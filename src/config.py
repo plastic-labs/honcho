@@ -849,8 +849,8 @@ class DeriverSettings(HonchoSettings):
     # Reduces steady-state query load against the (shared) DB/pooler.
     POLLING_BACKOFF_ENABLED: bool = True
     POLLING_SLEEP_MAX_INTERVAL_SECONDS: Annotated[
-        float, Field(default=30.0, gt=0.0, le=300.0)
-    ] = 30.0
+        float, Field(default=120.0, gt=0.0, le=300.0)
+    ] = 120.0
     POLLING_BACKOFF_MULTIPLIER: Annotated[
         float, Field(default=2.0, ge=1.0, le=10.0)
     ] = 2.0
@@ -861,10 +861,10 @@ class DeriverSettings(HonchoSettings):
         float, Field(default=30.0, ge=0.0, le=300.0)
     ] = 30.0
     # Multiply every poll sleep by a random factor in [1 - ratio, 1 + ratio]
-    # (0.5 -> [0.5x, 1.5x]) so poll loops don't re-converge over time. The
+    # (0.25 -> [0.75x, 1.25x]) so poll loops don't re-converge over time. The
     # backoff schedule is unchanged; only the returned sleep is scattered. Set
     # to 0.0 to disable.
-    POLLING_JITTER_RATIO: Annotated[float, Field(default=0.5, ge=0.0, le=1.0)] = 0.5
+    POLLING_JITTER_RATIO: Annotated[float, Field(default=0.25, ge=0.0, le=1.0)] = 0.25
     STALE_SESSION_TIMEOUT_MINUTES: Annotated[int, Field(default=5, gt=0, le=1440)] = 5
     # Minimum (jittered) spacing between stale-work-unit cleanup runs
     STALE_WORK_UNIT_CLEANUP_INTERVAL_SECONDS: Annotated[
