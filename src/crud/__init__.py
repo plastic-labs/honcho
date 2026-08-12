@@ -50,8 +50,8 @@ from .representation import (
 from .scope import (
     add_sessions_to_scope,
     get_or_create_scopes,
-    get_scope,
-    get_scope_session_names,
+    get_scope_or_raise,
+    get_scope_sessions,
     get_scopes,
     remove_session_from_scope,
 )
@@ -137,8 +137,8 @@ __all__ = [
     # Scope
     "add_sessions_to_scope",
     "get_or_create_scopes",
-    "get_scope",
-    "get_scope_session_names",
+    "get_scope_or_raise",
+    "get_scope_sessions",
     "get_scopes",
     "remove_session_from_scope",
     # Session

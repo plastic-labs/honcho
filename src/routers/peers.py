@@ -142,13 +142,17 @@ async def update_peer(
 ):
     """Update a Peer's metadata and/or configuration.
 
-    Three-way on the reserved namespace, all enforced inside ``crud.update_peer``
-    on the resolved row so there is no check-then-use window: a real scope is
-    refused (this route replaces `configuration` wholesale, so it must never touch
-    a facade-managed peer); an existing *unflagged* peer that merely occupies the
-    namespace is a normal peer and updates fine; and a reserved-prefix name that
-    does not exist is refused by create-path validation rather than being minted.
+    Returns 422 if the peer is a scope — use the scopes routes to manage scopes.
     """
+    # Three-way on the reserved namespace, all enforced inside ``crud.update_peer``
+    # on the resolved row so there is no check-then-use window: a real scope is
+    # refused (this route replaces `configuration` wholesale, so it must never touch
+    # a facade-managed peer); an existing *unflagged* peer that merely occupies the
+    # namespace is a normal peer and updates fine; and a reserved-prefix name that
+    # does not exist is refused by create-path validation rather than being minted.
+    #
+    # Kept out of the docstring deliberately: FastAPI publishes that into the
+    # OpenAPI description, and callers need the contract, not the mechanism.
     updated_peer = await crud.update_peer(
         db, workspace_name=workspace_id, peer_name=peer_id, peer=peer
     )
@@ -217,14 +221,19 @@ async def chat(
     """
     # Scope peers are never observed, so no representation of them exists to
     # query. Covers the path-level observer too: a scope `peer_id` no longer
-    # errors out downstream now that crud.get_peer takes a plain name, and a
-    # scope peer as the path-level observer is a Phase 2b concern.
+    # errors out downstream now that crud.get_peer takes a plain name, and
+    # querying from a scope's perspective is a read-side surface that does not
+    # exist yet.
     scope_candidates = [
         n for n in (peer_id, options.target) if n is not None and is_scope_peer_name(n)
     ]
     if scope_candidates:
         async with tracked_db("peers.chat.scope_check", read_only=True) as s_db:
-            await crud.reject_scope_peers(
+            # Strict variant, matching the representation route: `target` is an
+            # observed position and nothing here creates the peer, so a reserved
+            # name that does not exist yet must be refused rather than answered
+            # and then turned into a scope.
+            await crud.reject_scope_observed(
                 s_db,
                 workspace_id,
                 scope_candidates,
@@ -401,15 +410,23 @@ async def get_representation(
     try:
         embedding: list[float] | None = None
         if options.search_query:
-            with (
-                suppress(Exception),
-                embedding_call_purpose(
+            try:
+                with embedding_call_purpose(
                     EmbeddingCallPurpose.SEARCH_MEMORY.value,
                     workspace_name=workspace_id,
                     parent_category="api",
-                ),
-            ):
-                embedding = await embedding_client.embed(options.search_query)
+                ):
+                    embedding = await embedding_client.embed(options.search_query)
+            except Exception:
+                # Swallowed on purpose (see include_semantic_query below), but not
+                # silently: without this a provider outage degrades every search
+                # request to derived+recent retrieval with no signal anywhere.
+                logger.warning(
+                    "Representation search embedding failed for workspace %s,"
+                    + " degrading to non-semantic retrieval",
+                    workspace_id,
+                    exc_info=True,
+                )
 
         observed = options.target if options.target is not None else peer_id
         # Re-check and read in one short session, opened only now — after the

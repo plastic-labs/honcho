@@ -72,7 +72,8 @@ def _reject_impossible_peer_names(names: Collection[str]) -> None:
     too_long = sorted({n for n in names if len(n) > PEER_NAME_MAX_LENGTH})
     if too_long:
         raise ValidationException(
-            f"Peer name(s) must be at most {PEER_NAME_MAX_LENGTH} characters"
+            f"Peer name(s) {too_long} must be at most "
+            + f"{PEER_NAME_MAX_LENGTH} characters"
         )
 
 
@@ -117,7 +118,7 @@ def scope_peer_clause() -> ColumnElement[bool]:
     )
 
 
-async def _reserved_name_candidates(names: Iterable[str]) -> list[str]:
+def _reserved_name_candidates(names: Iterable[str]) -> list[str]:
     """Materialize ``names`` once and return the reserved-prefix ones, sorted.
 
     Materializing up front matters: callers pass generators (the message-author
@@ -167,7 +168,7 @@ async def reject_scope_observed(
     Raises:
         ValidationException: On a real scope or a missing reserved name.
     """
-    candidates = await _reserved_name_candidates(names)
+    candidates = _reserved_name_candidates(names)
     if not candidates:
         return
 
@@ -212,7 +213,7 @@ async def scope_peer_names(
     Raises:
         ValidationException: On a NUL byte or an over-length name.
     """
-    candidates = await _reserved_name_candidates(names)
+    candidates = _reserved_name_candidates(names)
     if not candidates:
         return set()
 
@@ -272,6 +273,8 @@ async def get_or_create_peers(
 
     Raises:
         ConflictException: If we fail to get or create the peers
+        ValidationException: On an impossible name (NUL byte, over-length), or a
+            reserved-prefix or non-conforming name on the create path
     """
 
     await get_or_create_workspace(db, schemas.WorkspaceCreate(name=workspace_name))

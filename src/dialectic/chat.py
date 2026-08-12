@@ -25,8 +25,8 @@ def _reject_scope_participants(*peers: models.Peer) -> None:
     """Refuse a dialectic run whose observer or observed is a scope peer.
 
     A scope is a silent observer with ``observe_me=false``: no representation of
-    one exists to query, and a scope as the path-level observer is a Phase 2b
-    concern rather than something the raw peer routes expose.
+    one exists to query. Querying *from* a scope's perspective is a read-side
+    surface that does not exist yet, and not something the raw peer routes expose.
 
     Raises:
         ValidationException: If any participant is a scope.

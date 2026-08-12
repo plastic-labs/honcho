@@ -35,14 +35,16 @@ enumerate; a gap there would not be caught here.
 """
 
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import pytest
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
+from httpx import Response
 from nanoid import generate as generate_nanoid
 from pydantic import BaseModel
 from pydantic.fields import FieldInfo
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
@@ -74,7 +76,7 @@ _KEY_POSITION = "body_peer_keys"
 _SCOPES_PREFIX = "/v3/workspaces/{workspace_id}/scopes"
 
 # A builder places `peer` into one position of one route and returns the response.
-Builder = Callable[[TestClient, str, str, str], object]
+Builder = Callable[[TestClient, str, str, str], Response]
 
 
 @dataclass(frozen=True)
@@ -87,6 +89,19 @@ class Case:
     refuse: bool
     reason: str = ""
     build: Builder | None = None
+    # REFUSE cases only. Whether a reserved name that does NOT YET EXIST is also
+    # refused — the third axis, and the one that is not derivable from `refuse`.
+    # It follows from the guard the call site picked:
+    #
+    #   validate_no_scope_peer_names  name-only, no DB          refuses missing
+    #   reject_scope_observed         strict on the observed     refuses missing
+    #   reject_scope_peers            flag-based, permissive     allows missing
+    #
+    # Permissive is correct where something downstream still stops it (the create
+    # path validates new names) or where the name simply resolves to nothing (404
+    # before any guard runs). Each False therefore needs `missing_reason`.
+    refuse_missing: bool | None = None
+    missing_reason: str = ""
     # Set when the 422 legitimately comes from request-schema validation rather
     # than a scope guard, so the detail is pydantic's rather than ours.
     schema_level: bool = False
@@ -95,7 +110,6 @@ class Case:
     # ALLOW cases only: builder plus the status a real scope must receive, so the
     # suite proves legitimate observer positions keep working.
     allow_status: tuple[int, ...] = ()
-    _: tuple[()] = field(default=(), repr=False)
 
     @property
     def key(self) -> tuple[str, str, str]:
@@ -255,6 +269,10 @@ def _b_peer_config(c: TestClient, ws: str, s: str, p: str):
     )
 
 
+def _b_peer_config_get(c: TestClient, ws: str, s: str, p: str):
+    return c.get(f"/v3/workspaces/{ws}/sessions/{s}/peers/{p}/config")
+
+
 # A plain peer used for the *other* side of two-position routes, so the position
 # under test is the only scope in the request. Created by the fixtures below.
 _OTHER = "policy-counterparty"
@@ -271,16 +289,48 @@ _READ_ONLY_OK = (
 POLICY: tuple[Case, ...] = (
     # ---- observed position: a scope must never be the subject ----
     Case(
-        "POST", f"{_W}/conclusions", "observed_id", True, build=_b_conclusion_observed
+        "POST",
+        f"{_W}/conclusions",
+        "observed_id",
+        True,
+        refuse_missing=False,
+        missing_reason=(
+            "Every observer and observed peer is resolved before the scope check, "
+            "so a name that does not exist is a 404 and no conclusion is written. "
+            "The guard is still the strict variant, for if that ever changes."
+        ),
+        build=_b_conclusion_observed,
     ),
-    Case("POST", f"{_W}/schedule_dream", "observed", True, build=_b_dream_observed),
-    Case("PUT", f"{_W}/peers/{{peer_id}}/card", "target", True, build=_b_card_target),
-    Case("POST", f"{_W}/peers/{{peer_id}}/chat", "target", True, build=_b_chat_target),
+    Case(
+        "POST",
+        f"{_W}/schedule_dream",
+        "observed",
+        True,
+        refuse_missing=True,
+        build=_b_dream_observed,
+    ),
+    Case(
+        "PUT",
+        f"{_W}/peers/{{peer_id}}/card",
+        "target",
+        True,
+        refuse_missing=True,
+        build=_b_card_target,
+    ),
+    Case(
+        "POST",
+        f"{_W}/peers/{{peer_id}}/chat",
+        "target",
+        True,
+        refuse_missing=True,
+        build=_b_chat_target,
+    ),
     Case(
         "POST",
         f"{_W}/peers/{{peer_id}}/representation",
         "target",
         True,
+        refuse_missing=True,
         build=_b_repr_target,
     ),
     Case(
@@ -288,6 +338,7 @@ POLICY: tuple[Case, ...] = (
         f"{_W}/sessions/{{session_id}}/context",
         "peer_target",
         True,
+        refuse_missing=True,
         build=_b_session_context_target,
     ),
     # ---- observer position: legitimately a scope ----
@@ -363,6 +414,7 @@ POLICY: tuple[Case, ...] = (
         f"{_W}/peers",
         _KEY_POSITION,
         True,
+        refuse_missing=True,
         build=_b_create_peer,
         schema_level=True,
         skip_squatter=(
@@ -371,13 +423,28 @@ POLICY: tuple[Case, ...] = (
             "test_scopes.py::test_peer_create_rejects_reserved_prefix."
         ),
     ),
-    Case("PUT", f"{_W}/peers/{{peer_id}}", "peer_id", True, build=_b_update_peer),
-    Case("POST", f"{_W}/sessions", "peer_names", True, build=_b_session_create),
+    Case(
+        "PUT",
+        f"{_W}/peers/{{peer_id}}",
+        "peer_id",
+        True,
+        refuse_missing=True,
+        build=_b_update_peer,
+    ),
+    Case(
+        "POST",
+        f"{_W}/sessions",
+        "peer_names",
+        True,
+        refuse_missing=True,
+        build=_b_session_create,
+    ),
     Case(
         "POST",
         f"{_W}/sessions/{{session_id}}/messages",
         "peer_name",
         True,
+        refuse_missing=True,
         build=_b_message,
     ),
     Case(
@@ -385,6 +452,7 @@ POLICY: tuple[Case, ...] = (
         f"{_W}/sessions/{{session_id}}/messages/upload",
         "peer_id",
         True,
+        refuse_missing=True,
         build=_b_upload,
     ),
     Case(
@@ -392,6 +460,7 @@ POLICY: tuple[Case, ...] = (
         f"{_W}/sessions/{{session_id}}/peers",
         _KEY_POSITION,
         True,
+        refuse_missing=True,
         build=_b_add_peers,
     ),
     Case(
@@ -399,6 +468,7 @@ POLICY: tuple[Case, ...] = (
         f"{_W}/sessions/{{session_id}}/peers",
         _KEY_POSITION,
         True,
+        refuse_missing=True,
         build=_b_set_peers,
     ),
     Case(
@@ -406,6 +476,12 @@ POLICY: tuple[Case, ...] = (
         f"{_W}/sessions/{{session_id}}/peers",
         _KEY_POSITION,
         True,
+        refuse_missing=False,
+        missing_reason=(
+            "Removal creates nothing and a name that does not exist has no "
+            "membership row, so the request is a no-op. Refusing here would give a "
+            "reserved name a different removal result than any other absent peer."
+        ),
         build=_b_remove_peers,
     ),
     Case(
@@ -413,7 +489,25 @@ POLICY: tuple[Case, ...] = (
         f"{_W}/sessions/{{session_id}}/peers/{{peer_id}}/config",
         "peer_id",
         True,
+        refuse_missing=False,
+        missing_reason=(
+            "The peer is resolved before the scope check, so a name that does not "
+            "exist is a 404 and never reaches the guard. Nothing is created, so "
+            "there is no window for the name to be claimed here."
+        ),
         build=_b_peer_config,
+    ),
+    Case(
+        "GET",
+        f"{_W}/sessions/{{session_id}}/peers/{{peer_id}}/config",
+        "peer_id",
+        True,
+        refuse_missing=False,
+        missing_reason=(
+            "Same resolution order as the write side of this route: an absent peer "
+            "is a 404 before the scope check, and a read creates nothing."
+        ),
+        build=_b_peer_config_get,
     ),
     # ---- path peer on the dialectic surface ----
     Case(
@@ -421,6 +515,7 @@ POLICY: tuple[Case, ...] = (
         f"{_W}/peers/{{peer_id}}/chat",
         "peer_id",
         True,
+        refuse_missing=True,
         build=_b_chat_observer,
     ),
     Case(
@@ -428,16 +523,10 @@ POLICY: tuple[Case, ...] = (
         f"{_W}/peers/{{peer_id}}/representation",
         "peer_id",
         True,
+        refuse_missing=True,
         build=_b_repr_observer,
     ),
     # ---- reads that neither create nor mutate knowledge about a scope ----
-    Case(
-        "GET",
-        f"{_W}/sessions/{{session_id}}/peers/{{peer_id}}/config",
-        "peer_id",
-        False,
-        reason="Read-only. The write side of this same route IS refused.",
-    ),
     Case(
         "POST", f"{_W}/peers/{{peer_id}}/search", "peer_id", False, reason=_READ_ONLY_OK
     ),
@@ -457,8 +546,8 @@ POLICY: tuple[Case, ...] = (
         "peer_id",
         False,
         reason=(
-            "Read-only. The read-side scope surface belongs to Phase 2b (DEV-1998), "
-            "which owns the `scope` option on the context routes."
+            "Read-only. The read-side scope surface is not implemented yet; the "
+            "`scope` option on the context routes will own it when it lands."
         ),
     ),
     Case(
@@ -468,7 +557,7 @@ POLICY: tuple[Case, ...] = (
         False,
         reason=(
             "Read-only, and empty for a scope now that nothing can write knowledge "
-            "about one. Phase 2b (DEV-1998) owns this surface."
+            "about one. The read-side scope surface is not implemented yet."
         ),
     ),
     Case(
@@ -487,8 +576,8 @@ POLICY: tuple[Case, ...] = (
         "peer_id",
         False,
         reason=(
-            "Mints a scoped JWT rather than touching a peer. Scope-bound keys are "
-            "Phase 3 (DEV-2002)."
+            "Mints a scoped JWT rather than touching a peer, so no peer row is read "
+            "or written. Keys cannot be bound to a scope yet."
         ),
     ),
 )
@@ -587,6 +676,19 @@ def test_every_peer_position_is_classified():
     derived = _derived_positions()
     classified = set(_BY_KEY)
 
+    # _peer_positions walks FastAPI/Pydantic internals (route.dependant, its
+    # *_params lists, field_info.annotation). An upgrade that reshapes any of them
+    # would make derivation silently return nothing, and every assertion below
+    # would then pass vacuously. Anchor on a position that must always be found.
+    assert (
+        "POST",
+        f"{_W}/sessions/{{session_id}}/messages",
+        "peer_name",
+    ) in derived, (
+        "derived no peer positions for a route that certainly has one — the "
+        "FastAPI internals _peer_positions() traverses have probably changed shape"
+    )
+
     unclassified = derived - classified
     assert not unclassified, (
         "peer positions with no scope policy: "
@@ -603,12 +705,25 @@ def test_policy_entries_are_well_formed():
         if case.refuse:
             assert case.build is not None, f"{case.key} refuses but has no builder"
             assert not case.reason, f"{case.key} refuses; reason is for allow cases"
+            # The missing-name axis is not derivable from `refuse`, so it must be
+            # stated rather than defaulted — that gap is what this field closes.
+            assert case.refuse_missing is not None, (
+                f"{case.key} refuses a real scope but does not say whether a "
+                "reserved name that does not exist yet is also refused"
+            )
+            if not case.refuse_missing:
+                assert (
+                    len(case.missing_reason.strip()) > 30
+                ), f"{case.key} tolerates a missing reserved name; say why"
         else:
             assert len(case.reason.strip()) > 30, f"{case.key} needs a real reason"
             assert bool(case.build) == bool(case.allow_status), (
                 f"{case.key}: an allow case needs a builder and an expected "
                 "allow_status together, or neither"
             )
+            assert (
+                case.refuse_missing is None
+            ), f"{case.key}: refuse_missing applies to REFUSE cases only"
 
 
 _REFUSING = tuple(case for case in POLICY if case.refuse)
@@ -630,6 +745,26 @@ def _setup(client: TestClient, workspace: str) -> tuple[str, str]:
     return session_name, str(generate_nanoid())
 
 
+def _real_scope(
+    client: TestClient, workspace: str, session_name: str, scope_name: str
+) -> str:
+    """Create a scope, attach the session to it, and return its backing peer name."""
+    assert (
+        client.post(
+            f"/v3/workspaces/{workspace}/scopes", json={"id": scope_name}
+        ).status_code
+        == 201
+    )
+    assert (
+        client.post(
+            f"/v3/workspaces/{workspace}/scopes/{scope_name}/sessions",
+            json={"session_ids": [session_name]},
+        ).status_code
+        == 204
+    )
+    return scope_peer_name(scope_name)
+
+
 @pytest.mark.parametrize("case", _REFUSING, ids=lambda c: f"{c.method}:{c.position}")
 def test_refusing_position_rejects_a_real_scope(
     client: TestClient,
@@ -639,31 +774,18 @@ def test_refusing_position_rejects_a_real_scope(
     """A real scope is refused in every position marked REFUSE."""
     test_workspace, _ = sample_data
     session_name, scope_name = _setup(client, test_workspace.name)
-    assert (
-        client.post(
-            f"/v3/workspaces/{test_workspace.name}/scopes", json={"id": scope_name}
-        ).status_code
-        == 201
-    )
-    backing = scope_peer_name(scope_name)
-    assert (
-        client.post(
-            f"/v3/workspaces/{test_workspace.name}/scopes/{scope_name}/sessions",
-            json={"session_ids": [session_name]},
-        ).status_code
-        == 200
-    )
+    backing = _real_scope(client, test_workspace.name, session_name, scope_name)
 
     assert case.build is not None
     result = case.build(client, test_workspace.name, session_name, backing)
-    status = getattr(result, "status_code", None)
+    status = result.status_code
     assert status == 422, (
         f"{case.method} {case.path} accepted a scope in position "
         f"{case.position!r} (got {status})"
     )
 
     # A 422 alone proves nothing — a malformed body would also produce one.
-    detail = str(getattr(result, "text", ""))
+    detail = result.text
     if case.schema_level:
         assert (
             "pattern" in detail
@@ -692,28 +814,14 @@ def test_allowing_position_accepts_a_real_scope(
     """
     test_workspace, _ = sample_data
     session_name, scope_name = _setup(client, test_workspace.name)
-    assert (
-        client.post(
-            f"/v3/workspaces/{test_workspace.name}/scopes", json={"id": scope_name}
-        ).status_code
-        == 201
-    )
-    backing = scope_peer_name(scope_name)
-    assert (
-        client.post(
-            f"/v3/workspaces/{test_workspace.name}/scopes/{scope_name}/sessions",
-            json={"session_ids": [session_name]},
-        ).status_code
-        == 200
-    )
+    backing = _real_scope(client, test_workspace.name, session_name, scope_name)
 
     assert case.build is not None
     result = case.build(client, test_workspace.name, session_name, backing)
-    status = getattr(result, "status_code", None)
-    assert status in case.allow_status, (
+    assert result.status_code in case.allow_status, (
         f"{case.method} {case.path} refused a scope in the legitimate position "
-        f"{case.position!r}: expected {case.allow_status}, got {status} — "
-        f"{getattr(result, 'text', '')[:200]}"
+        f"{case.position!r}: expected {case.allow_status}, got "
+        f"{result.status_code} — {result.text[:200]}"
     )
 
 
@@ -752,9 +860,62 @@ async def test_refusing_position_allows_unflagged_squatter(
 
     assert case.build is not None
     result = case.build(client, test_workspace.name, session_name, squatter)
-    status = getattr(result, "status_code", None)
-    assert status != 422, (
-        f"{case.method} {case.path} refused an unflagged squatter in position "
-        f"{case.position!r} (got {status}) — the guard is keying off the name "
-        "prefix rather than the scope flag"
+    # Deliberately not `!= 422`: that also passes on a 5xx, so a guard regressing
+    # into an unhandled error (the psycopg DataError path this feature defends
+    # against) would keep this green.
+    assert result.status_code < 400, (
+        f"{case.method} {case.path} did not accept an unflagged squatter in "
+        f"position {case.position!r} (got {result.status_code}) — a 422 means the "
+        "guard is keying off the name prefix rather than the scope flag; anything "
+        f"else means the request blew up. Body: {result.text[:200]}"
+    )
+
+
+@pytest.mark.parametrize("case", _REFUSING, ids=lambda c: f"{c.method}:{c.position}")
+async def test_refusing_position_and_a_missing_reserved_name(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+    case: Case,
+):
+    """The third axis: a reserved name that does not exist yet.
+
+    Neither of the other two tests reaches it — both resolve an existing subject.
+    A permissive guard here is sometimes correct (the create path refuses the name
+    itself, or it simply resolves to nothing), which is why the expected verdict is
+    declared per case rather than assumed.
+
+    What is NOT negotiable in either direction is that the request must not MINT
+    the reserved name. Minting it would let any caller squat a scope name before
+    the workspace owner can create it, and would leave a peer that the facade can
+    never adopt.
+    """
+    test_workspace, _ = sample_data
+    session_name, _ = _setup(client, test_workspace.name)
+    missing = scope_peer_name(str(generate_nanoid()))
+
+    assert case.build is not None
+    result = case.build(client, test_workspace.name, session_name, missing)
+
+    if case.refuse_missing:
+        assert result.status_code == 422, (
+            f"{case.method} {case.path} accepted a not-yet-existing reserved name "
+            f"in position {case.position!r} (got {result.status_code}) — it could "
+            f"become a scope later. Body: {result.text[:200]}"
+        )
+    else:
+        assert result.status_code != 422, (
+            f"{case.method} {case.path} refused a missing reserved name in position "
+            f"{case.position!r}, but the policy says it tolerates one "
+            f"({case.missing_reason!r}) — update the policy or the guard"
+        )
+
+    minted = await db_session.scalar(
+        select(models.Peer)
+        .where(models.Peer.workspace_name == test_workspace.name)
+        .where(models.Peer.name == missing)
+    )
+    assert minted is None, (
+        f"{case.method} {case.path} minted the reserved name {missing!r} from "
+        f"position {case.position!r} — the scope namespace is now squatted"
     )

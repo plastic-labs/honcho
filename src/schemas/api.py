@@ -401,10 +401,9 @@ class SessionCreate(SessionBase):
         max_length=100,
         description=(
             "Optional list of (unprefixed) scope names to add this session to. "
-            "Each scope is created if it does not exist yet. Note: scope "
-            "membership only affects messages ingested after the session is "
-            "added to the scope; backfill of pre-existing documents lands in a "
-            "follow-up (DEV-1999)."
+            "Each scope is created if it does not exist yet. Membership applies "
+            "only to messages ingested after the session is added to the scope; "
+            "conclusions already derived are not backfilled."
         ),
     )
 
@@ -563,12 +562,6 @@ class ScopeSessionsAdd(BaseModel):
         max_length=100,
         description="IDs of existing sessions to add to the scope",
     )
-
-
-class ScopeSessions(BaseModel):
-    """IDs of the sessions that are currently members of a scope."""
-
-    session_ids: list[str]
 
 
 # ---------------------------------------------------------------------------

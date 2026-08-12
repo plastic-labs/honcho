@@ -8,8 +8,8 @@ and never speaks.
 See ``src/utils/scopes.py`` for the namespace helpers.
 
 Membership only affects messages ingested *after* a session is added to a
-scope; backfill of pre-existing documents and reconciliation on removal land
-in a follow-up (DEV-1999).
+scope. Conclusions already derived are neither backfilled on add nor
+reconciled on removal.
 """
 
 from logging import getLogger
@@ -200,7 +200,7 @@ async def get_scopes(
     return stmt.order_by(models.Peer.created_at.asc(), models.Peer.id.asc())
 
 
-async def get_scope(
+async def get_scope_or_raise(
     db: AsyncSession,
     workspace_name: str,
     scope_name: str,
@@ -232,31 +232,35 @@ async def get_scope(
     return peer
 
 
-async def get_scope_session_names(
-    db: AsyncSession,
+async def get_scope_sessions(
     workspace_name: str,
     scope_name: str,
-) -> list[str]:
+    reverse: bool = False,
+) -> Select[tuple[models.Session]]:
     """
-    List the IDs of the active sessions that are members of a scope.
+    Build a query for the active sessions that are members of a scope.
+
+    Membership is unbounded — a scope may span every session in a workspace — so
+    this returns a query for the caller to paginate rather than a materialized
+    list. Callers must check the scope exists themselves (``get_scope_or_raise``);
+    an unknown scope yields an empty page here, not a 404.
+
+    Ordered by membership age, with the session id as a unique tiebreaker:
+    ``session_peers`` has a composite primary key and no id of its own, so
+    ``joined_at`` alone is not a stable pagination key.
 
     Args:
-        db: Database session
         workspace_name: Name of the workspace
         scope_name: Unprefixed scope name
+        reverse: Whether to return newest memberships first
 
     Returns:
-        Names of the scope's member sessions, oldest membership first
-
-    Raises:
-        ResourceNotFoundException: If the scope does not exist
+        Select for the scope's member sessions
     """
-    await get_scope(db, workspace_name, scope_name)
-
     stmt = (
-        select(models.SessionPeer.session_name)
+        select(models.Session)
         .join(
-            models.Session,
+            models.SessionPeer,
             (models.Session.name == models.SessionPeer.session_name)
             & (models.Session.workspace_name == models.SessionPeer.workspace_name),
         )
@@ -264,10 +268,12 @@ async def get_scope_session_names(
         .where(models.SessionPeer.peer_name == scope_peer_name(scope_name))
         .where(models.SessionPeer.left_at.is_(None))
         .where(models.Session.is_active == True)  # noqa: E712
-        .order_by(models.SessionPeer.joined_at.asc())
     )
-    result = await db.execute(stmt)
-    return [row[0] for row in result.all()]
+    if reverse:
+        return stmt.order_by(
+            models.SessionPeer.joined_at.desc(), models.Session.id.desc()
+        )
+    return stmt.order_by(models.SessionPeer.joined_at.asc(), models.Session.id.asc())
 
 
 async def add_sessions_to_scope(
@@ -275,23 +281,21 @@ async def add_sessions_to_scope(
     workspace_name: str,
     scope_name: str,
     session_names: list[str],
-) -> list[str]:
+) -> None:
     """
     Add sessions to a scope by creating observer memberships for its peer.
 
     Each membership is a ``session_peers`` row for the scope peer with
     ``observe_others=true, observe_me=false`` — exactly what a hand-built
-    observer peer would carry. Membership only affects messages ingested
-    after this call (backfill is DEV-1999).
+    observer peer would carry. No backfill happens here: membership only affects
+    messages ingested after this call, and conclusions already derived are left
+    as they are.
 
     Args:
         db: Database session
         workspace_name: Name of the workspace
         scope_name: Unprefixed scope name
         session_names: Names of existing sessions to add
-
-    Returns:
-        Names of all the scope's member sessions after the addition
 
     Raises:
         ResourceNotFoundException: If the scope or any named session does not
@@ -301,7 +305,7 @@ async def add_sessions_to_scope(
     # `scopes` path, so a module-level import would be circular.
     from .session import upsert_session_peers
 
-    await get_scope(db, workspace_name, scope_name)
+    await get_scope_or_raise(db, workspace_name, scope_name)
 
     requested = set(session_names)
     result = await db.execute(
@@ -328,8 +332,6 @@ async def add_sessions_to_scope(
 
     await db.commit()
 
-    return await get_scope_session_names(db, workspace_name, scope_name)
-
 
 async def remove_session_from_scope(
     db: AsyncSession,
@@ -341,8 +343,8 @@ async def remove_session_from_scope(
     Remove a session from a scope by ending the scope peer's membership.
 
     Ends the membership the same way the generic remove-peer path does (sets
-    ``left_at``). Reconciliation of documents derived while the session was a
-    member lands in a follow-up (DEV-1999).
+    ``left_at``). Conclusions derived while the session was a member are left in
+    place — nothing reconciles them.
 
     Args:
         db: Database session
@@ -356,7 +358,7 @@ async def remove_session_from_scope(
     # Lazy import for the same circular-import reason as add_sessions_to_scope.
     from .session import remove_peers_from_session
 
-    await get_scope(db, workspace_name, scope_name)
+    await get_scope_or_raise(db, workspace_name, scope_name)
 
     await remove_peers_from_session(
         db,

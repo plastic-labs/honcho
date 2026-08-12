@@ -321,7 +321,7 @@ async def get_or_create_session(
     # Add the session to any requested scopes: create-or-get each scope peer
     # and record an observer membership (observe_others=true, observe_me=false).
     # No backfill happens here — membership only affects messages ingested
-    # after this point (backfill is DEV-1999).
+    # after this point.
     scopes_result = None
     if session.scopes:
         scopes_result = await get_or_create_scopes(
@@ -919,6 +919,13 @@ async def get_peers_from_session(
         workspace_name: Name of the workspace
         session_name: Name of the session
 
+    Scope peers are excluded: a scope's membership is the facade's internal
+    observer wiring, and this is the generic peer surface. Listing them here
+    would show a caller a peer named ``scope.<name>`` with ``observe_others``
+    set, which is exactly the mechanic the facade exists to hide. Mirrors the
+    ``kind``-less default of ``crud.peer.get_peers``; the scopes routes expose
+    membership from the other direction.
+
     Returns:
         Paginated list of Peer objects in the session
     """
@@ -935,6 +942,10 @@ async def get_peers_from_session(
         .where(models.SessionPeer.session_name == session_name)
         .where(models.Peer.workspace_name == workspace_name)
         .where(models.SessionPeer.left_at.is_(None))  # Only active peers
+        # models.Peer is already in the FROM via the join above, so the clause
+        # composes directly — no correlated exists() as in the SessionPeer-only
+        # UPDATE statements elsewhere in this module.
+        .where(~scope_peer_clause())
     )
 
 
@@ -1164,7 +1175,7 @@ async def _get_or_add_peers_to_session(
 
     # Scope memberships carry observe_others=True but do not count against the
     # limit. The limit bounds per-observer deriver fan-out for real peers; a scope
-    # costs document rows, not LLM calls (Scopes RFC §5.2), and counting them would
+    # costs document rows, not LLM calls, and counting them would
     # cap scopes-per-session at SESSION_OBSERVERS_LIMIT and surface as an
     # observer-shaped 400 through a facade that hides observers entirely.
     scopes_being_added = await scope_peer_names(db, workspace_name, peer_names.keys())
@@ -1270,7 +1281,14 @@ async def get_peer_config(
 
     Raises:
         ResourceNotFoundException: If the session or peer does not exist
+        ValidationException: If the peer is a scope
     """
+    # A scope's membership config belongs to the facade, not the caller — the
+    # write path refuses it in set_peer_config below, and reading it back is the
+    # same internal wiring by another route. Checked on the resolved row, so a
+    # legacy peer merely occupying the reserved name keeps working.
+    _reject_resolved_scope_peers([await get_peer(db, workspace_name, peer_id)])
+
     # Get row from session_peer table
     stmt = select(models.SessionPeer).where(
         models.SessionPeer.workspace_name == workspace_name,

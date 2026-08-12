@@ -15,7 +15,7 @@ from sqlalchemy.sql.functions import func
 from src import models, schemas
 from src.config import settings
 from src.crud.collection import get_or_create_collection
-from src.crud.peer import get_peer, reject_scope_peers
+from src.crud.peer import get_peer, reject_scope_observed
 from src.crud.session import get_session
 from src.dependencies import tracked_db
 from src.embedding_client import embedding_client
@@ -958,7 +958,14 @@ async def create_observations(
     # but it must never be *observed*: scope peers carry observe_me=false and no
     # representation is ever formed of one. Without this, a conclusion about a
     # scope persists and a (observer, scope) collection is created for it.
-    await reject_scope_peers(
+    #
+    # The strict variant because this is an observed position, though defence in
+    # depth rather than the active guard: the loop above resolves every peer, so a
+    # reserved name that does not exist yet already 404s before reaching here. If
+    # that validation ever stops covering observed_id, this still refuses the
+    # pre-seeding case instead of persisting a conclusion that a later-created
+    # scope would retroactively own.
+    await reject_scope_observed(
         db,
         workspace_name,
         {obs.observed_id for obs in observations},

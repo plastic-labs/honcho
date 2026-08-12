@@ -318,6 +318,16 @@ async def get_or_create_session(
             )
         session.name = jwt_params.s
 
+    # The `scopes` field does what the scopes routes do — create scope peers and
+    # attach memberships — so it needs their authorization: workspace-level or
+    # admin only. Checked here rather than through `require_auth(...)` because
+    # that closure only resolves path and query params, never the body, so a
+    # declarative gate cannot see this field.
+    if session.scopes and not (
+        jwt_params.ad or (jwt_params.p is None and jwt_params.s is None)
+    ):
+        raise AuthenticationException("Scope membership requires a workspace-level key")
+
     # Scope peers may not be added through the generic peers mapping; use the
     # `scopes` field (which handles scope-peer creation and observer config).
     if session.peer_names:
@@ -746,10 +756,12 @@ async def get_session_context(
         )
 
     # peer_target is the *observed* peer, and no representation or card is ever
-    # formed of a scope. peer_perspective (the observer) is left alone: a scope
-    # is a legitimate perspective, which is what Phase 2b's `scope` option builds on.
+    # formed of a scope. peer_perspective (the observer) is left alone: a scope is
+    # a legitimate perspective, and the read-side scope surface will build on that.
     if peer_target is not None:
-        await crud.reject_scope_peers(
+        # Strict variant: an observed position that creates nothing, so a reserved
+        # name which does not exist yet must be refused too.
+        await crud.reject_scope_observed(
             db,
             workspace_id,
             [peer_target],

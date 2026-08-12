@@ -58,6 +58,30 @@ def _create_session(
     return session_name
 
 
+def _add_sessions(
+    client: TestClient,
+    workspace_name: str,
+    scope_name: str,
+    session_names: list[str],
+) -> int:
+    """Add sessions to a scope via the facade; returns the status code (204 on success)."""
+    return client.post(
+        f"/v3/workspaces/{workspace_name}/scopes/{scope_name}/sessions",
+        json={"session_ids": session_names},
+    ).status_code
+
+
+def _scope_sessions(
+    client: TestClient, workspace_name: str, scope_name: str
+) -> list[str]:
+    """Names of a scope's member sessions, oldest membership first."""
+    response = client.post(
+        f"/v3/workspaces/{workspace_name}/scopes/{scope_name}/sessions/list"
+    )
+    assert response.status_code == 200, response.text
+    return [item["id"] for item in response.json()["items"]]
+
+
 async def _get_session_peer(
     db_session: AsyncSession,
     workspace_name: str,
@@ -226,7 +250,61 @@ def test_scopes_routes_require_workspace_level_key(
     client.headers["Authorization"] = (
         f"Bearer {create_jwt(JWTParams(w=test_workspace.name, s='some-session'))}"
     )
-    assert client.get(f"{scopes_url}/{scope_name}/sessions").status_code == 401
+    assert client.post(f"{scopes_url}/{scope_name}/sessions/list").status_code == 401
+
+
+def test_session_create_scopes_requires_workspace_level_key(
+    client: TestClient,
+    sample_data: tuple[Workspace, Peer],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """`scopes` on session create is the scopes routes by another door.
+
+    It creates scope peers and attaches memberships, so it carries the same
+    workspace-level requirement. Session create is otherwise a self-authorizing
+    route that accepts peer- and session-scoped keys, which is exactly why this
+    needs its own check rather than the route's auth dependency.
+    """
+    test_workspace, test_peer = sample_data
+    monkeypatch.setattr(settings.AUTH, "USE_AUTH", True)
+    monkeypatch.setattr(settings.AUTH, "JWT_SECRET", "test-secret")
+    sessions_url = f"/v3/workspaces/{test_workspace.name}/sessions"
+    scopes_url = f"/v3/workspaces/{test_workspace.name}/scopes"
+    scope_name = str(generate_nanoid())
+
+    def create_with_scope(session_name: str) -> int:
+        return client.post(
+            sessions_url, json={"id": session_name, "scopes": [scope_name]}
+        ).status_code
+
+    def listed_scopes() -> set[str]:
+        response = client.post(f"{scopes_url}/list")
+        assert response.status_code == 200
+        return {item["id"] for item in response.json()["items"]}
+
+    # Peer-scoped key: rejected
+    client.headers["Authorization"] = (
+        f"Bearer {create_jwt(JWTParams(w=test_workspace.name, p=test_peer.name))}"
+    )
+    assert create_with_scope(str(generate_nanoid())) == 401
+
+    # Session-scoped key: rejected. The session name must match the token's `s`
+    # claim, or the handler's own session check would 401 first and this would
+    # pass without ever reaching the scopes gate.
+    own_session = str(generate_nanoid())
+    client.headers["Authorization"] = (
+        f"Bearer {create_jwt(JWTParams(w=test_workspace.name, s=own_session))}"
+    )
+    assert create_with_scope(own_session) == 401
+
+    # Workspace-scoped key: allowed. The scope is absent until this call lands,
+    # which proves the rejected requests did not mint it on their way out.
+    client.headers["Authorization"] = (
+        f"Bearer {create_jwt(JWTParams(w=test_workspace.name))}"
+    )
+    assert scope_name not in listed_scopes()
+    assert create_with_scope(str(generate_nanoid())) == 201
+    assert scope_name in listed_scopes()
 
 
 def test_peer_create_rejects_reserved_prefix(
@@ -283,89 +361,6 @@ def test_peers_list_kind_filtering(
     assert {test_peer.name, backing_peer_name} <= names
 
 
-def test_scope_peer_cannot_author_messages(
-    client: TestClient, sample_data: tuple[Workspace, Peer]
-):
-    test_workspace, _ = sample_data
-    scope_name = str(generate_nanoid())
-    assert _create_scope(client, test_workspace.name, scope_name).status_code == 201
-    session_name = _create_session(client, test_workspace.name)
-
-    response = client.post(
-        f"/v3/workspaces/{test_workspace.name}/sessions/{session_name}/messages",
-        json={
-            "messages": [
-                {
-                    "peer_id": scope_peer_name(scope_name),
-                    "content": "I should not speak",
-                }
-            ]
-        },
-    )
-    assert response.status_code == 422
-    assert SCOPE_PEER_PREFIX in response.json()["detail"]
-
-
-def test_scope_peer_cannot_be_chat_target(
-    client: TestClient, sample_data: tuple[Workspace, Peer]
-):
-    """Chat validation happens before any LLM work, so this is safe to exercise."""
-    test_workspace, test_peer = sample_data
-    scope_name = str(generate_nanoid())
-    assert _create_scope(client, test_workspace.name, scope_name).status_code == 201
-
-    response = client.post(
-        f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}/chat",
-        json={"query": "what do you know?", "target": scope_peer_name(scope_name)},
-    )
-    assert response.status_code == 422
-
-
-def test_scope_peer_cannot_be_representation_target(
-    client: TestClient, sample_data: tuple[Workspace, Peer]
-):
-    test_workspace, test_peer = sample_data
-    scope_name = str(generate_nanoid())
-    assert _create_scope(client, test_workspace.name, scope_name).status_code == 201
-
-    response = client.post(
-        f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}/representation",
-        json={"target": scope_peer_name(scope_name)},
-    )
-    assert response.status_code == 422
-
-
-def test_generic_session_peer_routes_reject_scope_peers(
-    client: TestClient, sample_data: tuple[Workspace, Peer]
-):
-    """Scope membership is managed only via the scopes facade."""
-    test_workspace, _ = sample_data
-    scope_name = str(generate_nanoid())
-    assert _create_scope(client, test_workspace.name, scope_name).status_code == 201
-    backing_peer_name = scope_peer_name(scope_name)
-    session_name = _create_session(client, test_workspace.name)
-
-    base = f"/v3/workspaces/{test_workspace.name}/sessions/{session_name}"
-
-    response = client.post(f"{base}/peers", json={backing_peer_name: {}})
-    assert response.status_code == 422
-    assert "scopes" in response.json()["detail"]
-
-    response = client.put(f"{base}/peers", json={backing_peer_name: {}})
-    assert response.status_code == 422
-
-    response = client.request("DELETE", f"{base}/peers", json=[backing_peer_name])
-    assert response.status_code == 422
-
-    # Session creation with a scope peer in the generic peers mapping is also
-    # rejected; the `scopes` field is the supported path.
-    response = client.post(
-        f"/v3/workspaces/{test_workspace.name}/sessions",
-        json={"id": str(generate_nanoid()), "peers": {backing_peer_name: {}}},
-    )
-    assert response.status_code == 422
-
-
 async def test_scope_sessions_add_list_remove(
     client: TestClient,
     db_session: AsyncSession,
@@ -381,11 +376,13 @@ async def test_scope_sessions_add_list_remove(
     scope_base = f"/v3/workspaces/{workspace_name}/scopes/{scope_name}"
 
     # Add both sessions
-    response = client.post(
-        f"{scope_base}/sessions", json={"session_ids": [session_1, session_2]}
+    assert (
+        _add_sessions(client, workspace_name, scope_name, [session_1, session_2]) == 204
     )
-    assert response.status_code == 200
-    assert set(response.json()["session_ids"]) == {session_1, session_2}
+    assert set(_scope_sessions(client, workspace_name, scope_name)) == {
+        session_1,
+        session_2,
+    }
 
     # Membership rows carry the observer shape: observe_others on, observe_me off
     session_peer = await _get_session_peer(
@@ -396,18 +393,11 @@ async def test_scope_sessions_add_list_remove(
     assert session_peer.configuration["observe_others"] is True
     assert session_peer.configuration["observe_me"] is False
 
-    # List memberships
-    response = client.get(f"{scope_base}/sessions")
-    assert response.status_code == 200
-    assert set(response.json()["session_ids"]) == {session_1, session_2}
-
     # Remove one membership (soft delete, like the generic remove-peer path)
     response = client.delete(f"{scope_base}/sessions/{session_1}")
     assert response.status_code == 204
 
-    response = client.get(f"{scope_base}/sessions")
-    assert response.status_code == 200
-    assert response.json()["session_ids"] == [session_2]
+    assert _scope_sessions(client, workspace_name, scope_name) == [session_2]
 
     db_session.expire_all()
     session_peer = await _get_session_peer(
@@ -425,11 +415,15 @@ def test_scope_sessions_add_missing_session_404(
     assert _create_scope(client, test_workspace.name, scope_name).status_code == 201
     existing_session = _create_session(client, test_workspace.name)
 
-    response = client.post(
-        f"/v3/workspaces/{test_workspace.name}/scopes/{scope_name}/sessions",
-        json={"session_ids": [existing_session, str(generate_nanoid())]},
+    assert (
+        _add_sessions(
+            client,
+            test_workspace.name,
+            scope_name,
+            [existing_session, str(generate_nanoid())],
+        )
+        == 404
     )
-    assert response.status_code == 404
 
 
 def test_scope_sessions_routes_404_on_unknown_scope(
@@ -437,14 +431,13 @@ def test_scope_sessions_routes_404_on_unknown_scope(
 ):
     test_workspace, _ = sample_data
     session_name = _create_session(client, test_workspace.name)
-    scope_base = f"/v3/workspaces/{test_workspace.name}/scopes/{generate_nanoid()}"
+    unknown_scope = str(generate_nanoid())
+    scope_base = f"/v3/workspaces/{test_workspace.name}/scopes/{unknown_scope}"
 
-    response = client.post(
-        f"{scope_base}/sessions", json={"session_ids": [session_name]}
+    assert (
+        _add_sessions(client, test_workspace.name, unknown_scope, [session_name]) == 404
     )
-    assert response.status_code == 404
-
-    assert client.get(f"{scope_base}/sessions").status_code == 404
+    assert client.post(f"{scope_base}/sessions/list").status_code == 404
     assert client.delete(f"{scope_base}/sessions/{session_name}").status_code == 404
 
 
@@ -483,11 +476,7 @@ async def test_session_create_with_scopes(
         assert session_peer.configuration["observe_me"] is False
 
     # And the memberships show up through the facade
-    response = client.get(
-        f"/v3/workspaces/{test_workspace.name}/scopes/{scope_a}/sessions"
-    )
-    assert response.status_code == 200
-    assert response.json()["session_ids"] == [session_name]
+    assert _scope_sessions(client, test_workspace.name, scope_a) == [session_name]
 
 
 def test_session_create_rejects_prefixed_scope_names(
@@ -530,11 +519,9 @@ async def test_scope_membership_equals_hand_built_observer(
     scope_name = str(generate_nanoid())
     assert _create_scope(client, test_workspace.name, scope_name).status_code == 201
     scope_session = _create_session(client, test_workspace.name)
-    response = client.post(
-        f"/v3/workspaces/{test_workspace.name}/scopes/{scope_name}/sessions",
-        json={"session_ids": [scope_session]},
+    assert (
+        _add_sessions(client, test_workspace.name, scope_name, [scope_session]) == 204
     )
-    assert response.status_code == 200
 
     hand_built = await _get_session_peer(
         db_session, test_workspace.name, observer_session, observer_name
@@ -565,11 +552,7 @@ async def test_scope_peer_observes_ingested_messages(
         json={test_peer.name: {}},
     )
     assert response.status_code == 200
-    response = client.post(
-        f"/v3/workspaces/{test_workspace.name}/scopes/{scope_name}/sessions",
-        json={"session_ids": [session_name]},
-    )
-    assert response.status_code == 200
+    assert _add_sessions(client, test_workspace.name, scope_name, [session_name]) == 204
 
     # Ingest a message from the real peer and run the deriver enqueue fan-out
     message = models.Message(
@@ -731,42 +714,6 @@ async def test_forged_configuration_kind_does_not_make_a_scope(
     assert response.status_code in [200, 201], response.text
 
 
-def test_update_peer_rejects_reserved_prefix(
-    client: TestClient, sample_data: tuple[Workspace, Peer]
-):
-    """PUT on a reserved-namespace name is a clean 422, never a 500."""
-    test_workspace, _ = sample_data
-
-    response = client.put(
-        f"/v3/workspaces/{test_workspace.name}/peers/{scope_peer_name('therapy')}",
-        json={"metadata": {"k": "v"}},
-    )
-    assert response.status_code == 422
-    assert SCOPE_PEER_PREFIX in response.json()["detail"]
-
-
-async def test_scope_peer_cannot_be_chat_or_representation_observer(
-    client: TestClient, sample_data: tuple[Workspace, Peer]
-):
-    """The path-level peer_id is guarded, not just `target`."""
-    test_workspace, _ = sample_data
-    scope_name = str(generate_nanoid())
-    assert _create_scope(client, test_workspace.name, scope_name).status_code == 201
-    backing = scope_peer_name(scope_name)
-
-    response = client.post(
-        f"/v3/workspaces/{test_workspace.name}/peers/{backing}/chat",
-        json={"query": "what do you know?"},
-    )
-    assert response.status_code == 422, response.text
-
-    response = client.post(
-        f"/v3/workspaces/{test_workspace.name}/peers/{backing}/representation",
-        json={},
-    )
-    assert response.status_code == 422, response.text
-
-
 def test_internal_metadata_never_in_peer_response(
     client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
@@ -848,96 +795,6 @@ def test_message_author_cannot_create_invalid_peer_name(
     assert bad_name not in [p["id"] for p in response.json()["items"]]
 
 
-def test_message_author_cannot_squat_scope_namespace(
-    client: TestClient, sample_data: tuple[Workspace, Peer]
-):
-    """The reserved namespace must not be reachable via the message author path.
-
-    Without create-path validation this minted an unflagged `scope.<name>` peer,
-    which then permanently 409-blocked creating that scope — a denial of service
-    on the namespace by any caller who can post a message.
-    """
-    test_workspace, _ = sample_data
-    scope_name = str(generate_nanoid())
-    session_name = _create_session(client, test_workspace.name)
-
-    response = client.post(
-        f"/v3/workspaces/{test_workspace.name}/sessions/{session_name}/messages",
-        json={
-            "messages": [{"peer_id": scope_peer_name(scope_name), "content": "hello"}]
-        },
-    )
-    assert response.status_code == 422, response.text
-    assert SCOPE_PEER_PREFIX in response.json()["detail"]
-
-    # The scope name is still available
-    assert _create_scope(client, test_workspace.name, scope_name).status_code == 201
-
-
-def test_session_peer_map_cannot_squat_scope_namespace(
-    client: TestClient, sample_data: tuple[Workspace, Peer]
-):
-    """Same hole, via the session peer mapping rather than a message author."""
-    test_workspace, _ = sample_data
-    scope_name = str(generate_nanoid())
-
-    response = client.post(
-        f"/v3/workspaces/{test_workspace.name}/sessions",
-        json={
-            "id": str(generate_nanoid()),
-            "peers": {scope_peer_name(scope_name): {}},
-        },
-    )
-    assert response.status_code == 422, response.text
-    assert _create_scope(client, test_workspace.name, scope_name).status_code == 201
-
-
-async def test_unflagged_squatter_can_still_be_updated(
-    client: TestClient,
-    db_session: AsyncSession,
-    sample_data: tuple[Workspace, Peer],
-):
-    """An existing unflagged peer in the namespace is a normal peer.
-
-    Three-way behavior on PUT /peers/{id}: a real scope is refused, an existing
-    unflagged squatter updates fine, and a missing reserved-prefix name is
-    refused by create-path validation rather than being minted.
-    """
-    test_workspace, _ = sample_data
-    squatter = scope_peer_name(str(generate_nanoid()))
-    db_session.add(models.Peer(workspace_name=test_workspace.name, name=squatter))
-    await db_session.commit()
-
-    # existing unflagged peer -> allowed
-    response = client.put(
-        f"/v3/workspaces/{test_workspace.name}/peers/{squatter}",
-        json={"metadata": {"k": "v"}},
-    )
-    assert response.status_code == 200, response.text
-    assert response.json()["metadata"] == {"k": "v"}
-
-    # real scope -> refused
-    scope_name = str(generate_nanoid())
-    assert _create_scope(client, test_workspace.name, scope_name).status_code == 201
-    response = client.put(
-        f"/v3/workspaces/{test_workspace.name}/peers/{scope_peer_name(scope_name)}",
-        json={"metadata": {"k": "v"}},
-    )
-    assert response.status_code == 422, response.text
-
-    # missing reserved-prefix name -> refused, not created
-    missing = scope_peer_name(str(generate_nanoid()))
-    response = client.put(
-        f"/v3/workspaces/{test_workspace.name}/peers/{missing}",
-        json={"metadata": {"k": "v"}},
-    )
-    assert response.status_code == 422, response.text
-    response = client.post(
-        f"/v3/workspaces/{test_workspace.name}/peers/list", json={"kind": "all"}
-    )
-    assert missing not in [p["id"] for p in response.json()["items"]]
-
-
 async def test_resolved_scope_peer_rejected_at_membership_upsert(
     client: TestClient,
     db_session: AsyncSession,
@@ -968,26 +825,25 @@ async def test_resolved_scope_peer_rejected_at_membership_upsert(
         )
 
 
-def test_set_peer_config_cannot_disable_a_scope(
-    client: TestClient, sample_data: tuple[Workspace, Peer]
+async def test_set_peer_config_cannot_disable_a_scope(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
 ):
     """A scope's membership config belongs to the facade, not the caller.
 
     `observe_others=false` would silently stop all fan-out into the scope, and
     `observe_me=true` would make Honcho form a representation *of* a scope.
+
+    Verified against the row rather than the config route, because that read is
+    refused for a scope too — see the policy table.
     """
     test_workspace, _ = sample_data
     scope_name = str(generate_nanoid())
     assert _create_scope(client, test_workspace.name, scope_name).status_code == 201
     backing = scope_peer_name(scope_name)
     session_name = _create_session(client, test_workspace.name)
-    assert (
-        client.post(
-            f"/v3/workspaces/{test_workspace.name}/scopes/{scope_name}/sessions",
-            json={"session_ids": [session_name]},
-        ).status_code
-        == 200
-    )
+    assert _add_sessions(client, test_workspace.name, scope_name, [session_name]) == 204
 
     response = client.put(
         f"/v3/workspaces/{test_workspace.name}/sessions/{session_name}/peers/{backing}/config",
@@ -996,62 +852,54 @@ def test_set_peer_config_cannot_disable_a_scope(
     assert response.status_code == 422, response.text
 
     # Observer semantics intact
-    current = client.get(
-        f"/v3/workspaces/{test_workspace.name}/sessions/{session_name}/peers/{backing}/config"
+    membership = await _get_session_peer(
+        db_session, test_workspace.name, session_name, backing
     )
-    assert current.status_code == 200
-    assert current.json() == {"observe_me": False, "observe_others": True}
+    assert membership is not None
+    assert membership.configuration == {"observe_me": False, "observe_others": True}
 
 
-async def test_unflagged_squatter_config_still_settable(
-    client: TestClient,
-    db_session: AsyncSession,
-    sample_data: tuple[Workspace, Peer],
-):
-    """The set_peer_config guard is flag-based, so a squatter is unaffected."""
-    test_workspace, _ = sample_data
-    squatter = scope_peer_name(str(generate_nanoid()))
-    db_session.add(models.Peer(workspace_name=test_workspace.name, name=squatter))
-    await db_session.commit()
-
-    session_name = _create_session(client, test_workspace.name)
-    assert (
-        client.post(
-            f"/v3/workspaces/{test_workspace.name}/sessions/{session_name}/peers",
-            json={squatter: {}},
-        ).status_code
-        == 200
-    )
-
-    response = client.put(
-        f"/v3/workspaces/{test_workspace.name}/sessions/{session_name}/peers/{squatter}/config",
-        json={"observe_others": False, "observe_me": True},
-    )
-    assert response.status_code == 204, response.text
-
-
-def test_generic_session_remove_cannot_detach_a_scope(
+def test_session_peers_listing_excludes_scopes(
     client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
-    """Scope membership must end through the scopes routes, which reconcile."""
-    test_workspace, _ = sample_data
+    """The generic session-peer surface must not expose the facade's observer.
+
+    Without the filter this listing returns a peer literally named
+    `scope.<name>` carrying `observe_others=true` — the exact mechanic the
+    facade exists to hide. The membership-config read is refused for the same
+    reason; ordinary members are unaffected by both.
+    """
+    test_workspace, test_peer = sample_data
+    base = f"/v3/workspaces/{test_workspace.name}"
     scope_name = str(generate_nanoid())
     assert _create_scope(client, test_workspace.name, scope_name).status_code == 201
+    backing = scope_peer_name(scope_name)
     session_name = _create_session(client, test_workspace.name)
+
     assert (
         client.post(
-            f"/v3/workspaces/{test_workspace.name}/scopes/{scope_name}/sessions",
-            json={"session_ids": [session_name]},
+            f"{base}/sessions/{session_name}/peers", json={test_peer.name: {}}
         ).status_code
         == 200
     )
+    assert _add_sessions(client, test_workspace.name, scope_name, [session_name]) == 204
 
-    response = client.request(
-        "DELETE",
-        f"/v3/workspaces/{test_workspace.name}/sessions/{session_name}/peers",
-        json=[scope_peer_name(scope_name)],
+    listed = client.get(f"{base}/sessions/{session_name}/peers")
+    assert listed.status_code == 200
+    names = {item["id"] for item in listed.json()["items"]}
+    assert test_peer.name in names
+    assert backing not in names
+
+    assert (
+        client.get(f"{base}/sessions/{session_name}/peers/{backing}/config").status_code
+        == 422
     )
-    assert response.status_code == 422, response.text
+    assert (
+        client.get(
+            f"{base}/sessions/{session_name}/peers/{test_peer.name}/config"
+        ).status_code
+        == 200
+    )
 
 
 @pytest.mark.parametrize("bad_name", ["", "a" * 513])
@@ -1075,10 +923,9 @@ def test_degenerate_peer_names_are_422_not_500(
 
 
 # ---------------------------------------------------------------------------
-# Observed-position and pre-seeding guards. A scope may be an observer but must
-# never be observed — and "observed" includes a reserved name that does not yet
-# exist, since nothing on these paths creates the peer and the state would
-# retroactively describe the scope once created.
+# Detach-by-omission. The replacement routes never name the scope, so there is
+# no peer position for the route-policy table to classify — the caller detaches
+# by leaving it out. Preservation has to be flag-based, not request-based.
 # ---------------------------------------------------------------------------
 
 
@@ -1094,13 +941,7 @@ def test_generic_replacement_preserves_scope_membership(
     scope_name = str(generate_nanoid())
     assert _create_scope(client, test_workspace.name, scope_name).status_code == 201
     session_name = _create_session(client, test_workspace.name)
-    assert (
-        client.post(
-            f"/v3/workspaces/{test_workspace.name}/scopes/{scope_name}/sessions",
-            json={"session_ids": [session_name]},
-        ).status_code
-        == 200
-    )
+    assert _add_sessions(client, test_workspace.name, scope_name, [session_name]) == 204
 
     # Replacement naming only an ordinary peer must succeed...
     response = client.put(
@@ -1110,11 +951,7 @@ def test_generic_replacement_preserves_scope_membership(
     assert response.status_code == 200, response.text
 
     # ...while leaving the scope's membership intact.
-    response = client.get(
-        f"/v3/workspaces/{test_workspace.name}/scopes/{scope_name}/sessions"
-    )
-    assert response.status_code == 200
-    assert response.json()["session_ids"] == [session_name]
+    assert _scope_sessions(client, test_workspace.name, scope_name) == [session_name]
 
 
 async def test_empty_replacement_preserves_scope_membership(
@@ -1131,10 +968,7 @@ async def test_empty_replacement_preserves_scope_membership(
         f"/v3/workspaces/{test_workspace.name}/sessions/{session_name}/peers",
         json={test_peer.name: {}},
     )
-    client.post(
-        f"/v3/workspaces/{test_workspace.name}/scopes/{scope_name}/sessions",
-        json={"session_ids": [session_name]},
-    )
+    _add_sessions(client, test_workspace.name, scope_name, [session_name])
 
     assert (
         client.put(
@@ -1144,10 +978,7 @@ async def test_empty_replacement_preserves_scope_membership(
         == 200
     )
 
-    response = client.get(
-        f"/v3/workspaces/{test_workspace.name}/scopes/{scope_name}/sessions"
-    )
-    assert response.json()["session_ids"] == [session_name]
+    assert _scope_sessions(client, test_workspace.name, scope_name) == [session_name]
 
     # The other half of the docstring: without this the test passes even if the
     # empty replacement became a no-op for ordinary peers too.
@@ -1192,45 +1023,15 @@ async def test_replacement_still_removes_unflagged_squatter(
     assert session_peer.left_at is not None, "squatter should be replaced normally"
 
 
-def test_peer_card_cannot_be_preseeded_for_a_future_scope(
-    client: TestClient, sample_data: tuple[Workspace, Peer]
-):
-    """A card keyed on a not-yet-existing reserved name is refused.
-
-    Only the observer is resolved when writing a card, so without this the card
-    persists and starts describing a real scope the moment one is created.
-    """
-    test_workspace, test_peer = sample_data
-    future = str(generate_nanoid())
-
-    response = client.put(
-        f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}"
-        + f"/card?target={scope_peer_name(future)}",
-        json={"peer_card": ["pre-seeded"]},
-    )
-    assert response.status_code == 422, response.text
-
-    # And the scope name is still free to create
-    assert _create_scope(client, test_workspace.name, future).status_code == 201
-
-
-async def test_peer_card_target_squatter_still_allowed(
-    client: TestClient,
-    db_session: AsyncSession,
-    sample_data: tuple[Workspace, Peer],
-):
-    """An existing unflagged squatter remains a valid card subject."""
-    test_workspace, test_peer = sample_data
-    squatter = scope_peer_name(str(generate_nanoid()))
-    db_session.add(models.Peer(workspace_name=test_workspace.name, name=squatter))
-    await db_session.commit()
-
-    response = client.put(
-        f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}"
-        + f"/card?target={squatter}",
-        json={"peer_card": ["ordinary"]},
-    )
-    assert response.status_code == 200, response.text
+# ---------------------------------------------------------------------------
+# Observed-position guards below the HTTP surface. A scope may be an observer
+# but must never be observed — and "observed" includes a reserved name that does
+# not yet exist, since nothing on these paths creates the peer and the state
+# would retroactively describe the scope once created. The route-level half of
+# this is enumerated in test_scope_route_policy.py; these cover the crud entry
+# points that no route table reaches, plus the side effects a status code alone
+# would not catch.
+# ---------------------------------------------------------------------------
 
 
 async def test_set_peer_card_guard_covers_internal_callers(
@@ -1254,10 +1055,12 @@ async def test_dream_cannot_be_queued_for_a_future_scope(
     db_session: AsyncSession,
     sample_data: tuple[Workspace, Peer],
 ):
-    """A dream naming a not-yet-existing reserved observed peer is refused.
+    """A refused dream leaves no queue row behind.
 
-    The route's own precheck cannot catch this — the peer is not flagged yet — so
-    the check has to sit in the transaction that inserts the queue item.
+    The 422 itself is enumerated in test_scope_route_policy.py; what that cannot
+    see is the side effect. The route's own precheck cannot catch this — the peer
+    is not flagged yet — so the check has to sit in the transaction that inserts
+    the queue item, and a check placed after the insert would still 422.
     """
     test_workspace, test_peer = sample_data
     future = scope_peer_name(str(generate_nanoid()))
@@ -1316,35 +1119,6 @@ def test_prefixed_nul_name_is_422_not_500(
     assert response.status_code == 422, response.text
 
 
-async def test_representation_rechecks_after_early_check(
-    client: TestClient,
-    db_session: AsyncSession,
-    sample_data: tuple[Workspace, Peer],
-):
-    """The representation read refuses a reserved name that could become a scope.
-
-    The early name check passes anything not yet flagged, and the read happens in
-    a later session — so a reserved name that does not exist yet must be refused
-    rather than left to become a scope before the read.
-    """
-    test_workspace, _ = sample_data
-    future = scope_peer_name(str(generate_nanoid()))
-
-    response = client.post(
-        f"/v3/workspaces/{test_workspace.name}/peers/{future}/representation", json={}
-    )
-    assert response.status_code == 422, response.text
-
-    # An existing unflagged squatter still reads normally.
-    squatter = scope_peer_name(str(generate_nanoid()))
-    db_session.add(models.Peer(workspace_name=test_workspace.name, name=squatter))
-    await db_session.commit()
-    response = client.post(
-        f"/v3/workspaces/{test_workspace.name}/peers/{squatter}/representation", json={}
-    )
-    assert response.status_code == 200, response.text
-
-
 # ---------------------------------------------------------------------------
 # Observer limit. Scope memberships carry observe_others=True but must not
 # consume SESSION_OBSERVERS_LIMIT: that would cap scopes-per-session at the
@@ -1365,18 +1139,16 @@ def test_scopes_do_not_count_toward_observer_limit(
 
     for scope_name in scope_names:
         assert _create_scope(client, test_workspace.name, scope_name).status_code == 201
-        response = client.post(
-            f"/v3/workspaces/{test_workspace.name}/scopes/{scope_name}/sessions",
-            json={"session_ids": [session_name]},
+        assert (
+            _add_sessions(client, test_workspace.name, scope_name, [session_name])
+            == 204
         )
-        assert response.status_code == 200, response.text
 
     # Every membership is live, and the session-create path agrees.
     for scope_name in scope_names:
-        response = client.get(
-            f"/v3/workspaces/{test_workspace.name}/scopes/{scope_name}/sessions"
-        )
-        assert response.json()["session_ids"] == [session_name]
+        assert _scope_sessions(client, test_workspace.name, scope_name) == [
+            session_name
+        ]
 
     response = client.post(
         f"/v3/workspaces/{test_workspace.name}/sessions",
@@ -1396,13 +1168,7 @@ def test_observer_limit_still_applies_to_real_peers(
     session_name = _create_session(client, test_workspace.name)
     scope_name = str(generate_nanoid())
     assert _create_scope(client, test_workspace.name, scope_name).status_code == 201
-    assert (
-        client.post(
-            f"/v3/workspaces/{test_workspace.name}/scopes/{scope_name}/sessions",
-            json={"session_ids": [session_name]},
-        ).status_code
-        == 200
-    )
+    assert _add_sessions(client, test_workspace.name, scope_name, [session_name]) == 204
 
     observers = {
         str(generate_nanoid()): {"observe_others": True}
