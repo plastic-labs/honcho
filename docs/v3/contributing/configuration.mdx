@@ -588,6 +588,8 @@ VECTOR_STORE_TURBOPUFFER_REGION=us-east-1
 VECTOR_STORE_LANCEDB_PATH=./lancedb_data
 ```
 
+LanceDB is an optional extra and is not included in the default Docker image. Build with `docker build --build-arg INSTALL_LANCEDB=true .` (or `INSTALL_LANCEDB=true docker compose up -d --build`), or run `uv sync --extra lancedb` for manual setups. Note the extra is unavailable on Intel macOS.
+
 ## Monitoring
 
 ### Prometheus Metrics
