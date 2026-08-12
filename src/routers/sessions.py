@@ -834,6 +834,18 @@ async def get_session_context(
     observer = peer_perspective or peer_target
     observed = peer_target
 
+    # Member-read lets a peer-scoped key reach this route, but membership grants
+    # access to the *session*, not to a co-member's representation or peer card.
+    # The observer is whose knowledge is being read, so a peer-scoped key may only
+    # read from its own perspective — mirroring
+    # `POST /peers/{peer_id}/representation`, where require_auth pins the observer
+    # to the path peer and any `target` is that observer's own view. A bare
+    # `peer_target` naming another peer is the omniscient view of them, which is
+    # nobody's own perspective, so it is refused too. Workspace/admin and
+    # session-scoped tokens are unaffected.
+    if jwt_params.p is not None and jwt_params.p != observer:
+        raise AuthenticationException("JWT not permissioned for this resource")
+
     # A scope swaps the perspective source: the scope peer becomes the
     # observer for both the working representation and the peer card, so the
     # scoped collection and scoped card are read instead of the global ones.

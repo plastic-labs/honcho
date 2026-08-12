@@ -254,6 +254,32 @@ class TestScopeReadValidation:
         assert resp.status_code == 422
         assert "maximum" in resp.json()["detail"]
 
+    @pytest.mark.parametrize(
+        "scope",
+        [
+            pytest.param([], id="empty-list"),
+            pytest.param(["s"] * 101, id="over-list-cap"),
+            pytest.param([scope_peer_name("already-prefixed")], id="double-prefixed"),
+            pytest.param(["ok", "not a name!"], id="bad-charset-element"),
+            pytest.param(scope_peer_name("already-prefixed"), id="single-prefixed"),
+        ],
+    )
+    def test_scope_option_bounds_422(
+        self,
+        client: TestClient,
+        sample_data: tuple[Workspace, Peer],
+        scope: str | list[str],
+    ):
+        """Schema-level bounds on `scope`, before any scope is resolved: the list is
+        bounded at both ends, and every element is validated as an unprefixed scope
+        name (so a double-prefixed one is a 422, not a 404 for `scope.scope.x`)."""
+        workspace, peer = sample_data
+        assert self._chat(client, workspace, peer, {"scope": scope}).status_code == 422
+        assert (
+            self._representation(client, workspace, peer, {"scope": scope}).status_code
+            == 422
+        )
+
 
 class TestRepresentationWithScope:
     async def test_single_scope_reads_scope_collection(

@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 
 import tiktoken
 from pydantic import (
+    AfterValidator,
     AliasChoices,
     BaseModel,
     BeforeValidator,
@@ -115,6 +116,19 @@ def _validate_scope_name(name: str) -> str:
     if not re.fullmatch(RESOURCE_NAME_PATTERN, name):
         raise ValueError(f"Scope name must match pattern {RESOURCE_NAME_PATTERN}")
     return name
+
+
+_ScopeName = Annotated[str, AfterValidator(_validate_scope_name)]
+
+# The `scope` read option (chat / representation): one scope name, or a bounded
+# list of them. The length cap sits on the list member so it bounds the *list* —
+# a single name is already bounded by `_validate_scope_name`, and a union-level
+# `max_length` would cap that name's characters instead. The upper bound matches
+# `SessionCreate.scopes`; the lower one rejects `[]`, which would otherwise
+# resolve to an empty allowlist and silently recall nothing.
+_ScopeOption = (
+    _ScopeName | Annotated[list[_ScopeName], Field(min_length=1, max_length=100)]
+)
 
 
 # ---------------------------------------------------------------------------
@@ -245,7 +259,7 @@ class PeerRepresentationGet(BaseModel):
             "must be included in the allowlist."
         ),
     )
-    scope: str | list[str] | None = Field(
+    scope: _ScopeOption | None = Field(
         None,
         description=(
             "Optional (unprefixed) scope name(s) to confine the representation. "
@@ -741,7 +755,7 @@ class DialecticOptions(BaseModel):
             "also set, it must be included in the allowlist."
         ),
     )
-    scope: str | list[str] | None = Field(
+    scope: _ScopeOption | None = Field(
         None,
         description=(
             "Optional (unprefixed) scope name(s) to confine recall. A single "
