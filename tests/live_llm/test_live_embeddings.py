@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from typing import Any, cast
+
 import pytest
+from openai import AsyncOpenAI
 
 from .conftest import cosine_similarity, make_embedding_client
 from .embedding_matrix import LiveEmbeddingSpec, get_live_embedding_specs
@@ -18,6 +21,9 @@ BATCH_TEXTS: list[str] = [
 
 ALL_SPECS = get_live_embedding_specs()
 GEMINI_SPECS = get_live_embedding_specs(transport="gemini")
+OPENAI_NATIVE_SPECS = tuple(
+    spec for spec in ALL_SPECS if spec.family == "openai_embedding"
+)
 
 
 @pytest.mark.asyncio
@@ -112,6 +118,32 @@ async def test_live_batch_embed_maps_chunks_to_their_ids(
         for vectors in result.values()
         for vector in vectors
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("spec", OPENAI_NATIVE_SPECS, ids=lambda spec: spec.id)
+async def test_live_openai_float_encoding_matches_base64(
+    spec: LiveEmbeddingSpec,
+) -> None:
+    """Guard for #938, which switched the openai paths to `encoding_format="float"`.
+
+    Requesting floats must return the same vectors the SDK's base64 default
+    decoded to, so existing stored embeddings stay comparable.
+    """
+    client = make_embedding_client(spec)
+    openai_client = cast(AsyncOpenAI, client.client)
+    base64_kwargs: dict[str, Any] = {"model": spec.model, "input": [BATCH_TEXTS[0]]}
+    if spec.send_dimensions:
+        base64_kwargs["dimensions"] = spec.dimensions
+
+    float_vector = await client.embed(BATCH_TEXTS[0])
+    # No encoding_format → SDK sends base64 and decodes it, the pre-#938 path.
+    base64_response = await openai_client.embeddings.create(**base64_kwargs)
+
+    similarity = cosine_similarity(float_vector, base64_response.data[0].embedding)
+    assert (
+        similarity > 0.99999
+    ), f"{spec.id}: float encoding diverges from base64 (cosine={similarity:.8f})"
 
 
 @pytest.mark.asyncio

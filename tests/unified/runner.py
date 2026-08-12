@@ -37,6 +37,7 @@ from tests.unified.schema import (
     AddMessageAction,
     AddMessagesAction,
     ContainsAssertion,
+    CreateScopeAction,
     CreateSessionAction,
     ExactMatchAssertion,
     JsonMatchAssertion,
@@ -215,6 +216,38 @@ class UnifiedTestExecutor:
         self.client: Honcho = honcho_client
         self.anthropic: AsyncAnthropic | None = anthropic_client
 
+    # --- raw HTTP -----------------------------------------------------------
+    # Some surfaces (scopes, the `scope` read option) exist in the API before the
+    # published SDK exposes them. Calling them directly also tests the contract
+    # the SDK is generated from, so a wrong status or shape surfaces here instead
+    # of being masked by client-side validation.
+
+    @property
+    def workspace_id(self) -> str:
+        workspace_id = getattr(self.client, "workspace_id", None)
+        if not workspace_id:
+            raise ValueError("Honcho client has no workspace_id")
+        return str(workspace_id)
+
+    async def _request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
+        """Call a /v3 workspace-scoped path directly, raising on error status."""
+        url = f"{str(self.client.base_url).rstrip('/')}/v3/workspaces/{self.workspace_id}{path}"
+        # Carry the same credential the SDK resolved (from `HONCHO_API_KEY`, unless
+        # passed explicitly). The harness sets no AUTH vars of its own, so auth is
+        # off by default — but it inherits `AUTH_USE_AUTH` from the environment,
+        # and these raw calls are the only ones here that would not be authorized.
+        headers: dict[str, str] = dict(kwargs.pop("headers", None) or {})
+        api_key = getattr(getattr(self.client, "_http", None), "api_key", None)
+        if api_key:
+            headers.setdefault("Authorization", f"Bearer {api_key}")
+        async with httpx.AsyncClient(timeout=120.0) as raw:
+            response = await raw.request(method, url, headers=headers, **kwargs)
+        if response.is_error:
+            raise AssertionError(
+                f"{method} {path} failed: {response.status_code} {response.text[:400]}"
+            )
+        return response
+
     async def execute(self, test_def: TestDefinition, test_name: str) -> bool:
         logger.info(f"Starting test: {test_name}")
 
@@ -311,6 +344,15 @@ class UnifiedTestExecutor:
                 )
             await session.aio.add_messages(msgs)
 
+        elif isinstance(step, CreateScopeAction):
+            await self._request("POST", "/scopes", json={"id": step.scope_id})
+            if step.session_ids:
+                await self._request(
+                    "POST",
+                    f"/scopes/{step.scope_id}/sessions",
+                    json={"session_ids": step.session_ids},
+                )
+
         elif isinstance(step, WaitAction):
             if step.duration:
                 await asyncio.sleep(step.duration)
@@ -344,6 +386,9 @@ class UnifiedTestExecutor:
         raise TimeoutError("Deriver queue did not empty within timeout")
 
     async def perform_query(self, step: QueryAction) -> Any:
+        if step.scope is not None:
+            return await self._perform_scoped_query(step)
+
         if step.target == "chat":
             if not step.observer_peer_id:
                 raise ValueError("observer_peer_id required for chat")
@@ -394,6 +439,60 @@ class UnifiedTestExecutor:
             return representation
 
         return None
+
+    async def _perform_scoped_query(self, step: QueryAction) -> Any:
+        """Run a `scope`-confined read over raw HTTP (no SDK parameter for it)."""
+        if step.target == "chat":
+            if not step.observer_peer_id:
+                raise ValueError("observer_peer_id required for chat")
+            if step.input is None:
+                raise ValueError("input required for chat")
+            body: dict[str, Any] = {"query": step.input, "scope": step.scope}
+            if step.session_id:
+                body["session_id"] = step.session_id
+            if step.observed_peer_id:
+                body["target"] = step.observed_peer_id
+            if step.reasoning_level:
+                body["reasoning_level"] = step.reasoning_level
+            response = await self._request(
+                "POST", f"/peers/{step.observer_peer_id}/chat", json=body
+            )
+            return response.json()["content"]
+
+        if step.target == "get_representation":
+            if not step.observer_peer_id:
+                raise ValueError("observer_peer_id required for get_representation")
+            body = {"scope": step.scope}
+            if step.observed_peer_id:
+                body["target"] = step.observed_peer_id
+            if step.input:
+                body["search_query"] = step.input
+            response = await self._request(
+                "POST", f"/peers/{step.observer_peer_id}/representation", json=body
+            )
+            return response.json()["representation"]
+
+        if step.target == "get_context":
+            if not step.session_id:
+                raise ValueError("session_id required for get_context")
+            if not step.observed_peer_id:
+                raise ValueError("observed_peer_id required for a scoped get_context")
+            # `scope` on session context takes a single scope name.
+            if isinstance(step.scope, list):
+                raise ValueError("get_context accepts a single scope, not a list")
+            params: dict[str, Any] = {
+                "scope": step.scope,
+                "peer_target": step.observed_peer_id,
+                "summary": str(step.summary).lower(),
+            }
+            if step.max_tokens is not None:
+                params["tokens"] = step.max_tokens
+            response = await self._request(
+                "GET", f"/sessions/{step.session_id}/context", params=params
+            )
+            return response.json()
+
+        raise ValueError(f"`scope` is not supported for target {step.target!r}")
 
     async def check_assertion(self, result: Any, assertion: Any):
         result_str = str(result)

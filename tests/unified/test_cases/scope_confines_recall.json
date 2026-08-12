@@ -1,0 +1,120 @@
+{
+  "description": "A scope confines recall to its member sessions. Alice states one fact in a session that belongs to the 'work' scope and a different, contradictory-sounding fact in a session outside it. A scoped read must surface only the in-scope fact; the unscoped read sees both. This is the observer swap: the scope peer is the observer, so conclusion recall comes from the (scope, alice) collection and message recall from the scope's membership.",
+  "steps": [
+    {
+      "step_type": "create_session",
+      "session_id": "work_session",
+      "description": "In-scope session",
+      "peer_configs": {
+        "alice": { "observe_me": true },
+        "assistant": { "observe_others": true }
+      }
+    },
+    {
+      "step_type": "create_session",
+      "session_id": "personal_session",
+      "description": "Out-of-scope session — must never leak into a scoped read",
+      "peer_configs": {
+        "alice": { "observe_me": true },
+        "assistant": { "observe_others": true }
+      }
+    },
+    {
+      "step_type": "create_scope",
+      "scope_id": "work",
+      "session_ids": ["work_session"],
+      "description": "Scope covers only work_session. Membership must precede the messages: it only affects messages ingested after the session joins."
+    },
+    {
+      "step_type": "add_messages",
+      "session_id": "work_session",
+      "messages": [
+        {
+          "peer_id": "alice",
+          "content": "I'm a staff platform engineer and I work primarily in Rust."
+        },
+        {
+          "peer_id": "alice",
+          "content": "My current project is migrating our billing service off Postgres triggers."
+        }
+      ]
+    },
+    {
+      "step_type": "add_messages",
+      "session_id": "personal_session",
+      "messages": [
+        {
+          "peer_id": "alice",
+          "content": "Outside work I'm training for a marathon in Chicago this October."
+        },
+        {
+          "peer_id": "alice",
+          "content": "I've been learning to play the upright bass on weekends."
+        }
+      ]
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty",
+      "flush": true
+    },
+    {
+      "step_type": "query",
+      "target": "get_representation",
+      "observer_peer_id": "assistant",
+      "observed_peer_id": "alice",
+      "scope": "work",
+      "description": "Scoped representation: only what the scope observed.",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "Does this text describe Alice's professional life (engineering, Rust, or the billing/Postgres project) WITHOUT mentioning marathon running, Chicago, or the upright bass? Answer true only if the professional material is present and the personal material is entirely absent.",
+          "pass_if": true
+        },
+        {
+          "assertion_type": "not_contains",
+          "text": "marathon"
+        },
+        {
+          "assertion_type": "not_contains",
+          "text": "bass"
+        }
+      ]
+    },
+    {
+      "step_type": "query",
+      "target": "chat",
+      "observer_peer_id": "assistant",
+      "observed_peer_id": "alice",
+      "scope": "work",
+      "input": "What do you know about Alice's hobbies outside of work?",
+      "description": "A scoped chat cannot answer from out-of-scope sessions, so it should report not knowing rather than surfacing the marathon or the bass.",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "Does this response indicate that it does not know about Alice's hobbies outside work, or only discuss her professional life? Answer false if it mentions marathon running, Chicago, or playing the bass.",
+          "pass_if": true
+        },
+        {
+          "assertion_type": "not_contains",
+          "text": "marathon"
+        }
+      ]
+    },
+    {
+      "step_type": "query",
+      "target": "chat",
+      "observer_peer_id": "assistant",
+      "observed_peer_id": "alice",
+      "input": "What do you know about Alice's hobbies outside of work?",
+      "description": "Control: the same question unscoped. Proves the scoped result above is the scope working, not the deriver simply having failed to record the personal session.",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "Does this response mention marathon running, Chicago, or playing the upright bass? Answer true if at least one of Alice's out-of-work hobbies is described.",
+          "pass_if": true
+        }
+      ]
+    }
+  ]
+}
