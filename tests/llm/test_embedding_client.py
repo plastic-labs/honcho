@@ -1,10 +1,16 @@
+import array
+import base64
 from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
 from google.genai import types as genai_types
 
-from src.config import EmbeddingModelConfig, resolve_embedding_model_config
+from src.config import (
+    EmbeddingEncodingFormat,
+    EmbeddingModelConfig,
+    resolve_embedding_model_config,
+)
 from src.embedding_client import (
     BatchItem,
     _EmbeddingClient,  # pyright: ignore[reportPrivateUsage]
@@ -20,6 +26,9 @@ class FakeOpenAIEmbeddingsAPI:
     def __init__(self, embedding: list[float]) -> None:
         self.embedding: list[float] = embedding
         self.calls: list[dict[str, Any]] = []
+        # Simulate a provider answering 200 with missing embeddings.
+        self.returns_no_data: bool = False
+        self.truncate_data_to: int | None = None
 
     async def create(
         self,
@@ -31,10 +40,21 @@ class FakeOpenAIEmbeddingsAPI:
         call: dict[str, Any] = {"model": model, "input": input}
         call.update(kwargs)
         self.calls.append(call)
+        # Mirror the SDK: a named encoding_format skips its base64 decode, so the
+        # response carries the raw string instead of floats.
+        payload: Any = self.embedding
+        if kwargs.get("encoding_format") == "base64":
+            payload = base64.b64encode(
+                array.array("f", self.embedding).tobytes()
+            ).decode()
         if isinstance(input, list):
-            data = [SimpleNamespace(embedding=self.embedding) for _ in input]
+            data = [SimpleNamespace(embedding=payload) for _ in input]
         else:
-            data = [SimpleNamespace(embedding=self.embedding)]
+            data = [SimpleNamespace(embedding=payload)]
+        if self.returns_no_data:
+            data = []
+        elif self.truncate_data_to is not None:
+            data = data[: self.truncate_data_to]
         return SimpleNamespace(data=data)
 
 
@@ -69,7 +89,11 @@ async def test_openai_embedding_client_uses_configured_model_and_dimensions(
 
     assert embedding == [0.1] * 8
     assert fake_embeddings.calls == [
-        {"model": "text-embedding-3-small", "input": ["hello world"]}
+        {
+            "model": "text-embedding-3-small",
+            "input": ["hello world"],
+            "encoding_format": "float",
+        }
     ]
 
 
@@ -204,6 +228,7 @@ def _build_openai_client(
     send_dimensions: bool,
     vector_dimensions: int,
     max_batch_size: int | None = None,
+    encoding_format: EmbeddingEncodingFormat = "float",
 ) -> tuple[_EmbeddingClient, FakeOpenAIEmbeddingsAPI]:
     fake_embeddings = FakeOpenAIEmbeddingsAPI(embedding)
 
@@ -226,6 +251,7 @@ def _build_openai_client(
         max_input_tokens=8192,
         max_tokens_per_request=300_000,
         send_dimensions=send_dimensions,
+        encoding_format=encoding_format,
     )
     return client, fake_embeddings
 
@@ -248,6 +274,7 @@ async def test_openai_embed_forwards_dimensions_when_send_dimensions_true(
         {
             "model": "text-embedding-3-small",
             "input": ["hello"],
+            "encoding_format": "float",
             "dimensions": 768,
         }
     ]
@@ -267,7 +294,13 @@ async def test_openai_embed_omits_dimensions_when_send_dimensions_false(
 
     await client.embed("hello")
 
-    assert fake.calls == [{"model": "text-embedding-3-small", "input": ["hello"]}]
+    assert fake.calls == [
+        {
+            "model": "text-embedding-3-small",
+            "input": ["hello"],
+            "encoding_format": "float",
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -437,6 +470,86 @@ async def test_openai_batch_embed_forwards_dimensions(
     assert fake.calls[0]["dimensions"] == 768
 
 
+@pytest.mark.asyncio
+async def test_openai_embed_requests_float_encoding_format(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The single-query path must request float embeddings explicitly.
+
+    Without an explicit encoding_format, the openai SDK defaults to base64,
+    which OpenAI-compatible providers such as OpenRouter answer with empty
+    embedding data for models that don't support base64 encoding.
+    """
+    client, fake = _build_openai_client(
+        monkeypatch,
+        embedding=[0.1] * 8,
+        model="text-embedding-3-small",
+        send_dimensions=False,
+        vector_dimensions=8,
+    )
+
+    await client.embed("hello")
+
+    assert fake.calls[0]["encoding_format"] == "float"
+
+
+@pytest.mark.asyncio
+async def test_openai_batch_embed_requests_float_encoding_format(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The batch path must request float embeddings explicitly, like embed()."""
+    client, fake = _build_openai_client(
+        monkeypatch,
+        embedding=[0.1] * 8,
+        model="text-embedding-3-small",
+        send_dimensions=False,
+        vector_dimensions=8,
+    )
+
+    await client.batch_embed({"a": "hello", "b": "world"})
+
+    assert len(fake.calls) == 1
+    assert fake.calls[0]["encoding_format"] == "float"
+
+
+@pytest.mark.asyncio
+async def test_openai_embed_reports_missing_embedding_data(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An explicit encoding_format turns off the SDK's own empty-data check, so
+    a provider answering 200 with no embeddings must still fail legibly."""
+    client, fake = _build_openai_client(
+        monkeypatch,
+        embedding=[0.1] * 8,
+        model="text-embedding-3-small",
+        send_dimensions=False,
+        vector_dimensions=8,
+    )
+    fake.returns_no_data = True
+
+    with pytest.raises(ValueError, match="Embedding count mismatch"):
+        await client.embed("hello")
+
+
+@pytest.mark.asyncio
+async def test_openai_batch_embed_reports_short_embedding_data(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A batch answered with fewer embeddings than inputs must name the counts
+    rather than surface a bare zip() error."""
+    client, fake = _build_openai_client(
+        monkeypatch,
+        embedding=[0.1] * 8,
+        model="text-embedding-3-small",
+        send_dimensions=False,
+        vector_dimensions=8,
+    )
+    fake.truncate_data_to = 1
+
+    with pytest.raises(ValueError, match="Expected 2, got 1"):
+        await client.batch_embed({"a": "hello", "b": "world"})
+
+
 def _build_embedding_settings(
     env: dict[str, str],
     monkeypatch: pytest.MonkeyPatch,
@@ -449,12 +562,78 @@ def _build_embedding_settings(
         "EMBEDDING_MODEL_CONFIG__MODEL",
         "EMBEDDING_MODEL_CONFIG__TRANSPORT",
         "EMBEDDING_MODEL_CONFIG__DIMENSIONS_MODE",
+        "EMBEDDING_MODEL_CONFIG__ENCODING_FORMAT_MODE",
+        "EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL",
         "EMBEDDING_MODEL_CONFIG__MAX_BATCH_SIZE",
     ):
         monkeypatch.delenv(key, raising=False)
     for key, value in env.items():
         monkeypatch.setenv(key, value)
     return EmbeddingSettings()
+
+
+@pytest.mark.parametrize(
+    ("env", "expected"),
+    [
+        # No base_url means real OpenAI, which serves base64 at ~1/3.6 the bytes.
+        ({}, "base64"),
+        (
+            {
+                "EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL": "https://api.openai.com/v1"
+            },
+            "base64",
+        ),
+        (
+            {
+                "EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL": "https://openrouter.ai/api/v1"
+            },
+            "float",
+        ),
+        (
+            {"EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL": "http://localhost:8000/v1"},
+            "float",
+        ),
+        ({"EMBEDDING_MODEL_CONFIG__ENCODING_FORMAT_MODE": "float"}, "float"),
+        (
+            {
+                "EMBEDDING_MODEL_CONFIG__ENCODING_FORMAT_MODE": "base64",
+                "EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL": "https://openrouter.ai/api/v1",
+            },
+            "base64",
+        ),
+    ],
+)
+def test_resolve_encoding_format(
+    env: dict[str, str], expected: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    s = _build_embedding_settings(env, monkeypatch)
+    assert s.resolve_encoding_format() == expected
+
+
+@pytest.mark.asyncio
+async def test_openai_base64_mode_omits_encoding_format_and_returns_floats(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """base64 mode must request by omission on both paths.
+
+    Naming `base64` explicitly makes the SDK skip its own decode and hand back
+    the raw string, which then fails the dimension check.
+    """
+    client, fake = _build_openai_client(
+        monkeypatch,
+        embedding=[0.1] * 8,
+        model="text-embedding-3-small",
+        send_dimensions=False,
+        vector_dimensions=8,
+        encoding_format="base64",
+    )
+
+    embedding = await client.embed("hello")
+    batched = await client.batch_embed({"a": "hello", "b": "world"})
+
+    assert all("encoding_format" not in call for call in fake.calls)
+    assert len(embedding) == 8
+    assert [len(vectors[0]) for vectors in batched.values()] == [8, 8]
 
 
 def test_resolve_send_dimensions_auto_default_dim_returns_false(

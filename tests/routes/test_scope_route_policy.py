@@ -12,7 +12,7 @@ cannot express the actual invariant, which is positional:
 scoped conclusions are stored and must work, while a scope as `observed_id`
 persisted a conclusion about something that carries ``observe_me=false``. One
 route, two positions, opposite verdicts. The same split applies to
-`schedule_dream` and the peer-card routes.
+`schedule_dream`, the peer-card routes, and session context.
 
 One refinement, added with the `scope` read option: on the *read* routes an
 observer position is refused too, even though a scope there is mechanically
