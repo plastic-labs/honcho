@@ -102,6 +102,10 @@ class Case:
     # before any guard runs). Each False therefore needs `missing_reason`.
     refuse_missing: bool | None = None
     missing_reason: str = ""
+    # Required when refuse_missing is False: the exact status(es) a missing
+    # reserved name may receive. Deliberately not a bare `!= 422` — that passes on
+    # a 5xx too, which is the same hole the squatter assertion below had.
+    missing_status: tuple[int, ...] = ()
     # Set when the 422 legitimately comes from request-schema validation rather
     # than a scope guard, so the detail is pydantic's rather than ours.
     schema_level: bool = False
@@ -299,6 +303,7 @@ POLICY: tuple[Case, ...] = (
             "so a name that does not exist is a 404 and no conclusion is written. "
             "The guard is still the strict variant, for if that ever changes."
         ),
+        missing_status=(404,),
         build=_b_conclusion_observed,
     ),
     Case(
@@ -482,6 +487,7 @@ POLICY: tuple[Case, ...] = (
             "membership row, so the request is a no-op. Refusing here would give a "
             "reserved name a different removal result than any other absent peer."
         ),
+        missing_status=(200,),
         build=_b_remove_peers,
     ),
     Case(
@@ -495,6 +501,7 @@ POLICY: tuple[Case, ...] = (
             "exist is a 404 and never reaches the guard. Nothing is created, so "
             "there is no window for the name to be claimed here."
         ),
+        missing_status=(404,),
         build=_b_peer_config,
     ),
     Case(
@@ -507,6 +514,7 @@ POLICY: tuple[Case, ...] = (
             "Same resolution order as the write side of this route: an absent peer "
             "is a 404 before the scope check, and a read creates nothing."
         ),
+        missing_status=(404,),
         build=_b_peer_config_get,
     ),
     # ---- path peer on the dialectic surface ----
@@ -537,7 +545,7 @@ POLICY: tuple[Case, ...] = (
         False,
         reason=(
             "Read-only. A scope legitimately has member sessions; this is the "
-            "observer-mechanics view of GET /scopes/{scope_id}/sessions."
+            "observer-mechanics view of POST /scopes/{scope_id}/sessions/list."
         ),
     ),
     Case(
@@ -711,10 +719,19 @@ def test_policy_entries_are_well_formed():
                 f"{case.key} refuses a real scope but does not say whether a "
                 "reserved name that does not exist yet is also refused"
             )
-            if not case.refuse_missing:
+            if case.refuse_missing:
+                assert not case.missing_status, (
+                    f"{case.key} refuses a missing reserved name, so the expected "
+                    "status is 422 — missing_status is for the permissive cases"
+                )
+            else:
                 assert (
                     len(case.missing_reason.strip()) > 30
                 ), f"{case.key} tolerates a missing reserved name; say why"
+                assert case.missing_status, (
+                    f"{case.key} tolerates a missing reserved name; name the exact "
+                    "status(es) it should get, so a 5xx cannot satisfy the case"
+                )
         else:
             assert len(case.reason.strip()) > 30, f"{case.key} needs a real reason"
             assert bool(case.build) == bool(case.allow_status), (
@@ -904,10 +921,13 @@ async def test_refusing_position_and_a_missing_reserved_name(
             f"become a scope later. Body: {result.text[:200]}"
         )
     else:
-        assert result.status_code != 422, (
-            f"{case.method} {case.path} refused a missing reserved name in position "
-            f"{case.position!r}, but the policy says it tolerates one "
-            f"({case.missing_reason!r}) — update the policy or the guard"
+        # Exact, not `!= 422`: a permissive position still has one correct answer,
+        # and a 5xx must not read as tolerance.
+        assert result.status_code in case.missing_status, (
+            f"{case.method} {case.path} gave {result.status_code} for a missing "
+            f"reserved name in position {case.position!r}; the policy expects "
+            f"{case.missing_status} because {case.missing_reason!r} — update the "
+            f"policy or the guard. Body: {result.text[:200]}"
         )
 
     minted = await db_session.scalar(

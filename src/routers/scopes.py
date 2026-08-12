@@ -159,7 +159,8 @@ async def get_scope_sessions(
 ):
     """Get the Sessions that are members of a Scope, paginated.
 
-    Ordered by how long each session has been a member, oldest first.
+    Ordered by how long each session has been a member: longest-standing member
+    first, or most recently added first when `reverse` is true.
     """
     # Distinguishes an empty scope from one that does not exist; the query itself
     # returns an empty page either way.
