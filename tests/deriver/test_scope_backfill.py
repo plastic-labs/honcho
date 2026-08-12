@@ -1,6 +1,6 @@
 """Tests for scope backfill-by-copy and removal reconciliation (DEV-1999).
 
-A scope is an observer peer (``scope__<name>``). Adding a session with
+A scope is an observer peer (``scope.<name>``). Adding a session with
 pre-existing messages to a scope enqueues a ``scope_backfill`` task; the
 handler (``src.deriver.scope_backfill``) copies each observed peer's
 explicit-level documents from their global ``(P, P)`` collection into the
