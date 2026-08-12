@@ -233,11 +233,22 @@ class _EmbeddingClient:
             )
         return embedding
 
+    def _apply_encoding_format(self, openai_kwargs: dict[str, Any]) -> None:
+        """Set the embedding wire format on an openai request.
+
+        Base64 is requested by omission, not by name: the SDK injects
+        `encoding_format=base64` when the caller passes nothing and decodes the
+        response, but skips that decode for any format the caller names, handing
+        back the raw base64 string.
+        """
+        if self.encoding_format != "base64":
+            openai_kwargs["encoding_format"] = self.encoding_format
+
     def _validate_embedding_count(self, expected: int, received: int) -> None:
         """Guard against a 200 response whose embedding count differs from inputs.
 
-        Passing an explicit `encoding_format` disables the openai SDK's own
-        empty-data check, so this has to live here.
+        An explicit `encoding_format` disables the openai SDK's own empty-data
+        check, so this has to live here.
         """
         if received != expected:
             raise ValueError(
@@ -282,13 +293,8 @@ class _EmbeddingClient:
         openai_client = self.client
 
         async def _call_openai() -> list[float]:
-            # Always explicit: left unset, the SDK sends base64 regardless, which
-            # OpenAI-compatible providers may reject or answer with empty data.
-            openai_kwargs: dict[str, Any] = {
-                "model": self.model,
-                "input": [query],
-                "encoding_format": self.encoding_format,
-            }
+            openai_kwargs: dict[str, Any] = {"model": self.model, "input": [query]}
+            self._apply_encoding_format(openai_kwargs)
             if self.send_dimensions:
                 openai_kwargs["dimensions"] = self.vector_dimensions
             response = await openai_client.embeddings.create(**openai_kwargs)
@@ -495,12 +501,11 @@ class _EmbeddingClient:
                                 self._validate_embedding_dimensions(embedding.values)
                             )
             else:  # openai
-                # Explicit for the same reason as in embed().
                 openai_kwargs: dict[str, Any] = {
                     "model": self.model,
                     "input": [item.text for item in batch],
-                    "encoding_format": self.encoding_format,
                 }
+                self._apply_encoding_format(openai_kwargs)
                 if self.send_dimensions:
                     openai_kwargs["dimensions"] = self.vector_dimensions
                 response = await self.client.embeddings.create(**openai_kwargs)

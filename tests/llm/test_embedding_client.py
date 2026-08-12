@@ -1,3 +1,5 @@
+import array
+import base64
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -38,10 +40,17 @@ class FakeOpenAIEmbeddingsAPI:
         call: dict[str, Any] = {"model": model, "input": input}
         call.update(kwargs)
         self.calls.append(call)
+        # Mirror the SDK: a named encoding_format skips its base64 decode, so the
+        # response carries the raw string instead of floats.
+        payload: Any = self.embedding
+        if kwargs.get("encoding_format") == "base64":
+            payload = base64.b64encode(
+                array.array("f", self.embedding).tobytes()
+            ).decode()
         if isinstance(input, list):
-            data = [SimpleNamespace(embedding=self.embedding) for _ in input]
+            data = [SimpleNamespace(embedding=payload) for _ in input]
         else:
-            data = [SimpleNamespace(embedding=self.embedding)]
+            data = [SimpleNamespace(embedding=payload)]
         if self.returns_no_data:
             data = []
         elif self.truncate_data_to is not None:
@@ -602,10 +611,14 @@ def test_resolve_encoding_format(
 
 
 @pytest.mark.asyncio
-async def test_openai_embed_forwards_base64_encoding_format(
+async def test_openai_base64_mode_omits_encoding_format_and_returns_floats(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """base64 mode must reach both openai paths, not just be stored."""
+    """base64 mode must request by omission on both paths.
+
+    Naming `base64` explicitly makes the SDK skip its own decode and hand back
+    the raw string, which then fails the dimension check.
+    """
     client, fake = _build_openai_client(
         monkeypatch,
         embedding=[0.1] * 8,
@@ -615,10 +628,12 @@ async def test_openai_embed_forwards_base64_encoding_format(
         encoding_format="base64",
     )
 
-    await client.embed("hello")
-    await client.batch_embed({"a": "hello", "b": "world"})
+    embedding = await client.embed("hello")
+    batched = await client.batch_embed({"a": "hello", "b": "world"})
 
-    assert [call["encoding_format"] for call in fake.calls] == ["base64", "base64"]
+    assert all("encoding_format" not in call for call in fake.calls)
+    assert len(embedding) == 8
+    assert [len(vectors[0]) for vectors in batched.values()] == [8, 8]
 
 
 def test_resolve_send_dimensions_auto_default_dim_returns_false(
