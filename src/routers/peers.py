@@ -311,7 +311,7 @@ async def chat(
                 ),
             )
 
-    # Scoped reads (DEV-1998): a single scope swaps the observer to the scope
+    # Scoped reads: a single scope swaps the observer to the scope
     # peer; a list of scopes becomes a session allowlist over their union.
     observer = peer_id
     scope_session_union: list[str] | None = None
@@ -501,7 +501,7 @@ async def get_representation(
         options.filters, must_include=options.session_id
     )
 
-    # Scoped reads (DEV-1998): a single scope swaps the observer to the scope
+    # Scoped reads: a single scope swaps the observer to the scope
     # peer; a list of scopes becomes a session allowlist over their union.
     observer = peer_id
     scope_session_union: list[str] | None = None

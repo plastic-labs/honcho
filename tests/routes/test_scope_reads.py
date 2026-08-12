@@ -1,9 +1,9 @@
-"""Tests for the `scope` option on the read routes (DEV-1998).
+"""Tests for the `scope` option on the read routes.
 
 A single scope swaps the observer to the scope peer, so recall is confined to
 the (scope, observed) collection and the scope's member sessions by existing
 observer semantics. A list of scopes keeps the path peer as observer and
-restricts recall to the union of the scopes' member sessions (the DEV-1995
+restricts recall to the union of the scopes' member sessions (the
 session-allowlist arm).
 """
 
@@ -222,6 +222,26 @@ class TestScopeReadValidation:
             == 401
         )
 
+        # A session-scoped key gets the same answer, but from `require_auth`
+        # rather than from `_validate_scope_option`: these routes declare
+        # `peer_name` and no `session_name`, so an `s` token never reaches the
+        # handler at all. Asserted here so the handler's peer-only check stays
+        # sufficient — if either route ever starts declaring a session, this
+        # fails and the check needs the `s` arm the session-context route has.
+        client.headers["Authorization"] = (
+            f"Bearer {create_jwt(JWTParams(w=workspace.name, s='any-session'))}"
+        )
+        assert (
+            self._chat(client, workspace, peer, {"scope": scope_name}).status_code
+            == 401
+        )
+        assert (
+            self._representation(
+                client, workspace, peer, {"scope": scope_name}
+            ).status_code
+            == 401
+        )
+
         # A workspace-level key is allowed through validation (404 here only
         # if the scope were unknown; representation of an empty scope is 200).
         client.headers["Authorization"] = (
@@ -342,7 +362,7 @@ class TestRepresentationWithScope:
 
         # All conclusions live in the GLOBAL (peer, peer) collection: only the
         # union session-allowlist can explain the filtering below (this is the
-        # dynamic DEV-1995 arm, not the observer swap).
+        # dynamic session-allowlist arm, not the observer swap).
         await _seed_documents(
             db_session,
             workspace.name,
