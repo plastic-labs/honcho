@@ -14,6 +14,7 @@ ones. Full enumeration is available via `uv run python scripts/configure_embeddi
 from __future__ import annotations
 
 import logging
+from typing import Protocol
 
 from sqlalchemy import select, text
 from sqlalchemy.exc import SQLAlchemyError
@@ -58,12 +59,19 @@ class StartupValidationError(HonchoException):
     """
 
 
+class EmbeddingDimensionProbe(Protocol):
+    async def validate_model_dimensions(self) -> int:
+        """Return the configured embedding model's output dimension."""
+        ...
+
+
 async def validate_embedding_schema(
     engine: AsyncEngine,
     *,
     app_settings: AppSettings | None = None,
+    embedding_client: EmbeddingDimensionProbe | None = None,
 ) -> None:
-    """Validate that the embedding schema matches the configured dimension.
+    """Validate that the embedding model and schema match the configured dimension.
 
     Run after the DB pool is initialized and before the embedding client is
     constructed. Fails closed: any unrecoverable introspection error raises
@@ -75,9 +83,51 @@ async def validate_embedding_schema(
 
     dims = await _introspect_pgvector_dims_with_retry(engine, schema)
     _assert_pgvector_dims_match(dims, schema=schema, target_dim=target_dim)
+    await _assert_embedding_model_dim_matches_config(
+        s,
+        target_dim=target_dim,
+        embedding_client=embedding_client,
+    )
 
     if s.VECTOR_STORE.TYPE in ("turbopuffer", "lancedb"):
         await _sample_external_namespaces(engine, target_dim=target_dim)
+
+
+async def _assert_embedding_model_dim_matches_config(
+    app_settings: AppSettings,
+    *,
+    target_dim: int,
+    embedding_client: EmbeddingDimensionProbe | None = None,
+) -> None:
+    """Probe the configured embedding model and compare its actual output dim.
+
+    The pgvector schema check catches config-vs-storage drift. This probe
+    catches config-vs-model drift before runtime writes can start failing with
+    provider or pgvector dimension errors.
+    """
+    if embedding_client is None:
+        from src.embedding_client import embedding_client as default_embedding_client
+
+        embedding_client = default_embedding_client
+    try:
+        actual_dim = await embedding_client.validate_model_dimensions()
+    except Exception as exc:
+        configured_model = app_settings.EMBEDDING.MODEL_CONFIG
+        raise StartupValidationError(
+            "could not validate embedding model output dimension for "
+            + f"{configured_model.transport}:{configured_model.model}: {exc}"
+        ) from exc
+
+    if actual_dim != target_dim:
+        configured_model = app_settings.EMBEDDING.MODEL_CONFIG
+        raise StartupValidationError(
+            "Embedding model output dimension mismatch for "
+            + f"{configured_model.transport}:{configured_model.model}: "
+            + f"model returned {actual_dim}, but EMBEDDING_VECTOR_DIMENSIONS "
+            + f"is {target_dim}. Set EMBEDDING_VECTOR_DIMENSIONS to match the "
+            + "model output or choose an embedding model with the configured "
+            + "dimension."
+        )
 
 
 async def _introspect_pgvector_dims_with_retry(

@@ -14,9 +14,10 @@ from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from src.config import settings
+from src.config import AppSettings, settings
 from src.startup.embedding_validator import (
     StartupValidationError,
+    _assert_embedding_model_dim_matches_config,  # pyright: ignore[reportPrivateUsage]
     _assert_pgvector_dims_match,  # pyright: ignore[reportPrivateUsage]
     validate_embedding_schema,
 )
@@ -81,6 +82,72 @@ def test_assert_pgvector_dims_match_respects_non_public_schema() -> None:
         )
 
 
+class FakeEmbeddingDimensionProbe:
+    def __init__(self, dimension: int) -> None:
+        self.dimension: int = dimension
+        self.calls: int = 0
+
+    async def validate_model_dimensions(self) -> int:
+        self.calls += 1
+        return self.dimension
+
+
+def _app_settings_with_embedding_model(
+    *,
+    vector_dimensions: int,
+    model: str = "text-embedding-nomic-embed-text-v1.5",
+) -> AppSettings:
+    return settings.model_copy(
+        deep=True,
+        update={
+            "EMBEDDING": settings.EMBEDDING.model_copy(
+                deep=True,
+                update={
+                    "VECTOR_DIMENSIONS": vector_dimensions,
+                    "MODEL_CONFIG": settings.EMBEDDING.MODEL_CONFIG.model_copy(
+                        deep=True,
+                        update={"transport": "openai", "model": model},
+                    ),
+                },
+            )
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_assert_embedding_model_dim_matches_config_accepts_actual_dim() -> None:
+    probe = FakeEmbeddingDimensionProbe(768)
+    app_settings = _app_settings_with_embedding_model(vector_dimensions=768)
+
+    await _assert_embedding_model_dim_matches_config(
+        app_settings,
+        target_dim=768,
+        embedding_client=probe,
+    )
+
+    assert probe.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_assert_embedding_model_dim_matches_config_reports_model_mismatch() -> (
+    None
+):
+    probe = FakeEmbeddingDimensionProbe(768)
+    app_settings = _app_settings_with_embedding_model(vector_dimensions=1536)
+
+    with pytest.raises(StartupValidationError) as excinfo:
+        await _assert_embedding_model_dim_matches_config(
+            app_settings,
+            target_dim=1536,
+            embedding_client=probe,
+        )
+
+    msg = str(excinfo.value)
+    assert "text-embedding-nomic-embed-text-v1.5" in msg
+    assert "model returned 768" in msg
+    assert "EMBEDDING_VECTOR_DIMENSIONS is 1536" in msg
+
+
 # ---------------------------------------------------------------------------
 # Fail-closed retry behavior
 # ---------------------------------------------------------------------------
@@ -128,7 +195,12 @@ async def test_validator_passes_against_test_database(
     # conftest provisions the test tables in `public`; pin the validator to it
     # so a developer's local .env DB_SCHEMA can't point it at another schema.
     monkeypatch.setattr(settings.DB, "SCHEMA", "public")
-    await validate_embedding_schema(db_engine)
+    await validate_embedding_schema(
+        db_engine,
+        embedding_client=FakeEmbeddingDimensionProbe(
+            settings.EMBEDDING.VECTOR_DIMENSIONS
+        ),
+    )
 
 
 @pytest.mark.asyncio
@@ -148,7 +220,12 @@ async def test_validator_raises_when_schema_dim_diverges_from_settings(
         )
     try:
         with pytest.raises(StartupValidationError, match="dim .* does not match"):
-            await validate_embedding_schema(db_engine)
+            await validate_embedding_schema(
+                db_engine,
+                embedding_client=FakeEmbeddingDimensionProbe(
+                    settings.EMBEDDING.VECTOR_DIMENSIONS
+                ),
+            )
     finally:
         async with db_engine.begin() as conn:
             await conn.execute(
@@ -179,9 +256,9 @@ def test_vector_store_dimensions_explicit_set_warns(
     messages = [
         str(w.message) for w in captured if issubclass(w.category, DeprecationWarning)
     ]
-    assert any(
-        "VECTOR_STORE_DIMENSIONS is deprecated" in m for m in messages
-    ), f"expected deprecation warning, got {messages!r}"
+    assert any("VECTOR_STORE_DIMENSIONS is deprecated" in m for m in messages), (
+        f"expected deprecation warning, got {messages!r}"
+    )
 
 
 def test_non_1536_pgvector_without_migrated_no_longer_raises_at_config_time() -> None:
