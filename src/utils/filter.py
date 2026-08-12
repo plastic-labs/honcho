@@ -29,6 +29,10 @@ COMPARISON_OPERATORS = {
 
 NUMERIC_OPERATORS = {"gte", "lte", "gt", "lt", "ne"}
 
+# JSONB columns keep containment semantics: bare lists are not membership
+# sugar, and dict values map to nested-metadata conditions rather than IN/Eq.
+JSONB_COLUMNS = ("h_metadata", "configuration", "internal_metadata")
+
 ALLOWED_EXTERNAL_TO_INTERNAL_COLUMN_MAPPING = {
     "id": "name",
     "created_at": "created_at",
@@ -62,6 +66,7 @@ MAX_SESSION_ALLOWLIST_ENTRIES = 1000
 
 def extract_session_allowlist(
     filters: dict[str, Any] | None,
+    must_include: str | None = None,
 ) -> list[str] | None:
     """Parse a recall-path ``filters`` body into a session allowlist.
 
@@ -71,8 +76,19 @@ def extract_session_allowlist(
     FilterError (422) rather than being silently ignored — a dropped filter
     on these endpoints would widen recall scope.
 
-    Returns None when filters is None. An explicit empty list is preserved so
-    downstream consumers fail closed.
+    Args:
+        filters: The raw ``filters`` body, or None.
+        must_include: A session id that must appear in the parsed allowlist —
+            used by routes that also accept a top-level ``session_id``, so the
+            two can't contradict each other. Ignored when filters is None.
+
+    Returns:
+        None when filters is None. An explicit empty list is preserved so
+        downstream consumers fail closed.
+
+    Raises:
+        FilterError: On an unsupported key or shape, an over-cap list, or a
+            ``must_include`` session missing from the allowlist.
     """
     if filters is None:
         return None
@@ -115,6 +131,10 @@ def extract_session_allowlist(
         if entry not in seen:
             seen.add(entry)
             allowlist.append(entry)
+
+    if must_include is not None and must_include not in seen:
+        raise FilterError("session_id must be included in filters.session_id")
+
     return allowlist
 
 
@@ -278,6 +298,13 @@ def _build_field_condition(
     if model_class.__name__ == "Message":
         column_name = ALLOWED_EXTERNAL_TO_INTERNAL_COLUMN_MAPPING_MESSAGES.get(key)
     elif model_class.__name__ == "Document":
+        # NOTE: unlike Message/Workspace, Document falls back to the raw key so
+        # internal callers can filter on internal column names. The session
+        # allowlist depends on this: recall passes {"session_name": {"in": ...}}
+        # (see search_memory in utils/agent_tools.py and RepresentationManager),
+        # and "session_name" is deliberately absent from the mapping below.
+        # Tightening this to a strict allowlist would break session scoping —
+        # fail-closed, since an unmapped key raises, but silently.
         column_name = ALLOWED_EXTERNAL_TO_INTERNAL_COLUMN_MAPPING_DOCUMENTS.get(
             key,
             key,  # fallback to the key itself if not found in the mapping for internal use here
@@ -303,11 +330,7 @@ def _build_field_condition(
     # Bare-list sugar on regular columns: {"session_id": ["a", "b"]} is
     # shorthand for {"session_id": {"in": ["a", "b"]}}. JSONB columns are
     # excluded — a bare list there keeps JSONB containment semantics.
-    if isinstance(value, list | tuple | set) and column_name not in (
-        "h_metadata",
-        "configuration",
-        "internal_metadata",
-    ):
+    if isinstance(value, list | tuple | set) and column_name not in JSONB_COLUMNS:
         value = {"in": list(typing_cast(Sequence[Any], value))}
 
     # Handle comparison operators vs regular values
@@ -320,12 +343,12 @@ def _build_field_condition(
         else:
             # This is a regular value that happens to be a dict
             # For JSONB fields (metadata, configuration), check if it contains nested comparison operators
-            if column_name in ("h_metadata", "configuration", "internal_metadata"):
+            if column_name in JSONB_COLUMNS:
                 return _build_nested_metadata_conditions(column, value)  # pyright: ignore
             else:
                 return column == value
     else:
-        if column_name in ("h_metadata", "configuration", "internal_metadata"):
+        if column_name in JSONB_COLUMNS:
             return column.contains(value)
         else:
             return column == value

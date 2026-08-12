@@ -1,6 +1,6 @@
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from nanoid import generate as generate_nanoid
@@ -8,6 +8,7 @@ from sqlalchemy import func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
+from src.crud.document import CreateDocumentsResult
 from src.crud.representation import RepresentationManager
 from src.schemas.configuration import (
     ResolvedConfiguration,
@@ -319,7 +320,7 @@ class TestRepresentationManagerSessionScoping:
         session_a, _, manager = await self._setup(db_session, test_workspace, test_peer)
 
         results = await manager._query_documents_recent(  # pyright: ignore[reportPrivateUsage]
-            db_session, top_k=10, session_names=[session_a.name]
+            db_session, top_k=10, session_allowlist=[session_a.name]
         )
 
         contents = [doc.content for doc in results]
@@ -336,7 +337,7 @@ class TestRepresentationManagerSessionScoping:
         session_a, _, manager = await self._setup(db_session, test_workspace, test_peer)
 
         results = await manager._query_documents_most_derived(  # pyright: ignore[reportPrivateUsage]
-            db_session, top_k=10, session_names=[session_a.name]
+            db_session, top_k=10, session_allowlist=[session_a.name]
         )
 
         contents = [doc.content for doc in results]
@@ -360,12 +361,15 @@ class TestRepresentationManagerSessionScoping:
                 query="anything",
                 top_k=5,
                 embedding=[0.1],
-                session_names=[session_a.name],
+                session_allowlist=[session_a.name],
             )
 
         assert mock_query.await_args is not None
         assert mock_query.await_args.kwargs["filters"] == {
-            "session_name": {"in": [session_a.name]}
+            "session_name": {"in": [session_a.name]},
+            # Scoped recall serves only levels with a trustworthy session
+            # stamp (ALLOWLIST_SAFE_LEVELS / DEV-2201).
+            "level": {"in": ["explicit"]},
         }
 
     @pytest.mark.asyncio
@@ -402,7 +406,7 @@ class TestRepresentationManagerSessionScoping:
 
         representation = await manager.get_working_representation(
             db=db_session,
-            session_names=[session_a.name],
+            session_allowlist=[session_a.name],
             include_most_derived=True,
         )
 
@@ -424,12 +428,46 @@ class TestRepresentationManagerSessionScoping:
 
         representation = await manager.get_working_representation(
             db=db_session,
-            session_names=[],
+            session_allowlist=[],
             include_most_derived=True,
         )
 
         assert representation.explicit == []
         assert representation.deductive == []
+
+    def test_build_filter_conditions_empty_allowlist_fails_closed(self):
+        """The filter-builder layer itself must fail closed, independent of the
+        early-return guard in _get_working_representation_internal. An empty
+        allowlist emits an empty `in` (renders as always-false downstream), not
+        an omitted filter."""
+        manager = RepresentationManager(
+            "workspace", observer="observer", observed="observed"
+        )
+
+        # Scoping also narrows to levels whose session stamp is trustworthy
+        # (see ALLOWLIST_SAFE_LEVELS / DEV-2201).
+        assert manager._build_filter_conditions(session_allowlist=[]) == {  # pyright: ignore[reportPrivateUsage]
+            "session_name": {"in": []},
+            "level": {"in": ["explicit"]},
+        }
+        # None means unscoped — no session filter and no level narrowing.
+        assert manager._build_filter_conditions(session_allowlist=None) == {}  # pyright: ignore[reportPrivateUsage]
+        assert manager._build_filter_conditions(session_allowlist=["s1"]) == {  # pyright: ignore[reportPrivateUsage]
+            "session_name": {"in": ["s1"]},
+            "level": {"in": ["explicit"]},
+        }
+        # A requested level outside the safe set yields an empty `in`, which
+        # matches nothing rather than falling back to unscoped recall.
+        assert manager._build_filter_conditions(  # pyright: ignore[reportPrivateUsage]
+            level="inductive", session_allowlist=["s1"]
+        ) == {
+            "session_name": {"in": ["s1"]},
+            "level": {"in": []},
+        }
+        # ...while an unscoped level filter is left exactly as asked.
+        assert manager._build_filter_conditions(level="inductive") == {  # pyright: ignore[reportPrivateUsage]
+            "level": "inductive"
+        }
 
 
 class TestRepresentationManagerSave:
@@ -468,7 +506,9 @@ class TestRepresentationManagerSave:
             patch.object(
                 manager,
                 "_save_representation_internal",
-                new=AsyncMock(return_value=1),
+                new=AsyncMock(
+                    return_value=CreateDocumentsResult(created_documents=[MagicMock()])
+                ),
             ) as mock_save,
         ):
             saved = await manager.save_representation(
@@ -479,7 +519,7 @@ class TestRepresentationManagerSave:
                 message_level_configuration=_resolved_config(),
             )
 
-        assert saved == 1
+        assert len(saved.created_documents) == 1
         mock_embed.assert_awaited_once_with(["useful observation"])
         saved_observations = _saved_observations(mock_save)
         assert len(saved_observations) == 1
@@ -522,7 +562,9 @@ class TestRepresentationManagerSave:
             patch.object(
                 manager,
                 "_save_representation_internal",
-                new=AsyncMock(return_value=1),
+                new=AsyncMock(
+                    return_value=CreateDocumentsResult(created_documents=[MagicMock()])
+                ),
             ) as mock_save,
         ):
             saved = await manager.save_representation(
@@ -533,7 +575,7 @@ class TestRepresentationManagerSave:
                 message_level_configuration=_resolved_config(),
             )
 
-        assert saved == 1
+        assert len(saved.created_documents) == 1
         mock_embed.assert_awaited_once_with(["inferred conclusion"])
         saved_observations = _saved_observations(mock_save)
         assert len(saved_observations) == 1
@@ -584,6 +626,6 @@ class TestRepresentationManagerSave:
                 message_level_configuration=_resolved_config(),
             )
 
-        assert saved == 0
+        assert len(saved.created_documents) == 0
         mock_embed.assert_not_awaited()
         mock_save.assert_not_awaited()

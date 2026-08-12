@@ -248,12 +248,17 @@ async def schedule_dream(
     observed = request.observed if request.observed is not None else request.observer
     dream_type = request.dream_type
 
+    # The authoritative observed-position check lives in enqueue_dream, in the same
+    # transaction as the queue insert. Nothing expensive happens before it here, so
+    # no early duplicate is needed.
+
     await enqueue_dream(
         workspace_id,
         observer=observer,
         observed=observed,
         dream_type=dream_type,
         session_name=request.session_id,
+        rebuild=request.rebuild,
         # Manual route — explicit sentinels for the DreamRunEvent
         # scheduling-context fields. Auto-schedule threads concrete
         # threshold/delay reasons (see src/dreamer/dream_scheduler.py);

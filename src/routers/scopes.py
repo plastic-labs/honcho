@@ -1,16 +1,16 @@
 """FastAPI routes for scope resources.
 
 A scope is a named grouping of sessions that provides a visibility boundary
-within a peer. Internally a scope is a peer named ``scope__<name>`` that
+within a peer. Internally a scope is a peer named ``scope.<name>`` that
 observes its member sessions and never speaks; these routes are the facade
 that keeps the observer/observed mechanics hidden.
 
 All scopes routes require a workspace-level (or admin) key: scopes are an
 app-level admin surface, so peer- and session-scoped keys are rejected.
 
-Note: backfill of pre-existing documents and reconciliation on removal land
-in a follow-up (DEV-1999) — for now, scope membership only affects messages
-ingested *after* the membership change.
+Note: scope membership only affects messages ingested *after* the membership
+change. Conclusions already derived are neither backfilled on add nor
+reconciled on removal.
 """
 
 import logging
@@ -85,12 +85,13 @@ async def get_scope(
     db: AsyncSession = read_db,
 ):
     """Get a single Scope by ID."""
-    return await crud.get_scope(db, workspace_id, scope_id)
+    return await crud.get_scope_or_raise(db, workspace_id, scope_id)
 
 
 @router.post(
     "/{scope_id}/sessions",
-    response_model=schemas.ScopeSessions,
+    status_code=204,
+    response_model=None,
     dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
 )
 async def add_sessions_to_scope(
@@ -104,19 +105,19 @@ async def add_sessions_to_scope(
     """
     Add Sessions to a Scope.
 
-    All named sessions must already exist (404 otherwise). Returns the scope's
-    full member session list after the addition.
+    All named sessions must already exist (404 otherwise). Adding a session that
+    is already a member is a no-op. List the resulting membership with
+    `POST /scopes/{scope_id}/sessions/list`.
 
-    Note: membership only affects messages ingested after this call — backfill
-    of pre-existing documents lands in a follow-up (DEV-1999).
+    Note: membership applies only to messages ingested after this call;
+    conclusions already derived are not backfilled.
     """
-    session_ids = await crud.add_sessions_to_scope(
+    await crud.add_sessions_to_scope(
         db,
         workspace_name=workspace_id,
         scope_name=scope_id,
         session_names=body.session_ids,
     )
-    return schemas.ScopeSessions(session_ids=session_ids)
 
 
 @router.delete(
@@ -134,8 +135,8 @@ async def remove_session_from_scope(
     """
     Remove a Session from a Scope.
 
-    Note: documents already derived while the session was a member are left in
-    place — reconciliation on removal lands in a follow-up (DEV-1999).
+    Note: conclusions already derived while the session was a member are left in
+    place.
     """
     await crud.remove_session_from_scope(
         db,
@@ -145,16 +146,28 @@ async def remove_session_from_scope(
     )
 
 
-@router.get(
-    "/{scope_id}/sessions",
-    response_model=schemas.ScopeSessions,
+@router.post(
+    "/{scope_id}/sessions/list",
+    response_model=Page[schemas.Session],
     dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
 )
 async def get_scope_sessions(
     workspace_id: str = Path(...),
     scope_id: str = Path(...),
+    reverse: bool = Query(False, description="Whether to reverse the order of results"),
     db: AsyncSession = read_db,
 ):
-    """Get the IDs of the Sessions that are members of a Scope."""
-    session_ids = await crud.get_scope_session_names(db, workspace_id, scope_id)
-    return schemas.ScopeSessions(session_ids=session_ids)
+    """Get the Sessions that are members of a Scope, paginated.
+
+    Ordered by how long each session has been a member: longest-standing member
+    first, or most recently added first when `reverse` is true.
+    """
+    # Distinguishes an empty scope from one that does not exist; the query itself
+    # returns an empty page either way.
+    await crud.get_scope_or_raise(db, workspace_id, scope_id)
+    return await apaginate(
+        db,
+        await crud.get_scope_sessions(
+            workspace_name=workspace_id, scope_name=scope_id, reverse=reverse
+        ),
+    )

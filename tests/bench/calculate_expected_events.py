@@ -246,7 +246,7 @@ def calculate_question_events(
 
     # Calculate representation events
     # Each unique (session, observed) pair generates one representation event
-    # (assuming messages fit within REPRESENTATION_BATCH_MAX_TOKENS)
+    # (assuming messages fit within REPRESENTATION_BATCH_TARGET_INPUT_TOKENS)
     # When merge_sessions=True, all messages go into one session
     if merge_sessions:
         # One merged session = one representation event

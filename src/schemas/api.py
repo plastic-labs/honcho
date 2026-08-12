@@ -103,13 +103,17 @@ def _validate_scope_name(name: str) -> str:
         raise ValueError(
             f"Scope name must be between 1 and {_SCOPE_NAME_MAX_LENGTH} characters"
         )
-    if not re.fullmatch(RESOURCE_NAME_PATTERN, name):
-        raise ValueError(f"Scope name must match pattern {RESOURCE_NAME_PATTERN}")
+    # Checked before the charset pattern: the reserved prefix is itself outside
+    # RESOURCE_NAME_PATTERN, so the pattern would otherwise reject a
+    # double-prefixed name first and report the charset instead of the real
+    # mistake.
     if name.startswith(SCOPE_PEER_PREFIX):
         raise ValueError(
             "Scope name must not start with the reserved prefix "
             + f"'{SCOPE_PEER_PREFIX}' (scope names are unprefixed)"
         )
+    if not re.fullmatch(RESOURCE_NAME_PATTERN, name):
+        raise ValueError(f"Scope name must match pattern {RESOURCE_NAME_PATTERN}")
     return name
 
 
@@ -166,13 +170,34 @@ class PeerBase(BaseModel):
     pass
 
 
-class PeerCreate(PeerBase):
+class PeerSpec(PeerBase):
+    """Peer identity plus optional updates, for callers that already have a name.
+
+    ``PeerCreate`` narrows ``name`` with ``pattern=RESOURCE_NAME_PATTERN`` because it
+    validates a *new, user-supplied* peer id at the API boundary. crud paths reach
+    ``get_or_create_peers`` with names that already exist — a path param, a message
+    author, an existing row — including pre-``d429de0e5338`` legacy names containing
+    '.' and every ``scope.``-prefixed peer name. Re-validating those turns a lookup
+    into a raw pydantic ValidationError, i.e. an HTTP 500.
+
+    Carries **no** constraints at all, deliberately. Length limits here were the
+    same trap as the charset pattern: request-bound peer names (message authors,
+    session peer-map keys) have no length bound of their own, so an empty or
+    over-long name reached ``PeerSpec(...)`` and raised internally — again a 500.
+    Every rule for a *new* name lives in ``crud.peer._validate_new_peer_names``,
+    which runs on the insert path only.
+    """
+
+    name: str
+    metadata: _SanitizedMetadata | None = None
+    configuration: dict[str, Any] | None = None
+
+
+class PeerCreate(PeerSpec):
     name: Annotated[
         str,
         Field(alias="id", min_length=1, max_length=512, pattern=RESOURCE_NAME_PATTERN),
     ]
-    metadata: _SanitizedMetadata | None = None
-    configuration: dict[str, Any] | None = None
 
     model_config = ConfigDict(populate_by_name=True)  # pyright: ignore
 
@@ -386,12 +411,12 @@ class SessionCreate(SessionBase):
     configuration: SessionConfiguration | None = None
     scopes: list[str] | None = Field(
         default=None,
+        max_length=100,
         description=(
             "Optional list of (unprefixed) scope names to add this session to. "
-            "Each scope is created if it does not exist yet. Note: scope "
-            "membership only affects messages ingested after the session is "
-            "added to the scope; backfill of pre-existing documents lands in a "
-            "follow-up (DEV-1999)."
+            "Each scope is created if it does not exist yet. Membership applies "
+            "only to messages ingested after the session is added to the scope; "
+            "conclusions already derived are not backfilled."
         ),
     )
 
@@ -550,12 +575,6 @@ class ScopeSessionsAdd(BaseModel):
         max_length=100,
         description="IDs of existing sessions to add to the scope",
     )
-
-
-class ScopeSessions(BaseModel):
-    """IDs of the sessions that are currently members of a scope."""
-
-    session_ids: list[str]
 
 
 # ---------------------------------------------------------------------------
@@ -747,6 +766,16 @@ class DialecticOptions(BaseModel):
         default="low",
         description="Level of reasoning to apply: minimal, low, medium, high, or max",
     )
+    response_format: dict[str, Any] | None = Field(
+        None,
+        description=(
+            "Optional JSON Schema (root type 'object') the response must conform"
+            " to. When provided, `content` is a JSON string matching this schema."
+            " Only a conservative subset of JSON Schema is supported; unsupported"
+            "  schemas are rejected with 422. Constraint keywords (minItems, "
+            " maxLength, ...) are hints to the model, not enforced server-side."
+        ),
+    )
 
     @field_validator("query", mode="after")
     @classmethod
@@ -832,6 +861,14 @@ class ScheduleDreamRequest(BaseModel):
     dream_type: DreamType = Field(..., description="Type of dream to schedule")
     session_id: str | None = Field(
         None, description="Session ID to scope the dream to if specified"
+    )
+    rebuild: bool = Field(
+        False,
+        description=(
+            "card_refresh dreams only: rebuild the peer card solely from "
+            "observations currently in the collection, without injecting the "
+            "existing card (use after removals)"
+        ),
     )
 
 

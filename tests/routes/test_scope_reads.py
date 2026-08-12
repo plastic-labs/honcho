@@ -51,7 +51,7 @@ def _add_sessions_to_scope(
         f"/v3/workspaces/{workspace_name}/scopes/{scope_name}/sessions",
         json={"session_ids": session_names},
     )
-    assert response.status_code == 200
+    assert response.status_code == 204, response.text
 
 
 async def _seed_documents(
@@ -191,13 +191,16 @@ class TestScopeReadValidation:
         assert self._chat(client, workspace, peer, body).status_code == 422
         assert self._representation(client, workspace, peer, body).status_code == 422
 
-    def test_peer_scoped_jwt_403(
+    def test_peer_scoped_jwt_401(
         self,
         client: TestClient,
         sample_data: tuple[Workspace, Peer],
         monkeypatch: pytest.MonkeyPatch,
     ):
-        """A scope's sessions may exceed the peer's own membership: workspace/admin only."""
+        """A scope's sessions may exceed the peer's own membership: workspace/admin only.
+
+        401, matching every other scope surface — see _validate_scope_option.
+        """
         workspace, peer = sample_data
         scope_name = str(generate_nanoid())
         _create_scope(client, workspace.name, scope_name)
@@ -210,13 +213,13 @@ class TestScopeReadValidation:
 
         assert (
             self._chat(client, workspace, peer, {"scope": scope_name}).status_code
-            == 403
+            == 401
         )
         assert (
             self._representation(
                 client, workspace, peer, {"scope": scope_name}
             ).status_code
-            == 403
+            == 401
         )
 
         # A workspace-level key is allowed through validation (404 here only
@@ -384,7 +387,7 @@ class TestChatWithScope:
         assert kwargs["observer"] == scope_peer_name(scope_name)
         assert kwargs["observed"] == peer.name
         # Single-scope confinement rides on observer semantics, not an allowlist
-        assert kwargs["session_names"] is None
+        assert kwargs["session_allowlist"] is None
 
     def test_scope_list_passes_union_allowlist(
         self,
@@ -412,7 +415,7 @@ class TestChatWithScope:
         # Union path: the path peer stays the observer, the allowlist is the union
         assert kwargs["observer"] == peer.name
         assert kwargs["observed"] == peer.name
-        assert set(kwargs["session_names"]) == {session_a, session_b}
+        assert set(kwargs["session_allowlist"]) == {session_a, session_b}
 
 
 class TestWorkspaceSearchWithScope:
@@ -609,7 +612,7 @@ class TestSessionContextWithScope:
         )
         assert resp.status_code == 404
 
-    def test_narrow_keys_rejected_403(
+    def test_narrow_keys_rejected_401(
         self,
         client: TestClient,
         sample_data: tuple[Workspace, Peer],
@@ -631,13 +634,13 @@ class TestSessionContextWithScope:
         client.headers["Authorization"] = (
             f"Bearer {create_jwt(JWTParams(w=workspace.name, p=peer.name))}"
         )
-        assert client.get(url, params=params).status_code == 403
+        assert client.get(url, params=params).status_code == 401
 
         # Session-scoped key
         client.headers["Authorization"] = (
             f"Bearer {create_jwt(JWTParams(w=workspace.name, s=session_name))}"
         )
-        assert client.get(url, params=params).status_code == 403
+        assert client.get(url, params=params).status_code == 401
 
         # Workspace-scoped key is allowed
         client.headers["Authorization"] = (

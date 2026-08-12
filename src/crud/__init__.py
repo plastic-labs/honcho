@@ -5,6 +5,7 @@ from .collection import (
 )
 from .deriver import get_deriver_status, get_queue_status
 from .document import (
+    CreateDocumentsResult,
     create_documents,
     create_observations,
     delete_document,
@@ -38,6 +39,8 @@ from .peer import (
     get_peer,
     get_peers,
     get_sessions_for_peer,
+    reject_scope_observed,
+    reject_scope_peers,
     update_peer,
 )
 from .peer_card import get_peer_card, set_peer_card
@@ -47,8 +50,8 @@ from .representation import (
 from .scope import (
     add_sessions_to_scope,
     get_or_create_scopes,
-    get_scope,
-    get_scope_session_names,
+    get_scope_or_raise,
+    get_scope_sessions,
     get_scopes,
     remove_session_from_scope,
     resolve_scope_peers,
@@ -92,6 +95,7 @@ __all__ = [
     "get_deriver_status",
     "get_queue_status",
     # Document
+    "CreateDocumentsResult",
     "create_documents",
     "create_observations",
     "fetch_documents_by_ids",
@@ -121,6 +125,8 @@ __all__ = [
     # Peer
     "get_or_create_peers",
     "get_peer",
+    "reject_scope_observed",
+    "reject_scope_peers",
     "get_peers",
     "update_peer",
     "get_sessions_for_peer",
@@ -132,8 +138,8 @@ __all__ = [
     # Scope
     "add_sessions_to_scope",
     "get_or_create_scopes",
-    "get_scope",
-    "get_scope_session_names",
+    "get_scope_or_raise",
+    "get_scope_sessions",
     "get_scopes",
     "remove_session_from_scope",
     "resolve_scope_peers",

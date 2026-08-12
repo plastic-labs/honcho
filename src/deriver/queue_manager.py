@@ -331,16 +331,18 @@ class QueueManager:
         """
         Get available work units that aren't being processed.
         For representation tasks, only returns work units whose accumulated
-        tokens reach REPRESENTATION_BATCH_MAX_TOKENS or whose oldest pending
-        item exceeds REPRESENTATION_BATCH_MAX_AGE_SECONDS, unless
-        FLUSH_ENABLED is True.
+        tokens reach REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS or whose
+        oldest pending item exceeds REPRESENTATION_BATCH_MAX_AGE_SECONDS,
+        unless FLUSH_ENABLED is True.
         Returns a dict mapping work_unit_key to aqs_id.
         """
         limit: int = max(0, self.workers - self.get_total_owned_work_units())
         if limit == 0:
             return {}
 
-        batch_max_tokens = settings.DERIVER.REPRESENTATION_BATCH_MAX_TOKENS
+        work_unit_target_tokens = (
+            settings.DERIVER.REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS
+        )
 
         async with tracked_db("get_available_work_units") as db:
             representation_prefix = "representation:"
@@ -396,11 +398,11 @@ class QueueManager:
             )
 
             # Apply batch threshold filter (skip if FLUSH_ENABLED is True)
-            if not settings.DERIVER.FLUSH_ENABLED and batch_max_tokens > 0:
+            if not settings.DERIVER.FLUSH_ENABLED and work_unit_target_tokens > 0:
                 max_age_seconds = settings.DERIVER.REPRESENTATION_BATCH_MAX_AGE_SECONDS
                 threshold_clause = (
                     func.coalesce(token_stats_subq.c.total_tokens, 0)
-                    >= batch_max_tokens
+                    >= work_unit_target_tokens
                 )
                 if max_age_seconds > 0:
                     threshold_clause = or_(
@@ -426,13 +428,13 @@ class QueueManager:
                     not settings.DERIVER.FLUSH_ENABLED
                     and settings.DERIVER.REPRESENTATION_BATCH_MAX_AGE_SECONDS > 0
                     and work_unit_key.startswith(representation_prefix)
-                    and int(total_tokens or 0) < batch_max_tokens
+                    and int(total_tokens or 0) < work_unit_target_tokens
                 ):
                     logger.info(
                         "age-flushing work unit %s (tokens=%s < %s, oldest=%s)",
                         work_unit_key,
                         total_tokens or 0,
-                        batch_max_tokens,
+                        work_unit_target_tokens,
                         oldest_created_at,
                     )
             if not available_units:
@@ -816,7 +818,7 @@ class QueueManager:
                 f"{task_type} tasks are not supported for get_queue_item_batch"
             )
 
-        batch_max_tokens = settings.DERIVER.REPRESENTATION_BATCH_MAX_TOKENS
+        batch_max_tokens = settings.DERIVER.REPRESENTATION_BATCH_TARGET_INPUT_TOKENS
         was_flush_enabled = settings.DERIVER.FLUSH_ENABLED
         parsed_key = parse_work_unit_key(work_unit_key)
         messages_context: list[models.Message] = []
