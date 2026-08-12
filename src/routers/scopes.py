@@ -1,16 +1,16 @@
 """FastAPI routes for scope resources.
 
 A scope is a named grouping of sessions that provides a visibility boundary
-within a peer. Internally a scope is a peer named ``scope__<name>`` that
+within a peer. Internally a scope is a peer named ``scope.<name>`` that
 observes its member sessions and never speaks; these routes are the facade
 that keeps the observer/observed mechanics hidden.
 
 All scopes routes require a workspace-level (or admin) key: scopes are an
 app-level admin surface, so peer- and session-scoped keys are rejected.
 
-Retroactive membership changes are handled asynchronously (DEV-1999): adding
-a session that already has messages enqueues a backfill-by-copy job, removing
-a session enqueues a removal-reconciliation job. Track backfill progress via
+Retroactive membership changes are handled asynchronously: adding a session
+that already has messages enqueues a backfill-by-copy job, removing a session
+enqueues a removal-reconciliation job. Track backfill progress via
 ``GET /scopes/{scope_id}/status``.
 """
 
@@ -86,12 +86,13 @@ async def get_scope(
     db: AsyncSession = read_db,
 ):
     """Get a single Scope by ID."""
-    return await crud.get_scope(db, workspace_id, scope_id)
+    return await crud.get_scope_or_raise(db, workspace_id, scope_id)
 
 
 @router.post(
     "/{scope_id}/sessions",
-    response_model=schemas.ScopeSessions,
+    status_code=204,
+    response_model=None,
     dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
 )
 async def add_sessions_to_scope(
@@ -105,20 +106,20 @@ async def add_sessions_to_scope(
     """
     Add Sessions to a Scope.
 
-    All named sessions must already exist (404 otherwise). Returns the scope's
-    full member session list after the addition.
+    All named sessions must already exist (404 otherwise). Adding a session that
+    is already a member is a no-op. List the resulting membership with
+    `POST /scopes/{scope_id}/sessions/list`.
 
     Note: any added session that already has messages triggers an asynchronous
     backfill-by-copy of its existing documents into the scope; track progress
     via ``GET /scopes/{scope_id}/status``.
     """
-    session_ids = await crud.add_sessions_to_scope(
+    await crud.add_sessions_to_scope(
         db,
         workspace_name=workspace_id,
         scope_name=scope_id,
         session_names=body.session_ids,
     )
-    return schemas.ScopeSessions(session_ids=session_ids)
 
 
 @router.delete(
@@ -149,19 +150,31 @@ async def remove_session_from_scope(
     )
 
 
-@router.get(
-    "/{scope_id}/sessions",
-    response_model=schemas.ScopeSessions,
+@router.post(
+    "/{scope_id}/sessions/list",
+    response_model=Page[schemas.Session],
     dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
 )
 async def get_scope_sessions(
     workspace_id: str = Path(...),
     scope_id: str = Path(...),
+    reverse: bool = Query(False, description="Whether to reverse the order of results"),
     db: AsyncSession = read_db,
 ):
-    """Get the IDs of the Sessions that are members of a Scope."""
-    session_ids = await crud.get_scope_session_names(db, workspace_id, scope_id)
-    return schemas.ScopeSessions(session_ids=session_ids)
+    """Get the Sessions that are members of a Scope, paginated.
+
+    Ordered by how long each session has been a member: longest-standing member
+    first, or most recently added first when `reverse` is true.
+    """
+    # Distinguishes an empty scope from one that does not exist; the query itself
+    # returns an empty page either way.
+    await crud.get_scope_or_raise(db, workspace_id, scope_id)
+    return await apaginate(
+        db,
+        await crud.get_scope_sessions(
+            workspace_name=workspace_id, scope_name=scope_id, reverse=reverse
+        ),
+    )
 
 
 @router.get(

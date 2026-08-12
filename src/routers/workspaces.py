@@ -225,6 +225,10 @@ async def schedule_dream(
     observed = request.observed if request.observed is not None else request.observer
     dream_type = request.dream_type
 
+    # The authoritative observed-position check lives in enqueue_dream, in the same
+    # transaction as the queue insert. Nothing expensive happens before it here, so
+    # no early duplicate is needed.
+
     await enqueue_dream(
         workspace_id,
         observer=observer,

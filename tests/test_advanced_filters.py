@@ -236,6 +236,86 @@ async def test_comparison_operators_filters(
 
 
 @pytest.mark.asyncio
+async def test_bare_list_membership_sugar(
+    client: TestClient,
+    sample_data: tuple[Workspace, Peer],
+):
+    """A bare list on a regular column is shorthand for {"in": [...]}.
+
+    JSONB metadata columns are excluded from the sugar: a bare list there
+    keeps JSONB containment semantics.
+    """
+    test_workspace, test_peer = sample_data
+
+    # Second peer so peer_id membership has something to exclude
+    peer2_name = str(generate_nanoid())
+    client.post(
+        f"/v3/workspaces/{test_workspace.name}/peers",
+        json={"id": peer2_name},
+    )
+
+    session_id = str(generate_nanoid())
+    session_response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions",
+        json={
+            "id": session_id,
+            "peer_names": {test_peer.name: {}, peer2_name: {}},
+        },
+    )
+    assert session_response.status_code == 201
+
+    message_configs = [
+        {
+            "content": "From peer one",
+            "peer_id": test_peer.name,
+            "metadata": {"tags": ["important", "urgent"]},
+        },
+        {
+            "content": "From peer two",
+            "peer_id": peer2_name,
+            "metadata": {"tags": ["normal"]},
+        },
+    ]
+    messages_response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/messages",
+        json={"messages": message_configs},
+    )
+    assert messages_response.status_code == 201
+
+    def list_contents(filter_config: dict[str, Any]) -> list[str]:
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
+            json={"filters": filter_config},
+        )
+        assert response.status_code == 200
+        return [item["content"] for item in response.json()["items"]]
+
+    # Bare list == membership on a regular column
+    assert list_contents({"peer_id": [test_peer.name]}) == ["From peer one"]
+
+    # Multiple values
+    assert sorted(list_contents({"peer_id": [test_peer.name, peer2_name]})) == [
+        "From peer one",
+        "From peer two",
+    ]
+
+    # Equivalent to the explicit {"in": [...]} form
+    assert list_contents({"peer_id": [test_peer.name]}) == list_contents(
+        {"peer_id": {"in": [test_peer.name]}}
+    )
+
+    # Empty list matches nothing (fail-closed), never everything
+    assert list_contents({"peer_id": []}) == []
+
+    # JSONB metadata keeps containment semantics for bare lists:
+    # matches arrays containing ALL listed elements, not membership.
+    assert list_contents({"metadata": {"tags": ["important", "urgent"]}}) == [
+        "From peer one"
+    ]
+    assert list_contents({"metadata": {"tags": ["important", "missing"]}}) == []
+
+
+@pytest.mark.asyncio
 async def test_wildcard_filters(
     client: TestClient, sample_data: tuple[Workspace, Peer]
 ):

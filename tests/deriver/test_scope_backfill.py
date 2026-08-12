@@ -30,7 +30,7 @@ from nanoid import generate as generate_nanoid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src import models
+from src import crud, models
 from src.deriver.scope_backfill import (
     COPIED_FROM_KEY,
     process_scope_backfill,
@@ -38,7 +38,7 @@ from src.deriver.scope_backfill import (
 )
 from src.schemas import DreamType
 from src.utils.queue_payload import ScopeBackfillPayload, ScopeRemovalPayload
-from src.utils.scopes import scope_peer_name
+from src.utils.scopes import is_scope_peer, scope_peer_name
 
 _EMBEDDING_DIM = 1536
 
@@ -60,7 +60,10 @@ async def _create_scope_peer(
     peer = models.Peer(
         name=scope_peer_name(scope_name),
         workspace_name=workspace_name,
-        configuration={"kind": "scope", "observe_me": False},
+        # The authoritative kind flag lives in internal_metadata, which is not
+        # user-writable; `configuration` carries only the observe_me knob.
+        internal_metadata={"kind": "scope"},
+        configuration={"observe_me": False},
     )
     db_session.add(peer)
     await db_session.commit()
@@ -605,7 +608,7 @@ async def test_status_reflects_pending_then_completed(
         f"/v3/workspaces/{workspace_name}/scopes/{scope_name}/sessions",
         json={"session_ids": [session_name]},
     )
-    assert response.status_code == 200
+    assert response.status_code == 204, response.text
 
     # Destination collection: crud.get_or_create_collection is stubbed to an
     # unpersisted object by the autouse fixture, so it must pre-exist.
@@ -615,7 +618,7 @@ async def test_status_reflects_pending_then_completed(
 
     status_url = f"/v3/workspaces/{workspace_name}/scopes/{scope_name}/status"
     response = client.get(status_url)
-    assert response.status_code == 200
+    assert response.status_code == 200, response.text
     backfill_status = response.json()["backfill_status"]
     assert backfill_status[session_name]["state"] == "pending"
 
@@ -628,7 +631,7 @@ async def test_status_reflects_pending_then_completed(
     )
 
     response = client.get(status_url)
-    assert response.status_code == 200
+    assert response.status_code == 200, response.text
     backfill_status = response.json()["backfill_status"]
     assert backfill_status[session_name]["state"] == "completed"
     assert backfill_status[session_name]["docs_copied"] == 1
@@ -689,7 +692,7 @@ async def test_add_sessions_enqueues_backfill_only_when_session_has_messages(
         f"/v3/workspaces/{workspace_name}/scopes/{scope_name}/sessions",
         json={"session_ids": [session_with_messages, empty_session]},
     )
-    assert response.status_code == 200
+    assert response.status_code == 204, response.text
 
     result = await db_session.execute(
         select(models.QueueItem).where(
@@ -700,3 +703,82 @@ async def test_add_sessions_enqueues_backfill_only_when_session_has_messages(
     backfill_items = list(result.scalars().all())
     assert len(backfill_items) == 1
     assert backfill_items[0].payload["session_name"] == session_with_messages
+
+
+# ---------------------------------------------------------------------------
+# The scope `kind` flag and the backfill status map share the scope peer's
+# internal_metadata. Every write to that column must be a JSONB merge scoped to
+# the backfill key; a wholesale assignment would drop the flag and silently turn
+# the peer back into an ordinary one — invisible until some later read stopped
+# recognising it as a scope.
+# ---------------------------------------------------------------------------
+
+
+async def test_backfill_status_writes_preserve_the_scope_kind_flag(
+    db_session: AsyncSession,
+    sample_data: tuple[models.Workspace, models.Peer],
+):
+    """Status writes must not clobber the authoritative kind flag.
+
+    Both live in internal_metadata, so this pins the one property that makes
+    them able to coexist. Covers the whole lifecycle, because a wholesale write
+    could be introduced at any single step: pending, completed, then cleared.
+    """
+    test_workspace, _ = sample_data
+    workspace_name = test_workspace.name
+    scope_name = str(generate_nanoid())
+    session_name = str(generate_nanoid())
+    await _create_scope_peer(db_session, workspace_name, scope_name)
+    # Held as a plain string: the ORM instance is expired below on every check,
+    # so reading an attribute off it would trigger a reload mid-assertion.
+    backing_peer = scope_peer_name(scope_name)
+
+    async def assert_still_a_scope(stage: str) -> dict[str, Any]:
+        db_session.expire_all()
+        refreshed = await db_session.scalar(
+            select(models.Peer)
+            .where(models.Peer.workspace_name == workspace_name)
+            .where(models.Peer.name == backing_peer)
+        )
+        assert refreshed is not None
+        assert is_scope_peer(refreshed.name, refreshed.internal_metadata), (
+            f"the peer stopped being a scope after {stage}: "
+            f"internal_metadata={refreshed.internal_metadata!r}"
+        )
+        # And the facade still resolves it, which is what actually breaks:
+        # get_scope_or_raise 404s on a peer that has lost the flag.
+        resolved = await crud.get_scope_or_raise(db_session, workspace_name, scope_name)
+        assert resolved.name == backing_peer
+        return refreshed.internal_metadata
+
+    await assert_still_a_scope("creation")
+
+    await crud.update_scope_backfill_status(
+        db_session,
+        workspace_name,
+        backing_peer,
+        session_name,
+        state="pending",
+    )
+    await db_session.commit()
+    metadata = await assert_still_a_scope("a pending status write")
+    assert metadata["backfill_status"][session_name]["state"] == "pending"
+
+    await crud.update_scope_backfill_status(
+        db_session,
+        workspace_name,
+        backing_peer,
+        session_name,
+        state="completed",
+        docs_copied=3,
+    )
+    await db_session.commit()
+    metadata = await assert_still_a_scope("a completed status write")
+    assert metadata["backfill_status"][session_name]["docs_copied"] == 3
+
+    await crud.clear_scope_backfill_status(
+        db_session, workspace_name, backing_peer, session_name
+    )
+    await db_session.commit()
+    metadata = await assert_still_a_scope("clearing the status")
+    assert session_name not in metadata.get("backfill_status", {})

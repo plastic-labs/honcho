@@ -23,6 +23,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+from fastapi import BackgroundTasks
 from sqlalchemy import and_, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -36,6 +37,7 @@ from src.reconciler.sync_vectors import (
     build_message_vector_record,
     compute_chunk_positions,
 )
+from src.telemetry import prometheus_metrics
 from src.telemetry.events import EmbeddingCallPurpose
 from src.utils.types import embedding_call_purpose
 from src.vector_store import VectorRecord, VectorStore, get_external_vector_store
@@ -64,6 +66,50 @@ def reset_embed_semaphore() -> None:
     current event loop and current config."""
     global _embed_semaphore
     _embed_semaphore = None
+
+
+class EmbedTaskGate:
+    """Non-blocking admission gate for immediate-embed background tasks.
+
+    Bounds the number of in-flight tasks per API process at
+    ``EMBEDDING.MAX_PENDING_EMBED_TASKS``. When saturated, nothing is scheduled:
+    the rows are already ``sync_state='pending'``, so the reconciler embeds them
+    on its next cycle. The count is taken at schedule time (not task start)
+    because background tasks only run after the response is sent — a request
+    burst would otherwise stack up unbounded scheduled-but-not-started tasks.
+
+    ``in_flight`` is mutated only from the event loop (request handlers and the
+    tracked task), so a plain int is race-free.
+    """
+
+    def __init__(self) -> None:
+        self.in_flight: int = 0
+
+    def try_schedule(
+        self, background_tasks: BackgroundTasks, message_ids: list[str]
+    ) -> bool:
+        """Schedule ``embed_messages_now`` if the cap allows it; return whether
+        the task was scheduled."""
+        if self.in_flight >= settings.EMBEDDING.MAX_PENDING_EMBED_TASKS:
+            if settings.METRICS.ENABLED:
+                prometheus_metrics.record_embed_now_task_shed()
+            return False
+        self.in_flight += 1
+        if settings.METRICS.ENABLED:
+            prometheus_metrics.set_embed_now_tasks_in_flight(self.in_flight)
+        background_tasks.add_task(self._run, message_ids)
+        return True
+
+    async def _run(self, message_ids: list[str]) -> None:
+        try:
+            await embed_messages_now(message_ids)
+        finally:
+            self.in_flight -= 1
+            if settings.METRICS.ENABLED:
+                prometheus_metrics.set_embed_now_tasks_in_flight(self.in_flight)
+
+
+embed_task_gate = EmbedTaskGate()
 
 
 @dataclass(frozen=True)

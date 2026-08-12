@@ -2,15 +2,18 @@
 
 A *scope* is a named grouping of sessions that provides a visibility boundary
 within a peer. Under the hood a scope named ``therapy`` is a peer named
-``scope__therapy`` that observes its member sessions and never speaks.
+``scope.therapy`` that observes its member sessions and never speaks.
 Developers manage scopes exclusively through the ``/scopes`` routes (and the
 ``scopes`` field on session creation) and never see the observer/observed
 mechanics.
 
-This module is the single source of truth for the reserved name prefix and
-the ``kind`` configuration flag. The name prefix is the namespace; the
-``{"kind": "scope"}`` flag inside the peer's configuration JSONB is the
-authoritative marker that guardrails key off.
+This module is the single source of truth for the reserved name prefix and the
+``kind`` flag. Being a scope requires **both**: the reserved name prefix (the
+namespace) and ``{"kind": "scope"}`` in the peer's ``internal_metadata`` JSONB
+(the authoritative marker). Neither half is forgeable — the prefix sits outside
+``RESOURCE_NAME_PATTERN``, and ``internal_metadata`` appears in no API schema —
+so requiring both means a peer that merely occupies the namespace, or merely
+carries a look-alike ``configuration``, is not a scope.
 """
 
 from collections.abc import Iterable
@@ -19,7 +22,14 @@ from typing import Any
 from src.exceptions import ValidationException
 
 # Reserved peer-name prefix for scope peers. User-created peers may not use it.
-SCOPE_PEER_PREFIX = "scope__"
+#
+# The '.' is load-bearing: it is outside RESOURCE_NAME_PATTERN
+# (^[a-zA-Z0-9_-]+$), the charset every peer name created through the API must
+# match. No peer created through the validated API can therefore occupy this
+# namespace. (Peers carried over by the users->peers rename in
+# d429de0e5338 predate that pattern and were never charset-validated, so the
+# legacy-collision path in crud/scope.py stays as a backstop.)
+SCOPE_PEER_PREFIX = "scope."
 
 # Value of the `kind` configuration flag carried by scope peers.
 SCOPE_KIND = "scope"
@@ -46,9 +56,18 @@ def scope_name_from_peer(peer_name: str) -> str:
     return peer_name[len(SCOPE_PEER_PREFIX) :]
 
 
-def is_scope_peer_configuration(configuration: dict[str, Any] | None) -> bool:
-    """Return whether a peer configuration carries the authoritative scope flag."""
-    return bool(configuration) and configuration.get("kind") == SCOPE_KIND
+def is_scope_peer(name: str, internal_metadata: dict[str, Any] | None) -> bool:
+    """Authoritative scope test: reserved name AND the internal kind flag.
+
+    Takes ``(name, internal_metadata)`` rather than a ``Peer`` so it is callable
+    from an ORM instance, the cached plain dict built by ``crud.peer._fetch_peer``,
+    or a raw row.
+    """
+    return (
+        is_scope_peer_name(name)
+        and bool(internal_metadata)
+        and internal_metadata.get("kind") == SCOPE_KIND
+    )
 
 
 def validate_no_scope_peer_names(names: Iterable[str], *, action: str) -> None:

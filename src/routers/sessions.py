@@ -24,7 +24,6 @@ from src.security import JWTParams, require_auth
 from src.telemetry.events import EmbeddingCallPurpose, GetContextEvent, emit
 from src.utils import summarizer
 from src.utils.representation import Representation
-from src.utils.scopes import validate_no_scope_peer_names
 from src.utils.search import search
 from src.utils.tokens import estimate_tokens
 from src.utils.types import embedding_call_purpose
@@ -41,7 +40,7 @@ router = APIRouter(
 # scopes facade so the observer mechanics stay internal.
 _SCOPES_ROUTE_GUIDANCE = (
     "Scope membership is managed via the scopes routes "
-    "(/workspaces/{workspace_id}/scopes/{scope_id}/sessions) or the `scopes` "
+    "(/v3/workspaces/{workspace_id}/scopes/{scope_id}/sessions) or the `scopes` "
     "field at session creation."
 )
 
@@ -53,7 +52,7 @@ async def _get_working_representation_task(
     *,
     observer: str,
     observed: str,
-    session_name: str | None,
+    session_allowlist: list[str] | None,
     search_top_k: int | None,
     search_max_distance: float | None,
     include_most_derived: bool,
@@ -69,7 +68,7 @@ async def _get_working_representation_task(
         last_message: Optional last message for semantic query
         observer: Name of the observer peer
         observed: Name of the observed peer
-        session_name: Optional session to filter by
+        session_allowlist: Optional session allowlist to filter by
         search_top_k: Number of semantic-search-retrieved observations to include in the representation
         search_max_distance: Maximum distance to search for semantically relevant observations
         include_most_derived: Whether to include the most derived observations in the representation
@@ -84,7 +83,7 @@ async def _get_working_representation_task(
         db=db,
         observer=observer,
         observed=observed,
-        session_name=session_name,
+        session_allowlist=session_allowlist,
         include_semantic_query=last_message,
         semantic_search_top_k=search_top_k,
         semantic_search_max_distance=search_max_distance,
@@ -319,11 +318,21 @@ async def get_or_create_session(
             )
         session.name = jwt_params.s
 
+    # The `scopes` field does what the scopes routes do — create scope peers and
+    # attach memberships — so it needs their authorization: workspace-level or
+    # admin only. Checked here rather than through `require_auth(...)` because
+    # that closure only resolves path and query params, never the body, so a
+    # declarative gate cannot see this field.
+    if session.scopes and not (
+        jwt_params.ad or (jwt_params.p is None and jwt_params.s is None)
+    ):
+        raise AuthenticationException("Scope membership requires a workspace-level key")
+
     # Scope peers may not be added through the generic peers mapping; use the
     # `scopes` field (which handles scope-peer creation and observer config).
     if session.peer_names:
-        validate_no_scope_peer_names(
-            session.peer_names.keys(), action=_SCOPES_ROUTE_GUIDANCE
+        await crud.reject_scope_peers(
+            db, workspace_id, session.peer_names.keys(), action=_SCOPES_ROUTE_GUIDANCE
         )
 
     # Handle session creation with proper error handling
@@ -461,7 +470,9 @@ async def add_peers_to_session(
 
     Scope peers cannot be added here; scope membership is managed via the scopes routes.
     """
-    validate_no_scope_peer_names(peers.keys(), action=_SCOPES_ROUTE_GUIDANCE)
+    await crud.reject_scope_peers(
+        db, workspace_id, peers.keys(), action=_SCOPES_ROUTE_GUIDANCE
+    )
     try:
         result = await crud.get_or_create_session(
             db,
@@ -500,7 +511,9 @@ async def set_session_peers(
 
     Scope peers cannot be set here; scope membership is managed via the scopes routes.
     """
-    validate_no_scope_peer_names(peers.keys(), action=_SCOPES_ROUTE_GUIDANCE)
+    await crud.reject_scope_peers(
+        db, workspace_id, peers.keys(), action=_SCOPES_ROUTE_GUIDANCE
+    )
     try:
         await crud.set_peers_for_session(
             db,
@@ -540,7 +553,9 @@ async def remove_peers_from_session(
 
     Scope peers cannot be removed here; scope membership is managed via the scopes routes.
     """
-    validate_no_scope_peer_names(peers, action=_SCOPES_ROUTE_GUIDANCE)
+    await crud.reject_scope_peers(
+        db, workspace_id, peers, action=_SCOPES_ROUTE_GUIDANCE
+    )
     try:
         await crud.remove_peers_from_session(
             db,
@@ -740,6 +755,22 @@ async def get_session_context(
             "peer_target must be provided if peer_perspective is provided"
         )
 
+    # peer_target is the *observed* peer, and no representation or card is ever
+    # formed of a scope. peer_perspective (the observer) is left alone: a scope is
+    # a legitimate perspective, and the read-side scope surface will build on that.
+    if peer_target is not None:
+        # Strict variant: an observed position that creates nothing, so a reserved
+        # name which does not exist yet must be refused too.
+        await crud.reject_scope_observed(
+            db,
+            workspace_id,
+            [peer_target],
+            action=(
+                "No representation is formed of a scope, so a scope cannot be a"
+                " context target."
+            ),
+        )
+
     if not peer_target:
         # No representation or card needed
         summary, messages = await _get_session_context_task(
@@ -793,7 +824,7 @@ async def get_session_context(
         search_query,
         observer=observer,
         observed=observed,
-        session_name=session_id if limit_to_session else None,
+        session_allowlist=[session_id] if limit_to_session else None,
         search_top_k=search_top_k,
         search_max_distance=search_max_distance,
         include_most_derived=include_most_frequent,

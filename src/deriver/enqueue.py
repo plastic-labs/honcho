@@ -478,6 +478,22 @@ async def enqueue_dream(
         rebuild: card_refresh only — rebuild the card without the prior card
     """
     async with tracked_db("dream_enqueue") as db_session:
+        # Authoritative scope check, in the same transaction as the queue insert.
+        # A route-level precheck cannot be relied on: it runs in its own session,
+        # and a *missing* reserved name passes it (nothing has flagged that peer
+        # yet) — so the dream would be enqueued and the scope created before the
+        # worker picked it up, letting the Dreamer run with a real scope as
+        # observed. A scope as `observer` stays allowed: consolidating scoped
+        # collections is exactly what the Dreamer does.
+        await crud.reject_scope_observed(
+            db_session,
+            workspace_name,
+            [observed],
+            action=(
+                "No representation is formed of a scope, so a scope cannot be the"
+                " observed peer of a dream."
+            ),
+        )
         try:
             dream_record = create_dream_record(
                 workspace_name,

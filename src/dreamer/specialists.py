@@ -20,7 +20,7 @@ from typing import Any, cast
 
 from nanoid import generate as generate_nanoid
 
-from src import crud, schemas
+from src import crud
 from src.config import ConfiguredModelSettings, settings
 from src.dependencies import tracked_db
 from src.exceptions import ValidationException
@@ -266,13 +266,9 @@ If you update it, send the full deduplicated list and remove stale entries.
         try:
             # Short-lived DB session for preflight operations
             async with tracked_db("dream.specialist.preflight") as db:
-                await crud.get_peer(
-                    db, workspace_name, schemas.PeerCreate(name=observer)
-                )
+                await crud.get_peer(db, workspace_name, observer)
                 if observer != observed:
-                    await crud.get_peer(
-                        db, workspace_name, schemas.PeerCreate(name=observed)
-                    )
+                    await crud.get_peer(db, workspace_name, observed)
 
                 # Determine if peer card tools should be included. Specialists that
                 # cannot write to the peer card (e.g., induction) skip the fetch and
@@ -613,7 +609,8 @@ Use `create_observations_deductive`.
 3. Always include source_ids linking to the observations you're synthesizing
 4. Empty or missing source_ids will be rejected
 5. Delete outdated observations - don't leave duplicates
-6. Quality over quantity - fewer good deductions beat many weak ones"""
+6. Quality over quantity - fewer good deductions beat many weak ones
+7. When you are finished, do not output a summary of what you did - output only the token DONE"""
 
     def build_user_prompt(
         self,
@@ -744,7 +741,8 @@ Use `create_observations_inductive`.
 3. Confidence based on evidence count: 2=low, 3-4=medium, 5+=high
 4. Look for HOW things change over time, not just static facts
 5. Include source_ids - always link back to evidence
-6. Empty or missing source_ids will be rejected"""
+6. Empty or missing source_ids will be rejected
+7. When you are finished, do not output a summary of what you did - output only the token DONE"""
 
     def build_user_prompt(
         self,
