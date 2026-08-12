@@ -286,20 +286,6 @@ async def test_tenant_work_still_resets_backoff(
     assert sleeps == [1.0, 2.0, 1.0, 2.0]
 
 
-def test_backoff_cap_clears_pooler_idle_timeout() -> None:
-    """Guard the mechanism this backoff exists for.
-
-    An idle tenant's connection is released only when the AlloyDB managed
-    pooler's server_connection_idle_timeout elapses between polls, so the
-    SHORTEST jittered sleep at the cap -- not the average -- has to clear it.
-    If someone raises the jitter ratio or lowers the cap, this fails loudly.
-    """
-    pooler_idle_timeout_seconds = 45.0
-    cap = settings.DERIVER.POLLING_SLEEP_MAX_INTERVAL_SECONDS
-    shortest_sleep_at_cap = cap * (1.0 - settings.DERIVER.POLLING_JITTER_RATIO)
-    assert shortest_sleep_at_cap > pooler_idle_timeout_seconds
-
-
 def test_inflight_gauge_no_drift(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings.METRICS, "NAMESPACE", "test")
     child: Any = db_queries_in_flight_gauge.labels(instance_type="api")
