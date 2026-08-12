@@ -4,6 +4,7 @@
 #   cp docker-compose.yml.example docker-compose.yml
 #   cp .env.template .env  # edit with your provider config
 #   docker compose up -d --build
+#   INSTALL_LANCEDB=true docker compose up -d --build  # optional local vector store
 #
 # By default, ports are bound to 127.0.0.1 (localhost only).
 # For development, uncomment the source mounts and monitoring services below.
@@ -13,6 +14,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        INSTALL_LANCEDB: ${INSTALL_LANCEDB:-false}
     entrypoint: ["sh", "docker/entrypoint.sh"]
     depends_on:
       database:
@@ -50,6 +53,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        INSTALL_LANCEDB: ${INSTALL_LANCEDB:-false}
     entrypoint: ["/app/.venv/bin/python", "-m", "src.deriver"]
     depends_on:
       api:
