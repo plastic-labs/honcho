@@ -11,7 +11,10 @@ from pydantic import BaseModel, ValidationError
 
 from src.exceptions import ValidationException
 from src.llm.backend import CompletionResult, StreamChunk, ToolCallResult
-from src.llm.request_builder import apply_sdk_passthroughs
+from src.llm.request_builder import (
+    apply_sdk_passthroughs,
+    request_timeout_from_extra_params,
+)
 from src.llm.structured_output import (
     StructuredOutputError,
     empty_structured_output,
@@ -397,6 +400,10 @@ class OpenAIBackend:
             # if the operator supplies `extra_body.reasoning`, it replaces any
             # value Honcho auto-injected above.
             apply_sdk_passthroughs(params, extra_params)
+
+        timeout = request_timeout_from_extra_params(extra_params)
+        if timeout is not None:
+            params["timeout"] = timeout
         return params
 
     def _normalize_response(

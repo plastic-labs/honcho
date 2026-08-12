@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator
 from datetime import datetime, timedelta, timezone
 from typing import Any, ClassVar, cast
 
+from google.genai import types as genai_types
 from pydantic import BaseModel
 
 from src.exceptions import LLMError, ValidationException
@@ -14,7 +15,10 @@ from src.llm.caching import (
     build_cache_key,
     gemini_cache_store,
 )
-from src.llm.request_builder import coerce_passthrough_mapping
+from src.llm.request_builder import (
+    coerce_passthrough_mapping,
+    request_timeout_from_extra_params,
+)
 from src.llm.structured_output import repair_response_model_json, schema_instruction
 
 GEMINI_BLOCKED_FINISH_REASONS = {
@@ -289,19 +293,38 @@ class GeminiBackend:
         # extra_query has no SDK-level equivalent and is ignored. Shallow
         # merge with operator-wins. Operators are responsible for not setting
         # unknown fields that google-genai's validation will reject.
+        http_options: genai_types.HttpOptions | None = None
         if extra_params:
             operator_extra_body = extra_params.get("extra_body")
             if operator_extra_body:
                 config.update(
                     coerce_passthrough_mapping("extra_body", operator_extra_body)
                 )
+                raw_http_options = config.get("http_options")
+                if isinstance(raw_http_options, genai_types.HttpOptions):
+                    http_options = raw_http_options
+                elif isinstance(raw_http_options, dict):
+                    http_options = genai_types.HttpOptions.model_validate(
+                        raw_http_options
+                    )
             operator_extra_headers = extra_params.get("extra_headers")
             if operator_extra_headers:
-                http_options = config.setdefault("http_options", {})
-                existing_headers = http_options.setdefault("headers", {})
+                if http_options is None:
+                    http_options = genai_types.HttpOptions()
+                existing_headers = dict(http_options.headers or {})
                 existing_headers.update(
                     coerce_passthrough_mapping("extra_headers", operator_extra_headers)
                 )
+                http_options.headers = existing_headers
+
+        timeout = request_timeout_from_extra_params(extra_params)
+        if timeout is not None:
+            if http_options is None:
+                http_options = genai_types.HttpOptions()
+            # Gemini has no native timeout kwarg; set the httpx-level value in ms.
+            http_options.timeout = int(timeout * 1000)
+        if http_options is not None:
+            config["http_options"] = http_options
         return config
 
     def _normalize_response(

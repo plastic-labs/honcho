@@ -1,6 +1,6 @@
 ---
 name: honcho-cli
-description: Inspect and debug Honcho workspaces via the `honcho` CLI. Use when investigating peer representations, memory state, session context, queue status, or dialectic quality — any task that requires introspection of a Honcho deployment.
+description: Inspect and debug Honcho workspaces via the `honcho` CLI. Use when investigating peer representations, memory state, session context, or dialectic quality — any task that requires introspection of a Honcho deployment, including verifying that a recall/record memory loop is actually working.
 allowed-tools: Bash(honcho:*), Bash(jq:*), Read, Grep
 ---
 
@@ -20,7 +20,7 @@ allowed-tools: Bash(honcho:*), Bash(jq:*), Read, Grep
 - `honcho config` — CLI configuration
 - `honcho workspace` — inspect, delete, search
 - `honcho peer` — inspect, card, chat, search
-- `honcho session` — inspect, messages, context, summaries
+- `honcho session` — inspect, view (transcript), context, summaries
 - `honcho message` — list and get
 - `honcho conclusion` — list, search, create, delete
 
@@ -30,7 +30,6 @@ allowed-tools: Bash(honcho:*), Bash(jq:*), Read, Grep
 - Run `honcho peer inspect` before `honcho peer chat` to understand context.
 - Use `honcho session context` to see exactly what an agent receives.
 - Never run `honcho workspace delete` without `honcho workspace inspect` first.
-- Check queue status when derivation seems stalled.
 - Compare peer card with conclusions to understand memory state.
 
 ## Inspection tour
@@ -62,6 +61,8 @@ honcho conclusion search "topic" --observer <peer_id> --json
 
 ```bash
 honcho session inspect <session_id> --json
+honcho session view <session_id> --last 20 --json
+honcho session view <session_id> --page 2 --size 50 --json
 honcho message list <session_id> --last 20 --json
 honcho session context <session_id> --json
 honcho session summaries <session_id> --json
@@ -81,9 +82,6 @@ honcho peer search <peer_id> "query" --json
 ```bash
 # Is observation enabled?
 honcho peer inspect <peer_id> --json | jq '.configuration'
-
-# Is the deriver queue processing messages?
-honcho workspace queue-status --json
 
 # What conclusions exist?
 honcho conclusion list --observer <peer_id> --json
