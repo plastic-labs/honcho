@@ -9,7 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import exceptions, models, schemas
 from src.cache.client import safe_cache_delete
-from src.crud.peer import get_or_create_peers, get_peer, peer_cache_key
+from src.crud.peer import (
+    get_or_create_peers,
+    get_peer,
+    peer_cache_key,
+    reject_scope_observed,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +43,7 @@ async def get_peer_card(
     Raises:
         ResourceNotFoundException: If the peer does not exist.
     """
-    peer = await get_peer(db, workspace_name, schemas.PeerCreate(name=observer))
+    peer = await get_peer(db, workspace_name, observer)
     return cast(
         list[str] | None,
         peer.internal_metadata.get(
@@ -68,9 +73,24 @@ async def set_peer_card(
         observer: Peer name of the observer
 
     """
+    # A scope may be the card's *observer* — the Dreamer writes (scope, observed)
+    # cards — but never its subject. Authoritative here rather than only in the
+    # route, so the Dreamer and agent-tool paths are covered too, and in the same
+    # transaction as the JSONB write below.
+    #
+    # A *missing* reserved name is refused as well: only the observer is resolved
+    # below, so a card keyed on `scope.future` would otherwise persist while that
+    # peer does not exist and retroactively describe the scope once created.
+    await reject_scope_observed(
+        db,
+        workspace_name,
+        [observed],
+        action="No peer card is ever formed about a scope.",
+    )
+
     # Ensure the peer exists (get-or-create)
     peers_result = await get_or_create_peers(
-        db, workspace_name, [schemas.PeerCreate(name=observer)]
+        db, workspace_name, [schemas.PeerSpec(name=observer)]
     )
 
     stmt = (

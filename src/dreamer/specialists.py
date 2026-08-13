@@ -20,7 +20,7 @@ from typing import Any, cast
 
 from nanoid import generate as generate_nanoid
 
-from src import crud, schemas
+from src import crud
 from src.config import ConfiguredModelSettings, settings
 from src.dependencies import tracked_db
 from src.exceptions import ValidationException
@@ -266,13 +266,9 @@ If you update it, send the full deduplicated list and remove stale entries.
         try:
             # Short-lived DB session for preflight operations
             async with tracked_db("dream.specialist.preflight") as db:
-                await crud.get_peer(
-                    db, workspace_name, schemas.PeerCreate(name=observer)
-                )
+                await crud.get_peer(db, workspace_name, observer)
                 if observer != observed:
-                    await crud.get_peer(
-                        db, workspace_name, schemas.PeerCreate(name=observed)
-                    )
+                    await crud.get_peer(db, workspace_name, observed)
 
                 # Determine if peer card tools should be included. Specialists that
                 # cannot write to the peer card (e.g., induction) skip the fetch and

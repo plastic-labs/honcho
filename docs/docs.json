@@ -24,7 +24,7 @@
   "navigation": {
     "versions": [
       {
-        "version": "v3.0.11",
+        "version": "v3.0.12",
         "api": {
           "openapi": ["v3/openapi.json"]
         },
@@ -65,6 +65,7 @@
                       "v3/documentation/features/advanced/representation-scopes",
                       "v3/documentation/features/advanced/dreaming",
                       "v3/documentation/features/advanced/queue-status",
+                      "v3/documentation/features/advanced/webhooks",
                       "v3/documentation/features/advanced/search",
                       "v3/documentation/features/advanced/using-filters",
                       "v3/documentation/features/advanced/structured-outputs",

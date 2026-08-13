@@ -62,6 +62,38 @@ class TestExtractSessionAllowlist:
             with pytest.raises(FilterError):
                 extract_session_allowlist({"session_id": bad})
 
+    @pytest.mark.parametrize(
+        "filters",
+        [
+            {"session_id": "*"},
+            {"session_id": ["s1", "*"]},
+            {"session_id": {"in": ["*"]}},
+        ],
+    )
+    def test_wildcard_rejected(self, filters: dict[str, Any]):
+        """A wildcard means two different things depending on which consumer
+        receives the allowlist: the filter DSL drops the condition entirely
+        (matching every session), while the direct `IN` and Python membership
+        paths treat "*" as a literal session name (matching none). It is not
+        part of this endpoint's contract, so it is rejected outright.
+
+        The mixed list is the case that matters most — it looks narrowed.
+        """
+        with pytest.raises(FilterError, match="Invalid session id"):
+            extract_session_allowlist(filters)
+
+    @pytest.mark.parametrize("name", ["a b", "a/b", "a.b", "a%b", "s1;drop"])
+    def test_malformed_session_ids_rejected(self, name: str):
+        with pytest.raises(FilterError, match="Invalid session id"):
+            extract_session_allowlist({"session_id": name})
+
+    def test_valid_id_characters_still_accepted(self):
+        """The pattern must not be stricter than the ids the API actually
+        issues, which include underscores and hyphens."""
+        assert extract_session_allowlist({"session_id": "Valid_name-123"}) == [
+            "Valid_name-123"
+        ]
+
     def test_cap_enforced(self):
         too_many = [f"s{i}" for i in range(MAX_SESSION_ALLOWLIST_ENTRIES + 1)]
         with pytest.raises(FilterError, match="at most"):

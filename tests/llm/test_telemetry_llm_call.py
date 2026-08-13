@@ -277,7 +277,7 @@ class TestExecutorEndToEnd:
 
     @pytest.mark.asyncio
     async def test_success_path_emits_one_event(self):
-        from src.llm import executor
+        from src.llm import executor, registry
 
         emitted: list[BaseEvent] = []
         result = BackendCompletionResult(
@@ -285,7 +285,7 @@ class TestExecutorEndToEnd:
         )
 
         with (
-            patch.object(executor, "CLIENTS", {"anthropic": object()}),
+            patch.object(registry, "CLIENTS", {"anthropic": object()}),
             patch.object(
                 executor,
                 "backend_for_provider",
@@ -326,7 +326,7 @@ class TestExecutorEndToEnd:
         'error' — client disconnects / shutdowns must not pollute error rates."""
         import asyncio
 
-        from src.llm import executor
+        from src.llm import executor, registry
 
         emitted: list[BaseEvent] = []
 
@@ -334,7 +334,7 @@ class TestExecutorEndToEnd:
             raise asyncio.CancelledError()
 
         with (
-            patch.object(executor, "CLIENTS", {"anthropic": object()}),
+            patch.object(registry, "CLIENTS", {"anthropic": object()}),
             patch.object(executor, "backend_for_provider", return_value=object()),
             patch.object(executor, "execute_completion", new=_cancel),
             patch(
@@ -364,7 +364,7 @@ class TestExecutorEndToEnd:
         import asyncio
         from collections.abc import AsyncIterator
 
-        from src.llm import executor
+        from src.llm import executor, registry
 
         emitted: list[BaseEvent] = []
 
@@ -377,7 +377,7 @@ class TestExecutorEndToEnd:
             return _cancelling_stream()
 
         with (
-            patch.object(executor, "CLIENTS", {"anthropic": object()}),
+            patch.object(registry, "CLIENTS", {"anthropic": object()}),
             patch.object(executor, "backend_for_provider", return_value=object()),
             patch.object(executor, "execute_stream", new=_setup_stream),
             patch.object(
@@ -418,7 +418,7 @@ class TestExecutorEndToEnd:
         generator without awaiting `execute_stream`, hiding setup failures
         from tenacity.
         """
-        from src.llm import executor
+        from src.llm import executor, registry
 
         emitted: list[BaseEvent] = []
 
@@ -426,7 +426,7 @@ class TestExecutorEndToEnd:
             raise RuntimeError("rate limited")
 
         with (
-            patch.object(executor, "CLIENTS", {"anthropic": object()}),
+            patch.object(registry, "CLIENTS", {"anthropic": object()}),
             patch.object(executor, "backend_for_provider", return_value=object()),
             patch.object(executor, "execute_stream", new=_setup_explodes),
             patch(
@@ -455,7 +455,7 @@ class TestExecutorEndToEnd:
 
     @pytest.mark.asyncio
     async def test_error_path_still_emits_via_finally(self):
-        from src.llm import executor
+        from src.llm import executor, registry
 
         emitted: list[BaseEvent] = []
 
@@ -463,7 +463,7 @@ class TestExecutorEndToEnd:
             raise RuntimeError("backend exploded")
 
         with (
-            patch.object(executor, "CLIENTS", {"anthropic": object()}),
+            patch.object(registry, "CLIENTS", {"anthropic": object()}),
             patch.object(
                 executor,
                 "backend_for_provider",
@@ -570,7 +570,7 @@ class TestStreamFinalResponseRetryAttempt:
     async def test_attempt_index_bumps_across_retries(self):
         from collections.abc import AsyncIterator
 
-        from src.llm import executor, tool_loop
+        from src.llm import executor, registry, tool_loop
 
         emitted: list[BaseEvent] = []
 
@@ -607,7 +607,7 @@ class TestStreamFinalResponseRetryAttempt:
         )
 
         with (
-            patch.object(executor, "CLIENTS", {"anthropic": object()}),
+            patch.object(registry, "CLIENTS", {"anthropic": object()}),
             patch.object(executor, "backend_for_provider", return_value=object()),
             patch.object(executor, "execute_stream", new=_flaky_setup),
             patch(
