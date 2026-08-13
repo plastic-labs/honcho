@@ -73,10 +73,7 @@ class TestDeriverProcessing:
         assert "llm_settings" not in kwargs
 
     async def test_all_observer_saves_failing_surfaces_failure(self):
-        """When every observer's save_representation fails, the batch must raise
-        instead of swallowing it. Without this the work unit is marked processed
-        with zero documents saved: silent memory loss (#728).
-        """
+        """When every observer's save_representation fails, the batch must raise."""
         message = Mock(
             id=1,
             public_id="msg_1",

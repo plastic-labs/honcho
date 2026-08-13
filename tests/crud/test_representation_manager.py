@@ -636,7 +636,7 @@ class TestRepresentationManagerSave:
 
     @pytest.mark.asyncio
     async def test_save_representation_embeds_with_truncate_on_oversize(self):
-        """One oversize observation must not drop the rest of the batch (#569)."""
+        """One oversize observation must not drop the rest of the batch."""
         manager = RepresentationManager(
             "workspace",
             observer="observer",

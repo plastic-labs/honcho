@@ -344,9 +344,6 @@ async def process_representation_tasks_batch(
         )
     )
 
-    # If every observer's save failed, surface the failure to the queue manager so the
-    # work unit is marked errored instead of silently processed with zero documents saved
-    # (#728). Raised after telemetry so metrics still record the attempt.
     if save_errors and successful_observer_count == 0:
         details = "; ".join(
             f"{observer}: {exc.__class__.__name__}: {exc}"

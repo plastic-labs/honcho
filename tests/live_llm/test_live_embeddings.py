@@ -151,11 +151,7 @@ async def test_live_openai_float_encoding_matches_base64(
 async def test_live_batch_embed_truncates_oversize_instead_of_dropping_batch(
     spec: LiveEmbeddingSpec,
 ) -> None:
-    """Regression for #569. Fails on main: simple_batch_embed raises
-    ValueError (or TypeError, before `on_oversize` existed) when any input
-    exceeds the per-item cap, so the rest of the batch is never embedded.
-    After the truncate path, one oversize item cannot drop the others.
-    """
+    """on_oversize='truncate' keeps one vector per input when an item exceeds the cap."""
     # Tiny cap so the oversize input stays cheap to tokenize and send.
     client = make_embedding_client(spec, max_input_tokens=32)
     oversize = " ".join(f"oversize-token-{index}" for index in range(200))

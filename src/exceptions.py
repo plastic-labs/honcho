@@ -135,12 +135,7 @@ class VectorStoreError(HonchoException):
 
 @final
 class RepresentationSaveError(HonchoException):
-    """Raised when every observer's representation save fails in a batch.
-
-    Surfaced from the deriver to the queue manager so the work unit is marked
-    errored instead of silently processed with zero documents saved. The
-    underlying save exception is preserved as the cause via ``raise ... from``.
-    """
+    """Raised when every observer's representation save fails in a batch."""
 
     status_code = 500
     detail = "Representation save failed for all observers"

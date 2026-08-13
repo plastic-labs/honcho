@@ -318,15 +318,7 @@ class _EmbeddingClient:
         )
 
     def _truncate_to_token_limit(self, text: str) -> tuple[str, int]:
-        """Return a prefix of `text` whose re-encoded token count fits the cap.
-
-        `decode(ids[:n])` can re-encode to more than `n` tokens at BPE /
-        pre-tokenizer boundaries (a slice landing mid-character decodes to
-        replacement chars that cost tokens of their own), so we re-encode
-        after each slice and trim again until the verified count fits. Each
-        retry keeps strictly fewer tokens than the last, so the loop always
-        terminates instead of oscillating around the cap.
-        """
+        """Return a prefix of `text` whose re-encoded token count fits the cap."""
         token_ids = self.encoding.encode(text)
         keep = self.max_embedding_tokens
         while len(token_ids) > self.max_embedding_tokens:
@@ -335,8 +327,6 @@ class _EmbeddingClient:
                 return "", 0
             text = self.encoding.decode(token_ids[:keep])
             token_ids = self.encoding.encode(text)
-            # Guarantee forward progress: if this slice still re-encodes over
-            # the cap, the next one must be strictly smaller.
             keep -= 1
         return text, len(token_ids)
 
@@ -354,11 +344,8 @@ class _EmbeddingClient:
 
         Args:
             texts: List of text strings to embed
-            on_oversize: What to do when an input exceeds `max_embedding_tokens`.
-                ``"raise"`` (default) preserves the historical contract.
-                ``"truncate"`` embeds a token-capped prefix and keeps the
-                one-input → one-vector mapping, so one long item cannot drop
-                the rest of the batch.
+            on_oversize: ``"raise"`` (default) errors; ``"truncate"`` embeds a
+                token-capped prefix.
 
         Returns:
             List of embedding vectors, one per input text (in order)
