@@ -94,6 +94,27 @@ for await (const chunk of responseStream.iter_text()) {
 
 Streaming is useful for displaying real-time responses in chat interfaces or when asking complex questions that require longer answers.
 
+## Scoping to Sessions
+
+By default the chat endpoint reasons over everything Honcho knows about the
+peer. Pass `session` (`session_id` on the REST body) to restrict it to one
+session:
+
+<CodeGroup>
+```python Python
+answer = peer.chat("What did the user ask about?", session=session.id)
+```
+
+```typescript TypeScript
+const answer = await peer.chat("What did the user ask about?", { session: session.id });
+```
+</CodeGroup>
+
+To scope a request to a *set* of sessions, use the session allowlist — a
+constrained `filters` body on the endpoint. See
+[Scoping Recall to Sessions](/v3/documentation/features/advanced/using-filters#scoping-recall-to-sessions)
+for the accepted shapes and for what an allowlist changes about the answer.
+
 ## Structured Outputs
 
 When your application needs a machine-readable answer instead of prose, pass a schema as `response_format` and the answer is guaranteed to conform to it:
