@@ -68,9 +68,6 @@ ALLOWED_EXTERNAL_TO_INTERNAL_COLUMN_MAPPING_DOCUMENTS = {
 
 MAX_SESSION_ALLOWLIST_ENTRIES = 1000
 
-# Values that can be bound to a non-JSONB column. Anything else (dict, list,
-# bytes, arbitrary objects) compiles into a valid statement and then fails in
-# psycopg at execute time as an unhandled 500, so it is rejected up front.
 # Columns whose values come from a closed set. Derived from the Literal types
 # themselves, so adding a level (e.g. "abduction") or a sync state updates
 # filter validation with no change here — an unlisted value is a 422 rather
@@ -367,8 +364,13 @@ def apply_filter(
     except FilterError:
         raise
     except Exception:
+        # Keys only, not the body: filter operands are client-supplied and carry
+        # peer/session ids and free-text `contains` values. The traceback plus
+        # the entry shape is what actually locates a builder bug.
         logger.exception(
-            "Unexpected error building filter for %s: %r", model_class.__name__, filters
+            "Unexpected error building filter for %s; filter keys: %s",
+            model_class.__name__,
+            sorted(filters),
         )
         raise FilterError("Invalid filter configuration") from None
 
@@ -520,6 +522,14 @@ def _build_field_condition(
     # Handle wildcard - matches everything, so no condition needed
     if value == "*":
         return None
+
+    # A null operand is a null check, not a value to compare. Every branch below
+    # binds the operand against the column's type, and no type accepts None, so
+    # this has to short-circuit or `{"col": null}` raises instead of matching the
+    # rows it names. Keeps bare null agreeing with `{"ne": null}` (IS NOT NULL)
+    # and with `NOT [{"col": null}]`.
+    if value is None:
+        return column.is_(None)
 
     # Bare-list sugar on regular columns: {"session_id": ["a", "b"]} is
     # shorthand for {"session_id": {"in": ["a", "b"]}}. JSONB columns are
@@ -764,8 +774,8 @@ def _build_comparison_conditions(
             continue
 
         # A null operand is a null check, not a value comparison, on every
-        # column type. Only `ne` is meaningful: {"col": None} already covers
-        # IS NULL via the equality path in _build_field_condition.
+        # column type. Only `ne` is meaningful: {"col": None} covers IS NULL
+        # via the null guard in _build_field_condition.
         if op_value is None:
             if operator != "ne":
                 raise FilterError(

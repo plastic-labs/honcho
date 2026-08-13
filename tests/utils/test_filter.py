@@ -210,6 +210,9 @@ def test_incompatible_operand_types_are_rejected(model: Any, filters: dict[str, 
 
 def _where(model: Any, filters: dict[str, Any]) -> str:
     stmt = apply_filter(select(model), model, filters)
+    # Without this, a dropped condition makes split("WHERE") return the whole
+    # statement, so a filter that silently widened could still pass the asserts.
+    assert stmt.whereclause is not None
     return str(stmt.compile(dialect=psycopg_dialect.dialect())).split("WHERE")[-1]
 
 
@@ -244,6 +247,42 @@ def test_ne_null_still_renders_is_not_null():
     """The null operand is intercepted before the operator dispatch, so this
     path is unchanged by null-safe `ne`."""
     assert "IS NOT NULL" in _where(Document, {"session_id": {"ne": None}})
+
+
+@pytest.mark.parametrize(
+    ("model", "filters"),
+    [
+        (Document, {"session_id": None}),  # text
+        (Message, {"token_count": None}),  # numeric
+        (Session, {"is_active": None}),  # boolean
+        (Message, {"created_at": None}),  # datetime
+        (Document, {"metadata": None}),  # JSONB
+        (Document, {"source_ids": None}),  # JSONB via the raw-key fallback
+    ],
+)
+def test_bare_null_is_a_null_check(model: Any, filters: dict[str, Any]):
+    """Regression: every operand routes through _coerce_operand, which accepts
+    no None on any column type, so bare null raised FilterError instead of
+    matching the unset rows it names."""
+    assert "IS NULL" in _where(model, filters)
+
+
+def test_bare_null_agrees_with_negation():
+    """`NOT [{col: null}]` and `{col: {ne: null}}` must select the same rows.
+    `x IS NULL` never evaluates to NULL, so `(x IS NULL) IS NOT true` is exactly
+    `x IS NOT NULL` — the three forms have to stay in agreement."""
+    assert "IS NOT NULL" in _where(Document, {"session_id": {"ne": None}})
+    negated = _where(Document, {"NOT": [{"session_id": None}]})
+    assert "IS NULL" in negated
+    assert "IS NOT true" in negated
+
+
+def test_dict_on_raw_key_jsonb_column_is_equality():
+    """Document falls back to raw column names, so a JSONB column outside
+    JSONB_COLUMNS reaches _build_field_condition's dict branch. It compares as
+    equality rather than containment — unlike `metadata`."""
+    where = _where(Document, {"source_ids": {"kind": "note"}})
+    assert "source_ids =" in where
 
 
 @pytest.mark.parametrize(
@@ -316,7 +355,6 @@ _MALFORMED: list[dict[str, Any]] = [
     {"NOT": None},
     {"NOT": [None]},
     {"unknown_column": 1},
-    {"metadata": None},
 ]
 
 
