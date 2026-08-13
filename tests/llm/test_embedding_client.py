@@ -70,7 +70,7 @@ async def test_openai_embedding_client_uses_configured_model_and_dimensions(
             self.base_url: str | None = base_url
             self.embeddings: FakeOpenAIEmbeddingsAPI = fake_embeddings
 
-    monkeypatch.setattr("src.embedding_client.AsyncOpenAI", FakeOpenAIClient)
+    monkeypatch.setattr("openai.AsyncOpenAI", FakeOpenAIClient)
 
     client = _EmbeddingClient(
         EmbeddingModelConfig(
@@ -107,7 +107,7 @@ async def test_openai_embedding_client_rejects_dimension_mismatch(
         def __init__(self, *, api_key: str | None, base_url: str | None) -> None:
             self.embeddings: FakeOpenAIEmbeddingsAPI = fake_embeddings
 
-    monkeypatch.setattr("src.embedding_client.AsyncOpenAI", FakeOpenAIClient)
+    monkeypatch.setattr("openai.AsyncOpenAI", FakeOpenAIClient)
 
     client = _EmbeddingClient(
         EmbeddingModelConfig(
@@ -156,7 +156,7 @@ async def test_gemini_embedding_client_uses_output_dimensionality(
             self.http_options: Any = http_options
             self.aio: Any = SimpleNamespace(models=FakeGeminiModels())
 
-    monkeypatch.setattr("src.embedding_client.genai.Client", FakeGeminiClient)
+    monkeypatch.setattr("google.genai.Client", FakeGeminiClient)
 
     client = _EmbeddingClient(
         EmbeddingModelConfig(
@@ -201,7 +201,7 @@ async def test_gemini_embedding_client_keeps_timeout_without_base_url(
             self.http_options: Any = http_options
             self.aio: Any = SimpleNamespace(models=SimpleNamespace())
 
-    monkeypatch.setattr("src.embedding_client.genai.Client", FakeGeminiClient)
+    monkeypatch.setattr("google.genai.Client", FakeGeminiClient)
 
     client = _EmbeddingClient(
         EmbeddingModelConfig(
@@ -238,7 +238,7 @@ def _build_openai_client(
             self.base_url: str | None = base_url
             self.embeddings: FakeOpenAIEmbeddingsAPI = fake_embeddings
 
-    monkeypatch.setattr("src.embedding_client.AsyncOpenAI", FakeOpenAIClient)
+    monkeypatch.setattr("openai.AsyncOpenAI", FakeOpenAIClient)
 
     client = _EmbeddingClient(
         EmbeddingModelConfig(
@@ -384,7 +384,7 @@ async def test_gemini_simple_batch_embed_respects_configured_max_batch_size(
         def __init__(self, *, api_key: str | None, http_options: Any) -> None:
             self.aio: Any = SimpleNamespace(models=FakeGeminiModels())
 
-    monkeypatch.setattr("src.embedding_client.genai.Client", FakeGeminiClient)
+    monkeypatch.setattr("google.genai.Client", FakeGeminiClient)
 
     client = _EmbeddingClient(
         EmbeddingModelConfig(
@@ -432,7 +432,7 @@ async def test_gemini_simple_batch_embed_defaults_to_100_when_unset(
         def __init__(self, *, api_key: str | None, http_options: Any) -> None:
             self.aio: Any = SimpleNamespace(models=FakeGeminiModels())
 
-    monkeypatch.setattr("src.embedding_client.genai.Client", FakeGeminiClient)
+    monkeypatch.setattr("google.genai.Client", FakeGeminiClient)
 
     client = _EmbeddingClient(
         EmbeddingModelConfig(
@@ -710,7 +710,7 @@ async def test_simple_batch_embed_respects_token_budget_per_request(
         def __init__(self, *, api_key: str | None, base_url: str | None) -> None:
             self.embeddings: FakeOpenAIEmbeddingsAPI = fake_embeddings
 
-    monkeypatch.setattr("src.embedding_client.AsyncOpenAI", FakeOpenAIClient)
+    monkeypatch.setattr("openai.AsyncOpenAI", FakeOpenAIClient)
 
     # max_input_tokens=100 per single input; max_tokens_per_request=120 total,
     # so two ~80-token inputs must end up in *separate* requests.
@@ -748,7 +748,7 @@ async def test_simple_batch_embed_rejects_oversized_input(
         def __init__(self, *, api_key: str | None, base_url: str | None) -> None:
             self.embeddings: FakeOpenAIEmbeddingsAPI = fake_embeddings
 
-    monkeypatch.setattr("src.embedding_client.AsyncOpenAI", FakeOpenAIClient)
+    monkeypatch.setattr("openai.AsyncOpenAI", FakeOpenAIClient)
 
     client = _EmbeddingClient(
         EmbeddingModelConfig(
@@ -778,7 +778,7 @@ def test_prepare_chunks_returns_ordered_chunks(
         def __init__(self, *, api_key: str | None, base_url: str | None) -> None:
             self.embeddings: FakeOpenAIEmbeddingsAPI = fake_embeddings
 
-    monkeypatch.setattr("src.embedding_client.AsyncOpenAI", FakeOpenAIClient)
+    monkeypatch.setattr("openai.AsyncOpenAI", FakeOpenAIClient)
 
     client = _EmbeddingClient(
         EmbeddingModelConfig(
@@ -844,7 +844,7 @@ async def test_gemini_process_batch_wraps_contents_as_content_part(
             self.http_options: Any = http_options
             self.aio: Any = SimpleNamespace(models=FakeGeminiModels())
 
-    monkeypatch.setattr("src.embedding_client.genai.Client", FakeGeminiClient)
+    monkeypatch.setattr("google.genai.Client", FakeGeminiClient)
 
     client = _EmbeddingClient(
         EmbeddingModelConfig(

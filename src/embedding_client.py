@@ -1,16 +1,15 @@
+from __future__ import annotations
+
 import asyncio
 import logging
 import threading
 import time
 from collections import defaultdict
 from collections.abc import Awaitable, Callable
-from typing import Any, Literal, NamedTuple, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple, TypeVar, cast
 
 import tiktoken
-from google import genai
-from google.genai import types as genai_types
 from nanoid import generate as generate_nanoid
-from openai import AsyncOpenAI
 
 from .config import (
     EmbeddingEncodingFormat,
@@ -18,6 +17,10 @@ from .config import (
     resolve_embedding_model_config,
     settings,
 )
+
+if TYPE_CHECKING:
+    from google import genai
+    from openai import AsyncOpenAI
 
 logger = logging.getLogger(__name__)
 
@@ -189,6 +192,9 @@ class _EmbeddingClient:
         if self.transport == "gemini":
             if not config.api_key:
                 raise ValueError("Gemini API key is required")
+            from google import genai
+            from google.genai import types as genai_types
+
             # 10-minute HTTP timeout, in lockstep with the LLM registry's Gemini
             # client (`src/llm/registry.py:_build_gemini_http_options`). Without
             # this, a stalled Gemini embedding socket wedges the deriver worker
@@ -208,6 +214,8 @@ class _EmbeddingClient:
         else:  # openai
             if not config.api_key:
                 raise ValueError("OpenAI API key is required")
+            from openai import AsyncOpenAI
+
             self.client = AsyncOpenAI(
                 api_key=config.api_key,
                 base_url=config.base_url,
@@ -264,11 +272,11 @@ class _EmbeddingClient:
                 f"Query exceeds maximum token limit of {self.max_embedding_tokens} tokens (got {token_count} tokens)"
             )
 
-        # Bind the typed client at the dispatch site so pyright can narrow it
-        # for the closures without needing `assert isinstance(...)` (bandit
-        # B101). The closures close over the narrowed local, not `self.client`.
-        if isinstance(self.client, genai.Client):
-            gemini_client = self.client
+        # Dispatch on transport rather than isinstance so this module never
+        # needs the SDK types at runtime; the cast gives the closures a typed
+        # local to close over.
+        if self.transport == "gemini":
+            gemini_client = cast("genai.Client", self.client)
 
             async def _call_gemini() -> list[float]:
                 response = await gemini_client.aio.models.embed_content(
@@ -290,7 +298,7 @@ class _EmbeddingClient:
                 fn=_call_gemini,
             )
 
-        openai_client = self.client
+        openai_client = cast("AsyncOpenAI", self.client)
 
         async def _call_openai() -> list[float]:
             openai_kwargs: dict[str, Any] = {"model": self.model, "input": [query]}
@@ -482,8 +490,11 @@ class _EmbeddingClient:
             attempt is a distinct provider hit and shows up as its own line
             item in analytics."""
             result: dict[str, dict[int, list[float]]] = defaultdict(dict)
-            if isinstance(self.client, genai.Client):
-                response = await self.client.aio.models.embed_content(
+            if self.transport == "gemini":
+                from google.genai import types as genai_types
+
+                gemini_client = cast("genai.Client", self.client)
+                response = await gemini_client.aio.models.embed_content(
                     model=self.model,
                     # One Content per item: a list of bare strings is folded
                     # into a single document by gemini-embedding-2*, which
@@ -508,7 +519,8 @@ class _EmbeddingClient:
                 self._apply_encoding_format(openai_kwargs)
                 if self.send_dimensions:
                     openai_kwargs["dimensions"] = self.vector_dimensions
-                response = await self.client.embeddings.create(**openai_kwargs)
+                openai_client = cast("AsyncOpenAI", self.client)
+                response = await openai_client.embeddings.create(**openai_kwargs)
                 self._validate_embedding_count(len(batch), len(response.data))
                 for item, embedding_data in zip(batch, response.data, strict=True):
                     result[item.text_id][item.chunk_index] = (
@@ -617,10 +629,10 @@ class EmbeddingClient:
     and allowing the application to start even if API keys are not yet configured.
     """
 
-    _instance: "_EmbeddingClient | None" = None
+    _instance: _EmbeddingClient | None = None
     _instance_signature: tuple[object, ...] | None = None
     _lock: threading.Lock = threading.Lock()
-    _wrapper_instance: "EmbeddingClient | None" = None
+    _wrapper_instance: EmbeddingClient | None = None
 
     def __new__(cls):
         """Ensure only one instance of EmbeddingClient exists."""

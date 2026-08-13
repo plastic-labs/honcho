@@ -50,7 +50,7 @@ def test_get_gemini_client_sets_http_timeout(monkeypatch: pytest.MonkeyPatch) ->
     """Default Gemini client must carry an HttpOptions timeout, not None."""
     monkeypatch.setattr(app_config.settings.LLM, "GEMINI_BASE_URL", None)
 
-    with patch("src.llm.registry.genai.Client") as mock_client:
+    with patch("google.genai.Client") as mock_client:
         registry_module.get_gemini_client()
 
     assert mock_client.call_count == 1
@@ -68,7 +68,7 @@ def test_get_gemini_client_preserves_custom_base_url(
         app_config.settings.LLM, "GEMINI_BASE_URL", "https://gemini-proxy.example.com"
     )
 
-    with patch("src.llm.registry.genai.Client") as mock_client:
+    with patch("google.genai.Client") as mock_client:
         registry_module.get_gemini_client()
 
     http_options = mock_client.call_args.kwargs["http_options"]
@@ -80,7 +80,7 @@ def test_get_gemini_client_preserves_custom_base_url(
 @pytest.mark.usefixtures("fresh_lru_caches")
 def test_get_gemini_override_client_sets_http_timeout() -> None:
     """Override Gemini client must also carry a timeout."""
-    with patch("src.llm.registry.genai.Client") as mock_client:
+    with patch("google.genai.Client") as mock_client:
         registry_module.get_gemini_override_client(
             "https://gemini-proxy.example.com", "sk-override"
         )
@@ -94,7 +94,7 @@ def test_get_gemini_override_client_sets_http_timeout() -> None:
 @pytest.mark.usefixtures("fresh_lru_caches")
 def test_get_gemini_override_client_handles_missing_base_url() -> None:
     """Override Gemini client with no base URL still carries a timeout."""
-    with patch("src.llm.registry.genai.Client") as mock_client:
+    with patch("google.genai.Client") as mock_client:
         registry_module.get_gemini_override_client(None, "sk-override")
 
     http_options = mock_client.call_args.kwargs["http_options"]
@@ -109,7 +109,7 @@ def test_get_anthropic_client_keeps_600s_timeout(
     """Anthropic timeout is the established behavior — lock it."""
     monkeypatch.setattr(app_config.settings.LLM, "ANTHROPIC_BASE_URL", None)
 
-    with patch("src.llm.registry.AsyncAnthropic") as mock_anthropic:
+    with patch("anthropic.AsyncAnthropic") as mock_anthropic:
         registry_module.get_anthropic_client()
 
     assert mock_anthropic.call_args.kwargs["timeout"] == _ANTHROPIC_TIMEOUT_S
@@ -118,7 +118,7 @@ def test_get_anthropic_client_keeps_600s_timeout(
 @pytest.mark.usefixtures("fresh_lru_caches")
 def test_get_anthropic_override_client_keeps_600s_timeout() -> None:
     """Override Anthropic client also keeps the 600s timeout."""
-    with patch("src.llm.registry.AsyncAnthropic") as mock_anthropic:
+    with patch("anthropic.AsyncAnthropic") as mock_anthropic:
         registry_module.get_anthropic_override_client(None, "sk-override")
 
     assert mock_anthropic.call_args.kwargs["timeout"] == _ANTHROPIC_TIMEOUT_S

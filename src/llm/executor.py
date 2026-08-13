@@ -26,7 +26,7 @@ from .backend import CompletionResult as BackendCompletionResult
 from .backend import StreamChunk as BackendStreamChunk
 from .backend import ToolCallResult
 from .capture import build_captured_call, dispatch_captured_call, has_exporters
-from .registry import CLIENTS, backend_for_provider
+from .registry import backend_for_provider, default_client
 from .request_builder import execute_completion, execute_stream
 from .runtime import (
     AttemptPlan,
@@ -439,7 +439,7 @@ async def honcho_llm_call_inner(
     post-stream at this layer; aggregate envelopes (DialecticCompletedEvent
     etc.) carry the accurate totals.
     """
-    client = client_override or CLIENTS.get(provider)
+    client = client_override or default_client(provider)
     if client is None:
         raise ValueError(f"Missing client for {provider}")
 
