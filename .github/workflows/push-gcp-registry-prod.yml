@@ -7,13 +7,6 @@ on:
   push:
     tags:
       - v*
-  workflow_dispatch:
-    inputs:
-      version:
-        description: "Version to deploy (without v prefix)"
-        required: true
-        type: string
-        default: "manual"
 
 env:
   GCP_PROJECT_ID: ${{ secrets.PROD_GCP_PROJECT_ID }}
@@ -25,9 +18,26 @@ env:
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Resolve and verify version
+        id: version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          # A running instance serves this version at /openapi.json, so it must
+          # match the version being deployed.
+          PYPROJECT_VERSION="$(grep -m1 '^version = ' pyproject.toml | cut -d'"' -f2)"
+          if [[ "$VERSION" != "$PYPROJECT_VERSION" ]]; then
+            echo "::error::pyproject.toml version '$PYPROJECT_VERSION' does not match tag '$GITHUB_REF_NAME'. Bump pyproject.toml before tagging."
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Authenticate to GCP
         uses: google-github-actions/auth@v2
@@ -42,15 +52,27 @@ jobs:
 
       - name: Build and push image
         env:
-          VERSION: ${{ github.event.inputs.version }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          # Determine the image label based on trigger type
-          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
-            IMAGE_LABEL="deployment-${VERSION}"
-          else
-            IMAGE_LABEL="deployment-${GITHUB_REF_NAME}"
-          fi
           BASE="${{ env.GCP_AR_LOCATION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.GCP_AR_REPO }}/${{ env.IMAGE_NAME }}"
-          TAG="$BASE:$IMAGE_LABEL"
+          TAG="$BASE:deployment-v${VERSION}"
           docker build -t "$TAG" .
           docker push "$TAG"
+
+  prompt-service:
+    name: Push to Service (Production Environment)
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    steps:
+      - name: Send POST request
+        env:
+          VERSION: ${{ needs.build-and-push.outputs.version }}
+        run: |
+          # Name and tag only; the registry path is supplied downstream.
+          IMAGE_LABEL="${{ env.IMAGE_NAME }}:deployment-v${VERSION}"
+
+          curl --fail --connect-timeout 10 --max-time 60 -X POST \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${{ secrets.PROD_ENV_WEBHOOK_SECRET }}" \
+            -d "{\"version\":\"$VERSION\",\"image_label\":\"$IMAGE_LABEL\"}" \
+            "${{ secrets.PROD_ENV_URL }}/webhooks/v1/add_honcho_version"

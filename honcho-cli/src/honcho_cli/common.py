@@ -52,6 +52,15 @@ def get_resolved_config():
     return config
 
 
+def get_flag_overrides() -> dict[str, str | None]:
+    """Workspace/peer/session as supplied by ``-w``/``-p``/``-s`` at any level.
+
+    Unlike :func:`get_resolved_config`, this excludes values coming from the
+    environment or config file.
+    """
+    return dict(_global_overrides)
+
+
 def maybe_refresh_token(config: CLIConfig) -> None:
     """Refresh an expired OAuth access token in place and persist it.
 

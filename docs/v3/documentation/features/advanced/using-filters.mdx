@@ -192,6 +192,90 @@ sessions = honcho.sessions(filters={
 ```
 </CodeGroup>
 
+### Negation and Unset Fields
+
+A field can be unset, and negation has to account for it. `NOT` and the `ne`
+comparison operator both **include** rows where the field has no value at all: a
+field with no value is not the value you are excluding, so excluding that value
+keeps the row.
+
+Positive conditions work the other way around. An unset field matches nothing,
+so equality and `contains` never return those rows. To select them, filter on
+`null` directly:
+
+| Filter | Rows where the field is unset |
+| --- | --- |
+| `{"field": "x"}`, `{"field": {"contains": "x"}}` | Excluded |
+| `{"NOT": [{"field": "x"}]}`, `{"field": {"ne": "x"}}` | Included |
+| `{"field": null}` | Only these |
+| `{"field": {"ne": null}}` | Excluded — the field must have some value |
+
+Of the filterable fields, only a conclusion's `session_id` can be unset: a
+conclusion drawn across a whole workspace belongs to no single session. Every
+other field is always populated, so none of this affects filters on them. See
+[Filtering Conclusions](#filtering-conclusions) for what conclusions are.
+
+<CodeGroup>
+```python Python
+# Every conclusion except the ones in this session — including
+# workspace-level conclusions, which belong to no session at all
+conclusions = peer.conclusions.list(filters={
+    "NOT": [
+        {"session_id": "session-123"}
+    ]
+})
+
+# Equivalent
+conclusions = peer.conclusions.list(filters={
+    "session_id": {"ne": "session-123"}
+})
+```
+
+```typescript TypeScript
+(async () => {
+    // Every conclusion except the ones in this session — including
+    // workspace-level conclusions, which belong to no session at all
+    const conclusions = await peer.conclusions.list({
+      filters: { NOT: [{ session_id: "session-123" }] }
+    });
+
+    // Equivalent
+    const same = await peer.conclusions.list({
+      filters: { session_id: { ne: "session-123" } }
+    });
+})();
+```
+</CodeGroup>
+
+To exclude a value **and** require the field to be set, combine the two with
+`AND`:
+
+<CodeGroup>
+```python Python
+# Excludes workspace-level conclusions and `session-123`
+conclusions = peer.conclusions.list(filters={
+    "AND": [
+        {"session_id": {"ne": "session-123"}},
+        {"session_id": {"ne": None}}
+    ]
+})
+```
+
+```typescript TypeScript
+(async () => {
+    // Excludes workspace-level conclusions and `session-123`
+    const conclusions = await peer.conclusions.list({
+      filters: {
+        AND: [
+          { session_id: { ne: "session-123" } },
+          { session_id: { ne: null } }
+        ]
+      }
+    });
+})();
+```
+</CodeGroup>
+
 ### Combining Logical Operators
 
 Create sophisticated queries by combining different logical operators:
@@ -303,6 +387,33 @@ sessions = honcho.sessions(filters={
 </CodeGroup>
 
 ### List Membership
+
+A bare list is shorthand for `in`, so `{"peer_id": ["alice", "bob"]}` and
+`{"peer_id": {"in": ["alice", "bob"]}}` are equivalent:
+
+<CodeGroup>
+```python Python
+# Shorthand: a bare list means "any of these"
+messages = session.messages(filters={
+    "peer_id": ["alice", "bob", "charlie"]
+})
+```
+
+```typescript TypeScript
+(async () => {
+    // Shorthand: a bare list means "any of these"
+    const messages = await session.messages({
+      filters: { peer_id: ["alice", "bob", "charlie"] }
+    });
+})();
+```
+</CodeGroup>
+
+<Warning>
+Bare lists behave differently inside metadata — use `{"in": [...]}` there for OR matching.
+</Warning>
+
+The explicit form, plus the other comparison operators:
 
 <CodeGroup>
 ```python Python
@@ -672,6 +783,145 @@ bob_explicit = peer.conclusions_of("bob").list(filters={"level": "explicit"})
 })();
 ```
 </CodeGroup>
+
+## Value Types
+
+A filter value has to be usable against the field it targets. Honcho validates
+this before running the query and returns a `422` with an explanation when it
+doesn't hold, rather than failing mid-query or quietly returning nothing.
+
+| Field | Accepts |
+| --- | --- |
+| Text — `peer_id`, `session_id`, `id`, `content` | Strings |
+| Numeric — `token_count` | Numbers, or numeric strings like `"5"`. Exact for integers of any size |
+| Timestamps — `created_at` | ISO 8601 strings such as `"2026-01-01"` or `"2026-01-01T12:00:00Z"` |
+| Boolean — `is_active` | `true` / `false` |
+| `metadata` | An object, matched by containment — bare or under `contains` |
+| Fields with fixed values — `level` | One of the documented values |
+| Any field | `null`, which matches rows where the field is unset |
+
+Three consequences worth knowing:
+
+- **Booleans must be real booleans.** `{"is_active": True}` filters; the string
+  `{"is_active": "true"}` is rejected.
+- **Fixed-value fields are checked.** `{"level": "explicit"}` filters;
+  `{"level": "typo"}` is rejected instead of returning an empty list, so a
+  misspelling doesn't look like "no results".
+- **`metadata` takes only the two shapes above** — bare, or under `contains`.
+  Comparison operators don't apply to the object as a whole, so
+  `{"metadata": {"ne": {...}}}` is rejected. To compare *within* metadata, put
+  the operator on the key — `{"metadata": {"status": {"ne": "done"}}}`. To negate
+  a match, wrap the whole condition in `NOT`. See
+  [Metadata Filtering](#metadata-filtering).
+
+For every field other than `metadata`, the same rules apply however the value is
+wrapped — bare, under an operator, or inside an `in` list — so
+`{"level": "explicit"}`, `{"level": {"ne": "explicit"}}` and
+`{"level": {"in": ["explicit"]}}` all validate identically.
+
+An empty `in` list matches nothing:
+
+<CodeGroup>
+```python Python
+# Returns no results — an empty allowlist excludes everything
+messages = session.messages(filters={"peer_id": {"in": []}})
+```
+
+```typescript TypeScript
+(async () => {
+    // Returns no results — an empty allowlist excludes everything
+    const messages = await session.messages({ filters: { peer_id: { in: [] } } });
+})();
+```
+</CodeGroup>
+
+## Scoping Recall to Sessions
+
+The [chat endpoint](/v3/documentation/features/chat) and the representation
+endpoint accept a `filters` body too, but a deliberately narrow one: it defines
+a **session allowlist**, restricting what the request can recall to the sessions
+you name — conclusions on both endpoints, and on chat the messages the agent
+reads as well.
+
+This is how you scope recall to more than one session. The `session_id`
+parameter pins a request to exactly one session; an allowlist accepts a set.
+
+Only the `session_id` key is supported here, in three shapes:
+
+```json
+{"filters": {"session_id": "support-chat-1"}}
+{"filters": {"session_id": ["support-chat-1", "support-chat-2"]}}
+{"filters": {"session_id": {"in": ["support-chat-1", "support-chat-2"]}}}
+```
+
+<CodeGroup>
+```bash Chat
+curl -X POST "$HONCHO_URL/v3/workspaces/my-app/peers/user-123/chat" \
+  -H "Authorization: Bearer $HONCHO_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "What did the user ask about billing?",
+    "filters": { "session_id": ["support-chat-1", "support-chat-2"] }
+  }'
+```
+
+```bash Representation
+curl -X POST "$HONCHO_URL/v3/workspaces/my-app/peers/user-123/representation" \
+  -H "Authorization: Bearer $HONCHO_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "filters": { "session_id": ["support-chat-1", "support-chat-2"] }
+  }'
+```
+</CodeGroup>
+
+<Note>
+The session allowlist is REST-only today. The SDKs cover the single-session case
+with `session`, but do not yet expose the allowlist — call the endpoint directly
+when you need a set of sessions.
+</Note>
+
+### Rules
+
+Unlike the list endpoints above, this filter **fails closed**: an unrecognized
+key or shape is rejected with `422` rather than ignored, because a silently
+dropped filter here would widen recall instead of narrowing it.
+
+| Rule | Behavior |
+|------|----------|
+| Any key other than `session_id` | `422` |
+| A shape other than a string, a list of strings, or `{"in": [...]}` | `422` |
+| An entry that isn't a well-formed session id — wildcards included | `422` |
+| More than 1,000 sessions | `422` |
+| `session_id` set alongside `filters` | The `session_id` must appear in the allowlist, else `422` |
+| An empty allowlist (`[]`) | Valid, and recalls nothing |
+| A peer-scoped key naming a session its peer isn't an active member of | `401` on chat — see below |
+
+<Note>
+On chat, a peer-scoped key must be an active member of every session it names —
+the allowlist reaches message recall there — and the request is rejected with
+`401` otherwise. The representation endpoint runs no membership check: key scope
+already confines the caller to its own peer's representation, which an allowlist
+can only narrow.
+</Note>
+
+### What Changes Under an Allowlist
+
+Scoping recall by session narrows what the reasoning agent can draw on:
+
+- **Only `explicit` conclusions are recalled.** Dream-derived conclusions
+  (`deductive`, `inductive`) are synthesized across sessions, so they can't be
+  attributed to one session and are excluded.
+- **Reasoning-chain traversal is unavailable**, since it walks into those
+  derived conclusions.
+- **Message recall is restricted to the allowlisted sessions** across every
+  search path — semantic, keyword, and date-range.
+
+<Note>
+Because of this, an allowlisted request answers from directly-stated facts
+rather than higher-order inferences. If you want the full representation, omit
+`filters` and let the agent search everything.
+</Note>
 
 ## Error Handling
 
