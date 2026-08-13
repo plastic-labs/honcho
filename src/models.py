@@ -444,12 +444,6 @@ class Document(Base):
             for i, sid in enumerate(dict.fromkeys(value or []))
         ]
 
-    @property
-    def resolved_source_ids(self) -> list[str] | None:
-        """Kept for API schema compatibility; legacy internal_metadata
-        storage is retired by the document_sources backfill migration."""
-        return self.source_ids
-
     __table_args__ = (
         CheckConstraint("length(id) = 21", name="id_length"),
         CheckConstraint("length(content) <= 65535", name="content_length"),

@@ -626,7 +626,6 @@ class Conclusion(BaseModel):
     )
     source_ids: list[str] | None = Field(
         default=None,
-        validation_alias=AliasChoices("resolved_source_ids", "source_ids"),
         description=(
             "IDs of the conclusions this one was derived from: premises for "
             "'deductive', supporting sources for 'inductive', conflicting "
