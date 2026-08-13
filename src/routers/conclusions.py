@@ -110,7 +110,10 @@ async def query_conclusions(
 
     if not observer or not observed:
         raise ValidationException(
-            "observer and observed must be specified for semantic search"
+            "observer and observed must be specified for semantic search. "
+            + "Pass them inside the 'filters' object, e.g. "
+            + '{"query": "...", "filters": {"observer": "alice", "observed": "bob"}}. '
+            + "Both 'observer'/'observer_id' and 'observed'/'observed_id' are accepted."
         )
 
     with embedding_call_purpose(

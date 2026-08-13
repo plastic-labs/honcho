@@ -22,7 +22,7 @@ You can retrieve a subset of conclusions from a peer's representation using `rep
 alice_rep = session.representation("alice")
 
 # Or via chat
-response = alice.chat("What are Alice's main interests?", session_id=session.id)
+response = alice.chat("What are Alice's main interests?", session=session.id)
 ```
 
 This is sufficient for most applications—Honcho reasons over every message written to the peer, storing conclusions that any part of your system can retrieve.
@@ -160,13 +160,13 @@ The `target` parameter also works with the chat endpoint:
 # Query using conclusions from Honcho's representation (across all sessions)
 honcho_answer = alice.chat(
     "What did Bob say about breakfast?",
-    session_id=session.id
+    session=session.id
 )
 
 # Query using conclusions from Alice's representation of Bob (from Alice's sessions only)
 alice_answer = alice.chat(
     "What did Bob say about breakfast?",
-    session_id=session.id,
+    session=session.id,
     target="bob"
 )
 ```
@@ -175,13 +175,13 @@ alice_answer = alice.chat(
 // Query using conclusions from Honcho's representation (across all sessions)
 const honchoAnswer = await alice.chat(
     "What did Bob say about breakfast?",
-    { sessionId: session.id }
+    { session: session.id }
 );
 
 // Query using conclusions from Alice's representation of Bob (from Alice's sessions only)
 const aliceAnswer = await alice.chat(
     "What did Bob say about breakfast?",
-    { sessionId: session.id, target: "bob" }
+    { session: session.id, target: "bob" }
 );
 ```
 </CodeGroup>
@@ -225,7 +225,7 @@ This architecture enables:
 
 ## Semantic Search Parameters
 
-Both `representation()` and `chat()` support semantic filtering to retrieve a subset of relevant conclusions. You can optionally filter by session to retrieve only conclusions from specific session context:
+Both `representation()` and `chat()` support semantic filtering to retrieve a subset of relevant conclusions. You can optionally filter by session — pass `session` to scope to a single session, or use the REST-only [session allowlist](/v3/documentation/features/advanced/using-filters#scoping-recall-to-sessions) to scope to a set of sessions:
 
 | Parameter | Type | Description |
 |-----------|------|-------------|

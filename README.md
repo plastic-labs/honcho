@@ -226,7 +226,7 @@ For wiring the Honcho SDK into an existing application, install the integration 
 npx skills add plastic-labs/honcho
 ```
 
-Then invoke `/honcho-integration` in Claude Code (or `/honcho-dev:integrate` via the plugin marketplace). Details: [agentic development guide](https://honcho.dev/docs/v3/documentation/introduction/vibecoding).
+Then invoke `/honcho-integration` in Claude Code (or `/honcho-dev:integrate` via the plugin marketplace). The same command also installs the memory skills — `honcho-memory` (concepts: the recall/record loop, session and peer strategy, plus how to connect and drive an MCP-connected Honcho) and `honcho-cli` (inspecting and debugging a deployment). Details: [agentic development guide](https://honcho.dev/docs/v3/documentation/introduction/vibecoding).
 
 ### Other MCP clients
 

@@ -1,6 +1,8 @@
+import pytest
 from pydantic import BaseModel
 
 from src.config import ModelConfig
+from src.exceptions import ValidationException
 from src.llm.caching import PromptCachePolicy
 from src.llm.request_builder import execute_completion
 from tests.llm.conftest import FakeBackend
@@ -95,3 +97,51 @@ async def test_provider_params_are_merged_into_extra_params(
     call = fake_backend.calls[0]
     assert call["extra_params"]["top_p"] == 0.9
     assert call["extra_params"]["custom_flag"] is True
+
+
+async def test_provider_timeout_is_normalized_into_extra_params(
+    fake_backend: FakeBackend,
+) -> None:
+    """Numeric-string provider timeout values are normalized before backends."""
+    config = ModelConfig(
+        model="gpt-4.1-mini",
+        transport="openai",
+        provider_params={"timeout": "42.5"},
+    )
+
+    await execute_completion(
+        fake_backend,
+        config,
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+    )
+
+    call = fake_backend.calls[0]
+    assert call["extra_params"]["timeout"] == 42.5
+
+
+@pytest.mark.parametrize(
+    "timeout",
+    ["slow", "", 0, -1, True, float("nan"), float("inf"), "nan", "inf"],
+)
+async def test_provider_timeout_rejects_invalid_values(
+    fake_backend: FakeBackend,
+    timeout: object,
+) -> None:
+    """Invalid provider timeout values fail before provider SDK calls."""
+    config = ModelConfig(
+        model="gpt-4.1-mini",
+        transport="openai",
+        provider_params={"timeout": timeout},
+    )
+
+    with pytest.raises(
+        ValidationException,
+        match=r"provider_params\.timeout must be a positive number of seconds",
+    ):
+        await execute_completion(
+            fake_backend,
+            config,
+            messages=[{"role": "user", "content": "Hello"}],
+            max_tokens=100,
+        )

@@ -71,6 +71,7 @@ Per-command scoping (workspace / peer / session) is handled via `-w` / `-p` / `-
 | `honcho session list` | List sessions in the workspace (filter with `--peer/-p`) |
 | `honcho session create <id>` | Create or get a session (optionally `--peers` to add peers, `--metadata`) |
 | `honcho session inspect <id>` | Peers, message count, summaries, config |
+| `honcho session view <id>` | Transcript table (`--last N`, `--page N --size M`, `--all`, `--reverse`, `--ids`, `-p`) |
 | `honcho session context <id>` | What an agent would see |
 | `honcho session summaries <id>` | Short + long summaries |
 | `honcho session peers <id>` / `add-peers` / `remove-peers` | Peer management |

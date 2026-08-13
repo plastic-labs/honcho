@@ -35,6 +35,15 @@ router = APIRouter(
     tags=["sessions"],
 )
 
+# Guidance appended to guardrail errors when a scope peer is passed to the
+# generic session-peer surface. Scope membership is managed only through the
+# scopes facade so the observer mechanics stay internal.
+_SCOPES_ROUTE_GUIDANCE = (
+    "Scope membership is managed via the scopes routes "
+    "(/v3/workspaces/{workspace_id}/scopes/{scope_id}/sessions) or the `scopes` "
+    "field at session creation."
+)
+
 
 async def _get_working_representation_task(
     db: AsyncSession,
@@ -309,6 +318,23 @@ async def get_or_create_session(
             )
         session.name = jwt_params.s
 
+    # The `scopes` field does what the scopes routes do — create scope peers and
+    # attach memberships — so it needs their authorization: workspace-level or
+    # admin only. Checked here rather than through `require_auth(...)` because
+    # that closure only resolves path and query params, never the body, so a
+    # declarative gate cannot see this field.
+    if session.scopes and not (
+        jwt_params.ad or (jwt_params.p is None and jwt_params.s is None)
+    ):
+        raise AuthenticationException("Scope membership requires a workspace-level key")
+
+    # Scope peers may not be added through the generic peers mapping; use the
+    # `scopes` field (which handles scope-peer creation and observer config).
+    if session.peer_names:
+        await crud.reject_scope_peers(
+            db, workspace_id, session.peer_names.keys(), action=_SCOPES_ROUTE_GUIDANCE
+        )
+
     # Handle session creation with proper error handling
     try:
         result = await crud.get_or_create_session(
@@ -440,7 +466,13 @@ async def add_peers_to_session(
     ),
     db: AsyncSession = db,
 ):
-    """Add Peers to a Session. If a Peer does not yet exist, it will be created automatically."""
+    """Add Peers to a Session. If a Peer does not yet exist, it will be created automatically.
+
+    Scope peers cannot be added here; scope membership is managed via the scopes routes.
+    """
+    await crud.reject_scope_peers(
+        db, workspace_id, peers.keys(), action=_SCOPES_ROUTE_GUIDANCE
+    )
     try:
         result = await crud.get_or_create_session(
             db,
@@ -476,7 +508,12 @@ async def set_session_peers(
     Set the Peers in a Session. If a Peer does not yet exist, it will be created automatically.
 
     This will fully replace the current set of Peers in the Session.
+
+    Scope peers cannot be set here; scope membership is managed via the scopes routes.
     """
+    await crud.reject_scope_peers(
+        db, workspace_id, peers.keys(), action=_SCOPES_ROUTE_GUIDANCE
+    )
     try:
         await crud.set_peers_for_session(
             db,
@@ -512,7 +549,13 @@ async def remove_peers_from_session(
     ),
     db: AsyncSession = db,
 ):
-    """Remove Peers by ID from a Session."""
+    """Remove Peers by ID from a Session.
+
+    Scope peers cannot be removed here; scope membership is managed via the scopes routes.
+    """
+    await crud.reject_scope_peers(
+        db, workspace_id, peers, action=_SCOPES_ROUTE_GUIDANCE
+    )
     try:
         await crud.remove_peers_from_session(
             db,
@@ -632,19 +675,17 @@ async def get_session_peers(
 @router.get(
     "/{session_id}/context",
     response_model=schemas.SessionContext,
-    dependencies=[
-        Depends(
-            require_auth(
-                workspace_name="workspace_id",
-                session_name="session_id",
-                allow_member_read=True,
-            )
-        )
-    ],
 )
 async def get_session_context(
     workspace_id: str = Path(...),
     session_id: str = Path(...),
+    jwt_params: JWTParams = Depends(
+        require_auth(
+            workspace_name="workspace_id",
+            session_name="session_id",
+            allow_member_read=True,
+        )
+    ),
     db: AsyncSession = read_db,
     tokens: int | None = Query(
         None,
@@ -668,6 +709,10 @@ async def get_session_context(
     peer_perspective: str | None = Query(
         None,
         description="A peer to get context for. If given, response will attempt to include representation and card from the perspective of that peer. Must be provided with `peer_target`.",
+    ),
+    scope: str | None = Query(
+        None,
+        description="An (unprefixed) scope name to use as the perspective source: the representation and peer card of `peer_target` are read from the scope's observations instead of the global (or `peer_perspective`) view. Must be provided with `peer_target`; mutually exclusive with `peer_perspective`. Requires a workspace- or admin-level key.",
     ),
     limit_to_session: bool = Query(
         default=False,
@@ -712,6 +757,50 @@ async def get_session_context(
             "peer_target must be provided if peer_perspective is provided"
         )
 
+    # peer_target is the *observed* peer, and no representation or card is ever
+    # formed of a scope. Strict variant: an observed position that creates
+    # nothing, so a reserved name which does not exist yet must be refused too.
+    if peer_target is not None:
+        await crud.reject_scope_observed(
+            db,
+            workspace_id,
+            [peer_target],
+            action=(
+                "No representation is formed of a scope, so a scope cannot be a"
+                " context target."
+            ),
+        )
+
+    # peer_perspective is an observer position, where a scope is mechanically
+    # legitimate — but `scope` below is the supported way to ask for a scope's
+    # perspective, and routing through it is what keeps the observer mechanics
+    # hidden. Flag-based (not prefix-based) so a legacy peer merely occupying the
+    # reserved name keeps working, same as everywhere else.
+    if peer_perspective is not None:
+        await crud.reject_scope_peers(
+            db,
+            workspace_id,
+            [peer_perspective],
+            action="Use the `scope` parameter instead.",
+        )
+
+    if scope is not None:
+        if peer_perspective:
+            raise ValidationException(
+                "`scope` and `peer_perspective` are mutually exclusive"
+            )
+        if not peer_target:
+            raise ValidationException(
+                "peer_target must be provided if scope is provided"
+            )
+        # A scope's perspective spans sessions beyond this one, so scoped reads
+        # require a workspace- or admin-level key. 401, matching every other
+        # scope surface (see _validate_scope_option in routers/peers.py).
+        if jwt_params.p is not None or jwt_params.s is not None:
+            raise AuthenticationException(
+                "`scope` requires a workspace- or admin-level key"
+            )
+
     if not peer_target:
         # No representation or card needed
         summary, messages = await _get_session_context_task(
@@ -744,6 +833,24 @@ async def get_session_context(
 
     observer = peer_perspective or peer_target
     observed = peer_target
+
+    # Member-read lets a peer-scoped key reach this route, but membership grants
+    # access to the *session*, not to a co-member's representation or peer card.
+    # The observer is whose knowledge is being read, so a peer-scoped key may only
+    # read from its own perspective — mirroring
+    # `POST /peers/{peer_id}/representation`, where require_auth pins the observer
+    # to the path peer and any `target` is that observer's own view. A bare
+    # `peer_target` naming another peer is the omniscient view of them, which is
+    # nobody's own perspective, so it is refused too. Workspace/admin and
+    # session-scoped tokens are unaffected.
+    if jwt_params.p is not None and jwt_params.p != observer:
+        raise AuthenticationException("JWT not permissioned for this resource")
+
+    # A scope swaps the perspective source: the scope peer becomes the
+    # observer for both the working representation and the peer card, so the
+    # scoped collection and scoped card are read instead of the global ones.
+    if scope is not None:
+        [observer] = await crud.resolve_scope_peers(db, workspace_id, [scope])
 
     # Pre-compute embedding outside the DB session (best-effort)
     embedding: list[float] | None = None
