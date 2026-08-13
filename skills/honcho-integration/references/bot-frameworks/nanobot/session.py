@@ -137,7 +137,10 @@ class HonchoSessionManager:
 
         session = self.honcho.session(session_id)
 
-        # Configure peer observation settings
+        # Configure peer observation settings.
+        # observe_me=False on the assistant skips modeling it — optional for an
+        # AI assistant (fine to leave observation on); it's really only needed
+        # for deterministic bots, where there's nothing meaningful to model.
         from honcho.api_types import SessionPeerConfig
         user_config = SessionPeerConfig(observe_me=True, observe_others=True)
         ai_config = SessionPeerConfig(observe_me=False, observe_others=True)
