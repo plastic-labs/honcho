@@ -176,7 +176,7 @@ def _get_test_db_url(worker_id: str) -> URL:
     return CONNECTION_URI.set(database=f"test_db_{run_id}{suffix}")
 
 
-def _drop_database(db_url: URL) -> None:
+def _drop_database(db_url: URL, *, force: bool = True) -> None:
     """Drop a test database, evicting any connections still holding it open.
 
     WITH (FORCE) (pg13+) is what makes this reliable: a pooled connection that
@@ -194,7 +194,8 @@ def _drop_database(db_url: URL) -> None:
     )
     try:
         with engine.connect() as conn:
-            conn.exec_driver_sql(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+            force_clause = " WITH (FORCE)" if force else ""
+            conn.exec_driver_sql(f'DROP DATABASE IF EXISTS "{name}"{force_clause}')
     finally:
         engine.dispose()
 
@@ -272,7 +273,7 @@ def _sweep_stale_test_databases() -> None:
             if not _is_test_database_idle(db_url):
                 continue
             logger.info(f"Dropping stale test database: {name}")
-            _drop_database(db_url)
+            _drop_database(db_url, force=False)
     except Exception as e:
         logger.warning(f"Could not sweep stale test databases: {e}")
 
@@ -387,14 +388,15 @@ async def db_engine(worker_id: str):
 
         yield engine
     finally:
-        if engine is not None:
-            await engine.dispose()
+        try:
+            if engine is not None:
+                await engine.dispose()
+        finally:
+            Base.metadata.schema = original_schema
+            for table in Base.metadata.tables.values():
+                table.schema = original_schema
 
-        Base.metadata.schema = original_schema
-        for table in Base.metadata.tables.values():
-            table.schema = original_schema
-
-        _drop_database(test_db_url)
+            _drop_database(test_db_url)
 
 
 @pytest_asyncio.fixture(scope="function")
