@@ -344,7 +344,7 @@ Navigate to Claude Desktop's custom MCP servers settings and add Honcho:
 }
 ```
 
-**Optional customization** — You can also set a custom assistant name:
+**Optional customization** — You can also set a custom assistant name and workspace ID:
 
 ```json
 {
@@ -359,19 +359,20 @@ Navigate to Claude Desktop's custom MCP servers settings and add Honcho:
         "--header",
         "X-Honcho-User-Name:${USER_NAME}",
         "--header",
-        "X-Honcho-Assistant-Name:${ASSISTANT_NAME}"
+        "X-Honcho-Assistant-Name:${ASSISTANT_NAME}",
+        "--header",
+        "X-Honcho-Workspace-ID:${WORKSPACE_ID}"
       ],
       "env": {
         "AUTH_HEADER": "Bearer <your-honcho-key>",
         "USER_NAME": "<your-name>",
-        "ASSISTANT_NAME": "<your-assistant-name>"
+        "ASSISTANT_NAME": "<your-assistant-name>",
+        "WORKSPACE_ID": "<your-custom-workspace-id>"
       }
     }
   }
 }
 ```
-
-Workspace is selected per tool via `workspace_id`. You can also set `X-Honcho-Workspace-ID` on the connection to fill that argument by default. Use `list_workspaces` to discover IDs.
 
 ### Step 3: Restart Claude Desktop
 
