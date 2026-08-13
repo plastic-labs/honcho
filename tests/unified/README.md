@@ -48,11 +48,12 @@ Tests are defined in JSON files. A test definition consists of a name, optional 
 
 4. **Querying & Assertions**:
     * `query`: Perform an action and assert on the result.
-        * `target`: "chat", "get_context", "get_peer_card", "get_representation"
-        * `scope`: confine the read to a scope (or, for chat/representation, to
-          the union of several). Valid for "chat", "get_representation" and
-          "get_context"; the latter takes a single scope and requires
-          `observed_peer_id`.
+        * `target`: "chat", "get_context", "get_peer_card", "get_representation",
+          "workspace_chat"
+        * `scope`: confine the read to a scope (or, for chat/representation/
+          workspace_chat, to the union of several). Valid for "chat",
+          "get_representation", "get_context", and "workspace_chat"; get_context
+          takes a single scope and requires `observed_peer_id`.
 
 ### Raw HTTP vs the SDK
 

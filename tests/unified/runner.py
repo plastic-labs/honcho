@@ -386,6 +386,17 @@ class UnifiedTestExecutor:
         raise TimeoutError("Deriver queue did not empty within timeout")
 
     async def perform_query(self, step: QueryAction) -> Any:
+        if step.target == "workspace_chat":
+            if step.input is None:
+                raise ValueError("input required for workspace_chat")
+            return await self.client.aio.chat(
+                step.input,
+                session=step.session_id,
+                reasoning_level=step.reasoning_level,
+                response_format=step.response_format,
+                scope=step.scope,
+            )
+
         if step.scope is not None:
             return await self._perform_scoped_query(step)
 
