@@ -71,19 +71,26 @@ export function register(server: McpServer, ctx: ToolContext) {
           .number()
           .optional()
           .describe("Max results to return."),
+        filters: z
+          .record(z.string(), z.unknown())
+          .optional()
+          .describe(
+            'Optional: filter criteria, e.g. {"level": ["deductive", "inductive"]} to only return conclusions derived during dreaming. Levels: explicit (extracted directly from messages), deductive, inductive, contradiction. See https://honcho.dev/docs/v3/documentation/features/advanced/using-filters',
+          ),
       },
     },
-    async ({ peer_id, query, target_peer_id, top_k }) => {
+    async ({ peer_id, query, target_peer_id, top_k, filters }) => {
       try {
         const peer = await ctx.honcho.peer(peer_id);
         const scope = target_peer_id
           ? peer.conclusionsOf(target_peer_id)
           : peer.conclusions;
-        const conclusions = await scope.query(query, top_k);
+        const conclusions = await scope.query(query, top_k, undefined, filters);
         return textResult(
           conclusions.map((c) => ({
             id: c.id,
             content: c.content,
+            level: c.level,
             observer_id: c.observerId,
             observed_id: c.observedId,
             session_id: c.sessionId,
@@ -149,6 +156,7 @@ export function register(server: McpServer, ctx: ToolContext) {
     {
       description: [
         "Delete a specific conclusion by ID.",
+        "Use query_conclusions or list_conclusions to find the ID first.",
         "Use this to remove incorrect or outdated knowledge.",
       ].join("\n"),
       inputSchema: {
