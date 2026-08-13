@@ -137,8 +137,8 @@ class VectorStoreError(HonchoException):
 class RepresentationSaveError(HonchoException):
     """Raised when every observer's representation save fails in a batch."""
 
-    status_code = 500
-    detail = "Representation save failed for all observers"
+    status_code: int = 500
+    detail: str = "Representation save failed for all observers"
 
 
 class LLMError(Exception):
