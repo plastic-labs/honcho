@@ -592,6 +592,7 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
         reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
         | None = None,
         response_format: type[BaseModel] | dict[str, Any] | None = None,
+        scope: str | list[str] | None = None,
     ) -> BaseModel | str | None:
         """
         Query the entire workspace with a natural language question.
@@ -608,6 +609,8 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
             response_format: Optional structure for the answer: a Pydantic
                              model class (returns a parsed instance) or a raw
                              JSON Schema dict (returns a JSON string).
+            scope: Optional scope name(s) restricting recall to those scopes'
+                   member sessions. Mutually exclusive with `session`.
 
         Returns:
             The synthesized answer, or None if no relevant information.
@@ -619,6 +622,8 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
             body["session_id"] = resolved_session_id
         if reasoning_level:
             body["reasoning_level"] = reasoning_level
+        if scope is not None:
+            body["scope"] = scope
         response_format_schema = serialize_response_format(response_format)
         if response_format_schema is not None:
             body["response_format"] = response_format_schema
@@ -643,6 +648,7 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
         reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
         | None = None,
         response_format: type[BaseModel] | dict[str, Any] | None = None,
+        scope: str | list[str] | None = None,
     ) -> DialecticStreamResponse:
         """Streaming variant of :meth:`chat`. See chat() for argument docs."""
         self._ensure_workspace()
@@ -652,6 +658,8 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
             body["session_id"] = resolved_session_id
         if reasoning_level:
             body["reasoning_level"] = reasoning_level
+        if scope is not None:
+            body["scope"] = scope
         response_format_schema = serialize_response_format(response_format)
         if response_format_schema is not None:
             body["response_format"] = response_format_schema

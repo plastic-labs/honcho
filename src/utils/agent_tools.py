@@ -2938,9 +2938,14 @@ async def _handle_get_workspace_stats(
     """Workspace-level counts, message date range, and most active peers."""
     _ = tool_input
     async with tracked_db("workspace_tool.get_workspace_stats", read_only=True) as db:
-        stats = await crud.get_workspace_stats(db, ctx.workspace_name)
+        stats = await crud.get_workspace_stats(
+            db, ctx.workspace_name, session_names=ctx.session_allowlist
+        )
         peers = await crud.get_active_peers(
-            db, ctx.workspace_name, limit=_STATS_ACTIVE_PEERS
+            db,
+            ctx.workspace_name,
+            limit=_STATS_ACTIVE_PEERS,
+            session_names=ctx.session_allowlist,
         )
     lines = [
         f"Peers: {stats.peer_count}",

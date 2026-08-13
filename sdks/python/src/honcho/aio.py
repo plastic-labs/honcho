@@ -408,6 +408,7 @@ class HonchoAio(AsyncMetadataConfigMixin):
         reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
         | None = None,
         response_format: type[BaseModel] | dict[str, Any] | None = None,
+        scope: str | list[str] | None = None,
     ) -> BaseModel | str | None:
         """Query the entire workspace asynchronously (see Honcho.chat)."""
         await self._honcho._ensure_workspace_async()
@@ -417,6 +418,8 @@ class HonchoAio(AsyncMetadataConfigMixin):
             body["session_id"] = resolved_session_id
         if reasoning_level:
             body["reasoning_level"] = reasoning_level
+        if scope is not None:
+            body["scope"] = scope
         response_format_schema = serialize_response_format(response_format)
         if response_format_schema is not None:
             body["response_format"] = response_format_schema
@@ -441,6 +444,7 @@ class HonchoAio(AsyncMetadataConfigMixin):
         reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
         | None = None,
         response_format: type[BaseModel] | dict[str, Any] | None = None,
+        scope: str | list[str] | None = None,
     ) -> AsyncDialecticStreamResponse:
         """Streaming variant of :meth:`chat` (async)."""
         await self._honcho._ensure_workspace_async()
@@ -450,6 +454,8 @@ class HonchoAio(AsyncMetadataConfigMixin):
             body["session_id"] = resolved_session_id
         if reasoning_level:
             body["reasoning_level"] = reasoning_level
+        if scope is not None:
+            body["scope"] = scope
         response_format_schema = serialize_response_format(response_format)
         if response_format_schema is not None:
             body["response_format"] = response_format_schema

@@ -1,5 +1,6 @@
 """CRUD helpers for workspace records and workspace deletion checks."""
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from logging import getLogger
@@ -561,39 +562,75 @@ class ActivePeer:
 async def get_workspace_stats(
     db: AsyncSession,
     workspace_name: str,
+    session_names: Sequence[str] | None = None,
 ) -> WorkspaceStats:
     """Get aggregate statistics for a workspace.
 
-    Args:
-        db: Database session
-        workspace_name: Name of the workspace
-
-    Returns:
-        WorkspaceStats with peer, session, and message counts plus date range
+    Scope peers are excluded from ``peer_count``. When ``session_names`` is
+    provided, counts are restricted to that allowlist (empty → zeros).
     """
-    peer_count = int(
-        await db.scalar(
-            select(func.count(models.Peer.id)).where(
-                models.Peer.workspace_name == workspace_name
-            )
+    from src.crud.peer import scope_peer_clause
+
+    if session_names is not None and not session_names:
+        return WorkspaceStats(
+            peer_count=0,
+            session_count=0,
+            message_count=0,
+            oldest_message_at=None,
+            newest_message_at=None,
         )
-        or 0
-    )
-    session_count = int(
-        await db.scalar(
-            select(func.count(models.Session.id)).where(
-                models.Session.workspace_name == workspace_name
+
+    msg_filters = [models.Message.workspace_name == workspace_name]
+    if session_names is not None:
+        msg_filters.append(models.Message.session_name.in_(session_names))
+        peer_count = int(
+            await db.scalar(
+                select(func.count(func.distinct(models.Message.peer_name)))
+                .select_from(models.Message)
+                .join(
+                    models.Peer,
+                    (models.Peer.workspace_name == models.Message.workspace_name)
+                    & (models.Peer.name == models.Message.peer_name),
+                )
+                .where(*msg_filters, ~scope_peer_clause())
             )
+            or 0
         )
-        or 0
-    )
+        session_count = int(
+            await db.scalar(
+                select(func.count(models.Session.id)).where(
+                    models.Session.workspace_name == workspace_name,
+                    models.Session.name.in_(session_names),
+                )
+            )
+            or 0
+        )
+    else:
+        peer_count = int(
+            await db.scalar(
+                select(func.count(models.Peer.id)).where(
+                    models.Peer.workspace_name == workspace_name,
+                    ~scope_peer_clause(),
+                )
+            )
+            or 0
+        )
+        session_count = int(
+            await db.scalar(
+                select(func.count(models.Session.id)).where(
+                    models.Session.workspace_name == workspace_name
+                )
+            )
+            or 0
+        )
+
     msg_row = (
         await db.execute(
             select(
                 func.count(models.Message.id),
                 func.min(models.Message.created_at),
                 func.max(models.Message.created_at),
-            ).where(models.Message.workspace_name == workspace_name)
+            ).where(*msg_filters)
         )
     ).one()
     message_count = int(msg_row[0] or 0)
@@ -621,25 +658,30 @@ async def get_active_peers(
     workspace_name: str,
     limit: int = 20,
     sort_by: str = "recent_activity",
+    session_names: Sequence[str] | None = None,
 ) -> list[ActivePeer]:
     """Get the most active peers in a workspace.
 
     Activity is measured over the trailing ACTIVE_PEER_WINDOW_DAYS days.
-
-    Args:
-        db: Database session
-        workspace_name: Name of the workspace
-        limit: Maximum number of peers to return (default 20, max 50)
-        sort_by: Sort order — "recent_activity" (default) or "message_count"
-
-    Returns:
-        List of ActivePeer objects with message counts and last-active dates
+    Scope peers are excluded. When ``session_names`` is provided, only peers
+    with messages in that allowlist are returned (empty → no peers).
     """
+    from src.crud.peer import scope_peer_clause
+
     if limit <= 0:
+        return []
+    if session_names is not None and not session_names:
         return []
     limit = min(limit, 50)
 
     window_start = datetime.now(timezone.utc) - timedelta(days=ACTIVE_PEER_WINDOW_DAYS)
+
+    msg_filters = [
+        models.Message.workspace_name == workspace_name,
+        models.Message.created_at >= window_start,
+    ]
+    if session_names is not None:
+        msg_filters.append(models.Message.session_name.in_(session_names))
 
     # Subquery: aggregate messages per peer within the activity window
     subq = (
@@ -648,24 +690,34 @@ async def get_active_peers(
             func.count(models.Message.id).label("msg_count"),
             func.max(models.Message.created_at).label("last_msg_at"),
         )
-        .where(
-            models.Message.workspace_name == workspace_name,
-            models.Message.created_at >= window_start,
-        )
+        .where(*msg_filters)
         .group_by(models.Message.peer_name)
         .subquery()
     )
 
-    # Join with Peer to get only valid peers
-    stmt = (
-        select(
-            models.Peer.name,
-            func.coalesce(subq.c.msg_count, 0).label("msg_count"),
-            subq.c.last_msg_at,
-        )
-        .outerjoin(subq, models.Peer.name == subq.c.peer_name)
-        .where(models.Peer.workspace_name == workspace_name)
+    columns = (
+        models.Peer.name,
+        func.coalesce(subq.c.msg_count, 0).label("msg_count"),
+        subq.c.last_msg_at,
     )
+    if session_names is not None:
+        stmt = (
+            select(*columns)
+            .join(subq, models.Peer.name == subq.c.peer_name)
+            .where(
+                models.Peer.workspace_name == workspace_name,
+                ~scope_peer_clause(),
+            )
+        )
+    else:
+        stmt = (
+            select(*columns)
+            .outerjoin(subq, models.Peer.name == subq.c.peer_name)
+            .where(
+                models.Peer.workspace_name == workspace_name,
+                ~scope_peer_clause(),
+            )
+        )
 
     # Peer name as secondary key so ties (notably all-NULL activity in young
     # workspaces) return a stable order across calls.

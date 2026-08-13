@@ -18,7 +18,9 @@ from src.dialectic.chat import workspace_chat, workspace_chat_stream
 from src.exceptions import AuthenticationException, ValidationException
 from src.security import JWTParams, require_auth
 from src.telemetry import prometheus_metrics
+from src.utils.filter import MAX_SESSION_ALLOWLIST_ENTRIES
 from src.utils.schema_conversion import json_response_schema_to_pydantic
+from src.utils.scopes import validate_scope_read_option
 from src.utils.search import search
 
 logger = logging.getLogger(__name__)
@@ -295,22 +297,40 @@ async def schedule_dream(
             },
         },
     },
-    dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
 )
 async def chat(
     workspace_id: str = Path(...),
     options: schemas.WorkspaceChatOptions = Body(...),
+    jwt_params: JWTParams = Depends(require_auth(workspace_name="workspace_id")),
 ):
-    """
-    Query the entire workspace using natural language. Performs agentic search
-    and reasoning across ALL peers' representations and messages -- discovering
-    relevant peers first, then querying their memory -- to answer
-    workspace-wide questions ("what themes are common across users?",
-    "which peers discussed X?").
+    """Query the entire workspace using natural language.
+
+    Pass `scope` to restrict recall to the union of those scopes' member
+    sessions. A scope with no member sessions recalls nothing (fail-closed).
     """
     from collections.abc import AsyncIterator
 
     from pydantic import BaseModel as _BaseModel
+
+    session_allowlist: list[str] | None = None
+    if options.scope is not None:
+        validate_scope_read_option(
+            filters=None,
+            session_id=options.session_id,
+            jwt_params=jwt_params,
+        )
+        names = [options.scope] if isinstance(options.scope, str) else options.scope
+        async with tracked_db(
+            "workspaces.chat.resolve_scope", read_only=True
+        ) as scope_db:
+            session_allowlist = await crud.resolve_scope_session_union(
+                scope_db, workspace_id, names
+            )
+        if len(session_allowlist) > MAX_SESSION_ALLOWLIST_ENTRIES:
+            raise ValidationException(
+                "The scopes' combined membership exceeds the maximum of "
+                + f"{MAX_SESSION_ALLOWLIST_ENTRIES} sessions per request"
+            )
 
     response_model: type[_BaseModel] | None = None
     if options.response_format is not None:
@@ -340,6 +360,7 @@ async def chat(
                     query=options.query,
                     reasoning_level=options.reasoning_level,
                     response_model=response_model,
+                    session_allowlist=session_allowlist,
                 )
             ),
             media_type="text/event-stream",
@@ -351,5 +372,6 @@ async def chat(
         query=options.query,
         reasoning_level=options.reasoning_level,
         response_model=response_model,
+        session_allowlist=session_allowlist,
     )
     return schemas.DialecticResponse(content=response if response else None)

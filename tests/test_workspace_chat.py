@@ -31,6 +31,7 @@ from src.utils.agent_tools import (
     create_workspace_tool_executor,
 )
 from src.utils.representation import format_documents_with_attribution
+from src.utils.scopes import SCOPE_KIND, scope_peer_name
 
 # =============================================================================
 # Fixtures
@@ -171,6 +172,7 @@ def make_workspace_ctx(
         *,
         session_name: str | None = None,
         include_observation_ids: bool = True,
+        session_allowlist: list[str] | None = None,
     ) -> ToolContext:
         return ToolContext(
             observer="",
@@ -181,6 +183,7 @@ def make_workspace_ctx(
             include_observation_ids=include_observation_ids,
             history_token_limit=8192,
             db_lock=shared_lock,
+            session_allowlist=session_allowlist,
         )
 
     return _make_ctx
@@ -711,6 +714,42 @@ class TestGetWorkspaceStats:
         assert "Peers: 0" in result
         assert "Messages: 0" in result
 
+    async def test_excludes_scope_peers(
+        self,
+        db_session: AsyncSession,
+        make_workspace_ctx: Callable[..., ToolContext],
+        workspace_test_data: Any,
+    ):
+        workspace, *_ = workspace_test_data
+        db_session.add(
+            models.Peer(
+                name=scope_peer_name("therapy"),
+                workspace_name=workspace.name,
+                internal_metadata={"kind": SCOPE_KIND},
+                configuration={"observe_me": False},
+            )
+        )
+        await db_session.commit()
+
+        result = await _handle_get_workspace_stats(make_workspace_ctx(), {})
+
+        assert "Peers: 3" in result
+        assert "scope.therapy" not in result
+
+    async def test_empty_session_allowlist_is_zero(
+        self,
+        make_workspace_ctx: Callable[..., ToolContext],
+        workspace_test_data: Any,
+    ):
+        _ = workspace_test_data
+        result = await _handle_get_workspace_stats(
+            make_workspace_ctx(session_allowlist=[]), {}
+        )
+
+        assert "Peers: 0" in result
+        assert "Sessions: 0" in result
+        assert "Messages: 0" in result
+
 
 @pytest.mark.asyncio
 class TestGetPeerCardByName:
@@ -1185,9 +1224,7 @@ class TestWorkspaceMessageToolsUnpinned:
         db_session: AsyncSession,  # pyright: ignore[reportUnusedParameter]
         workspace_test_data: Any,
     ):
-        """When a caller ever passes an allowlist (scopes work, #897), the
-        fallthrough message tools must intersect with it — an allowlist
-        naming no real session yields no results."""
+        """An allowlist naming no real session yields no results."""
         workspace, *_ = workspace_test_data
 
         executor = await create_workspace_tool_executor(

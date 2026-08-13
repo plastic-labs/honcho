@@ -87,6 +87,7 @@ export interface WorkspaceChatParams {
   session_id?: string
   reasoning_level?: 'minimal' | 'low' | 'medium' | 'high' | 'max'
   response_format?: Record<string, unknown>
+  scope?: string | string[]
 }
 
 export interface WorkspaceChatResponse {

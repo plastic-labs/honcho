@@ -49,6 +49,7 @@ class WorkspaceDialecticAgent(DialecticAgent):
         metric_key: str | None = None,
         reasoning_level: ReasoningLevel = "low",
         session_id: str | None = None,
+        session_allowlist: list[str] | None = None,
     ) -> None:
         super().__init__(
             workspace_name=workspace_name,
@@ -58,6 +59,7 @@ class WorkspaceDialecticAgent(DialecticAgent):
             metric_key=metric_key,
             reasoning_level=reasoning_level,
             session_id=session_id,
+            session_allowlist=session_allowlist,
         )
         # Replace the pair-oriented system prompt with the workspace one.
         self.messages[0] = {
@@ -83,11 +85,18 @@ class WorkspaceDialecticAgent(DialecticAgent):
         # _prepare_query does not guard this).
         try:
             async with tracked_db("dialectic.workspace_prefetch", read_only=True) as db:
-                stats = await crud.get_workspace_stats(db, self.workspace_name)
+                stats = await crud.get_workspace_stats(
+                    db,
+                    self.workspace_name,
+                    session_names=self.session_allowlist,
+                )
                 if stats.peer_count == 0:
                     return None
                 peers = await crud.get_active_peers(
-                    db, self.workspace_name, limit=_PREFETCH_ACTIVE_PEERS
+                    db,
+                    self.workspace_name,
+                    limit=_PREFETCH_ACTIVE_PEERS,
+                    session_names=self.session_allowlist,
                 )
                 cards: dict[str, list[str]] = {}
                 for peer in peers:

@@ -866,6 +866,7 @@ export class Honcho {
       session?: string | Session
       reasoningLevel?: ReasoningLevel
       responseFormat?: Record<string, unknown>
+      scope?: string | string[]
     }
   ): Promise<string | null> {
     const validatedQuery = SearchQuerySchema.parse(query)
@@ -879,6 +880,7 @@ export class Honcho {
       session_id: resolvedSessionId,
       reasoning_level: options?.reasoningLevel,
       response_format: options?.responseFormat,
+      scope: options?.scope,
     })
     if (!response.content) {
       return null
@@ -917,6 +919,7 @@ export class Honcho {
       session?: string | Session
       reasoningLevel?: ReasoningLevel
       responseFormat?: Record<string, unknown>
+      scope?: string | string[]
     }
   ): Promise<DialecticStreamResponse> {
     const validatedQuery = SearchQuerySchema.parse(query)
@@ -929,6 +932,7 @@ export class Honcho {
       session_id: resolvedSessionId,
       reasoning_level: options?.reasoningLevel,
       response_format: options?.responseFormat,
+      scope: options?.scope,
     })
 
     return createDialecticStream(response)

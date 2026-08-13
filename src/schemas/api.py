@@ -821,9 +821,15 @@ class WorkspaceChatOptions(BaseModel):
             " to. When provided, `content` is a JSON string matching this schema."
         ),
     )
-    # scopes(#897): the observer-swap `scope` read option lands here once the
-    # scopes facade merges; workspace chat is the peer-unanchored read and
-    # scope becomes its narrowing parameter.
+    scope: _ScopeOption | None = Field(
+        None,
+        description=(
+            "Optional (unprefixed) scope name(s) restricting recall to the "
+            "union of the scopes' member sessions (explicit allowlist, "
+            "fail-closed: an empty union recalls nothing). Mutually exclusive "
+            "with `session_id`. Requires a workspace- or admin-level key."
+        ),
+    )
 
 
 class DialecticResponse(BaseModel):
