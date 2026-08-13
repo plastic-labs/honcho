@@ -7,6 +7,7 @@ import {
   formatMessage,
   formatMessages,
   formatSessionSummaries,
+  workspaceIdSchema,
 } from "../types.js";
 
 export function register(server: McpServer, ctx: ToolContext) {
@@ -20,12 +21,13 @@ export function register(server: McpServer, ctx: ToolContext) {
         "Returns the session ID.",
       ].join("\n"),
       inputSchema: {
+        workspace_id: workspaceIdSchema(ctx),
         session_id: z.string().describe("Unique identifier for the session."),
       },
     },
-    async ({ session_id }) => {
+    async ({ workspace_id, session_id }) => {
       try {
-        const session = await ctx.honcho.session(session_id);
+        const session = await ctx.clientFor(workspace_id).session(session_id);
         return textResult({ session_id: session.id });
       } catch (e) {
         return errorResult(
@@ -40,15 +42,17 @@ export function register(server: McpServer, ctx: ToolContext) {
     "list_sessions",
     {
       description: [
-        "List sessions in the current workspace (paginated).",
+        "List sessions in the given workspace (paginated).",
         "Use this to discover existing conversations.",
         "Returns session IDs with pagination metadata.",
       ].join("\n"),
-      inputSchema: {},
+      inputSchema: {
+        workspace_id: workspaceIdSchema(ctx),
+      },
     },
-    async () => {
+    async ({ workspace_id }) => {
       try {
-        const page = await ctx.honcho.sessions();
+        const page = await ctx.clientFor(workspace_id).sessions();
         return textResult({
           sessions: page.items.map((s) => ({ id: s.id })),
           total: page.total,
@@ -72,12 +76,13 @@ export function register(server: McpServer, ctx: ToolContext) {
         "This cannot be undone.",
       ].join("\n"),
       inputSchema: {
+        workspace_id: workspaceIdSchema(ctx),
         session_id: z.string().describe("The session to delete."),
       },
     },
-    async ({ session_id }) => {
+    async ({ workspace_id, session_id }) => {
       try {
-        const session = await ctx.honcho.session(session_id);
+        const session = await ctx.clientFor(workspace_id).session(session_id);
         await session.delete();
         return textResult("Session deleted successfully");
       } catch (e) {
@@ -98,6 +103,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         "Returns the new cloned session ID.",
       ].join("\n"),
       inputSchema: {
+        workspace_id: workspaceIdSchema(ctx),
         session_id: z.string().describe("The session to clone."),
         message_id: z
           .string()
@@ -107,9 +113,9 @@ export function register(server: McpServer, ctx: ToolContext) {
           ),
       },
     },
-    async ({ session_id, message_id }) => {
+    async ({ workspace_id, session_id, message_id }) => {
       try {
-        const session = await ctx.honcho.session(session_id);
+        const session = await ctx.clientFor(workspace_id).session(session_id);
         const cloned = await session.clone(message_id);
         return textResult({ session_id: cloned.id });
       } catch (e) {
@@ -129,6 +135,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         "Use this to bring participants into a conversation.",
       ].join("\n"),
       inputSchema: {
+        workspace_id: workspaceIdSchema(ctx),
         session_id: z.string().describe("The session to add peers to."),
         peers: z
           .array(
@@ -152,9 +159,10 @@ export function register(server: McpServer, ctx: ToolContext) {
           .describe("Peers to add — plain IDs or objects with per-session config."),
       },
     },
-    async ({ session_id, peers }) => {
+    async ({ workspace_id, session_id, peers }) => {
       try {
-        const session = await ctx.honcho.session(session_id);
+        const honcho = ctx.clientFor(workspace_id);
+        const session = await honcho.session(session_id);
         const additions = peers.map((p) => {
           if (typeof p === "string") return p;
           const config: { observeMe?: boolean | null; observeOthers?: boolean | null } = {};
@@ -182,15 +190,16 @@ export function register(server: McpServer, ctx: ToolContext) {
         "Remove one or more peers from a session.",
       ].join("\n"),
       inputSchema: {
+        workspace_id: workspaceIdSchema(ctx),
         session_id: z.string().describe("The session to remove peers from."),
         peer_ids: z
           .array(z.string())
           .describe("Peer IDs to remove."),
       },
     },
-    async ({ session_id, peer_ids }) => {
+    async ({ workspace_id, session_id, peer_ids }) => {
       try {
-        const session = await ctx.honcho.session(session_id);
+        const session = await ctx.clientFor(workspace_id).session(session_id);
         await session.removePeers(peer_ids);
         return textResult("Peers removed from session successfully");
       } catch (e) {
@@ -211,12 +220,13 @@ export function register(server: McpServer, ctx: ToolContext) {
         "Returns an array of peer IDs.",
       ].join("\n"),
       inputSchema: {
+        workspace_id: workspaceIdSchema(ctx),
         session_id: z.string().describe("The session to query."),
       },
     },
-    async ({ session_id }) => {
+    async ({ workspace_id, session_id }) => {
       try {
-        const session = await ctx.honcho.session(session_id);
+        const session = await ctx.clientFor(workspace_id).session(session_id);
         const peers = await session.peers();
         return textResult(peers.map((p) => p.id));
       } catch (e) {
@@ -237,12 +247,13 @@ export function register(server: McpServer, ctx: ToolContext) {
         "Returns a single JSON object.",
       ].join("\n"),
       inputSchema: {
+        workspace_id: workspaceIdSchema(ctx),
         session_id: z.string().describe("The session to inspect."),
       },
     },
-    async ({ session_id }) => {
+    async ({ workspace_id, session_id }) => {
       try {
-        const session = await ctx.honcho.session(session_id);
+        const session = await ctx.clientFor(workspace_id).session(session_id);
         const [peers, messagePage, summaries] = await Promise.all([
           session.peers(),
           session.messages(),
@@ -273,6 +284,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         "Each message must specify the peer_id of the author.",
       ].join("\n"),
       inputSchema: {
+        workspace_id: workspaceIdSchema(ctx),
         session_id: z.string().describe("The session to add messages to."),
         messages: z
           .array(
@@ -288,15 +300,16 @@ export function register(server: McpServer, ctx: ToolContext) {
           .describe("Messages to add."),
       },
     },
-    async ({ session_id, messages }) => {
+    async ({ workspace_id, session_id, messages }) => {
       try {
-        const session = await ctx.honcho.session(session_id);
-        const peerCache = new Map<string, Awaited<ReturnType<typeof ctx.honcho.peer>>>();
+        const honcho = ctx.clientFor(workspace_id);
+        const session = await honcho.session(session_id);
+        const peerCache = new Map<string, Awaited<ReturnType<typeof honcho.peer>>>();
         const sessionMessages = [];
         for (const msg of messages) {
           let peer = peerCache.get(msg.peer_id);
           if (!peer) {
-            peer = await ctx.honcho.peer(msg.peer_id);
+            peer = await honcho.peer(msg.peer_id);
             peerCache.set(msg.peer_id, peer);
           }
           sessionMessages.push(
@@ -325,6 +338,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         "Returns the first page of messages with pagination metadata.",
       ].join("\n"),
       inputSchema: {
+        workspace_id: workspaceIdSchema(ctx),
         session_id: z.string().describe("The session to get messages from."),
         filters: z
           .record(z.string(), z.unknown())
@@ -332,9 +346,9 @@ export function register(server: McpServer, ctx: ToolContext) {
           .describe("Optional metadata filter criteria."),
       },
     },
-    async ({ session_id, filters }) => {
+    async ({ workspace_id, session_id, filters }) => {
       try {
-        const session = await ctx.honcho.session(session_id);
+        const session = await ctx.clientFor(workspace_id).session(session_id);
         const page = await session.messages(filters);
         return textResult({
           messages: formatMessages(page.items),
@@ -360,13 +374,14 @@ export function register(server: McpServer, ctx: ToolContext) {
         "Returns the message object.",
       ].join("\n"),
       inputSchema: {
+        workspace_id: workspaceIdSchema(ctx),
         session_id: z.string().describe("The session the message belongs to."),
         message_id: z.string().describe("The message ID to fetch."),
       },
     },
-    async ({ session_id, message_id }) => {
+    async ({ workspace_id, session_id, message_id }) => {
       try {
-        const session = await ctx.honcho.session(session_id);
+        const session = await ctx.clientFor(workspace_id).session(session_id);
         const message = await session.getMessage(message_id);
         return textResult(formatMessage(message));
       } catch (e) {
@@ -388,6 +403,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         "Returns messages, summary, and session ID.",
       ].join("\n"),
       inputSchema: {
+        workspace_id: workspaceIdSchema(ctx),
         session_id: z.string().describe("The session to get context for."),
         summary: z
           .boolean()
@@ -399,9 +415,9 @@ export function register(server: McpServer, ctx: ToolContext) {
           .describe("Target token budget for the context window."),
       },
     },
-    async ({ session_id, summary, tokens }) => {
+    async ({ workspace_id, session_id, summary, tokens }) => {
       try {
-        const session = await ctx.honcho.session(session_id);
+        const session = await ctx.clientFor(workspace_id).session(session_id);
         const context = await session.context({ summary, tokens });
         return textResult({
           session_id: context.sessionId,

@@ -3,7 +3,8 @@ import { Honcho } from "@honcho-ai/sdk";
 export interface HonchoConfig {
   apiKey: string;
   baseUrl: string;
-  workspaceId: string;
+  /** From X-Honcho-Workspace-ID when set. */
+  workspaceId?: string;
 }
 
 export interface Env {
@@ -19,6 +20,9 @@ export interface Env {
  * instance (see the "Self-Hosted Honcho" section in README.md). It is
  * intentionally not exposed as a request header: routing public requests
  * to an internal URL would be a latency and security regression.
+ *
+ * Optional `X-Honcho-Workspace-ID` becomes the default `workspace_id` on
+ * tools. If the header is omitted, each tool call must pass `workspace_id`.
  */
 export function parseConfig(request: Request, env: Env = {}): HonchoConfig {
   const authHeader = request.headers.get("Authorization");
@@ -33,17 +37,59 @@ export function parseConfig(request: Request, env: Env = {}): HonchoConfig {
     throw new Error("Authorization header is empty after 'Bearer '.");
   }
 
+  const workspaceId =
+    request.headers.get("X-Honcho-Workspace-ID")?.trim() || undefined;
+
   return {
     apiKey,
     baseUrl: env.HONCHO_API_URL?.trim() || "https://api.honcho.dev",
-    workspaceId: request.headers.get("X-Honcho-Workspace-ID")?.trim() || "default",
+    workspaceId,
   };
 }
 
-export function createClient(config: HonchoConfig): Honcho {
+export function resolveWorkspaceId(
+  config: HonchoConfig,
+  workspaceId?: string,
+): string {
+  const id = workspaceId?.trim() || config.workspaceId?.trim();
+  if (!id) {
+    throw new Error(
+      "workspace_id is required. Pass it as a tool argument or set the X-Honcho-Workspace-ID header.",
+    );
+  }
+  return id;
+}
+
+export function createClient(
+  config: HonchoConfig,
+  workspaceId: string,
+): Honcho {
   return new Honcho({
     apiKey: config.apiKey,
     baseURL: config.baseUrl,
-    workspaceId: config.workspaceId,
+    workspaceId,
   });
+}
+
+/** Client used only for credential-scoped ops (list workspaces). */
+export function createUnscopedClient(config: HonchoConfig): Honcho {
+  return new Honcho({
+    apiKey: config.apiKey,
+    baseURL: config.baseUrl,
+  });
+}
+
+export function createClientFactory(
+  config: HonchoConfig,
+): (workspaceId?: string) => Honcho {
+  const cache = new Map<string, Honcho>();
+  return (workspaceId?: string) => {
+    const id = resolveWorkspaceId(config, workspaceId);
+    let client = cache.get(id);
+    if (!client) {
+      client = createClient(config, id);
+      cache.set(id, client);
+    }
+    return client;
+  };
 }
