@@ -24,6 +24,7 @@ from src.routers import (
     keys,
     messages,
     peers,
+    scopes,
     sessions,
     webhooks,
     workspaces,
@@ -171,6 +172,7 @@ add_pagination(app)
 app.include_router(workspaces.router, prefix="/v3")
 app.include_router(peers.router, prefix="/v3")
 app.include_router(sessions.router, prefix="/v3")
+app.include_router(scopes.router, prefix="/v3")
 app.include_router(messages.router, prefix="/v3")
 app.include_router(conclusions.router, prefix="/v3")
 app.include_router(keys.router, prefix="/v3")

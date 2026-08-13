@@ -67,6 +67,7 @@ Scoped keys are authorized by their narrowest claim and never widen to the whole
 - A **peer-scoped** key acts on its own peer, plus **read-only** access to the sessions its peer is an active member of (context, summaries, peers, its own per-session config, search, and message reads). It cannot write to those sessions or act on other peers.
 - A **session-scoped** key is confined to its own session and cannot reach peer routes.
 - Peer- and session-scoped keys **must carry their parent workspace** — creating one without a workspace is rejected.
+- On the chat endpoint, a peer-scoped key can only name sessions its peer is an active member of — both the `session_id` and every session in a [session allowlist](/v3/documentation/features/advanced/using-filters#scoping-recall-to-sessions). Naming any other session returns `401`. Workspace and admin keys pass the allowlist through as given.
 
 <Frame>
   <img src="/images/app-screenshots/api-keys.png" alt="API Key Management Dashboard" width="1200" height="800" loading="lazy" decoding="async" fetchpriority="low" />

@@ -37,13 +37,10 @@ Edit `%APPDATA%\Claude\claude_desktop_config.json`:
         "mcp-remote",
         "https://mcp.honcho.dev",
         "--header",
-        "Authorization:${AUTH_HEADER}",
-        "--header",
-        "X-Honcho-User-Name:${USER_NAME}"
+        "Authorization:${AUTH_HEADER}"
       ],
       "env": {
-        "AUTH_HEADER": "Bearer hch-your-key-here",
-        "USER_NAME": "YourName"
+        "AUTH_HEADER": "Bearer hch-your-key-here"
       }
     }
   }
@@ -62,8 +59,7 @@ For best results, create a project and paste these [instructions](https://raw.gi
 claude mcp add honcho \
   --transport http \
   --url "https://mcp.honcho.dev" \
-  --header "Authorization: Bearer hch-your-key-here" \
-  --header "X-Honcho-User-Name: YourName"
+  --header "Authorization: Bearer hch-your-key-here"
 ```
 
 Or if you prefer the [Claude Code Honcho plugin](/v3/guides/integrations/claudecode) for a deeper integration with persistent memory, git awareness, and agent skills:
@@ -83,9 +79,7 @@ args = [
   "mcp-remote",
   "https://mcp.honcho.dev",
   "--header",
-  "Authorization:Bearer hch-your-key-here",
-  "--header",
-  "X-Honcho-User-Name:YourName"
+  "Authorization:Bearer hch-your-key-here"
 ]
 ```
 
@@ -103,8 +97,7 @@ Cursor supports MCP servers natively via HTTP. Add to your global config at `~/.
     "honcho": {
       "url": "https://mcp.honcho.dev",
       "headers": {
-        "Authorization": "Bearer hch-your-key-here",
-        "X-Honcho-User-Name": "YourName"
+        "Authorization": "Bearer hch-your-key-here"
       }
     }
   }
@@ -123,8 +116,7 @@ Add to `~/.codeium/windsurf/mcp_config.json`:
     "honcho": {
       "serverUrl": "https://mcp.honcho.dev",
       "headers": {
-        "Authorization": "Bearer hch-your-key-here",
-        "X-Honcho-User-Name": "YourName"
+        "Authorization": "Bearer hch-your-key-here"
       }
     }
   }
@@ -146,8 +138,7 @@ Add to your workspace `.vscode/mcp.json`:
       "type": "http",
       "url": "https://mcp.honcho.dev",
       "headers": {
-        "Authorization": "Bearer hch-your-key-here",
-        "X-Honcho-User-Name": "YourName"
+        "Authorization": "Bearer hch-your-key-here"
       }
     }
   }
@@ -164,8 +155,7 @@ Or add to your User Settings JSON (`Cmd+Shift+P` → "Preferences: Open User Set
         "type": "http",
         "url": "https://mcp.honcho.dev",
         "headers": {
-          "Authorization": "Bearer hch-your-key-here",
-          "X-Honcho-User-Name": "YourName"
+          "Authorization": "Bearer hch-your-key-here"
         }
       }
     }
@@ -192,8 +182,7 @@ Cline supports remote MCP servers natively. Open Cline's MCP settings at:
     "honcho": {
       "url": "https://mcp.honcho.dev",
       "headers": {
-        "Authorization": "Bearer hch-your-key-here",
-        "X-Honcho-User-Name": "YourName"
+        "Authorization": "Bearer hch-your-key-here"
       }
     }
   }
@@ -212,8 +201,7 @@ Add to `~/.config/zed/settings.json`:
     "honcho": {
       "url": "https://mcp.honcho.dev",
       "headers": {
-        "Authorization": "Bearer hch-your-key-here",
-        "X-Honcho-User-Name": "YourName"
+        "Authorization": "Bearer hch-your-key-here"
       }
     }
   }
@@ -228,7 +216,7 @@ Zed uses `context_servers` instead of `mcpServers`. Native HTTP support requires
 
 [Goose](https://goose-docs.ai/) supports remote MCP servers natively over Streamable HTTP.
 
-The easiest way is to run `goose configure`, choose **Add Extension → Remote Extension (Streamable HTTP)**, and enter the name `honcho`, the URI `https://mcp.honcho.dev`, and the headers `Authorization: Bearer hch-your-key-here` and `X-Honcho-User-Name: YourName`.
+The easiest way is to run `goose configure`, choose **Add Extension → Remote Extension (Streamable HTTP)**, and enter the name `honcho`, the URI `https://mcp.honcho.dev`, and the header `Authorization: Bearer hch-your-key-here`.
 
 Or edit your `config.yaml` directly (on Linux, `~/.config/goose/config.yaml`):
 
@@ -242,7 +230,6 @@ extensions:
     uri: https://mcp.honcho.dev
     headers:
       Authorization: "Bearer hch-your-key-here"
-      X-Honcho-User-Name: "YourName"
     timeout: 60
 ```
 
@@ -252,62 +239,19 @@ To teach Goose the recommended memory flow, save the [instructions](https://raw.
 
 ---
 
-## Optional Configuration
+## Workspace
 
-You can customize the assistant name and workspace ID by adding extra headers. Both are optional.
+Every workspace-scoped tool takes a `workspace_id` argument. You can also set `X-Honcho-Workspace-ID` on the connection; that value fills `workspace_id` when the argument is omitted.
 
-| Header | Default | Description |
-|--------|---------|-------------|
-| `Authorization` | *required* | `Bearer hch-your-key-here` |
-| `X-Honcho-User-Name` | *required* | What the AI should call you |
-| `X-Honcho-Assistant-Name` | `"Assistant"` | Name for the AI peer |
-| `X-Honcho-Workspace-ID` | `"default"` | Isolate memory per project |
-
-Example with all headers (Claude Desktop format):
-
-```json
-{
-  "mcpServers": {
-    "honcho": {
-      "command": "npx",
-      "args": [
-        "mcp-remote",
-        "https://mcp.honcho.dev",
-        "--header",
-        "Authorization:${AUTH_HEADER}",
-        "--header",
-        "X-Honcho-User-Name:${USER_NAME}",
-        "--header",
-        "X-Honcho-Assistant-Name:${ASSISTANT_NAME}",
-        "--header",
-        "X-Honcho-Workspace-ID:${WORKSPACE_ID}"
-      ],
-      "env": {
-        "AUTH_HEADER": "Bearer hch-your-key-here",
-        "USER_NAME": "YourName",
-        "ASSISTANT_NAME": "Claude",
-        "WORKSPACE_ID": "my-project"
-      }
-    }
-  }
-}
-```
+Use `list_workspaces` to discover IDs (each result includes metadata and `created_at`), or `create_workspace` if none fit, then reuse the same ID for subsequent tool calls.
 
 ---
 
-## Available Tools
+## Using the Tools
 
-The recommended flow for a standard conversation uses `create_session` + `add_messages_to_session` + `chat`. See the [full instructions](https://raw.githubusercontent.com/plastic-labs/honcho/refs/heads/main/mcp/instructions.md) for a complete walkthrough.
+Once connected, the Honcho MCP server tells your assistant how to use the tools automatically — it ships usage instructions (the recall → respond → record loop, the full tool list, and reasoning levels) on connect, so there's nothing extra to configure.
 
-**Workspace** — `inspect_workspace`, `list_workspaces`, `search`, `get_metadata`, `set_metadata`
-
-**Peers** — `create_peer`, `list_peers`, `chat`, `get_peer_card`, `set_peer_card`, `get_peer_context`, `get_representation`
-
-**Sessions** — `create_session`, `list_sessions`, `delete_session`, `clone_session`, `add_peers_to_session`, `remove_peers_from_session`, `get_session_peers`, `inspect_session`, `add_messages_to_session`, `get_session_messages`, `get_session_message`, `get_session_context`
-
-**Conclusions** — `list_conclusions`, `query_conclusions`, `create_conclusions`, `delete_conclusion`
-
-**System** — `schedule_dream`, `get_queue_status`
+If you want to read that guidance yourself, it's the [full instructions](https://raw.githubusercontent.com/plastic-labs/honcho/refs/heads/main/mcp/instructions.md).
 
 ---
 

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ToolContext } from "../types.js";
-import { textResult, errorResult } from "../types.js";
+import { textResult, errorResult, workspaceIdSchema } from "../types.js";
 
 export function register(server: McpServer, ctx: ToolContext) {
   // ── create_peer ─────────────────────────────────────────────────────
@@ -14,6 +14,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         "Returns the peer ID and any configuration that was set.",
       ].join("\n"),
       inputSchema: {
+        workspace_id: workspaceIdSchema(ctx),
         peer_id: z.string().describe("Unique identifier for the peer."),
         configuration: z
           .object({
@@ -25,9 +26,11 @@ export function register(server: McpServer, ctx: ToolContext) {
           .describe("Optional peer configuration."),
       },
     },
-    async ({ peer_id, configuration }) => {
+    async ({ workspace_id, peer_id, configuration }) => {
       try {
-        const peer = await ctx.honcho.peer(peer_id, { configuration });
+        const peer = await ctx.clientFor(workspace_id).peer(peer_id, {
+          configuration,
+        });
         return textResult({ peer_id: peer.id, configuration: peer.configuration });
       } catch (e) {
         return errorResult(
@@ -42,15 +45,17 @@ export function register(server: McpServer, ctx: ToolContext) {
     "list_peers",
     {
       description: [
-        "List peers in the current workspace (paginated).",
+        "List peers in the given workspace (paginated).",
         "Use this to discover which users and agents exist.",
         "Returns peer IDs with pagination metadata.",
       ].join("\n"),
-      inputSchema: {},
+      inputSchema: {
+        workspace_id: workspaceIdSchema(ctx),
+      },
     },
-    async () => {
+    async ({ workspace_id }) => {
       try {
-        const page = await ctx.honcho.peers();
+        const page = await ctx.clientFor(workspace_id).peers();
         return textResult({
           peers: page.items.map((p) => ({ id: p.id })),
           total: page.total,
@@ -75,6 +80,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         "Returns a natural-language answer, or 'None' if no relevant information exists.",
       ].join("\n"),
       inputSchema: {
+        workspace_id: workspaceIdSchema(ctx),
         peer_id: z.string().describe("The peer to query about."),
         query: z.string().describe("Natural-language question."),
         target_peer_id: z
@@ -93,9 +99,16 @@ export function register(server: McpServer, ctx: ToolContext) {
           .describe("Reasoning effort. Higher = more detailed but slower."),
       },
     },
-    async ({ peer_id, query, target_peer_id, session_id, reasoning_level }) => {
+    async ({
+      workspace_id,
+      peer_id,
+      query,
+      target_peer_id,
+      session_id,
+      reasoning_level,
+    }) => {
       try {
-        const peer = await ctx.honcho.peer(peer_id);
+        const peer = await ctx.clientFor(workspace_id).peer(peer_id);
         const result = await peer.chat(query, {
           target: target_peer_id,
           session: session_id,
@@ -120,6 +133,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         "Returns an array of fact strings, or null if no card exists yet.",
       ].join("\n"),
       inputSchema: {
+        workspace_id: workspaceIdSchema(ctx),
         peer_id: z.string().describe("The observer peer."),
         target_peer_id: z
           .string()
@@ -129,9 +143,9 @@ export function register(server: McpServer, ctx: ToolContext) {
           ),
       },
     },
-    async ({ peer_id, target_peer_id }) => {
+    async ({ workspace_id, peer_id, target_peer_id }) => {
       try {
-        const peer = await ctx.honcho.peer(peer_id);
+        const peer = await ctx.clientFor(workspace_id).peer(peer_id);
         const card = await peer.getCard(target_peer_id);
         return textResult(card ?? "No peer card found.");
       } catch (e) {
@@ -152,6 +166,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         "Returns the updated peer card.",
       ].join("\n"),
       inputSchema: {
+        workspace_id: workspaceIdSchema(ctx),
         peer_id: z.string().describe("The observer peer."),
         peer_card: z
           .array(z.string())
@@ -164,9 +179,9 @@ export function register(server: McpServer, ctx: ToolContext) {
           ),
       },
     },
-    async ({ peer_id, peer_card, target_peer_id }) => {
+    async ({ workspace_id, peer_id, peer_card, target_peer_id }) => {
       try {
-        const peer = await ctx.honcho.peer(peer_id);
+        const peer = await ctx.clientFor(workspace_id).peer(peer_id);
         const result = await peer.setCard(peer_card, target_peer_id);
         return textResult(result ?? "Peer card set successfully");
       } catch (e) {
@@ -187,6 +202,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         "Returns an object with representation, peer_card, peer_id, and target_id.",
       ].join("\n"),
       inputSchema: {
+        workspace_id: workspaceIdSchema(ctx),
         peer_id: z.string().describe("The observer peer."),
         target_peer_id: z
           .string()
@@ -202,9 +218,15 @@ export function register(server: McpServer, ctx: ToolContext) {
           .describe("Optional: max number of conclusions to include."),
       },
     },
-    async ({ peer_id, target_peer_id, search_query, max_conclusions }) => {
+    async ({
+      workspace_id,
+      peer_id,
+      target_peer_id,
+      search_query,
+      max_conclusions,
+    }) => {
       try {
-        const peer = await ctx.honcho.peer(peer_id);
+        const peer = await ctx.clientFor(workspace_id).peer(peer_id);
         const context = await peer.context({
           target: target_peer_id,
           searchQuery: search_query,
@@ -234,6 +256,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         "Returns a formatted string of conclusions.",
       ].join("\n"),
       inputSchema: {
+        workspace_id: workspaceIdSchema(ctx),
         peer_id: z.string().describe("The observer peer."),
         target_peer_id: z
           .string()
@@ -254,6 +277,7 @@ export function register(server: McpServer, ctx: ToolContext) {
       },
     },
     async ({
+      workspace_id,
       peer_id,
       target_peer_id,
       session_id,
@@ -261,7 +285,7 @@ export function register(server: McpServer, ctx: ToolContext) {
       max_conclusions,
     }) => {
       try {
-        const peer = await ctx.honcho.peer(peer_id);
+        const peer = await ctx.clientFor(workspace_id).peer(peer_id);
         const rep = await peer.representation({
           target: target_peer_id,
           session: session_id,

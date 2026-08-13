@@ -1,5 +1,10 @@
 import { createMcpHandler } from "agents/mcp";
-import { parseConfig, createClient, type Env } from "./config.js";
+import {
+  parseConfig,
+  createClientFactory,
+  createUnscopedClient,
+  type Env,
+} from "./config.js";
 import { createServer } from "./server.js";
 
 const CORS_ORIGIN = "*";
@@ -66,8 +71,11 @@ export default {
     }
 
     try {
-      const honcho = createClient(config);
-      const server = createServer({ honcho, config });
+      const server = createServer({
+        config,
+        clientFor: createClientFactory(config),
+        unscoped: createUnscopedClient(config),
+      });
       const handler = createMcpHandler(server, {
         route: "/",
         corsOptions: {
