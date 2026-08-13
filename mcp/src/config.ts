@@ -47,15 +47,16 @@ export function parseConfig(request: Request, env: Env = {}): HonchoConfig {
   };
 }
 
+export const MISSING_WORKSPACE_ID_MESSAGE =
+  "Missing workspace_id. Pass workspace_id on the next tool call, or set the X-Honcho-Workspace-ID header on the connection so it is used automatically.";
+
 export function resolveWorkspaceId(
   config: HonchoConfig,
   workspaceId?: string,
 ): string {
   const id = workspaceId?.trim() || config.workspaceId?.trim();
   if (!id) {
-    throw new Error(
-      "workspace_id is required. Pass it as a tool argument or set the X-Honcho-Workspace-ID header.",
-    );
+    throw new Error(MISSING_WORKSPACE_ID_MESSAGE);
   }
   return id;
 }

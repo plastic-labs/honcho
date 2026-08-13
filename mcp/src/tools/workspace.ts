@@ -1,13 +1,26 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { PageResponse, WorkspaceResponse } from "@honcho-ai/sdk";
+import {
+  HonchoError,
+  type PageResponse,
+  type WorkspaceResponse,
+} from "@honcho-ai/sdk";
 import type { ToolContext } from "../types.js";
+import { resolveWorkspaceId } from "../config.js";
 import {
   textResult,
   errorResult,
   formatMessages,
   workspaceIdSchema,
 } from "../types.js";
+
+function withAdminKeyHint(prefix: string, e: unknown): string {
+  const message = e instanceof Error ? e.message : String(e);
+  const denied =
+    e instanceof HonchoError && (e.status === 401 || e.status === 403);
+  if (!denied) return `${prefix}: ${message}`;
+  return `${prefix}: ${message}. This operation is only possible with an admin API key.`;
+}
 
 function formatWorkspace(workspace: WorkspaceResponse) {
   return {
@@ -100,9 +113,7 @@ export function register(server: McpServer, ctx: ToolContext) {
           pages: result.pages,
         });
       } catch (e) {
-        return errorResult(
-          `Failed to list workspaces: ${e instanceof Error ? e.message : String(e)}`,
-        );
+        return errorResult(withAdminKeyHint("Failed to list workspaces", e));
       }
     },
   );
@@ -130,20 +141,19 @@ export function register(server: McpServer, ctx: ToolContext) {
     },
     async ({ workspace_id, metadata }) => {
       try {
+        const id = resolveWorkspaceId(ctx.config, workspace_id);
         const workspace = await ctx.unscoped.http.post<WorkspaceResponse>(
           "/v3/workspaces",
           {
             body: {
-              id: workspace_id,
+              id,
               metadata,
             },
           },
         );
         return textResult(formatWorkspace(workspace));
       } catch (e) {
-        return errorResult(
-          `Failed to create workspace: ${e instanceof Error ? e.message : String(e)}`,
-        );
+        return errorResult(withAdminKeyHint("Failed to create workspace", e));
       }
     },
   );
