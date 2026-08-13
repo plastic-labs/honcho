@@ -4,12 +4,21 @@
 
 The simplest way to use Honcho for a standard user/assistant conversation. Three steps using the general tools.
 
+Every workspace-scoped tool takes `workspace_id`. The simplest setup is for the client to set `X-Honcho-Workspace-ID` on the connection — then omit `workspace_id` on every call. Do not list or create a workspace just to rediscover a header that is already set.
+
+If the header is unset and you don't already know the workspace:
+
+1. Call `list_workspaces` and pick the workspace whose id or metadata best matches this work.
+2. If none fit, call `create_workspace` with a descriptive id (and optional metadata like `{ "project": "...", "purpose": "..." }`).
+3. Reuse that same `workspace_id` for the rest of the conversation.
+
 ### 1. Start a conversation (once per conversation)
 
 Create a session and set up the user and assistant peers:
 
 ```
 create_session
+  workspace_id: "<workspace-id>"
   session_id: "<unique-id>"
 ```
 
@@ -17,12 +26,15 @@ Then add peers to the session:
 
 ```
 create_peer
+  workspace_id: "<workspace-id>"
   peer_id: "<user-name>"
 
 create_peer
+  workspace_id: "<workspace-id>"
   peer_id: "Assistant"
 
 add_peers_to_session
+  workspace_id: "<workspace-id>"
   session_id: "<session_id>"
   peers:
     - peer_id: "<user-name>"
@@ -39,6 +51,7 @@ Store the `session_id` for the rest of this conversation.
 
 ```
 chat
+  workspace_id: "<workspace-id>"
   peer_id: "Assistant"
   query: "What communication style does this user prefer?"
   target_peer_id: "<user-name>"
@@ -58,6 +71,7 @@ This calls Honcho's reasoning system to answer your question about the user, gro
 
 ```
 add_messages_to_session
+  workspace_id: "<workspace-id>"
   session_id: "<session_id>"
   messages:
     - peer_id: "<user-name>"
@@ -88,8 +102,9 @@ The full API for advanced use cases.
 
 | Tool | When to use |
 | --- | --- |
-| `inspect_workspace` | Inspect a single workspace's details |
-| `list_workspaces` | Enumerate available workspaces |
+| `list_workspaces` | Discover available workspaces (id, metadata, created_at). No `workspace_id` needed. |
+| `create_workspace` | Get or create a workspace when none of the listed ones fit |
+| `inspect_workspace` | Inspect a single workspace's details. Requires `workspace_id`. |
 | `search` | Semantic search across messages — scope with optional `peer_id` or `session_id` params |
 | `get_metadata` | Read metadata for workspace, peer, or session (scope with optional `peer_id` or `session_id`) |
 | `set_metadata` | Store metadata for workspace, peer, or session (scope with optional `peer_id` or `session_id`) |
