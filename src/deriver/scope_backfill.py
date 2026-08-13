@@ -35,6 +35,7 @@ from sqlalchemy.sql.functions import func
 from src import crud, models
 from src.config import settings
 from src.crud.scope import ScopeBackfillState
+from src.crud.session import is_peer_in_session
 from src.dependencies import tracked_db
 from src.embedding_client import embedding_client
 from src.schemas import DreamType
@@ -106,14 +107,25 @@ async def process_scope_backfill(
     session_name = payload.session_name
 
     try:
-        docs_copied, touched_observed = await _run_backfill(
-            workspace_name, scope_peer, session_name
-        )
+        result = await _run_backfill(workspace_name, scope_peer, session_name)
     except Exception:
         await _write_backfill_status(
             workspace_name, scope_peer, session_name, state="failed"
         )
         raise
+
+    if result is None:
+        # The session left the scope before this task was drained: removal
+        # already cleared the copies and the status entry, so there is nothing
+        # to backfill and nothing to record.
+        logger.info(
+            "Scope backfill skipped for %s/%s/%s: membership is no longer active",
+            workspace_name,
+            scope_peer,
+            session_name,
+        )
+        return
+    docs_copied, touched_observed = result
 
     # One manual (gate-bypassing) omni dream per touched collection builds the
     # scope's higher-order layer and card. enqueue_dream dedupes on the
@@ -149,8 +161,12 @@ async def process_scope_backfill(
 
 async def _run_backfill(
     workspace_name: str, scope_peer: str, session_name: str
-) -> tuple[int, set[str]]:
-    """Run the copy itself. Returns (docs copied or restored, touched observed peers)."""
+) -> tuple[int, set[str]] | None:
+    """Run the copy itself.
+
+    Returns (docs copied or restored, touched observed peers), or ``None`` if
+    the session is no longer a member of the scope.
+    """
     # Phase 1 (DB): plan. Read the session's explicit documents from each
     # sender's global (P, P) collection, and any existing copies (live or
     # soft-deleted) already in the scope's collections.
@@ -242,6 +258,14 @@ async def _run_backfill(
     touched_observed = {spec.observed for spec in plans}
     new_rows: list[models.Document] = []
     async with tracked_db("scope_backfill.write") as db:
+        # scope_backfill and scope_removal carry different work-unit keys, so
+        # nothing orders them: a removal enqueued right after the add (or one
+        # that landed while phase 2 was embedding) can sweep the scope before
+        # these copies exist. Re-checking membership here, in the transaction
+        # that inserts, keeps a removed session from being copied back in.
+        if not await is_peer_in_session(db, workspace_name, session_name, scope_peer):
+            return None
+
         for observed in sorted(touched_observed):
             await crud.get_or_create_collection(
                 db, workspace_name, observer=scope_peer, observed=observed

@@ -27,7 +27,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 from nanoid import generate as generate_nanoid
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models
@@ -77,6 +77,24 @@ async def _create_session(
     db_session.add(session)
     await db_session.commit()
     return session
+
+
+async def _join_scope(
+    db_session: AsyncSession, workspace_name: str, session_name: str, scope_peer: str
+) -> None:
+    """Record the scope peer's membership, as the scopes routes do.
+
+    The backfill handler refuses to copy into a scope the session has left, so
+    tests driving the handler directly must stand the membership row up.
+    """
+    db_session.add(
+        models.SessionPeer(
+            workspace_name=workspace_name,
+            session_name=session_name,
+            peer_name=scope_peer,
+        )
+    )
+    await db_session.commit()
 
 
 async def _create_collection(
@@ -167,6 +185,7 @@ async def test_backfill_copies_only_target_session_explicit_docs(
 
     target_session = await _create_session(db_session, workspace_name)
     other_session = await _create_session(db_session, workspace_name)
+    await _join_scope(db_session, workspace_name, target_session.name, scope_peer.name)
 
     await _create_collection(
         db_session, workspace_name, observer=sender.name, observed=sender.name
@@ -245,6 +264,7 @@ async def test_backfill_processed_twice_is_idempotent(
     scope_name = str(generate_nanoid())
     scope_peer = await _create_scope_peer(db_session, workspace_name, scope_name)
     session = await _create_session(db_session, workspace_name)
+    await _join_scope(db_session, workspace_name, session.name, scope_peer.name)
     await _create_collection(
         db_session, workspace_name, observer=sender.name, observed=sender.name
     )
@@ -281,6 +301,7 @@ async def test_add_remove_readd_converges_on_one_live_copy(
     scope_name = str(generate_nanoid())
     scope_peer = await _create_scope_peer(db_session, workspace_name, scope_name)
     session = await _create_session(db_session, workspace_name)
+    await _join_scope(db_session, workspace_name, session.name, scope_peer.name)
     await _create_collection(
         db_session, workspace_name, observer=sender.name, observed=sender.name
     )
@@ -326,6 +347,74 @@ async def test_add_remove_readd_converges_on_one_live_copy(
     assert len(live_copies) == 1
 
 
+async def test_backfill_skips_a_session_that_left_the_scope(
+    db_session: AsyncSession,
+    sample_data: tuple[models.Workspace, models.Peer],
+):
+    """A removal that lands first must not be undone by a queued backfill.
+
+    scope_backfill and scope_removal carry different work-unit keys, so nothing
+    orders them: add-then-remove can leave a backfill queued after removal has
+    already swept the scope.
+    """
+    test_workspace, sender = sample_data
+    workspace_name = test_workspace.name
+    scope_name = str(generate_nanoid())
+    scope_peer = await _create_scope_peer(db_session, workspace_name, scope_name)
+    session = await _create_session(db_session, workspace_name)
+    await _join_scope(db_session, workspace_name, session.name, scope_peer.name)
+    await _create_collection(
+        db_session, workspace_name, observer=sender.name, observed=sender.name
+    )
+    await _create_collection(
+        db_session, workspace_name, observer=scope_peer.name, observed=sender.name
+    )
+    await _create_document(
+        db_session,
+        workspace_name,
+        observer=sender.name,
+        observed=sender.name,
+        session_name=session.name,
+    )
+
+    # The session leaves the scope before the queued backfill is drained.
+    await db_session.execute(
+        update(models.SessionPeer)
+        .where(
+            models.SessionPeer.workspace_name == workspace_name,
+            models.SessionPeer.session_name == session.name,
+            models.SessionPeer.peer_name == scope_peer.name,
+        )
+        .values(left_at=func.now())
+    )
+    await db_session.commit()
+
+    await process_scope_backfill(
+        ScopeBackfillPayload(scope_peer=scope_peer.name, session_name=session.name),
+        workspace_name,
+    )
+
+    assert (
+        await _get_docs(
+            db_session, workspace_name, observer=scope_peer.name, observed=sender.name
+        )
+        == []
+    )
+    # No status entry either: removal cleared it, and a skipped backfill must
+    # not resurrect the session in the scope's status map.
+    # Names held as plain strings: expire_all() below would make reading them
+    # off the ORM instances trigger a lazy reload mid-assertion.
+    scope_peer_name_str, session_name = scope_peer.name, session.name
+    db_session.expire_all()
+    peer = await db_session.scalar(
+        select(models.Peer)
+        .where(models.Peer.workspace_name == workspace_name)
+        .where(models.Peer.name == scope_peer_name_str)
+    )
+    assert peer is not None
+    assert session_name not in peer.internal_metadata.get("backfill_status", {})
+
+
 # ---------------------------------------------------------------------------
 # 3. Multi-peer session
 # ---------------------------------------------------------------------------
@@ -341,6 +430,7 @@ async def test_backfill_multi_peer_session_copies_into_right_collections(
     scope_name = str(generate_nanoid())
     scope_peer = await _create_scope_peer(db_session, workspace_name, scope_name)
     session = await _create_session(db_session, workspace_name)
+    await _join_scope(db_session, workspace_name, session.name, scope_peer.name)
 
     for peer in (peer_a, peer_b):
         await _create_collection(
@@ -389,6 +479,7 @@ async def test_removal_cascades_to_dependent_derived_docs_only(
     scope_name = str(generate_nanoid())
     scope_peer = await _create_scope_peer(db_session, workspace_name, scope_name)
     session = await _create_session(db_session, workspace_name)
+    await _join_scope(db_session, workspace_name, session.name, scope_peer.name)
     await _create_collection(
         db_session, workspace_name, observer=sender.name, observed=sender.name
     )
@@ -473,6 +564,7 @@ async def test_backfill_enqueues_manual_omni_dream(
     scope_name = str(generate_nanoid())
     scope_peer = await _create_scope_peer(db_session, workspace_name, scope_name)
     session = await _create_session(db_session, workspace_name)
+    await _join_scope(db_session, workspace_name, session.name, scope_peer.name)
     await _create_collection(
         db_session, workspace_name, observer=sender.name, observed=sender.name
     )
@@ -635,6 +727,88 @@ async def test_status_reflects_pending_then_completed(
     backfill_status = response.json()["backfill_status"]
     assert backfill_status[session_name]["state"] == "completed"
     assert backfill_status[session_name]["docs_copied"] == 1
+
+
+async def test_backfill_re_embeds_sources_with_null_embeddings(
+    db_session: AsyncSession,
+    sample_data: tuple[models.Workspace, models.Peer],
+):
+    """Source rows carry no embedding on external-store deployments.
+
+    Phase 2 re-embeds those (embedding API only) and pairs results back with
+    strict=True, so a mis-pairing would raise rather than silently mismatch.
+    """
+    test_workspace, sender = sample_data
+    workspace_name = test_workspace.name
+    scope_name = str(generate_nanoid())
+    scope_peer = await _create_scope_peer(db_session, workspace_name, scope_name)
+    session = await _create_session(db_session, workspace_name)
+    await _join_scope(db_session, workspace_name, session.name, scope_peer.name)
+    await _create_collection(
+        db_session, workspace_name, observer=sender.name, observed=sender.name
+    )
+    await _create_collection(
+        db_session, workspace_name, observer=scope_peer.name, observed=sender.name
+    )
+    source = await _create_document(
+        db_session,
+        workspace_name,
+        observer=sender.name,
+        observed=sender.name,
+        session_name=session.name,
+        content="fact whose vector lives in the external store",
+    )
+    source.embedding = None
+    await db_session.commit()
+
+    await process_scope_backfill(
+        ScopeBackfillPayload(scope_peer=scope_peer.name, session_name=session.name),
+        workspace_name,
+    )
+
+    [copy] = await _get_docs(
+        db_session, workspace_name, observer=scope_peer.name, observed=sender.name
+    )
+    assert copy.embedding is not None
+    assert len(copy.embedding) == _EMBEDDING_DIM
+
+
+async def test_backfill_failure_records_failed_status(
+    db_session: AsyncSession,
+    sample_data: tuple[models.Workspace, models.Peer],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    test_workspace, _ = sample_data
+    workspace_name = test_workspace.name
+    scope_name = str(generate_nanoid())
+    scope_peer = await _create_scope_peer(db_session, workspace_name, scope_name)
+    session = await _create_session(db_session, workspace_name)
+
+    # Plain strings: the ORM instances are expired below (see the same guard in
+    # test_backfill_status_writes_preserve_the_scope_kind_flag).
+    scope_peer_name_str, session_name = scope_peer.name, session.name
+
+    async def boom(*_args: Any, **_kwargs: Any) -> None:
+        raise RuntimeError("copy phase blew up")
+
+    monkeypatch.setattr("src.deriver.scope_backfill._run_backfill", boom)
+
+    with pytest.raises(RuntimeError):
+        await process_scope_backfill(
+            ScopeBackfillPayload(
+                scope_peer=scope_peer_name_str, session_name=session_name
+            ),
+            workspace_name,
+        )
+
+    db_session.expire_all()
+    peer = await db_session.scalar(
+        select(models.Peer)
+        .where(models.Peer.workspace_name == workspace_name)
+        .where(models.Peer.name == scope_peer_name_str)
+    )
+    assert peer is not None
+    assert peer.internal_metadata["backfill_status"][session_name]["state"] == "failed"
 
 
 # ---------------------------------------------------------------------------
