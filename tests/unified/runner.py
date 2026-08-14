@@ -637,7 +637,8 @@ class UnifiedTestRunner:
             AsyncAnthropic(api_key=self.api_key) if self.api_key else None
         )
 
-    async def run(self):
+    async def run(self) -> int:
+        """Run the suite and return the number of tests that did not pass."""
         try:
             # 1. Start Harness
             logger.info("Starting Honcho Harness...")
@@ -795,6 +796,8 @@ class UnifiedTestRunner:
 
                 await send_discord_message(discord_webhook_url, message)
 
+            return failed_count
+
         finally:
             # 7. Cleanup
             logger.info("Cleaning up harness...")
@@ -809,4 +812,4 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     runner = UnifiedTestRunner(Path(args.test_dir))
-    asyncio.run(runner.run())
+    sys.exit(1 if asyncio.run(runner.run()) else 0)
