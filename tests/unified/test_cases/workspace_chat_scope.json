@@ -1,7 +1,9 @@
 {
   "description": "Workspace chat with `scope` only recalls the scope's member sessions.",
   "workspace_config": {
-    "deriver": false
+    "reasoning": {
+      "enabled": true
+    }
   },
   "steps": [
     {

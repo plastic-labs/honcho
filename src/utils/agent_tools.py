@@ -1927,7 +1927,7 @@ async def _handle_search_memory(
         # here, we automatically search the message history for relevant
         # information.
         zero_hit_meta = {**search_meta, "results_count": 0}
-        if ctx.agent_type == "dialectic":
+        if ctx.agent_type in ("dialectic", "workspace_dialectic"):
             limit = min(_safe_int(tool_input.get("top_k"), 20), 20)
             message_output = None
             snippets = await crud.search_messages(

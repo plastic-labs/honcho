@@ -1,7 +1,9 @@
 {
   "description": "Test that workspace-level chat can fall back to searching messages directly. Deriver is disabled so no observations are created, forcing the agent to find information from raw message history.",
   "workspace_config": {
-    "deriver": false
+    "reasoning": {
+      "enabled": false
+    }
   },
   "steps": [
     {
