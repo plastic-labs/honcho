@@ -437,9 +437,9 @@ class SessionCreate(SessionBase):
         max_length=100,
         description=(
             "Optional list of (unprefixed) scope names to add this session to. "
-            "Each scope is created if it does not exist yet. Membership applies "
-            "only to messages ingested after the session is added to the scope; "
-            "conclusions already derived are not backfilled."
+            "Each scope is created if it does not exist yet. If the session "
+            "already has messages, its existing documents are backfilled into "
+            "the scope asynchronously."
         ),
     )
 
@@ -598,6 +598,18 @@ class ScopeSessionsAdd(BaseModel):
         max_length=100,
         description="IDs of existing sessions to add to the scope",
     )
+
+
+class ScopeStatus(BaseModel):
+    """Per-session backfill/reconciliation job status for a scope.
+
+    ``backfill_status`` maps each session that has had a backfill enqueued to
+    its current job state: ``{state, updated_at[, docs_copied]}`` where
+    ``state`` is ``pending``/``completed``/``failed`` and ``docs_copied`` is
+    present once a backfill completes.
+    """
+
+    backfill_status: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------

@@ -8,6 +8,10 @@ rules = [
   { type = "Text", globs = ["**/*.md"], fallthrough = true },
 ]
 
+# Executes the scheduled() handler
+[triggers]
+crons = ["*/5 * * * *"]
+
 [env.production]
 name = "honcho-mcp"
 

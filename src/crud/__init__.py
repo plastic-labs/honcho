@@ -49,13 +49,17 @@ from .representation import (
 )
 from .scope import (
     add_sessions_to_scope,
+    clear_scope_backfill_status,
     get_or_create_scopes,
+    get_scope_backfill_status,
     get_scope_or_raise,
     get_scope_sessions,
     get_scopes,
+    invalidate_scope_peer_cache,
     remove_session_from_scope,
     resolve_scope_peers,
     resolve_scope_session_union,
+    update_scope_backfill_status,
 )
 from .session import (
     SessionDeletionResult,
@@ -146,13 +150,17 @@ __all__ = [
     "get_working_representation",
     # Scope
     "add_sessions_to_scope",
+    "clear_scope_backfill_status",
     "get_or_create_scopes",
+    "get_scope_backfill_status",
     "get_scope_or_raise",
     "get_scope_sessions",
     "get_scopes",
+    "invalidate_scope_peer_cache",
     "remove_session_from_scope",
     "resolve_scope_peers",
     "resolve_scope_session_union",
+    "update_scope_backfill_status",
     # Session
     "SessionDeletionResult",
     "get_sessions",
