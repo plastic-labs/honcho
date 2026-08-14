@@ -348,6 +348,7 @@ async def chat(
     if options.stream:
 
         async def format_sse_stream(chunks: AsyncIterator[str]) -> AsyncIterator[str]:
+            """Format chunks as SSE events."""
             async for chunk in chunks:
                 yield f"data: {json.dumps({'delta': {'content': chunk}, 'done': False})}\n\n"
             yield f"data: {json.dumps({'done': True})}\n\n"

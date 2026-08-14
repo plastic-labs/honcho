@@ -57,11 +57,12 @@ Tests are defined in JSON files. A test definition consists of a name, optional 
 
 ### Raw HTTP vs the SDK
 
-Most steps drive the Honcho Python SDK. `create_scope` and any query carrying
-`scope` go over raw HTTP instead, because the published SDK trails the API and
-exposes neither. Calling the API directly also tests the contract the SDK is
-generated from, so a wrong status code or response shape surfaces here rather
-than being masked by client-side validation.
+Most steps drive the Honcho Python SDK. `create_scope` and scoped `chat` /
+`get_representation` / `get_context` queries go over raw HTTP instead, because
+the published SDK trails the API and exposes neither. Scoped `workspace_chat`
+uses the SDK `scope` argument. Calling the API directly also tests the contract
+the SDK is generated from, so a wrong status code or response shape surfaces
+here rather than being masked by client-side validation.
 
 ### Assertions
 
