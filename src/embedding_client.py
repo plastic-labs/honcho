@@ -17,6 +17,7 @@ from .config import (
     resolve_embedding_model_config,
     settings,
 )
+from .llm.request_builder import request_timeout_from_extra_params
 
 if TYPE_CHECKING:
     from google import genai
@@ -216,9 +217,19 @@ class _EmbeddingClient:
                 raise ValueError("OpenAI API key is required")
             from openai import AsyncOpenAI
 
+            # Unlike the Gemini branch above, this had no HTTP timeout at all —
+            # a stalled OpenAI-compatible embedding socket (e.g. a contended
+            # self-hosted backend) wedges the deriver worker exactly the way
+            # #785/#903 describe, just via a code path #903 didn't cover.
+            # `provider_params.timeout` is opt-in and already validated at
+            # config load (`coerce_provider_timeout`); when unset this stays
+            # `None` and the SDK's own default applies, same as before.
+            timeout = request_timeout_from_extra_params(config.provider_params)
+
             self.client = AsyncOpenAI(
                 api_key=config.api_key,
                 base_url=config.base_url,
+                timeout=timeout,
             )
             self.max_embedding_tokens = max_input_tokens
             self.max_batch_size = config.max_batch_size or 2048

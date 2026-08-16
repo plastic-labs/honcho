@@ -65,7 +65,13 @@ async def test_openai_embedding_client_uses_configured_model_and_dimensions(
     fake_embeddings = FakeOpenAIEmbeddingsAPI([0.1] * 8)
 
     class FakeOpenAIClient:
-        def __init__(self, *, api_key: str | None, base_url: str | None) -> None:
+        def __init__(
+            self,
+            *,
+            api_key: str | None,
+            base_url: str | None,
+            timeout: float | None = None,
+        ) -> None:
             self.api_key: str | None = api_key
             self.base_url: str | None = base_url
             self.embeddings: FakeOpenAIEmbeddingsAPI = fake_embeddings
@@ -104,7 +110,13 @@ async def test_openai_embedding_client_rejects_dimension_mismatch(
     fake_embeddings = FakeOpenAIEmbeddingsAPI([0.1] * 7)
 
     class FakeOpenAIClient:
-        def __init__(self, *, api_key: str | None, base_url: str | None) -> None:
+        def __init__(
+            self,
+            *,
+            api_key: str | None,
+            base_url: str | None,
+            timeout: float | None = None,
+        ) -> None:
             self.embeddings: FakeOpenAIEmbeddingsAPI = fake_embeddings
 
     monkeypatch.setattr("openai.AsyncOpenAI", FakeOpenAIClient)
@@ -220,6 +232,89 @@ async def test_gemini_embedding_client_keeps_timeout_without_base_url(
     assert gemini_client.http_options.timeout == 600_000
 
 
+@pytest.mark.asyncio
+async def test_openai_embedding_client_forwards_provider_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`provider_params.timeout` must reach the OpenAI-compatible embedding
+    client too, not just the Gemini one — a stalled OpenAI-compatible socket
+    (e.g. a contended self-hosted backend) wedges the deriver worker exactly
+    like #785/#903 describe for Gemini."""
+
+    class FakeOpenAIClient:
+        def __init__(
+            self,
+            *,
+            api_key: str | None,
+            base_url: str | None,
+            timeout: float | None = None,
+        ) -> None:
+            self.api_key: str | None = api_key
+            self.base_url: str | None = base_url
+            self.timeout: float | None = timeout
+            self.embeddings: FakeOpenAIEmbeddingsAPI = FakeOpenAIEmbeddingsAPI(
+                [0.1] * 8
+            )
+
+    monkeypatch.setattr("openai.AsyncOpenAI", FakeOpenAIClient)
+
+    client = _EmbeddingClient(
+        EmbeddingModelConfig(
+            transport="openai",
+            model="text-embedding-3-small",
+            api_key="test-key",
+            provider_params={"timeout": 45},
+        ),
+        vector_dimensions=8,
+        max_input_tokens=8192,
+        max_tokens_per_request=300_000,
+        send_dimensions=False,
+    )
+
+    openai_client = cast(Any, client.client)
+    assert openai_client.timeout == 45.0
+
+
+@pytest.mark.asyncio
+async def test_openai_embedding_client_omits_timeout_when_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unset `provider_params.timeout` must not forward a timeout — opt-in,
+    changes no existing behavior, same contract as the LLM registry (#832)."""
+
+    class FakeOpenAIClient:
+        def __init__(
+            self,
+            *,
+            api_key: str | None,
+            base_url: str | None,
+            timeout: float | None = None,
+        ) -> None:
+            self.api_key: str | None = api_key
+            self.base_url: str | None = base_url
+            self.timeout: float | None = timeout
+            self.embeddings: FakeOpenAIEmbeddingsAPI = FakeOpenAIEmbeddingsAPI(
+                [0.1] * 8
+            )
+
+    monkeypatch.setattr("openai.AsyncOpenAI", FakeOpenAIClient)
+
+    client = _EmbeddingClient(
+        EmbeddingModelConfig(
+            transport="openai",
+            model="text-embedding-3-small",
+            api_key="test-key",
+        ),
+        vector_dimensions=8,
+        max_input_tokens=8192,
+        max_tokens_per_request=300_000,
+        send_dimensions=False,
+    )
+
+    openai_client = cast(Any, client.client)
+    assert openai_client.timeout is None
+
+
 def _build_openai_client(
     monkeypatch: pytest.MonkeyPatch,
     *,
@@ -233,7 +328,13 @@ def _build_openai_client(
     fake_embeddings = FakeOpenAIEmbeddingsAPI(embedding)
 
     class FakeOpenAIClient:
-        def __init__(self, *, api_key: str | None, base_url: str | None) -> None:
+        def __init__(
+            self,
+            *,
+            api_key: str | None,
+            base_url: str | None,
+            timeout: float | None = None,
+        ) -> None:
             self.api_key: str | None = api_key
             self.base_url: str | None = base_url
             self.embeddings: FakeOpenAIEmbeddingsAPI = fake_embeddings
@@ -707,7 +808,13 @@ async def test_simple_batch_embed_respects_token_budget_per_request(
     fake_embeddings = FakeOpenAIEmbeddingsAPI([0.5] * 4)
 
     class FakeOpenAIClient:
-        def __init__(self, *, api_key: str | None, base_url: str | None) -> None:
+        def __init__(
+            self,
+            *,
+            api_key: str | None,
+            base_url: str | None,
+            timeout: float | None = None,
+        ) -> None:
             self.embeddings: FakeOpenAIEmbeddingsAPI = fake_embeddings
 
     monkeypatch.setattr("openai.AsyncOpenAI", FakeOpenAIClient)
@@ -745,7 +852,13 @@ async def test_simple_batch_embed_rejects_oversized_input(
     fake_embeddings = FakeOpenAIEmbeddingsAPI([0.1] * 4)
 
     class FakeOpenAIClient:
-        def __init__(self, *, api_key: str | None, base_url: str | None) -> None:
+        def __init__(
+            self,
+            *,
+            api_key: str | None,
+            base_url: str | None,
+            timeout: float | None = None,
+        ) -> None:
             self.embeddings: FakeOpenAIEmbeddingsAPI = fake_embeddings
 
     monkeypatch.setattr("openai.AsyncOpenAI", FakeOpenAIClient)
@@ -775,7 +888,13 @@ def test_prepare_chunks_returns_ordered_chunks(
     fake_embeddings = FakeOpenAIEmbeddingsAPI([0.1] * 4)
 
     class FakeOpenAIClient:
-        def __init__(self, *, api_key: str | None, base_url: str | None) -> None:
+        def __init__(
+            self,
+            *,
+            api_key: str | None,
+            base_url: str | None,
+            timeout: float | None = None,
+        ) -> None:
             self.embeddings: FakeOpenAIEmbeddingsAPI = fake_embeddings
 
     monkeypatch.setattr("openai.AsyncOpenAI", FakeOpenAIClient)

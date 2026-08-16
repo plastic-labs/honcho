@@ -82,6 +82,8 @@ model = "text-embedding-3-small"
 # [embedding.model_config.overrides]
 # base_url = "https://embedding-proxy.internal.example/v1"
 # api_key_env = "EMBEDDING_CUSTOM_API_KEY"
+# [embedding.model_config.overrides.provider_params]
+# timeout = 90.0
 
 # Deriver settings
 [deriver]
