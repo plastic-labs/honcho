@@ -233,13 +233,10 @@ async def test_gemini_embedding_client_keeps_timeout_without_base_url(
 
 
 @pytest.mark.asyncio
-async def test_openai_embedding_client_forwards_provider_timeout(
+async def test_openai_embedding_client_forwards_timeout(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`provider_params.timeout` must reach the OpenAI-compatible embedding
-    client too, not just the Gemini one — a stalled OpenAI-compatible socket
-    (e.g. a contended self-hosted backend) wedges the deriver worker exactly
-    like #785/#903 describe for Gemini."""
+    """Configured embedding timeout reaches the OpenAI-compatible client."""
 
     class FakeOpenAIClient:
         def __init__(
@@ -263,7 +260,7 @@ async def test_openai_embedding_client_forwards_provider_timeout(
             transport="openai",
             model="text-embedding-3-small",
             api_key="test-key",
-            provider_params={"timeout": 45},
+            timeout=45,
         ),
         vector_dimensions=8,
         max_input_tokens=8192,
@@ -279,8 +276,9 @@ async def test_openai_embedding_client_forwards_provider_timeout(
 async def test_openai_embedding_client_omits_timeout_when_unset(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Unset `provider_params.timeout` must not forward a timeout — opt-in,
-    changes no existing behavior, same contract as the LLM registry (#832)."""
+    """Unset timeout omits the kwarg so the OpenAI SDK keeps its default."""
+
+    missing = object()
 
     class FakeOpenAIClient:
         def __init__(
@@ -288,11 +286,11 @@ async def test_openai_embedding_client_omits_timeout_when_unset(
             *,
             api_key: str | None,
             base_url: str | None,
-            timeout: float | None = None,
+            timeout: object = missing,
         ) -> None:
             self.api_key: str | None = api_key
             self.base_url: str | None = base_url
-            self.timeout: float | None = timeout
+            self.timeout: object = timeout
             self.embeddings: FakeOpenAIEmbeddingsAPI = FakeOpenAIEmbeddingsAPI(
                 [0.1] * 8
             )
@@ -312,7 +310,38 @@ async def test_openai_embedding_client_omits_timeout_when_unset(
     )
 
     openai_client = cast(Any, client.client)
-    assert openai_client.timeout is None
+    assert openai_client.timeout is missing
+
+
+@pytest.mark.asyncio
+async def test_gemini_embedding_client_forwards_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Configured embedding timeout reaches Gemini as milliseconds."""
+
+    class FakeGeminiClient:
+        def __init__(self, *, api_key: str | None, http_options: Any) -> None:
+            self.api_key: str | None = api_key
+            self.http_options: Any = http_options
+            self.aio: Any = SimpleNamespace(models=SimpleNamespace())
+
+    monkeypatch.setattr("google.genai.Client", FakeGeminiClient)
+
+    client = _EmbeddingClient(
+        EmbeddingModelConfig(
+            transport="gemini",
+            model="gemini-embedding-001",
+            api_key="gemini-key",
+            timeout=45,
+        ),
+        vector_dimensions=8,
+        max_input_tokens=4096,
+        max_tokens_per_request=300_000,
+        send_dimensions=False,
+    )
+
+    gemini_client = cast(Any, client.client)
+    assert gemini_client.http_options.timeout == 45_000
 
 
 def _build_openai_client(
@@ -935,6 +964,31 @@ def test_embedding_model_config_parses_max_batch_size_from_env(
 
     resolved = resolve_embedding_model_config(s.MODEL_CONFIG)
     assert resolved.max_batch_size == 10
+
+
+def test_embedding_model_config_parses_timeout_from_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    s = _build_embedding_settings(
+        {"EMBEDDING_MODEL_CONFIG__TIMEOUT": "90.0"},
+        monkeypatch,
+    )
+
+    assert s.MODEL_CONFIG.timeout == 90.0
+
+    resolved = resolve_embedding_model_config(s.MODEL_CONFIG)
+    assert resolved.timeout == 90.0
+
+
+def test_embedding_model_config_rejects_invalid_timeout() -> None:
+    with pytest.raises(
+        ValueError, match=r"provider_params\.timeout must be a positive number"
+    ):
+        EmbeddingModelConfig(
+            transport="openai",
+            model="text-embedding-3-small",
+            timeout=-1,
+        )
 
 
 @pytest.mark.asyncio
