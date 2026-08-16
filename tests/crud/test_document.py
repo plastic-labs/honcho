@@ -1,4 +1,5 @@
 import datetime
+import math
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -465,6 +466,220 @@ class TestDocumentCRUD:
         )
         # Original is soft-deleted; replacement isn't inserted until create_documents runs.
         assert len(live) == 0
+
+    @pytest.mark.asyncio
+    async def test_loose_band_paraphrase_reinforces_without_replacing(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """◆0816 regression (issue #729): an LLM paraphrase at ~0.90 similarity
+        (distance ~0.10, below the old 0.95 wall) must reinforce the existing
+        row instead of minting a duplicate — and must never soft-delete it."""
+        test_workspace, test_peer = sample_data
+        test_peer2, test_session, _ = await self._setup_test_data(
+            db_session, test_workspace, test_peer
+        )
+
+        # e1/e2 are crafted for cosine similarity exactly 0.90 -> distance 0.10.
+        e1 = [0.0] * 1536
+        e1[0] = 1.0
+        e2 = [0.0] * 1536
+        e2[0] = 0.9
+        e2[1] = math.sqrt(1.0 - 0.81)
+
+        await crud.create_documents(
+            db_session,
+            [
+                schemas.DocumentCreate(
+                    content=(
+                        "the operator follows a strict system hardening and "
+                        "soak protocol for production fixes before sharing"
+                    ),
+                    embedding=e1,
+                    session_name=test_session.name,
+                    times_derived=1,
+                    metadata=schemas.DocumentMetadata(
+                        message_ids=[1],
+                        message_created_at="2026-01-01T00:00:00Z",
+                    ),
+                )
+            ],
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+        )
+
+        # Shorter paraphrase of the same fact — strictly less informative.
+        paraphrase = schemas.DocumentCreate(
+            content="operator follows strict soak protocol for fixes",
+            embedding=e2,
+            session_name=test_session.name,
+            times_derived=1,
+            metadata=schemas.DocumentMetadata(
+                message_ids=[2],
+                message_created_at="2026-01-02T00:00:00Z",
+            ),
+        )
+        result = await is_rejected_duplicate(
+            db_session,
+            paraphrase,
+            test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+        )
+
+        assert result is SemanticRejectionResult.REJECTED
+        live = (
+            await db_session.execute(
+                select(models.Document).where(
+                    models.Document.workspace_name == test_workspace.name,
+                    models.Document.observer == test_peer.name,
+                    models.Document.observed == test_peer2.name,
+                    models.Document.deleted_at.is_(None),
+                )
+            )
+        ).scalars().all()
+        assert len(live) == 1
+        assert live[0].times_derived == 2
+        # The original content survives untouched — no soft delete in the
+        # loose band.
+        assert live[0].content.startswith(
+            "the operator follows a strict system hardening"
+        )
+
+    @pytest.mark.asyncio
+    async def test_loose_band_distinct_fact_survives(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """◆0816 no-data-loss guarantee: embedding-level similarity at ~0.90
+        with clearly distinct content must NOT reject the new fact and must
+        NOT soft-delete the existing one."""
+        test_workspace, test_peer = sample_data
+        test_peer2, test_session, _ = await self._setup_test_data(
+            db_session, test_workspace, test_peer
+        )
+
+        e1 = [0.0] * 1536
+        e1[0] = 1.0
+        e2 = [0.0] * 1536
+        e2[0] = 0.9
+        e2[1] = math.sqrt(1.0 - 0.81)
+
+        await crud.create_documents(
+            db_session,
+            [
+                schemas.DocumentCreate(
+                    content="eri loves cats and dogs and birds and snakes",
+                    embedding=e1,
+                    session_name=test_session.name,
+                    times_derived=1,
+                    metadata=schemas.DocumentMetadata(
+                        message_ids=[1],
+                        message_created_at="2026-01-01T00:00:00Z",
+                    ),
+                )
+            ],
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+        )
+
+        # Same embeddings (0.90 similarity), completely different fact with
+        # plenty of unique tokens.
+        distinct = schemas.DocumentCreate(
+            content=(
+                "the model swap cycle tests dialectic candidates with the "
+                "multi task bench and a formal swap protocol"
+            ),
+            embedding=e2,
+            session_name=test_session.name,
+            times_derived=1,
+            metadata=schemas.DocumentMetadata(
+                message_ids=[2],
+                message_created_at="2026-01-02T00:00:00Z",
+            ),
+        )
+        result = await is_rejected_duplicate(
+            db_session,
+            distinct,
+            test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+        )
+
+        assert result is SemanticRejectionResult.NOT_DUPLICATE
+        live = (
+            await db_session.execute(
+                select(models.Document).where(
+                    models.Document.workspace_name == test_workspace.name,
+                    models.Document.observer == test_peer.name,
+                    models.Document.observed == test_peer2.name,
+                    models.Document.deleted_at.is_(None),
+                )
+            )
+        ).scalars().all()
+        assert len(live) == 1
+        assert live[0].times_derived == 1
+        assert live[0].content == "eri loves cats and dogs and birds and snakes"
+
+    @pytest.mark.asyncio
+    async def test_timestamp_prefix_variants_reinforce(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """◆0816 regression (issue #729 date-clause class): two derivations of
+        the same fact differing only by a leading bracketed timestamp prefix
+        collapse to one document with reinforcement."""
+        test_workspace, test_peer = sample_data
+        test_peer2, test_session, _ = await self._setup_test_data(
+            db_session, test_workspace, test_peer
+        )
+
+        def make(content: str, msg_id: int) -> schemas.DocumentCreate:
+            return schemas.DocumentCreate(
+                content=content,
+                embedding=[0.5] * 1536,
+                session_name=test_session.name,
+                times_derived=1,
+                metadata=schemas.DocumentMetadata(
+                    message_ids=[msg_id],
+                    message_created_at="2026-01-01T00:00:00Z",
+                ),
+            )
+
+        await crud.create_documents(
+            db_session,
+            [make("[2026-08-16 07:00] Auto-handoff note content", 1)],
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+            deduplicate=True,
+        )
+        await crud.create_documents(
+            db_session,
+            [make("[2026-08-15 07:00] Auto-handoff note content", 2)],
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+            deduplicate=True,
+        )
+
+        live = (
+            await db_session.execute(
+                select(models.Document).where(
+                    models.Document.workspace_name == test_workspace.name,
+                    models.Document.observer == test_peer.name,
+                    models.Document.observed == test_peer2.name,
+                    models.Document.deleted_at.is_(None),
+                )
+            )
+        ).scalars().all()
+        assert len(live) == 1
+        assert live[0].times_derived == 2
 
     @pytest.mark.asyncio
     async def test_exact_dedup_within_batch_drops_repeat(

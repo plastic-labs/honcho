@@ -1,4 +1,6 @@
 import datetime
+import math
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import Enum
@@ -436,14 +438,17 @@ async def query_documents(
 def _normalize_content(content: str) -> str:
     """Normalize document content for exact-match deduplication.
 
-    Content is compared after trimming surrounding whitespace and lowercasing
+    Content is compared after trimming surrounding whitespace and lowercasing,
+    stripping a leading bracketed timestamp prefix (``[2026-08-16 07:00]``
+    style), and collapsing internal whitespace runs. The timestamp strip means
+    re-derivations of the same fact that differ only by a timestamp prefix
+    collapse to one dedup key (◆0816, issue #729 date-clause class).
 
-    The SQL filter in ``create_documents`` must stay in sync with this:
-    ``lower(regexp_replace(content, '^\\s+|\\s+$', '', 'g'))``. Postgres'
-    ``trim()`` only strips spaces, so a regex is used to match Python's
-    ``str.strip()`` across all whitespace.
+    The SQL normalization in ``create_documents`` must mirror this exactly.
     """
-    return content.strip().lower()
+    normalized = re.sub(r"^\[[^\]]{0,40}\]\s*", "", content.strip())
+    normalized = re.sub(r"\s+", " ", normalized)
+    return normalized.lower()
 
 
 def _dedup_key(
@@ -533,8 +538,19 @@ async def create_documents(
         #         (lower(regexp_replace(content, '^\s+|\s+$', '', 'g')))
         #     )
         #     WHERE deleted_at IS NULL;
+        # Mirrors _normalize_content exactly: strip → bracket-prefix strip →
+        # collapse whitespace → lowercase (◆0816 timestamp-prefix class).
         normalized_content_sql = func.lower(
-            func.regexp_replace(models.Document.content, r"^\s+|\s+$", "", "g")
+            func.regexp_replace(
+                func.regexp_replace(
+                    func.regexp_replace(
+                        models.Document.content,
+                        r"^\s+|\s+$", "", "g",
+                    ),
+                    r"^\[[^\]]{0,40}\]\s*", "", "g",
+                ),
+                r"\s+", " ", "g",
+            )
         )
         existing_result = await db.execute(
             select(models.Document).where(
@@ -1155,6 +1171,35 @@ class SemanticRejectionResult(Enum):
     REJECTED = 2
 
 
+def _cosine_distance(a: object, b: object) -> float | None:
+    """Cosine distance (1 - similarity) between two embeddings.
+
+    Pure-python, called only for the handful of dedup candidates. Accepts
+    lists or numpy arrays (pgvector returns ndarrays). Returns None when
+    either side is missing/empty/mismatched so callers can fall back to a
+    conservative tier decision.
+    """
+    if a is None or b is None:
+        return None
+    try:
+        if len(a) != len(b) or len(a) == 0:
+            return None
+    except TypeError:
+        return None
+    dot = 0.0
+    norm_a_sq = 0.0
+    norm_b_sq = 0.0
+    for x, y in zip(a, b, strict=False):
+        x = float(x)
+        y = float(y)
+        dot += x * y
+        norm_a_sq += x * x
+        norm_b_sq += y * y
+    if norm_a_sq == 0.0 or norm_b_sq == 0.0:
+        return None
+    return max(0.0, min(1.0, 1.0 - dot / (math.sqrt(norm_a_sq) * math.sqrt(norm_b_sq))))
+
+
 async def is_rejected_duplicate(
     db: AsyncSession,
     doc: schemas.DocumentCreate,
@@ -1166,7 +1211,14 @@ async def is_rejected_duplicate(
     """
     Check if a document is a duplicate of an existing document.
 
-    Uses: 1) Cosine similarity (>=0.95), 2) Token diff for retention.
+    Two-tier semantic gate (◆0816, upstream issue #729):
+    - TIGHT band (distance <= DEDUP_SEMANTIC_DISTANCE_TIGHT, i.e. >= ~0.95
+      similarity): legacy semantics — token-set informativeness picks the
+      winner; the loser is either rejected+reinforced or soft-deleted.
+    - LOOSE band (TIGHT, LOOSE]: LLM paraphrase territory. The new doc is
+      rejected ONLY when the existing row is strictly more informative
+      (token-set heuristic); existing rows are never soft-deleted in this
+      band, so a genuinely distinct but topically-adjacent fact survives.
 
     Returns True if both:
     - the document is deemed a duplicate of an existing document
@@ -1196,7 +1248,9 @@ async def is_rejected_duplicate(
             return SemanticRejectionResult.NOT_DUPLICATE
         filters["session_name"] = doc.session_name
 
-    # Step 1: Find potential duplicates using cosine similarity
+    # Step 1: Find potential duplicates using cosine similarity, across the
+    # full loose band so the true cluster representative is found even when
+    # rank-1 is a different variant (◆0816: top_k=1 missed paraphrase pairs).
     similar_docs = await query_documents(
         db=db,
         workspace_name=workspace_name,
@@ -1204,8 +1258,8 @@ async def is_rejected_duplicate(
         observer=observer,
         observed=observed,
         filters=filters,
-        max_distance=0.05,
-        top_k=1,
+        max_distance=settings.DERIVER.DEDUP_SEMANTIC_DISTANCE_LOOSE,
+        top_k=settings.DERIVER.DEDUP_SEMANTIC_TOP_K,
         embedding=doc.embedding,
     )
 
@@ -1213,6 +1267,15 @@ async def is_rejected_duplicate(
         return SemanticRejectionResult.NOT_DUPLICATE
 
     existing_doc = similar_docs[0]
+
+    # Tier the closest candidate. Distance unavailable (missing embedding,
+    # external vector store without distances) = treat conservatively as
+    # LOOSE: reject only when the existing row is strictly superior.
+    distance = _cosine_distance(doc.embedding, existing_doc.embedding)
+    tight_band = (
+        distance is not None
+        and distance <= settings.DERIVER.DEDUP_SEMANTIC_DISTANCE_TIGHT
+    )
 
     # Step 2: Determine which has more information using token set difference
     tokens_new = set(embedding_client.encoding.encode(doc.content))
@@ -1224,8 +1287,9 @@ async def is_rejected_duplicate(
     score_new = len(tokens_new) + (unique_new * 10)
     score_existing = len(tokens_existing) + (unique_existing * 10)
 
-    # If new document has more or equal information, keep it and delete existing
-    if score_new >= score_existing:
+    # If the new document is strictly more informative, keep it and delete
+    # the existing (tight band only — loose-band similarity never soft-deletes).
+    if tight_band and score_new > score_existing:
         logger.debug(
             "[DUPLICATE DETECTION] Deleting existing in favor of new. new=%r, existing=%r.",
             doc.content,
@@ -1241,22 +1305,28 @@ async def is_rejected_duplicate(
             SemanticRejectionResult.REPLACED_EXISTING
         )  # Don't reject the new document
 
-    # Existing document has more information, reject the new one but record the
-    # reinforcement: a semantic duplicate was derived again. greatest(...) keeps
-    # the increment atomic server-side -- concurrent workers reinforcing the same
-    # document must not lose updates -- while still honoring an incoming doc that
-    # already carries accumulated reinforcement (times_derived > 1).
-    existing_doc.times_derived = func.greatest(
-        models.Document.times_derived + 1,
-        doc.times_derived,
-    )
-    await db.flush()
-    logger.debug(
-        "[DUPLICATE DETECTION] Rejecting new in favor of existing. new=%r, existing=%r.",
-        doc.content,
-        existing_doc.content,
-    )
-    return SemanticRejectionResult.REJECTED
+    # Reject-and-reinforce when the existing row is at least as informative.
+    # Tight-band ties land here too (identical informativeness = same fact;
+    # keep the existing content and bump the count rather than soft-deleting).
+    # In the LOOSE band this is the only rejection path: nothing is ever
+    # soft-deleted for paraphrase-level similarity, so distinct adjacent
+    # facts can't be destroyed (◆0816 no-data-loss guarantee).
+    if score_existing > score_new or (tight_band and score_existing == score_new):
+        existing_doc.times_derived = func.greatest(
+            models.Document.times_derived + 1,
+            doc.times_derived,
+        )
+        await db.flush()
+        logger.debug(
+            "[DUPLICATE DETECTION] Rejecting new in favor of existing. new=%r, existing=%r.",
+            doc.content,
+            existing_doc.content,
+        )
+        return SemanticRejectionResult.REJECTED
+
+    # Loose band, new content at least as informative: the overlap is treated
+    # as coincidence, not duplication. Insert normally.
+    return SemanticRejectionResult.NOT_DUPLICATE
 
 
 async def cleanup_soft_deleted_documents(

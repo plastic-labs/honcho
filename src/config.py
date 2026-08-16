@@ -932,6 +932,16 @@ class DeriverSettings(HonchoSettings):
 
     # Whether to deduplicate documents when creating them
     DEDUPLICATE: bool = True
+    # Semantic dedup gate (◆0816): two-tier. The tight band (≤
+    # DEDUP_SEMANTIC_DISTANCE_TIGHT, i.e. ≥ ~0.95 cosine similarity) keeps the
+    # legacy replace/reject semantics. The loose band (TIGHT, LOOSE] catches
+    # LLM paraphrases that previously slipped through the 0.95 wall: the new
+    # doc is rejected only when the existing row is strictly more informative
+    # (token-set heuristic), and never soft-deleted — distinct adjacent facts
+    # can't be destroyed by paraphrase overlap. Upstream context: issue #729.
+    DEDUP_SEMANTIC_DISTANCE_TIGHT: float = 0.05
+    DEDUP_SEMANTIC_DISTANCE_LOOSE: float = 0.12
+    DEDUP_SEMANTIC_TOP_K: int = 4
 
     LOG_OBSERVATIONS: bool = False
 
