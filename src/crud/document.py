@@ -1,5 +1,7 @@
 import asyncio
 import datetime
+import math
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import Enum
@@ -212,8 +214,6 @@ def _uses_pgvector() -> bool:
 
 
 # Shared by is_rejected_duplicate and create_documents candidate resolution.
-_SEMANTIC_DUP_MAX_DISTANCE = 0.05
-_SEMANTIC_DUP_TOP_K = 1
 _SEMANTIC_CANDIDATE_CONCURRENCY = 8
 
 
@@ -237,15 +237,18 @@ async def query_external_vector_document_ids(
     top_k: int = 5,
     max_distance: float | None = None,
     filters: dict[str, Any] | None = None,
-) -> list[str] | None:
+) -> list[tuple[str, float | None]] | None:
     """Query external vector store for document IDs sorted by similarity.
 
     No DB session needed — safe to call outside a tracked_db scope.
 
     Returns:
-        Ordered list of document IDs on the external-store path,
-        empty list when the external store has no results,
-        or None when the pgvector (DB-only) path should be used instead.
+        Ordered list of (document ID, store-reported distance) pairs on the
+        external-store path — the distance is carried so downstream
+        two-tier dedup can tier candidates tight vs loose even when the
+        rows hold no DB embedding (◆0907 CodeRabbit finding; 0.0 is a real
+        distance and is preserved). Empty list when the external store has
+        no results, or None when the pgvector (DB-only) path should be used.
     """
     if _uses_pgvector():
         return None
@@ -279,7 +282,7 @@ async def query_external_vector_document_ids(
     if not vector_results:
         return []
 
-    return [result.id for result in vector_results]
+    return [(result.id, result.score) for result in vector_results]
 
 
 async def fetch_documents_by_ids(
@@ -418,8 +421,10 @@ async def query_documents(
                 managed_db.expunge(doc)
             return docs
 
-    # External vector store — network call first, DB only for the ID fetch
-    document_ids = await query_external_vector_document_ids(
+    # External vector store — network call first, DB only for the ID fetch.
+    # Carry the store-reported distance per candidate so downstream
+    # two-tier dedup can tier external-store rows (◆0907 CodeRabbit fix).
+    id_distance_pairs = await query_external_vector_document_ids(
         workspace_name=workspace_name,
         observer=observer,
         observed=observed,
@@ -429,17 +434,27 @@ async def query_documents(
         filters=filters,
     )
 
-    if not document_ids:
+    if not id_distance_pairs:
         return []
 
+    id_distances = dict(id_distance_pairs)
+    document_ids = list(id_distances)
+
+    def _attach_distance(docs: list[models.Document]) -> list[models.Document]:
+        for doc in docs:
+            doc._vector_distance = id_distances.get(doc.id)  # type: ignore[attr-defined]
+        return docs
+
     if db is not None:
-        return await fetch_documents_by_ids(
-            db=db,
-            workspace_name=workspace_name,
-            observer=observer,
-            observed=observed,
-            document_ids=document_ids,
-            filters=filters,
+        return _attach_distance(
+            await fetch_documents_by_ids(
+                db=db,
+                workspace_name=workspace_name,
+                observer=observer,
+                observed=observed,
+                document_ids=document_ids,
+                filters=filters,
+            )
         )
     async with tracked_db("query_documents.fetch", read_only=True) as managed_db:
         docs = await fetch_documents_by_ids(
@@ -452,20 +467,23 @@ async def query_documents(
         )
         for doc in docs:
             managed_db.expunge(doc)
-        return docs
+        return _attach_distance(docs)
 
 
 def _normalize_content(content: str) -> str:
     """Normalize document content for exact-match deduplication.
 
-    Content is compared after trimming surrounding whitespace and lowercasing
+    Content is compared after trimming surrounding whitespace and lowercasing,
+    stripping a leading bracketed timestamp prefix (``[2026-08-16 07:00]``
+    style), and collapsing internal whitespace runs. The timestamp strip means
+    re-derivations of the same fact that differ only by a timestamp prefix
+    collapse to one dedup key (◆0816, issue #729 date-clause class).
 
-    The SQL filter in ``create_documents`` must stay in sync with this:
-    ``lower(regexp_replace(content, '^\\s+|\\s+$', '', 'g'))``. Postgres'
-    ``trim()`` only strips spaces, so a regex is used to match Python's
-    ``str.strip()`` across all whitespace.
+    The SQL normalization in ``create_documents`` must mirror this exactly.
     """
-    return content.strip().lower()
+    normalized = re.sub(r"^\[[^\]]{0,40}\]\s*", "", content.strip())
+    normalized = re.sub(r"\s+", " ", normalized)
+    return normalized.lower()
 
 
 def _dedup_key(
@@ -546,7 +564,7 @@ async def create_documents(
 
     # Resolve external-store dup candidates before the first DB statement.
     # None = pgvector in-place fallback; [] = skip semantic (no external I/O under db).
-    semantic_candidates: list[list[str] | None] = [None] * len(documents)
+    semantic_candidates: list[list[tuple[str, float | None]] | None] = [None] * len(documents)
     if deduplicate and not _uses_pgvector():
         resolve_sem = asyncio.Semaphore(_SEMANTIC_CANDIDATE_CONCURRENCY)
 
@@ -562,8 +580,8 @@ async def create_documents(
                         observer=observer,
                         observed=observed,
                         embedding=doc.embedding,
-                        top_k=_SEMANTIC_DUP_TOP_K,
-                        max_distance=_SEMANTIC_DUP_MAX_DISTANCE,
+                        top_k=settings.DERIVER.DEDUP_SEMANTIC_TOP_K,
+                        max_distance=settings.DERIVER.DEDUP_SEMANTIC_DISTANCE_LOOSE,
                         filters=filters,
                     )
                 except Exception:
@@ -602,8 +620,19 @@ async def create_documents(
         #         (lower(regexp_replace(content, '^\s+|\s+$', '', 'g')))
         #     )
         #     WHERE deleted_at IS NULL;
+        # Mirrors _normalize_content exactly: strip → bracket-prefix strip →
+        # collapse whitespace → lowercase (◆0816 timestamp-prefix class).
         normalized_content_sql = func.lower(
-            func.regexp_replace(models.Document.content, r"^\s+|\s+$", "", "g")
+            func.regexp_replace(
+                func.regexp_replace(
+                    func.regexp_replace(
+                        models.Document.content,
+                        r"^\s+|\s+$", "", "g",
+                    ),
+                    r"^\[[^\]]{0,40}\]\s*", "", "g",
+                ),
+                r"\s+", " ", "g",
+            )
         )
         existing_result = await db.execute(
             select(models.Document).where(
@@ -690,7 +719,7 @@ async def create_documents(
                     workspace_name,
                     observer=observer,
                     observed=observed,
-                    candidate_document_ids=semantic_candidates[index],
+                    candidate_documents=semantic_candidates[index],
                 )
                 if (
                     duplicate_result is SemanticRejectionResult.REPLACED_EXISTING
@@ -1345,6 +1374,35 @@ class SemanticRejectionResult(Enum):
     REJECTED = 2
 
 
+def _cosine_distance(a: Any, b: Any) -> float | None:
+    """Cosine distance (1 - similarity) between two embeddings.
+
+    Pure-python, called only for the handful of dedup candidates. Accepts
+    lists or numpy arrays (pgvector returns ndarrays). Returns None when
+    either side is missing/empty/mismatched so callers can fall back to a
+    conservative tier decision.
+    """
+    if a is None or b is None:
+        return None
+    try:
+        if len(a) != len(b) or len(a) == 0:
+            return None
+    except TypeError:
+        return None
+    dot = 0.0
+    norm_a_sq = 0.0
+    norm_b_sq = 0.0
+    for x, y in zip(a, b, strict=False):
+        x = float(x)
+        y = float(y)
+        dot += x * y
+        norm_a_sq += x * x
+        norm_b_sq += y * y
+    if norm_a_sq == 0.0 or norm_b_sq == 0.0:
+        return None
+    return max(0.0, min(1.0, 1.0 - dot / (math.sqrt(norm_a_sq) * math.sqrt(norm_b_sq))))
+
+
 async def _semantic_dup_decision(
     db: AsyncSession,
     doc: schemas.DocumentCreate,
@@ -1352,22 +1410,44 @@ async def _semantic_dup_decision(
     *,
     observer: str,
     observed: str,
-    candidate_document_ids: list[str] | None = None,
+    candidate_documents: list[tuple[str, float | None]] | None = None,
 ) -> tuple[SemanticRejectionResult, models.Document | None]:
-    """Classify a semantic duplicate without writing."""
+    """Classify a semantic duplicate without writing.
+
+    Two-tier semantic gate (◆0816, upstream issue #729):
+    - TIGHT band (distance <= DEDUP_SEMANTIC_DISTANCE_TIGHT, i.e. >= ~0.95
+      cosine similarity): legacy semantics — token-set informativeness picks
+      the winner; the loser is either rejected+reinforced or soft-deleted.
+    - LOOSE band (TIGHT, LOOSE]: LLM paraphrase territory. The new doc is
+      rejected ONLY when the existing row is strictly more informative
+      (token-set heuristic); existing rows are never soft-deleted in this
+      band, so a genuinely distinct but topically-adjacent fact survives.
+
+    Distance is the store-reported value when the external vector store
+    supplied it (carried as a transient ``_vector_distance`` attribute on the
+    document), falling back to a local cosine computation for pgvector /
+    DB-embedded rows. A 0.0 store distance is a real value (perfect match),
+    never folded to None. Every candidate is evaluated and the tight band
+    decides replace-vs-reject against its single most-informative candidate,
+    not the first in vector rank (◆0907 CodeRabbit findings).
+    """
     filters = _semantic_dup_filters(doc)
     if filters is None:
         return SemanticRejectionResult.NOT_DUPLICATE, None
 
-    if candidate_document_ids is not None:
-        similar_docs: Sequence[models.Document] = await fetch_documents_by_ids(
+    if candidate_documents is not None:
+        id_distances = dict(candidate_documents)
+        document_ids = list(id_distances)
+        similar_docs = await fetch_documents_by_ids(
             db=db,
             workspace_name=workspace_name,
             observer=observer,
             observed=observed,
-            document_ids=candidate_document_ids,
+            document_ids=document_ids,
             filters=filters,
         )
+        for existing_doc in similar_docs:
+            existing_doc._vector_distance = id_distances.get(existing_doc.id)  # type: ignore[attr-defined]
     elif _uses_pgvector():
         if not doc.embedding:
             # Match external-store path: never embed under an open session.
@@ -1379,8 +1459,8 @@ async def _semantic_dup_decision(
             observer=observer,
             observed=observed,
             filters=filters,
-            max_distance=_SEMANTIC_DUP_MAX_DISTANCE,
-            top_k=_SEMANTIC_DUP_TOP_K,
+            max_distance=settings.DERIVER.DEDUP_SEMANTIC_DISTANCE_LOOSE,
+            top_k=settings.DERIVER.DEDUP_SEMANTIC_TOP_K,
             embedding=doc.embedding,
         )
     else:
@@ -1389,16 +1469,60 @@ async def _semantic_dup_decision(
     if not similar_docs:
         return SemanticRejectionResult.NOT_DUPLICATE, None
 
-    existing_doc = similar_docs[0]
+    # Compute the new document's token set once (reused across candidates).
     tokens_new = set(embedding_client.encoding.encode(doc.content))
-    tokens_existing = set(embedding_client.encoding.encode(existing_doc.content))
-    unique_new = len(tokens_new - tokens_existing)
-    unique_existing = len(tokens_existing - tokens_new)
-    score_new = len(tokens_new) + (unique_new * 10)
-    score_existing = len(tokens_existing) + (unique_existing * 10)
-    if score_new >= score_existing:
+
+    # Evaluate ALL candidates before deciding (◆0907 CodeRabbit finding):
+    # vector rank does not order candidates by token-set informativeness.
+    best_tight: tuple[float, models.Document] | None = None
+    best_loose: tuple[float, models.Document] | None = None
+
+    for existing_doc in similar_docs:
+        distance = getattr(existing_doc, "_vector_distance", None)
+        if distance is None:
+            distance = _cosine_distance(doc.embedding, existing_doc.embedding)
+
+        # Tier the candidate by distance. None = conservatively LOOSE.
+        tight_band = (
+            distance is not None
+            and distance <= settings.DERIVER.DEDUP_SEMANTIC_DISTANCE_TIGHT
+        )
+
+        tokens_existing = set(embedding_client.encoding.encode(existing_doc.content))
+        unique_new = len(tokens_new - tokens_existing)
+        unique_existing = len(tokens_existing - tokens_new)
+
+        # Informativeness gap: > 0 => existing is more informative, < 0 => new
+        # is. Matches the original pairwise score comparison.
+        gap = (len(tokens_existing) + (unique_existing * 10)) - (
+            len(tokens_new) + (unique_new * 10)
+        )
+
+        if tight_band:
+            if best_tight is None or gap > best_tight[0]:
+                best_tight = (gap, existing_doc)
+        else:
+            if best_loose is None or gap > best_loose[0]:
+                best_loose = (gap, existing_doc)
+
+    if best_tight is not None:
+        gap, existing_doc = best_tight
+        if gap > 0:
+            # Existing row is strictly more informative: reject-and-reinforce.
+            return SemanticRejectionResult.REJECTED, existing_doc
+        # New doc is at least as informative (incl. ties): replace existing.
         return SemanticRejectionResult.REPLACED_EXISTING, existing_doc
-    return SemanticRejectionResult.REJECTED, existing_doc
+
+    if best_loose is not None:
+        gap, existing_doc = best_loose
+        if gap > 0:
+            # Loose band: reject only when the existing row is strictly
+            # superior; never soft-delete at paraphrase-level similarity.
+            return SemanticRejectionResult.REJECTED, existing_doc
+        # Overlap is treated as coincidence, not duplication.
+        return SemanticRejectionResult.NOT_DUPLICATE, None
+
+    return SemanticRejectionResult.NOT_DUPLICATE, None
 
 
 async def is_rejected_duplicate(
@@ -1408,7 +1532,7 @@ async def is_rejected_duplicate(
     *,
     observer: str,
     observed: str,
-    candidate_document_ids: list[str] | None = None,
+    candidate_documents: list[tuple[str, float | None]] | None = None,
 ) -> SemanticRejectionResult:
     """Classify a semantic duplicate and apply the corresponding row write."""
     result, existing_doc = await _semantic_dup_decision(
@@ -1417,7 +1541,7 @@ async def is_rejected_duplicate(
         workspace_name,
         observer=observer,
         observed=observed,
-        candidate_document_ids=candidate_document_ids,
+        candidate_documents=candidate_documents,
     )
     if existing_doc is None:
         return result
