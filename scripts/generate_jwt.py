@@ -108,17 +108,16 @@ def main():
     if (args.peer or args.session) and not args.workspace:
         parser.error("--peer and --session require --workspace")
 
-    exp_str: str | None = None
-    if args.expires:
+    expiry: datetime.datetime | None = None
+    if args.expires is not None:
         expiry = datetime.datetime.now(datetime.timezone.utc) + args.expires
-        exp_str = format_datetime_utc(expiry)
 
     params = JWTParams(
         ad=True if args.admin else None,
         w=args.workspace,
         p=args.peer,
         s=args.session,
-        exp=exp_str,
+        exp=expiry,
     )
 
     token = create_jwt(params)
@@ -137,8 +136,8 @@ def main():
             scope_parts.append(f"session={args.session}")
 
         print(f"Scope:   {', '.join(scope_parts)}")
-        if exp_str:
-            print(f"Expires: {exp_str}")
+        if expiry:
+            print(f"Expires: {format_datetime_utc(expiry)}")
         else:
             print("Expires: never")
         print(f"Token:   {token}")
