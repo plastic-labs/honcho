@@ -18,7 +18,7 @@ allowed-tools: Bash(honcho:*), Bash(jq:*), Read, Grep
 ## Command groups
 
 - `honcho config` — CLI configuration
-- `honcho start` / `stop` / `status` — local Docker stack (does not change `environmentUrl`). `honcho status` lists every profile; pass `--profile` for one.
+- `honcho start` / `stop` / `status` — local Docker stack (does not change `environmentUrl`). First start pins the Honcho image digest and writes `config.toml` into the profile. `honcho status` lists every profile; pass `--profile` for one.
 - `honcho workspace` — inspect, delete, search
 - `honcho peer` — inspect, card, chat, search
 - `honcho session` — inspect, view (transcript), context, summaries

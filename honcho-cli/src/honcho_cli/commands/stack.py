@@ -28,6 +28,8 @@ from honcho_cli.local.docker import (
     compose_ps,
     compose_up,
     ensure_docker,
+    pin_image,
+    seed_config_toml,
     services_running,
 )
 from honcho_cli.local.env import is_placeholder_key, read_env_value, render_stack
@@ -131,6 +133,7 @@ def _payload(
         "profile": profile.name,
         "status": status,
         "inference": inference,
+        "image": profile.image,
         "endpoints": endpoints,
         "services": services or {},
         "hint": f"HONCHO_BASE_URL={profile.base_url} honcho workspace list",
@@ -196,7 +199,9 @@ def start(
         help="OpenAI-compatible key for cloud inference",
     ),
     image: str | None = typer.Option(
-        None, "--image", help=f"Honcho image (default: {DEFAULT_IMAGE})"
+        None,
+        "--image",
+        help=f"Honcho image to pull and pin by digest (default: {DEFAULT_IMAGE})",
     ),
     timeout: int = typer.Option(
         DEFAULT_HEALTH_TIMEOUT,
@@ -253,12 +258,26 @@ def start(
         _step(f"Port {old} in use; {service} on {new}")
 
     key = _resolve_llm_key(llm_api_key, profile)
+    _step(f"Pinning {profile.image}")
+    try:
+        pinned = pin_image(profile.image)
+    except DockerError as e:
+        e.exit()
+    profile = profile.overlay(image=pinned)
+    _ok(pinned)
+
     _step(f"Writing stack config to {profile.dir()}")
     save_profile(profile)
     render_stack(profile, key)
+    try:
+        wrote = seed_config_toml(profile)
+    except DockerError as e:
+        e.exit()
+    if wrote:
+        _ok("config.toml")
     _ok(f"Profile '{profile.name}'")
 
-    _step("Starting containers (first run pulls images)")
+    _step("Starting containers")
     try:
         compose_up(profile)
     except DockerError as e:

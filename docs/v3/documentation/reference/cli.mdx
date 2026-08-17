@@ -29,7 +29,7 @@ honcho             # show banner + command list
 
 ## Local stack
 
-`honcho start` runs a personal Honcho server on your machine via Docker (API, deriver, Postgres, Redis) using cloud LLM inference. Files live under `~/.honcho/profiles/local/`.
+`honcho start` runs a personal Honcho server on your machine via Docker (API, deriver, Postgres, Redis) using cloud LLM inference. Files live under `~/.honcho/profiles/local/`. First start pins the Honcho image to a digest and copies that image's `config.toml.example` into the profile directory. Later starts do not overwrite `config.toml`.
 
 This does **not** change `environmentUrl` in the shared config file. To talk to the local stack:
 

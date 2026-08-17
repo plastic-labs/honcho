@@ -36,6 +36,8 @@ Per-command scoping (workspace / peer / session) is handled via `-w` / `-p` / `-
 
 `honcho start` runs a personal Honcho server on your machine (API, deriver, Postgres, Redis) via Docker. Inference is cloud-side: you provide an OpenAI-compatible API key. Stack files live under `~/.honcho/profiles/local/` and are not committed to a project.
 
+On first start, the CLI pulls `ghcr.io/plastic-labs/honcho:latest` and **pins that digest** in `profile.json`, then copies the image's `config.toml.example` to `config.toml` in the same directory. `honcho start` never overwrites `config.toml` after that — including when you re-pin the image. Delete the file yourself if you want a fresh copy from a new image.
+
 `honcho start` does **not** change `environmentUrl` in `~/.honcho/config.json` (that file is shared with plugins). To talk to the local stack for one command:
 
 ```bash

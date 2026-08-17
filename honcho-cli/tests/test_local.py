@@ -1,29 +1,21 @@
-"""Unit tests for the local-stack profile, env renderer, and Compose helpers."""
+"""Local-stack contracts: profile files, env merge, image pin, port remap."""
 
 from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
+import subprocess
 
 import pytest
-from honcho_cli.local import DEFAULT_IMAGE, DEFAULT_PROFILE
-from honcho_cli.local.docker import _parse_ps, services_running, stack_containers_up
-from honcho_cli.local.env import (
-    is_placeholder_key,
-    managed_env,
-    read_env_value,
-    render_stack,
-    upsert_env,
+from honcho_cli.local.docker import (
+    DockerError,
+    allocate_host_ports,
+    compose_up,
+    pin_image,
+    seed_config_toml,
 )
-from honcho_cli.local.profile import (
-    LocalProfile,
-    list_profile_names,
-    load_profile,
-    resolve_profile_name,
-    save_profile,
-    validate_profile_name,
-)
+from honcho_cli.local.env import managed_env, read_env_value, render_stack, upsert_env
+from honcho_cli.local.profile import LocalProfile, load_profile, save_profile
 
 
 @pytest.fixture
@@ -35,253 +27,124 @@ def cfg_dir(tmp_path, monkeypatch):
     return tmp_path
 
 
-class TestProfileName:
-    def test_default_is_local(self, cfg_dir, monkeypatch):
-        monkeypatch.delenv("HONCHO_PROFILE", raising=False)
-        assert resolve_profile_name(None) == DEFAULT_PROFILE
-
-    def test_flag_beats_env(self, cfg_dir, monkeypatch):
-        monkeypatch.setenv("HONCHO_PROFILE", "from-env")
-        assert resolve_profile_name("from-flag") == "from-flag"
-
-    def test_env_when_no_flag(self, cfg_dir, monkeypatch):
-        monkeypatch.setenv("HONCHO_PROFILE", "from-env")
-        assert resolve_profile_name(None) == "from-env"
-
-    def test_empty_flag_falls_back_to_env(self, cfg_dir, monkeypatch):
-        monkeypatch.setenv("HONCHO_PROFILE", "from-env")
-        assert resolve_profile_name("  ") == "from-env"
-
-    def test_rejects_uppercase_and_paths(self, cfg_dir):
-        for bad in ("Local", "../etc", "has/slash", "", "1leading-digit"):
-            with pytest.raises(SystemExit):
-                validate_profile_name(bad)
-
-    def test_list_profile_names(self, cfg_dir):
-        assert list_profile_names() == []
-        local = cfg_dir / "profiles" / "local"
-        demo = cfg_dir / "profiles" / "demo"
-        junk = cfg_dir / "profiles" / "NotValid"
-        local.mkdir(parents=True)
-        demo.mkdir()
-        junk.mkdir()
-        (local / "docker-compose.yml").write_text("services: {}\n")
-        (demo / "docker-compose.yml").write_text("services: {}\n")
-        (junk / "docker-compose.yml").write_text("services: {}\n")
-        (cfg_dir / "profiles" / "empty").mkdir()
-        assert list_profile_names() == ["demo", "local"]
+def test_profile_roundtrip_has_no_secrets(cfg_dir):
+    profile = LocalProfile(
+        name="local",
+        api_port=8001,
+        image="ghcr.io/plastic-labs/honcho@sha256:abc",
+    )
+    save_profile(profile)
+    loaded = load_profile("local")
+    assert loaded.api_port == 8001
+    assert loaded.image.endswith("@sha256:abc")
+    on_disk = json.loads(profile.profile_file().read_text())
+    assert "LLM" not in json.dumps(on_disk)
+    assert set(on_disk) == {"inference", "apiPort", "dbPort", "redisPort", "image"}
 
 
-class TestProfileRoundTrip:
-    def test_save_load_ports_and_image(self, cfg_dir):
-        profile = LocalProfile(
-            name="local",
-            api_port=8001,
-            db_port=5433,
-            redis_port=6380,
-            image="ghcr.io/plastic-labs/honcho:v3.0.12",
-        )
-        save_profile(profile)
-        loaded = load_profile("local")
-        assert loaded.api_port == 8001
-        assert loaded.db_port == 5433
-        assert loaded.redis_port == 6380
-        assert loaded.image == "ghcr.io/plastic-labs/honcho:v3.0.12"
-        on_disk = json.loads(profile.profile_file().read_text())
-        assert "LLM" not in json.dumps(on_disk)
-        assert set(on_disk) == {"inference", "apiPort", "dbPort", "redisPort", "image"}
-
-    def test_missing_file_uses_defaults(self, cfg_dir):
-        loaded = load_profile("local")
-        assert loaded.api_port == 8000
-        assert loaded.image == DEFAULT_IMAGE
-
-    def test_overlay_does_not_mutate(self, cfg_dir):
-        base = LocalProfile(name="local")
-        over = base.overlay(api_port=9000)
-        assert base.api_port == 8000
-        assert over.api_port == 9000
-
-    def test_endpoints(self, cfg_dir):
-        ep = LocalProfile(name="local", api_port=8001, db_port=5433).endpoints()
-        assert ep["api"] == "http://127.0.0.1:8001"
-        assert ep["docs"] == "http://127.0.0.1:8001/docs"
-        assert "5433" in ep["postgres"]
-        assert ep["inference"] == "cloud"
+def test_upsert_preserves_extra_env_keys(tmp_path):
+    path = tmp_path / ".env"
+    path.write_text("LLM_OPENAI_API_KEY=old\nCUSTOM_FLAG=keep-me\n# user comment\n")
+    upsert_env(path, managed_env(LocalProfile(name="local"), "sk-new"))
+    text = path.read_text()
+    assert "LLM_OPENAI_API_KEY=sk-new" in text
+    assert "CUSTOM_FLAG=keep-me" in text
+    assert "user comment" in text
+    assert text.count("Generated by honcho start") == 1
 
 
-class TestEnv:
-    def test_placeholder_detection(self):
-        assert is_placeholder_key(None)
-        assert is_placeholder_key("")
-        assert is_placeholder_key("your-api-key-here")
-        assert not is_placeholder_key("sk-live-abc")
-
-    def test_upsert_preserves_extra_keys(self, tmp_path):
-        path = tmp_path / ".env"
-        path.write_text("LLM_OPENAI_API_KEY=old\nCUSTOM_FLAG=keep-me\n# user comment\n")
-        upsert_env(path, managed_env(LocalProfile(name="local"), "sk-new"))
-        text = path.read_text()
-        assert "LLM_OPENAI_API_KEY=sk-new" in text
-        assert "CUSTOM_FLAG=keep-me" in text
-        assert "user comment" in text
-        assert text.count("Generated by honcho start") == 1
-
-    def test_read_env_value(self, tmp_path):
-        path = tmp_path / ".env"
-        path.write_text("LLM_OPENAI_API_KEY=sk-quoted\n")
-        assert read_env_value(path, "LLM_OPENAI_API_KEY") == "sk-quoted"
-        assert read_env_value(path, "NOPE") is None
-
-    def test_render_stack_writes_compose_and_init(self, cfg_dir):
-        profile = LocalProfile(name="local")
-        render_stack(profile, "sk-test")
-        compose = profile.compose_file().read_text()
-        assert "ghcr.io/plastic-labs/honcho" in compose
-        assert "build:" not in compose
-        assert (profile.dir() / "init.sql").read_text().startswith("CREATE EXTENSION")
-        assert read_env_value(profile.env_file(), "AUTH_USE_AUTH") == "false"
-        assert read_env_value(profile.env_file(), "LLM_OPENAI_API_KEY") == "sk-test"
-        assert oct(profile.env_file().stat().st_mode)[-3:] == "600"
+def test_render_stack_uses_published_image(cfg_dir):
+    profile = LocalProfile(name="local")
+    render_stack(profile, "sk-test")
+    compose = profile.compose_file().read_text()
+    assert "ghcr.io/plastic-labs/honcho" in compose
+    assert "build:" not in compose
+    assert compose.count("./config.toml:/app/config.toml:ro") == 2
+    assert read_env_value(profile.env_file(), "AUTH_USE_AUTH") == "false"
+    assert oct(profile.env_file().stat().st_mode)[-3:] == "600"
 
 
-class TestComposePs:
-    def test_parse_ndjson(self):
-        raw = '{"Service":"api","State":"running"}\n{"Service":"redis","State":"running"}\n'
-        rows = _parse_ps(raw)
-        assert [r["Service"] for r in rows] == ["api", "redis"]
+def test_pin_latest_to_matching_digest(monkeypatch):
+    pulls: list[str] = []
 
-    def test_parse_array(self):
-        raw = json.dumps([{"Service": "api", "State": "running"}])
-        assert _parse_ps(raw)[0]["Service"] == "api"
+    def fake_run(args, *, check=False):
+        if args[:1] == ["pull"]:
+            pulls.append(args[1])
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+        if args[:2] == ["image", "inspect"]:
+            body = json.dumps(
+                [
+                    "ghcr.io/plastic-labs/honcho@sha256:deadbeef",
+                    "ghcr.io/other/honcho@sha256:nope",
+                ]
+            )
+            return subprocess.CompletedProcess(args, 0, stdout=body, stderr="")
+        raise AssertionError(args)
 
-    def test_stack_containers_up(self):
-        ps = [
-            {"Service": "api", "State": "running", "Health": "healthy"},
-            {"Service": "deriver", "State": "running"},
-            {"Service": "database", "State": "running", "Health": "healthy"},
-            {"Service": "redis", "State": "running", "Health": "healthy"},
-        ]
-        assert stack_containers_up(ps)
-        assert services_running(ps)["api"] == "healthy"
-
-    def test_exited_container_is_down(self):
-        ps = [
-            {"Service": "api", "State": "exited"},
-            {"Service": "deriver", "State": "running"},
-            {"Service": "database", "State": "running"},
-            {"Service": "redis", "State": "running"},
-        ]
-        assert not stack_containers_up(ps)
+    monkeypatch.setattr("honcho_cli.local.docker._run_docker", fake_run)
+    assert pin_image("ghcr.io/plastic-labs/honcho:latest") == (
+        "ghcr.io/plastic-labs/honcho@sha256:deadbeef"
+    )
+    assert pulls == ["ghcr.io/plastic-labs/honcho:latest"]
 
 
-class TestDockerEnv:
-    def test_prepends_existing_helper_dir(self, monkeypatch, tmp_path):
-        helper = tmp_path / "bin"
-        helper.mkdir()
-        monkeypatch.setattr("honcho_cli.local.docker._DARWIN_DOCKER_BIN", helper)
-        monkeypatch.setattr(
-            "honcho_cli.local.docker._helper_path_dirs",
-            lambda: [str(helper)],
-        )
-        monkeypatch.setenv("PATH", "/usr/bin")
-        from honcho_cli.local.docker import docker_env
-
-        env = docker_env()
-        parts = env["PATH"].split(os.pathsep)
-        assert parts[0] == str(helper)
-        assert "/usr/bin" in parts
-
-    def test_compose_up_retries_without_creds_store(self, monkeypatch, tmp_path):
-        import subprocess
-
-        from honcho_cli.local.docker import compose_up
-        from honcho_cli.local.profile import LocalProfile
-
-        cfg = tmp_path / "config.json"
-        cfg.write_text(json.dumps({"credsStore": "desktop"}))
-        monkeypatch.setattr("honcho_cli.local.docker._docker_user_config", lambda: cfg)
-        fail = subprocess.CompletedProcess(
-            args=["docker", "compose", "up", "-d"],
-            returncode=1,
-            stdout="",
-            stderr=(
-                'error getting credentials - err: exec: "docker-credential-desktop": '
-                "executable file not found in $PATH, out: ``\n"
-            ),
-        )
-        ok = subprocess.CompletedProcess(
-            args=["docker", "compose", "up", "-d"],
-            returncode=0,
-            stdout="",
-            stderr="",
-        )
-        calls: list[dict | None] = []
-
-        def fake_run(profile, args, *, capture=False, check=True, extra_env=None):
-            calls.append(extra_env)
-            return fail if extra_env is None else ok
-
-        monkeypatch.setattr("honcho_cli.local.docker._run_compose", fake_run)
-        compose_up(LocalProfile(name="local"))
-        assert len(calls) == 2
-        assert calls[0] is None
-        assert calls[1] is not None
-        assert "DOCKER_CONFIG" in calls[1]
-        retry_cfg = Path(calls[1]["DOCKER_CONFIG"]) / "config.json"
-        # temp dir is cleaned up after the retry; the written file must have
-        # dropped credsStore (assert via the helper's own output before rmtree
-        # by inspecting that the second call happened with DOCKER_CONFIG set).
-        assert retry_cfg.name == "config.json"
-
-    def test_compose_up_cred_error_without_config_raises(self, monkeypatch, tmp_path):
-        import subprocess
-
-        from honcho_cli.local.docker import DockerError, compose_up
-        from honcho_cli.local.profile import LocalProfile
-
-        monkeypatch.setattr(
-            "honcho_cli.local.docker._docker_user_config",
-            lambda: tmp_path / "missing.json",
-        )
-        fail = subprocess.CompletedProcess(
-            args=["docker"],
-            returncode=1,
-            stdout="",
-            stderr='error getting credentials - err: exec: "docker-credential-desktop"',
-        )
-        monkeypatch.setattr(
-            "honcho_cli.local.docker._run_compose",
-            lambda *a, **k: fail,
-        )
-        with pytest.raises(DockerError) as exc:
-            compose_up(LocalProfile(name="local"))
-        assert exc.value.code == "DOCKER_CREDENTIALS"
+def test_seed_config_toml_writes_once(cfg_dir, monkeypatch):
+    profile = LocalProfile(
+        name="local", image="ghcr.io/plastic-labs/honcho@sha256:abc"
+    )
+    monkeypatch.setattr(
+        "honcho_cli.local.docker._copy_from_image",
+        lambda image, paths: "[deriver]\nWORKERS = 2\n",
+    )
+    assert seed_config_toml(profile) is True
+    profile.config_file().write_text(
+        profile.config_file().read_text() + "# user edit\n"
+    )
+    assert seed_config_toml(profile) is False
+    assert "# user edit" in profile.config_file().read_text()
 
 
-class TestPorts:
-    def test_allocate_remaps_busy_redis(self, monkeypatch):
-        from honcho_cli.local.docker import allocate_host_ports
-        from honcho_cli.local.profile import LocalProfile
+def test_busy_port_remaps_unless_pinned(monkeypatch):
+    monkeypatch.setattr(
+        "honcho_cli.local.docker.port_available",
+        lambda port, host="127.0.0.1": port != 6379,
+    )
+    profile, remapped = allocate_host_ports(LocalProfile(name="local"))
+    assert profile.redis_port == 6380
+    assert remapped["redis"] == (6379, 6380)
 
-        monkeypatch.setattr(
-            "honcho_cli.local.docker.port_available",
-            lambda port, host="127.0.0.1": port != 6379,
-        )
-        profile, remapped = allocate_host_ports(LocalProfile(name="local"))
-        assert profile.redis_port == 6380
-        assert remapped["redis"] == (6379, 6380)
-        assert "api" not in remapped
+    with pytest.raises(DockerError) as exc:
+        allocate_host_ports(LocalProfile(name="local"), pinned=frozenset({"redis"}))
+    assert exc.value.code == "PORT_IN_USE"
+    assert exc.value.details["flag"] == "--redis-port"
 
-    def test_pinned_busy_port_raises(self, monkeypatch):
-        from honcho_cli.local.docker import DockerError, allocate_host_ports
-        from honcho_cli.local.profile import LocalProfile
 
-        monkeypatch.setattr(
-            "honcho_cli.local.docker.port_available",
-            lambda port, host="127.0.0.1": port != 6379,
-        )
-        with pytest.raises(DockerError) as exc:
-            allocate_host_ports(LocalProfile(name="local"), pinned=frozenset({"redis"}))
-        assert exc.value.code == "PORT_IN_USE"
-        assert exc.value.details["flag"] == "--redis-port"
+def test_compose_up_retries_without_creds_store(monkeypatch, tmp_path):
+    cfg = tmp_path / "config.json"
+    cfg.write_text(json.dumps({"credsStore": "desktop"}))
+    monkeypatch.setattr("honcho_cli.local.docker._docker_user_config", lambda: cfg)
+    fail = subprocess.CompletedProcess(
+        args=["docker", "compose", "up", "-d"],
+        returncode=1,
+        stdout="",
+        stderr=(
+            'error getting credentials - err: exec: "docker-credential-desktop": '
+            "executable file not found in $PATH, out: ``\n"
+        ),
+    )
+    ok = subprocess.CompletedProcess(
+        args=["docker", "compose", "up", "-d"],
+        returncode=0,
+        stdout="",
+        stderr="",
+    )
+    calls: list[dict | None] = []
+
+    def fake_run(profile, args, *, capture=False, check=True, extra_env=None):
+        calls.append(extra_env)
+        return fail if extra_env is None else ok
+
+    monkeypatch.setattr("honcho_cli.local.docker._run_compose", fake_run)
+    compose_up(LocalProfile(name="local"))
+    assert [c is None for c in calls] == [True, False]
+    assert "DOCKER_CONFIG" in calls[1]

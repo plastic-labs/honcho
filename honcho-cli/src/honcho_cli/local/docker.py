@@ -131,6 +131,72 @@ def compose_argv(profile: LocalProfile) -> list[str]:
     ]
 
 
+_CONFIG_PATHS = ("/app/config.toml.example", "/app/config.toml")
+_CONFIG_HEADER = (
+    "# Copied from {image} by honcho start. This file is not overwritten on later starts.\n"
+    "# Secrets belong in .env (environment variables win over this file).\n\n"
+)
+
+
+def image_is_digest(ref: str) -> bool:
+    """True when ``ref`` is already pinned to a content digest."""
+    return "@sha256:" in ref.lower()
+
+
+def image_repository(ref: str) -> str:
+    """Strip a tag or digest from a Docker image reference."""
+    if "@" in ref:
+        return ref.split("@", 1)[0]
+    last_slash = ref.rfind("/")
+    last_colon = ref.rfind(":")
+    if last_colon > last_slash:
+        return ref[:last_colon]
+    return ref
+
+
+def pin_image(image: str) -> str:
+    """Pull ``image`` if needed and return a digest-pinned reference.
+
+    ``ghcr.io/plastic-labs/honcho:latest`` becomes
+    ``ghcr.io/plastic-labs/honcho@sha256:...`` so the profile does not
+    float when ``:latest`` moves. Already-pinned refs are left alone.
+    """
+    if image_is_digest(image):
+        if not _image_exists(image):
+            _pull(image)
+        return image
+    _pull(image)
+    digest = _repo_digest(image)
+    if not digest:
+        raise DockerError(
+            "IMAGE_PIN_FAILED",
+            f"Pulled {image} but could not resolve a registry digest to pin.",
+            {"image": image},
+        )
+    return digest
+
+
+def seed_config_toml(profile: LocalProfile) -> bool:
+    """Copy the image's ``config.toml.example`` into the profile if missing.
+
+    Returns True when a file was written. Never overwrites an existing
+    ``config.toml``.
+    """
+    dest = profile.config_file()
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.exists():
+        return False
+    copied = _copy_from_image(profile.image, _CONFIG_PATHS)
+    if copied is None:
+        raise DockerError(
+            "CONFIG_MISSING",
+            f"Could not copy config.toml from {profile.image}.",
+            {"image": profile.image},
+        )
+    dest.write_text(_CONFIG_HEADER.format(image=profile.image) + copied)
+    return True
+
+
 def compose_up(profile: LocalProfile) -> None:
     """``docker compose up -d``. Compose output goes to stderr.
 
@@ -358,6 +424,127 @@ def _run_compose(
             {"project": profile.project_name, "exit_code": proc.returncode},
         )
     return proc
+
+
+def _run_docker(
+    args: list[str],
+    *,
+    check: bool = False,
+) -> subprocess.CompletedProcess[str]:
+    """Run ``docker …`` with the same credsStore retry as Compose."""
+
+    def run(extra_env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+        try:
+            return subprocess.run(
+                ["docker", *args],
+                capture_output=True,
+                text=True,
+                env=docker_env(extra_env),
+            )
+        except FileNotFoundError as e:
+            raise DockerError(
+                "DOCKER_NOT_INSTALLED",
+                "Docker is not installed. Install Docker Desktop (or another Compose-v2 runtime) and retry.",
+            ) from e
+        except OSError as e:
+            raise DockerError("DOCKER_FAILED", str(e), {"command": args}) from e
+
+    proc = run()
+    if proc.returncode == 0:
+        return proc
+    if _looks_like_cred_helper_error(proc):
+        config_dir = _docker_config_without_creds_store()
+        if config_dir is not None:
+            try:
+                retry = run({"DOCKER_CONFIG": str(config_dir)})
+            finally:
+                shutil.rmtree(config_dir, ignore_errors=True)
+            if retry.returncode == 0:
+                return retry
+            proc = retry
+        if _looks_like_cred_helper_error(proc):
+            raise DockerError(
+                "DOCKER_CREDENTIALS",
+                "Docker could not read registry credentials "
+                "(docker-credential-desktop is not on PATH). "
+                "Quit and reopen your terminal, or add Docker Desktop's bin "
+                "directory to PATH, then retry.",
+                {"exit_code": proc.returncode},
+            )
+    if check and proc.returncode != 0:
+        raise DockerError(
+            "DOCKER_FAILED",
+            f"docker {' '.join(args)} failed.",
+            {
+                "exit_code": proc.returncode,
+                "stderr": (proc.stderr or "")[-500:],
+            },
+        )
+    return proc
+
+
+def _pull(image: str) -> None:
+    proc = _run_docker(["pull", image], check=False)
+    if proc.stdout:
+        sys.stderr.write(proc.stdout)
+    if proc.stderr:
+        sys.stderr.write(proc.stderr)
+    if proc.returncode != 0:
+        raise DockerError(
+            "IMAGE_PULL_FAILED",
+            f"Failed to pull {image}.",
+            {"image": image, "exit_code": proc.returncode},
+        )
+
+
+def _image_exists(image: str) -> bool:
+    return _run_docker(["image", "inspect", image], check=False).returncode == 0
+
+
+def _repo_digest(image: str) -> str | None:
+    proc = _run_docker(
+        ["image", "inspect", "--format", "{{json .RepoDigests}}", image],
+        check=False,
+    )
+    if proc.returncode != 0:
+        return None
+    try:
+        digests = json.loads((proc.stdout or "").strip() or "[]")
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(digests, list):
+        return None
+    repo = image_repository(image)
+    for item in digests:
+        if isinstance(item, str) and item.startswith(repo + "@"):
+            return item
+    for item in digests:
+        if isinstance(item, str) and "@sha256:" in item:
+            return item
+    return None
+
+
+def _copy_from_image(image: str, paths: tuple[str, ...]) -> str | None:
+    """Create a stopped container and copy the first path that exists."""
+    name = f"honcho-seed-{os.getpid()}-{time.time_ns()}"
+    created = _run_docker(["create", "--name", name, image], check=False)
+    if created.returncode != 0:
+        cid = (created.stdout or "").strip() or name
+        _run_docker(["rm", "-f", cid], check=False)
+        return None
+    cid = (created.stdout or "").strip() or name
+    try:
+        with tempfile.TemporaryDirectory(prefix="honcho-cfg-") as tmp:
+            dest = Path(tmp) / "config.toml"
+            for path in paths:
+                if dest.exists():
+                    dest.unlink()
+                copied = _run_docker(["cp", f"{cid}:{path}", str(dest)], check=False)
+                if copied.returncode == 0 and dest.exists():
+                    return dest.read_text(encoding="utf-8")
+    finally:
+        _run_docker(["rm", "-f", cid], check=False)
+    return None
 
 
 def _parse_ps(stdout: str) -> list[dict]:

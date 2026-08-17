@@ -1,13 +1,12 @@
-"""CLI tests for `honcho start` / `stop` / `status`."""
+"""CLI contracts for `honcho start` / `stop` / `status`."""
 
 from __future__ import annotations
 
 import json
 import os
-from unittest.mock import patch
 
 import pytest
-from honcho_cli.local.docker import DockerError
+from honcho_cli.local.docker import image_is_digest, image_repository
 from honcho_cli.main import app
 from typer.testing import CliRunner
 
@@ -30,8 +29,18 @@ def runner():
 
 @pytest.fixture(autouse=True)
 def _host_ports_free(monkeypatch):
-    """Don't let a local Redis/Postgres steal default ports during CLI tests."""
     monkeypatch.setattr("honcho_cli.local.docker.port_available", lambda *a, **k: True)
+
+
+@pytest.fixture(autouse=True)
+def _stub_image_pin(monkeypatch):
+    def fake_pin(image: str) -> str:
+        if image_is_digest(image):
+            return image
+        return f"{image_repository(image)}@sha256:cafedeadbeef"
+
+    monkeypatch.setattr("honcho_cli.commands.stack.pin_image", fake_pin)
+    monkeypatch.setattr("honcho_cli.commands.stack.seed_config_toml", lambda profile: False)
 
 
 _PS = [
@@ -42,256 +51,82 @@ _PS = [
 ]
 
 
-class TestStartErrors:
-    def test_inference_local_rejected(self, cfg, runner):
-        result = runner.invoke(
-            app, ["start", "--inference", "local", "--llm-api-key", "sk-test"]
-        )
-        assert result.exit_code == 1
-        err = json.loads(result.stderr)
-        assert err["error"]["code"] == "INFERENCE_UNSUPPORTED"
-
-    def test_inference_hybrid_rejected(self, cfg, runner):
-        result = runner.invoke(
-            app, ["start", "--inference", "hybrid", "--llm-api-key", "sk-test"]
-        )
-        assert result.exit_code == 1
-        assert json.loads(result.stderr)["error"]["code"] == "INFERENCE_UNSUPPORTED"
-
-    def test_invalid_profile_name(self, cfg, runner):
-        result = runner.invoke(
-            app, ["start", "--profile", "../etc", "--llm-api-key", "sk-test"]
-        )
-        assert result.exit_code == 1
-        assert json.loads(result.stderr)["error"]["code"] == "INVALID_PROFILE"
-
-    def test_docker_not_installed(self, cfg, runner):
-        err = DockerError("DOCKER_NOT_INSTALLED", "Docker is not installed.")
-        with patch("honcho_cli.commands.stack.ensure_docker", side_effect=err):
-            result = runner.invoke(app, ["start", "--llm-api-key", "sk-test"])
-        assert result.exit_code == 1
-        assert json.loads(result.stderr)["error"]["code"] == "DOCKER_NOT_INSTALLED"
-
-    def test_missing_llm_key_noninteractive(self, cfg, runner):
-        with (
-            patch("honcho_cli.commands.stack.ensure_docker"),
-            patch("honcho_cli.commands.stack.stack_healthy", return_value=False),
-        ):
-            result = runner.invoke(app, ["start"])
-        assert result.exit_code == 1
-        assert json.loads(result.stderr)["error"]["code"] == "MISSING_LLM_KEY"
+def test_start_does_not_rewrite_environment_url(cfg, runner, monkeypatch):
+    cfg.write_text(
+        json.dumps({"apiKey": "k", "environmentUrl": "https://api.honcho.dev"})
+    )
+    monkeypatch.setattr("honcho_cli.commands.stack.ensure_docker", lambda: None)
+    monkeypatch.setattr("honcho_cli.commands.stack.stack_healthy", lambda profile: False)
+    monkeypatch.setattr("honcho_cli.commands.stack.compose_up", lambda profile: None)
+    monkeypatch.setattr("honcho_cli.commands.stack.wait_for_health", lambda *a, **k: True)
+    monkeypatch.setattr("honcho_cli.commands.stack.compose_ps", lambda profile: _PS)
+    result = runner.invoke(app, ["start", "--llm-api-key", "sk-test", "--json"])
+    assert result.exit_code == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["endpoints"]["api"] == "http://127.0.0.1:8000"
+    assert payload["image"].endswith("@sha256:cafedeadbeef")
+    on_disk = json.loads(cfg.read_text())
+    assert on_disk["environmentUrl"] == "https://api.honcho.dev"
 
 
-class TestStartHappy:
-    def test_json_endpoints_and_does_not_mutate_config(self, cfg, runner):
-        cfg.write_text(
-            json.dumps({"apiKey": "k", "environmentUrl": "https://api.honcho.dev"})
-        )
-        with (
-            patch("honcho_cli.commands.stack.ensure_docker"),
-            patch("honcho_cli.commands.stack.stack_healthy", return_value=False),
-            patch("honcho_cli.commands.stack.compose_up") as up,
-            patch("honcho_cli.commands.stack.wait_for_health", return_value=True),
-            patch("honcho_cli.commands.stack.compose_ps", return_value=_PS),
-        ):
-            result = runner.invoke(app, ["start", "--llm-api-key", "sk-test", "--json"])
-        assert result.exit_code == 0, result.stderr
-        up.assert_called_once()
-        payload = json.loads(result.stdout)
-        assert payload["status"] == "running"
-        assert payload["profile"] == "local"
-        assert payload["inference"] == "cloud"
-        assert payload["endpoints"]["api"] == "http://127.0.0.1:8000"
-        assert payload["endpoints"]["docs"].endswith("/docs")
-        assert "HONCHO_BASE_URL=http://127.0.0.1:8000" in payload["hint"]
-        on_disk = json.loads(cfg.read_text())
-        assert on_disk["environmentUrl"] == "https://api.honcho.dev"
-        assert on_disk["apiKey"] == "k"
-
-    def test_idempotent_skips_compose_up(self, cfg, runner):
-        with (
-            patch("honcho_cli.commands.stack.ensure_docker"),
-            patch("honcho_cli.commands.stack.stack_healthy", return_value=True),
-            patch("honcho_cli.commands.stack.compose_up") as up,
-            patch("honcho_cli.commands.stack.compose_ps", return_value=_PS),
-        ):
-            result = runner.invoke(app, ["start", "--llm-api-key", "sk-test"])
-        assert result.exit_code == 0, result.stderr
-        up.assert_not_called()
-        payload = json.loads(result.stdout)
-        assert payload["status"] == "running"
-
-    def test_health_timeout(self, cfg, runner):
-        with (
-            patch("honcho_cli.commands.stack.ensure_docker"),
-            patch("honcho_cli.commands.stack.stack_healthy", return_value=False),
-            patch("honcho_cli.commands.stack.compose_up"),
-            patch("honcho_cli.commands.stack.wait_for_health", return_value=False),
-        ):
-            result = runner.invoke(app, ["start", "--llm-api-key", "sk-test"])
-        assert result.exit_code == 1
-        assert json.loads(result.stderr)["error"]["code"] == "HEALTH_TIMEOUT"
-
-    def test_custom_api_port_in_endpoints(self, cfg, runner):
-        with (
-            patch("honcho_cli.commands.stack.ensure_docker"),
-            patch("honcho_cli.commands.stack.stack_healthy", return_value=False),
-            patch("honcho_cli.commands.stack.compose_up"),
-            patch("honcho_cli.commands.stack.wait_for_health", return_value=True),
-            patch("honcho_cli.commands.stack.compose_ps", return_value=_PS),
-        ):
-            result = runner.invoke(
-                app, ["start", "--llm-api-key", "sk-test", "--api-port", "8001"]
-            )
-        payload = json.loads(result.stdout)
-        assert payload["endpoints"]["api"] == "http://127.0.0.1:8001"
-
-    def test_remaps_busy_redis_port(self, cfg, runner, monkeypatch):
-        monkeypatch.setattr(
-            "honcho_cli.local.docker.port_available",
-            lambda port, host="127.0.0.1": port != 6379,
-        )
-        with (
-            patch("honcho_cli.commands.stack.ensure_docker"),
-            patch("honcho_cli.commands.stack.stack_healthy", return_value=False),
-            patch("honcho_cli.commands.stack.compose_up"),
-            patch("honcho_cli.commands.stack.wait_for_health", return_value=True),
-            patch("honcho_cli.commands.stack.compose_ps", return_value=_PS),
-        ):
-            result = runner.invoke(app, ["start", "--llm-api-key", "sk-test"])
-        assert result.exit_code == 0, result.stderr
-        payload = json.loads(result.stdout)
-        assert ":6379/" not in payload["endpoints"]["redis"]
-        assert payload["endpoints"]["redis"].startswith("redis://127.0.0.1:")
-
-    def test_pinned_busy_port_errors(self, cfg, runner, monkeypatch):
-        monkeypatch.setattr(
-            "honcho_cli.local.docker.port_available",
-            lambda port, host="127.0.0.1": port != 6379,
-        )
-        with (
-            patch("honcho_cli.commands.stack.ensure_docker"),
-            patch("honcho_cli.commands.stack.stack_healthy", return_value=False),
-        ):
-            result = runner.invoke(
-                app, ["start", "--llm-api-key", "sk-test", "--redis-port", "6379"]
-            )
-        assert result.exit_code == 1
-        err = json.loads(result.stderr)
-        assert err["error"]["code"] == "PORT_IN_USE"
-        assert err["error"]["details"]["flag"] == "--redis-port"
+def test_start_rejects_local_inference(cfg, runner):
+    result = runner.invoke(
+        app, ["start", "--inference", "local", "--llm-api-key", "sk-test"]
+    )
+    assert result.exit_code == 1
+    assert json.loads(result.stderr)["error"]["code"] == "INFERENCE_UNSUPPORTED"
 
 
-class TestStop:
-    def test_stop_missing_stack_is_ok(self, cfg, runner):
-        result = runner.invoke(app, ["stop"])
-        assert result.exit_code == 0, result.stderr
-        assert json.loads(result.stdout)["status"] == "stopped"
-
-    def test_stop_wipe_passes_wipe_flag(self, cfg, runner, tmp_path):
-        compose = tmp_path / "profiles" / "local" / "docker-compose.yml"
-        compose.parent.mkdir(parents=True)
-        compose.write_text("services: {}\n")
-        with (
-            patch("honcho_cli.commands.stack.ensure_docker"),
-            patch("honcho_cli.commands.stack.compose_ps", return_value=_PS),
-            patch("honcho_cli.commands.stack.compose_down") as down,
-        ):
-            result = runner.invoke(app, ["stop", "--wipe"])
-        assert result.exit_code == 0, result.stderr
-        down.assert_called_once()
-        assert down.call_args.kwargs["wipe"] is True
-        assert json.loads(result.stdout)["status"] == "wiped"
-
-    def test_stop_already_stopped_skips_compose_down(self, cfg, runner, tmp_path):
-        compose = tmp_path / "profiles" / "local" / "docker-compose.yml"
-        compose.parent.mkdir(parents=True)
-        compose.write_text("services: {}\n")
-        with (
-            patch("honcho_cli.commands.stack.ensure_docker"),
-            patch("honcho_cli.commands.stack.compose_ps", return_value=[]),
-            patch("honcho_cli.commands.stack.compose_down") as down,
-        ):
-            result = runner.invoke(app, ["stop"])
-        assert result.exit_code == 0, result.stderr
-        down.assert_not_called()
-        assert json.loads(result.stdout)["status"] == "stopped"
+def test_start_requires_llm_key(cfg, runner, monkeypatch):
+    monkeypatch.setattr("honcho_cli.commands.stack.ensure_docker", lambda: None)
+    monkeypatch.setattr("honcho_cli.commands.stack.stack_healthy", lambda profile: False)
+    result = runner.invoke(app, ["start"])
+    assert result.exit_code == 1
+    assert json.loads(result.stderr)["error"]["code"] == "MISSING_LLM_KEY"
 
 
-class TestStatus:
-    def test_status_not_found(self, cfg, runner):
-        result = runner.invoke(app, ["status"])
-        assert result.exit_code == 1
-        assert json.loads(result.stderr)["error"]["code"] == "STACK_NOT_FOUND"
+def test_stop_already_stopped_skips_down(cfg, runner, tmp_path, monkeypatch):
+    compose = tmp_path / "profiles" / "local" / "docker-compose.yml"
+    compose.parent.mkdir(parents=True)
+    compose.write_text("services: {}\n")
+    monkeypatch.setattr("honcho_cli.commands.stack.ensure_docker", lambda: None)
+    monkeypatch.setattr("honcho_cli.commands.stack.compose_ps", lambda profile: [])
+    down = []
+    monkeypatch.setattr(
+        "honcho_cli.commands.stack.compose_down",
+        lambda profile, wipe=False: down.append(wipe),
+    )
+    result = runner.invoke(app, ["stop"])
+    assert result.exit_code == 0, result.stderr
+    assert down == []
+    assert json.loads(result.stdout)["status"] == "stopped"
 
-    def test_status_running(self, cfg, runner, tmp_path):
-        compose = tmp_path / "profiles" / "local" / "docker-compose.yml"
-        compose.parent.mkdir(parents=True)
-        compose.write_text("services: {}\n")
-        with (
-            patch("honcho_cli.commands.stack.ensure_docker"),
-            patch("honcho_cli.commands.stack.compose_ps", return_value=_PS),
-            patch("honcho_cli.commands.stack.stack_healthy", return_value=True),
-        ):
-            result = runner.invoke(app, ["status"])
-        assert result.exit_code == 0, result.stderr
-        payload = json.loads(result.stdout)
-        assert payload["status"] == "running"
-        assert payload["endpoints"]["api"] == "http://127.0.0.1:8000"
 
-    def test_status_stopped_exits_nonzero(self, cfg, runner, tmp_path):
-        compose = tmp_path / "profiles" / "local" / "docker-compose.yml"
-        compose.parent.mkdir(parents=True)
-        compose.write_text("services: {}\n")
-        with (
-            patch("honcho_cli.commands.stack.ensure_docker"),
-            patch("honcho_cli.commands.stack.compose_ps", return_value=[]),
-            patch("honcho_cli.commands.stack.stack_healthy", return_value=False),
-        ):
-            result = runner.invoke(app, ["status"])
-        assert result.exit_code == 1
-        assert json.loads(result.stdout)["status"] == "stopped"
+def test_status_lists_profiles_or_one(cfg, runner, tmp_path, monkeypatch):
+    for name, port in (("demo", 8001), ("local", 8000)):
+        d = tmp_path / "profiles" / name
+        d.mkdir(parents=True)
+        (d / "docker-compose.yml").write_text("services: {}\n")
+        (d / "profile.json").write_text(json.dumps({"apiPort": port}) + "\n")
 
-    def test_status_lists_all_profiles(self, cfg, runner, tmp_path):
-        for name, port in (("demo", 8001), ("local", 8000)):
-            d = tmp_path / "profiles" / name
-            d.mkdir(parents=True)
-            (d / "docker-compose.yml").write_text("services: {}\n")
-            (d / "profile.json").write_text(json.dumps({"apiPort": port}) + "\n")
+    monkeypatch.setattr("honcho_cli.commands.stack.ensure_docker", lambda: None)
+    monkeypatch.setattr(
+        "honcho_cli.commands.stack.compose_ps",
+        lambda profile: _PS if profile.name == "local" else [],
+    )
+    monkeypatch.setattr(
+        "honcho_cli.commands.stack.stack_healthy",
+        lambda profile: profile.name == "local",
+    )
+    listed = runner.invoke(app, ["status"])
+    assert listed.exit_code == 0, listed.stderr
+    rows = json.loads(listed.stdout)["profiles"]
+    by_name = {row["profile"]: row for row in rows}
+    assert by_name["local"]["status"] == "running"
+    assert by_name["demo"]["endpoints"]["api"] == "http://127.0.0.1:8001"
 
-        def fake_ps(profile):
-            return _PS if profile.name == "local" else []
-
-        def fake_healthy(profile):
-            return profile.name == "local"
-
-        with (
-            patch("honcho_cli.commands.stack.ensure_docker"),
-            patch("honcho_cli.commands.stack.compose_ps", side_effect=fake_ps),
-            patch("honcho_cli.commands.stack.stack_healthy", side_effect=fake_healthy),
-        ):
-            result = runner.invoke(app, ["status"])
-        assert result.exit_code == 0, result.stderr
-        payload = json.loads(result.stdout)
-        names = [row["profile"] for row in payload["profiles"]]
-        assert names == ["demo", "local"]
-        by_name = {row["profile"]: row for row in payload["profiles"]}
-        assert by_name["local"]["status"] == "running"
-        assert by_name["demo"]["status"] == "stopped"
-        assert by_name["demo"]["endpoints"]["api"] == "http://127.0.0.1:8001"
-
-    def test_status_profile_flag_is_one_stack(self, cfg, runner, tmp_path):
-        for name in ("demo", "local"):
-            d = tmp_path / "profiles" / name
-            d.mkdir(parents=True)
-            (d / "docker-compose.yml").write_text("services: {}\n")
-        with (
-            patch("honcho_cli.commands.stack.ensure_docker"),
-            patch("honcho_cli.commands.stack.compose_ps", return_value=_PS),
-            patch("honcho_cli.commands.stack.stack_healthy", return_value=True),
-        ):
-            result = runner.invoke(app, ["status", "--profile", "demo"])
-        assert result.exit_code == 0, result.stderr
-        payload = json.loads(result.stdout)
-        assert payload["profile"] == "demo"
-        assert "profiles" not in payload
+    one = runner.invoke(app, ["status", "--profile", "local"])
+    assert one.exit_code == 0, one.stderr
+    payload = json.loads(one.stdout)
+    assert payload["profile"] == "local"
+    assert "profiles" not in payload

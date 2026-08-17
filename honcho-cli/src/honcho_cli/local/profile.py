@@ -99,6 +99,9 @@ class LocalProfile:
     def profile_file(self):
         return self.dir() / "profile.json"
 
+    def config_file(self):
+        return self.dir() / "config.toml"
+
     def endpoints(self) -> dict[str, str]:
         return {
             "api": self.base_url,
