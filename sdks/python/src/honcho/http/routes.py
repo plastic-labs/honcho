@@ -111,10 +111,6 @@ def scopes_list(workspace_id: str) -> str:
     return f"/{API_VERSION}/workspaces/{workspace_id}/scopes/list"
 
 
-def scope(workspace_id: str, scope_id: str) -> str:
-    return f"/{API_VERSION}/workspaces/{workspace_id}/scopes/{scope_id}"
-
-
 def scope_sessions(workspace_id: str, scope_id: str) -> str:
     return f"/{API_VERSION}/workspaces/{workspace_id}/scopes/{scope_id}/sessions"
 

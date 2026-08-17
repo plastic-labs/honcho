@@ -9,6 +9,7 @@ from .resolve import resolve_id
 from .scopes import (
     resolve_scope_membership,
     resolve_scope_option,
+    resolve_scope_session,
     resolve_session_allowlist,
     scope_context_fields,
     scope_recall_fields,
@@ -29,6 +30,7 @@ __all__ = [
     "resolve_id",
     "resolve_scope_membership",
     "resolve_scope_option",
+    "resolve_scope_session",
     "resolve_session_allowlist",
     "scope_context_fields",
     "scope_recall_fields",

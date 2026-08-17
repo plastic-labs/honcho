@@ -158,6 +158,93 @@ describe('scope id validation', () => {
       ZodError
     )
   })
+
+  test('the specific message survives the scope option union', async () => {
+    // ScopeOptionSchema is a union. Zod collapses a failing union into a single
+    // `invalid_union` / "Invalid input" issue and buries the branch errors, so
+    // the rules are applied after the union resolves. Without that, every bad
+    // scope reports "Invalid input" and the caller learns nothing.
+    for (const [input, expected] of [
+      ['scope.therapy', 'reserved prefix'],
+      ['my scope', 'may only contain'],
+      ['', 'non-empty'],
+      ['a'.repeat(507), 'at most 506'],
+    ] as const) {
+      const { http } = capturingHttp({ content: 'ok' })
+      const peer = new Peer('alice', 'workspace-1', http)
+      const error = (await peer
+        .chat('q', { scope: input })
+        .then(() => undefined)
+        .catch((err: unknown) => err)) as ZodError
+
+      expect(error).toBeInstanceOf(ZodError)
+      const messages = error.issues.map((i) => i.message).join(' | ')
+      expect(messages).toContain(expected)
+      expect(messages).not.toContain('Invalid input')
+    }
+  })
+
+  test('list-form messages also survive the union', async () => {
+    const { http } = capturingHttp({ content: 'ok' })
+    const peer = new Peer('alice', 'workspace-1', http)
+
+    for (const [input, expected] of [
+      [[], 'at least one scope'],
+      [['ok', 'scope.bad'], 'reserved prefix'],
+      [Array.from({ length: 101 }, (_, i) => `s${i}`), 'at most 100 scopes'],
+    ] as const) {
+      const error = (await peer
+        .chat('q', { scope: input as string[] })
+        .then(() => undefined)
+        .catch((err: unknown) => err)) as ZodError
+
+      expect(error.issues.map((i) => i.message).join(' | ')).toContain(expected)
+    }
+  })
+})
+
+describe('empty-string options fail closed', () => {
+  test("session.context rejects scope: '' instead of returning unscoped context", async () => {
+    const { http, query } = capturingHttp({
+      id: 'session-a',
+      messages: [],
+      summary: null,
+      peer_representation: null,
+      peer_card: null,
+    })
+    const session = new Session('session-a', 'workspace-1', http)
+
+    // A truthiness check here would drop the option and silently return the
+    // unscoped context — the opposite of what an invalid scope should do.
+    await expect(
+      session.context({ peerTarget: 'user', scope: '' })
+    ).rejects.toBeInstanceOf(ZodError)
+    expect(query()).toBeUndefined()
+  })
+})
+
+describe('scope membership ids are validated before reaching a URL', () => {
+  test('removeSession rejects an id that would alter the request path', async () => {
+    const { http, path } = capturingHttp(undefined)
+    const scope = new Scope('therapy', 'workspace-1', http)
+
+    // `valid-session?typo` would address `valid-session` with a stray query
+    // string, removing the wrong session and reconciling against it.
+    await expect(
+      scope.removeSession('valid-session?typo')
+    ).rejects.toBeInstanceOf(ZodError)
+    expect(path()).toBeUndefined()
+  })
+
+  test('addSessions rejects the same shape', async () => {
+    const { http, body } = capturingHttp(undefined)
+    const scope = new Scope('therapy', 'workspace-1', http)
+
+    await expect(
+      scope.addSessions(['ok-session', 'valid-session?typo'])
+    ).rejects.toBeInstanceOf(ZodError)
+    expect(body()).toBeUndefined()
+  })
 })
 
 describe('session.context scoping', () => {

@@ -725,14 +725,18 @@ async def get_session_context(
             "sessions — conclusions synthesized across sessions are excluded, "
             "since their provenance cannot be proven to sit inside the allowlist "
             "— and the peer card is omitted for the same reason. Mutually "
-            "exclusive with `scope` and `limit_to_session`. Capped at 1,000 "
-            "sessions. A peer-scoped key must be an active member of every "
-            "session named."
+            "exclusive with `scope` and `limit_to_session`. A peer-scoped key "
+            "must be an active member of every session named. The 1,000-session "
+            "cap shared with the recall endpoints applies but is not reachable "
+            "here: these are repeated query parameters, so a long list exceeds "
+            "the request-line limit of the server or any proxy in front of it "
+            "(a 414/431, not a 422) at a few hundred entries. Use a named "
+            "`scope` for large or reusable session sets."
         ),
     ),
     limit_to_session: bool = Query(
         default=False,
-        description="Only used if `search_query` is provided. Whether to limit the representation to the session (as opposed to everything known about the target peer)",
+        description="Whether to limit the representation to the session (as opposed to everything known about the target peer). Narrows recall the same way `sessions` does, so the same restrictions apply: explicit-only conclusions, and the peer card is omitted because it carries no per-session provenance.",
     ),
     search_top_k: int | None = Query(
         None,
@@ -922,6 +926,17 @@ async def get_session_context(
         ):
             embedding = await embedding_client.embed(search_query)
 
+    # The allowlist recall must respect, whichever way the caller expressed it.
+    # `sessions` and `limit_to_session` are mutually exclusive (422 above), so at
+    # most one of these is set. `session_allowlist` is never an empty list here —
+    # `must_include=session_id` guarantees at least this session — so the
+    # None-check is the only distinction that matters.
+    effective_allowlist = (
+        session_allowlist
+        if session_allowlist is not None
+        else ([session_id] if limit_to_session else None)
+    )
+
     # Sequential calls on shared DB session
     representation = await _get_working_representation_task(
         db,
@@ -929,9 +944,7 @@ async def get_session_context(
         search_query,
         observer=observer,
         observed=observed,
-        session_allowlist=session_allowlist
-        if session_allowlist is not None
-        else ([session_id] if limit_to_session else None),
+        session_allowlist=effective_allowlist,
         search_top_k=search_top_k,
         search_max_distance=search_max_distance,
         include_most_derived=include_most_frequent,
@@ -943,11 +956,19 @@ async def get_session_context(
     # observer has ever seen and cannot be narrowed to an allowlist. Returning it
     # would leak exactly what the allowlist exists to exclude, so it is dropped —
     # the same fail-closed reasoning that limits allowlisted conclusion recall to
-    # ALLOWLIST_SAFE_LEVELS. `scope` needs no such carve-out: it swaps the
-    # observer to the scope peer above, so the card read below is the scope's own.
+    # ALLOWLIST_SAFE_LEVELS.
+    #
+    # Gated on the *effective* allowlist, not on `sessions` alone:
+    # `limit_to_session=true` narrows recall identically, so carving out only the
+    # newer parameter would leave a control that one parameter swap defeats.
+    # `scope` needs no carve-out at all — it swaps the observer to the scope peer
+    # above, so the card read below is the scope's own.
+    #
+    # POST /peers/{id}/chat still injects an unscoped card under an allowlist
+    # (src/dialectic/chat.py) — tracked in DEV-2201, not fixed here.
     card = (
         None
-        if session_allowlist is not None
+        if effective_allowlist is not None
         else await _get_peer_card_task(
             db, workspace_id, observer=observer, observed=observed
         )

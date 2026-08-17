@@ -819,7 +819,9 @@ export class Session {
       tokens: opts.tokens,
       peerTarget: peerTargetId,
       peerPerspective: peerPerspectiveId,
-      scope: opts.scope ? resolveId(opts.scope) : undefined,
+      // Checked against undefined, not truthiness: `scope: ''` must reach the
+      // schema and be rejected, not be dropped into an unscoped context.
+      scope: opts.scope !== undefined ? resolveId(opts.scope) : undefined,
       sessions: opts.sessions,
       limitToSession: opts.limitToSession,
       representationOptions: opts.representationOptions

@@ -930,9 +930,12 @@ export class Honcho {
     const validatedFilters = options?.filters
       ? FilterSchema.parse(options.filters)
       : undefined
-    const validatedScope = options?.scope
-      ? ScopeIdSchema.parse(resolveId(options.scope))
-      : undefined
+    // Checked against undefined, not truthiness: `scope: ''` is invalid, and
+    // dropping it silently would diverge from the Python SDK, which rejects it.
+    const validatedScope =
+      options?.scope !== undefined
+        ? ScopeIdSchema.parse(resolveId(options.scope))
+        : undefined
     const validatedLimit = options?.limit
       ? LimitSchema.parse(options.limit)
       : undefined

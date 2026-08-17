@@ -15,7 +15,7 @@ from .base import ScopeBase, SessionBase
 from .http import routes
 from .pagination import SyncPage
 from .session import Session
-from .utils import resolve_id, resolve_scope_membership
+from .utils import resolve_scope_membership, resolve_scope_session
 
 if TYPE_CHECKING:
     from .aio import ScopeAio
@@ -158,7 +158,9 @@ class Scope(ScopeBase):
         """
         self._honcho._ensure_workspace()
         self._honcho._http.delete(
-            routes.scope_session(self.workspace_id, self.id, resolve_id(session))
+            routes.scope_session(
+                self.workspace_id, self.id, resolve_scope_session(session)
+            )
         )
 
     def sessions(

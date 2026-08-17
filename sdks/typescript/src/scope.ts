@@ -8,7 +8,11 @@ import type {
   SessionResponse,
 } from './types/api'
 import { resolveId } from './utils'
-import { ScopeSessionsSchema, sessionConfigFromApi } from './validation'
+import {
+  ScopeSessionsSchema,
+  SessionIdSchema,
+  sessionConfigFromApi,
+} from './validation'
 
 /**
  * Backfill job state for one session in a scope.
@@ -186,9 +190,14 @@ export class Scope {
    * whatever evidence remains. Poll {@link Scope.status} to watch that settle.
    *
    * @param session - Session to remove, as an ID string or a Session object
+   * @throws If the session ID is malformed
    */
   async removeSession(session: string | Session): Promise<void> {
-    await this._removeSession(resolveId(session))
+    // Validated because this ID is interpolated into a request *path*: an
+    // unvalidated value silently changes which resource the request addresses.
+    // `valid-session?typo` would target `valid-session` with a stray query
+    // string, removing the wrong session and reconciling against it.
+    await this._removeSession(SessionIdSchema.parse(resolveId(session)))
   }
 
   /**

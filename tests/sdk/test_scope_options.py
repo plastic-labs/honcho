@@ -19,6 +19,7 @@ from sdks.python.src.honcho.utils.scopes import (  # noqa: E402
     MAX_SESSIONS_PER_ADD,
     resolve_scope_membership,
     resolve_scope_option,
+    resolve_scope_session,
     scope_context_fields,
     scope_recall_fields,
     validate_scope_id,
@@ -187,6 +188,39 @@ class TestResolveScopeMembership:
     def test_rejects_over_the_per_call_cap_rather_than_chunking(self):
         with pytest.raises(ValueError, match="At most"):
             resolve_scope_membership([f"s{i}" for i in range(MAX_SESSIONS_PER_ADD + 1)])
+
+    def test_rejects_a_malformed_id(self):
+        with pytest.raises(ValueError, match="must match pattern"):
+            resolve_scope_membership(["ok-session", "valid-session?typo"])
+
+
+class TestResolveScopeSession:
+    """Guards the ID that gets interpolated into a scope membership URL path."""
+
+    def test_resolves_a_plain_id(self):
+        assert resolve_scope_session("session-a") == "session-a"
+
+    def test_resolves_an_object(self):
+        class FakeSession:
+            id: str = "session-a"
+
+        assert resolve_scope_session(FakeSession()) == "session-a"  # pyright: ignore[reportArgumentType]
+
+    @pytest.mark.parametrize(
+        "malformed",
+        [
+            "valid-session?typo",  # would address `valid-session` + a query string
+            "valid-session/../other",  # would climb the path
+            "valid session",
+            "",
+        ],
+    )
+    def test_rejects_ids_that_would_alter_the_request_path(self, malformed: str):
+        # This value lands in a DELETE path. An unvalidated id silently changes
+        # which session is removed, and removal triggers reconciliation against
+        # whatever it hits.
+        with pytest.raises(ValueError, match="Session ID"):
+            resolve_scope_session(malformed)
 
 
 def test_deprecated_conclusion_scope_aliases_still_resolve():

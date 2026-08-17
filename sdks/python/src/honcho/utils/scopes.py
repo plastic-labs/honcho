@@ -23,6 +23,7 @@ __all__ = [
     "MAX_SESSION_ALLOWLIST_ENTRIES",
     "resolve_scope_membership",
     "resolve_scope_option",
+    "resolve_scope_session",
     "resolve_session_allowlist",
     "scope_context_fields",
     "scope_recall_fields",
@@ -131,6 +132,47 @@ def resolve_session_allowlist(
     return ids
 
 
+def _validate_session_id(value: str) -> str:
+    """Validate a session ID against the charset the server accepts.
+
+    Args:
+        value: The session ID as the caller supplied it.
+
+    Returns:
+        The validated session ID, unchanged.
+
+    Raises:
+        ValueError: If the ID is empty or contains characters outside the
+            resource-name charset.
+    """
+    if not value:
+        raise ValueError("Session ID must be a non-empty string")
+    if not re.fullmatch(_RESOURCE_NAME_PATTERN, value):
+        raise ValueError(f"Session ID must match pattern {_RESOURCE_NAME_PATTERN}")
+    return value
+
+
+def resolve_scope_session(session: "str | SessionBase") -> str:
+    """Resolve and validate a single session ID for a scope membership change.
+
+    Validated rather than passed through because this ID is interpolated into a
+    request *path*: an unvalidated value silently changes which resource the
+    request addresses. ``valid-session?typo`` would target ``valid-session``
+    with a stray query string, removing the wrong session from the scope and
+    triggering reconciliation against it.
+
+    Args:
+        session: The session, as an ID or a ``Session`` object.
+
+    Returns:
+        The validated session ID.
+
+    Raises:
+        ValueError: If the ID is empty or malformed.
+    """
+    return _validate_session_id(resolve_id(session))
+
+
 def resolve_scope_membership(
     sessions: "Sequence[str | SessionBase]",
 ) -> list[str]:
@@ -146,9 +188,10 @@ def resolve_scope_membership(
         The session IDs, in the order given.
 
     Raises:
-        ValueError: On an empty list or one over the server's per-call cap.
+        ValueError: On an empty list, one over the server's per-call cap, or a
+            malformed session ID.
     """
-    ids = [resolve_id(session) for session in sessions]
+    ids = [_validate_session_id(resolve_id(session)) for session in sessions]
     if not ids:
         raise ValueError("At least one session must be given")
     if len(ids) > MAX_SESSIONS_PER_ADD:

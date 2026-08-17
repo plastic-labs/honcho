@@ -68,6 +68,7 @@ from .utils import (
     prepare_file_for_upload,
     resolve_id,
     resolve_scope_membership,
+    resolve_scope_session,
     scope_context_fields,
     scope_recall_fields,
     validate_scope_id,
@@ -1873,7 +1874,7 @@ class ScopeAio:
         await self._scope._honcho._ensure_workspace_async()
         await self._scope._honcho._async_http_client.delete(
             routes.scope_session(
-                self._scope.workspace_id, self._scope.id, resolve_id(session)
+                self._scope.workspace_id, self._scope.id, resolve_scope_session(session)
             )
         )
 

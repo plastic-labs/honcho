@@ -171,43 +171,65 @@ const SCOPE_PEER_PREFIX = 'scope.'
 const SCOPE_ID_MAX_LENGTH = 512 - SCOPE_PEER_PREFIX.length
 
 /**
+ * The scope ID rules, as a plain function rather than only a schema.
+ *
+ * Zod reports a failing union as a single `invalid_union` / "Invalid input"
+ * issue and buries the branch errors, so a schema alone cannot carry these
+ * messages out of `ScopeOptionSchema`. Keeping the rules callable lets both the
+ * bare schema and the union surface the same specific message.
+ *
+ * @returns The problems found, or an empty array when the ID is valid.
+ */
+function scopeIdIssues(value: string): string[] {
+  if (value.length < 1) {
+    return ['Scope ID must be a non-empty string']
+  }
+  if (value.length > SCOPE_ID_MAX_LENGTH) {
+    return [`Scope ID can be at most ${SCOPE_ID_MAX_LENGTH} characters`]
+  }
+  // Checked before the charset: the reserved prefix contains '.', which is
+  // itself outside the charset, so a charset-first check would report the
+  // charset instead of the real mistake for a double-prefixed name.
+  if (value.startsWith(SCOPE_PEER_PREFIX)) {
+    return [
+      `Scope ID must not start with the reserved prefix '${SCOPE_PEER_PREFIX}' (scope IDs are unprefixed)`,
+    ]
+  }
+  if (!/^[a-zA-Z0-9_-]+$/.test(value)) {
+    return [
+      'Scope ID may only contain letters, numbers, underscores, and hyphens',
+    ]
+  }
+  return []
+}
+
+/**
+ * Add every scope ID problem in `values` as a top-level issue.
+ */
+function addScopeIdIssues(values: string[], ctx: z.RefinementCtx): void {
+  for (const value of values) {
+    for (const message of scopeIdIssues(value)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message })
+    }
+  }
+}
+
+/**
  * Schema for scope ID validation.
  *
  * Scope IDs are unprefixed — the `scope.` prefix is a server-side storage
  * detail and never appears on the wire.
  */
-export const ScopeIdSchema = z
-  .string()
-  .min(1, 'Scope ID must be a non-empty string')
-  .max(
-    SCOPE_ID_MAX_LENGTH,
-    `Scope ID can be at most ${SCOPE_ID_MAX_LENGTH} characters`
-  )
-  .superRefine((val, ctx) => {
-    // Checked before the charset: the reserved prefix contains '.', which is
-    // itself outside the charset, so a charset-first check would report the
-    // charset instead of the real mistake for a double-prefixed name.
-    if (val.startsWith(SCOPE_PEER_PREFIX)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: `Scope ID must not start with the reserved prefix '${SCOPE_PEER_PREFIX}' (scope IDs are unprefixed)`,
-      })
-      return
-    }
-    if (!/^[a-zA-Z0-9_-]+$/.test(val)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message:
-          'Scope ID may only contain letters, numbers, underscores, and hyphens',
-      })
-    }
-  })
+export const ScopeIdSchema = z.string().superRefine((val, ctx) => {
+  addScopeIdIssues([val], ctx)
+})
 
 /**
- * Strict helper: scope ID as object, so a `Scope` instance can be passed
- * anywhere a scope ID is accepted.
+ * Shape-only branch for the `scope` option: an ID string, or an object carrying
+ * one (so a `Scope` instance is accepted). The ID itself is validated after the
+ * union resolves — see `ScopeOptionSchema`.
  */
-const ScopeIdObjectSchema = z.object({ id: ScopeIdSchema })
+const ScopeIdLikeSchema = z.union([z.string(), z.object({ id: z.string() })])
 
 /**
  * Schema for the `scope` read option: one scope, or a bounded list of them.
@@ -215,21 +237,35 @@ const ScopeIdObjectSchema = z.object({ id: ScopeIdSchema })
  * A single scope reads that scope's own view. A list restricts recall to the
  * union of the scopes' member sessions. An empty list is rejected rather than
  * resolved to an empty allowlist, which would silently recall nothing.
+ *
+ * The union discriminates shape only; IDs and list bounds are checked after the
+ * transform so their messages are not swallowed as `invalid_union`.
  */
 export const ScopeOptionSchema = z
-  .union([
-    ScopeIdSchema,
-    ScopeIdObjectSchema,
-    z
-      .array(z.union([ScopeIdSchema, ScopeIdObjectSchema]))
-      .min(1, 'scope must name at least one scope')
-      .max(100, 'scope can name at most 100 scopes'),
-  ])
-  .transform((val) => {
-    if (Array.isArray(val)) {
-      return val.map((entry) => (typeof entry === 'string' ? entry : entry.id))
+  .union([ScopeIdLikeSchema, z.array(ScopeIdLikeSchema)])
+  .transform((val) =>
+    Array.isArray(val)
+      ? val.map((entry) => (typeof entry === 'string' ? entry : entry.id))
+      : typeof val === 'string'
+        ? val
+        : val.id
+  )
+  .superRefine((resolved, ctx) => {
+    if (Array.isArray(resolved)) {
+      if (resolved.length === 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'scope must name at least one scope',
+        })
+      }
+      if (resolved.length > 100) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'scope can name at most 100 scopes',
+        })
+      }
     }
-    return typeof val === 'string' ? val : val.id
+    addScopeIdIssues(Array.isArray(resolved) ? resolved : [resolved], ctx)
   })
 
 /**
