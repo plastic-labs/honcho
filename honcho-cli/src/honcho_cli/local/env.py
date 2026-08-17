@@ -41,22 +41,27 @@ def is_placeholder_key(value: str | None) -> bool:
     return value.strip() in _PLACEHOLDERS
 
 
-def read_env_value(path: Path, key: str) -> str | None:
-    """Return the raw value for ``key`` in a dotenv file, or None."""
+def read_env_file(path: Path) -> dict[str, str]:
+    """Parse a dotenv file into a dict. Last assignment of a key wins."""
     if not path.exists():
-        return None
+        return {}
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except OSError:
-        return None
+        return {}
+    out: dict[str, str] = {}
     for line in lines:
         stripped = line.strip()
         if not stripped or stripped.startswith("#") or "=" not in stripped:
             continue
         k, _, v = stripped.partition("=")
-        if k.strip() == key:
-            return _unquote(v.strip())
-    return None
+        out[k.strip()] = _unquote(v.strip())
+    return out
+
+
+def read_env_value(path: Path, key: str) -> str | None:
+    """Return the raw value for ``key`` in a dotenv file, or None."""
+    return read_env_file(path).get(key)
 
 
 def managed_env(profile: LocalProfile, llm_api_key: str) -> dict[str, str]:
@@ -72,11 +77,19 @@ def managed_env(profile: LocalProfile, llm_api_key: str) -> dict[str, str]:
     }
 
 
-def upsert_env(path: Path, updates: dict[str, str]) -> None:
-    """Write managed keys, preserving unrelated user lines.
+def upsert_env(
+    path: Path,
+    updates: dict[str, str],
+    *,
+    drop: tuple[str, ...] = (),
+) -> None:
+    """Write ``updates``, preserving unrelated user lines.
 
-    Drops a previous generated header so it is not duplicated.
+    Managed keys are written first (stable order), then any other keys in
+    ``updates``. Keys in ``drop`` are removed and not rewritten. Drops a
+    previous generated header so it is not duplicated.
     """
+    drop_set = frozenset(drop)
     extras: list[str] = []
     if path.exists():
         for line in path.read_text(encoding="utf-8").splitlines():
@@ -90,14 +103,22 @@ def upsert_env(path: Path, updates: dict[str, str]) -> None:
                 continue
             if "=" in stripped:
                 k, _, _ = stripped.partition("=")
-                if k.strip() in updates or k.strip() in MANAGED_KEYS:
+                name = k.strip()
+                if name in updates or name in MANAGED_KEYS or name in drop_set:
                     continue
             extras.append(line)
 
     managed = [f"{k}={updates[k]}" for k in MANAGED_KEYS if k in updates]
+    extra_updates = [
+        f"{k}={v}" for k, v in updates.items() if k not in MANAGED_KEYS
+    ]
     body = [_HEADER, *managed]
+    if extra_updates:
+        if not body[-1].startswith("#"):
+            body.append("")
+        body.extend(extra_updates)
     if extras:
-        # Keep a blank line between managed and user keys when there are extras.
+        # Keep a blank line between generated and user keys when there are extras.
         if extras[0].strip():
             body.append("")
         body.extend(extras)
@@ -106,7 +127,12 @@ def upsert_env(path: Path, updates: dict[str, str]) -> None:
         os.chmod(path, 0o600)
 
 
-def render_stack(profile: LocalProfile, llm_api_key: str) -> None:
+def render_stack(
+    profile: LocalProfile,
+    llm_api_key: str,
+    extra: dict[str, str] | None = None,
+    drop: tuple[str, ...] = (),
+) -> None:
     """Write compose, init.sql, and .env into the profile directory."""
     directory = profile.dir()
     directory.mkdir(parents=True, exist_ok=True)
@@ -118,7 +144,10 @@ def render_stack(profile: LocalProfile, llm_api_key: str) -> None:
     init_sql = templates.joinpath("init.sql").read_text(encoding="utf-8")
     profile.compose_file().write_text(compose)
     (directory / "init.sql").write_text(init_sql)
-    upsert_env(profile.env_file(), managed_env(profile, llm_api_key))
+    updates = managed_env(profile, llm_api_key)
+    if extra:
+        updates.update(extra)
+    upsert_env(profile.env_file(), updates, drop=drop)
 
 
 def _unquote(value: str) -> str:

@@ -197,13 +197,23 @@ def seed_config_toml(profile: LocalProfile) -> bool:
     return True
 
 
-def compose_up(profile: LocalProfile) -> None:
+def compose_up(
+    profile: LocalProfile,
+    *,
+    recreate: tuple[str, ...] = (),
+) -> None:
     """``docker compose up -d``. Compose output goes to stderr.
+
+    ``recreate`` names services to ``--force-recreate`` (used after ``--setup``
+    on an already-running stack so new ``.env`` values take effect).
 
     If a Docker Desktop credential helper is missing from PATH, retries
     once with ``credsStore`` stripped so public GHCR/Hub pulls can proceed.
     """
-    proc = _run_compose(profile, ["up", "-d"], check=False)
+    args = ["up", "-d"]
+    if recreate:
+        args.extend(["--force-recreate", *recreate])
+    proc = _run_compose(profile, args, check=False)
     if proc.returncode == 0:
         return
     if _looks_like_cred_helper_error(proc):
@@ -212,7 +222,7 @@ def compose_up(profile: LocalProfile) -> None:
             try:
                 retry = _run_compose(
                     profile,
-                    ["up", "-d"],
+                    args,
                     check=False,
                     extra_env={"DOCKER_CONFIG": str(config_dir)},
                 )

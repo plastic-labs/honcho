@@ -38,6 +38,8 @@ Per-command scoping (workspace / peer / session) is handled via `-w` / `-p` / `-
 
 On first start, the CLI pulls `ghcr.io/plastic-labs/honcho:latest` and **pins that digest** in `profile.json`, then copies the image's `config.toml.example` to `config.toml` in the same directory. `honcho start` never overwrites `config.toml` after that — including when you re-pin the image. Delete the file yourself if you want a fresh copy from a new image.
 
+Pass `--setup basic` or `--setup advanced` for an interactive wizard that writes curated LLM/feature overrides into the profile `.env` (env wins over `config.toml`). TTY only; re-runnable. `basic` asks provider + chat model; `advanced` also covers embeddings, deriver/dialectic models, dreams, and snappy deriver flush. Everything else stays in `config.toml`.
+
 `honcho start` does **not** change `environmentUrl` in `~/.honcho/config.json` (that file is shared with plugins). To talk to the local stack for one command:
 
 ```bash
@@ -48,6 +50,8 @@ To make local the default, run `honcho init --base-url http://127.0.0.1:8000`.
 
 ```bash
 honcho start --llm-api-key "$LLM_OPENAI_API_KEY"
+honcho start --setup basic
+honcho start --setup advanced
 honcho status
 honcho stop            # keep data
 honcho stop --wipe     # also delete volumes
@@ -60,7 +64,7 @@ honcho stop --wipe     # also delete volumes
 | Command | Description |
 |---------|-------------|
 | `honcho init` | Confirm/set `apiKey` + `environmentUrl` in `~/.honcho/config.json` |
-| `honcho start` | Start a local Honcho stack (API, deriver, Postgres, Redis). Requires Docker and a cloud LLM key. Does not change `environmentUrl`. |
+| `honcho start` | Start a local Honcho stack (API, deriver, Postgres, Redis). Requires Docker and a cloud LLM key. `--setup basic` / `--setup advanced` runs an interactive config wizard (TTY only). Does not change `environmentUrl`. |
 | `honcho stop` | Stop the local stack. `--wipe` also deletes volumes. |
 | `honcho status` | Show every local stack (or `--profile` for one). |
 | `honcho doctor` | Health check: config, connectivity, workspace, peer, queue |

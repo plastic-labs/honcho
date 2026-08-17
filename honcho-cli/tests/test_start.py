@@ -57,7 +57,7 @@ def test_start_does_not_rewrite_environment_url(cfg, runner, monkeypatch):
     )
     monkeypatch.setattr("honcho_cli.commands.stack.ensure_docker", lambda: None)
     monkeypatch.setattr("honcho_cli.commands.stack.stack_healthy", lambda profile: False)
-    monkeypatch.setattr("honcho_cli.commands.stack.compose_up", lambda profile: None)
+    monkeypatch.setattr("honcho_cli.commands.stack.compose_up", lambda profile, **k: None)
     monkeypatch.setattr("honcho_cli.commands.stack.wait_for_health", lambda *a, **k: True)
     monkeypatch.setattr("honcho_cli.commands.stack.compose_ps", lambda profile: _PS)
     result = runner.invoke(app, ["start", "--llm-api-key", "sk-test", "--json"])
@@ -130,3 +130,42 @@ def test_status_lists_profiles_or_one(cfg, runner, tmp_path, monkeypatch):
     payload = json.loads(one.stdout)
     assert payload["profile"] == "local"
     assert "profiles" not in payload
+
+
+def test_start_setup_requires_tty(cfg, runner):
+    result = runner.invoke(app, ["start", "--setup", "basic", "--json"])
+    assert result.exit_code == 1
+    assert json.loads(result.stderr)["error"]["code"] == "SETUP_REQUIRES_TTY"
+
+
+def test_start_setup_recreates_when_already_running(cfg, runner, monkeypatch):
+    from honcho_cli.local.setup import SetupAnswers
+
+    ups: list[tuple[str, ...]] = []
+    monkeypatch.setattr("honcho_cli.commands.stack.use_json", lambda: False)
+    monkeypatch.setattr("honcho_cli.commands.stack.ensure_docker", lambda: None)
+    monkeypatch.setattr("honcho_cli.commands.stack.stack_healthy", lambda profile: True)
+    monkeypatch.setattr(
+        "honcho_cli.commands.stack.compose_up",
+        lambda profile, **k: ups.append(k.get("recreate", ())),
+    )
+    monkeypatch.setattr("honcho_cli.commands.stack.wait_for_health", lambda *a, **k: True)
+    monkeypatch.setattr("honcho_cli.commands.stack.compose_ps", lambda profile: _PS)
+    monkeypatch.setattr(
+        "honcho_cli.commands.stack.run_setup",
+        lambda mode, path, llm_api_key_flag=None: SetupAnswers(
+            mode="basic",
+            provider="openai",
+            api_key="sk-wiz",
+            chat_model="gpt-test",
+        ),
+    )
+    pins: list[str] = []
+    monkeypatch.setattr(
+        "honcho_cli.commands.stack.pin_image",
+        lambda image: pins.append(image) or image,
+    )
+    result = runner.invoke(app, ["start", "--setup", "basic"])
+    assert result.exit_code == 0, result.stderr
+    assert pins == []
+    assert ups == [("api", "deriver")]

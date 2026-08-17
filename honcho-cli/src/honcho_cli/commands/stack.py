@@ -41,6 +41,13 @@ from honcho_cli.local.profile import (
     resolve_profile_name,
     save_profile,
 )
+from honcho_cli.local.setup import (
+    SETUP_MODES,
+    answers_drop_keys,
+    answers_to_env,
+    openai_key_for_managed,
+    run_setup,
+)
 from honcho_cli.output import (
     print_error,
     print_json,
@@ -98,6 +105,14 @@ def _resolve_llm_key(flag: str | None, profile: LocalProfile) -> str:
         if candidate and not is_placeholder_key(candidate):
             return candidate.strip()
 
+    # A previous --setup may have stored only Anthropic/Gemini keys. Reuse
+    # the managed OpenAI line if present (possibly empty) and skip the prompt.
+    env_file = profile.env_file()
+    for alt in ("LLM_ANTHROPIC_API_KEY", "LLM_GEMINI_API_KEY"):
+        stored = read_env_value(env_file, alt)
+        if stored and not is_placeholder_key(stored):
+            return (read_env_value(env_file, "LLM_OPENAI_API_KEY") or "").strip()
+
     if use_json():
         _die(
             "MISSING_LLM_KEY",
@@ -122,6 +137,25 @@ def _resolve_llm_key(flag: str | None, profile: LocalProfile) -> str:
             "Pass --llm-api-key or set LLM_OPENAI_API_KEY / HONCHO_LLM_API_KEY.",
         )
     return raw
+
+
+def _validate_setup(setup: str | None) -> str | None:
+    if setup is None:
+        return None
+    mode = setup.strip().lower()
+    if mode not in SETUP_MODES:
+        _die(
+            "INVALID_SETUP",
+            f"Unknown setup mode {setup!r}. Use --setup basic or --setup advanced.",
+            {"setup": setup},
+        )
+    if use_json():
+        _die(
+            "SETUP_REQUIRES_TTY",
+            "honcho start --setup is interactive. Run it in a terminal without --json.",
+            {"setup": mode},
+        )
+    return mode
 
 
 def _payload(
@@ -198,6 +232,12 @@ def start(
         envvar="HONCHO_LLM_API_KEY",
         help="OpenAI-compatible key for cloud inference",
     ),
+    setup: str | None = typer.Option(
+        None,
+        "--setup",
+        help="Interactive config wizard: basic (provider/model) or advanced "
+        "(embeddings, deriver, dialectic, dreams, flush)",
+    ),
     image: str | None = typer.Option(
         None,
         "--image",
@@ -215,11 +255,13 @@ def start(
 
     Requires Docker. Uses cloud LLM inference. Does not change the CLI's
     configured server URL — pass HONCHO_BASE_URL to talk to this stack.
+    ``--setup basic`` or ``--setup advanced`` runs an interactive config wizard.
     """
     if json_output:
         set_json_mode(True)
 
     inference = _validate_inference(inference)
+    setup = _validate_setup(setup)
     name = resolve_profile_name(profile_name)
     profile = load_profile(name).overlay(
         inference=inference,
@@ -243,43 +285,67 @@ def start(
 
     _ensure_docker()
 
-    if stack_healthy(profile):
+    already_running = stack_healthy(profile)
+    if already_running and not setup:
         _ok(f"Already running ({profile.base_url})")
         _print_stack(
             _payload(profile, "running", services_running(compose_ps(profile)))
         )
         return
 
-    try:
-        profile, remapped = allocate_host_ports(profile, pinned=pinned)
-    except DockerError as e:
-        e.exit()
-    for service, (old, new) in remapped.items():
-        _step(f"Port {old} in use; {service} on {new}")
+    if not already_running:
+        try:
+            profile, remapped = allocate_host_ports(profile, pinned=pinned)
+        except DockerError as e:
+            e.exit()
+        for service, (old, new) in remapped.items():
+            _step(f"Port {old} in use; {service} on {new}")
 
-    key = _resolve_llm_key(llm_api_key, profile)
-    _step(f"Pinning {profile.image}")
-    try:
-        pinned = pin_image(profile.image)
-    except DockerError as e:
-        e.exit()
-    profile = profile.overlay(image=pinned)
-    _ok(pinned)
+        _step(f"Pinning {profile.image}")
+        try:
+            pinned_image = pin_image(profile.image)
+        except DockerError as e:
+            e.exit()
+        profile = profile.overlay(image=pinned_image)
+        _ok(pinned_image)
+
+    extra: dict[str, str] | None = None
+    drop: tuple[str, ...] = ()
+    if setup:
+        try:
+            wrote = seed_config_toml(profile)
+        except DockerError as e:
+            e.exit()
+        if wrote:
+            _ok("config.toml")
+        answers = run_setup(setup, profile.env_file(), llm_api_key_flag=llm_api_key)
+        extra = answers_to_env(answers)
+        drop = answers_drop_keys(answers)
+        key = openai_key_for_managed(answers)
+        _ok(f"Wrote overrides to {profile.env_file()}")
+        _console.print(
+            f"  [dim]Other settings live in {profile.config_file()}[/dim]"
+        )
+    else:
+        key = _resolve_llm_key(llm_api_key, profile)
+        try:
+            wrote = seed_config_toml(profile)
+        except DockerError as e:
+            e.exit()
+        if wrote:
+            _ok("config.toml")
 
     _step(f"Writing stack config to {profile.dir()}")
     save_profile(profile)
-    render_stack(profile, key)
-    try:
-        wrote = seed_config_toml(profile)
-    except DockerError as e:
-        e.exit()
-    if wrote:
-        _ok("config.toml")
+    render_stack(profile, key, extra=extra, drop=drop)
     _ok(f"Profile '{profile.name}'")
 
-    _step("Starting containers")
+    _step("Starting containers" if not already_running else "Recreating api + deriver")
     try:
-        compose_up(profile)
+        compose_up(
+            profile,
+            recreate=("api", "deriver") if already_running else (),
+        )
     except DockerError as e:
         e.exit()
 
