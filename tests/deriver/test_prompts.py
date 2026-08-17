@@ -30,6 +30,29 @@ def test_minimal_deriver_prompt_omits_custom_instructions_when_absent() -> None:
     assert "CUSTOM INSTRUCTIONS:" not in prompt
 
 
+def test_minimal_deriver_prompt_delimits_examples_and_forbids_example_leakage() -> None:
+    prompt = minimal_deriver_prompt(
+        peer_id="alice",
+        messages="alice: hello",
+        custom_instructions=None,
+    )
+
+    assert "<examples>" in prompt
+    assert "</examples>" in prompt
+    assert "<messages>" in prompt
+    assert "</messages>" in prompt
+    assert "These examples are fabricated illustrations of the output format." in prompt
+    assert (
+        "Never emit a conclusion for which content comes from these examples." in prompt
+    )
+    assert "Every conclusion must be supported by the <messages> block only." in prompt
+    examples_start = prompt.index("<examples>")
+    examples_end = prompt.index("</examples>")
+    examples_block = prompt[examples_start:examples_end]
+    assert "alice is 25 years old" in examples_block
+    assert "alice has a dog" in examples_block
+
+
 def test_estimate_deriver_prompt_tokens_increases_with_custom_instructions() -> None:
     base_tokens = estimate_minimal_deriver_prompt_tokens()
     custom_tokens = estimate_deriver_prompt_tokens(
