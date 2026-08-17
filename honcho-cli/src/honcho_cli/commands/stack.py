@@ -57,6 +57,11 @@ from honcho_cli.output import (
 
 _console = Console(stderr=True)
 
+_MISSING_LLM_KEY = (
+    "Cloud inference needs an OpenAI-compatible API key. "
+    "Pass --llm-api-key or set LLM_OPENAI_API_KEY / HONCHO_LLM_API_KEY."
+)
+
 
 def _die(code: str, message: str, details: dict | None = None) -> None:
     print_error(code, message, details)
@@ -113,11 +118,7 @@ def _resolve_llm_key(flag: str | None, profile: LocalProfile) -> str:
             return (read_env_value(env_file, "LLM_OPENAI_API_KEY") or "").strip()
 
     if use_json():
-        _die(
-            "MISSING_LLM_KEY",
-            "Cloud inference needs an OpenAI-compatible API key. "
-            "Pass --llm-api-key or set LLM_OPENAI_API_KEY / HONCHO_LLM_API_KEY.",
-        )
+        _die("MISSING_LLM_KEY", _MISSING_LLM_KEY)
 
     _console.print(
         "  [dim]OpenAI-compatible API key for the local deriver (not a Honcho API key)[/dim]"
@@ -130,11 +131,7 @@ def _resolve_llm_key(flag: str | None, profile: LocalProfile) -> str:
         prompt_suffix=": ",
     ).strip()
     if not raw or is_placeholder_key(raw):
-        _die(
-            "MISSING_LLM_KEY",
-            "Cloud inference needs an OpenAI-compatible API key. "
-            "Pass --llm-api-key or set LLM_OPENAI_API_KEY / HONCHO_LLM_API_KEY.",
-        )
+        _die("MISSING_LLM_KEY", _MISSING_LLM_KEY)
     return raw
 
 
@@ -193,6 +190,20 @@ def _print_stack(payload: dict) -> None:
     )
     _console.print(f"  [dim]To talk to this stack:[/dim] {payload['hint']}")
     _console.print()
+
+
+def _print_running(profile: LocalProfile) -> None:
+    _print_stack(_payload(profile, "running", services_running(compose_ps(profile))))
+
+
+def _seed_config(profile: LocalProfile) -> None:
+    if seed_config_toml(profile):
+        _ok("config.toml")
+
+
+def _inspect(profile: LocalProfile) -> tuple[dict[str, str], bool]:
+    """Compose service states and whether the API is healthy."""
+    return services_running(compose_ps(profile)), stack_healthy(profile)
 
 
 def start(
@@ -260,7 +271,7 @@ def start(
         redis_port=redis_port,
         image=image,
     )
-    pinned = frozenset(
+    pinned_ports = frozenset(
         name
         for name, value in (
             ("api", api_port),
@@ -277,13 +288,11 @@ def start(
         already_running = stack_healthy(profile)
         if already_running and not setup:
             _ok(f"Already running ({profile.base_url})")
-            _print_stack(
-                _payload(profile, "running", services_running(compose_ps(profile)))
-            )
+            _print_running(profile)
             return
 
         if not already_running:
-            profile, remapped = allocate_host_ports(profile, pinned=pinned)
+            profile, remapped = allocate_host_ports(profile, pinned=pinned_ports)
             for service, (old, new) in remapped.items():
                 _step(f"Port {old} in use; {service} on {new}")
 
@@ -294,10 +303,8 @@ def start(
 
         extra: dict[str, str] | None = None
         drop: tuple[str, ...] = ()
+        _seed_config(profile)
         if setup:
-            wrote = seed_config_toml(profile)
-            if wrote:
-                _ok("config.toml")
             answers = run_setup(setup, profile.env_file(), llm_api_key_flag=llm_api_key)
             extra = answers_to_env(answers)
             drop = answers_drop_keys(answers)
@@ -308,9 +315,6 @@ def start(
             )
         else:
             key = _resolve_llm_key(llm_api_key, profile)
-            wrote = seed_config_toml(profile)
-            if wrote:
-                _ok("config.toml")
 
         _step(f"Writing stack config to {profile.dir()}")
         save_profile(profile)
@@ -338,7 +342,7 @@ def start(
             )
 
         _ok("Honcho is running")
-        _print_stack(_payload(profile, "running", services_running(compose_ps(profile))))
+        _print_running(profile)
     except DockerError as e:
         e.exit()
 
@@ -362,26 +366,27 @@ def stop(
     name = resolve_profile_name(profile_name)
     profile = load_profile(name)
 
-    if not profile.compose_file().exists():
-        payload = _payload(profile, "stopped")
-        if use_json():
-            print_json(payload)
-        else:
-            _console.print(f"  [dim]No local stack for profile '{profile.name}'.[/dim]")
-        return
-
     try:
+        if not profile.compose_file().exists():
+            payload = _payload(profile, "stopped")
+            if use_json():
+                print_json(payload)
+            else:
+                _console.print(
+                    f"  [dim]No local stack for profile '{profile.name}'.[/dim]"
+                )
+            return
+
         running = bool(compose_ps(profile))
-    except DockerError as e:
-        e.exit()
-    if not running and not wipe:
-        if use_json():
-            print_json(_payload(profile, "stopped"))
-        else:
-            _console.print(f"  [dim]Profile '{profile.name}' is already stopped.[/dim]")
-        return
+        if not running and not wipe:
+            if use_json():
+                print_json(_payload(profile, "stopped"))
+            else:
+                _console.print(
+                    f"  [dim]Profile '{profile.name}' is already stopped.[/dim]"
+                )
+            return
 
-    try:
         compose_down(profile, wipe=wipe)
     except DockerError as e:
         e.exit()
@@ -395,10 +400,9 @@ def stop(
 def _status_one(profile: LocalProfile) -> bool:
     """Print one profile's status. Return True when the API is healthy."""
     try:
-        services = services_running(compose_ps(profile))
+        services, running = _inspect(profile)
     except DockerError as e:
         e.exit()
-    running = stack_healthy(profile)
     data = _payload(profile, "running" if running else "stopped", services)
     if not use_json():
         icon = ICON_OK if running else ICON_FAIL
@@ -453,16 +457,15 @@ def status(
         return
 
     rows: list[dict] = []
-    for name in names:
-        profile = load_profile(name)
-        try:
-            services = services_running(compose_ps(profile))
-        except DockerError as e:
-            e.exit()
-        running = stack_healthy(profile)
-        rows.append(
-            _payload(profile, "running" if running else "stopped", services)
-        )
+    try:
+        for name in names:
+            profile = load_profile(name)
+            services, running = _inspect(profile)
+            rows.append(
+                _payload(profile, "running" if running else "stopped", services)
+            )
+    except DockerError as e:
+        e.exit()
     if use_json():
         print_json({"profiles": rows})
         return
