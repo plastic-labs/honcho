@@ -18,6 +18,7 @@ from honcho_cli.local.env import (
 )
 from honcho_cli.local.profile import (
     LocalProfile,
+    list_profile_names,
     load_profile,
     resolve_profile_name,
     save_profile,
@@ -55,6 +56,20 @@ class TestProfileName:
         for bad in ("Local", "../etc", "has/slash", "", "1leading-digit"):
             with pytest.raises(SystemExit):
                 validate_profile_name(bad)
+
+    def test_list_profile_names(self, cfg_dir):
+        assert list_profile_names() == []
+        local = cfg_dir / "profiles" / "local"
+        demo = cfg_dir / "profiles" / "demo"
+        junk = cfg_dir / "profiles" / "NotValid"
+        local.mkdir(parents=True)
+        demo.mkdir()
+        junk.mkdir()
+        (local / "docker-compose.yml").write_text("services: {}\n")
+        (demo / "docker-compose.yml").write_text("services: {}\n")
+        (junk / "docker-compose.yml").write_text("services: {}\n")
+        (cfg_dir / "profiles" / "empty").mkdir()
+        assert list_profile_names() == ["demo", "local"]
 
 
 class TestProfileRoundTrip:

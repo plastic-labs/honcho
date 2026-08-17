@@ -52,6 +52,22 @@ def resolve_profile_name(flag: str | None) -> str:
     return validate_profile_name(raw)
 
 
+def list_profile_names() -> list[str]:
+    """Profile directories that already have a Compose file."""
+    root = profiles_dir()
+    if not root.is_dir():
+        return []
+    names: list[str] = []
+    for path in sorted(root.iterdir()):
+        if (
+            path.is_dir()
+            and _PROFILE_NAME.match(path.name)
+            and (path / "docker-compose.yml").exists()
+        ):
+            names.append(path.name)
+    return names
+
+
 @dataclass
 class LocalProfile:
     """Ports, image, and inference mode for one local stack."""

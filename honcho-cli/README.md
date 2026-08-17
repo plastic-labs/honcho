@@ -60,7 +60,7 @@ honcho stop --wipe     # also delete volumes
 | `honcho init` | Confirm/set `apiKey` + `environmentUrl` in `~/.honcho/config.json` |
 | `honcho start` | Start a local Honcho stack (API, deriver, Postgres, Redis). Requires Docker and a cloud LLM key. Does not change `environmentUrl`. |
 | `honcho stop` | Stop the local stack. `--wipe` also deletes volumes. |
-| `honcho status` | Show local stack endpoints and container health. |
+| `honcho status` | Show every local stack (or `--profile` for one). |
 | `honcho doctor` | Health check: config, connectivity, workspace, peer, queue |
 
 ### Workspaces

@@ -543,14 +543,14 @@ honcho start
 
 ## honcho status
 
-Show local stack endpoints and container health.
+Show local stack endpoints and container health. With no `--profile`, lists every stack under `~/.honcho/profiles/`.
 
 ```bash
 honcho status
 ```
 
-<ParamField path="--profile" type="string" default="local">
-  Local stack profile name.
+<ParamField path="--profile" type="string">
+  Limit to this profile. Omit to show every local stack.
 </ParamField>
 
 ## honcho stop

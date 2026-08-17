@@ -194,6 +194,7 @@ class TestStop:
         compose.write_text("services: {}\n")
         with (
             patch("honcho_cli.commands.stack.ensure_docker"),
+            patch("honcho_cli.commands.stack.compose_ps", return_value=_PS),
             patch("honcho_cli.commands.stack.compose_down") as down,
         ):
             result = runner.invoke(app, ["stop", "--wipe"])
@@ -201,6 +202,20 @@ class TestStop:
         down.assert_called_once()
         assert down.call_args.kwargs["wipe"] is True
         assert json.loads(result.stdout)["status"] == "wiped"
+
+    def test_stop_already_stopped_skips_compose_down(self, cfg, runner, tmp_path):
+        compose = tmp_path / "profiles" / "local" / "docker-compose.yml"
+        compose.parent.mkdir(parents=True)
+        compose.write_text("services: {}\n")
+        with (
+            patch("honcho_cli.commands.stack.ensure_docker"),
+            patch("honcho_cli.commands.stack.compose_ps", return_value=[]),
+            patch("honcho_cli.commands.stack.compose_down") as down,
+        ):
+            result = runner.invoke(app, ["stop"])
+        assert result.exit_code == 0, result.stderr
+        down.assert_not_called()
+        assert json.loads(result.stdout)["status"] == "stopped"
 
 
 class TestStatus:
@@ -236,3 +251,47 @@ class TestStatus:
             result = runner.invoke(app, ["status"])
         assert result.exit_code == 1
         assert json.loads(result.stdout)["status"] == "stopped"
+
+    def test_status_lists_all_profiles(self, cfg, runner, tmp_path):
+        for name, port in (("demo", 8001), ("local", 8000)):
+            d = tmp_path / "profiles" / name
+            d.mkdir(parents=True)
+            (d / "docker-compose.yml").write_text("services: {}\n")
+            (d / "profile.json").write_text(json.dumps({"apiPort": port}) + "\n")
+
+        def fake_ps(profile):
+            return _PS if profile.name == "local" else []
+
+        def fake_healthy(profile):
+            return profile.name == "local"
+
+        with (
+            patch("honcho_cli.commands.stack.ensure_docker"),
+            patch("honcho_cli.commands.stack.compose_ps", side_effect=fake_ps),
+            patch("honcho_cli.commands.stack.stack_healthy", side_effect=fake_healthy),
+        ):
+            result = runner.invoke(app, ["status"])
+        assert result.exit_code == 0, result.stderr
+        payload = json.loads(result.stdout)
+        names = [row["profile"] for row in payload["profiles"]]
+        assert names == ["demo", "local"]
+        by_name = {row["profile"]: row for row in payload["profiles"]}
+        assert by_name["local"]["status"] == "running"
+        assert by_name["demo"]["status"] == "stopped"
+        assert by_name["demo"]["endpoints"]["api"] == "http://127.0.0.1:8001"
+
+    def test_status_profile_flag_is_one_stack(self, cfg, runner, tmp_path):
+        for name in ("demo", "local"):
+            d = tmp_path / "profiles" / name
+            d.mkdir(parents=True)
+            (d / "docker-compose.yml").write_text("services: {}\n")
+        with (
+            patch("honcho_cli.commands.stack.ensure_docker"),
+            patch("honcho_cli.commands.stack.compose_ps", return_value=_PS),
+            patch("honcho_cli.commands.stack.stack_healthy", return_value=True),
+        ):
+            result = runner.invoke(app, ["status", "--profile", "demo"])
+        assert result.exit_code == 0, result.stderr
+        payload = json.loads(result.stdout)
+        assert payload["profile"] == "demo"
+        assert "profiles" not in payload

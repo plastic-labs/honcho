@@ -34,6 +34,7 @@ from honcho_cli.local.env import is_placeholder_key, read_env_value, render_stac
 from honcho_cli.local.health import stack_healthy, wait_for_health
 from honcho_cli.local.profile import (
     LocalProfile,
+    list_profile_names,
     load_profile,
     resolve_profile_name,
     save_profile,
@@ -309,6 +310,14 @@ def stop(
         return
 
     _ensure_docker()
+    running = bool(compose_ps(profile))
+    if not running and not wipe:
+        if use_json():
+            print_json(_payload(profile, "stopped"))
+        else:
+            _console.print(f"  [dim]Profile '{profile.name}' is already stopped.[/dim]")
+        return
+
     try:
         compose_down(profile, wipe=wipe)
     except DockerError as e:
@@ -316,43 +325,89 @@ def stop(
 
     state = "wiped" if wipe else "stopped"
     _ok(f"Stopped profile '{profile.name}'" + (" (volumes removed)" if wipe else ""))
-    _print_stack(_payload(profile, state))
+    if use_json():
+        print_json(_payload(profile, state))
 
 
-def status(
-    profile_name: str = typer.Option(
-        DEFAULT_PROFILE,
-        "--profile",
-        envvar="HONCHO_PROFILE",
-        help="Local stack profile name",
-    ),
-    json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
-) -> None:
-    """Show local stack endpoints and container health."""
-    if json_output:
-        set_json_mode(True)
-
-    name = resolve_profile_name(profile_name)
-    profile = load_profile(name)
-
-    if not profile.compose_file().exists():
-        _die(
-            "STACK_NOT_FOUND",
-            f"No local stack for profile '{profile.name}'. Run `honcho start` first.",
-            {"profile": profile.name},
-        )
-
-    _ensure_docker()
+def _status_one(profile: LocalProfile) -> bool:
+    """Print one profile's status. Return True when the API is healthy."""
     services = services_running(compose_ps(profile))
     running = stack_healthy(profile)
-    state = "running" if running else "stopped"
+    data = _payload(profile, "running" if running else "stopped", services)
     if not use_json():
         icon = ICON_OK if running else ICON_FAIL
-        _console.print(f"\n  {icon}  profile '{profile.name}' is {state}\n")
+        _console.print(f"\n  {icon}  profile '{profile.name}' is {data['status']}\n")
         if services:
             for svc in STACK_SERVICES:
                 detail = services.get(svc, "missing")
                 _console.print(f"  {svc:<10}  [dim]{detail}[/dim]")
-    _print_stack(_payload(profile, state, services))
-    if not running:
-        raise typer.Exit(1)
+    _print_stack(data)
+    return running
+
+
+def status(
+    profile_name: str | None = typer.Option(
+        None,
+        "--profile",
+        envvar="HONCHO_PROFILE",
+        help="Limit to this profile. Omit to show every local stack.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
+) -> None:
+    """Show local stack endpoints and container health.
+
+    With no ``--profile``, lists every stack under ``~/.honcho/profiles/``.
+    """
+    if json_output:
+        set_json_mode(True)
+
+    if profile_name:
+        name = resolve_profile_name(profile_name)
+        profile = load_profile(name)
+        if not profile.compose_file().exists():
+            _die(
+                "STACK_NOT_FOUND",
+                f"No local stack for profile '{profile.name}'. Run `honcho start` first.",
+                {"profile": profile.name},
+            )
+        _ensure_docker()
+        if not _status_one(profile):
+            raise typer.Exit(1)
+        return
+
+    names = list_profile_names()
+    if not names:
+        _die(
+            "STACK_NOT_FOUND",
+            "No local stacks. Run `honcho start` first.",
+        )
+
+    _ensure_docker()
+    if len(names) == 1:
+        if not _status_one(load_profile(names[0])):
+            raise typer.Exit(1)
+        return
+
+    rows: list[dict] = []
+    for name in names:
+        profile = load_profile(name)
+        services = services_running(compose_ps(profile))
+        running = stack_healthy(profile)
+        rows.append(
+            _payload(profile, "running" if running else "stopped", services)
+        )
+    if use_json():
+        print_json({"profiles": rows})
+        return
+    _console.print()
+    print_result(
+        [
+            {
+                "profile": row["profile"],
+                "status": row["status"],
+                "api": row["endpoints"]["api"],
+            }
+            for row in rows
+        ],
+        columns=["profile", "status", "api"],
+    )
