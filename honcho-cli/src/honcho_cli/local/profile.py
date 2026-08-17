@@ -16,7 +16,6 @@ from honcho_cli.local import (
     DEFAULT_API_PORT,
     DEFAULT_DB_PORT,
     DEFAULT_IMAGE,
-    DEFAULT_INFERENCE,
     DEFAULT_PROFILE,
     DEFAULT_REDIS_PORT,
 )
@@ -70,10 +69,9 @@ def list_profile_names() -> list[str]:
 
 @dataclass
 class LocalProfile:
-    """Ports, image, and inference mode for one local stack."""
+    """Ports and image for one local stack."""
 
     name: str
-    inference: str = DEFAULT_INFERENCE
     api_port: int = DEFAULT_API_PORT
     db_port: int = DEFAULT_DB_PORT
     redis_port: int = DEFAULT_REDIS_PORT
@@ -108,7 +106,6 @@ class LocalProfile:
             "docs": f"{self.base_url}/docs",
             "postgres": f"postgresql://postgres:postgres@127.0.0.1:{self.db_port}/postgres",
             "redis": f"redis://127.0.0.1:{self.redis_port}/0",
-            "inference": self.inference,
         }
 
     def overlay(self, **fields) -> LocalProfile:
@@ -126,11 +123,9 @@ def load_profile(name: str) -> LocalProfile:
         return profile
     if not isinstance(data, dict):
         return profile
-    inference = data.get("inference")
     image = data.get("image")
     return replace(
         profile,
-        inference=inference if isinstance(inference, str) and inference else profile.inference,
         api_port=_port(data.get("apiPort"), profile.api_port),
         db_port=_port(data.get("dbPort"), profile.db_port),
         redis_port=_port(data.get("redisPort"), profile.redis_port),
@@ -144,7 +139,6 @@ def save_profile(profile: LocalProfile) -> None:
     with suppress(OSError):
         os.chmod(directory, 0o700)
     payload = {
-        "inference": profile.inference,
         "apiPort": profile.api_port,
         "dbPort": profile.db_port,
         "redisPort": profile.redis_port,

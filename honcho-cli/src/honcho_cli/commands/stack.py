@@ -137,14 +137,11 @@ def _validate_setup(setup: str | None) -> str | None:
 def _payload(
     profile: LocalProfile, status: str, services: dict[str, str] | None = None
 ) -> dict:
-    endpoints = profile.endpoints()
-    inference = endpoints.pop("inference")
     return {
         "profile": profile.name,
         "status": status,
-        "inference": inference,
         "image": profile.image,
-        "endpoints": endpoints,
+        "endpoints": profile.endpoints(),
         "services": services or {},
         "hint": f"HONCHO_BASE_URL={profile.base_url} honcho workspace list",
     }
@@ -161,7 +158,6 @@ def _print_stack(payload: dict) -> None:
         "Docs": endpoints["docs"],
         "Postgres": endpoints["postgres"],
         "Redis": endpoints["redis"],
-        "Inference": payload["inference"],
     }
     print_result(table_data)
     _console.print()

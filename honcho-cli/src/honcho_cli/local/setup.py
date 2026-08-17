@@ -64,33 +64,23 @@ def load_toml_setup_defaults(path: Path | None) -> TomlSetupDefaults:
     try:
         with path.open("rb") as fh:
             data = tomllib.load(fh)
-    except (OSError, tomllib.TOMLDecodeError):
+        deriver = data.get("deriver") or {}
+        chat = deriver.get("model_config") or {}
+        embedding = data.get("embedding") or {}
+        embed = embedding.get("model_config") or {}
+        dream = data.get("dream") or {}
+        dims = embedding.get("VECTOR_DIMENSIONS")
+        return TomlSetupDefaults(
+            chat_transport=chat.get("transport"),
+            chat_model=chat.get("model"),
+            embed_transport=embed.get("transport"),
+            embed_model=embed.get("model"),
+            embed_dims=dims if isinstance(dims, int) and dims > 0 else None,
+            dreams_enabled=dream.get("ENABLED"),
+            flush_enabled=deriver.get("FLUSH_ENABLED"),
+        )
+    except (OSError, tomllib.TOMLDecodeError, TypeError, AttributeError):
         return TomlSetupDefaults()
-    if not isinstance(data, dict):
-        return TomlSetupDefaults()
-    deriver = data.get("deriver") if isinstance(data.get("deriver"), dict) else {}
-    deriver_mc = (
-        deriver.get("model_config")
-        if isinstance(deriver.get("model_config"), dict)
-        else {}
-    )
-    embedding = data.get("embedding") if isinstance(data.get("embedding"), dict) else {}
-    embed_mc = (
-        embedding.get("model_config")
-        if isinstance(embedding.get("model_config"), dict)
-        else {}
-    )
-    dream = data.get("dream") if isinstance(data.get("dream"), dict) else {}
-    dims = embedding.get("VECTOR_DIMENSIONS")
-    return TomlSetupDefaults(
-        chat_transport=_opt_str(deriver_mc.get("transport")),
-        chat_model=_opt_str(deriver_mc.get("model")),
-        embed_transport=_opt_str(embed_mc.get("transport")),
-        embed_model=_opt_str(embed_mc.get("model")),
-        embed_dims=dims if isinstance(dims, int) and dims > 0 else None,
-        dreams_enabled=_opt_bool(dream.get("ENABLED")),
-        flush_enabled=_opt_bool(deriver.get("FLUSH_ENABLED")),
-    )
 
 
 def chat_model_default(
@@ -116,18 +106,6 @@ def _provider_matches_transport(provider: str, transport: str | None) -> bool:
     if not transport:
         return False
     return transport_of(provider) == transport
-
-
-def _opt_str(value: object) -> str | None:
-    if isinstance(value, str) and value.strip():
-        return value.strip()
-    return None
-
-
-def _opt_bool(value: object) -> bool | None:
-    if isinstance(value, bool):
-        return value
-    return None
 
 
 @dataclass(frozen=True)

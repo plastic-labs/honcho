@@ -38,7 +38,7 @@ def test_profile_roundtrip_has_no_secrets(cfg_dir):
     assert loaded.image.endswith("@sha256:abc")
     on_disk = json.loads(profile.profile_file().read_text())
     assert "LLM" not in json.dumps(on_disk)
-    assert set(on_disk) == {"inference", "apiPort", "dbPort", "redisPort", "image"}
+    assert set(on_disk) == {"apiPort", "dbPort", "redisPort", "image"}
 
 
 def test_upsert_preserves_extra_env_keys(tmp_path):

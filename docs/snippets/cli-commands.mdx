@@ -509,7 +509,7 @@ honcho session view [<session_id>]
 
 Start a local Honcho stack (API, deriver, Postgres, Redis).
 
-Requires Docker. Uses cloud LLM inference. Does not change the CLI's
+Requires Docker. Uses cloud LLM providers. Does not change the CLI's
 configured server URL — pass HONCHO_BASE_URL to talk to this stack.
 ``--setup basic`` or ``--setup advanced`` runs an interactive config wizard.
 
@@ -517,9 +517,6 @@ configured server URL — pass HONCHO_BASE_URL to talk to this stack.
 honcho start
 ```
 
-<ParamField path="--inference" type="string" default="cloud">
-  Where the deriver runs LLMs: cloud now; local and hybrid later.
-</ParamField>
 <ParamField path="--profile" type="string" default="local">
   Local stack profile name.
 </ParamField>
