@@ -27,7 +27,6 @@ from honcho_cli.local.docker import (
     compose_down,
     compose_ps,
     compose_up,
-    ensure_docker,
     pin_image,
     seed_config_toml,
     services_running,
@@ -196,15 +195,6 @@ def _print_stack(payload: dict) -> None:
     _console.print()
 
 
-def _ensure_docker() -> None:
-    _step("Checking Docker")
-    try:
-        ensure_docker()
-    except DockerError as e:
-        e.exit()
-    _ok("Docker")
-
-
 def start(
     inference: str = typer.Option(
         "cloud",
@@ -283,88 +273,74 @@ def start(
     if not use_json():
         _console.print(f"\n[bold {BRAND}]Honcho Start[/bold {BRAND}]\n")
 
-    _ensure_docker()
-
-    already_running = stack_healthy(profile)
-    if already_running and not setup:
-        _ok(f"Already running ({profile.base_url})")
-        _print_stack(
-            _payload(profile, "running", services_running(compose_ps(profile)))
-        )
-        return
-
-    if not already_running:
-        try:
-            profile, remapped = allocate_host_ports(profile, pinned=pinned)
-        except DockerError as e:
-            e.exit()
-        for service, (old, new) in remapped.items():
-            _step(f"Port {old} in use; {service} on {new}")
-
-        _step(f"Pinning {profile.image}")
-        try:
-            pinned_image = pin_image(profile.image)
-        except DockerError as e:
-            e.exit()
-        profile = profile.overlay(image=pinned_image)
-        _ok(pinned_image)
-
-    extra: dict[str, str] | None = None
-    drop: tuple[str, ...] = ()
-    if setup:
-        try:
-            wrote = seed_config_toml(profile)
-        except DockerError as e:
-            e.exit()
-        if wrote:
-            _ok("config.toml")
-        answers = run_setup(setup, profile.env_file(), llm_api_key_flag=llm_api_key)
-        extra = answers_to_env(answers)
-        drop = answers_drop_keys(answers)
-        key = openai_key_for_managed(answers)
-        _ok(f"Wrote overrides to {profile.env_file()}")
-        _console.print(
-            f"  [dim]Other settings live in {profile.config_file()}[/dim]"
-        )
-    else:
-        key = _resolve_llm_key(llm_api_key, profile)
-        try:
-            wrote = seed_config_toml(profile)
-        except DockerError as e:
-            e.exit()
-        if wrote:
-            _ok("config.toml")
-
-    _step(f"Writing stack config to {profile.dir()}")
-    save_profile(profile)
-    render_stack(profile, key, extra=extra, drop=drop)
-    _ok(f"Profile '{profile.name}'")
-
-    _step("Starting containers" if not already_running else "Recreating api + deriver")
     try:
+        already_running = stack_healthy(profile)
+        if already_running and not setup:
+            _ok(f"Already running ({profile.base_url})")
+            _print_stack(
+                _payload(profile, "running", services_running(compose_ps(profile)))
+            )
+            return
+
+        if not already_running:
+            profile, remapped = allocate_host_ports(profile, pinned=pinned)
+            for service, (old, new) in remapped.items():
+                _step(f"Port {old} in use; {service} on {new}")
+
+            _step(f"Pinning {profile.image}")
+            pinned_image = pin_image(profile.image)
+            profile = profile.overlay(image=pinned_image)
+            _ok(pinned_image)
+
+        extra: dict[str, str] | None = None
+        drop: tuple[str, ...] = ()
+        if setup:
+            wrote = seed_config_toml(profile)
+            if wrote:
+                _ok("config.toml")
+            answers = run_setup(setup, profile.env_file(), llm_api_key_flag=llm_api_key)
+            extra = answers_to_env(answers)
+            drop = answers_drop_keys(answers)
+            key = openai_key_for_managed(answers)
+            _ok(f"Wrote overrides to {profile.env_file()}")
+            _console.print(
+                f"  [dim]Other settings live in {profile.config_file()}[/dim]"
+            )
+        else:
+            key = _resolve_llm_key(llm_api_key, profile)
+            wrote = seed_config_toml(profile)
+            if wrote:
+                _ok("config.toml")
+
+        _step(f"Writing stack config to {profile.dir()}")
+        save_profile(profile)
+        render_stack(profile, key, extra=extra, drop=drop)
+        _ok(f"Profile '{profile.name}'")
+
+        _step("Starting containers" if not already_running else "Recreating api + deriver")
         compose_up(
             profile,
             recreate=("api", "deriver") if already_running else (),
         )
+
+        _step(f"Waiting for API at {profile.base_url}/health")
+        if not wait_for_health(profile, timeout=float(timeout)):
+            _fail("Timed out waiting for /health")
+            _die(
+                "HEALTH_TIMEOUT",
+                f"Stack started but {profile.base_url}/health did not become ready within {timeout}s. "
+                f"Check `docker compose -p {profile.project_name} logs`.",
+                {
+                    "base_url": profile.base_url,
+                    "timeout": timeout,
+                    "project": profile.project_name,
+                },
+            )
+
+        _ok("Honcho is running")
+        _print_stack(_payload(profile, "running", services_running(compose_ps(profile))))
     except DockerError as e:
         e.exit()
-
-    _step(f"Waiting for API at {profile.base_url}/health")
-    if not wait_for_health(profile, timeout=float(timeout)):
-        _fail("Timed out waiting for /health")
-        _die(
-            "HEALTH_TIMEOUT",
-            f"Stack started but {profile.base_url}/health did not become ready within {timeout}s. "
-            f"Check `docker compose -p {profile.project_name} logs`.",
-            {
-                "base_url": profile.base_url,
-                "timeout": timeout,
-                "project": profile.project_name,
-            },
-        )
-
-    _ok("Honcho is running")
-    _print_stack(_payload(profile, "running", services_running(compose_ps(profile))))
 
 
 def stop(
@@ -394,8 +370,10 @@ def stop(
             _console.print(f"  [dim]No local stack for profile '{profile.name}'.[/dim]")
         return
 
-    _ensure_docker()
-    running = bool(compose_ps(profile))
+    try:
+        running = bool(compose_ps(profile))
+    except DockerError as e:
+        e.exit()
     if not running and not wipe:
         if use_json():
             print_json(_payload(profile, "stopped"))
@@ -416,7 +394,10 @@ def stop(
 
 def _status_one(profile: LocalProfile) -> bool:
     """Print one profile's status. Return True when the API is healthy."""
-    services = services_running(compose_ps(profile))
+    try:
+        services = services_running(compose_ps(profile))
+    except DockerError as e:
+        e.exit()
     running = stack_healthy(profile)
     data = _payload(profile, "running" if running else "stopped", services)
     if not use_json():
@@ -455,7 +436,6 @@ def status(
                 f"No local stack for profile '{profile.name}'. Run `honcho start` first.",
                 {"profile": profile.name},
             )
-        _ensure_docker()
         if not _status_one(profile):
             raise typer.Exit(1)
         return
@@ -467,7 +447,6 @@ def status(
             "No local stacks. Run `honcho start` first.",
         )
 
-    _ensure_docker()
     if len(names) == 1:
         if not _status_one(load_profile(names[0])):
             raise typer.Exit(1)
@@ -476,7 +455,10 @@ def status(
     rows: list[dict] = []
     for name in names:
         profile = load_profile(name)
-        services = services_running(compose_ps(profile))
+        try:
+            services = services_running(compose_ps(profile))
+        except DockerError as e:
+            e.exit()
         running = stack_healthy(profile)
         rows.append(
             _payload(profile, "running" if running else "stopped", services)

@@ -55,7 +55,6 @@ def test_start_does_not_rewrite_environment_url(cfg, runner, monkeypatch):
     cfg.write_text(
         json.dumps({"apiKey": "k", "environmentUrl": "https://api.honcho.dev"})
     )
-    monkeypatch.setattr("honcho_cli.commands.stack.ensure_docker", lambda: None)
     monkeypatch.setattr("honcho_cli.commands.stack.stack_healthy", lambda profile: False)
     monkeypatch.setattr("honcho_cli.commands.stack.compose_up", lambda profile, **k: None)
     monkeypatch.setattr("honcho_cli.commands.stack.wait_for_health", lambda *a, **k: True)
@@ -78,7 +77,6 @@ def test_start_rejects_local_inference(cfg, runner):
 
 
 def test_start_requires_llm_key(cfg, runner, monkeypatch):
-    monkeypatch.setattr("honcho_cli.commands.stack.ensure_docker", lambda: None)
     monkeypatch.setattr("honcho_cli.commands.stack.stack_healthy", lambda profile: False)
     result = runner.invoke(app, ["start"])
     assert result.exit_code == 1
@@ -89,7 +87,6 @@ def test_stop_already_stopped_skips_down(cfg, runner, tmp_path, monkeypatch):
     compose = tmp_path / "profiles" / "local" / "docker-compose.yml"
     compose.parent.mkdir(parents=True)
     compose.write_text("services: {}\n")
-    monkeypatch.setattr("honcho_cli.commands.stack.ensure_docker", lambda: None)
     monkeypatch.setattr("honcho_cli.commands.stack.compose_ps", lambda profile: [])
     down = []
     monkeypatch.setattr(
@@ -109,7 +106,6 @@ def test_status_lists_profiles_or_one(cfg, runner, tmp_path, monkeypatch):
         (d / "docker-compose.yml").write_text("services: {}\n")
         (d / "profile.json").write_text(json.dumps({"apiPort": port}) + "\n")
 
-    monkeypatch.setattr("honcho_cli.commands.stack.ensure_docker", lambda: None)
     monkeypatch.setattr(
         "honcho_cli.commands.stack.compose_ps",
         lambda profile: _PS if profile.name == "local" else [],
@@ -143,7 +139,6 @@ def test_start_setup_recreates_when_already_running(cfg, runner, monkeypatch):
 
     ups: list[tuple[str, ...]] = []
     monkeypatch.setattr("honcho_cli.commands.stack.use_json", lambda: False)
-    monkeypatch.setattr("honcho_cli.commands.stack.ensure_docker", lambda: None)
     monkeypatch.setattr("honcho_cli.commands.stack.stack_healthy", lambda profile: True)
     monkeypatch.setattr(
         "honcho_cli.commands.stack.compose_up",

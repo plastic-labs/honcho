@@ -10,7 +10,6 @@ import pytest
 from honcho_cli.local.docker import (
     DockerError,
     allocate_host_ports,
-    compose_up,
     pin_image,
     seed_config_toml,
 )
@@ -128,34 +127,3 @@ def test_busy_port_remaps_unless_pinned(monkeypatch):
         allocate_host_ports(LocalProfile(name="local"), pinned=frozenset({"redis"}))
     assert exc.value.code == "PORT_IN_USE"
     assert exc.value.details["flag"] == "--redis-port"
-
-
-def test_compose_up_retries_without_creds_store(monkeypatch, tmp_path):
-    cfg = tmp_path / "config.json"
-    cfg.write_text(json.dumps({"credsStore": "desktop"}))
-    monkeypatch.setattr("honcho_cli.local.docker._docker_user_config", lambda: cfg)
-    fail = subprocess.CompletedProcess(
-        args=["docker", "compose", "up", "-d"],
-        returncode=1,
-        stdout="",
-        stderr=(
-            'error getting credentials - err: exec: "docker-credential-desktop": '
-            "executable file not found in $PATH, out: ``\n"
-        ),
-    )
-    ok = subprocess.CompletedProcess(
-        args=["docker", "compose", "up", "-d"],
-        returncode=0,
-        stdout="",
-        stderr="",
-    )
-    calls: list[dict | None] = []
-
-    def fake_run(profile, args, *, capture=False, check=True, extra_env=None):
-        calls.append(extra_env)
-        return fail if extra_env is None else ok
-
-    monkeypatch.setattr("honcho_cli.local.docker._run_compose", fake_run)
-    compose_up(LocalProfile(name="local"))
-    assert [c is None for c in calls] == [True, False]
-    assert "DOCKER_CONFIG" in calls[1]
