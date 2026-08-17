@@ -22,8 +22,26 @@ uvx honcho-cli
 
 ```bash
 honcho init        # confirm/set apiKey + Honcho URL in ~/.honcho/config.json
+honcho start       # optional: local API + deriver + Postgres + Redis (Docker)
 honcho doctor      # verify your config + connectivity
 honcho             # show banner + command list
+```
+
+## Local stack
+
+`honcho start` runs a personal Honcho server on your machine via Docker (API, deriver, Postgres, Redis) using cloud LLM inference. Files live under `~/.honcho/profiles/local/`.
+
+This does **not** change `environmentUrl` in the shared config file. To talk to the local stack:
+
+```bash
+HONCHO_BASE_URL=http://127.0.0.1:8000 honcho workspace list
+```
+
+```bash
+honcho start --llm-api-key "$LLM_OPENAI_API_KEY"
+honcho status
+honcho stop            # keep data
+honcho stop --wipe     # also delete volumes
 ```
 
 ## Configuration

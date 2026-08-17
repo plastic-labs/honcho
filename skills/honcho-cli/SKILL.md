@@ -18,6 +18,7 @@ allowed-tools: Bash(honcho:*), Bash(jq:*), Read, Grep
 ## Command groups
 
 - `honcho config` — CLI configuration
+- `honcho start` / `stop` / `status` — local Docker stack (does not change `environmentUrl`)
 - `honcho workspace` — inspect, delete, search
 - `honcho peer` — inspect, card, chat, search
 - `honcho session` — inspect, view (transcript), context, summaries
@@ -31,6 +32,7 @@ allowed-tools: Bash(honcho:*), Bash(jq:*), Read, Grep
 - Use `honcho session context` to see exactly what an agent receives.
 - Never run `honcho workspace delete` without `honcho workspace inspect` first.
 - Compare peer card with conclusions to understand memory state.
+- `honcho start` does not rewrite `environmentUrl`. Use `HONCHO_BASE_URL=http://127.0.0.1:8000` to talk to local stack.
 
 ## Inspection tour
 

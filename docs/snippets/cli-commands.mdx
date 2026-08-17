@@ -505,6 +505,69 @@ honcho session view [<session_id>]
 </Accordion>
 </AccordionGroup>
 
+## honcho start
+
+Start a local Honcho stack (API, deriver, Postgres, Redis).
+
+Requires Docker. Uses cloud LLM inference. Does not change the CLI's
+configured server URL — pass HONCHO_BASE_URL to talk to this stack.
+
+```bash
+honcho start
+```
+
+<ParamField path="--inference" type="string" default="cloud">
+  Where the deriver runs LLMs: cloud now; local and hybrid later.
+</ParamField>
+<ParamField path="--profile" type="string" default="local">
+  Local stack profile name.
+</ParamField>
+<ParamField path="--api-port" type="string">
+  Host port for the API.
+</ParamField>
+<ParamField path="--db-port" type="string">
+  Host port for Postgres.
+</ParamField>
+<ParamField path="--redis-port" type="string">
+  Host port for Redis.
+</ParamField>
+<ParamField path="--llm-api-key" type="string">
+  OpenAI-compatible key for cloud inference.
+</ParamField>
+<ParamField path="--image" type="string">
+  Honcho image (default: ghcr.io/plastic-labs/honcho:latest).
+</ParamField>
+<ParamField path="--timeout" type="string" default="180">
+  Seconds to wait for /health after compose up.
+</ParamField>
+
+## honcho status
+
+Show local stack endpoints and container health.
+
+```bash
+honcho status
+```
+
+<ParamField path="--profile" type="string" default="local">
+  Local stack profile name.
+</ParamField>
+
+## honcho stop
+
+Stop the local stack started by `honcho start`. Keeps data unless --wipe.
+
+```bash
+honcho stop
+```
+
+<ParamField path="--profile" type="string" default="local">
+  Local stack profile name.
+</ParamField>
+<ParamField path="--wipe" type="boolean">
+  Also delete volumes (Postgres data).
+</ParamField>
+
 ## honcho workspace
 
 List, create, inspect, delete, and search workspaces.
