@@ -15,18 +15,18 @@ from .pagination import SyncPage
 from .utils import resolve_id
 
 if TYPE_CHECKING:
-    from .aio import ConclusionScopeAio
+    from .aio import ConclusionsViewAio
     from .client import Honcho
 
 __all__ = [
     "Conclusion",
-    "ConclusionScope",
+    "ConclusionsView",
     "ConclusionCreateParams",
 ]
 
 # Filter keys that define a conclusion scope (the observer/observed peer pair).
 # They are set from the scope itself, so a caller must not pass them in `filters`.
-_SCOPE_RESERVED = ("observer", "observed", "observer_id", "observed_id")
+_VIEW_RESERVED = ("observer", "observed", "observer_id", "observed_id")
 
 
 def _reject_reserved_filter_keys(
@@ -126,7 +126,7 @@ class Conclusion:
         return self.content
 
 
-class ConclusionScope:
+class ConclusionsView:
     """
     Scoped access to conclusions for a specific observer/observed relationship.
 
@@ -165,7 +165,7 @@ class ConclusionScope:
         observed: str,
     ):
         """
-        Initialize a ConclusionScope.
+        Initialize a ConclusionsView.
 
         Args:
             honcho: The Honcho client instance
@@ -179,12 +179,12 @@ class ConclusionScope:
         self.observed = observed
 
     @property
-    def aio(self) -> "ConclusionScopeAio":
+    def aio(self) -> "ConclusionsViewAio":
         """
-        Access async versions of all ConclusionScope methods.
+        Access async versions of all ConclusionsView methods.
 
-        Returns a ConclusionScopeAio view that provides async versions of all methods
-        while sharing state with this ConclusionScope instance.
+        Returns a ConclusionsViewAio view that provides async versions of all methods
+        while sharing state with this ConclusionsView instance.
 
         Example:
             ```python
@@ -194,9 +194,9 @@ class ConclusionScope:
             ```
         """
         # Import here to avoid circular import (aio.py imports from this module)
-        from .aio import ConclusionScopeAio
+        from .aio import ConclusionsViewAio
 
-        return ConclusionScopeAio(self)
+        return ConclusionsViewAio(self)
 
     def list(
         self,
@@ -226,7 +226,7 @@ class ConclusionScope:
             Paginated response containing Conclusion objects
         """
         _reject_reserved_filter_keys(
-            filters, _SCOPE_RESERVED + ("session", "session_id")
+            filters, _VIEW_RESERVED + ("session", "session_id")
         )
         self._honcho._ensure_workspace()
         resolved_session_id = resolve_id(session)
@@ -288,7 +288,7 @@ class ConclusionScope:
         Returns:
             List of matching Conclusion objects
         """
-        _reject_reserved_filter_keys(filters, _SCOPE_RESERVED)
+        _reject_reserved_filter_keys(filters, _VIEW_RESERVED)
         self._honcho._ensure_workspace()
         filters = {
             "observer_id": self.observer,
@@ -443,6 +443,6 @@ class ConclusionScope:
 
     def __repr__(self) -> str:
         return (
-            f"ConclusionScope(workspace_id={self.workspace_id!r}, "
+            f"ConclusionsView(workspace_id={self.workspace_id!r}, "
             f"observer={self.observer!r}, observed={self.observed!r})"
         )

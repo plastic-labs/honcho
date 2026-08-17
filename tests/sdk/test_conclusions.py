@@ -6,7 +6,7 @@ from sdks.python.src.honcho.client import Honcho
 from sdks.python.src.honcho.conclusions import (
     Conclusion,
     ConclusionCreateParams,
-    ConclusionScope,
+    ConclusionsView,
 )
 
 
@@ -34,7 +34,7 @@ async def test_observation_create_single(
 
         # Get observation scope for observer -> target
         obs_scope = observer.conclusions_of(target)
-        assert isinstance(obs_scope, ConclusionScope)
+        assert isinstance(obs_scope, ConclusionsView)
 
         # Create a single observation
         created = await obs_scope.aio.create(
@@ -68,7 +68,7 @@ async def test_observation_create_single(
 
         # Get observation scope for observer -> target
         obs_scope = observer.conclusions_of(target)
-        assert isinstance(obs_scope, ConclusionScope)
+        assert isinstance(obs_scope, ConclusionsView)
 
         # Create a single observation
         created = obs_scope.create(
@@ -422,7 +422,7 @@ async def test_self_observation_create(
 
         # Get self-observation scope
         obs_scope = peer.conclusions
-        assert isinstance(obs_scope, ConclusionScope)
+        assert isinstance(obs_scope, ConclusionsView)
         assert obs_scope.observer == peer.id
         assert obs_scope.observed == peer.id
 
@@ -443,7 +443,7 @@ async def test_self_observation_create(
 
         # Get self-observation scope
         obs_scope = peer.conclusions
-        assert isinstance(obs_scope, ConclusionScope)
+        assert isinstance(obs_scope, ConclusionsView)
         assert obs_scope.observer == peer.id
         assert obs_scope.observed == peer.id
 

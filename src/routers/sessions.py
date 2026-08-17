@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import config, crud, schemas
 from src.cache.client import safe_cache_delete
+from src.crud.message import get_peer_session_names
 from src.crud.session import session_cache_key
 from src.dependencies import db, read_db
 from src.deriver.enqueue import enqueue_deletion
@@ -23,6 +24,7 @@ from src.exceptions import (
 from src.security import JWTParams, require_auth
 from src.telemetry.events import EmbeddingCallPurpose, GetContextEvent, emit
 from src.utils import summarizer
+from src.utils.filter import normalize_session_allowlist
 from src.utils.representation import Representation
 from src.utils.search import search
 from src.utils.tokens import estimate_tokens
@@ -714,6 +716,20 @@ async def get_session_context(
         None,
         description="An (unprefixed) scope name to use as the perspective source: the representation and peer card of `peer_target` are read from the scope's observations instead of the global (or `peer_perspective`) view. Must be provided with `peer_target`; mutually exclusive with `peer_perspective`. Requires a workspace- or admin-level key.",
     ),
+    sessions: list[str] | None = Query(
+        None,
+        description=(
+            "Optional allowlist of session IDs confining the representation of "
+            "`peer_target` to those sessions. This session must be one of them. "
+            "Recall is restricted to conclusions stated directly in the allowed "
+            "sessions — conclusions synthesized across sessions are excluded, "
+            "since their provenance cannot be proven to sit inside the allowlist "
+            "— and the peer card is omitted for the same reason. Mutually "
+            "exclusive with `scope` and `limit_to_session`. Capped at 1,000 "
+            "sessions. A peer-scoped key must be an active member of every "
+            "session named."
+        ),
+    ),
     limit_to_session: bool = Query(
         default=False,
         description="Only used if `search_query` is provided. Whether to limit the representation to the session (as opposed to everything known about the target peer)",
@@ -801,6 +817,47 @@ async def get_session_context(
                 "`scope` requires a workspace- or admin-level key"
             )
 
+    # The session allowlist confines the representation to a set of sessions this
+    # one belongs to. `scope` already determines what can be seen and
+    # `limit_to_session` already pins the set to this session alone, so both are
+    # contradictions rather than further narrowings — refused rather than given a
+    # silent precedence order.
+    session_allowlist: list[str] | None = None
+    if sessions is not None:
+        if scope is not None:
+            raise ValidationException("`sessions` and `scope` are mutually exclusive")
+        if limit_to_session:
+            raise ValidationException(
+                "`sessions` and `limit_to_session` are mutually exclusive"
+            )
+        if not peer_target:
+            # The allowlist only reaches the representation, and there is no
+            # representation without a target. Refused rather than accepted and
+            # silently ignored, which would read as a scoped context.
+            raise ValidationException(
+                "peer_target must be provided if sessions is provided"
+            )
+        # `must_include` keeps the allowlist from contradicting the route's own
+        # session: this session's messages and summary are always part of the
+        # response, so an allowlist excluding it would describe a context that
+        # cannot be assembled.
+        session_allowlist = normalize_session_allowlist(
+            sessions, field="sessions", must_include=session_id
+        )
+        # A peer-scoped key may only name sessions its peer belongs to. Mirrors
+        # the chat route's gate (see routers/peers.py), including `active_only`,
+        # so both answer the same question for a peer that has left a session.
+        # Reuses the handler's session rather than opening its own: this is a
+        # DB-only read and the handler already holds a connection.
+        if jwt_params.p is not None:
+            member_sessions = set(
+                await get_peer_session_names(
+                    db, workspace_id, jwt_params.p, active_only=True
+                )
+            )
+            if not set(session_allowlist) <= member_sessions:
+                raise AuthenticationException("JWT not permissioned for this resource")
+
     if not peer_target:
         # No representation or card needed
         summary, messages = await _get_session_context_task(
@@ -872,15 +929,28 @@ async def get_session_context(
         search_query,
         observer=observer,
         observed=observed,
-        session_allowlist=[session_id] if limit_to_session else None,
+        session_allowlist=session_allowlist
+        if session_allowlist is not None
+        else ([session_id] if limit_to_session else None),
         search_top_k=search_top_k,
         search_max_distance=search_max_distance,
         include_most_derived=include_most_frequent,
         max_observations=max_conclusions,
         embedding=embedding,
     )
-    card = await _get_peer_card_task(
-        db, workspace_id, observer=observer, observed=observed
+    # A peer card is keyed by (workspace, observer, observed) with no session
+    # dimension (crud/peer_card.py), so it is synthesized from everything the
+    # observer has ever seen and cannot be narrowed to an allowlist. Returning it
+    # would leak exactly what the allowlist exists to exclude, so it is dropped —
+    # the same fail-closed reasoning that limits allowlisted conclusion recall to
+    # ALLOWLIST_SAFE_LEVELS. `scope` needs no such carve-out: it swaps the
+    # observer to the scope peer above, so the card read below is the scope's own.
+    card = (
+        None
+        if session_allowlist is not None
+        else await _get_peer_card_task(
+            db, workspace_id, observer=observer, observed=observed
+        )
     )
     short_summary, long_summary = await _get_both_summaries_task(
         db, workspace_id, session_id

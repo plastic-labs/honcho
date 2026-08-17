@@ -1,7 +1,7 @@
 /**
  * Conclusions Tests
  *
- * Tests for Conclusion operations via ConclusionScope.
+ * Tests for Conclusion operations via ConclusionsView.
  *
  * Endpoints covered:
  * - POST /v3/workspaces/:workspaceId/conclusions (create conclusions)
@@ -11,7 +11,7 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test'
-import { Honcho, Conclusion, ConclusionScope } from '../src'
+import { Honcho, Conclusion, ConclusionsView } from '../src'
 import { createTestClient, requireServer } from './setup'
 import { assertConclusionShape } from './helpers'
 
@@ -31,16 +31,16 @@ describe('Conclusions', () => {
   })
 
   // ===========================================================================
-  // ConclusionScope Access
+  // ConclusionsView Access
   // ===========================================================================
 
-  describe('ConclusionScope access', () => {
+  describe('ConclusionsView access', () => {
     test('peer.conclusions returns self-scope', async () => {
       const peer = await client.peer('self-scope-peer')
 
       const scope = peer.conclusions
 
-      expect(scope).toBeInstanceOf(ConclusionScope)
+      expect(scope).toBeInstanceOf(ConclusionsView)
       expect(scope.observer).toBe(peer.id)
       expect(scope.observed).toBe(peer.id)
       expect(scope.workspaceId).toBe(client.workspaceId)
@@ -464,16 +464,16 @@ describe('Conclusions', () => {
   })
 
   // ===========================================================================
-  // ConclusionScope toString
+  // ConclusionsView toString
   // ===========================================================================
 
-  describe('ConclusionScope toString', () => {
+  describe('ConclusionsView toString', () => {
     test('returns readable format', async () => {
       const peer = await client.peer('scope-tostring-peer')
 
       const str = peer.conclusions.toString()
 
-      expect(str).toContain('ConclusionScope')
+      expect(str).toContain('ConclusionsView')
       expect(str).toContain(peer.id)
       expect(str).toContain(client.workspaceId)
     })
