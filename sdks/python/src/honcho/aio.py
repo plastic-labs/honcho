@@ -52,7 +52,7 @@ from .conclusions import (
     Conclusion,
     _reject_reserved_filter_keys,
 )
-from .http import routes
+from .http import NotFoundError, routes
 from .message import Message
 from .mixins import AsyncMetadataConfigMixin
 from .pagination import AsyncPage
@@ -1603,15 +1603,25 @@ class ConclusionScopeAio:
     async def get(self, conclusion_id: str) -> Conclusion:
         """Get a single conclusion by ID asynchronously.
 
+        Equivalent to ``list`` with an ``id`` filter.
+
         Returns:
             The Conclusion object, including its attribution fields
             (`source_ids`, `times_derived`)
+
+        Raises:
+            NotFoundError: If no conclusion with the given ID exists
         """
         await self._scope._honcho._ensure_workspace_async()
-        data = await self._scope._honcho._async_http_client.get(
-            routes.conclusion(self._scope.workspace_id, conclusion_id)
+        data = await self._scope._honcho._async_http_client.post(
+            routes.conclusions_list(self._scope.workspace_id),
+            body={"filters": {"id": conclusion_id}},
+            query={"page": 1, "size": 1},
         )
-        return Conclusion.from_api_response(ConclusionResponse.model_validate(data))
+        items = data.get("items", [])
+        if not items:
+            raise NotFoundError("Conclusion not found")
+        return Conclusion.from_api_response(ConclusionResponse.model_validate(items[0]))
 
     async def get_many(self, conclusion_ids: list[str]) -> list[Conclusion]:
         """Get multiple conclusions by ID in a single call asynchronously.
@@ -1662,7 +1672,7 @@ class ConclusionScopeAio:
             size: Number of results per page. Default: 50.
             reverse: If True, reverses the default newest-first ordering.
 
-        Sugar for ``list`` with a ``parent_id`` filter; an unknown
+        Equivalent to ``list`` with a ``parent_id`` filter; an unknown
         ``conclusion_id`` yields an empty page rather than an error.
 
         Returns:

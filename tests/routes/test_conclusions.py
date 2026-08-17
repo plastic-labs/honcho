@@ -667,13 +667,14 @@ class TestConclusionRoutes:
         assert "not found" in data["detail"].lower()
 
     @pytest.mark.asyncio
-    async def test_get_conclusion_success(
+    async def test_list_conclusion_by_id_success(
         self,
         client: TestClient,
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
     ):
-        """Test getting a single conclusion by ID with attribution fields"""
+        """Test getting a single conclusion via list with an id filter,
+        including attribution fields"""
         test_workspace, test_peer = sample_data
 
         # Create another peer
@@ -719,13 +720,16 @@ class TestConclusionRoutes:
         db_session.add(derived)
         await db_session.commit()
 
-        # Get conclusion by ID
-        response = client.get(
-            f"/v3/workspaces/{test_workspace.name}/conclusions/{derived.id}"
+        # Get conclusion via list with an id filter
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/conclusions/list",
+            json={"filters": {"id": derived.id}},
         )
 
         assert response.status_code == 200
-        conclusion = response.json()
+        items = response.json()["items"]
+        assert len(items) == 1
+        conclusion = items[0]
         assert conclusion["id"] == derived.id
         assert conclusion["content"] == "User is likely a night owl"
         assert conclusion["observer_id"] == test_peer.name
@@ -739,7 +743,7 @@ class TestConclusionRoutes:
         assert "internal_metadata" not in conclusion
 
     @pytest.mark.asyncio
-    async def test_get_conclusion_legacy_source_ids(
+    async def test_list_conclusion_by_id_legacy_source_ids(
         self,
         client: TestClient,
         db_session: AsyncSession,
@@ -775,39 +779,41 @@ class TestConclusionRoutes:
         db_session.add(doc)
         await db_session.commit()
 
-        response = client.get(
-            f"/v3/workspaces/{test_workspace.name}/conclusions/{doc.id}"
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/conclusions/list",
+            json={"filters": {"id": doc.id}},
         )
 
         assert response.status_code == 200
-        conclusion = response.json()
-        assert conclusion["source_ids"] is None
+        items = response.json()["items"]
+        assert len(items) == 1
+        assert items[0]["source_ids"] is None
 
     @pytest.mark.asyncio
-    async def test_get_conclusion_not_found(
+    async def test_list_conclusion_by_id_not_found(
         self,
         client: TestClient,
         sample_data: tuple[Workspace, Peer],
     ):
-        """Test getting a non-existent conclusion"""
+        """Listing with a non-existent id filter yields an empty page"""
         test_workspace, _test_peer = sample_data
 
-        response = client.get(
-            f"/v3/workspaces/{test_workspace.name}/conclusions/nonexistent_id"
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/conclusions/list",
+            json={"filters": {"id": "nonexistent_id"}},
         )
 
-        assert response.status_code == 404
-        data = response.json()
-        assert "not found" in data["detail"].lower()
+        assert response.status_code == 200
+        assert response.json()["items"] == []
 
     @pytest.mark.asyncio
-    async def test_get_conclusion_soft_deleted(
+    async def test_list_conclusion_by_id_soft_deleted(
         self,
         client: TestClient,
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
     ):
-        """Test that a soft-deleted conclusion returns 404"""
+        """Test that a soft-deleted conclusion is excluded from list results"""
         test_workspace, test_peer = sample_data
 
         # Create another peer
@@ -837,10 +843,12 @@ class TestConclusionRoutes:
         )
         assert delete_response.status_code == 204
 
-        response = client.get(
-            f"/v3/workspaces/{test_workspace.name}/conclusions/{doc.id}"
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/conclusions/list",
+            json={"filters": {"id": doc.id}},
         )
-        assert response.status_code == 404
+        assert response.status_code == 200
+        assert response.json()["items"] == []
 
     @pytest.mark.asyncio
     async def test_list_conclusions_includes_attribution_fields(

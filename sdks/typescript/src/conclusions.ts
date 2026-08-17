@@ -1,5 +1,6 @@
 import { API_VERSION } from './api-version'
 import type { HonchoHTTPClient } from './http/client'
+import { NotFoundError } from './http/errors'
 import { Page } from './pagination'
 import type { Session } from './session'
 import type {
@@ -208,10 +209,17 @@ export class ConclusionScope {
   }
 
   private async _get(conclusionId: string): Promise<ConclusionResponse> {
-    await this._ensureWorkspace()
-    return this._http.get<ConclusionResponse>(
-      `/${API_VERSION}/workspaces/${this.workspaceId}/conclusions/${conclusionId}`
-    )
+    // Equivalent to list with an `id` filter; there is no single-GET endpoint.
+    const response = await this._list({
+      filters: { id: conclusionId },
+      page: 1,
+      size: 1,
+    })
+    const item = response.items?.[0]
+    if (!item) {
+      throw new NotFoundError('Conclusion not found')
+    }
+    return item
   }
 
   private async _derived(
@@ -222,7 +230,7 @@ export class ConclusionScope {
       reverse?: boolean
     }
   ): Promise<PageResponse<ConclusionResponse>> {
-    // Sugar for list with a parent_id filter; an unknown conclusionId
+    // Equivalent to list with a parent_id filter; an unknown conclusionId
     // yields an empty page rather than an error.
     return this._list({
       filters: { parent_id: conclusionId },

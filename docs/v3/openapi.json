@@ -2423,45 +2423,6 @@
       }
     },
     "/v3/workspaces/{workspace_id}/conclusions/{conclusion_id}": {
-      "get": {
-        "tags": ["conclusions"],
-        "summary": "Get Conclusion",
-        "description": "Get a single Conclusion by ID.",
-        "operationId": "get_conclusion_v3_workspaces__workspace_id__conclusions__conclusion_id__get",
-        "security": [{ "HTTPBearer": [] }],
-        "parameters": [
-          {
-            "name": "workspace_id",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string", "title": "Workspace Id" }
-          },
-          {
-            "name": "conclusion_id",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string", "title": "Conclusion Id" }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/Conclusion" }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
-              }
-            }
-          }
-        }
-      },
       "delete": {
         "tags": ["conclusions"],
         "summary": "Delete Conclusion",

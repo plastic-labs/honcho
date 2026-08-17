@@ -334,10 +334,10 @@ describe('Conclusions', () => {
   })
 
   // ===========================================================================
-  // Single Conclusion Retrieval (GET /conclusions/:id)
+  // Single Conclusion Retrieval (list with an id filter)
   // ===========================================================================
 
-  describe('GET /conclusions/:id (get)', () => {
+  describe('get (list with id filter)', () => {
     test('get returns conclusion with attribution fields', async () => {
       const peer = await client.peer('get-conclusion-peer', { metadata: {} })
       const session = await client.session('get-conclusion-session', { metadata: {} })

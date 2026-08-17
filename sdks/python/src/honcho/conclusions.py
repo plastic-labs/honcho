@@ -10,7 +10,7 @@ from pydantic import BaseModel
 
 from .api_types import ConclusionLevel, ConclusionResponse, RepresentationResponse
 from .base import SessionBase
-from .http import routes
+from .http import NotFoundError, routes
 from .pagination import SyncPage
 from .utils import resolve_id
 
@@ -332,18 +332,28 @@ class ConclusionScope:
         """
         Get a single conclusion by ID.
 
+        Equivalent to ``list`` with an ``id`` filter.
+
         Args:
             conclusion_id: The ID of the conclusion to retrieve
 
         Returns:
             The Conclusion object, including its attribution fields
             (`source_ids`, `times_derived`)
+
+        Raises:
+            NotFoundError: If no conclusion with the given ID exists
         """
         self._honcho._ensure_workspace()
-        data = self._honcho._http.get(
-            routes.conclusion(self.workspace_id, conclusion_id)
+        data = self._honcho._http.post(
+            routes.conclusions_list(self.workspace_id),
+            body={"filters": {"id": conclusion_id}},
+            query={"page": 1, "size": 1},
         )
-        return Conclusion.from_api_response(ConclusionResponse.model_validate(data))
+        items = data.get("items", [])
+        if not items:
+            raise NotFoundError("Conclusion not found")
+        return Conclusion.from_api_response(ConclusionResponse.model_validate(items[0]))
 
     def get_many(self, conclusion_ids: list[str]) -> list[Conclusion]:
         """
@@ -397,7 +407,7 @@ class ConclusionScope:
             size: Number of results per page. Default: 50.
             reverse: If True, reverses the default newest-first ordering.
 
-        Sugar for ``list`` with a ``parent_id`` filter; an unknown
+        Equivalent to ``list`` with a ``parent_id`` filter; an unknown
         ``conclusion_id`` yields an empty page rather than an error.
 
         Returns:
