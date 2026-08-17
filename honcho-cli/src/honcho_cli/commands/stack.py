@@ -17,9 +17,7 @@ from honcho_cli.local import (
     DEFAULT_HEALTH_TIMEOUT,
     DEFAULT_IMAGE,
     DEFAULT_PROFILE,
-    INFERENCE_MODES,
     STACK_SERVICES,
-    SUPPORTED_INFERENCE,
 )
 from honcho_cli.local.docker import (
     DockerError,
@@ -83,22 +81,6 @@ def _fail(msg: str) -> None:
         _console.print(f"  {ICON_FAIL}  {msg}")
 
 
-def _validate_inference(inference: str) -> str:
-    if inference not in INFERENCE_MODES:
-        _die(
-            "INVALID_INFERENCE",
-            f"Unknown inference mode {inference!r}. Use cloud, local, or hybrid.",
-            {"inference": inference},
-        )
-    if inference not in SUPPORTED_INFERENCE:
-        _die(
-            "INFERENCE_UNSUPPORTED",
-            "Local and hybrid inference are not available yet. Use --inference cloud.",
-            {"inference": inference},
-        )
-    return inference
-
-
 def _resolve_llm_key(flag: str | None, profile: LocalProfile) -> str:
     for candidate in (
         flag,
@@ -109,8 +91,6 @@ def _resolve_llm_key(flag: str | None, profile: LocalProfile) -> str:
         if candidate and not is_placeholder_key(candidate):
             return candidate.strip()
 
-    # A previous --setup may have stored only Anthropic/Gemini keys. Reuse
-    # the managed OpenAI line if present (possibly empty) and skip the prompt.
     env_file = profile.env_file()
     for alt in ("LLM_ANTHROPIC_API_KEY", "LLM_GEMINI_API_KEY"):
         stored = read_env_value(env_file, alt)
@@ -207,11 +187,6 @@ def _inspect(profile: LocalProfile) -> tuple[dict[str, str], bool]:
 
 
 def start(
-    inference: str = typer.Option(
-        "cloud",
-        "--inference",
-        help="Where the deriver runs LLMs: cloud now; local and hybrid later",
-    ),
     profile_name: str = typer.Option(
         DEFAULT_PROFILE,
         "--profile",
@@ -254,18 +229,16 @@ def start(
 ) -> None:
     """Start a local Honcho stack (API, deriver, Postgres, Redis).
 
-    Requires Docker. Uses cloud LLM inference. Does not change the CLI's
+    Requires Docker. Uses cloud LLM providers. Does not change the CLI's
     configured server URL — pass HONCHO_BASE_URL to talk to this stack.
     ``--setup basic`` or ``--setup advanced`` runs an interactive config wizard.
     """
     if json_output:
         set_json_mode(True)
 
-    inference = _validate_inference(inference)
     setup = _validate_setup(setup)
     name = resolve_profile_name(profile_name)
     profile = load_profile(name).overlay(
-        inference=inference,
         api_port=api_port,
         db_port=db_port,
         redis_port=redis_port,
@@ -305,7 +278,12 @@ def start(
         drop: tuple[str, ...] = ()
         _seed_config(profile)
         if setup:
-            answers = run_setup(setup, profile.env_file(), llm_api_key_flag=llm_api_key)
+            answers = run_setup(
+                setup,
+                profile.env_file(),
+                llm_api_key_flag=llm_api_key,
+                config_path=profile.config_file(),
+            )
             extra = answers_to_env(answers)
             drop = answers_drop_keys(answers)
             key = openai_key_for_managed(answers)

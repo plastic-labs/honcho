@@ -1,8 +1,14 @@
-"""Wizard mapping: ``answers_to_env``."""
+"""Wizard mapping: ``answers_to_env`` and image-toml defaults."""
 
 from __future__ import annotations
 
-from honcho_cli.local.setup import DIALECTIC_LEVELS, SetupAnswers, answers_to_env
+from honcho_cli.local.setup import (
+    DIALECTIC_LEVELS,
+    SetupAnswers,
+    answers_to_env,
+    chat_model_default,
+    load_toml_setup_defaults,
+)
 
 
 def test_basic_openai_applies_chat_model_everywhere():
@@ -38,3 +44,23 @@ def test_basic_anthropic_keeps_openai_embeddings_default():
     assert env["LLM_OPENAI_API_KEY"] == "sk-embed"
     assert env["DERIVER_MODEL_CONFIG__TRANSPORT"] == "anthropic"
     assert "EMBEDDING_MODEL_CONFIG__TRANSPORT" not in env
+
+
+def test_chat_default_comes_from_image_toml(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text(
+        "[deriver.model_config]\n"
+        'transport = "openai"\n'
+        'model = "gpt-from-image"\n'
+    )
+    defaults = load_toml_setup_defaults(path)
+    assert defaults.chat_model == "gpt-from-image"
+    assert chat_model_default("openai", {}, defaults) == "gpt-from-image"
+    assert chat_model_default("openai-compatible", {}, defaults) == "gpt-from-image"
+    assert chat_model_default("anthropic", {}, defaults) == ""
+    assert chat_model_default(
+        "openai",
+        {"DERIVER_MODEL_CONFIG__MODEL": "gpt-from-env"},
+        defaults,
+        inferred="openai",
+    ) == "gpt-from-env"

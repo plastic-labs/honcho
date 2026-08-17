@@ -10,7 +10,4 @@ DEFAULT_REDIS_PORT = 6379
 DEFAULT_IMAGE = "ghcr.io/plastic-labs/honcho:latest"
 DEFAULT_HEALTH_TIMEOUT = 180
 
-INFERENCE_MODES = ("cloud", "local", "hybrid")
-SUPPORTED_INFERENCE = ("cloud",)
-
 STACK_SERVICES = ("api", "deriver", "database", "redis")

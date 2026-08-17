@@ -68,14 +68,6 @@ def test_start_does_not_rewrite_environment_url(cfg, runner, monkeypatch):
     assert on_disk["environmentUrl"] == "https://api.honcho.dev"
 
 
-def test_start_rejects_local_inference(cfg, runner):
-    result = runner.invoke(
-        app, ["start", "--inference", "local", "--llm-api-key", "sk-test"]
-    )
-    assert result.exit_code == 1
-    assert json.loads(result.stderr)["error"]["code"] == "INFERENCE_UNSUPPORTED"
-
-
 def test_start_requires_llm_key(cfg, runner, monkeypatch):
     monkeypatch.setattr("honcho_cli.commands.stack.stack_healthy", lambda profile: False)
     result = runner.invoke(app, ["start"])
@@ -148,7 +140,7 @@ def test_start_setup_recreates_when_already_running(cfg, runner, monkeypatch):
     monkeypatch.setattr("honcho_cli.commands.stack.compose_ps", lambda profile: _PS)
     monkeypatch.setattr(
         "honcho_cli.commands.stack.run_setup",
-        lambda mode, path, llm_api_key_flag=None: SetupAnswers(
+        lambda mode, path, llm_api_key_flag=None, config_path=None: SetupAnswers(
             mode="basic",
             provider="openai",
             api_key="sk-wiz",

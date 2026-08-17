@@ -7,6 +7,7 @@ only — the start command rejects ``--setup`` in JSON / non-TTY mode.
 
 from __future__ import annotations
 
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -20,17 +21,6 @@ SETUP_MODES = ("basic", "advanced")
 DIALECTIC_LEVELS = ("minimal", "low", "medium", "high", "max")
 PROVIDERS = ("openai", "anthropic", "gemini", "openai-compatible")
 EMBEDDING_TRANSPORTS = ("openai", "gemini")
-
-DEFAULT_CHAT_MODELS = {
-    "openai": "gpt-5.4-mini",
-    "anthropic": "claude-haiku-4-5",
-    "gemini": "gemini-2.5-flash",
-    "openai-compatible": "gpt-5.4-mini",
-}
-DEFAULT_EMBEDDING = {
-    "openai": ("text-embedding-3-small", 1536),
-    "gemini": ("gemini-embedding-001", 3072),
-}
 
 _CHAT_PREFIXES = (
     "DERIVER_MODEL_CONFIG",
@@ -48,6 +38,96 @@ _PROVIDER_KEY_ENV = {
 }
 
 _console = Console(stderr=True)
+
+
+@dataclass(frozen=True)
+class TomlSetupDefaults:
+    """Model/feature defaults copied from the image ``config.toml``.
+
+    Honcho only ships OpenAI chat/embedding defaults. Other providers have
+    no suggested model in that file — the wizard does not invent one.
+    """
+
+    chat_transport: str | None = None
+    chat_model: str | None = None
+    embed_transport: str | None = None
+    embed_model: str | None = None
+    embed_dims: int | None = None
+    dreams_enabled: bool | None = None
+    flush_enabled: bool | None = None
+
+
+def load_toml_setup_defaults(path: Path | None) -> TomlSetupDefaults:
+    """Read prompt defaults from the profile ``config.toml`` (image-aligned)."""
+    if path is None or not path.is_file():
+        return TomlSetupDefaults()
+    try:
+        with path.open("rb") as fh:
+            data = tomllib.load(fh)
+    except (OSError, tomllib.TOMLDecodeError):
+        return TomlSetupDefaults()
+    if not isinstance(data, dict):
+        return TomlSetupDefaults()
+    deriver = data.get("deriver") if isinstance(data.get("deriver"), dict) else {}
+    deriver_mc = (
+        deriver.get("model_config")
+        if isinstance(deriver.get("model_config"), dict)
+        else {}
+    )
+    embedding = data.get("embedding") if isinstance(data.get("embedding"), dict) else {}
+    embed_mc = (
+        embedding.get("model_config")
+        if isinstance(embedding.get("model_config"), dict)
+        else {}
+    )
+    dream = data.get("dream") if isinstance(data.get("dream"), dict) else {}
+    dims = embedding.get("VECTOR_DIMENSIONS")
+    return TomlSetupDefaults(
+        chat_transport=_opt_str(deriver_mc.get("transport")),
+        chat_model=_opt_str(deriver_mc.get("model")),
+        embed_transport=_opt_str(embed_mc.get("transport")),
+        embed_model=_opt_str(embed_mc.get("model")),
+        embed_dims=dims if isinstance(dims, int) and dims > 0 else None,
+        dreams_enabled=_opt_bool(dream.get("ENABLED")),
+        flush_enabled=_opt_bool(deriver.get("FLUSH_ENABLED")),
+    )
+
+
+def chat_model_default(
+    provider: str,
+    env: dict[str, str],
+    toml: TomlSetupDefaults,
+    *,
+    inferred: str | None = None,
+) -> str:
+    """Prefer a previous wizard choice, else the image toml when transports match."""
+    if inferred is None:
+        inferred = infer_provider(env)
+    if inferred == provider:
+        current = env.get("DERIVER_MODEL_CONFIG__MODEL")
+        if current:
+            return current
+    if toml.chat_model and _provider_matches_transport(provider, toml.chat_transport):
+        return toml.chat_model
+    return ""
+
+
+def _provider_matches_transport(provider: str, transport: str | None) -> bool:
+    if not transport:
+        return False
+    return transport_of(provider) == transport
+
+
+def _opt_str(value: object) -> str | None:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def _opt_bool(value: object) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    return None
 
 
 @dataclass(frozen=True)
@@ -108,22 +188,14 @@ def answers_to_env(answers: SetupAnswers) -> dict[str, str]:
             )
 
     if answers.embedding_transport:
-        model = (
-            answers.embedding_model
-            or DEFAULT_EMBEDDING[answers.embedding_transport][0]
-        )
         env["EMBEDDING_MODEL_CONFIG__TRANSPORT"] = answers.embedding_transport
-        env["EMBEDDING_MODEL_CONFIG__MODEL"] = model
-        dims = answers.embedding_dimensions
-        if dims is None:
-            dims = DEFAULT_EMBEDDING[answers.embedding_transport][1]
-        env["EMBEDDING_VECTOR_DIMENSIONS"] = str(dims)
+        if answers.embedding_model:
+            env["EMBEDDING_MODEL_CONFIG__MODEL"] = answers.embedding_model
+        if answers.embedding_dimensions is not None:
+            env["EMBEDDING_VECTOR_DIMENSIONS"] = str(answers.embedding_dimensions)
     elif answers.embedding_key_transport == "gemini":
-        # Basic + Anthropic chat: Gemini embed key is unused unless we switch.
-        model, dims = DEFAULT_EMBEDDING["gemini"]
+        # Basic + Anthropic chat: a Gemini key is unused unless embeddings switch.
         env["EMBEDDING_MODEL_CONFIG__TRANSPORT"] = "gemini"
-        env["EMBEDDING_MODEL_CONFIG__MODEL"] = model
-        env["EMBEDDING_VECTOR_DIMENSIONS"] = str(dims)
 
     if answers.dreams_enabled is not None:
         env["DREAM_ENABLED"] = "true" if answers.dreams_enabled else "false"
@@ -155,9 +227,11 @@ def run_setup(
     env_path: Path,
     *,
     llm_api_key_flag: str | None = None,
+    config_path: Path | None = None,
 ) -> SetupAnswers:
     """Prompt for ``basic`` or ``advanced`` knobs. Enter keeps the default."""
     env = read_env_file(env_path)
+    defaults = load_toml_setup_defaults(config_path)
     _console.print()
     _console.print(
         "  [dim]Configure the local stack. Press Enter to keep the default.[/dim]"
@@ -196,13 +270,14 @@ def run_setup(
         current_key = llm_api_key_flag
     api_key = _prompt_secret("API key", current_key)
 
-    same_provider = inferred == provider
-    chat_default = (
-        env.get("DERIVER_MODEL_CONFIG__MODEL")
-        if same_provider and env.get("DERIVER_MODEL_CONFIG__MODEL")
-        else DEFAULT_CHAT_MODELS[provider]
+    chat_default = chat_model_default(
+        provider, env, defaults, inferred=inferred
     )
-    chat_model = _prompt_text("Chat model (deriver, dialectic, summary, dream)", chat_default)
+    chat_model = _prompt_text(
+        "Chat model (deriver, dialectic, summary, dream)",
+        chat_default,
+        required=True,
+    )
 
     embedding_api_key: str | None = None
     embedding_key_transport: str | None = None
@@ -218,17 +293,25 @@ def run_setup(
         embedding_transport = _choose(
             "Embedding provider",
             [("openai", "OpenAI"), ("gemini", "Gemini")],
-            _default_embedding_transport(provider, env),
+            _default_embedding_transport(provider, env, defaults),
         )
-        embed_defaults = DEFAULT_EMBEDDING[embedding_transport]
-        current_embed_model = env.get("EMBEDDING_MODEL_CONFIG__MODEL")
         same_embed = env.get("EMBEDDING_MODEL_CONFIG__TRANSPORT") == embedding_transport
-        embedding_model = _prompt_text(
-            "Embedding model",
-            current_embed_model if same_embed and current_embed_model else embed_defaults[0],
+        current_embed = env.get("EMBEDDING_MODEL_CONFIG__MODEL") if same_embed else None
+        embed_from_toml = (
+            defaults.embed_model
+            if defaults.embed_transport == embedding_transport
+            else None
         )
-        dim_default = env.get("EMBEDDING_VECTOR_DIMENSIONS") or str(embed_defaults[1])
-        embedding_dimensions = _prompt_int("Embedding dimensions", int(dim_default))
+        embedding_model = (
+            _prompt_text("Embedding model", current_embed or embed_from_toml or "")
+            or None
+        )
+        dim_default = (
+            int(env["EMBEDDING_VECTOR_DIMENSIONS"])
+            if env.get("EMBEDDING_VECTOR_DIMENSIONS", "").isdigit()
+            else (defaults.embed_dims or 1536)
+        )
+        embedding_dimensions = _prompt_int("Embedding dimensions", dim_default)
         embedding_key_transport, embedding_api_key = _embedding_key_if_needed(
             provider, embedding_transport, env
         )
@@ -236,11 +319,17 @@ def run_setup(
         dialectic_model = _prompt_text("Dialectic model (all reasoning levels)", chat_model)
         dreams_enabled = _choose_bool(
             "Dreams (periodic deeper reasoning)",
-            _env_bool(env.get("DREAM_ENABLED"), default=True),
+            _env_bool(
+                env.get("DREAM_ENABLED"),
+                default=True if defaults.dreams_enabled is None else defaults.dreams_enabled,
+            ),
         )
         flush_enabled = _choose_bool(
             "Snappy local deriver (flush work immediately, skip batching)",
-            _env_bool(env.get("DERIVER_FLUSH_ENABLED"), default=False),
+            _env_bool(
+                env.get("DERIVER_FLUSH_ENABLED"),
+                default=False if defaults.flush_enabled is None else defaults.flush_enabled,
+            ),
         )
     elif provider == "anthropic":
         embedding_key_transport = _choose(
@@ -286,10 +375,14 @@ def infer_provider(env: dict[str, str]) -> str:
     return "openai"
 
 
-def _default_embedding_transport(provider: str, env: dict[str, str]) -> str:
+def _default_embedding_transport(
+    provider: str, env: dict[str, str], defaults: TomlSetupDefaults
+) -> str:
     current = env.get("EMBEDDING_MODEL_CONFIG__TRANSPORT")
     if current in EMBEDDING_TRANSPORTS:
         return current
+    if defaults.embed_transport in EMBEDDING_TRANSPORTS:
+        return defaults.embed_transport
     if provider == "gemini":
         return "gemini"
     return "openai"
@@ -341,14 +434,18 @@ def _choose_bool(label: str, default: bool) -> bool:
     )
 
 
-def _prompt_text(label: str, default: str) -> str:
-    raw = typer.prompt(
-        f"  {label}",
-        default=default,
-        show_default=True,
-        prompt_suffix=": ",
-    ).strip()
-    return raw or default
+def _prompt_text(label: str, default: str, *, required: bool = False) -> str:
+    while True:
+        raw = typer.prompt(
+            f"  {label}",
+            default=default,
+            show_default=bool(default),
+            prompt_suffix=": ",
+        ).strip()
+        value = raw or default
+        if value or not required:
+            return value
+        _console.print("  [red]A model name is required[/red]")
 
 
 def _prompt_int(label: str, default: int) -> int:
