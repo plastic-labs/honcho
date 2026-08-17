@@ -289,7 +289,7 @@ describe('Conclusions', () => {
       for (const key of ['observer', 'observed', 'observer_id', 'observed_id']) {
         await expect(
           peer.conclusions.list({ filters: { [key]: 'someone-else' } })
-        ).rejects.toThrow(/managed by this conclusion scope/)
+        ).rejects.toThrow(/managed by this conclusions view/)
       }
     })
 
@@ -298,10 +298,10 @@ describe('Conclusions', () => {
 
       await expect(
         peer.conclusions.list({ filters: { session_id: 'sess' } })
-      ).rejects.toThrow(/managed by this conclusion scope/)
+      ).rejects.toThrow(/managed by this conclusions view/)
       await expect(
         peer.conclusions.list({ filters: { session: 'sess' } })
-      ).rejects.toThrow(/managed by this conclusion scope/)
+      ).rejects.toThrow(/managed by this conclusions view/)
     })
 
     test('query rejects observer/observed scope keys in filters', async () => {
@@ -310,7 +310,7 @@ describe('Conclusions', () => {
       for (const key of ['observer', 'observed', 'observer_id', 'observed_id']) {
         await expect(
           peer.conclusions.query('q', 10, undefined, { [key]: 'someone-else' })
-        ).rejects.toThrow(/managed by this conclusion scope/)
+        ).rejects.toThrow(/managed by this conclusions view/)
       }
     })
 

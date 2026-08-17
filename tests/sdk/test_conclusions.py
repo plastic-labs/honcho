@@ -796,7 +796,7 @@ async def test_list_rejects_reserved_scope_filter_keys(
         target = await honcho_client.aio.peer(id="test-obs-reserved-list-target")
         obs_scope = observer.conclusions_of(target)
         for key in reserved:
-            with pytest.raises(ValueError, match="managed by this conclusion scope"):
+            with pytest.raises(ValueError, match="managed by this conclusions view"):
                 await obs_scope.aio.list(filters={key: "someone-else"})
         # A non-reserved filter (level) is allowed through.
         await obs_scope.aio.list(filters={"level": "explicit"})
@@ -805,7 +805,7 @@ async def test_list_rejects_reserved_scope_filter_keys(
         target = honcho_client.peer(id="test-obs-reserved-list-target")
         obs_scope = observer.conclusions_of(target)
         for key in reserved:
-            with pytest.raises(ValueError, match="managed by this conclusion scope"):
+            with pytest.raises(ValueError, match="managed by this conclusions view"):
                 obs_scope.list(filters={key: "someone-else"})
         obs_scope.list(filters={"level": "explicit"})
 
@@ -827,7 +827,7 @@ async def test_query_rejects_reserved_scope_filter_keys(
         target = await honcho_client.aio.peer(id="test-obs-reserved-query-target")
         obs_scope = observer.conclusions_of(target)
         for key in reserved:
-            with pytest.raises(ValueError, match="managed by this conclusion scope"):
+            with pytest.raises(ValueError, match="managed by this conclusions view"):
                 await obs_scope.aio.query("q", filters={key: "someone-else"})
         # session_id is a normal filter for query (no dedicated param) — allowed.
         await obs_scope.aio.query("q", filters={"session_id": "some-session"})
@@ -836,6 +836,6 @@ async def test_query_rejects_reserved_scope_filter_keys(
         target = honcho_client.peer(id="test-obs-reserved-query-target")
         obs_scope = observer.conclusions_of(target)
         for key in reserved:
-            with pytest.raises(ValueError, match="managed by this conclusion scope"):
+            with pytest.raises(ValueError, match="managed by this conclusions view"):
                 obs_scope.query("q", filters={key: "someone-else"})
         obs_scope.query("q", filters={"session_id": "some-session"})

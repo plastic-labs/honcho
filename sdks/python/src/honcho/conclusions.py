@@ -24,19 +24,19 @@ __all__ = [
     "ConclusionCreateParams",
 ]
 
-# Filter keys that define a conclusion scope (the observer/observed peer pair).
-# They are set from the scope itself, so a caller must not pass them in `filters`.
+# Filter keys that define a conclusions view (the observer/observed peer pair).
+# They are set from the view itself, so a caller must not pass them in `filters`.
 _VIEW_RESERVED = ("observer", "observed", "observer_id", "observed_id")
 
 
 def _reject_reserved_filter_keys(
     filters: dict[str, Any] | None, reserved: tuple[str, ...]
 ) -> None:
-    """Raise if ``filters`` contains keys managed by the conclusion scope.
+    """Raise if ``filters`` contains keys managed by the conclusions view.
 
     The observer/observed peer pair (and, on ``list``, the session) is fixed by
-    the scope, so letting a user filter override it would silently return data
-    from a different scope than requested. Fail loud instead.
+    the view, so letting a user filter override it would silently return data
+    from a different pair than requested. Fail loud instead.
     """
     if not filters:
         return
@@ -48,7 +48,7 @@ def _reject_reserved_filter_keys(
         if "session" in reserved or "session_id" in reserved:
             guidance += "; use the session= parameter to filter by session"
         raise ValueError(
-            f"Filter key(s) {clash} are managed by this conclusion scope and "
+            f"Filter key(s) {clash} are managed by this conclusions view and "
             + f"cannot be passed in filters. {guidance}."
         )
 
