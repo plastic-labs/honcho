@@ -1,0 +1,70 @@
+name: Integration request
+description: Add Honcho to an app store, agent framework, plugin marketplace, or other third-party surface — or improve an existing integration.
+title: "[Integration] "
+labels: ["integration"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this when you want Honcho available in (or better supported by) an external product surface — app stores, agent frameworks, plugin marketplaces, IDE extensions, MCP clients, etc.
+
+        For core API/SDK product features that are not about a third-party surface, use the **Feature request** template instead.
+
+  - type: dropdown
+    id: request_kind
+    attributes:
+      label: What kind of request is this?
+      options:
+        - New integration / listing (Honcho is not there yet)
+        - Improve an existing integration
+        - Official plugin / extension
+        - Marketplace or app-store listing
+        - Docs / guide for integrating with a specific tool
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: target
+    attributes:
+      label: Target product or platform
+      description: Name of the app, framework, marketplace, or tool.
+      placeholder: e.g. Claude Code, Cursor, CrewAI, OpenClaw, VS Code Marketplace…
+    validations:
+      required: true
+
+  - type: input
+    id: target_url
+    attributes:
+      label: Link (if any)
+      description: Docs, marketplace page, repo, or product URL.
+      placeholder: https://…
+    validations:
+      required: false
+
+  - type: textarea
+    id: why
+    attributes:
+      label: Why does this matter?
+      description: Who would use it, and what does the integration unlock?
+    validations:
+      required: true
+
+  - type: textarea
+    id: shape
+    attributes:
+      label: What should the integration look like?
+      description: >
+        e.g. one-click install, MCP server listing, native memory backend,
+        SDK recipe, plugin with slash commands, env-var setup, etc.
+        Link to prior art or a sketch if you have one.
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Related issues, community demand, constraints, offers to help build it.
+    validations:
+      required: false

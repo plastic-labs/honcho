@@ -196,7 +196,7 @@ We welcome various types of contributions:
 When reporting bugs or requesting features:
 
 1. Check if the issue already exists
-2. Use the appropriate [issue template](https://github.com/plastic-labs/honcho/issues/new/choose) (bug, memory/recall quality, or feature)
+2. Use the appropriate [issue template](https://github.com/plastic-labs/honcho/issues/new/choose) (bug, memory/recall quality, feature, or integration)
 3. Provide clear reproduction steps for bugs
 4. Include relevant environment information (managed vs self-hosted, server version, SDK)
 5. Be specific about expected vs actual behavior
@@ -208,6 +208,7 @@ When reporting bugs or requesting features:
 - **Bug reports** - GitHub issues → Bug report template
 - **Memory / recall quality** - GitHub issues → Memory / recall quality template
 - **Feature requests** - GitHub issues → Feature request template
+- **Integrations / plugins / app-store listings** - GitHub issues → Integration request template
 - **Security issues** - Report **privately** only — see [`SECURITY.md`](./SECURITY.md) (GitHub Private Vulnerability Reporting or email). Do not open a public issue.
 
 ## License

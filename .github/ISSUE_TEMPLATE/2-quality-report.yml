@@ -23,45 +23,12 @@ body:
     validations:
       required: true
 
-  - type: dropdown
-    id: surface
-    attributes:
-      label: Which surface looks wrong?
-      description: Pick the closest match; add detail below if several apply.
-      options:
-        - Conclusions (extracted memory)
-        - Dialectic / chat answers
-        - Peer representation / peer card
-        - Session context / summaries
-        - Search (messages or conclusions)
-        - Dreamer consolidation / reasoning
-        - Other
-    validations:
-      required: true
-
-  - type: input
-    id: server_version
-    attributes:
-      label: Honcho server version
-      description: Image tag, revision, or release.
-      placeholder: e.g. v2.4.1
-    validations:
-      required: true
-
   - type: textarea
     id: description
     attributes:
       label: What is wrong with the quality?
       description: Describe the failure mode (noise, omission, contradiction, staleness, over/under-generalization, etc.).
       placeholder: After ingesting messages about X, Honcho concludes Y / chat answers Z…
-    validations:
-      required: true
-
-  - type: textarea
-    id: expected
-    attributes:
-      label: What should have happened instead?
-      description: Ideal conclusions, answer, or representation behavior.
     validations:
       required: true
 
@@ -78,21 +45,6 @@ body:
         2. Messages ingested: …
         3. Query / conclusion listing shows: …
       render: markdown
-    validations:
-      required: true
-
-  - type: dropdown
-    id: reasoning_level
-    attributes:
-      label: Dialectic reasoning level (if chat-related)
-      options:
-        - n/a — not chat-related
-        - minimal
-        - low
-        - medium
-        - high
-        - max
-        - Unsure / default
     validations:
       required: true
 

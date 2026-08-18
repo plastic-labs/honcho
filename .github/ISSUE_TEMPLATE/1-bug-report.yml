@@ -24,46 +24,6 @@ body:
     validations:
       required: true
 
-  - type: dropdown
-    id: component
-    attributes:
-      label: Component
-      description: Where does the bug show up?
-      options:
-        - API / HTTP routes
-        - Deriver / queue / message processing
-        - Dreamer / consolidation
-        - Dialectic / chat endpoint
-        - Summarizer / session context
-        - Auth / JWT / API keys
-        - Embeddings / vector search
-        - Python SDK
-        - TypeScript SDK
-        - CLI
-        - Managed offering (dashboard, billing, hosted infra)
-        - Docs
-        - Other
-    validations:
-      required: true
-
-  - type: input
-    id: server_version
-    attributes:
-      label: Honcho server version
-      description: Image tag, PyPI/git revision, or release (e.g. `v2.4.1`, `main@abc1234`, Docker digest).
-      placeholder: e.g. v2.4.1
-    validations:
-      required: true
-
-  - type: input
-    id: sdk_version
-    attributes:
-      label: SDK / client version (if applicable)
-      description: Python `honcho-ai` or TypeScript `@honcho-ai/sdk` version, or "n/a".
-      placeholder: e.g. honcho-ai 1.2.0 / n/a
-    validations:
-      required: false
-
   - type: textarea
     id: description
     attributes:
@@ -87,41 +47,6 @@ body:
       required: true
 
   - type: textarea
-    id: expected
-    attributes:
-      label: Expected behavior
-      description: What you expected to happen.
-    validations:
-      required: true
-
-  - type: textarea
-    id: actual
-    attributes:
-      label: Actual behavior
-      description: What actually happened (error messages, status codes, incorrect data).
-    validations:
-      required: true
-
-  - type: dropdown
-    id: regression
-    attributes:
-      label: Is this a regression?
-      options:
-        - "No"
-        - "Yes — it worked in an earlier version"
-        - Unsure
-    validations:
-      required: true
-
-  - type: input
-    id: last_good_version
-    attributes:
-      label: Last known good version (if regression)
-      placeholder: e.g. v2.3.0
-    validations:
-      required: false
-
-  - type: textarea
     id: logs
     attributes:
       label: Logs and evidence
@@ -134,6 +59,6 @@ body:
     id: context
     attributes:
       label: Additional context
-      description: Config knobs (provider, deriver/dream settings), deployment notes, related issues/PRs.
+      description: Versions, config knobs, deployment notes, related issues/PRs.
     validations:
       required: false
