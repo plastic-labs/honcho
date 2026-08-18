@@ -236,10 +236,11 @@ export class ConclusionScope {
       reverse?: boolean
     }
   ): Promise<PageResponse<ConclusionResponse>> {
-    // Equivalent to list with a parent_id filter, restricted to this pair.
+    // Equivalent to list with { source_ids: { contains: id } }, restricted
+    // to this pair.
     return this._list({
       filters: {
-        parent_id: conclusionId,
+        source_ids: { contains: conclusionId },
         observer_id: this.observer,
         observed_id: this.observed,
       },

@@ -1758,7 +1758,8 @@ class ConclusionScopeAio:
             size: Number of results per page. Default: 50.
             reverse: If True, reverses the default newest-first ordering.
 
-        Equivalent to ``list`` with a ``parent_id`` filter, restricted to this
+        Equivalent to ``list`` with
+        ``{"source_ids": {"contains": conclusion_id}}``, restricted to this
         observer/observed pair. An unknown ``conclusion_id`` yields an empty
         page rather than an error.
 
@@ -1768,7 +1769,7 @@ class ConclusionScopeAio:
         return await _alist_conclusions(
             self._scope._honcho,
             {
-                "parent_id": conclusion_id,
+                "source_ids": {"contains": conclusion_id},
                 "observer_id": self._scope.observer,
                 "observed_id": self._scope.observed,
             },

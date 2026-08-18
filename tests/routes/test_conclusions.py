@@ -1687,7 +1687,7 @@ class TestConclusionRoutes:
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
     ):
-        """Test traversing the reasoning tree upward via the parent_id filter"""
+        """Test traversing the reasoning DAG upward via source_ids membership"""
         test_workspace, test_peer = sample_data
 
         test_peer2 = models.Peer(
@@ -1706,7 +1706,7 @@ class TestConclusionRoutes:
 
         response = client.post(
             f"/v3/workspaces/{test_workspace.name}/conclusions/list",
-            json={"filters": {"parent_id": premise.id}},
+            json={"filters": {"source_ids": {"contains": premise.id}}},
         )
 
         assert response.status_code == 200
@@ -1725,7 +1725,7 @@ class TestConclusionRoutes:
         # derived1 is itself a source of derived2
         response = client.post(
             f"/v3/workspaces/{test_workspace.name}/conclusions/list",
-            json={"filters": {"parent_id": derived1.id}},
+            json={"filters": {"source_ids": {"contains": derived1.id}}},
         )
         assert response.status_code == 200
         data = response.json()
@@ -1758,7 +1758,7 @@ class TestConclusionRoutes:
         response = client.post(
             f"/v3/workspaces/{test_workspace.name}/conclusions/list",
             params={"reverse": "true"},
-            json={"filters": {"parent_id": premise.id}},
+            json={"filters": {"source_ids": {"contains": premise.id}}},
         )
 
         assert response.status_code == 200
@@ -1791,7 +1791,7 @@ class TestConclusionRoutes:
 
         response = client.post(
             f"/v3/workspaces/{test_workspace.name}/conclusions/list",
-            json={"filters": {"parent_id": derived2.id}},
+            json={"filters": {"source_ids": {"contains": derived2.id}}},
         )
 
         assert response.status_code == 200
@@ -1805,12 +1805,12 @@ class TestConclusionRoutes:
         client: TestClient,
         sample_data: tuple[Workspace, Peer],
     ):
-        """A nonexistent parent yields an empty page, not an error"""
+        """A nonexistent source id yields an empty page, not an error."""
         test_workspace, _test_peer = sample_data
 
         response = client.post(
             f"/v3/workspaces/{test_workspace.name}/conclusions/list",
-            json={"filters": {"parent_id": str(generate_nanoid())}},
+            json={"filters": {"source_ids": {"contains": str(generate_nanoid())}}},
         )
 
         assert response.status_code == 200

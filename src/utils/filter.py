@@ -74,7 +74,6 @@ ALLOWED_EXTERNAL_TO_INTERNAL_COLUMN_MAPPING_DOCUMENTS = {
     "observed_id": "observed",
     "level": "level",
     "source_ids": "source_ids",
-    "parent_id": "source_ids",
     "times_derived": "times_derived",
     "metadata": "internal_metadata",
 }

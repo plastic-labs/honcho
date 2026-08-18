@@ -398,7 +398,7 @@ describe('Conclusions', () => {
   })
 
   // ===========================================================================
-  // Derived Conclusions (list + parent_id filter)
+  // Derived Conclusions (list + source_ids contains)
   // ===========================================================================
 
   describe('honcho.conclusions (workspace-wide)', () => {
@@ -456,7 +456,7 @@ describe('Conclusions', () => {
     })
   })
 
-  describe('derived() via parent_id filter', () => {
+  describe('derived() via source_ids contains', () => {
     test('leaf conclusion has no derived conclusions', async () => {
       const peer = await client.peer('derived-conclusion-peer', { metadata: {} })
       const session = await client.session('derived-conclusion-session', { metadata: {} })
