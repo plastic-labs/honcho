@@ -23,6 +23,7 @@ from .api_types import (
     WorkspaceResponse,
 )
 from .base import PeerBase, SessionBase
+from .conclusions import WorkspaceConclusions
 from .http import AsyncHonchoHTTPClient, HonchoHTTPClient, routes
 from .message import Message
 from .mixins import MetadataConfigMixin
@@ -688,6 +689,23 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
                 "dream_type": "omni",
             },
         )
+
+    @property
+    def conclusions(self) -> WorkspaceConclusions:
+        """Workspace-wide conclusions. No observer/observed pair is implied.
+
+        Use this to list or look up conclusions across the workspace. Pair-
+        scoped create/query/delete stay on ``peer.conclusions``.
+
+        Example:
+            ```python
+            honcho.conclusions.list()
+            honcho.conclusions.list(filters={"observed_id": "alice"})
+            honcho.conclusions.list(filters={"session_id": session.id})
+            honcho.conclusions.get(conclusion_id)
+            ```
+        """
+        return WorkspaceConclusions(self)
 
     def __repr__(self) -> str:
         """

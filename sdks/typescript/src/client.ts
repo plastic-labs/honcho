@@ -1,4 +1,5 @@
 import { API_VERSION } from './api-version'
+import { WorkspaceConclusions } from './conclusions'
 import { HonchoHTTPClient } from './http/client'
 import { Message } from './message'
 import { Page } from './pagination'
@@ -119,6 +120,18 @@ export class Honcho {
    */
   get http(): HonchoHTTPClient {
     return this._http
+  }
+
+  /**
+   * Workspace-wide conclusions. No observer/observed pair is implied.
+   *
+   * Use this to list or look up conclusions across the workspace. Pair-
+   * scoped create/query/delete stay on `peer.conclusions`.
+   */
+  get conclusions(): WorkspaceConclusions {
+    return new WorkspaceConclusions(this._http, this.workspaceId, () =>
+      this._ensureWorkspace()
+    )
   }
 
   /**

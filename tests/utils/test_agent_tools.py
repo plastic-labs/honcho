@@ -26,6 +26,7 @@ from src.utils.agent_tools import (
     _handle_get_messages_by_date_range,  # pyright: ignore[reportPrivateUsage]
     _handle_get_observation_context,  # pyright: ignore[reportPrivateUsage]
     _handle_get_peer_card,  # pyright: ignore[reportPrivateUsage]
+    _handle_get_reasoning_chain,  # pyright: ignore[reportPrivateUsage]
     _handle_get_recent_history,  # pyright: ignore[reportPrivateUsage]
     _handle_get_recent_observations,  # pyright: ignore[reportPrivateUsage]
     _handle_get_session_summary,  # pyright: ignore[reportPrivateUsage]
@@ -222,13 +223,15 @@ class TestCreateObservations:
         """Dialectic context (no current_messages) forces observations to be deductive."""
         ctx = make_tool_context(current_messages=None)
 
+        # source links are check-constrained to nanoid shape
+        premise_ids = [str(generate_nanoid()), str(generate_nanoid())]
         result = await _handle_create_observations(
             ctx,
             {
                 "observations": [
                     {
                         "content": "Inferred preference for quiet spaces",
-                        "source_ids": ["premise1", "premise2"],
+                        "source_ids": premise_ids,
                         "premises": [
                             "User mentioned working in libraries",
                             "User avoids noisy cafes",
@@ -248,7 +251,7 @@ class TestCreateObservations:
         doc = (await db_session.execute(stmt)).scalar_one_or_none()
         assert doc is not None
         assert doc.level == "deductive"
-        assert doc.source_ids == ["premise1", "premise2"]
+        assert doc.source_ids == premise_ids
 
     async def test_non_deriver_context_rejects_explicit(
         self,
@@ -289,13 +292,14 @@ class TestCreateObservations:
         the prefix must be stripped so provenance links reference real IDs."""
         ctx = make_tool_context(current_messages=None)
 
+        premise_ids = [str(generate_nanoid()), str(generate_nanoid())]
         result = await _handle_create_observations(
             ctx,
             {
                 "observations": [
                     {
                         "content": "Inferred preference for early mornings",
-                        "source_ids": ["id:premise1", "ID:premise2"],
+                        "source_ids": [f"id:{premise_ids[0]}", f"ID:{premise_ids[1]}"],
                         "premises": [
                             "User schedules meetings before 9am",
                             "User mentions waking at 5:30",
@@ -312,7 +316,7 @@ class TestCreateObservations:
         )
         doc = (await db_session.execute(stmt)).scalar_one_or_none()
         assert doc is not None
-        assert doc.source_ids == ["premise1", "premise2"]
+        assert doc.source_ids == premise_ids
 
     async def test_empty_observations_list_returns_error(
         self, make_tool_context: Callable[..., ToolContext]
@@ -1037,6 +1041,94 @@ class TestGetObservationContext:
         )
 
         assert "Retrieved" in result or "No messages found" in result
+
+
+@pytest.mark.asyncio
+class TestGetReasoningChain:
+    """Tests for _handle_get_reasoning_chain."""
+
+    async def _create_tree(
+        self,
+        db_session: AsyncSession,
+        workspace: models.Workspace,
+        observer: models.Peer,
+        observed: models.Peer,
+    ) -> tuple[models.Document, models.Document]:
+        """Create a premise and a deductive conclusion derived from it."""
+        premise = models.Document(
+            workspace_name=workspace.name,
+            observer=observer.name,
+            observed=observed.name,
+            content="User works late at night",
+        )
+        db_session.add(premise)
+        await db_session.flush()
+
+        derived = models.Document(
+            workspace_name=workspace.name,
+            observer=observer.name,
+            observed=observed.name,
+            content="User is likely a night owl",
+            level="deductive",
+            source_ids=[premise.id],
+        )
+        db_session.add(derived)
+        # Commit so the handler's own tracked_db session can see the data.
+        await db_session.commit()
+        return premise, derived
+
+    async def test_traverses_derived_conclusions(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        """Walking upward from a premise finds the conclusions derived from it."""
+        workspace, peer1, peer2, _, _, _ = tool_test_data
+        premise, derived = await self._create_tree(db_session, workspace, peer1, peer2)
+        ctx = make_tool_context()
+
+        result = await _handle_get_reasoning_chain(
+            ctx, {"observation_id": premise.id, "direction": "conclusions"}
+        )
+
+        assert f"[id:{derived.id}]" in result
+        assert "User is likely a night owl" in result
+
+    async def test_traverses_premises(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        """Walking downward from a derived conclusion finds its premises."""
+        workspace, peer1, peer2, _, _, _ = tool_test_data
+        premise, derived = await self._create_tree(db_session, workspace, peer1, peer2)
+        ctx = make_tool_context()
+
+        result = await _handle_get_reasoning_chain(
+            ctx, {"observation_id": derived.id, "direction": "premises"}
+        )
+
+        assert f"[id:{premise.id}]" in result
+        assert "User works late at night" in result
+
+    async def test_leaf_has_no_derived_conclusions(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        """A conclusion nothing was derived from reports none found."""
+        workspace, peer1, peer2, _, _, _ = tool_test_data
+        _, derived = await self._create_tree(db_session, workspace, peer1, peer2)
+        ctx = make_tool_context()
+
+        result = await _handle_get_reasoning_chain(
+            ctx, {"observation_id": derived.id, "direction": "conclusions"}
+        )
+
+        assert "None found" in result
 
 
 @pytest.mark.asyncio

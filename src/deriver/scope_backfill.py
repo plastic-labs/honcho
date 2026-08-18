@@ -28,8 +28,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import select, update
-from sqlalchemy.dialects.postgresql import array
+from sqlalchemy import exists, select, update
 from sqlalchemy.sql.functions import func
 
 from src import crud, models
@@ -441,7 +440,7 @@ async def process_scope_removal(
             all_removed = list(frontier)
 
             # Fail-closed cascade: soft-delete derived documents whose support
-            # (source_ids) intersects anything removed, transitively — a
+            # (document_sources) intersects anything removed, transitively — a
             # deduction resting on removed evidence must leave with it, and so
             # must an induction resting on that deduction.
             while frontier:
@@ -453,7 +452,11 @@ async def process_scope_removal(
                         models.Document.observed == observed,
                         models.Document.level != "explicit",
                         models.Document.deleted_at.is_(None),
-                        models.Document.source_ids.has_any(array(frontier)),
+                        exists().where(
+                            models.DocumentSource.derived_id == models.Document.id,
+                            models.DocumentSource.source_id.in_(frontier),
+                            models.DocumentSource.workspace_name == workspace_name,
+                        ),
                     )
                     .values(deleted_at=func.now())
                     .returning(models.Document.id)
