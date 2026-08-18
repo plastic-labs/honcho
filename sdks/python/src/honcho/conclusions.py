@@ -67,21 +67,18 @@ def _conclusion_from_item(item: Any) -> Conclusion:
     return Conclusion.from_api_response(ConclusionResponse.model_validate(item))
 
 
-def _get_conclusion(
-    honcho: "Honcho",
-    *,
-    filters: dict[str, Any],
-) -> Conclusion:
+def _get_conclusion(honcho: "Honcho", conclusion_id: str) -> Conclusion:
     honcho._ensure_workspace()
-    data = honcho._http.post(
-        routes.conclusions_list(honcho.workspace_id),
-        body={"filters": filters},
-        query={"page": 1, "size": 1},
-    )
-    items = data.get("items", [])
-    if not items:
+    data = honcho._http.get(routes.conclusion(honcho.workspace_id, conclusion_id))
+    return _conclusion_from_item(data)
+
+
+def _require_scope(
+    conclusion: Conclusion, observer_id: str, observed_id: str
+) -> Conclusion:
+    if conclusion.observer_id != observer_id or conclusion.observed_id != observed_id:
         raise NotFoundError("Conclusion not found")
-    return _conclusion_from_item(items[0])
+    return conclusion
 
 
 def _get_many_conclusions(
@@ -275,7 +272,7 @@ class WorkspaceConclusions:
 
     def get(self, conclusion_id: str) -> Conclusion:
         """Get a single conclusion by ID, anywhere in the workspace."""
-        return _get_conclusion(self._honcho, filters={"id": conclusion_id})
+        return _get_conclusion(self._honcho, conclusion_id)
 
     def get_many(self, conclusion_ids: list[str]) -> list[Conclusion]:
         """Get multiple conclusions by ID. Missing IDs are omitted."""
@@ -453,8 +450,6 @@ class ConclusionScope:
         """
         Get a single conclusion by ID.
 
-        Equivalent to ``list`` with an ``id`` filter.
-
         Args:
             conclusion_id: The ID of the conclusion to retrieve
 
@@ -467,13 +462,10 @@ class ConclusionScope:
                 observer/observed pair. Use ``honcho.conclusions.get`` for a
                 workspace-wide lookup.
         """
-        return _get_conclusion(
-            self._honcho,
-            filters={
-                "id": conclusion_id,
-                "observer_id": self.observer,
-                "observed_id": self.observed,
-            },
+        return _require_scope(
+            _get_conclusion(self._honcho, conclusion_id),
+            self.observer,
+            self.observed,
         )
 
     def get_many(self, conclusion_ids: list[str]) -> list[Conclusion]:

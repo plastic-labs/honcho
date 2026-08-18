@@ -211,18 +211,14 @@ export class ConclusionScope {
   }
 
   private async _get(conclusionId: string): Promise<ConclusionResponse> {
-    // Equivalent to list with an `id` filter, restricted to this pair.
-    const response = await this._list({
-      filters: {
-        id: conclusionId,
-        observer_id: this.observer,
-        observed_id: this.observed,
-      },
-      page: 1,
-      size: 1,
-    })
-    const item = response.items?.[0]
-    if (!item) {
+    await this._ensureWorkspace()
+    const item = await this._http.get<ConclusionResponse>(
+      `/${API_VERSION}/workspaces/${this.workspaceId}/conclusions/${conclusionId}`
+    )
+    if (
+      item.observer_id !== this.observer ||
+      item.observed_id !== this.observed
+    ) {
       throw new NotFoundError('Conclusion not found')
     }
     return item
@@ -607,15 +603,10 @@ export class WorkspaceConclusions {
    * Get a single conclusion by ID, anywhere in the workspace.
    */
   async get(conclusionId: string): Promise<Conclusion> {
-    const response = await this._list({
-      filters: { id: conclusionId },
-      page: 1,
-      size: 1,
-    })
-    const item = response.items?.[0]
-    if (!item) {
-      throw new NotFoundError('Conclusion not found')
-    }
+    await this._ensureWorkspace()
+    const item = await this._http.get<ConclusionResponse>(
+      `/${API_VERSION}/workspaces/${this.workspaceId}/conclusions/${conclusionId}`
+    )
     return Conclusion.fromApiResponse(item)
   }
 

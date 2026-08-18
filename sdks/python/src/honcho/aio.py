@@ -52,8 +52,9 @@ from .conclusions import (
     _SCOPE_RESERVED,
     Conclusion,
     _reject_reserved_filter_keys,
+    _require_scope,
 )
-from .http import NotFoundError, routes
+from .http import routes
 from .message import Message
 from .mixins import AsyncMetadataConfigMixin
 from .pagination import AsyncPage
@@ -1495,21 +1496,12 @@ class SessionAio(AsyncMetadataConfigMixin):
         return Message.from_api_response(MessageResponse.model_validate(data))
 
 
-async def _aget_conclusion(
-    honcho: "Honcho",
-    *,
-    filters: dict[str, Any],
-) -> Conclusion:
+async def _aget_conclusion(honcho: "Honcho", conclusion_id: str) -> Conclusion:
     await honcho._ensure_workspace_async()
-    data = await honcho._async_http_client.post(
-        routes.conclusions_list(honcho.workspace_id),
-        body={"filters": filters},
-        query={"page": 1, "size": 1},
+    data = await honcho._async_http_client.get(
+        routes.conclusion(honcho.workspace_id, conclusion_id)
     )
-    items = data.get("items", [])
-    if not items:
-        raise NotFoundError("Conclusion not found")
-    return Conclusion.from_api_response(ConclusionResponse.model_validate(items[0]))
+    return Conclusion.from_api_response(ConclusionResponse.model_validate(data))
 
 
 async def _aget_many_conclusions(
@@ -1598,9 +1590,7 @@ class WorkspaceConclusionsAio:
 
     async def get(self, conclusion_id: str) -> Conclusion:
         """Get a single conclusion by ID, anywhere in the workspace."""
-        return await _aget_conclusion(
-            self._workspace._honcho, filters={"id": conclusion_id}
-        )
+        return await _aget_conclusion(self._workspace._honcho, conclusion_id)
 
     async def get_many(self, conclusion_ids: list[str]) -> list[Conclusion]:
         """Get multiple conclusions by ID. Missing IDs are omitted."""
@@ -1697,8 +1687,6 @@ class ConclusionScopeAio:
     async def get(self, conclusion_id: str) -> Conclusion:
         """Get a single conclusion by ID asynchronously.
 
-        Equivalent to ``list`` with an ``id`` filter.
-
         Returns:
             The Conclusion object, including its attribution fields
             (`source_ids`, `times_derived`)
@@ -1708,13 +1696,10 @@ class ConclusionScopeAio:
                 observer/observed pair. Use ``honcho.aio.conclusions.get`` for a
                 workspace-wide lookup.
         """
-        return await _aget_conclusion(
-            self._scope._honcho,
-            filters={
-                "id": conclusion_id,
-                "observer_id": self._scope.observer,
-                "observed_id": self._scope.observed,
-            },
+        return _require_scope(
+            await _aget_conclusion(self._scope._honcho, conclusion_id),
+            self._scope.observer,
+            self._scope.observed,
         )
 
     async def get_many(self, conclusion_ids: list[str]) -> list[Conclusion]:
