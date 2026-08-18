@@ -48,6 +48,7 @@ from .api_types import (
 )
 from .base import PeerBase, SessionBase
 from .conclusions import (
+    _LIST_PAGE_CAP,
     _SCOPE_RESERVED,
     Conclusion,
     _reject_reserved_filter_keys,
@@ -68,7 +69,7 @@ from .utils import (
 
 if TYPE_CHECKING:
     from .client import Honcho
-    from .conclusions import ConclusionScope
+    from .conclusions import ConclusionScope, WorkspaceConclusions
 
 from .conclusions import ConclusionCreateParams
 from .peer import Peer, TResponseFormat, serialize_response_format
@@ -81,6 +82,7 @@ __all__ = [
     "PeerAio",
     "SessionAio",
     "ConclusionScopeAio",
+    "WorkspaceConclusionsAio",
 ]
 
 
@@ -446,6 +448,11 @@ class HonchoAio(AsyncMetadataConfigMixin):
             query=query if query else None,
         )
         return QueueStatusResponse.model_validate(data)
+
+    @property
+    def conclusions(self) -> "WorkspaceConclusionsAio":
+        """Workspace-wide conclusions (no observer/observed pair implied)."""
+        return self._honcho.conclusions.aio
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     async def schedule_dream(
@@ -1488,6 +1495,118 @@ class SessionAio(AsyncMetadataConfigMixin):
         return Message.from_api_response(MessageResponse.model_validate(data))
 
 
+async def _aget_conclusion(
+    honcho: "Honcho",
+    *,
+    filters: dict[str, Any],
+) -> Conclusion:
+    await honcho._ensure_workspace_async()
+    data = await honcho._async_http_client.post(
+        routes.conclusions_list(honcho.workspace_id),
+        body={"filters": filters},
+        query={"page": 1, "size": 1},
+    )
+    items = data.get("items", [])
+    if not items:
+        raise NotFoundError("Conclusion not found")
+    return Conclusion.from_api_response(ConclusionResponse.model_validate(items[0]))
+
+
+async def _aget_many_conclusions(
+    honcho: "Honcho",
+    conclusion_ids: list[str],
+    extra_filters: dict[str, Any] | None = None,
+) -> list[Conclusion]:
+    if not conclusion_ids:
+        return []
+    await honcho._ensure_workspace_async()
+    conclusions: list[Conclusion] = []
+    for start in range(0, len(conclusion_ids), _LIST_PAGE_CAP):
+        chunk = conclusion_ids[start : start + _LIST_PAGE_CAP]
+        filters: dict[str, Any] = {"id": {"in": chunk}, **(extra_filters or {})}
+        data = await honcho._async_http_client.post(
+            routes.conclusions_list(honcho.workspace_id),
+            body={"filters": filters},
+            query={"page": 1, "size": len(chunk)},
+        )
+        conclusions.extend(
+            Conclusion.from_api_response(ConclusionResponse.model_validate(item))
+            for item in data.get("items", [])
+        )
+    return conclusions
+
+
+async def _alist_conclusions(
+    honcho: "Honcho",
+    filters: dict[str, Any] | None,
+    *,
+    page: int,
+    size: int,
+    reverse: bool,
+) -> AsyncPage[ConclusionResponse, Conclusion]:
+    await honcho._ensure_workspace_async()
+    body: dict[str, Any] | None = {"filters": filters} if filters else None
+    query: dict[str, Any] = {"page": page, "size": size}
+    if reverse:
+        query["reverse"] = "true"
+    data = await honcho._async_http_client.post(
+        routes.conclusions_list(honcho.workspace_id),
+        body=body,
+        query=query,
+    )
+
+    def transform(response: ConclusionResponse) -> Conclusion:
+        return Conclusion.from_api_response(response)
+
+    async def fetch_next(
+        next_page: int,
+    ) -> AsyncPage[ConclusionResponse, Conclusion]:
+        next_query: dict[str, Any] = {"page": next_page, "size": size}
+        if reverse:
+            next_query["reverse"] = "true"
+        next_data = await honcho._async_http_client.post(
+            routes.conclusions_list(honcho.workspace_id),
+            body=body,
+            query=next_query,
+        )
+        return AsyncPage(next_data, ConclusionResponse, transform, fetch_next)
+
+    return AsyncPage(data, ConclusionResponse, transform, fetch_next)
+
+
+class WorkspaceConclusionsAio:
+    """Async view of workspace-wide conclusions. Access via ``honcho.aio.conclusions``."""
+
+    __slots__: ClassVar[tuple[str, ...]] = ("_workspace",)
+    _workspace: "WorkspaceConclusions"
+
+    def __init__(self, workspace: "WorkspaceConclusions") -> None:
+        self._workspace = workspace
+
+    async def list(
+        self,
+        page: int = 1,
+        size: int = 50,
+        *,
+        filters: dict[str, Any] | None = None,
+        reverse: bool = False,
+    ) -> AsyncPage[ConclusionResponse, Conclusion]:
+        """List conclusions in this workspace asynchronously."""
+        return await _alist_conclusions(
+            self._workspace._honcho, filters, page=page, size=size, reverse=reverse
+        )
+
+    async def get(self, conclusion_id: str) -> Conclusion:
+        """Get a single conclusion by ID, anywhere in the workspace."""
+        return await _aget_conclusion(
+            self._workspace._honcho, filters={"id": conclusion_id}
+        )
+
+    async def get_many(self, conclusion_ids: list[str]) -> list[Conclusion]:
+        """Get multiple conclusions by ID. Missing IDs are omitted."""
+        return await _aget_many_conclusions(self._workspace._honcho, conclusion_ids)
+
+
 class ConclusionScopeAio:
     """
     Async view of a ConclusionScope.
@@ -1522,7 +1641,6 @@ class ConclusionScopeAio:
         _reject_reserved_filter_keys(
             filters, _SCOPE_RESERVED + ("session", "session_id")
         )
-        await self._scope._honcho._ensure_workspace_async()
         resolved_session_id = resolve_id(session)
         filters = {
             "observer_id": self._scope.observer,
@@ -1530,33 +1648,9 @@ class ConclusionScopeAio:
             **({"session_id": resolved_session_id} if resolved_session_id else {}),
             **(filters or {}),
         }
-
-        query: dict[str, Any] = {"page": page, "size": size}
-        if reverse:
-            query["reverse"] = "true"
-        data = await self._scope._honcho._async_http_client.post(
-            routes.conclusions_list(self._scope.workspace_id),
-            body={"filters": filters},
-            query=query,
+        return await _alist_conclusions(
+            self._scope._honcho, filters, page=page, size=size, reverse=reverse
         )
-
-        def transform(response: ConclusionResponse) -> Conclusion:
-            return Conclusion.from_api_response(response)
-
-        async def fetch_next(
-            next_page: int,
-        ) -> AsyncPage[ConclusionResponse, Conclusion]:
-            next_query: dict[str, Any] = {"page": next_page, "size": size}
-            if reverse:
-                next_query["reverse"] = "true"
-            next_data = await self._scope._honcho._async_http_client.post(
-                routes.conclusions_list(self._scope.workspace_id),
-                body={"filters": filters},
-                query=next_query,
-            )
-            return AsyncPage(next_data, ConclusionResponse, transform, fetch_next)
-
-        return AsyncPage(data, ConclusionResponse, transform, fetch_next)
 
     async def query(
         self,
@@ -1610,18 +1704,18 @@ class ConclusionScopeAio:
             (`source_ids`, `times_derived`)
 
         Raises:
-            NotFoundError: If no conclusion with the given ID exists
+            NotFoundError: If no conclusion with the given ID exists in this
+                observer/observed pair. Use ``honcho.aio.conclusions.get`` for a
+                workspace-wide lookup.
         """
-        await self._scope._honcho._ensure_workspace_async()
-        data = await self._scope._honcho._async_http_client.post(
-            routes.conclusions_list(self._scope.workspace_id),
-            body={"filters": {"id": conclusion_id}},
-            query={"page": 1, "size": 1},
+        return await _aget_conclusion(
+            self._scope._honcho,
+            filters={
+                "id": conclusion_id,
+                "observer_id": self._scope.observer,
+                "observed_id": self._scope.observed,
+            },
         )
-        items = data.get("items", [])
-        if not items:
-            raise NotFoundError("Conclusion not found")
-        return Conclusion.from_api_response(ConclusionResponse.model_validate(items[0]))
 
     async def get_many(self, conclusion_ids: list[str]) -> list[Conclusion]:
         """Get multiple conclusions by ID in a single call asynchronously.
@@ -1635,22 +1729,14 @@ class ConclusionScopeAio:
             omitted, so the result may be shorter than the input (order
             is not guaranteed to match the input either).
         """
-        if not conclusion_ids:
-            return []
-        await self._scope._honcho._ensure_workspace_async()
-        conclusions: list[Conclusion] = []
-        for start in range(0, len(conclusion_ids), 100):
-            chunk = conclusion_ids[start : start + 100]
-            data = await self._scope._honcho._async_http_client.post(
-                routes.conclusions_list(self._scope.workspace_id),
-                body={"filters": {"id": {"in": chunk}}},
-                query={"page": 1, "size": len(chunk)},
-            )
-            conclusions.extend(
-                Conclusion.from_api_response(ConclusionResponse.model_validate(item))
-                for item in data.get("items", [])
-            )
-        return conclusions
+        return await _aget_many_conclusions(
+            self._scope._honcho,
+            conclusion_ids,
+            extra_filters={
+                "observer_id": self._scope.observer,
+                "observed_id": self._scope.observed,
+            },
+        )
 
     async def derived(
         self,
@@ -1672,41 +1758,24 @@ class ConclusionScopeAio:
             size: Number of results per page. Default: 50.
             reverse: If True, reverses the default newest-first ordering.
 
-        Equivalent to ``list`` with a ``parent_id`` filter; an unknown
-        ``conclusion_id`` yields an empty page rather than an error.
+        Equivalent to ``list`` with a ``parent_id`` filter, restricted to this
+        observer/observed pair. An unknown ``conclusion_id`` yields an empty
+        page rather than an error.
 
         Returns:
             Paginated response containing Conclusion objects
         """
-        await self._scope._honcho._ensure_workspace_async()
-        body: dict[str, Any] = {"filters": {"parent_id": conclusion_id}}
-
-        def build_query(page_num: int) -> dict[str, Any]:
-            query: dict[str, Any] = {"page": page_num, "size": size}
-            if reverse:
-                query["reverse"] = "true"
-            return query
-
-        data = await self._scope._honcho._async_http_client.post(
-            routes.conclusions_list(self._scope.workspace_id),
-            body=body,
-            query=build_query(page),
+        return await _alist_conclusions(
+            self._scope._honcho,
+            {
+                "parent_id": conclusion_id,
+                "observer_id": self._scope.observer,
+                "observed_id": self._scope.observed,
+            },
+            page=page,
+            size=size,
+            reverse=reverse,
         )
-
-        def transform(response: ConclusionResponse) -> Conclusion:
-            return Conclusion.from_api_response(response)
-
-        async def fetch_next(
-            next_page: int,
-        ) -> AsyncPage[ConclusionResponse, Conclusion]:
-            next_data = await self._scope._honcho._async_http_client.post(
-                routes.conclusions_list(self._scope.workspace_id),
-                body=body,
-                query=build_query(next_page),
-            )
-            return AsyncPage(next_data, ConclusionResponse, transform, fetch_next)
-
-        return AsyncPage(data, ConclusionResponse, transform, fetch_next)
 
     async def delete(self, conclusion_id: str) -> None:
         """Delete a conclusion by ID asynchronously."""

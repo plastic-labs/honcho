@@ -7,7 +7,9 @@ from sdks.python.src.honcho.conclusions import (
     Conclusion,
     ConclusionCreateParams,
     ConclusionScope,
+    WorkspaceConclusions,
 )
+from sdks.python.src.honcho.http import NotFoundError
 
 
 @pytest.mark.asyncio
@@ -1023,3 +1025,103 @@ async def test_query_rejects_reserved_scope_filter_keys(
             with pytest.raises(ValueError, match="managed by this conclusion scope"):
                 obs_scope.query("q", filters={key: "someone-else"})
         obs_scope.query("q", filters={"session_id": "some-session"})
+
+
+@pytest.mark.asyncio
+async def test_workspace_conclusions_list_and_get(
+    client_fixture: tuple[Honcho, str],
+):
+    """honcho.conclusions lists and fetches across observer/observed pairs."""
+    honcho_client, client_type = client_fixture
+
+    if client_type == "async":
+        alice = await honcho_client.aio.peer(id="test-ws-conc-alice")
+        bob = await honcho_client.aio.peer(id="test-ws-conc-bob")
+        session = await honcho_client.aio.session(id="test-ws-conc-session")
+        await session.aio.add_messages(
+            [alice.message("hi from alice"), bob.message("hi from bob")]
+        )
+        alice_conc = (
+            await alice.conclusions.aio.create(
+                [{"content": "Alice self conclusion", "session_id": session.id}]
+            )
+        )[0]
+        about_bob = (
+            await alice.conclusions_of(bob).aio.create(
+                [{"content": "Alice about Bob", "session_id": session.id}]
+            )
+        )[0]
+
+        assert isinstance(honcho_client.conclusions, WorkspaceConclusions)
+
+        page = await honcho_client.aio.conclusions.list(size=100)
+        ids = {c.id for c in page.items}
+        assert alice_conc.id in ids
+        assert about_bob.id in ids
+
+        about_bob_only = await honcho_client.aio.conclusions.list(
+            filters={"observed_id": bob.id}, size=100
+        )
+        assert {c.id for c in about_bob_only.items} >= {about_bob.id}
+        assert all(c.observed_id == bob.id for c in about_bob_only.items)
+
+        session_page = await honcho_client.aio.conclusions.list(
+            filters={"session_id": session.id}, size=100
+        )
+        assert {c.id for c in session_page.items} >= {alice_conc.id, about_bob.id}
+
+        fetched = await honcho_client.aio.conclusions.get(about_bob.id)
+        assert fetched.id == about_bob.id
+        assert fetched.observer_id == alice.id
+        assert fetched.observed_id == bob.id
+
+        batch = await honcho_client.aio.conclusions.get_many(
+            [alice_conc.id, about_bob.id]
+        )
+        assert {c.id for c in batch} == {alice_conc.id, about_bob.id}
+
+        # Scoped get cannot see a conclusion from a different pair.
+        with pytest.raises(NotFoundError):
+            await alice.conclusions.aio.get(about_bob.id)
+    else:
+        alice = honcho_client.peer(id="test-ws-conc-alice")
+        bob = honcho_client.peer(id="test-ws-conc-bob")
+        session = honcho_client.session(id="test-ws-conc-session")
+        session.add_messages(
+            [alice.message("hi from alice"), bob.message("hi from bob")]
+        )
+        alice_conc = alice.conclusions.create(
+            [{"content": "Alice self conclusion", "session_id": session.id}]
+        )[0]
+        about_bob = alice.conclusions_of(bob).create(
+            [{"content": "Alice about Bob", "session_id": session.id}]
+        )[0]
+
+        assert isinstance(honcho_client.conclusions, WorkspaceConclusions)
+
+        page = honcho_client.conclusions.list(size=100)
+        ids = {c.id for c in page.items}
+        assert alice_conc.id in ids
+        assert about_bob.id in ids
+
+        about_bob_only = honcho_client.conclusions.list(
+            filters={"observed_id": bob.id}, size=100
+        )
+        assert {c.id for c in about_bob_only.items} >= {about_bob.id}
+        assert all(c.observed_id == bob.id for c in about_bob_only.items)
+
+        session_page = honcho_client.conclusions.list(
+            filters={"session_id": session.id}, size=100
+        )
+        assert {c.id for c in session_page.items} >= {alice_conc.id, about_bob.id}
+
+        fetched = honcho_client.conclusions.get(about_bob.id)
+        assert fetched.id == about_bob.id
+        assert fetched.observer_id == alice.id
+        assert fetched.observed_id == bob.id
+
+        batch = honcho_client.conclusions.get_many([alice_conc.id, about_bob.id])
+        assert {c.id for c in batch} == {alice_conc.id, about_bob.id}
+
+        with pytest.raises(NotFoundError):
+            alice.conclusions.get(about_bob.id)

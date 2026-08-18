@@ -7,6 +7,7 @@ export {
   Conclusion,
   type ConclusionCreateParams,
   ConclusionScope,
+  WorkspaceConclusions,
 } from './conclusions'
 // HTTP infrastructure
 export {

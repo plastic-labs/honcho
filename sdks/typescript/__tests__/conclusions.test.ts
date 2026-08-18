@@ -11,7 +11,8 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test'
-import { Honcho, Conclusion, ConclusionScope } from '../src'
+import { Honcho, Conclusion, ConclusionScope, WorkspaceConclusions } from '../src'
+import { NotFoundError } from '../src/http/errors'
 import { createTestClient, requireServer } from './setup'
 import { assertConclusionShape } from './helpers'
 
@@ -399,6 +400,61 @@ describe('Conclusions', () => {
   // ===========================================================================
   // Derived Conclusions (list + parent_id filter)
   // ===========================================================================
+
+  describe('honcho.conclusions (workspace-wide)', () => {
+    test('lists and fetches across observer/observed pairs', async () => {
+      const alice = await client.peer('ws-conc-alice', { metadata: {} })
+      const bob = await client.peer('ws-conc-bob', { metadata: {} })
+      const session = await client.session('ws-conc-session', { metadata: {} })
+
+      const [aliceSelf] = await alice.conclusions.create({
+        content: 'Alice self conclusion',
+        sessionId: session,
+      })
+      const [aboutBob] = await alice.conclusionsOf(bob).create({
+        content: 'Alice about Bob',
+        sessionId: session,
+      })
+
+      expect(client.conclusions).toBeInstanceOf(WorkspaceConclusions)
+
+      const page = await client.conclusions.list({ size: 100 })
+      const ids = new Set(page.items.map((c) => c.id))
+      expect(ids.has(aliceSelf.id)).toBe(true)
+      expect(ids.has(aboutBob.id)).toBe(true)
+
+      const aboutBobOnly = await client.conclusions.list({
+        filters: { observed_id: bob.id },
+        size: 100,
+      })
+      expect(aboutBobOnly.items.every((c) => c.observedId === bob.id)).toBe(true)
+      expect(new Set(aboutBobOnly.items.map((c) => c.id)).has(aboutBob.id)).toBe(
+        true
+      )
+
+      const sessionPage = await client.conclusions.list({
+        filters: { session_id: session.id },
+        size: 100,
+      })
+      const sessionIds = new Set(sessionPage.items.map((c) => c.id))
+      expect(sessionIds.has(aliceSelf.id)).toBe(true)
+      expect(sessionIds.has(aboutBob.id)).toBe(true)
+
+      const fetched = await client.conclusions.get(aboutBob.id)
+      expect(fetched.id).toBe(aboutBob.id)
+      expect(fetched.observerId).toBe(alice.id)
+      expect(fetched.observedId).toBe(bob.id)
+
+      const batch = await client.conclusions.getMany([aliceSelf.id, aboutBob.id])
+      expect(new Set(batch.map((c) => c.id))).toEqual(
+        new Set([aliceSelf.id, aboutBob.id])
+      )
+
+      await expect(alice.conclusions.get(aboutBob.id)).rejects.toBeInstanceOf(
+        NotFoundError
+      )
+    })
+  })
 
   describe('derived() via parent_id filter', () => {
     test('leaf conclusion has no derived conclusions', async () => {

@@ -16,6 +16,8 @@ import { normalizeSearchQuery, RepresentationOptionsSchema } from './validation'
  * Filter keys that define a conclusion scope (the observer/observed peer pair).
  * They are set from the scope itself, so a caller must not pass them in `filters`.
  */
+const LIST_PAGE_CAP = 100
+
 const SCOPE_RESERVED_KEYS = [
   'observer',
   'observed',
@@ -209,9 +211,13 @@ export class ConclusionScope {
   }
 
   private async _get(conclusionId: string): Promise<ConclusionResponse> {
-    // Equivalent to list with an `id` filter; there is no single-GET endpoint.
+    // Equivalent to list with an `id` filter, restricted to this pair.
     const response = await this._list({
-      filters: { id: conclusionId },
+      filters: {
+        id: conclusionId,
+        observer_id: this.observer,
+        observed_id: this.observed,
+      },
       page: 1,
       size: 1,
     })
@@ -230,10 +236,13 @@ export class ConclusionScope {
       reverse?: boolean
     }
   ): Promise<PageResponse<ConclusionResponse>> {
-    // Equivalent to list with a parent_id filter; an unknown conclusionId
-    // yields an empty page rather than an error.
+    // Equivalent to list with a parent_id filter, restricted to this pair.
     return this._list({
-      filters: { parent_id: conclusionId },
+      filters: {
+        parent_id: conclusionId,
+        observer_id: this.observer,
+        observed_id: this.observed,
+      },
       page: params.page,
       size: params.size,
       reverse: params.reverse,
@@ -391,10 +400,14 @@ export class ConclusionScope {
     if (conclusionIds.length === 0) return []
     const conclusions: Conclusion[] = []
     // The list endpoint caps page size at 100
-    for (let start = 0; start < conclusionIds.length; start += 100) {
-      const chunk = conclusionIds.slice(start, start + 100)
+    for (let start = 0; start < conclusionIds.length; start += LIST_PAGE_CAP) {
+      const chunk = conclusionIds.slice(start, start + LIST_PAGE_CAP)
       const response = await this._list({
-        filters: { id: { in: chunk } },
+        filters: {
+          id: { in: chunk },
+          observer_id: this.observer,
+          observed_id: this.observed,
+        },
         page: 1,
         size: chunk.length,
       })
@@ -508,5 +521,126 @@ export class ConclusionScope {
 
   toString(): string {
     return `ConclusionScope(workspaceId='${this.workspaceId}', observer='${this.observer}', observed='${this.observed}')`
+  }
+}
+
+/**
+ * Workspace-wide conclusion access. No observer/observed pair is implied.
+ *
+ * Use this to list or look up conclusions across the workspace, then filter
+ * down to a peer or session. Pair-scoped create/query/delete stay on
+ * `peer.conclusions` / `peer.conclusionsOf(target)`.
+ */
+export class WorkspaceConclusions {
+  private _http: HonchoHTTPClient
+  private _ensureWorkspace: () => Promise<void>
+  readonly workspaceId: string
+
+  constructor(
+    http: HonchoHTTPClient,
+    workspaceId: string,
+    ensureWorkspace: () => Promise<void> = async () => undefined
+  ) {
+    this._http = http
+    this.workspaceId = workspaceId
+    this._ensureWorkspace = ensureWorkspace
+  }
+
+  private async _list(params: {
+    filters?: Record<string, unknown>
+    page?: number
+    size?: number
+    reverse?: boolean
+  }): Promise<PageResponse<ConclusionResponse>> {
+    await this._ensureWorkspace()
+    return this._http.post<PageResponse<ConclusionResponse>>(
+      `/${API_VERSION}/workspaces/${this.workspaceId}/conclusions/list`,
+      {
+        body: params.filters ? { filters: params.filters } : undefined,
+        query: {
+          page: params.page,
+          size: params.size,
+          reverse: params.reverse ? 'true' : undefined,
+        },
+      }
+    )
+  }
+
+  /**
+   * List conclusions in this workspace.
+   *
+   * Unlike `peer.conclusions.list`, no observer/observed pair is injected.
+   * Pass `filters` to narrow the view — e.g. `{ observed_id: 'alice' }` or
+   * `{ session_id: '...' }`.
+   */
+  async list(options?: {
+    page?: number
+    size?: number
+    filters?: Record<string, unknown>
+    reverse?: boolean
+  }): Promise<Page<Conclusion, ConclusionResponse>> {
+    const filters = options?.filters
+    const reverse = options?.reverse
+    const response = await this._list({
+      filters,
+      page: options?.page ?? 1,
+      size: options?.size ?? 50,
+      reverse,
+    })
+
+    const fetchNextPage = async (
+      page: number,
+      size: number
+    ): Promise<PageResponse<ConclusionResponse>> => {
+      return this._list({ filters, page, size, reverse })
+    }
+
+    return new Page(
+      response,
+      (item) => Conclusion.fromApiResponse(item),
+      fetchNextPage
+    )
+  }
+
+  /**
+   * Get a single conclusion by ID, anywhere in the workspace.
+   */
+  async get(conclusionId: string): Promise<Conclusion> {
+    const response = await this._list({
+      filters: { id: conclusionId },
+      page: 1,
+      size: 1,
+    })
+    const item = response.items?.[0]
+    if (!item) {
+      throw new NotFoundError('Conclusion not found')
+    }
+    return Conclusion.fromApiResponse(item)
+  }
+
+  /**
+   * Get multiple conclusions by ID. Missing IDs are omitted.
+   */
+  async getMany(conclusionIds: string[]): Promise<Conclusion[]> {
+    if (conclusionIds.length === 0) return []
+    const conclusions: Conclusion[] = []
+    for (let start = 0; start < conclusionIds.length; start += LIST_PAGE_CAP) {
+      const chunk = conclusionIds.slice(start, start + LIST_PAGE_CAP)
+      const response = await this._list({
+        filters: { id: { in: chunk } },
+        page: 1,
+        size: chunk.length,
+      })
+      conclusions.push(
+        ...(response.items ?? []).map((item) =>
+          Conclusion.fromApiResponse(item)
+        )
+      )
+    }
+    return conclusions
+  }
+
+  toString(): string {
+    return `WorkspaceConclusions(workspaceId='${this.workspaceId}')`
   }
 }
