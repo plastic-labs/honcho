@@ -195,13 +195,13 @@ class _EmbeddingClient:
             from google import genai
             from google.genai import types as genai_types
 
-            # 10-minute HTTP timeout, in lockstep with the LLM registry's Gemini
-            # client (`src/llm/registry.py:_build_gemini_http_options`). Without
-            # this, a stalled Gemini embedding socket wedges the deriver worker
-            # exactly the way #785 describes for the LLM client.
+            # Default 10-minute HTTP timeout matches the LLM registry Gemini client.
+            timeout_ms = (
+                int(config.timeout * 1000) if config.timeout is not None else 600_000
+            )
             http_options = genai_types.HttpOptions(
                 base_url=config.base_url,
-                timeout=600_000,
+                timeout=timeout_ms,
             )
             self.client: genai.Client | AsyncOpenAI = genai.Client(
                 api_key=config.api_key,
@@ -216,10 +216,14 @@ class _EmbeddingClient:
                 raise ValueError("OpenAI API key is required")
             from openai import AsyncOpenAI
 
-            self.client = AsyncOpenAI(
-                api_key=config.api_key,
-                base_url=config.base_url,
-            )
+            # Omit timeout when unset so the OpenAI SDK keeps its own default.
+            client_kwargs: dict[str, Any] = {
+                "api_key": config.api_key,
+                "base_url": config.base_url,
+            }
+            if config.timeout is not None:
+                client_kwargs["timeout"] = config.timeout
+            self.client = AsyncOpenAI(**client_kwargs)
             self.max_embedding_tokens = max_input_tokens
             self.max_batch_size = config.max_batch_size or 2048
 
