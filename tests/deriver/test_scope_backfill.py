@@ -522,7 +522,7 @@ async def test_removal_cascades_to_dependent_derived_docs_only(
         session_name=None,
         content="unrelated deduction",
         level="deductive",
-        source_ids=["some-other-doc-id-not-removed"],
+        source_ids=[generate_nanoid()],
     )
 
     copy_id, dependent_id, unrelated_id = copy.id, dependent.id, unrelated.id
