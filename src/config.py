@@ -394,6 +394,15 @@ class ConfiguredEmbeddingModelSettings(BaseModel):
     dimensions_mode: EmbeddingDimensionsMode = "auto"
     encoding_format_mode: EmbeddingEncodingFormatMode = "auto"
     max_batch_size: Annotated[int, Field(gt=0)] | None = None
+    # Client HTTP timeout in seconds. OpenAI receives seconds; Gemini converts to ms.
+    timeout: float | None = None
+
+    @field_validator("timeout", mode="before")
+    @classmethod
+    def _validate_timeout(cls, v: Any) -> float | None:
+        if v is None:
+            return None
+        return coerce_provider_timeout(v)
 
     @model_validator(mode="before")
     @classmethod
@@ -431,6 +440,15 @@ class EmbeddingModelConfig(BaseModel):
     api_key: str | None = None
     base_url: str | None = None
     max_batch_size: Annotated[int, Field(gt=0)] | None = None
+    # Client HTTP timeout in seconds. OpenAI receives seconds; Gemini converts to ms.
+    timeout: float | None = None
+
+    @field_validator("timeout", mode="before")
+    @classmethod
+    def _validate_timeout(cls, v: Any) -> float | None:
+        if v is None:
+            return None
+        return coerce_provider_timeout(v)
 
     @model_validator(mode="before")
     @classmethod
@@ -556,6 +574,7 @@ def resolve_embedding_model_config(
         api_key=api_key,
         base_url=configured.overrides.base_url,
         max_batch_size=configured.max_batch_size,
+        timeout=configured.timeout,
     )
 
 

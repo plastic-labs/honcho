@@ -4,7 +4,7 @@ import random
 import signal
 import time
 from asyncio import Task
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from logging import getLogger
@@ -476,6 +476,18 @@ class QueueManager:
         """Snap the polling interval back to the base after finding work."""
         self._current_poll_interval = settings.DERIVER.POLLING_SLEEP_INTERVAL_SECONDS
 
+    @staticmethod
+    def _is_tenant_work(work_unit_keys: Iterable[str]) -> bool:
+        """True if any claimed work unit is real tenant work, not housekeeping.
+        """
+        for key in work_unit_keys:
+            try:
+                if parse_work_unit_key(key).task_type != "reconciler":
+                    return True
+            except ValueError:
+                return True
+        return False
+
     def _jitter(self, seconds: float) -> float:
         """Scatter a sleep by +/- POLLING_JITTER_RATIO to avoid lockstep polling.
 
@@ -542,7 +554,8 @@ class QueueManager:
                     await self._maybe_cleanup_stale_work_units()
                     claimed_work_units = await self.get_and_claim_work_units()
                     if claimed_work_units:
-                        self._reset_poll_interval()
+                        if self._is_tenant_work(claimed_work_units):
+                            self._reset_poll_interval()
                         for work_unit_key, aqs_id in claimed_work_units.items():
                             # Create a new task for processing this work unit
                             if not self.shutdown_event.is_set():

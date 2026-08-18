@@ -21,7 +21,7 @@
         },
         {
           "name": "X-Honcho-Workspace-ID",
-          "description": "Optional. Target Honcho workspace; defaults to 'default' when omitted.",
+          "description": "Optional. Default Honcho workspace for tool calls. When set, it fills workspace_id on tools.",
           "isRequired": false,
           "isSecret": false
         }

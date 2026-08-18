@@ -239,38 +239,11 @@ To teach Goose the recommended memory flow, save the [instructions](https://raw.
 
 ---
 
-## Optional Configuration
+## Workspace
 
-You can target a specific workspace by adding an extra header. It's optional.
+Every workspace-scoped tool takes a `workspace_id` argument. You can also set `X-Honcho-Workspace-ID` on the connection; that value fills `workspace_id` when the argument is omitted.
 
-| Header | Default | Description |
-|--------|---------|-------------|
-| `Authorization` | *required* | `Bearer hch-your-key-here` |
-| `X-Honcho-Workspace-ID` | `"default"` | Isolate memory per project |
-
-Example with all headers (Claude Desktop format):
-
-```json
-{
-  "mcpServers": {
-    "honcho": {
-      "command": "npx",
-      "args": [
-        "mcp-remote",
-        "https://mcp.honcho.dev",
-        "--header",
-        "Authorization:${AUTH_HEADER}",
-        "--header",
-        "X-Honcho-Workspace-ID:${WORKSPACE_ID}"
-      ],
-      "env": {
-        "AUTH_HEADER": "Bearer hch-your-key-here",
-        "WORKSPACE_ID": "my-project"
-      }
-    }
-  }
-}
-```
+Use `list_workspaces` to discover IDs (each result includes metadata and `created_at`), or `create_workspace` if none fit, then reuse the same ID for subsequent tool calls.
 
 ---
 
