@@ -43,6 +43,7 @@ from src.reconciler import (
 from src.schemas import ResolvedConfiguration
 from src.telemetry import prometheus_metrics
 from src.telemetry.sentry import initialize_sentry
+from src.utils.retryable_errors import is_retryable_error
 from src.utils.work_unit import parse_work_unit_key
 from src.webhooks.events import (
     QueueEmptyEvent,
@@ -52,6 +53,11 @@ from src.webhooks.events import (
 logger = getLogger(__name__)
 
 load_dotenv(override=True)
+
+# Total processing attempts per work unit for transient errors, counted
+# per instance (N deriver instances give N x this many attempts).
+MAX_RETRYABLE_ATTEMPTS = 3
+RETRY_BACKOFF_SECONDS = 1.0
 
 
 class WorkerOwnership(NamedTuple):
@@ -128,6 +134,10 @@ class QueueManager:
         self.active_tasks: set[asyncio.Task[None]] = set()
         self.worker_ownership: dict[str, WorkerOwnership] = {}
         self.queue_empty_flag: asyncio.Event = asyncio.Event()
+
+        # Transient-failure attempts per work-unit key. Entries are removed
+        # on success or terminal failure, never on the retry path itself.
+        self._retry_attempts: dict[str, int] = {}
 
         # Current adaptive polling interval; grows while idle/erroring and
         # resets to the base interval as soon as work is claimed.
@@ -579,11 +589,19 @@ class QueueManager:
         items: list[QueueItem],
         work_unit_key: str,
         context: str,
-    ) -> None:
+    ) -> bool:
         """
-        Handle processing errors by marking queue items as errored, logging, and forwarding to Sentry.
-        We only mark the first queue item as errored so we don't potentially throw away a batch. This allows us
-        to incrementally attempt to process the batch while still maintaining progress in a work unit.
+        Handle a processing error. Returns True when the caller should stop
+        processing and release the work unit for a later re-claim.
+
+        Transient errors (is_retryable_error) get up to MAX_RETRYABLE_ATTEMPTS
+        attempts per work unit: items stay unprocessed with no error recorded.
+        Reprocessing is safe because a retried batch re-derives the same
+        observations and exact dedup collapses them into reinforcement.
+
+        Terminal errors mark only the first queue item as errored so we don't
+        potentially throw away a batch. This allows us to incrementally attempt
+        to process the batch while still maintaining progress in a work unit.
 
         Args:
             error: The exception that occurred
@@ -591,6 +609,21 @@ class QueueManager:
             work_unit_key: The work unit key for the queue items
             context: Context string describing what was being processed (e.g., "processing representation batch")
         """
+        if is_retryable_error(error):
+            attempts = self._retry_attempts.get(work_unit_key, 0) + 1
+            if attempts < MAX_RETRYABLE_ATTEMPTS:
+                self._retry_attempts[work_unit_key] = attempts
+                logger.warning(
+                    "Transient error %s for work unit %s (attempt %d/%d); leaving items unprocessed for retry",
+                    context,
+                    work_unit_key,
+                    attempts,
+                    MAX_RETRYABLE_ATTEMPTS,
+                    exc_info=error,
+                )
+                return True
+
+        self._retry_attempts.pop(work_unit_key, None)
         error_msg = f"{error.__class__.__name__}: {str(error)}"
         try:
             if items:
@@ -609,6 +642,7 @@ class QueueManager:
         )
         if settings.SENTRY.ENABLED:
             sentry_sdk.capture_exception(error)
+        return False
 
     async def process_work_unit(self, work_unit_key: str, worker_id: str) -> None:
         """Process all queue items for a specific work unit by routing to the correct handler."""
@@ -672,14 +706,21 @@ class QueueManager:
                                 await self.mark_queue_items_as_processed(
                                     items_to_process, work_unit_key
                                 )
+                                self._retry_attempts.pop(work_unit_key, None)
                                 queue_item_count += len(items_to_process)
                             except Exception as e:
-                                await self._handle_processing_error(
+                                if await self._handle_processing_error(
                                     e,
                                     items_to_process,
                                     work_unit_key,
                                     f"processing {work_unit.task_type} batch",
-                                )
+                                ):
+                                    # Release the work unit (via the finally
+                                    # below) and let a later poll re-claim it.
+                                    await asyncio.sleep(
+                                        self._jitter(RETRY_BACKOFF_SECONDS)
+                                    )
+                                    break
 
                         else:
                             queue_item = await self.get_next_queue_item(
@@ -696,14 +737,19 @@ class QueueManager:
                                 await self.mark_queue_items_as_processed(
                                     [queue_item], work_unit_key
                                 )
+                                self._retry_attempts.pop(work_unit_key, None)
                                 queue_item_count += 1
                             except Exception as e:
-                                await self._handle_processing_error(
+                                if await self._handle_processing_error(
                                     e,
                                     [queue_item],
                                     work_unit_key,
                                     "processing queue item",
-                                )
+                                ):
+                                    await asyncio.sleep(
+                                        self._jitter(RETRY_BACKOFF_SECONDS)
+                                    )
+                                    break
 
                     except Exception as e:
                         logger.error(

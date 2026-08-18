@@ -1,10 +1,13 @@
+import asyncio
 import datetime
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from nanoid import generate as generate_nanoid
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from src import crud, models, schemas
 from src.crud.document import SemanticRejectionResult, is_rejected_duplicate
@@ -1334,3 +1337,477 @@ class TestSessionPurityInvariant:
             )
         assert rejected is SemanticRejectionResult.NOT_DUPLICATE
         mock_query.assert_not_awaited()
+
+
+class TestCreateDocumentsConcurrency:
+    """Concurrency regression tests for create_documents (DEV-1975).
+
+    Two deriver work units can write the same (workspace, observer, observed)
+    collection concurrently: work-unit keys include session but not observer,
+    so one peer active in two sessions produces two writers, and the dreamer
+    adds a third through a different key. Reinforcement UPDATEs issued in
+    batch order used to deadlock when two writers touched the same rows in
+    opposite orders; create_documents now serializes writers per collection
+    with a transaction-scoped advisory lock.
+    """
+
+    N_DOCS: int = 20
+    N_ROUNDS: int = 5
+
+    async def _setup(
+        self,
+        db_session: AsyncSession,
+        test_workspace: models.Workspace,
+        test_peer: models.Peer,
+    ) -> tuple[models.Peer, models.Session]:
+        """Create an observed peer, session, and collection, committed so
+        they are visible to independent concurrent sessions."""
+        test_peer2 = models.Peer(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        test_session = models.Session(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add_all([test_peer2, test_session])
+        await db_session.flush()
+        collection = models.Collection(
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+        )
+        db_session.add(collection)
+        await db_session.commit()
+        return test_peer2, test_session
+
+    def _batch(self, session_name: str) -> list[schemas.DocumentCreate]:
+        return [
+            schemas.DocumentCreate(
+                content=f"user fact number {i}",
+                embedding=[0.1] * 1536,
+                session_name=session_name,
+                metadata=schemas.DocumentMetadata(
+                    message_ids=[i],
+                    message_created_at="2026-01-01T00:00:00Z",
+                ),
+            )
+            for i in range(self.N_DOCS)
+        ]
+
+    @staticmethod
+    def _chain(exc: BaseException) -> str:
+        parts: list[str] = []
+        seen: set[int] = set()
+        e: BaseException | None = exc
+        while e is not None and id(e) not in seen:
+            seen.add(id(e))
+            parts.append(f"{type(e).__name__}: {e}")
+            e = e.__cause__ or e.__context__
+        return " <- ".join(parts)
+
+    @pytest.mark.asyncio
+    async def test_concurrent_reinforcement_does_not_deadlock(
+        self,
+        db_engine: "AsyncEngine",
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """Concurrent same-collection batches locking rows in opposite orders
+        must serialize, not deadlock (DEV-1975)."""
+        test_workspace, test_peer = sample_data
+        test_peer2, test_session = await self._setup(
+            db_session, test_workspace, test_peer
+        )
+
+        # Seed the rows both writers will reinforce.
+        await crud.create_documents(
+            db_session,
+            self._batch(test_session.name),
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+        )
+
+        session_factory = async_sessionmaker(bind=db_engine, expire_on_commit=False)
+
+        for round_num in range(self.N_ROUNDS):
+            forward = self._batch(test_session.name)
+            backward = list(reversed(self._batch(test_session.name)))
+
+            async def _run(batch: list[schemas.DocumentCreate]) -> None:
+                async with session_factory() as db:
+                    await crud.create_documents(
+                        db,
+                        batch,
+                        workspace_name=test_workspace.name,
+                        observer=test_peer.name,
+                        observed=test_peer2.name,
+                    )
+
+            results = await asyncio.gather(
+                _run(forward), _run(backward), return_exceptions=True
+            )
+            errors = [r for r in results if isinstance(r, BaseException)]
+            assert not errors, (
+                f"round {round_num}: concurrent create_documents failed: "
+                + "; ".join(self._chain(e) for e in errors)
+            )
+
+        # Every round reinforced the same rows: 1 seed + 2 per round.
+        docs = (
+            (
+                await db_session.execute(
+                    select(models.Document).where(
+                        models.Document.workspace_name == test_workspace.name,
+                        models.Document.observer == test_peer.name,
+                        models.Document.observed == test_peer2.name,
+                        models.Document.deleted_at.is_(None),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(docs) == self.N_DOCS
+        assert all(d.times_derived == 1 + 2 * self.N_ROUNDS for d in docs)
+
+
+class TestCreateDocumentsErrorHandling:
+    """A dead transaction aborts the batch loudly; per-document failures
+    still skip just that document (DEV-1975)."""
+
+    async def _setup(
+        self,
+        db_session: AsyncSession,
+        test_workspace: models.Workspace,
+        test_peer: models.Peer,
+    ) -> tuple[models.Peer, models.Session]:
+        test_peer2 = models.Peer(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        test_session = models.Session(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add_all([test_peer2, test_session])
+        await db_session.flush()
+        collection = models.Collection(
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+        )
+        db_session.add(collection)
+        await db_session.commit()
+        return test_peer2, test_session
+
+    def _doc(self, content: str, session_name: str) -> schemas.DocumentCreate:
+        return schemas.DocumentCreate(
+            content=content,
+            embedding=[0.1] * 1536,
+            session_name=session_name,
+            metadata=schemas.DocumentMetadata(
+                message_ids=[1],
+                message_created_at="2026-01-01T00:00:00Z",
+            ),
+        )
+
+    @pytest.mark.asyncio
+    async def test_db_error_in_loop_aborts_batch(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """A DB error on an in-loop flush must raise out of create_documents
+        instead of cascading through a dead session, and commit nothing."""
+        test_workspace, test_peer = sample_data
+        test_peer2, test_session = await self._setup(
+            db_session, test_workspace, test_peer
+        )
+        # Plain strings: the rollback below expires ORM objects in the session.
+        workspace_name = test_workspace.name
+        observer = test_peer.name
+        observed = test_peer2.name
+        session_name = test_session.name
+
+        await crud.create_documents(
+            db_session,
+            [self._doc("existing fact", session_name)],
+            workspace_name=workspace_name,
+            observer=observer,
+            observed=observed,
+        )
+
+        class FakePGError(Exception):
+            sqlstate: str = "40P01"
+
+        deadlock = OperationalError("UPDATE documents", {}, FakePGError())
+        # Batch: an exact dup (triggers the reinforcement flush that "deadlocks")
+        # followed by a new document that must NOT be committed.
+        with (
+            patch.object(db_session, "flush", AsyncMock(side_effect=deadlock)),
+            pytest.raises(OperationalError),
+        ):
+            await crud.create_documents(
+                db_session,
+                [
+                    self._doc("existing fact", session_name),
+                    self._doc("a brand new fact", session_name),
+                ],
+                workspace_name=workspace_name,
+                observer=observer,
+                observed=observed,
+            )
+
+        docs = (
+            (
+                await db_session.execute(
+                    select(models.Document).where(
+                        models.Document.workspace_name == workspace_name,
+                        models.Document.observer == observer,
+                        models.Document.observed == observed,
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert [d.content for d in docs] == ["existing fact"]
+        assert docs[0].times_derived == 1
+
+    @pytest.mark.asyncio
+    async def test_per_document_error_still_skips_only_that_document(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """Non-DB per-document failures keep their skip semantics."""
+        test_workspace, test_peer = sample_data
+        test_peer2, test_session = await self._setup(
+            db_session, test_workspace, test_peer
+        )
+
+        from src.crud import document as document_module
+
+        real_dedup_key = document_module._dedup_key  # pyright: ignore[reportPrivateUsage]
+
+        def flaky_dedup_key(
+            content: str, level: str, session_name: str | None
+        ) -> tuple[str, str, str | None]:
+            if content == "poison":
+                raise ValueError("bad content")
+            return real_dedup_key(content, level, session_name)
+
+        with patch.object(document_module, "_dedup_key", flaky_dedup_key):
+            result = await crud.create_documents(
+                db_session,
+                [
+                    self._doc("good fact one", test_session.name),
+                    self._doc("poison", test_session.name),
+                    self._doc("good fact two", test_session.name),
+                ],
+                workspace_name=test_workspace.name,
+                observer=test_peer.name,
+                observed=test_peer2.name,
+            )
+
+        assert sorted(d.content for d in result.created_documents) == [
+            "good fact one",
+            "good fact two",
+        ]
+
+
+class TestAdvisoryLockBehavior:
+    """The per-collection advisory lock in create_documents: held for the
+    transaction, keyed by (workspace, observer, observed), and skipped when
+    the batch can only INSERT."""
+
+    async def _setup(
+        self,
+        db_session: AsyncSession,
+        test_workspace: models.Workspace,
+        test_peer: models.Peer,
+        n_observed: int = 1,
+    ) -> tuple[list[models.Peer], models.Session]:
+        observed_peers = [
+            models.Peer(name=str(generate_nanoid()), workspace_name=test_workspace.name)
+            for _ in range(n_observed)
+        ]
+        test_session = models.Session(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add_all([*observed_peers, test_session])
+        await db_session.flush()
+        for observed_peer in observed_peers:
+            db_session.add(
+                models.Collection(
+                    workspace_name=test_workspace.name,
+                    observer=test_peer.name,
+                    observed=observed_peer.name,
+                )
+            )
+        await db_session.commit()
+        return observed_peers, test_session
+
+    def _doc(self, content: str, session_name: str) -> schemas.DocumentCreate:
+        return schemas.DocumentCreate(
+            content=content,
+            embedding=[0.1] * 1536,
+            session_name=session_name,
+            metadata=schemas.DocumentMetadata(
+                message_ids=[1],
+                message_created_at="2026-01-01T00:00:00Z",
+            ),
+        )
+
+    @pytest.mark.asyncio
+    async def test_lock_blocks_same_key_not_other_keys(
+        self,
+        db_engine: AsyncEngine,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """While one writer holds a collection's lock, a second writer on the
+        same collection blocks and a writer on a different collection does not."""
+        test_workspace, test_peer = sample_data
+        (observed_a, observed_b), test_session = await self._setup(
+            db_session, test_workspace, test_peer, n_observed=2
+        )
+        session_factory = async_sessionmaker(bind=db_engine, expire_on_commit=False)
+
+        holder_in_lock = asyncio.Event()
+        release_holder = asyncio.Event()
+
+        real_is_rejected_duplicate = crud.document.is_rejected_duplicate
+
+        async def pausing_is_rejected_duplicate(*args: Any, **kwargs: Any) -> Any:
+            holder_in_lock.set()
+            await release_holder.wait()
+            return await real_is_rejected_duplicate(*args, **kwargs)
+
+        async def _create(observed: str, content: str) -> None:
+            async with session_factory() as db:
+                await crud.create_documents(
+                    db,
+                    [self._doc(content, test_session.name)],
+                    workspace_name=test_workspace.name,
+                    observer=test_peer.name,
+                    observed=observed,
+                    deduplicate=True,
+                )
+
+        with patch(
+            "src.crud.document.is_rejected_duplicate",
+            side_effect=pausing_is_rejected_duplicate,
+        ):
+            holder = asyncio.create_task(_create(observed_a.name, "holder fact"))
+            await asyncio.wait_for(holder_in_lock.wait(), timeout=10)
+
+        # Holder is parked inside its critical section; the patch is no longer
+        # active so contender/other run the real dedup path.
+        contender = asyncio.create_task(_create(observed_a.name, "contender fact"))
+        other_key = asyncio.create_task(_create(observed_b.name, "other fact"))
+
+        # A different collection's writer completes while the lock is held...
+        await asyncio.wait_for(other_key, timeout=10)
+        # ...but the same collection's writer stays blocked.
+        await asyncio.sleep(0.3)
+        assert not contender.done()
+
+        release_holder.set()
+        await asyncio.wait_for(asyncio.gather(holder, contender), timeout=10)
+
+    @pytest.mark.asyncio
+    async def test_lock_skipped_for_insert_only_batch(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """deduplicate=False with no exact-dup matches only INSERTs, so no
+        advisory lock is taken; a batch with an existing exact dup takes it."""
+        test_workspace, test_peer = sample_data
+        (observed_peer,), test_session = await self._setup(
+            db_session, test_workspace, test_peer
+        )
+
+        executed_sql: list[str] = []
+        real_execute = db_session.execute
+
+        async def spying_execute(statement: Any, *args: Any, **kwargs: Any) -> Any:
+            executed_sql.append(str(statement))
+            return await real_execute(statement, *args, **kwargs)
+
+        def lock_statements() -> list[str]:
+            return [s for s in executed_sql if "pg_advisory_xact_lock" in s]
+
+        with patch.object(db_session, "execute", side_effect=spying_execute):
+            await crud.create_documents(
+                db_session,
+                [self._doc("all new fact", test_session.name)],
+                workspace_name=test_workspace.name,
+                observer=test_peer.name,
+                observed=observed_peer.name,
+                deduplicate=False,
+            )
+            assert not lock_statements()
+
+            # Same content again: the exact-dup prefetch now matches, so the
+            # reinforcement UPDATE must run under the lock.
+            await crud.create_documents(
+                db_session,
+                [self._doc("all new fact", test_session.name)],
+                workspace_name=test_workspace.name,
+                observer=test_peer.name,
+                observed=observed_peer.name,
+                deduplicate=False,
+            )
+            assert len(lock_statements()) == 1
+
+    @pytest.mark.asyncio
+    async def test_external_candidates_resolved_before_lock(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """On the external-vector-store path, every candidate resolution
+        happens before the advisory lock is acquired."""
+        from src.config import settings
+
+        test_workspace, test_peer = sample_data
+        (observed_peer,), test_session = await self._setup(
+            db_session, test_workspace, test_peer
+        )
+        monkeypatch.setattr(settings.VECTOR_STORE, "TYPE", "turbopuffer")
+        monkeypatch.setattr(settings.VECTOR_STORE, "MIGRATED", True)
+
+        events: list[str] = []
+        real_execute = db_session.execute
+
+        async def spying_execute(statement: Any, *args: Any, **kwargs: Any) -> Any:
+            if "pg_advisory_xact_lock" in str(statement):
+                events.append("lock")
+            return await real_execute(statement, *args, **kwargs)
+
+        async def fake_resolve(*_args: Any, **_kwargs: Any) -> list[str]:
+            events.append("resolve")
+            return []
+
+        with (
+            patch.object(db_session, "execute", side_effect=spying_execute),
+            patch(
+                "src.crud.document.query_external_vector_document_ids",
+                side_effect=fake_resolve,
+            ),
+        ):
+            result = await crud.create_documents(
+                db_session,
+                [
+                    self._doc("fact one", test_session.name),
+                    self._doc("fact two", test_session.name),
+                ],
+                workspace_name=test_workspace.name,
+                observer=test_peer.name,
+                observed=observed_peer.name,
+                deduplicate=True,
+            )
+
+        assert len(result.created_documents) == 2
+        assert events == ["resolve", "resolve", "lock"]

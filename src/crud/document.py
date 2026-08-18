@@ -1,3 +1,4 @@
+import asyncio
 import datetime
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -5,9 +6,9 @@ from enum import Enum
 from logging import getLogger
 from typing import Any, cast
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, select, text, update
 from sqlalchemy.engine import CursorResult
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DBAPIError, IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import Select
 from sqlalchemy.sql.functions import func
@@ -208,6 +209,24 @@ def _uses_pgvector() -> bool:
     return (
         settings.VECTOR_STORE.TYPE == "pgvector" or not settings.VECTOR_STORE.MIGRATED
     )
+
+
+# Semantic-dup candidate search parameters, shared by is_rejected_duplicate
+# and the pre-lock candidate resolution in create_documents.
+_SEMANTIC_DUP_MAX_DISTANCE = 0.05
+_SEMANTIC_DUP_TOP_K = 1
+
+
+def _semantic_dup_filters(doc: schemas.DocumentCreate) -> dict[str, Any] | None:
+    """Merge scope for semantic dedup: never across levels, never across
+    sessions for explicit documents. None when the document has no valid
+    merge partner (session-less explicit)."""
+    filters: dict[str, Any] = {"level": doc.level}
+    if doc.level == "explicit":
+        if doc.session_name is None:
+            return None
+        filters["session_name"] = doc.session_name
+    return filters
 
 
 async def query_external_vector_document_ids(
@@ -512,6 +531,32 @@ async def create_documents(
     # Store (document_model, embedding) pairs - IDs aren't available until after commit
     docs_with_embeddings: list[tuple[models.Document, list[float]]] = []
 
+    # Resolve external-vector-store dup candidates up front, before the first
+    # DB statement: the advisory lock's critical section below must contain no
+    # network round trips, and the lazy session has no open transaction yet.
+    # A None entry falls back to in-place resolution in is_rejected_duplicate
+    # (the pgvector path, or a document with no valid merge partner).
+    semantic_candidates: list[list[str] | None] = [None] * len(documents)
+    if deduplicate and not _uses_pgvector():
+
+        async def _resolve_candidates(index: int, doc: schemas.DocumentCreate) -> None:
+            filters = _semantic_dup_filters(doc)
+            if filters is None:
+                return
+            semantic_candidates[index] = await query_external_vector_document_ids(
+                workspace_name=workspace_name,
+                observer=observer,
+                observed=observed,
+                embedding=doc.embedding,
+                top_k=_SEMANTIC_DUP_TOP_K,
+                max_distance=_SEMANTIC_DUP_MAX_DISTANCE,
+                filters=filters,
+            )
+
+        await asyncio.gather(
+            *(_resolve_candidates(i, doc) for i, doc in enumerate(documents))
+        )
+
     # exact-content dedup (independent of `deduplicate`): pre-fetch
     # existing live documents whose normalized content matches anything in this
     # batch, scoped to (workspace, observer, observed). The SQL normalization must
@@ -557,6 +602,24 @@ async def create_documents(
                 existing_doc,
             )
 
+    # Serialize writers per (workspace, observer, observed) collection: two
+    # batches reinforcing the same rows in different orders deadlock otherwise
+    # (DEV-1975), and work-unit keys don't prevent concurrent writers to one
+    # collection. Skipped when the only writes are INSERTs of new rows, which
+    # can't deadlock on document rows. This advisory lock must stay the
+    # OUTERMOST lock taken in this transaction — don't add row-locking reads
+    # earlier in this function. SET LOCAL persists for the transaction, so the
+    # timeout also bounds the FOR KEY SHARE wait at the final INSERT;
+    # lock_timeout raises 55P03, which the queue layer classifies retryable.
+    # hashtextextended needs PG 11+; \x1f because names can contain ':'.
+    if documents and (deduplicate or existing_by_key):
+        lock_key = f"honcho:documents:{workspace_name}\x1f{observer}\x1f{observed}"
+        await db.execute(text("SET LOCAL lock_timeout = '30s'"))
+        await db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+            {"key": lock_key},
+        )
+
     # Tracks dedup keys already accepted from this batch so exact
     # duplicates within a single inference call collapse to one document.
     seen_in_batch: set[tuple[str, str, str | None]] = set()
@@ -565,7 +628,7 @@ async def create_documents(
     exact_dup_in_batch_count = 0
     semantic_dup_rejected_count = 0
     semantic_dup_replaced_count = 0
-    for doc in documents:
+    for index, doc in enumerate(documents):
         try:
             # Session-purity invariant: an explicit document must always carry
             # the session it was derived from. Refuse to write session-less
@@ -601,6 +664,7 @@ async def create_documents(
                 # reinforcement (times_derived > 1, e.g. a future re-ingestion or
                 # collection-merge path). Mirrors the superior-replacement branch
                 # in is_rejected_duplicate.
+                # Row lock held until commit; ordered by the advisory lock above.
                 existing_match.times_derived = func.greatest(
                     models.Document.times_derived + 1,
                     doc.times_derived,
@@ -614,7 +678,12 @@ async def create_documents(
             # as a duplicate OR deletes an existing document that is a duplicate.
             if deduplicate:
                 duplicate_result = await is_rejected_duplicate(
-                    db, doc, workspace_name, observer=observer, observed=observed
+                    db,
+                    doc,
+                    workspace_name,
+                    observer=observer,
+                    observed=observed,
+                    candidate_document_ids=semantic_candidates[index],
                 )
                 if duplicate_result is SemanticRejectionResult.REPLACED_EXISTING:
                     # Existing doc was soft-deleted in favor of this one; the
@@ -670,7 +739,14 @@ async def create_documents(
             if doc.embedding:
                 docs_with_embeddings.append((new_doc, doc.embedding))
 
+        except SQLAlchemyError:
+            # The session/transaction is dead; continuing the loop would only
+            # cascade PendingRollbackErrors and lose the whole batch silently.
+            await db.rollback()
+            raise
         except Exception as e:
+            # Genuinely per-document failures (bad content, metadata, token
+            # overflow) skip the document without poisoning the batch.
             logger.error(
                 f"Error adding new document to {workspace_name}/{doc.session_name}/{observer}/{observed}: {e}"
             )
@@ -772,6 +848,11 @@ async def create_documents(
         raise ValidationException(
             "Failed to create documents due to integrity constraint violation"
         ) from e
+    except DBAPIError:
+        # Leave the session clean for callers that own it (e.g. a deadlock
+        # at the final commit); the queue layer classifies and retries.
+        await db.rollback()
+        raise
 
     return CreateDocumentsResult(
         created_documents=accepted_documents,
@@ -1160,6 +1241,7 @@ async def is_rejected_duplicate(
     *,
     observer: str,
     observed: str,
+    candidate_document_ids: list[str] | None = None,
 ) -> SemanticRejectionResult:
     """
     Check if a document is a duplicate of an existing document.
@@ -1185,27 +1267,41 @@ async def is_rejected_duplicate(
     sessions for explicit-level documents (session-purity invariant: an
     explicit document records what was derived from exactly one session, so
     a near-duplicate from another session must not reinforce or replace it).
+
+    ``candidate_document_ids`` carries pre-resolved external-vector-store
+    candidates (see create_documents), keeping vector-store round trips out
+    of the caller's transaction; the ``deleted_at IS NULL`` filter in
+    ``fetch_documents_by_ids`` re-validates candidates that went stale since
+    resolution. None means resolve in place.
     """
-    filters: dict[str, Any] = {"level": doc.level}
-    if doc.level == "explicit":
-        if doc.session_name is None:
-            # create_documents refuses session-less explicit documents; if one
-            # reaches here anyway it has no valid merge partner.
-            return SemanticRejectionResult.NOT_DUPLICATE
-        filters["session_name"] = doc.session_name
+    filters = _semantic_dup_filters(doc)
+    if filters is None:
+        # create_documents refuses session-less explicit documents; if one
+        # reaches here anyway it has no valid merge partner.
+        return SemanticRejectionResult.NOT_DUPLICATE
 
     # Step 1: Find potential duplicates using cosine similarity
-    similar_docs = await query_documents(
-        db=db,
-        workspace_name=workspace_name,
-        query=doc.content,
-        observer=observer,
-        observed=observed,
-        filters=filters,
-        max_distance=0.05,
-        top_k=1,
-        embedding=doc.embedding,
-    )
+    if candidate_document_ids is not None:
+        similar_docs: Sequence[models.Document] = await fetch_documents_by_ids(
+            db=db,
+            workspace_name=workspace_name,
+            observer=observer,
+            observed=observed,
+            document_ids=candidate_document_ids,
+            filters=filters,
+        )
+    else:
+        similar_docs = await query_documents(
+            db=db,
+            workspace_name=workspace_name,
+            query=doc.content,
+            observer=observer,
+            observed=observed,
+            filters=filters,
+            max_distance=_SEMANTIC_DUP_MAX_DISTANCE,
+            top_k=_SEMANTIC_DUP_TOP_K,
+            embedding=doc.embedding,
+        )
 
     if not similar_docs:
         return SemanticRejectionResult.NOT_DUPLICATE
@@ -1233,6 +1329,8 @@ async def is_rejected_duplicate(
         # another derivation rather than resetting times_derived to 1.
         doc.times_derived = max(doc.times_derived, existing_doc.times_derived + 1)
         # Soft-delete the existing document - reconciliation will clean up vectors and hard-delete
+        # Row lock held until commit; concurrent create_documents writers are
+        # serialized by the advisory lock taken there.
         existing_doc.deleted_at = datetime.datetime.now(datetime.timezone.utc)
         await db.flush()
         return (
@@ -1244,6 +1342,8 @@ async def is_rejected_duplicate(
     # the increment atomic server-side -- concurrent workers reinforcing the same
     # document must not lose updates -- while still honoring an incoming doc that
     # already carries accumulated reinforcement (times_derived > 1).
+    # Row lock held until commit; concurrent create_documents writers are
+    # serialized by the advisory lock taken there.
     existing_doc.times_derived = func.greatest(
         models.Document.times_derived + 1,
         doc.times_derived,
