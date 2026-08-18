@@ -1,0 +1,128 @@
+name: Memory / recall quality
+description: Conclusions, representations, or dialectic answers are wrong, noisy, missing, or low-quality — not a hard crash.
+title: "[Quality] "
+labels: ["quality"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this when Honcho runs without erroring, but **memory formation or recall quality** is off (bad conclusions, missed facts, weak chat answers, polluted representations, etc.).
+
+        For crashes, 5xxs, auth failures, or incorrect API mechanics, use the **Bug report** template instead.
+
+        **Do not paste production user content, full peer representations, or secrets.** Redact or invent a minimal synthetic example.
+
+  - type: dropdown
+    id: deploy_mode
+    attributes:
+      label: Deploy mode
+      options:
+        - Managed (api.honcho.dev / app.honcho.dev)
+        - Self-hosted
+        - Unsure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Which surface looks wrong?
+      description: Pick the closest match; add detail below if several apply.
+      options:
+        - Conclusions (extracted memory)
+        - Dialectic / chat answers
+        - Peer representation / peer card
+        - Session context / summaries
+        - Search (messages or conclusions)
+        - Dreamer consolidation / reasoning
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: server_version
+    attributes:
+      label: Honcho server version
+      description: Image tag, revision, or release.
+      placeholder: e.g. v2.4.1
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What is wrong with the quality?
+      description: Describe the failure mode (noise, omission, contradiction, staleness, over/under-generalization, etc.).
+      placeholder: After ingesting messages about X, Honcho concludes Y / chat answers Z…
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What should have happened instead?
+      description: Ideal conclusions, answer, or representation behavior.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal scenario
+      description: >
+        Smallest synthetic message sequence or setup that triggers the issue.
+        Prefer invented names/facts over real user data. Include observer/observed
+        peer setup if relevant (self vs cross-peer).
+      placeholder: |
+        1. Peers: alice (user), bot (agent); session S
+        2. Messages ingested: …
+        3. Query / conclusion listing shows: …
+      render: markdown
+    validations:
+      required: true
+
+  - type: dropdown
+    id: reasoning_level
+    attributes:
+      label: Dialectic reasoning level (if chat-related)
+      options:
+        - n/a — not chat-related
+        - minimal
+        - low
+        - medium
+        - high
+        - max
+        - Unsure / default
+    validations:
+      required: true
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Relevant config
+      description: >
+        Custom instructions, provider/model, deriver/dream settings, or workspace/peer
+        config that affects reasoning. Redact secrets.
+      placeholder: |
+        Provider/model: …
+        Custom instructions: (summary or redacted)
+        Other: …
+    validations:
+      required: false
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Redacted conclusion text, chat excerpts, or counts that show the failure. No production PII.
+      render: markdown
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Frequency, scale (message/conclusion counts), related issues, workarounds.
+    validations:
+      required: false
