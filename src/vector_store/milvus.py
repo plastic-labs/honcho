@@ -429,7 +429,7 @@ class MilvusVectorStore(VectorStore):
     def _output_fields(self, include_attributes: bool | list[str]) -> list[str] | None:
         """Translate Honcho projection settings to Milvus output fields."""
         if include_attributes is True:
-            return None
+            return [METADATA_FIELD]
         if include_attributes is False:
             return [ID_FIELD]
         return [field for field in include_attributes if field != ID_FIELD]

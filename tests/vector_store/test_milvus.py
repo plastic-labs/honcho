@@ -70,7 +70,9 @@ def test_filter_expression_rejects_invalid_keys() -> None:
 def test_projection_settings_map_to_milvus_output_fields() -> None:
     store = _helper_store()
 
-    assert store._output_fields(True) is None  # pyright: ignore[reportPrivateUsage]
+    assert store._output_fields(True) == [  # pyright: ignore[reportPrivateUsage]
+        "metadata"
+    ]
     assert store._output_fields(False) == ["id"]  # pyright: ignore[reportPrivateUsage]
     assert store._output_fields(["id", "message_id"]) == [  # pyright: ignore[reportPrivateUsage]
         "message_id"
