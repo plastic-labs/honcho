@@ -334,7 +334,9 @@ class TestCreateObservations:
         """If batch embedding fails but individual embeds succeed, all observations are created."""
         workspace, peer1, peer2, session, _, _ = tool_test_data
 
-        async def fail_batch_embed(_texts: list[str]) -> list[list[float]]:
+        async def fail_batch_embed(
+            _texts: list[str], **_kwargs: object
+        ) -> list[list[float]]:
             raise RuntimeError("embedding provider timeout")
 
         async def succeed_single_embed(_content: str) -> list[float]:
@@ -393,7 +395,9 @@ class TestCreateObservations:
         """If batch embedding fails and some individual embeds also fail, only successful ones are created."""
         workspace, peer1, peer2, session, _, _ = tool_test_data
 
-        async def fail_batch_embed(_texts: list[str]) -> list[list[float]]:
+        async def fail_batch_embed(
+            _texts: list[str], **_kwargs: object
+        ) -> list[list[float]]:
             raise RuntimeError("embedding provider timeout")
 
         async def embed_per_observation(content: str) -> list[float]:
@@ -458,7 +462,9 @@ class TestCreateObservations:
         workspace, peer1, peer2, session, _, _ = tool_test_data
         created_documents: list[Any] = []
 
-        async def fake_batch_embed(texts: list[str]) -> list[list[float]]:
+        async def fake_batch_embed(
+            texts: list[str], **_kwargs: object
+        ) -> list[list[float]]:
             assert texts == ["trimmed observation"]
             return [[0.4, 0.5, 0.6]]
 
@@ -503,6 +509,60 @@ class TestCreateObservations:
         assert len(result.failed) == 0
         assert len(created_documents) == 1
         assert created_documents[0].content == "trimmed observation"
+
+    async def test_create_observations_embeds_with_truncate_on_oversize(
+        self,
+        tool_test_data: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """Storage path must opt into truncation so one long obs cannot drop the batch."""
+        workspace, peer1, peer2, session, _, _ = tool_test_data
+        captured: dict[str, object] = {}
+
+        async def fake_batch_embed(
+            texts: list[str], *, on_oversize: str = "raise", **_kwargs: object
+        ) -> list[list[float]]:
+            captured["texts"] = texts
+            captured["on_oversize"] = on_oversize
+            return [[0.1] for _ in texts]
+
+        async def fake_create_documents(
+            _db: AsyncSession,
+            documents: list[Any],
+            workspace_name: str,
+            *,
+            observer: str,
+            observed: str,
+            deduplicate: bool = False,
+        ) -> crud.CreateDocumentsResult:
+            _ = (workspace_name, observer, observed, deduplicate)
+            return crud.CreateDocumentsResult(created_documents=documents)
+
+        monkeypatch.setattr(
+            "src.utils.agent_tools.embedding_client.simple_batch_embed",
+            fake_batch_embed,
+        )
+        monkeypatch.setattr(
+            "src.utils.agent_tools.crud.create_documents", fake_create_documents
+        )
+
+        result = await create_observations(
+            observations=[
+                schemas.ObservationInput(content="short fact", level="explicit"),
+                schemas.ObservationInput(content="long fact", level="explicit"),
+            ],
+            observer=peer1.name,
+            observed=peer2.name,
+            session_name=session.name,
+            workspace_name=workspace.name,
+            message_ids=[],
+            message_created_at=str(datetime.now(timezone.utc)),
+        )
+
+        assert isinstance(result, ObservationsCreatedResult)
+        assert result.created_count == 2
+        assert captured["on_oversize"] == "truncate"
+        assert captured["texts"] == ["short fact", "long fact"]
 
     async def test_create_observations_skips_all_blank_content(
         self,

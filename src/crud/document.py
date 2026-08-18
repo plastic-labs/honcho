@@ -984,7 +984,9 @@ async def create_observations(
     # Generate embeddings in batch
     contents = [obs.content for obs in observations]
     try:
-        embeddings = await embedding_client.simple_batch_embed(contents)
+        embeddings = await embedding_client.simple_batch_embed(
+            contents, on_oversize="truncate"
+        )
     except ValueError as e:
         raise ValidationException(str(e)) from e
 

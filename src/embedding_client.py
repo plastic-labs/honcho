@@ -318,7 +318,10 @@ class _EmbeddingClient:
         )
 
     def _truncate_to_token_limit(self, text: str) -> tuple[str, int]:
-        """Return a prefix of `text` whose re-encoded token count fits the cap."""
+        """Return a prefix of `text` whose re-encoded token count fits the cap.
+
+        Decode/re-encode after slicing: BPE boundaries can re-expand past the cap.
+        """
         token_ids = self.encoding.encode(text)
         keep = self.max_embedding_tokens
         while len(token_ids) > self.max_embedding_tokens:
