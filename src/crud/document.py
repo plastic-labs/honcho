@@ -544,7 +544,7 @@ async def create_documents(
 
         async def _resolve_candidates(index: int, doc: schemas.DocumentCreate) -> None:
             filters = _semantic_dup_filters(doc)
-            if filters is None:
+            if filters is None or not doc.embedding:
                 return
             semantic_candidates[index] = await query_external_vector_document_ids(
                 workspace_name=workspace_name,
@@ -557,7 +557,8 @@ async def create_documents(
             )
 
         await asyncio.gather(
-            *(_resolve_candidates(i, doc) for i, doc in enumerate(documents))
+            *(_resolve_candidates(i, doc) for i, doc in enumerate(documents)),
+            return_exceptions=True,
         )
 
     # exact-content dedup (independent of `deduplicate`): pre-fetch
@@ -674,6 +675,7 @@ async def create_documents(
                         existing_dup.id, existing_dup.times_derived
                     )
                     doc.times_derived = max(doc.times_derived, current_td + 1)
+                    pending_times_derived[existing_dup.id] = doc.times_derived
                     row_ops.append(_DocumentRowOp("replace", existing_dup.id))
                     semantic_dup_replaced_count += 1
                 elif (
@@ -1312,7 +1314,7 @@ async def _semantic_dup_decision(
             filters=filters,
             max_distance=_SEMANTIC_DUP_MAX_DISTANCE,
             top_k=_SEMANTIC_DUP_TOP_K,
-            embedding=doc.embedding,
+            embedding=doc.embedding or None,
         )
 
     if not similar_docs:

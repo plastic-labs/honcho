@@ -1499,7 +1499,7 @@ class TestCreateDocumentsErrorHandling:
         )
 
     @pytest.mark.asyncio
-    async def test_db_error_in_loop_aborts_batch(
+    async def test_db_error_on_row_update_flush_aborts_batch(
         self,
         db_session: AsyncSession,
         sample_data: tuple[models.Workspace, models.Peer],
@@ -1557,6 +1557,60 @@ class TestCreateDocumentsErrorHandling:
         )
         assert [d.content for d in docs] == ["existing fact"]
         assert docs[0].times_derived == 1
+
+    @pytest.mark.asyncio
+    async def test_db_error_in_loop_aborts_batch(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """A DB error during per-document classification raises and commits nothing."""
+        test_workspace, test_peer = sample_data
+        test_peer2, test_session = await self._setup(
+            db_session, test_workspace, test_peer
+        )
+        workspace_name = test_workspace.name
+        observer = test_peer.name
+        observed = test_peer2.name
+        session_name = test_session.name
+
+        class FakePGError(Exception):
+            sqlstate: str = "40P01"
+
+        deadlock = OperationalError("SELECT documents", {}, FakePGError())
+        with (
+            patch(
+                "src.crud.document._semantic_dup_decision",
+                AsyncMock(side_effect=deadlock),
+            ),
+            pytest.raises(OperationalError),
+        ):
+            await crud.create_documents(
+                db_session,
+                [
+                    self._doc("a brand new fact", session_name),
+                    self._doc("another new fact", session_name),
+                ],
+                workspace_name=workspace_name,
+                observer=observer,
+                observed=observed,
+                deduplicate=True,
+            )
+
+        docs = (
+            (
+                await db_session.execute(
+                    select(models.Document).where(
+                        models.Document.workspace_name == workspace_name,
+                        models.Document.observer == observer,
+                        models.Document.observed == observed,
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert docs == []
 
     @pytest.mark.asyncio
     async def test_per_document_error_still_skips_only_that_document(
@@ -1670,6 +1724,10 @@ class TestExternalCandidateHoist:
             patch(
                 "src.crud.document.query_external_vector_document_ids",
                 side_effect=fake_resolve,
+            ),
+            patch(
+                "src.crud.document.get_external_vector_store",
+                return_value=None,
             ),
         ):
             result = await crud.create_documents(
