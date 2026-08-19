@@ -541,6 +541,62 @@ class TestCreateObservations:
         batch_embed.assert_not_awaited()
         create_documents.assert_not_awaited()
 
+    @pytest.mark.parametrize("deduplicate_setting", [True, False])
+    async def test_create_observations_honors_deduplicate_setting(
+        self,
+        tool_test_data: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        deduplicate_setting: bool,
+    ):
+        """create_observations forwards settings.DERIVER.DEDUPLICATE to create_documents.
+
+        Guards against reintroducing a hardcoded deduplicate=True, which made
+        DERIVER_DEDUPLICATE=false unable to disable dedup on this path (#989).
+        """
+        workspace, peer1, peer2, session, _, _ = tool_test_data
+        monkeypatch.setattr(settings.DERIVER, "DEDUPLICATE", deduplicate_setting)
+
+        captured: dict[str, Any] = {}
+
+        async def fake_batch_embed(texts: list[str]) -> list[list[float]]:
+            return [[0.1, 0.2, 0.3] for _ in texts]
+
+        async def fake_create_documents(
+            _db: AsyncSession,
+            documents: list[Any],
+            workspace_name: str,
+            *,
+            observer: str,
+            observed: str,
+            deduplicate: bool = False,
+        ) -> crud.CreateDocumentsResult:
+            _ = (workspace_name, observer, observed)
+            captured["deduplicate"] = deduplicate
+            return crud.CreateDocumentsResult(created_documents=documents)
+
+        monkeypatch.setattr(
+            "src.utils.agent_tools.embedding_client.simple_batch_embed",
+            fake_batch_embed,
+        )
+        monkeypatch.setattr(
+            "src.utils.agent_tools.crud.create_documents", fake_create_documents
+        )
+
+        result = await create_observations(
+            observations=[
+                schemas.ObservationInput(content="An observation", level="explicit"),
+            ],
+            observer=peer1.name,
+            observed=peer2.name,
+            session_name=session.name,
+            workspace_name=workspace.name,
+            message_ids=[],
+            message_created_at=str(datetime.now(timezone.utc)),
+        )
+
+        assert isinstance(result, ObservationsCreatedResult)
+        assert captured["deduplicate"] is deduplicate_setting
+
 
 class TestNormalizeObservationId:
     """Unit tests for _normalize_observation_id."""

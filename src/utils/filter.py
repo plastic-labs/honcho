@@ -279,16 +279,50 @@ def extract_session_allowlist(
             'filters.session_id must be a session id, a list of session ids, or {"in": [...]}'
         )
 
+    return normalize_session_allowlist(
+        entries, field="filters.session_id", must_include=must_include
+    )
+
+
+def normalize_session_allowlist(
+    entries: Sequence[Any],
+    *,
+    field: str,
+    must_include: str | None = None,
+) -> list[str]:
+    """Validate and de-duplicate a session allowlist.
+
+    Shared by every route-level entry point that accepts one — the ``filters``
+    body on the recall endpoints and the ``sessions`` query parameter on session
+    context — so the cap, the id charset, and the ``must_include`` rule cannot
+    drift apart between them. Only the parameter *name* in error messages
+    differs, which is what ``field`` supplies.
+
+    Args:
+        entries: Raw allowlist entries as the caller supplied them.
+        field: Caller-facing parameter name, used in error messages.
+        must_include: A session id that must appear in the allowlist — used by
+            routes that also carry a session of their own, so the two can't
+            contradict each other.
+
+    Returns:
+        The allowlist, de-duplicated, in first-seen order. An empty input yields
+        an empty list so downstream consumers fail closed.
+
+    Raises:
+        FilterError: On an over-cap list, a malformed session id, or a
+            ``must_include`` session missing from the allowlist.
+    """
     if len(entries) > MAX_SESSION_ALLOWLIST_ENTRIES:
         raise FilterError(
-            f"filters.session_id supports at most {MAX_SESSION_ALLOWLIST_ENTRIES} sessions per request"
+            f"{field} supports at most {MAX_SESSION_ALLOWLIST_ENTRIES} sessions per request"
         )
 
     allowlist: list[str] = []
     seen: set[str] = set()
     for entry in entries:
         if not isinstance(entry, str) or not entry:
-            raise FilterError("filters.session_id entries must be non-empty strings")
+            raise FilterError(f"{field} entries must be non-empty strings")
         # Only names a session could actually have. The allowlist reaches
         # queries three ways — direct `IN`, the filter DSL, and a Python
         # membership test — and they don't agree on a value like "*", which the
@@ -298,14 +332,14 @@ def extract_session_allowlist(
         # {"in": [...]}) which never included wildcards.
         if not re.fullmatch(RESOURCE_NAME_PATTERN, entry):
             raise FilterError(
-                f"Invalid session id in filters.session_id: {entry!r}. Session ids match {RESOURCE_NAME_PATTERN}"
+                f"Invalid session id in {field}: {entry!r}. Session ids match {RESOURCE_NAME_PATTERN}"
             )
         if entry not in seen:
             seen.add(entry)
             allowlist.append(entry)
 
     if must_include is not None and must_include not in seen:
-        raise FilterError("session_id must be included in filters.session_id")
+        raise FilterError(f"session_id must be included in {field}")
 
     return allowlist
 

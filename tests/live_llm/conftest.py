@@ -66,14 +66,23 @@ def require_embedding_key(spec: LiveEmbeddingSpec) -> str:
     return key
 
 
+_EMBEDDING_CONFIG_OVERRIDE_KEYS = frozenset({"timeout", "max_batch_size"})
+
+
 def make_embedding_client(
     spec: LiveEmbeddingSpec, **overrides: Any
 ) -> _EmbeddingClient:
     """Build a live embedding client for one matrix entry.
 
     Bypasses the `EmbeddingClient` singleton so each spec gets its own client
-    without mutating global settings.
+    without mutating global settings. `timeout` and `max_batch_size` land on
+    `EmbeddingModelConfig`; remaining kwargs go to `_EmbeddingClient`.
     """
+    config_overrides = {
+        key: overrides.pop(key)
+        for key in _EMBEDDING_CONFIG_OVERRIDE_KEYS
+        if key in overrides
+    }
     kwargs: dict[str, Any] = {
         "vector_dimensions": spec.dimensions,
         "max_input_tokens": 2048,
@@ -90,6 +99,7 @@ def make_embedding_client(
             model=spec.model,
             api_key=require_embedding_key(spec),
             base_url=spec.base_url,
+            **config_overrides,
         ),
         **kwargs,
     )
