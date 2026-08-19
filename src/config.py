@@ -13,6 +13,7 @@ from pydantic_settings import (
     BaseSettings,
     DotEnvSettingsSource,
     EnvSettingsSource,
+    NoDecode,
     PydanticBaseSettingsSource,
     SettingsConfigDict,
 )
@@ -29,6 +30,13 @@ EmbeddingTransport = Literal["openai", "gemini"]
 EmbeddingDimensionsMode = Literal["auto", "always", "never"]
 EmbeddingEncodingFormat = Literal["float", "base64"]
 EmbeddingEncodingFormatMode = Literal["auto", "float", "base64"]
+RepresentationSection = Literal["explicit", "deductive", "inductive", "contradiction"]
+REPRESENTATION_SECTIONS: tuple[RepresentationSection, ...] = (
+    "explicit",
+    "deductive",
+    "inductive",
+    "contradiction",
+)
 
 # OpenAI-compatible models that reject the `dimensions=` request parameter.
 _EMBEDDING_KNOWN_REJECTING_MODELS: frozenset[str] = frozenset(
@@ -1495,6 +1503,9 @@ class AppSettings(HonchoSettings):
     GET_CONTEXT_MAX_TOKENS: Annotated[int, Field(default=100_000, gt=0, le=250_000)] = (
         100_000
     )
+    REPRESENTATION_INJECTION_ORDER: Annotated[
+        tuple[RepresentationSection, ...], NoDecode
+    ] = REPRESENTATION_SECTIONS
 
     MAX_MESSAGE_SIZE: Annotated[int, Field(default=25_000, gt=0)] = 25_000
     EMBED_MESSAGES: bool = True
@@ -1568,6 +1579,30 @@ class AppSettings(HonchoSettings):
         if log_format not in ["compact", "rich"]:
             raise ValueError(f"Invalid performance log format: {v}")
         return log_format
+
+    @field_validator("REPRESENTATION_INJECTION_ORDER", mode="before")
+    @classmethod
+    def validate_representation_injection_order(
+        cls, value: Any
+    ) -> tuple[RepresentationSection, ...]:
+        sections: tuple[Any, ...]
+        if isinstance(value, str):
+            sections = tuple(section.strip() for section in value.split(","))
+        elif isinstance(value, list | tuple):
+            sections = tuple(cast(list[Any] | tuple[Any, ...], value))
+        else:
+            sections = ()
+
+        if len(sections) != len(REPRESENTATION_SECTIONS) or set(sections) != set(
+            REPRESENTATION_SECTIONS
+        ):
+            supported = ",".join(REPRESENTATION_SECTIONS)
+            raise ValueError(
+                "REPRESENTATION_INJECTION_ORDER must contain each supported "
+                + f"section exactly once: {supported}"
+            )
+
+        return cast(tuple[RepresentationSection, ...], sections)
 
     @model_validator(mode="after")
     def propagate_namespace(self) -> "AppSettings":
