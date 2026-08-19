@@ -1,7 +1,9 @@
 import logging
+import math
 import os
 from pathlib import Path
 from typing import Annotated, Any, ClassVar, Literal, cast
+from urllib.parse import urlparse
 
 import tomllib
 from dotenv import load_dotenv
@@ -25,11 +27,16 @@ logger = logging.getLogger(__name__)
 ModelTransport = Literal["anthropic", "openai", "gemini"]
 EmbeddingTransport = Literal["openai", "gemini"]
 EmbeddingDimensionsMode = Literal["auto", "always", "never"]
+EmbeddingEncodingFormat = Literal["float", "base64"]
+EmbeddingEncodingFormatMode = Literal["auto", "float", "base64"]
 
 # OpenAI-compatible models that reject the `dimensions=` request parameter.
 _EMBEDDING_KNOWN_REJECTING_MODELS: frozenset[str] = frozenset(
     {"text-embedding-ada-002"}
 )
+
+# Hosts known to serve base64 embeddings, which are ~3.6x smaller on the wire.
+_EMBEDDING_BASE64_CAPABLE_HOSTS: frozenset[str] = frozenset({"api.openai.com"})
 
 
 def _default_embedding_model_for_transport(transport: EmbeddingTransport) -> str:
@@ -66,6 +73,37 @@ ThinkingEffortLevel = Literal[
 StructuredOutputMode = Literal["json_schema", "json_object"]
 
 
+PROVIDER_TIMEOUT_ERROR_TEXT = (
+    "provider_params.timeout must be a positive number of seconds"
+)
+
+
+def coerce_provider_timeout(value: Any) -> float:
+    """Coerce a `provider_params.timeout` value to positive, finite seconds.
+
+    Canonical implementation shared by config-load validation (here) and
+    per-request validation (`src.llm.request_builder.request_timeout_from_extra_params`,
+    which translates the ValueError into a ValidationException). Lives in
+    config.py because src.exceptions imports src.config, so config validators
+    cannot raise Honcho exception types.
+    """
+    if isinstance(value, bool):
+        raise ValueError(PROVIDER_TIMEOUT_ERROR_TEXT)
+    if isinstance(value, int | float):
+        timeout = float(value)
+    elif isinstance(value, str):
+        try:
+            timeout = float(value.strip())
+        except ValueError as exc:
+            raise ValueError(PROVIDER_TIMEOUT_ERROR_TEXT) from exc
+    else:
+        raise ValueError(PROVIDER_TIMEOUT_ERROR_TEXT)
+
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError(PROVIDER_TIMEOUT_ERROR_TEXT)
+    return timeout
+
+
 class ModelOverrideSettings(BaseModel):
     """Advanced module-level transport overrides."""
 
@@ -90,6 +128,14 @@ class ModelOverrideSettings(BaseModel):
             "supplying an `extra_body.thinking` for Anthropic-via-proxy)."
         ),
     )
+
+    @field_validator("provider_params")
+    @classmethod
+    def _validate_provider_timeout(cls, v: dict[str, Any]) -> dict[str, Any]:
+        """Reject bad `timeout` values at config load; normalize good ones to float."""
+        if "timeout" not in v:
+            return v
+        return {**v, "timeout": coerce_provider_timeout(v["timeout"])}
 
 
 class PromptCachePolicy(BaseModel):
@@ -346,6 +392,17 @@ class ConfiguredEmbeddingModelSettings(BaseModel):
     transport: EmbeddingTransport = "openai"
     overrides: ModelOverrideSettings = Field(default_factory=ModelOverrideSettings)
     dimensions_mode: EmbeddingDimensionsMode = "auto"
+    encoding_format_mode: EmbeddingEncodingFormatMode = "auto"
+    max_batch_size: Annotated[int, Field(gt=0)] | None = None
+    # Client HTTP timeout in seconds. OpenAI receives seconds; Gemini converts to ms.
+    timeout: float | None = None
+
+    @field_validator("timeout", mode="before")
+    @classmethod
+    def _validate_timeout(cls, v: Any) -> float | None:
+        if v is None:
+            return None
+        return coerce_provider_timeout(v)
 
     @model_validator(mode="before")
     @classmethod
@@ -382,6 +439,16 @@ class EmbeddingModelConfig(BaseModel):
     transport: EmbeddingTransport = "openai"
     api_key: str | None = None
     base_url: str | None = None
+    max_batch_size: Annotated[int, Field(gt=0)] | None = None
+    # Client HTTP timeout in seconds. OpenAI receives seconds; Gemini converts to ms.
+    timeout: float | None = None
+
+    @field_validator("timeout", mode="before")
+    @classmethod
+    def _validate_timeout(cls, v: Any) -> float | None:
+        if v is None:
+            return None
+        return coerce_provider_timeout(v)
 
     @model_validator(mode="before")
     @classmethod
@@ -506,6 +573,8 @@ def resolve_embedding_model_config(
         transport=configured.transport,
         api_key=api_key,
         base_url=configured.overrides.base_url,
+        max_batch_size=configured.max_batch_size,
+        timeout=configured.timeout,
     )
 
 
@@ -786,6 +855,22 @@ class EmbeddingSettings(HonchoSettings):
         if self.MODEL_CONFIG.model in _EMBEDDING_KNOWN_REJECTING_MODELS:
             return False
         return "VECTOR_DIMENSIONS" in self.model_fields_set
+
+    def resolve_encoding_format(self) -> EmbeddingEncodingFormat:
+        """Pick the ``encoding_format`` for OpenAI embedding calls.
+
+        ``auto`` keeps the compact base64 wire format on hosts known to support
+        it and falls back to float elsewhere, since OpenAI-compatible providers
+        may answer a base64 request with an error or empty data.
+        """
+        mode = self.MODEL_CONFIG.encoding_format_mode
+        if mode != "auto":
+            return mode
+        base_url = self.MODEL_CONFIG.overrides.base_url
+        if not base_url:
+            return "base64"
+        host = urlparse(base_url).hostname
+        return "base64" if host in _EMBEDDING_BASE64_CAPABLE_HOSTS else "float"
 
 
 class DeriverSettings(HonchoSettings):

@@ -4,15 +4,12 @@ import time
 import uuid
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING
 
 import sentry_sdk
 from fastapi import FastAPI, Request, Response
-from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi_pagination import add_pagination
-from pydantic import ValidationError
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
@@ -27,6 +24,7 @@ from src.routers import (
     keys,
     messages,
     peers,
+    scopes,
     sessions,
     webhooks,
     workspaces,
@@ -41,9 +39,6 @@ from src.telemetry import (
 )
 from src.telemetry.logging import get_route_template
 from src.telemetry.sentry import initialize_sentry
-
-if TYPE_CHECKING:
-    from sentry_sdk._types import Event, Hint
 
 
 def get_log_level() -> int:
@@ -88,30 +83,10 @@ class MetricsAccessFilter(logging.Filter):
 logging.getLogger("uvicorn.access").addFilter(MetricsAccessFilter())
 
 
-def before_send(event: "Event", hint: "Hint | None") -> "Event | None":
-    """Filter out events raised from known non-actionable exceptions before Sentry sees them."""
-    if not hint:
-        return event
-
-    exc_info = hint.get("exc_info")
-    if not exc_info:
-        return event
-
-    _, exc_value, _ = exc_info
-    if isinstance(exc_value, HonchoException):
-        return None
-
-    # Filters out ValidationErrors and RequestValidationErrors (typically coming from Pydantic)
-    if isinstance(exc_value, ValidationError | RequestValidationError):
-        logger.info(f"Filtering out validation error from Sentry: {exc_value}")
-        return None
-
-    return event
-
-
 # Sentry Setup
 SENTRY_ENABLED = settings.SENTRY.ENABLED
 if SENTRY_ENABLED:
+    # before_send defaults to sentry.default_before_send (shared with the deriver).
     initialize_sentry(
         integrations=[
             StarletteIntegration(
@@ -123,7 +98,6 @@ if SENTRY_ENABLED:
             # Explicit so DB-query spans are not reliant on auto-enabling.
             SqlalchemyIntegration(),
         ],
-        before_send=before_send,
     )
 
 
@@ -198,6 +172,7 @@ add_pagination(app)
 app.include_router(workspaces.router, prefix="/v3")
 app.include_router(peers.router, prefix="/v3")
 app.include_router(sessions.router, prefix="/v3")
+app.include_router(scopes.router, prefix="/v3")
 app.include_router(messages.router, prefix="/v3")
 app.include_router(conclusions.router, prefix="/v3")
 app.include_router(keys.router, prefix="/v3")

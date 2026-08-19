@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from typing import Any, cast
+from urllib.parse import urlparse, urlunparse
 
 import sentry_sdk
 from cashews import cache
@@ -20,8 +21,97 @@ from src.config import settings
 
 logger = logging.getLogger(__name__)
 
-
 _cache_lock = asyncio.Lock()
+
+
+# Query parameters that carry secrets when configured via URL:
+# redis-py accepts ``?password=`` (all querystring options become client
+# kwargs) and cashews accepts ``?secret=`` (HMAC key for value signing).
+_SENSITIVE_QUERY_PARAMS = frozenset({"password", "secret"})
+
+
+def _mask_sensitive_query(query: str) -> str:
+    """Mask values of secret-bearing query parameters.
+
+    Operates on the raw query string (no decode/re-encode round trip)
+    so non-secret parameters are preserved byte-for-byte.
+
+    Args:
+        query: The raw query string from a parsed URL.
+
+    Returns:
+        The query string with sensitive values replaced by ``***``, or
+        the original string if no sensitive parameter is present.
+    """
+    if not query:
+        return query
+    parts: list[str] = []
+    changed = False
+    for part in query.split("&"):
+        name, sep, _value = part.partition("=")
+        if sep and name.lower() in _SENSITIVE_QUERY_PARAMS:
+            parts.append(f"{name}=***")
+            changed = True
+        else:
+            parts.append(part)
+    return "&".join(parts) if changed else query
+
+
+def _redact_cache_url(url: str) -> str:
+    """Mask credentials in a Redis connection URL before logging.
+
+    Given ``redis://:password@host:port/db`` returns
+    ``redis://:***@host:port/db``; secret-bearing query parameters
+    (``?password=``, ``?secret=``) are masked as well.  A URL carrying
+    no credentials is returned unchanged.  This function never raises
+    and never returns a credential: an invalid port is omitted from
+    the output, and a URL that cannot be parsed at all is replaced by
+    a generic placeholder rather than echoed back, so that logging
+    inside ``except`` blocks can neither crash startup nor leak the
+    secrets this helper exists to hide.
+
+    Args:
+        url: The Redis connection URL to redact.
+
+    Returns:
+        The URL with its credentials masked, the original URL if it
+        carries none, or ``"<redacted-unparseable-url>"`` if parsing
+        fails entirely.
+    """
+    try:
+        parsed = urlparse(url)
+        query = _mask_sensitive_query(parsed.query)
+        # .password only splits netloc and never raises, unlike .port
+        if parsed.password is None and query == parsed.query:
+            # A string with an "@" but no parsed authority (e.g. a URL
+            # missing its scheme, ":pass@host:6379/0") may still carry
+            # userinfo that urlparse could not see — never echo it.
+            if "@" in url and not parsed.netloc:
+                return "<redacted-unparseable-url>"
+            return url
+        netloc = parsed.netloc
+        if parsed.password is not None:
+            userinfo = parsed.username or ""
+            hostname = parsed.hostname or ""
+            # Preserve IPv6 brackets (urlparse strips them from .hostname)
+            if hostname and ":" in hostname and not hostname.startswith("["):
+                hostname = f"[{hostname}]"
+            netloc = f"{userinfo}:***@{hostname}"
+            try:
+                port = parsed.port
+            except ValueError:
+                # Invalid or out-of-range port: omit it rather than let
+                # the outer fallback echo the raw URL (and its password)
+                # back.
+                port = None
+            if port is not None:
+                netloc += f":{port}"
+        parsed = parsed._replace(netloc=netloc, query=query)
+        return urlunparse(parsed)
+    except (ValueError, TypeError):
+        # Unparseable URL: never return the raw input — it may contain
+        # the very password this helper exists to hide.
+        return "<redacted-unparseable-url>"
 
 
 def is_cache_enabled() -> bool:
@@ -59,7 +149,7 @@ async def init_cache() -> None:
         except Exception as setup_err:
             logger.warning(
                 "Cache setup failed for %s: %s. Falling back to in-memory cache",
-                settings.CACHE.URL,
+                _redact_cache_url(settings.CACHE.URL),
                 setup_err,
             )
             if settings.SENTRY.ENABLED:
@@ -87,7 +177,10 @@ async def init_cache() -> None:
                 with attempt:
                     async with asyncio.timeout(2):
                         await cache.ping()
-                        logger.info("Connected to cache at %s", settings.CACHE.URL)
+                        logger.info(
+                            "Connected to cache at %s",
+                            _redact_cache_url(settings.CACHE.URL),
+                        )
         except (
             redis_exc.TimeoutError,
             redis_exc.ConnectionError,
@@ -96,7 +189,7 @@ async def init_cache() -> None:
         ) as e:
             logger.warning(
                 "Failed to connect to cache at %s: %s. Falling back to in-memory cache",
-                settings.CACHE.URL,
+                _redact_cache_url(settings.CACHE.URL),
                 e,
             )
             if settings.SENTRY.ENABLED:
@@ -107,7 +200,7 @@ async def init_cache() -> None:
         except Exception as e:
             logger.warning(
                 "Unexpected cache error at %s: %s. Falling back to in-memory cache",
-                settings.CACHE.URL,
+                _redact_cache_url(settings.CACHE.URL),
                 e,
             )
             if settings.SENTRY.ENABLED:

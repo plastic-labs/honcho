@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+import os
 from collections.abc import Iterator
 from typing import Any
 
 import pytest
 from pydantic import BaseModel
 
-from src.config import ModelConfig, settings
+from src.config import EmbeddingModelConfig, ModelConfig, settings
+from src.embedding_client import _EmbeddingClient  # pyright: ignore[reportPrivateUsage]
 from src.llm import get_backend
 from src.llm.caching import gemini_cache_store
 
+from .embedding_matrix import LiveEmbeddingSpec, selected_embedding_summary_lines
 from .model_matrix import LiveModelSpec, selected_model_summary_lines
 
 
@@ -22,9 +25,12 @@ class StructuredLiveResponse(BaseModel):
 def pytest_report_header(config: pytest.Config) -> list[str] | None:
     if not config.getoption("--live-llm"):
         return None
-    return ["live llm model matrix:"] + [
-        f"  {line}" for line in selected_model_summary_lines()
-    ]
+    return (
+        ["live llm model matrix:"]
+        + [f"  {line}" for line in selected_model_summary_lines()]
+        + ["live embedding model matrix:"]
+        + [f"  {line}" for line in selected_embedding_summary_lines()]
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -43,6 +49,67 @@ def require_provider_key(model_spec: LiveModelSpec) -> None:
     }[model_spec.provider]
     if not key_present:
         pytest.skip(f"Missing API key for live provider {model_spec.provider}")
+
+
+def require_embedding_key(spec: LiveEmbeddingSpec) -> str:
+    if spec.api_key_env:
+        key = os.getenv(spec.api_key_env)
+        if not key:
+            pytest.skip(f"Missing {spec.api_key_env} for live embedding {spec.id}")
+        return key
+    key = {
+        "openai": settings.LLM.OPENAI_API_KEY,
+        "gemini": settings.LLM.GEMINI_API_KEY,
+    }[spec.transport]
+    if not key:
+        pytest.skip(f"Missing API key for live embedding transport {spec.transport}")
+    return key
+
+
+_EMBEDDING_CONFIG_OVERRIDE_KEYS = frozenset({"timeout", "max_batch_size"})
+
+
+def make_embedding_client(
+    spec: LiveEmbeddingSpec, **overrides: Any
+) -> _EmbeddingClient:
+    """Build a live embedding client for one matrix entry.
+
+    Bypasses the `EmbeddingClient` singleton so each spec gets its own client
+    without mutating global settings. `timeout` and `max_batch_size` land on
+    `EmbeddingModelConfig`; remaining kwargs go to `_EmbeddingClient`.
+    """
+    config_overrides = {
+        key: overrides.pop(key)
+        for key in _EMBEDDING_CONFIG_OVERRIDE_KEYS
+        if key in overrides
+    }
+    kwargs: dict[str, Any] = {
+        "vector_dimensions": spec.dimensions,
+        "max_input_tokens": 2048,
+        "max_tokens_per_request": 300_000,
+        "send_dimensions": spec.send_dimensions,
+        # Pinned rather than resolved from settings: the matrix exists to exercise
+        # the float path that `auto` only picks for third-party providers.
+        "encoding_format": "float",
+    }
+    kwargs.update(overrides)
+    return _EmbeddingClient(
+        EmbeddingModelConfig(
+            transport=spec.transport,
+            model=spec.model,
+            api_key=require_embedding_key(spec),
+            base_url=spec.base_url,
+            **config_overrides,
+        ),
+        **kwargs,
+    )
+
+
+def cosine_similarity(a: list[float], b: list[float]) -> float:
+    dot = sum(x * y for x, y in zip(a, b, strict=True))
+    norm_a = sum(x * x for x in a) ** 0.5
+    norm_b = sum(y * y for y in b) ** 0.5
+    return dot / (norm_a * norm_b)
 
 
 def make_model_config(model_spec: LiveModelSpec, **overrides: Any) -> ModelConfig:

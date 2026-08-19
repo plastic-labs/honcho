@@ -305,7 +305,7 @@ honcho peer set-metadata <metadata>
 
 ## honcho session
 
-List, inspect, create, delete, and manage conversation sessions and their peers.
+List, inspect, view, create, delete, and manage conversation sessions and their peers.
 
 <AccordionGroup>
 <Accordion title="add-peers">
@@ -460,6 +460,48 @@ honcho session summaries [<session_id>]
 ```
 
 <ParamField path="session_id" type="string" />
+</Accordion>
+<Accordion title="view">
+View a session transcript as a chat log.
+
+Modes (pick one):
+
+- default / --last N: tail of the conversation (most recent N)
+- --page N [--size M]: page through the full transcript
+- --all: every message
+
+Paging follows the requested order: --page 1 starts at the oldest message,
+or the newest with --reverse.
+
+Human mode prints a row-delimited table. JSON mode emits the message list
+(same shape as message list).
+
+```bash
+honcho session view [<session_id>]
+```
+
+<ParamField path="session_id" type="string" />
+<ParamField path="--last" type="number">
+  Show only the N most recent messages (default when no --page/--all: 50).
+</ParamField>
+<ParamField path="--page" type="number">
+  1-indexed page of the full transcript. Use for page 2+.
+</ParamField>
+<ParamField path="--size" type="number">
+  Messages per page; requires --page (1-100, default: 50).
+</ParamField>
+<ParamField path="--all" type="boolean">
+  Show the full transcript (every page).
+</ParamField>
+<ParamField path="--reverse" type="boolean">
+  Newest first (default is chronological: oldest at top).
+</ParamField>
+<ParamField path="--ids" type="boolean">
+  Include message IDs in the transcript.
+</ParamField>
+<ParamField path="--peer" type="string">
+  Filter by peer ID. Short alias: `-p`.
+</ParamField>
 </Accordion>
 </AccordionGroup>
 

@@ -1,4 +1,8 @@
 import logging
+import os
+import re
+import time
+import uuid
 from collections.abc import AsyncGenerator, Callable
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -6,14 +10,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import jwt
 import pytest
 import pytest_asyncio
-from cashews.backends.interface import ControlMixin
 from cashews.picklers import PicklerType
-from fakeredis import FakeAsyncRedis
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 from nanoid import generate as generate_nanoid
-from sqlalchemy import text
+from sqlalchemy import create_engine, text
 from sqlalchemy.engine.url import URL, make_url
 from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.ext.asyncio import (
@@ -25,7 +27,6 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy_utils import (
     create_database,  # pyright: ignore[reportUnknownVariableType]
     database_exists,  # pyright: ignore[reportUnknownVariableType]
-    drop_database,  # pyright: ignore[reportUnknownVariableType]
 )
 
 from src import models
@@ -128,11 +129,122 @@ def pytest_collection_modifyitems(
             item.add_marker(skip_live)
 
 
+_RUN_ID_ENV_VAR = "HONCHO_TEST_RUN_ID"
+_RUN_ID_TIME_FORMAT = "%Y%m%d%H%M%S"
+
+# Only a database whose name carries a run-id timestamp this old is swept. Long
+# enough that no live suite is ever this stale, short enough that a leak from the
+# morning is gone by the afternoon.
+_STALE_DB_AGE_SECONDS = 2 * 60 * 60
+
+# test_db_<14-digit timestamp>_<4 hex>[_gwN] -- only names this function minted.
+# A pinned HONCHO_TEST_RUN_ID deliberately won't match, so it's never swept.
+_SWEEPABLE_DB_NAME = re.compile(r"^test_db_(\d{14})_[0-9a-f]{4}(?:_gw\d+)?$")
+
+
+def pytest_configure(config: pytest.Config) -> None:  # pyright: ignore[reportUnusedParameter]
+    """Stamp this pytest run with an id so its databases can't collide with another run's.
+
+    The xdist controller runs this first and its environment is inherited by the
+    workers it spawns, so `setdefault` gives every worker in a run the same id
+    while separate runs (concurrent worktrees, two agents, a local run alongside
+    CI) each get their own. Set the env var yourself to pin a stable name.
+
+    The id leads with a sortable local-time timestamp so leaked databases can be
+    aged out (see `_sweep_stale_test_databases`); the random tail keeps two runs
+    starting in the same second apart.
+    """
+
+    os.environ.setdefault(
+        _RUN_ID_ENV_VAR,
+        f"{time.strftime(_RUN_ID_TIME_FORMAT)}_{uuid.uuid4().hex[:4]}",
+    )
+
+    # Workers inherit the controller's env and would each redo this.
+    if os.environ.get("PYTEST_XDIST_WORKER") is None:
+        _sweep_stale_test_databases()
+
+
 def _get_test_db_url(worker_id: str) -> URL:
     """Get a worker-specific test database URL for pytest-xdist parallelism."""
 
-    db_name = "test_db" if worker_id == "master" else f"test_db_{worker_id}"
-    return CONNECTION_URI.set(database=db_name)
+    run_id = os.environ.get(_RUN_ID_ENV_VAR, "local")
+    suffix = "" if worker_id == "master" else f"_{worker_id}"
+    return CONNECTION_URI.set(database=f"test_db_{run_id}{suffix}")
+
+
+def _drop_database(db_url: URL) -> None:
+    """Drop a test database, evicting any connections still holding it open.
+
+    WITH (FORCE) (pg13+) is what makes this reliable: a pooled connection that
+    outlives engine disposal, or an xdist worker killed mid-query, otherwise
+    leaves the drop failing with "database is being accessed by other users".
+    """
+
+    name = db_url.database
+    if not name:
+        return
+
+    # Maintenance connection: you cannot drop the database you're connected to.
+    engine = create_engine(
+        db_url.set(database="postgres"), isolation_level="AUTOCOMMIT"
+    )
+    try:
+        with engine.connect() as conn:
+            conn.exec_driver_sql(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+    finally:
+        engine.dispose()
+
+
+def _sweep_stale_test_databases() -> None:
+    """Reclaim test databases left behind by runs that died before teardown.
+
+    A run killed by SIGKILL, an IDE stop button, an OOM'd worker or `-x` on a hang
+    never reaches the `db_engine` teardown, and since every run mints its own
+    database name nothing later reuses (and thus cleans) it.
+
+    Two guards keep this from touching a suite that is currently running, which is
+    the whole point of per-run names:
+
+    - the run-id timestamp in the name must be older than `_STALE_DB_AGE_SECONDS`
+    - the database must have no backends connected to it right now
+
+    Each covers the other's blind spot: the age check is immune to the race where
+    a database has been created but its first worker hasn't connected yet, and the
+    connection check catches a genuinely long-running suite. Failure to sweep is
+    logged and ignored -- it must never fail a test session.
+    """
+
+    cutoff = time.strftime(
+        _RUN_ID_TIME_FORMAT, time.localtime(time.time() - _STALE_DB_AGE_SECONDS)
+    )
+
+    try:
+        engine = create_engine(
+            CONNECTION_URI.set(database="postgres"), isolation_level="AUTOCOMMIT"
+        )
+        try:
+            with engine.connect() as conn:
+                names = [
+                    row[0]
+                    for row in conn.exec_driver_sql(
+                        "SELECT datname FROM pg_database d "
+                        + "WHERE NOT EXISTS ("
+                        + "  SELECT 1 FROM pg_stat_activity WHERE datname = d.datname"
+                        + ")"
+                    )
+                ]
+        finally:
+            engine.dispose()
+
+        for name in names:
+            match = _SWEEPABLE_DB_NAME.match(name)
+            if match is None or match.group(1) >= cutoff:
+                continue
+            logger.info(f"Dropping stale test database: {name}")
+            _drop_database(CONNECTION_URI.set(database=name))
+    except Exception as e:
+        logger.warning(f"Could not sweep stale test databases: {e}")
 
 
 # Test API authorization - no longer needed as module-level constants
@@ -193,11 +305,21 @@ async def setup_test_database(db_url: URL):
     return engine
 
 
-async def _truncate_all_tables(engine: AsyncEngine) -> None:
-    """Remove all data from every mapped table while resetting identities."""
+async def _clear_all_tables(engine: AsyncEngine) -> None:
+    """Remove all data from every mapped table between tests.
+
+    Uses DELETE rather than TRUNCATE: TRUNCATE rewrites the relfilenode of every
+    table and index it touches, so it costs a flat ~33ms for this schema's 11
+    tables / 41 indexes no matter how few rows a test actually wrote. DELETE of
+    the same (near-empty) tables, batched into one round trip, is ~3ms. Tables go
+    in reverse dependency order so foreign keys are satisfied without CASCADE.
+
+    This does not reset identity sequences, so tests must not assert on absolute
+    generated id values -- compare against the ids the test itself created.
+    """
 
     table_names: list[str] = []
-    for table in Base.metadata.sorted_tables:
+    for table in reversed(Base.metadata.sorted_tables):
         if table.schema:
             table_names.append(f'"{table.schema}"."{table.name}"')
         else:
@@ -206,9 +328,9 @@ async def _truncate_all_tables(engine: AsyncEngine) -> None:
     if not table_names:
         return
 
-    joined_names = ", ".join(table_names)
+    statement = "; ".join(f"DELETE FROM {name}" for name in table_names)
     async with engine.begin() as conn:
-        await conn.execute(text(f"TRUNCATE {joined_names} RESTART IDENTITY CASCADE"))
+        await conn.exec_driver_sql(statement)
 
 
 @pytest_asyncio.fixture(scope="session")
@@ -242,7 +364,7 @@ async def db_engine(worker_id: str):
         for table in Base.metadata.tables.values():
             table.schema = original_schema
 
-        drop_database(test_db_url)
+        _drop_database(test_db_url)
 
 
 @pytest_asyncio.fixture(scope="function")
@@ -256,59 +378,37 @@ async def db_session(db_engine: AsyncEngine):
             finally:
                 await session.rollback()
     finally:
-        await _truncate_all_tables(db_engine)
+        await _clear_all_tables(db_engine)
 
 
 @pytest_asyncio.fixture(scope="session")
 async def fake_cache_session():
-    """Set up fakeredis for caching once per test session."""
+    """Set up a taskless in-memory cache once per test session.
+
+    Cashews' normal memory backend starts a periodic expiry task on whichever
+    event loop first uses it. Tests use both pytest-asyncio loops and TestClient
+    portal loops, so that task can be cancelled when its originating loop closes
+    and then leak a CancelledError into the next app startup. Disabling the
+    periodic sweep keeps the backend loop-agnostic; expired entries are still
+    discarded lazily when read.
+    """
     # Store original settings
     original_enabled = settings.CACHE.ENABLED
     original_url = settings.CACHE.URL
 
-    # Create a fake redis instance that persists for the session
-    fake_redis = FakeAsyncRedis(decode_responses=True)
-
-    # Patch redis creation to use fakeredis
-    # Cashews uses redis.asyncio.from_url to create connections
-    def fake_redis_from_url(*_args: Any, **_kwargs: Any):
-        return fake_redis
-
-    # Patch the cashews backend's _disable property to avoid ContextVar issues
-    # This works around cashews' ContextVar not being properly initialized in TestClient context
-
-    original_disable_property = ControlMixin._disable  # pyright: ignore[reportPrivateUsage]
-
-    @property  # type: ignore
-    def patched_disable_property(self):  # pyright: ignore
-        try:
-            return original_disable_property.fget(self)  # pyright: ignore[reportOptionalCall]
-        except LookupError:
-            # Return empty set as default if ContextVar not set in current context
-            return set()  # pyright: ignore
-
-    # Start patching
-    redis_patch = patch("redis.asyncio.from_url", fake_redis_from_url)
-    redis_patch.start()
-    ControlMixin._disable = patched_disable_property  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]
-
     try:
-        # Enable caching and set URL for tests
+        # Use the same backend from pytest-asyncio and TestClient event loops.
         settings.CACHE.ENABLED = True
-        settings.CACHE.URL = "redis://fake-redis:6379/0"
-
-        # Setup cache for tests that don't use TestClient (direct CRUD tests)
-        # For TestClient tests, the app's lifespan handler will also call cache.setup()
-        # The ContextVar patch above handles any context issues
+        settings.CACHE.URL = "mem://?check_interval=0"
         cache.setup(
-            "redis://fake-redis:6379/0", pickle_type=PicklerType.SQLALCHEMY, enable=True
+            settings.CACHE.URL,
+            pickle_type=PicklerType.SQLALCHEMY,
+            enable=True,
         )
 
-        yield fake_redis
+        yield cache
     finally:
-        # Stop the patches
-        redis_patch.stop()
-        ControlMixin._disable = original_disable_property  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]
+        await cache.close()
 
         # Restore original settings
         settings.CACHE.ENABLED = original_enabled
@@ -316,21 +416,21 @@ async def fake_cache_session():
 
 
 @pytest_asyncio.fixture(scope="function", autouse=True)
-async def fake_cache(fake_cache_session: FakeAsyncRedis):
+async def fake_cache(fake_cache_session: Any):  # pyright: ignore[reportUnusedParameter]
     """Clear cache between tests."""
     # Clear cache before each test
-    await fake_cache_session.flushall()  # pyright: ignore[reportUnknownMemberType]
+    await cache.clear()
 
     yield cache
 
     # Clear cache after each test
-    await fake_cache_session.flushall()  # pyright: ignore[reportUnknownMemberType]
+    await cache.clear()
 
 
 @pytest.fixture(scope="function")
 async def client(
     db_session: AsyncSession,
-    fake_cache_session: FakeAsyncRedis,  # pyright: ignore[reportUnusedParameter]
+    fake_cache_session: Any,  # pyright: ignore[reportUnusedParameter]
     monkeypatch: pytest.MonkeyPatch,
 ) -> AsyncGenerator[TestClient, Any]:
     """Create a FastAPI TestClient for the scope of a single test function"""
@@ -430,7 +530,7 @@ async def sample_data(
     db_session.add(test_peer)
 
     # Commit so data is visible to independent tracked_db sessions.
-    # _truncate_all_tables handles cleanup between tests.
+    # _clear_all_tables handles cleanup between tests.
     await db_session.commit()
 
     yield test_workspace, test_peer
@@ -840,6 +940,7 @@ def mock_tracked_db(request: pytest.FixtureRequest):
         "src.deriver.consumer.tracked_db",
         "src.deriver.enqueue.tracked_db",
         "src.routers.peers.tracked_db",
+        "src.routers.workspaces.tracked_db",
         "src.crud.representation.tracked_db",
         "src.dreamer.orchestrator.tracked_db",
         "src.dreamer.dream_scheduler.tracked_db",
@@ -856,6 +957,7 @@ def mock_tracked_db(request: pytest.FixtureRequest):
         "src.dialectic.core.tracked_db",
         "src.dreamer.specialists.tracked_db",
         "src.dreamer.surprisal.tracked_db",
+        "src.deriver.scope_backfill.tracked_db",
     ]
     with ExitStack() as stack:
         for target in tracked_db_targets:

@@ -202,7 +202,16 @@ def _create_store_by_type(store_type: str) -> VectorStore:
 
         return TurbopufferVectorStore()
     elif store_type == "lancedb":
-        from src.vector_store.lancedb import LanceDBVectorStore
+        try:
+            from src.vector_store.lancedb import LanceDBVectorStore
+        except ImportError as exc:
+            raise RuntimeError(
+                "VECTOR_STORE.TYPE is set to 'lancedb', but the 'lancedb' package "
+                + "could not be imported. Install Honcho's 'lancedb' extra "
+                + "(for example, `uv sync --extra lancedb`; unavailable on Intel "
+                + "macOS), or use TYPE 'pgvector' or 'turbopuffer'. "
+                + f"Original import error: {exc}"
+            ) from exc
 
         return LanceDBVectorStore()
     else:

@@ -1,5 +1,10 @@
 import { createMcpHandler } from "agents/mcp";
-import { parseConfig, createClient, type Env } from "./config.js";
+import {
+  parseConfig,
+  createClientFactory,
+  createUnscopedClient,
+  type Env,
+} from "./config.js";
 import { createServer } from "./server.js";
 
 const CORS_ORIGIN = "*";
@@ -15,6 +20,7 @@ const CORS_HEADERS = {
 };
 
 const PROTECTED_RESOURCE_PATH = "/.well-known/oauth-protected-resource";
+const HEALTHCHECK_TIMEOUT_MS = 15_000;
 
 function resourceUrl(request: Request): string {
   return new URL(request.url).origin;
@@ -25,6 +31,41 @@ function authorizationServer(env: Env): string {
 }
 
 export default {
+  // Probes the authorization server API to confirm it is reachable and healthy.
+  async scheduled(
+    _controller: ScheduledController,
+    env: Env,
+    _executionCtx: ExecutionContext,
+  ): Promise<void> {
+    const upstream = `${authorizationServer(env)}/health`;
+
+    let failure: string | null = null;
+    try {
+      const response = await fetch(upstream, {
+        signal: AbortSignal.timeout(HEALTHCHECK_TIMEOUT_MS),
+      });
+      if (!response.ok) failure = `HTTP ${response.status}`;
+    } catch (e) {
+      failure = e instanceof Error ? e.message : String(e);
+    }
+    if (!failure) return;
+
+    console.error(`healthcheck failed: ${upstream} — ${failure}`);
+    if (!env.ALERT_WEBHOOK_URL) return;
+
+    const alertResponse = await fetch(env.ALERT_WEBHOOK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        content: `🚨 honcho-mcp cannot reach upstream API (${upstream}): ${failure}`,
+      }),
+      signal: AbortSignal.timeout(HEALTHCHECK_TIMEOUT_MS),
+    });
+    if (!alertResponse.ok) {
+      throw new Error(`alert webhook failed: HTTP ${alertResponse.status}`);
+    }
+  },
+
   async fetch(
     request: Request,
     env: Env,
@@ -42,6 +83,7 @@ export default {
           resource: resourceUrl(request),
           authorization_servers: [authorizationServer(env)],
           bearer_methods_supported: ["header"],
+          scopes_supported: ["read", "write"],
         },
         { headers: CORS_HEADERS },
       );
@@ -66,8 +108,11 @@ export default {
     }
 
     try {
-      const honcho = createClient(config);
-      const server = createServer({ honcho, config });
+      const server = createServer({
+        config,
+        clientFor: createClientFactory(config),
+        unscoped: createUnscopedClient(config),
+      });
       const handler = createMcpHandler(server, {
         route: "/",
         corsOptions: {

@@ -39,6 +39,8 @@ from src.utils.agent_tools import (
     create_observations,
     create_tool_executor,
     extract_preferences,
+    get_observation_context,
+    get_recent_history,
 )
 
 # =============================================================================
@@ -127,7 +129,7 @@ async def tool_test_data(
     # Commit so data is visible to independent tracked_db sessions.
     # Tool handlers no longer share the test's db_session — they open
     # their own short-lived sessions via tracked_db.
-    # _truncate_all_tables handles cleanup between tests.
+    # _clear_all_tables handles cleanup between tests.
     await db_session.commit()
 
     yield workspace, peer1, peer2, session, messages, documents
@@ -247,6 +249,36 @@ class TestCreateObservations:
         assert doc is not None
         assert doc.level == "deductive"
         assert doc.source_ids == ["premise1", "premise2"]
+
+    async def test_non_deriver_context_rejects_explicit(
+        self,
+        db_session: AsyncSession,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        """Session-purity invariant: agents without current_messages (dreamer
+        specialists, dialectic) must not create explicit-level observations,
+        even when they pass level='explicit' to the generic tool."""
+        ctx = make_tool_context(current_messages=None)
+
+        result = await _handle_create_observations(
+            ctx,
+            {
+                "observations": [
+                    {"content": "Claims to be a doctor", "level": "explicit"},
+                ]
+            },
+        )
+
+        assert isinstance(result, str)
+        assert "ERROR" in result
+        assert "explicit" in result
+
+        # Verify nothing landed in the DB
+        stmt = select(models.Document).where(
+            models.Document.content == "Claims to be a doctor"
+        )
+        doc = (await db_session.execute(stmt)).scalar_one_or_none()
+        assert doc is None
 
     async def test_source_ids_display_prefix_is_stripped(
         self,
@@ -508,6 +540,62 @@ class TestCreateObservations:
         assert len(result.failed) == 0
         batch_embed.assert_not_awaited()
         create_documents.assert_not_awaited()
+
+    @pytest.mark.parametrize("deduplicate_setting", [True, False])
+    async def test_create_observations_honors_deduplicate_setting(
+        self,
+        tool_test_data: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        deduplicate_setting: bool,
+    ):
+        """create_observations forwards settings.DERIVER.DEDUPLICATE to create_documents.
+
+        Guards against reintroducing a hardcoded deduplicate=True, which made
+        DERIVER_DEDUPLICATE=false unable to disable dedup on this path (#989).
+        """
+        workspace, peer1, peer2, session, _, _ = tool_test_data
+        monkeypatch.setattr(settings.DERIVER, "DEDUPLICATE", deduplicate_setting)
+
+        captured: dict[str, Any] = {}
+
+        async def fake_batch_embed(texts: list[str]) -> list[list[float]]:
+            return [[0.1, 0.2, 0.3] for _ in texts]
+
+        async def fake_create_documents(
+            _db: AsyncSession,
+            documents: list[Any],
+            workspace_name: str,
+            *,
+            observer: str,
+            observed: str,
+            deduplicate: bool = False,
+        ) -> crud.CreateDocumentsResult:
+            _ = (workspace_name, observer, observed)
+            captured["deduplicate"] = deduplicate
+            return crud.CreateDocumentsResult(created_documents=documents)
+
+        monkeypatch.setattr(
+            "src.utils.agent_tools.embedding_client.simple_batch_embed",
+            fake_batch_embed,
+        )
+        monkeypatch.setattr(
+            "src.utils.agent_tools.crud.create_documents", fake_create_documents
+        )
+
+        result = await create_observations(
+            observations=[
+                schemas.ObservationInput(content="An observation", level="explicit"),
+            ],
+            observer=peer1.name,
+            observed=peer2.name,
+            session_name=session.name,
+            workspace_name=workspace.name,
+            message_ids=[],
+            message_created_at=str(datetime.now(timezone.utc)),
+        )
+
+        assert isinstance(result, ObservationsCreatedResult)
+        assert captured["deduplicate"] is deduplicate_setting
 
 
 class TestNormalizeObservationId:
@@ -771,6 +859,7 @@ class TestSearchMemory:
             context_window: int = 2,
             embedding: list[float] | None = None,
             observer: str | None = None,
+            **_kwargs: Any,
         ) -> list[tuple[list[models.Message], list[models.Message]]]:
             _ = (workspace_name, session_name, query, limit, context_window, observer)
             fallback_embeddings.append(embedding)
@@ -879,6 +968,7 @@ class TestSearchMessagesTemporal:
             context_window: int = 2,
             embedding: list[float] | None = None,
             observer: str | None = None,
+            **_kwargs: Any,
         ) -> list[tuple[list[models.Message], list[models.Message]]]:
             _ = (
                 workspace_name,
@@ -1472,6 +1562,7 @@ class TestExtractPreferences:
             context_window: int,
             embedding: list[float] | None,
             observer: str | None = None,
+            **_kwargs: Any,
         ) -> list[tuple[list[models.Message], list[models.Message]]]:
             _ = (limit, context_window, observer)
             embedding_args.append(embedding)
@@ -1818,3 +1909,63 @@ class TestObserverPeerNameWiring:
         await _handle_get_messages_by_date_range(ctx, {"after_date": "2024-01-01"})
 
         assert captured_kwargs["observer"] == ctx.observer
+
+
+@pytest.mark.asyncio
+class TestSessionAllowlistFailClosed:
+    """A specific session_name outside the session_allowlist allowlist must fail closed.
+
+    Routes guard this too, but these CRUD/tool functions are reachable directly
+    from the dialectic loop, so the allowlist is enforced at the boundary.
+    """
+
+    async def test_get_recent_history_respects_allowlist(
+        self, db_session: AsyncSession, tool_test_data: Any
+    ):
+        workspace, _peer1, peer2, session, _messages, _ = tool_test_data
+
+        # session IS in the allowlist -> history returned
+        allowed = await get_recent_history(
+            db_session,
+            workspace_name=workspace.name,
+            session_name=session.name,
+            observed=peer2.name,
+            session_allowlist=[session.name],
+        )
+        assert allowed  # non-empty
+
+        # session is NOT in the allowlist -> fail closed
+        blocked = await get_recent_history(
+            db_session,
+            workspace_name=workspace.name,
+            session_name=session.name,
+            observed=peer2.name,
+            session_allowlist=["some-other-session"],
+        )
+        assert blocked == []
+
+    async def test_get_observation_context_fails_closed(
+        self, db_session: AsyncSession, tool_test_data: Any
+    ):
+        workspace, peer1, _peer2, session, messages, _ = tool_test_data
+        blocked = await get_observation_context(
+            db_session,
+            workspace_name=workspace.name,
+            session_name=session.name,
+            message_ids=[messages[0].id],
+            observer=peer1.name,
+            session_allowlist=["some-other-session"],
+        )
+        assert blocked == []
+
+    async def test_get_messages_by_date_range_fails_closed(
+        self, db_session: AsyncSession, tool_test_data: Any
+    ):
+        workspace, _peer1, _peer2, session, _messages, _ = tool_test_data
+        blocked = await crud.get_messages_by_date_range(
+            db_session,
+            workspace_name=workspace.name,
+            session_name=session.name,
+            session_allowlist=["some-other-session"],
+        )
+        assert blocked == []
