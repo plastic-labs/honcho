@@ -1340,16 +1340,7 @@ class TestSessionPurityInvariant:
 
 
 class TestCreateDocumentsConcurrency:
-    """Concurrency regression tests for create_documents (DEV-1975).
-
-    Two deriver work units can write the same (workspace, observer, observed)
-    collection concurrently: work-unit keys include session but not observer,
-    so one peer active in two sessions produces two writers, and the dreamer
-    adds a third through a different key. Reinforcement UPDATEs issued in
-    batch order used to deadlock when two writers touched the same rows in
-    opposite orders; create_documents now serializes writers per collection
-    with a transaction-scoped advisory lock.
-    """
+    """Concurrent same-collection reinforcements lock rows in id order."""
 
     N_DOCS: int = 20
     N_ROUNDS: int = 5
@@ -1411,8 +1402,7 @@ class TestCreateDocumentsConcurrency:
         db_session: AsyncSession,
         sample_data: tuple[models.Workspace, models.Peer],
     ):
-        """Concurrent same-collection batches locking rows in opposite orders
-        must serialize, not deadlock (DEV-1975)."""
+        """Opposing-order batches on one collection must not deadlock."""
         test_workspace, test_peer = sample_data
         test_peer2, test_session = await self._setup(
             db_session, test_workspace, test_peer
@@ -1472,8 +1462,7 @@ class TestCreateDocumentsConcurrency:
 
 
 class TestCreateDocumentsErrorHandling:
-    """A dead transaction aborts the batch loudly; per-document failures
-    still skip just that document (DEV-1975)."""
+    """A dead transaction aborts the batch; per-document failures skip one document."""
 
     async def _setup(
         self,
@@ -1515,8 +1504,7 @@ class TestCreateDocumentsErrorHandling:
         db_session: AsyncSession,
         sample_data: tuple[models.Workspace, models.Peer],
     ):
-        """A DB error on an in-loop flush must raise out of create_documents
-        instead of cascading through a dead session, and commit nothing."""
+        """A DB error while applying row updates raises and commits nothing."""
         test_workspace, test_peer = sample_data
         test_peer2, test_session = await self._setup(
             db_session, test_workspace, test_peer
@@ -1539,8 +1527,6 @@ class TestCreateDocumentsErrorHandling:
             sqlstate: str = "40P01"
 
         deadlock = OperationalError("UPDATE documents", {}, FakePGError())
-        # Batch: an exact dup (triggers the reinforcement flush that "deadlocks")
-        # followed by a new document that must NOT be committed.
         with (
             patch.object(db_session, "flush", AsyncMock(side_effect=deadlock)),
             pytest.raises(OperationalError),
@@ -1614,37 +1600,32 @@ class TestCreateDocumentsErrorHandling:
         ]
 
 
-class TestAdvisoryLockBehavior:
-    """The per-collection advisory lock in create_documents: held for the
-    transaction, keyed by (workspace, observer, observed), and skipped when
-    the batch can only INSERT."""
+class TestExternalCandidateHoist:
+    """External-store dup candidates resolve before the first DB statement."""
 
     async def _setup(
         self,
         db_session: AsyncSession,
         test_workspace: models.Workspace,
         test_peer: models.Peer,
-        n_observed: int = 1,
-    ) -> tuple[list[models.Peer], models.Session]:
-        observed_peers = [
-            models.Peer(name=str(generate_nanoid()), workspace_name=test_workspace.name)
-            for _ in range(n_observed)
-        ]
+    ) -> tuple[models.Peer, models.Session]:
+        observed_peer = models.Peer(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
         test_session = models.Session(
             name=str(generate_nanoid()), workspace_name=test_workspace.name
         )
-        db_session.add_all([*observed_peers, test_session])
+        db_session.add_all([observed_peer, test_session])
         await db_session.flush()
-        for observed_peer in observed_peers:
-            db_session.add(
-                models.Collection(
-                    workspace_name=test_workspace.name,
-                    observer=test_peer.name,
-                    observed=observed_peer.name,
-                )
+        db_session.add(
+            models.Collection(
+                workspace_name=test_workspace.name,
+                observer=test_peer.name,
+                observed=observed_peer.name,
             )
+        )
         await db_session.commit()
-        return observed_peers, test_session
+        return observed_peer, test_session
 
     def _doc(self, content: str, session_name: str) -> schemas.DocumentCreate:
         return schemas.DocumentCreate(
@@ -1658,121 +1639,16 @@ class TestAdvisoryLockBehavior:
         )
 
     @pytest.mark.asyncio
-    async def test_lock_blocks_same_key_not_other_keys(
-        self,
-        db_engine: AsyncEngine,
-        db_session: AsyncSession,
-        sample_data: tuple[models.Workspace, models.Peer],
-    ):
-        """While one writer holds a collection's lock, a second writer on the
-        same collection blocks and a writer on a different collection does not."""
-        test_workspace, test_peer = sample_data
-        (observed_a, observed_b), test_session = await self._setup(
-            db_session, test_workspace, test_peer, n_observed=2
-        )
-        session_factory = async_sessionmaker(bind=db_engine, expire_on_commit=False)
-
-        holder_in_lock = asyncio.Event()
-        release_holder = asyncio.Event()
-
-        real_is_rejected_duplicate = crud.document.is_rejected_duplicate
-
-        async def pausing_is_rejected_duplicate(*args: Any, **kwargs: Any) -> Any:
-            holder_in_lock.set()
-            await release_holder.wait()
-            return await real_is_rejected_duplicate(*args, **kwargs)
-
-        async def _create(observed: str, content: str) -> None:
-            async with session_factory() as db:
-                await crud.create_documents(
-                    db,
-                    [self._doc(content, test_session.name)],
-                    workspace_name=test_workspace.name,
-                    observer=test_peer.name,
-                    observed=observed,
-                    deduplicate=True,
-                )
-
-        with patch(
-            "src.crud.document.is_rejected_duplicate",
-            side_effect=pausing_is_rejected_duplicate,
-        ):
-            holder = asyncio.create_task(_create(observed_a.name, "holder fact"))
-            await asyncio.wait_for(holder_in_lock.wait(), timeout=10)
-
-        # Holder is parked inside its critical section; the patch is no longer
-        # active so contender/other run the real dedup path.
-        contender = asyncio.create_task(_create(observed_a.name, "contender fact"))
-        other_key = asyncio.create_task(_create(observed_b.name, "other fact"))
-
-        # A different collection's writer completes while the lock is held...
-        await asyncio.wait_for(other_key, timeout=10)
-        # ...but the same collection's writer stays blocked.
-        await asyncio.sleep(0.3)
-        assert not contender.done()
-
-        release_holder.set()
-        await asyncio.wait_for(asyncio.gather(holder, contender), timeout=10)
-
-    @pytest.mark.asyncio
-    async def test_lock_skipped_for_insert_only_batch(
-        self,
-        db_session: AsyncSession,
-        sample_data: tuple[models.Workspace, models.Peer],
-    ):
-        """deduplicate=False with no exact-dup matches only INSERTs, so no
-        advisory lock is taken; a batch with an existing exact dup takes it."""
-        test_workspace, test_peer = sample_data
-        (observed_peer,), test_session = await self._setup(
-            db_session, test_workspace, test_peer
-        )
-
-        executed_sql: list[str] = []
-        real_execute = db_session.execute
-
-        async def spying_execute(statement: Any, *args: Any, **kwargs: Any) -> Any:
-            executed_sql.append(str(statement))
-            return await real_execute(statement, *args, **kwargs)
-
-        def lock_statements() -> list[str]:
-            return [s for s in executed_sql if "pg_advisory_xact_lock" in s]
-
-        with patch.object(db_session, "execute", side_effect=spying_execute):
-            await crud.create_documents(
-                db_session,
-                [self._doc("all new fact", test_session.name)],
-                workspace_name=test_workspace.name,
-                observer=test_peer.name,
-                observed=observed_peer.name,
-                deduplicate=False,
-            )
-            assert not lock_statements()
-
-            # Same content again: the exact-dup prefetch now matches, so the
-            # reinforcement UPDATE must run under the lock.
-            await crud.create_documents(
-                db_session,
-                [self._doc("all new fact", test_session.name)],
-                workspace_name=test_workspace.name,
-                observer=test_peer.name,
-                observed=observed_peer.name,
-                deduplicate=False,
-            )
-            assert len(lock_statements()) == 1
-
-    @pytest.mark.asyncio
-    async def test_external_candidates_resolved_before_lock(
+    async def test_external_candidates_resolved_before_db(
         self,
         db_session: AsyncSession,
         sample_data: tuple[models.Workspace, models.Peer],
         monkeypatch: pytest.MonkeyPatch,
     ):
-        """On the external-vector-store path, every candidate resolution
-        happens before the advisory lock is acquired."""
         from src.config import settings
 
         test_workspace, test_peer = sample_data
-        (observed_peer,), test_session = await self._setup(
+        observed_peer, test_session = await self._setup(
             db_session, test_workspace, test_peer
         )
         monkeypatch.setattr(settings.VECTOR_STORE, "TYPE", "turbopuffer")
@@ -1782,8 +1658,7 @@ class TestAdvisoryLockBehavior:
         real_execute = db_session.execute
 
         async def spying_execute(statement: Any, *args: Any, **kwargs: Any) -> Any:
-            if "pg_advisory_xact_lock" in str(statement):
-                events.append("lock")
+            events.append("execute")
             return await real_execute(statement, *args, **kwargs)
 
         async def fake_resolve(*_args: Any, **_kwargs: Any) -> list[str]:
@@ -1810,4 +1685,5 @@ class TestAdvisoryLockBehavior:
             )
 
         assert len(result.created_documents) == 2
-        assert events == ["resolve", "resolve", "lock"]
+        assert events[:2] == ["resolve", "resolve"]
+        assert "execute" in events
