@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import re
 import time
@@ -18,6 +19,7 @@ from src._version import HONCHO_VERSION
 from src.cache.client import close_cache, init_cache
 from src.config import settings
 from src.db import engine, register_db_query_instrumentation, request_context
+from src.embedding_client import embedding_client
 from src.exceptions import HonchoException
 from src.routers import (
     conclusions,
@@ -121,6 +123,12 @@ async def lifespan(_: FastAPI):
     # pgvector columns, the process refuses to start rather than silently
     # writing wrong-dim vectors.
     await validate_embedding_schema(engine)
+
+    # Eagerly build the embedding client so an hf: tokenizer download happens
+    # here, not on the first request under the singleton lock. Run it in a
+    # worker thread: the download is blocking network I/O and would otherwise
+    # stall the event loop (signal handling, telemetry) during startup.
+    await asyncio.to_thread(embedding_client.warmup)
 
     try:
         await init_cache()

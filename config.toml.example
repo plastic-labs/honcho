@@ -79,6 +79,7 @@ model = "text-embedding-3-small"
 # max_batch_size = 10
 # Optional client HTTP timeout in seconds (OpenAI + Gemini).
 # timeout = 90.0
+# tokenizer = "tiktoken:cl100k_base" # or "hf:BAAI/bge-m3" / "file:/path/to/tokenizer.json"
 
 # Optional module-level endpoint overrides
 # [embedding.model_config.overrides]

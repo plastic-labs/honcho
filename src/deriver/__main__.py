@@ -78,6 +78,13 @@ async def run_deriver():
         # gate the API runs in its lifespan. Inside the try block so the
         # telemetry buffer is still flushed if validation raises.
         await validate_embedding_schema(engine)
+        # Eagerly build the embedding client so an hf: tokenizer download
+        # happens here, not on the first reconciler call under the lock.
+        # Run it in a worker thread so the blocking download doesn't stall
+        # the event loop.
+        from src.embedding_client import embedding_client
+
+        await asyncio.to_thread(embedding_client.warmup)
         await main()
     finally:
         # Shutdown telemetry (flush CloudEvents buffer)
