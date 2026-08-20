@@ -144,22 +144,20 @@ __all__ = [
 ]
 
 
-# Explicit registry of CloudEvents `type` values, used to pre-materialize the
-# `telemetry_events_emitted` / `telemetry_events_sampled_out` counter children at
-# 0 so those metrics are visible in Prometheus before any event fires (see
-# src/telemetry/prometheus/metrics.py:initialize_bounded_metrics for why absent
-# and zero are worth distinguishing).
+# Explicit registry of CloudEvents `type` values, used to zero-initialize the
+# telemetry_events_emitted / telemetry_events_sampled_out counter children.
+# region ai
+# See metrics.py:initialize_bounded_metrics for why absent and zero are worth
+# distinguishing. Explicit literal, not a set derived from BaseEvent subclasses: a
+# derived set would follow whatever happens to be imported at init time, so a type
+# could drop out of the registry with no code change. A hand-maintained list plus a
+# drift-guard test fails loud at the right moment instead.
 #
-# This is an explicit literal rather than a set derived from BaseEvent
-# subclasses: the derived version would silently follow whatever happens to be
-# imported at init time, so a type could drop out of the registry without any
-# code change. Pairing a hand-maintained list with a drift-guard test keeps the
-# failure loud and at the right moment.
-#
-# ⚠️ When you add a new BaseEvent subclass, add its `_event_type` here (and to
-# HIGH_VOLUME_EVENT_TYPES if `_volume_class == "high_volume"`). The drift-guard
-# test tests/telemetry/test_metric_zero_init.py fails until you do — it asserts
-# this registry equals the set discovered by walking BaseEvent subclasses.
+# When you add a BaseEvent subclass, add its `_event_type` here (and to
+# HIGH_VOLUME_EVENT_TYPES if `_volume_class == "high_volume"`). The drift-guard test
+# tests/telemetry/test_metric_zero_init.py fails until you do — it asserts this
+# registry equals the set discovered by walking BaseEvent subclasses.
+# endregion
 ALL_EVENT_TYPES: tuple[str, ...] = (
     # api
     "message.created",
@@ -184,16 +182,22 @@ ALL_EVENT_TYPES: tuple[str, ...] = (
     # reconciliation
     "reconciliation.sync_vectors.completed",
     "reconciliation.cleanup_stale_items.completed",
-    # trace stream (only emitted when TELEMETRY.TRACE_PAYLOADS_ENABLED, but they
-    # flow through the same emit() path and increment the same counters)
+    # trace stream
+    # region ai
+    # Only emitted when TELEMETRY.TRACE_PAYLOADS_ENABLED, but they flow through the
+    # same emit() path and increment the same counters, so they belong in the set.
+    # endregion
     "llm.call.traced",
     "embedding.call.traced",
     "trace.content",
 )
 
-# Subset of ALL_EVENT_TYPES whose `_volume_class == "high_volume"` — only these
-# can ever be counted by `telemetry_events_sampled_out` (ground_truth events skip
-# the sampler entirely).
+# Subset of ALL_EVENT_TYPES whose `_volume_class == "high_volume"`.
+# region ai
+# Only these can ever be counted by ``telemetry_events_sampled_out``; ground_truth
+# events skip the sampler entirely (pre-creating their sampled_out series would be a
+# permanently-misleading 0).
+# endregion
 HIGH_VOLUME_EVENT_TYPES: tuple[str, ...] = (
     "agent.iteration",
     "agent.tool.call.completed",

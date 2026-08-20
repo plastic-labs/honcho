@@ -703,25 +703,24 @@ async def _cleanup_pgvector_batch(
 
 async def record_pending_embeddings_backlog() -> None:
     """Set the pending-embeddings backlog gauge to the current count of
-    MessageEmbedding rows awaiting a vector (sync_state='pending').
-
-    Called from ``ReconcilerScheduler._scheduler_loop`` — deliberately NOT from
-    ``run_vector_reconciliation_cycle``. The cycle runs off the queue behind
-    work-unit dedup, so exactly one deriver replica executes it; driving the
-    gauge from there would leave every other replica exporting a stale value, or
-    (worse, given this metric is zero-initialized) a confident permanent 0 it had
-    never measured. The count is a property of the database, not of the process,
-    so every replica must refresh it on its own timer for ``max()``/``avg()`` to
-    mean anything.
-
-    Cost: one COUNT per replica per scheduler interval (~5 min by default).
-    ``ix_message_embeddings_sync_state_last_sync_at`` makes the scan proportional
-    to the pending BACKLOG rather than to the whole table — which is not the same
-    as cheap: after an embedding outage the backlog is exactly what is large. It
-    stays a small duty cycle, and the cost shrinks as the reconciler drains.
-
-    Best-effort: a metrics/DB hiccup here must never break the scheduler loop.
-    """
+    MessageEmbedding rows awaiting a vector (sync_state='pending')."""
+    # region ai
+    # Called from ``ReconcilerScheduler._scheduler_loop``, deliberately NOT from
+    # ``run_vector_reconciliation_cycle``: the cycle runs off the queue behind
+    # work-unit dedup, so exactly one deriver replica executes it. Driving the gauge
+    # from there would leave every other replica exporting a stale value — or, since
+    # this metric is zero-initialized, a confident permanent 0 it never measured. The
+    # count is a property of the database, not the process, so every replica must
+    # refresh it on its own timer for ``max()``/``avg()`` to mean anything.
+    #
+    # Cost: one COUNT per replica per scheduler interval (~5 min by default).
+    # ``ix_message_embeddings_sync_state_last_sync_at`` keeps the scan proportional to
+    # the pending backlog, not the whole table — which is not the same as cheap: after
+    # an embedding outage the backlog is exactly what is large. Still a small duty
+    # cycle, and the cost shrinks as the reconciler drains.
+    #
+    # Best-effort: a metrics/DB hiccup here must never break the scheduler loop.
+    # endregion
     if not settings.METRICS.ENABLED:
         return
     try:

@@ -5,11 +5,12 @@ Asserts that:
 - high-cardinality / impossible label combinations are deliberately NOT,
 - per-process init doesn't materialize the other process's counters,
 - the explicit registries stay in sync with the source of truth (drift guards).
-
-Reads use ``REGISTRY.get_sample_value`` (returns the value if a series exists,
-``None`` if it does not) rather than ``counter.labels(...)``, because ``.labels``
-would itself materialize the child and destroy the presence/absence signal.
 """
+# region ai
+# Reads use ``REGISTRY.get_sample_value`` (returns the value if a series exists,
+# ``None`` if it does not) rather than ``counter.labels(...)``, because ``.labels``
+# would itself materialize the child and destroy the presence/absence signal.
+# endregion
 
 from collections.abc import Iterator
 from typing import cast
@@ -34,14 +35,14 @@ from src.utils.types import walk_subclasses
 
 
 def unique_ns(tag: str) -> str:
-    """A ``namespace`` label value no other test can have materialized under.
-
-    Every assertion here reads the process-global ``REGISTRY``, which keeps a
-    child series for the rest of the session once anything materializes it. A
-    shared namespace (several other suites pin ``"test"``) would therefore let
-    another test's children satisfy a presence assertion, or break an absence
-    assertion, independently of what the initializer under test actually did.
-    """
+    """A ``namespace`` label value no other test can have materialized under."""
+    # region ai
+    # Every assertion here reads the process-global ``REGISTRY``, which keeps a child
+    # series for the rest of the session once anything materializes it. A shared
+    # namespace (several other suites pin ``"test"``) would let another test's children
+    # satisfy a presence assertion, or break an absence assertion, independently of
+    # what the initializer under test actually did.
+    # endregion
     return f"test_metric_zero_init_{tag}_{uuid4().hex[:8]}"
 
 
@@ -191,10 +192,11 @@ def test_deriver_init_materializes_token_and_backlog():
                 )
                 is not None
             )
-    # dreamer specialists are derived from the concrete BaseSpecialist subclasses.
-    # Derived here too, rather than hardcoded: a hardcoded list would keep passing
-    # when a new specialist is added (it only asserts presence), silently leaving
-    # the new one uncovered.
+    # region ai
+    # Specialist names are derived from the concrete BaseSpecialist subclasses here
+    # too, rather than hardcoded: a hardcoded list would keep passing when a new
+    # specialist is added (it only asserts presence), silently leaving it uncovered.
+    # endregion
     specialist_names = {
         name
         for cls in walk_subclasses(BaseSpecialist)
@@ -327,16 +329,15 @@ def test_dropped_counter_children_materialized():
 def test_dropped_counter_init_noop_when_metrics_disabled(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """The per-emitter initializer must no-op when metrics are disabled.
-
-    The enabled/disabled pair above and below this line exists for
-    ``initialize_bounded_metrics`` (see
-    ``test_init_noop_when_metrics_disabled``); without this test the sibling
-    initializer had only the enabled half, so its ``METRICS.ENABLED`` guard
-    could be deleted with the suite staying green. The unique namespace is what
-    makes the absence assertion mean anything — the enabled test above
-    materializes these same two reason values under a different one.
-    """
+    """The per-emitter initializer must no-op when metrics are disabled."""
+    # region ai
+    # The enabled/disabled pair above and below this line exists for
+    # ``initialize_bounded_metrics`` (see ``test_init_noop_when_metrics_disabled``);
+    # without this test the sibling initializer had only the enabled half, so its
+    # ``METRICS.ENABLED`` guard could be deleted with the suite staying green. The
+    # unique namespace is what makes the absence assertion mean anything — the enabled
+    # test above materializes these same two reason values under a different one.
+    # endregion
     monkeypatch.setattr("src.config.settings.METRICS.ENABLED", False)
     monkeypatch.setattr(
         "src.config.settings.METRICS.NAMESPACE", unique_ns("dropped_disabled")

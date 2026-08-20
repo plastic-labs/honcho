@@ -8,13 +8,13 @@ T = TypeVar("T")
 
 
 def walk_subclasses(cls: type[T]) -> Iterator[type[T]]:
-    """Yield every subclass of ``cls``, recursively.
-
-    ``type.__subclasses__()`` is direct-children-only, so a grandchild class is
-    silently invisible to it. Any registry that enumerates subclasses to decide
-    what to initialize or validate wants the transitive closure — otherwise
-    subclassing a concrete class is enough to slip past the check.
-    """
+    """Yield every subclass of ``cls``, recursively."""
+    # region ai
+    # ``type.__subclasses__()`` is direct-children-only, so a grandchild class is
+    # silently invisible to it. Any registry that enumerates subclasses to decide
+    # what to initialize or validate wants the transitive closure — otherwise
+    # subclassing a concrete class is enough to slip past the check.
+    # endregion
     for subclass in cls.__subclasses__():
         yield subclass
         yield from walk_subclasses(subclass)

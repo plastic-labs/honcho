@@ -999,9 +999,11 @@ class PeerCardSettings(HonchoSettings):
 
 
 # Reasoning levels for dialectic - defined here to avoid circular imports with schemas.
-# REASONING_LEVELS is derived from the Literal rather than hand-listed: the
-# annotation alone would reject an invalid member but not a MISSING one, so a
-# hand-written copy can silently drop a level and still typecheck.
+# region ai
+# REASONING_LEVELS is derived from the Literal, not hand-listed: the annotation
+# rejects an invalid member but not a MISSING one, so a hand-written copy could
+# silently drop a level and still typecheck.
+# endregion
 ReasoningLevel = Literal["minimal", "low", "medium", "high", "max"]
 REASONING_LEVELS: list[ReasoningLevel] = list(get_args(ReasoningLevel))
 

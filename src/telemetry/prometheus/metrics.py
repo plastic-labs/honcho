@@ -67,20 +67,17 @@ class DialecticComponents(Enum):
     TOTAL = "total"
 
 
-# Bounded label domains used to zero-initialize counter children at startup are
-# defined below (see initialize_bounded_metrics). Reasoning levels come from
-# src.config.REASONING_LEVELS, which is derived from the config Literal so it
-# never drifts.
-#
-# Valid (token_type, component) pairs for deriver_tokens_processed, per task_type.
+# Valid (token_type, component) pairs for deriver_tokens_processed, per task_type,
+# used to zero-initialize counter children (see initialize_bounded_metrics).
+# region ai
 # NOT the cartesian product: input tokens only pair with input components, output
 # only with OUTPUT_TOTAL, and PREVIOUS_SUMMARY occurs only for summary tasks
-# (ingestion has no previous summary). Enumerating anything broader would
-# fabricate impossible always-0 series (e.g. output/prompt, or
-# ingestion/previous_summary). Explicit literal, drift-guarded by
-# tests/telemetry/test_metric_zero_init.py. Sources: track_deriver_input_tokens
-# (src/utils/tokens.py) + the OUTPUT_TOTAL sites in src/deriver/deriver.py and
-# src/utils/summarizer.py.
+# (ingestion has no previous summary). Enumerating anything broader would fabricate
+# impossible always-0 series (e.g. output/prompt, or ingestion/previous_summary).
+# Explicit literal, drift-guarded by tests/telemetry/test_metric_zero_init.py.
+# Sources: track_deriver_input_tokens (src/utils/tokens.py) + the OUTPUT_TOTAL sites
+# in src/deriver/deriver.py and src/utils/summarizer.py.
+# endregion
 _DERIVER_TOKEN_COMBOS_BY_TASK: dict[str, tuple[tuple[str, str], ...]] = {
     DeriverTaskTypes.INGESTION.value: (
         (TokenTypes.INPUT.value, DeriverComponents.PROMPT.value),
@@ -186,13 +183,14 @@ telemetry_buffer_size_gauge = NamespacedGauge(
 )
 
 # Embedding backlog: MessageEmbedding rows still awaiting a vector
-# (sync_state='pending'). Distinct from embed_now_tasks_in_flight (which counts
-# in-flight fast-path work in the API process) — this is the durable, DB-wide
-# backlog the reconciler drains. Every deriver replica refreshes it on its own
-# timer from ReconcilerScheduler._scheduler_loop, so replicas can disagree by at
-# most one interval. The help string names the owner explicitly because this is
-# the only gauge here whose value is service-wide rather than per-process, and a
-# dashboard author must not reach for sum().
+# (sync_state='pending').
+# region ai
+# Distinct from embed_now_tasks_in_flight (in-flight fast-path work in the API
+# process) — this is the durable, DB-wide backlog the reconciler drains. Every
+# deriver replica refreshes it on its own timer from
+# ReconcilerScheduler._scheduler_loop, so replicas disagree by at most one interval.
+# Service-wide, not per-process — hence the help string's "never sum()".
+# endregion
 message_embeddings_pending_gauge = NamespacedGauge(
     "message_embeddings_pending",
     "MessageEmbedding rows awaiting embedding (sync_state='pending'). "
@@ -372,36 +370,35 @@ class PrometheusMetrics:
             self._handle_metric_error("record_telemetry_event_dropped", e)
 
     def _touch(self, counter: NamespacedCounter, **labels: str) -> None:
-        """Pre-create a counter child series at 0 without incrementing it.
-
-        A labeled Prometheus counter exports no time series until its first
-        ``labels(...)`` call, so pre-touching a child keeps it present at 0 —
-        a missing series then signals a broken scrape rather than "no events".
-        Fail-soft (like the recorders): a bad init must never crash startup.
-        """
+        """Pre-create a counter child series at 0 without incrementing it."""
+        # region ai
+        # A labeled Prometheus counter exports no time series until its first
+        # ``labels(...)`` call, so pre-touching a child keeps it present at 0 — a
+        # missing series then signals a broken scrape rather than "no events".
+        # Fail-soft (like the recorders): a bad init must never crash startup.
+        # endregion
         try:
             counter.labels(**labels)
         except Exception as e:
             self._handle_metric_error("_touch", e)
 
     def initialize_telemetry_dropped_metrics(self, *, reasons: list[str]) -> None:
-        """Pre-create telemetry_events_dropped child series at 0.
-
-        ``telemetry_events_dropped`` stays invisible in Prometheus/Grafana until
-        an event is actually dropped — you cannot alert on or graph a metric that
-        does not exist yet. Materializing the ``(namespace, reason)`` children at
-        startup keeps the metric present at 0, so a missing series signals a broken
-        scrape rather than "no drops".
-
-        Called per-emitter from ``TelemetryEmitter.start()`` rather than hoisted
-        into the process-level ``initialize_bounded_metrics``: the trace emitter
-        (whose reasons carry a ``trace_`` prefix) only exists when
-        ``TRACE_PAYLOADS_ENABLED`` is set, so hoisting would fabricate ``trace_*``
-        series on deployments that run with tracing off.
+        """Pre-create telemetry_events_dropped ``(namespace, reason)`` children at 0.
 
         Args:
             reasons: The reason label values the calling emitter can produce.
         """
+        # region ai
+        # The metric stays invisible in Prometheus/Grafana until an event is actually
+        # dropped, so materializing the children at startup keeps it present at 0 — a
+        # missing series then means a broken scrape, not "no drops" (see _touch).
+        #
+        # Called per-emitter from ``TelemetryEmitter.start()`` rather than hoisted into
+        # the process-level ``initialize_bounded_metrics``: the trace emitter (whose
+        # reasons carry a ``trace_`` prefix) only exists when ``TRACE_PAYLOADS_ENABLED``
+        # is set, so hoisting would fabricate ``trace_*`` series on deployments that run
+        # with tracing off.
+        # endregion
         if not settings.METRICS.ENABLED:
             return
 
@@ -409,61 +406,62 @@ class PrometheusMetrics:
             self._touch(telemetry_events_dropped_counter, reason=reason)
 
     def initialize_bounded_metrics(self, *, instance_type: str) -> None:
-        """Pre-create bounded-label counter children at 0 for this process.
-
-        A Prometheus counter does not exist until its first increment, so a
-        never-yet-incremented metric is indistinguishable from a broken scrape:
-        you cannot graph or alert on a series that is absent. Materializing the
-        children at 0 inverts that — a missing series now means something is
-        wrong, and "no events" reads as a flat 0 instead of a gap.
-
-        That only holds for label sets we can enumerate honestly, so a metric is
-        initialized here only when its full label domain is bounded, enumerable
-        at startup, and actually emitted by THIS process. High-cardinality labels
-        (endpoint, workspace_name) and impossible label tuples are deliberately
-        left absent — fabricating a permanently-0 series that no code path can
-        ever increment is the same lie in the other direction.
-
-        Multi-instance safety splits the metrics here into three buckets:
-
-        1. instance-scoped (``telemetry_buffer_size``,
-           ``embed_now_tasks_in_flight``) — per-process by nature, so any
-           aggregation is meaningful and zero-init is unambiguously right.
-        2. service-scoped additive (the token counters,
-           ``telemetry_events_emitted``) — each instance holds a partial count
-           and ``sum()`` reconstructs the whole, so multi-instance safe.
-        3. service-scoped non-additive — every instance reports the whole
-           service's value, so the instances are N witnesses to one fact rather
-           than N parts of one whole. ``sum()`` is therefore never correct here:
-           it scales with the replica count. Scale-preserving aggregations
-           (``max()``, ``avg()``, quantiles) ARE correct, but only while the
-           witnesses disagree by a bounded amount — which requires every
-           instance to refresh on its own timer (see
-           ``message_embeddings_pending``, refreshed per replica from
-           ``ReconcilerScheduler._scheduler_loop``). A bucket-3 metric that
-           cannot meet that bar does not belong in the app at all — it belongs
-           in an exporter that yields exactly one series.
-
-        Prometheus stamps ``instance``/``job`` at scrape time, which is why
-        buckets 1 and 2 need no special handling.
-
-        ``telemetry_events_dropped`` is handled separately, per-emitter, in
-        ``TelemetryEmitter.start()`` (prefix-dependent — see above).
+        """Pre-create bounded-label counter children at 0 for this process, so an
+        absent series means a broken scrape rather than "nothing happened".
 
         Args:
             instance_type: "api" or "deriver" — selects the process-specific
                 counters. Event-type and buffer metrics are initialized in both.
         """
+        # region ai
+        # A Prometheus counter does not exist until its first increment, so a
+        # never-yet-incremented metric is indistinguishable from a broken scrape:
+        # you cannot graph or alert on a series that is absent. Materializing the
+        # children at 0 inverts that — a missing series now means something is wrong,
+        # and "no events" reads as a flat 0 instead of a gap.
+        #
+        # That only holds for label sets we can enumerate honestly, so a metric is
+        # initialized here only when its full label domain is bounded, enumerable at
+        # startup, and actually emitted by THIS process. High-cardinality labels
+        # (endpoint, workspace_name) and impossible label tuples are deliberately left
+        # absent — fabricating a permanently-0 series that no code path can ever
+        # increment is the same lie in the other direction.
+        #
+        # Multi-instance safety splits the metrics here into three buckets:
+        #
+        # 1. instance-scoped (``telemetry_buffer_size``, ``embed_now_tasks_in_flight``)
+        #    — per-process by nature, so any aggregation is meaningful and zero-init is
+        #    unambiguously right.
+        # 2. service-scoped additive (the token counters, ``telemetry_events_emitted``)
+        #    — each instance holds a partial count and ``sum()`` reconstructs the whole,
+        #    so multi-instance safe.
+        # 3. service-scoped non-additive — every instance reports the whole service's
+        #    value, so the instances are N witnesses to one fact rather than N parts of
+        #    one whole. ``sum()`` is therefore never correct here: it scales with the
+        #    replica count. Scale-preserving aggregations (``max()``, ``avg()``,
+        #    quantiles) ARE correct, but only while the witnesses disagree by a bounded
+        #    amount — which requires every instance to refresh on its own timer (see
+        #    ``message_embeddings_pending``, refreshed per replica from
+        #    ``ReconcilerScheduler._scheduler_loop``). A bucket-3 metric that cannot
+        #    meet that bar does not belong in the app at all — it belongs in an exporter
+        #    that yields exactly one series.
+        #
+        # Prometheus stamps ``instance``/``job`` at scrape time, which is why buckets 1
+        # and 2 need no special handling. ``telemetry_events_dropped`` is handled
+        # separately, per-emitter, in ``TelemetryEmitter.start()`` (prefix-dependent).
+        # endregion
         if not settings.METRICS.ENABLED:
             return
 
-        # Lazy import to avoid any import-time cycle (metrics is imported widely).
+        # ai: lazy import avoids an import-time cycle (metrics is imported widely)
         from src.telemetry.events import ALL_EVENT_TYPES, HIGH_VOLUME_EVENT_TYPES
 
-        # --- Common: both processes run a TelemetryEmitter, so both emit their
-        # own subset of event types. The domain is bounded/low-cardinality (~21
-        # types), so init the full set in each process rather than maintain a
-        # fragile per-event-type -> process map.
+        # region ai
+        # Common: both processes run a TelemetryEmitter, so both emit their own subset
+        # of event types. The domain is bounded/low-cardinality (~21 types), so init
+        # the full set in each process rather than maintain a fragile
+        # per-event-type -> process map.
+        # endregion
         for event_type in ALL_EVENT_TYPES:
             self._touch(telemetry_events_emitted_counter, type=event_type)
         for event_type in HIGH_VOLUME_EVENT_TYPES:
@@ -480,14 +478,13 @@ class PrometheusMetrics:
                         component=DialecticComponents.TOTAL.value,
                         reasoning_level=level,
                     )
-            # embed_now fast path runs as an API-process background task
+            # ai: embed_now fast path runs as an API-process background task
             self._touch(embed_now_tasks_shed_counter)
             self.set_embed_now_tasks_in_flight(0)
 
         elif instance_type == "deriver":
-            # deriver tokens: only the VALID (token_type, component) tuples per
-            # task_type (see _DERIVER_TOKEN_COMBOS_BY_TASK) — never the cartesian
-            # product, which would fabricate impossible always-0 series.
+            # deriver tokens: only the valid (token_type, component) tuples per
+            # task_type (see _DERIVER_TOKEN_COMBOS_BY_TASK).
             for task_type_value, combos in _DERIVER_TOKEN_COMBOS_BY_TASK.items():
                 for token_type_value, component_value in combos:
                     self._touch(
@@ -496,10 +493,11 @@ class PrometheusMetrics:
                         token_type=token_type_value,
                         component=component_value,
                     )
-            # dreamer tokens: specialist_name x token_type. Specialist names are
-            # derived from the concrete BaseSpecialist subclasses so a new
-            # specialist can't silently miss init. Walked recursively — a
-            # specialist that subclasses another specialist is still a specialist.
+            # dreamer tokens: specialist_name x token_type.
+            # region ai
+            # Names come from the concrete BaseSpecialist subclasses (walked recursively
+            # via walk_subclasses) so a new specialist can't silently miss init.
+            # endregion
             from src.dreamer.specialists import BaseSpecialist
 
             for specialist in walk_subclasses(BaseSpecialist):
@@ -509,9 +507,7 @@ class PrometheusMetrics:
                         specialist_name=specialist.name,
                         token_type=token_type.value,
                     )
-            # embedding backlog gauge — refreshed per-replica from
-            # ReconcilerScheduler._scheduler_loop; init at 0 so it is visible
-            # before the first refresh.
+            # ai: init at 0 so the gauge is visible before its first per-replica refresh
             self.set_message_embeddings_pending(count=0)
 
     def set_telemetry_buffer_size(self, *, size: int) -> None:

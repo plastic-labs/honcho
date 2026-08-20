@@ -1,15 +1,17 @@
 """The pending-embeddings backlog gauge must be refreshed per-replica.
 
-``message_embeddings_pending`` reports a DB-global count, so it is the one gauge
-here whose value is service-wide rather than per-process. It is also zero-
-initialized at startup, which makes a missing refresh actively harmful: a replica
-that never measured the backlog would export a confident, permanently-healthy 0.
-
-The count therefore has to be driven from ``ReconcilerScheduler._scheduler_loop``
-(runs on every replica, every interval) and NOT from
-``run_vector_reconciliation_cycle`` (runs off the queue behind work-unit dedup, so
-exactly one replica per cycle executes it). These tests pin both halves of that.
+These tests pin both halves: the scheduler loop drives the refresh, and the
+queue-driven reconciliation cycle does not.
 """
+# region ai
+# ``message_embeddings_pending`` reports a DB-global count, so it is the one gauge
+# here whose value is service-wide rather than per-process. It is also zero-
+# initialized at startup, which makes a missing refresh actively harmful: a replica
+# that never measured the backlog would export a confident, permanently-healthy 0.
+# So the count is driven from ``ReconcilerScheduler._scheduler_loop`` (runs on every
+# replica, every interval), NOT from ``run_vector_reconciliation_cycle`` (runs off
+# the queue behind work-unit dedup, so exactly one replica per cycle executes it).
+# endregion
 
 import asyncio
 
@@ -43,9 +45,11 @@ async def test_scheduler_loop_refreshes_backlog_gauge(
         calls += 1
         refreshed.set()
 
+    # region ai
     # Patched onto the class, so it is invoked as a bound method — it needs the
-    # `self` parameter or the call raises TypeError, which `_scheduler_loop`
-    # would then swallow, leaving this guard silently inert.
+    # ``self`` parameter or the call raises TypeError, which ``_scheduler_loop`` would
+    # then swallow, leaving this guard silently inert.
+    # endregion
     async def _never_enqueue(_self: object, _task: object) -> bool:
         return False
 
@@ -67,15 +71,15 @@ async def test_scheduler_loop_refreshes_backlog_gauge(
 
 
 def test_reconciliation_cycle_does_not_drive_the_gauge() -> None:
-    """The queue-driven cycle must not be the thing that sets the gauge.
-
-    If the refresh moves back into ``run_vector_reconciliation_cycle``, only the
-    replica that wins the ``sync_vectors`` work unit would ever measure the
-    backlog, and the zero-init would go back to lying on all the others.
-
-    Structural guard: the cycle is a long DB-driven coroutine, so this inspects
-    the global names it references rather than executing it.
-    """
+    """The queue-driven cycle must not be the thing that sets the gauge."""
+    # region ai
+    # If the refresh moves back into ``run_vector_reconciliation_cycle``, only the
+    # replica that wins the ``sync_vectors`` work unit would ever measure the backlog,
+    # and the zero-init would go back to lying on all the others.
+    #
+    # Structural guard: the cycle is a long DB-driven coroutine, so this inspects the
+    # global names it references rather than executing it.
+    # endregion
     assert hasattr(sync_vectors, "record_pending_embeddings_backlog")
 
     referenced = sync_vectors.run_vector_reconciliation_cycle.__code__.co_names

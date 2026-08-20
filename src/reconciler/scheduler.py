@@ -158,11 +158,12 @@ class ReconcilerScheduler:
             while not self._shutdown_event.is_set():
                 now = datetime.now(timezone.utc)
 
-                # Refresh the pending-embeddings backlog gauge on EVERY replica,
-                # not just whichever one wins the sync_vectors work unit — the
-                # count is DB-global, so a replica that never ran a cycle would
-                # otherwise export a stale (or zero-initialized) value forever.
-                # See record_pending_embeddings_backlog for the full rationale.
+                # region ai
+                # Refresh on EVERY replica, not just whichever wins the sync_vectors
+                # work unit: the count is DB-global, so a replica that never ran a
+                # cycle would otherwise export a stale (or zero-initialized) value
+                # forever. Full rationale in record_pending_embeddings_backlog.
+                # endregion
                 await record_pending_embeddings_backlog()
 
                 # Check each task and enqueue if due
