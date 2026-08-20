@@ -7,7 +7,7 @@
 Please report security issues privately using one of:
 
 1. **[GitHub Private Vulnerability Reporting](https://github.com/plastic-labs/honcho/security/advisories/new)** (preferred)
-2. Email **<hello@plasticlabs.ai>** with subject line `[SECURITY] …`
+2. Email **<support@honcho.dev>** with subject line `[SECURITY] …`
 
 Include as much of the following as you can:
 
