@@ -316,6 +316,14 @@ RepresentationObservation = (
 
 
 def _observation_without_timestamp(observation: RepresentationObservation) -> str:
+    """Format an observation without timestamp metadata.
+
+    Args:
+        observation: Observation to format.
+
+    Returns:
+        Raw content for an explicit observation, otherwise timestamp-free text.
+    """
     if isinstance(observation, ExplicitObservation):
         return observation.content
     return observation.str_no_timestamps()
@@ -424,6 +432,11 @@ class Representation(BaseModel):
     def _iter_sections(
         self,
     ) -> Iterator[tuple[RepresentationSection, Sequence[RepresentationObservation]]]:
+        """Yield observation sections in the configured injection order.
+
+        Yields:
+            Pairs containing a section name and its observation sequence.
+        """
         sections: dict[RepresentationSection, Sequence[RepresentationObservation]] = {
             "explicit": self.explicit,
             "deductive": self.deductive,
@@ -436,6 +449,14 @@ class Representation(BaseModel):
     def _format_sections(
         self, format_observation: Callable[[RepresentationObservation], str]
     ) -> str:
+        """Format every section in configured order, including empty headers.
+
+        Args:
+            format_observation: Callable that renders one observation.
+
+        Returns:
+            Newline-delimited sections with observations numbered per section.
+        """
         parts: list[str] = []
         for section, observations in self._iter_sections():
             parts.append(f"{section.upper()}:\n")

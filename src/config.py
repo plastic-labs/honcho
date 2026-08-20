@@ -1585,6 +1585,17 @@ class AppSettings(HonchoSettings):
     def validate_representation_injection_order(
         cls, value: Any
     ) -> tuple[RepresentationSection, ...]:
+        """Normalize and validate the representation section order.
+
+        Args:
+            value: Comma-separated string or sequence of supported section names.
+
+        Returns:
+            The validated section order as a tuple.
+
+        Raises:
+            ValueError: If the value is not an exact permutation of all sections.
+        """
         sections: tuple[Any, ...]
         if isinstance(value, str):
             sections = tuple(section.strip() for section in value.split(","))
