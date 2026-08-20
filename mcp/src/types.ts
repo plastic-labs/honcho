@@ -1,10 +1,27 @@
+import { z } from "zod";
 import type { Honcho, Message, Summary, SessionSummaries } from "@honcho-ai/sdk";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { HonchoConfig } from "./config.js";
 
 export interface ToolContext {
-  honcho: Honcho;
   config: HonchoConfig;
+  /** Return a Honcho client scoped to the given workspace (or the header default). */
+  clientFor: (workspaceId?: string) => Honcho;
+  /** Client used only for credential-scoped ops (list workspaces). */
+  unscoped: Honcho;
+}
+
+/**
+ * Always optional at the schema layer so a missing value reaches clientFor,
+ * which returns a clear error (header or workspace_id on the next call).
+ */
+export function workspaceIdSchema(ctx: ToolContext) {
+  const fromHeader = ctx.config.workspaceId;
+  const description = fromHeader
+    ? `Workspace to operate in. The connection already set X-Honcho-Workspace-ID=${fromHeader}; omit this argument unless you need a different workspace.`
+    : "Workspace to operate in. Prefer the client setting X-Honcho-Workspace-ID on the connection — then you can omit this on every call. Only pass it (or use list_workspaces / create_workspace) when the header is unset.";
+  const field = z.string().optional().describe(description);
+  return fromHeader ? field.default(fromHeader) : field;
 }
 
 export function textResult(

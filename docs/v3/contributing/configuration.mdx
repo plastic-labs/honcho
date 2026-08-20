@@ -267,6 +267,7 @@ EMBEDDING_MAX_TOKENS_PER_REQUEST=300000
 EMBEDDING_MODEL_CONFIG__TRANSPORT=openai  # openai, gemini
 EMBEDDING_MODEL_CONFIG__MODEL=text-embedding-3-small
 EMBEDDING_MODEL_CONFIG__MAX_BATCH_SIZE=10  # optional per-request input cap
+EMBEDDING_MODEL_CONFIG__TIMEOUT=90.0       # optional client HTTP timeout (seconds)
 
 # Optional endpoint overrides
 EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL=http://localhost:8000/v1
@@ -278,6 +279,13 @@ Gemini the client applies a conservative default of 100 — Gemini does not
 document a per-request limit. Set it when an OpenAI-compatible embedding
 provider accepts fewer inputs per request, such as DashScope
 `text-embedding-v4` with a limit of 10.
+
+`EMBEDDING_MODEL_CONFIG__TIMEOUT` is an optional client HTTP timeout in
+seconds. OpenAI-compatible transports receive it as the SDK `timeout` kwarg
+(omitted when unset, so the SDK default applies). Gemini converts it to
+milliseconds on `http_options.timeout`, and keeps its existing 10-minute
+default when unset. The value is validated at config load the same way as
+LLM `provider_params.timeout` (positive, finite number of seconds).
 
 Forwarding `dimensions=` to OpenAI-compatible providers is controlled by `EMBEDDING_MODEL_CONFIG__DIMENSIONS_MODE`:
 
@@ -595,6 +603,8 @@ VECTOR_STORE_TURBOPUFFER_REGION=us-east-1
 # LanceDB-specific
 VECTOR_STORE_LANCEDB_PATH=./lancedb_data
 ```
+
+LanceDB is an optional extra and is not included in the default Docker image. Build with `docker build --build-arg INSTALL_LANCEDB=true .` (or `INSTALL_LANCEDB=true docker compose up -d --build`), or run `uv sync --extra lancedb` for manual setups. Note the extra is unavailable on Intel macOS.
 
 ## Monitoring
 

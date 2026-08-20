@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any, Literal
 
 import httpx
@@ -16,20 +16,22 @@ from .api_types import (
     PeerConfig,
     PeerResponse,
     QueueStatusResponse,
+    ScopeResponse,
     SessionConfiguration,
     SessionPeerConfig,
     SessionResponse,
     WorkspaceConfiguration,
     WorkspaceResponse,
 )
-from .base import PeerBase, SessionBase
+from .base import PeerBase, ScopeBase, SessionBase
 from .http import AsyncHonchoHTTPClient, HonchoHTTPClient, routes
 from .message import Message
 from .mixins import MetadataConfigMixin
 from .pagination import SyncPage
 from .peer import Peer
+from .scope import Scope
 from .session import Session
-from .utils import normalize_peers_to_dict, resolve_id
+from .utils import normalize_peers_to_dict, resolve_id, validate_scope_id
 
 logger = logging.getLogger(__name__)
 
@@ -419,6 +421,10 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
             None,
             description="Optional peers to attach to the session at creation. Accepts the same shape as Session.add_peers.",
         ),
+        scopes: Sequence[str | ScopeBase] | None = Field(
+            None,
+            description="Optional scopes this session should join. Each scope is created if it does not exist yet.",
+        ),
     ) -> Session:
         """
         Get or create a session with the given ID.
@@ -433,6 +439,11 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
             peers: Optional peers to attach to the session at creation. Accepts the
                 same shape as Session.add_peers (peer ID string, Peer object, list
                 of either, or tuples with SessionPeerConfig).
+            scopes: Optional scopes this session should join, as IDs or Scope
+                objects. Each scope is created if it does not exist yet. Attaching
+                at creation avoids the asynchronous backfill a later
+                ``scope.add_sessions()`` triggers, since there is no history to
+                copy.
 
         Returns:
             A Session object with cached metadata, configuration, created_at, and is_active.
@@ -445,6 +456,8 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
             body["configuration"] = configuration.model_dump(exclude_none=True)
         if peers is not None:
             body["peers"] = normalize_peers_to_dict(peers)
+        if scopes is not None:
+            body["scopes"] = [validate_scope_id(resolve_id(scope)) for scope in scopes]
 
         data = self._http.post(routes.sessions(self.workspace_id), body=body)
         session_data = SessionResponse.model_validate(data)
@@ -513,6 +526,97 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
             return SyncPage(next_data, SessionResponse, transform, fetch_next)
 
         return SyncPage(data, SessionResponse, transform, fetch_next)
+
+    @validate_call
+    def scope(
+        self,
+        id: str = Field(  # noqa: A002
+            ..., min_length=1, description="Unprefixed name for the scope"
+        ),
+        *,
+        metadata: dict[str, object] | None = Field(
+            None,
+            description="Optional metadata dictionary to associate with this scope.",
+        ),
+    ) -> Scope:
+        """
+        Get or create a scope with the given ID.
+
+        A scope is a named set of sessions that acts as a visibility boundary:
+        recall performed through the scope sees only what happened in its sessions,
+        while the underlying peer keeps its single unified representation of
+        everything.
+
+        Args:
+            id: Unprefixed scope name, unique within the workspace.
+            metadata: Optional metadata dictionary to associate with this scope.
+
+        Returns:
+            A Scope object for managing membership.
+
+        Raises:
+            ValueError: If the scope ID is invalid.
+
+        Example:
+            ```python
+            therapy = honcho.scope("therapy")
+            therapy.add_sessions([session_1, session_2])
+            ```
+        """
+        validate_scope_id(id)
+        self._ensure_workspace()
+        body: dict[str, Any] = {"id": id}
+        if metadata is not None:
+            body["metadata"] = metadata
+
+        data = self._http.post(routes.scopes(self.workspace_id), body=body)
+        scope_data = ScopeResponse.model_validate(data)
+        return Scope(
+            id,
+            self,
+            metadata=scope_data.metadata,
+            created_at=scope_data.created_at,
+        )
+
+    def scopes(
+        self,
+        *,
+        page: int = 1,
+        size: int = 50,
+        reverse: bool = False,
+    ) -> SyncPage[ScopeResponse, Scope]:
+        """
+        Get all scopes in the current workspace.
+
+        Args:
+            page: Page number (1-indexed). Default: 1.
+            size: Number of items per page. Default: 50.
+            reverse: If True, reverses the default ordering. Default: False.
+
+        Returns:
+            A SyncPage of Scope objects representing all scopes in the workspace.
+        """
+        self._ensure_workspace()
+
+        def fetch(next_page: int) -> dict[str, Any]:
+            query: dict[str, Any] = {"page": next_page, "size": size}
+            if reverse:
+                query["reverse"] = "true"
+            return self._http.post(routes.scopes_list(self.workspace_id), query=query)
+
+        def transform(scope: ScopeResponse) -> Scope:
+            """Convert a scope API response into a Scope SDK object."""
+            return Scope(
+                scope.id,
+                self,
+                metadata=scope.metadata,
+                created_at=scope.created_at,
+            )
+
+        def fetch_next(next_page: int) -> SyncPage[ScopeResponse, Scope]:
+            return SyncPage(fetch(next_page), ScopeResponse, transform, fetch_next)
+
+        return SyncPage(fetch(page), ScopeResponse, transform, fetch_next)
 
     def workspaces(
         self,
@@ -592,6 +696,11 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
         limit: int = Field(
             default=10, ge=1, le=100, description="Number of results to return"
         ),
+        *,
+        scope: str | ScopeBase | None = Field(
+            None,
+            description="Optional scope restricting the search to its member sessions",
+        ),
     ) -> list[Message]:
         """
         Search for messages in the current workspace.
@@ -602,15 +711,22 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
             query: The search query to use
             filters: Filters to scope the search. See [search filters documentation](https://honcho.dev/docs/v3/documentation/core-concepts/features/using-filters).
             limit: Number of results to return (1-100, default: 10)
+            scope: Optional scope (ID or Scope object) restricting the search to
+                that scope's member sessions. Mutually exclusive with a
+                ``session_id`` filter. A scope with no member sessions matches
+                nothing rather than everything.
 
         Returns:
             A list of Message objects representing the search results.
             Returns an empty list if no messages are found.
         """
         self._ensure_workspace()
+        body: dict[str, Any] = {"query": query, "filters": filters, "limit": limit}
+        if scope is not None:
+            body["scope"] = validate_scope_id(resolve_id(scope))
         data = self._http.post(
             routes.workspace_search(self.workspace_id),
-            body={"query": query, "filters": filters, "limit": limit},
+            body=body,
         )
         return [
             Message.from_api_response(MessageResponse.model_validate(item))

@@ -1,0 +1,217 @@
+---
+title: 'Webhooks'
+description: 'Receive push notifications when Honcho finishes background work'
+icon: 'satellite-dish'
+---
+
+Honcho's reasoning runs in the background, so a message you just created is not
+immediately reflected in the peer's representation. Instead of polling
+[queue status](/v3/documentation/features/advanced/queue-status), you can
+register a webhook endpoint and have Honcho notify you when the work it queued
+for a session has drained.
+
+Webhooks are registered per workspace. Every event for that workspace is
+delivered to every endpoint registered on it.
+
+## Registering an Endpoint
+
+<CodeGroup>
+```bash Register
+curl -X POST "$HONCHO_URL/v3/workspaces/my-app/webhooks" \
+  -H "Authorization: Bearer $HONCHO_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://example.com/honcho/webhook"}'
+```
+
+```bash List
+curl -X GET "$HONCHO_URL/v3/workspaces/my-app/webhooks" \
+  -H "Authorization: Bearer $HONCHO_API_KEY"
+```
+
+```bash Test
+curl -X GET "$HONCHO_URL/v3/workspaces/my-app/webhooks/test" \
+  -H "Authorization: Bearer $HONCHO_API_KEY"
+```
+
+```bash Delete
+curl -X DELETE "$HONCHO_URL/v3/workspaces/my-app/webhooks/$ENDPOINT_ID" \
+  -H "Authorization: Bearer $HONCHO_API_KEY"
+```
+</CodeGroup>
+
+Registration is get-or-create: a URL already registered on the workspace
+returns `200` with the existing endpoint, a new one returns `201`. The test
+route emits a `test.event` to every endpoint on the workspace, which is the
+quickest way to confirm your receiver and signature check work end to end.
+
+Webhook routes accept an admin key or a workspace-scoped key for that
+workspace. Peer- and session-scoped keys cannot manage webhooks.
+
+<Note>
+Webhook management is also available in the dashboard on the
+[Webhooks](https://app.honcho.dev/webhooks) page.
+</Note>
+
+### URL Requirements
+
+A webhook URL must be absolute and use `http` or `https`. URLs whose host is an
+IP literal in a private, loopback, link-local, reserved, multicast, or
+unspecified range are rejected with `422`.
+
+<Warning>
+This check inspects IP literals only — hostnames are accepted without
+resolution. If you self-host, treat network-level egress controls, not this
+validation, as your defense against internal-address delivery.
+</Warning>
+
+Each workspace can register up to `WEBHOOK_MAX_WORKSPACE_LIMIT` endpoints
+(default 10). Exceeding the limit returns `409`.
+
+## Events
+
+| Event | When it fires | `data` fields |
+|-------|---------------|---------------|
+| `queue.empty` | A unit of queued background work finished draining | `workspace_id`, `queue_type` (`representation` or `summary`), `session_id`, `observer`, `observed` |
+| `test.event` | You called `GET /webhooks/test` | `workspace_id` |
+
+<Warning>
+`queue.empty` is scoped to a single unit of work — one task type for one
+session and observer/observed pair — not to the workspace as a whole. Other
+work may still be queued elsewhere in the workspace when it fires. A session
+whose messages produce both representation and summary work emits one event per
+task type.
+</Warning>
+
+## Payload
+
+Every delivery is a `POST` with a `Content-Type: application/json` body in this
+envelope:
+
+```json
+{
+  "type": "queue.empty",
+  "data": {
+    "workspace_id": "my-app",
+    "queue_type": "representation",
+    "session_id": "support-chat-1",
+    "observer": "assistant",
+    "observed": "user-123"
+  },
+  "timestamp": "2026-08-10T18:24:05.123456Z"
+}
+```
+
+**`data` is event-specific — its keys differ by event type.** A `test.event`
+carries only `workspace_id`:
+
+```json
+{
+  "type": "test.event",
+  "data": { "workspace_id": "my-app" },
+  "timestamp": "2026-08-10T18:24:05.123456Z"
+}
+```
+
+Within one event type, an optional field with no value is sent as an explicit
+`null` — on `queue.empty`, that's `session_id`, `observer`, and `observed` for
+work that isn't tied to a session or an observer pair. Across event types the key
+is simply absent.
+
+Parse defensively: branch on `type` as the discriminator, treat every `data` key
+as optional rather than required, and tolerate new event types and new fields.
+A parser that requires the `queue.empty` keys on every event will break on a
+`test.event`.
+
+## Verifying Signatures
+
+Each delivery carries an `X-Honcho-Signature` header: the hex-encoded
+HMAC-SHA256 of the **raw request body**, keyed with your deployment's
+`WEBHOOK_SECRET`. Always compare with a constant-time function, and always sign
+the bytes you received — Honcho serializes the body compactly with sorted keys,
+so re-serializing your parsed JSON will not reliably reproduce it.
+
+<CodeGroup>
+```python Python
+import hashlib
+import hmac
+import json
+import os
+
+def verify(raw_body: bytes, signature: str) -> bool:
+    expected = hmac.new(
+        os.environ["WEBHOOK_SECRET"].encode(),
+        raw_body,
+        hashlib.sha256,
+    ).hexdigest()
+    return hmac.compare_digest(expected, signature)
+
+# FastAPI — read the raw body, not a parsed model
+@app.post("/honcho/webhook")
+async def handle(request: Request):
+    raw = await request.body()
+    if not verify(raw, request.headers.get("X-Honcho-Signature", "")):
+        raise HTTPException(status_code=401)
+    event = json.loads(raw)
+    ...
+```
+
+```typescript TypeScript
+import crypto from 'node:crypto';
+
+function verify(rawBody: Buffer, signature: string): boolean {
+  const expected = crypto
+    .createHmac('sha256', process.env.WEBHOOK_SECRET!)
+    .update(rawBody)
+    .digest('hex');
+  const a = Buffer.from(expected);
+  const b = Buffer.from(signature);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+// Express — note express.raw(), not express.json()
+app.post('/honcho/webhook', express.raw({ type: 'application/json' }), (req, res) => {
+  if (!verify(req.body, req.header('X-Honcho-Signature') ?? '')) {
+    return res.sendStatus(401);
+  }
+  const event = JSON.parse(req.body.toString());
+  res.sendStatus(200);
+});
+```
+</CodeGroup>
+
+## Delivery Semantics
+
+Delivery is best-effort and fire-and-forget:
+
+- Events fan out to all of the workspace's endpoints concurrently.
+- Each request has a 30-second timeout.
+- **There are no retries.** A non-2xx response, a timeout, or a connection
+  error is logged on the server and the event is dropped.
+
+Design your receiver accordingly: treat the event as a hint to re-read state
+from the API rather than as the state itself, and fall back to
+[queue status](/v3/documentation/features/advanced/queue-status) polling if you
+need a guarantee.
+
+## Self-Hosting Requirements
+
+<Warning>
+`WEBHOOK_SECRET` must be set, or nothing is delivered. Honcho signs every
+payload before sending it; with no secret configured, signing fails and the
+event is dropped after being logged. Registration still succeeds, so a missing
+secret looks like silence rather than an error.
+</Warning>
+
+Webhook delivery is queued work handled by the deriver process, so a deriver
+worker must be running for events to be sent. See
+[Configuration](/v3/contributing/configuration#webhooks) for
+`WEBHOOK_SECRET` and `WEBHOOK_MAX_WORKSPACE_LIMIT`.
+
+<CardGroup cols={2}>
+  <Card title="Queue Status" icon="list-check" href="/v3/documentation/features/advanced/queue-status">
+    Poll background processing state instead of waiting for a push
+  </Card>
+  <Card title="Webhook API Reference" icon="code" href="/v3/api-reference/endpoint/webhooks/get-or-create-webhook-endpoint">
+    Full request and response schemas for the webhook endpoints
+  </Card>
+</CardGroup>

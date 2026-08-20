@@ -60,7 +60,7 @@ If you're unsure, list your available tools and look for Honcho memory tools (an
 
 You need a Honcho API key — get one free at <https://app.honcho.dev> (starts with `hch-`). Then connect via the path you picked above — a purpose-built integration (recommended), or a raw connection:
 
-- **MCP** — point your client at `https://mcp.honcho.dev` with two headers: `Authorization: Bearer hch-your-key-here` and `X-Honcho-User-Name: YourName` (what Honcho should call the user). Optional: `X-Honcho-Assistant-Name` (default `Assistant`) and `X-Honcho-Workspace-ID` (default `default`; set it to isolate memory per project). Restart the client fully after adding config. Per-client config snippets (Claude Desktop, Cursor, Codex, Windsurf, VS Code, Cline, Zed) are in the [MCP integration guide](https://honcho.dev/docs/v3/guides/integrations/mcp.md). Once connected, the server tells your assistant how to use the tools automatically.
+- **MCP** — point your client at `https://mcp.honcho.dev` with `Authorization: Bearer hch-your-key-here`. Optional `X-Honcho-Workspace-ID` fills the `workspace_id` tool argument when omitted; otherwise pass `workspace_id` on each call (use `list_workspaces` to discover IDs). Restart the client fully after adding config. Per-client config snippets (Claude Desktop, Cursor, Codex, Windsurf, VS Code, Cline, Zed) are in the [MCP integration guide](https://honcho.dev/docs/v3/guides/integrations/mcp.md). Once connected, the server tells your assistant how to use the tools automatically.
 - **CLI** — use the `honcho-cli` skill.
 
 ---

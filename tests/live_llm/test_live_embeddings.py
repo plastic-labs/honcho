@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import time
 from typing import Any, cast
 
+import httpx
+import openai
 import pytest
 from openai import AsyncOpenAI
+
+from src.config import EmbeddingTransport
 
 from .conftest import cosine_similarity, make_embedding_client
 from .embedding_matrix import LiveEmbeddingSpec, get_live_embedding_specs
@@ -24,6 +29,52 @@ GEMINI_SPECS = get_live_embedding_specs(transport="gemini")
 OPENAI_NATIVE_SPECS = tuple(
     spec for spec in ALL_SPECS if spec.family == "openai_embedding"
 )
+
+GENEROUS_TIMEOUT_SECONDS = 120.0
+TIGHT_TIMEOUT_SECONDS = 0.01
+# Well under the client defaults; generous enough to absorb SDK retries.
+TIGHT_TIMEOUT_WALL_CLOCK_LIMIT_SECONDS = 30
+
+EMBEDDING_TIMEOUT_EXCEPTIONS: dict[
+    EmbeddingTransport, tuple[type[BaseException], ...]
+] = {
+    "openai": (openai.APITimeoutError,),
+    # google-genai raises httpx or aiohttp timeouts depending on its transport;
+    # aiohttp surfaces as asyncio.TimeoutError (== builtins.TimeoutError).
+    "gemini": (httpx.TimeoutException, TimeoutError),
+}
+
+TRANSPORT_MARKS = {
+    "openai": pytest.mark.requires_openai,
+    "gemini": pytest.mark.requires_gemini,
+}
+
+
+def representative_embedding_specs() -> list[Any]:
+    """One spec per transport — timeout plumbing is client-level, not model-level."""
+    params: list[Any] = []
+    for transport in ("openai", "gemini"):
+        specs = get_live_embedding_specs(transport=transport)
+        if not specs:
+            continue
+        # Prefer the native family over openai-compatible proxies.
+        family = f"{transport}_embedding"
+        native = next((s for s in specs if s.family == family), specs[0])
+        params.append(
+            pytest.param(native, marks=TRANSPORT_MARKS[transport], id=native.id)
+        )
+    return params
+
+
+def assert_embedding_timeout_on_client(
+    client: Any, transport: EmbeddingTransport, timeout_seconds: float
+) -> None:
+    if transport == "gemini":
+        http_options = client.client._api_client._http_options
+        assert http_options.timeout == int(timeout_seconds * 1000)
+        return
+    openai_client = cast(AsyncOpenAI, client.client)
+    assert openai_client.timeout == timeout_seconds
 
 
 @pytest.mark.asyncio
@@ -160,3 +211,36 @@ async def test_live_gemini_batch_embed_survives_batch_split(
 
     assert len(embeddings) == len(BATCH_TEXTS)
     assert len({tuple(embedding) for embedding in embeddings}) == len(BATCH_TEXTS)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("spec", representative_embedding_specs())
+async def test_live_embedding_timeout_reaches_the_client(
+    spec: LiveEmbeddingSpec,
+) -> None:
+    """Configured embedding timeout lands on the provider SDK client."""
+    client = make_embedding_client(spec, timeout=GENEROUS_TIMEOUT_SECONDS)
+
+    embedding = await client.embed(BATCH_TEXTS[0])
+
+    assert len(embedding) == spec.dimensions
+    assert_embedding_timeout_on_client(client, spec.transport, GENEROUS_TIMEOUT_SECONDS)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("spec", representative_embedding_specs())
+async def test_live_tight_embedding_timeout_aborts_request(
+    spec: LiveEmbeddingSpec,
+) -> None:
+    """A near-zero embedding timeout aborts before the provider can answer."""
+    client = make_embedding_client(spec, timeout=TIGHT_TIMEOUT_SECONDS)
+
+    started = time.monotonic()
+    with pytest.raises(EMBEDDING_TIMEOUT_EXCEPTIONS[spec.transport]):
+        await client.embed(BATCH_TEXTS[0])
+    elapsed = time.monotonic() - started
+
+    assert elapsed < TIGHT_TIMEOUT_WALL_CLOCK_LIMIT_SECONDS, (
+        f"tight embedding timeout took {elapsed:.1f}s — client timeout "
+        f"likely not applied"
+    )

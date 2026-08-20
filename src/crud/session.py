@@ -7,7 +7,18 @@ from typing import cast as typing_cast
 
 from cashews import NOT_NONE
 from nanoid import generate as generate_nanoid
-from sqlalchemy import Select, and_, case, cast, delete, func, insert, select, update
+from sqlalchemy import (
+    Select,
+    and_,
+    case,
+    cast,
+    delete,
+    exists,
+    func,
+    insert,
+    select,
+    update,
+)
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
@@ -27,12 +38,21 @@ from src.exceptions import (
     ConflictException,
     ObserverException,
     ResourceNotFoundException,
+    ValidationException,
 )
 from src.utils.filter import apply_filter
+from src.utils.scopes import is_scope_peer, scope_peer_name
 from src.utils.types import GetOrCreateResult
 from src.vector_store import get_external_vector_store
 
-from .peer import get_or_create_peers, get_peer
+from .peer import (
+    get_or_create_peers,
+    get_peer,
+    reject_scope_peers,
+    scope_peer_clause,
+    scope_peer_names,
+)
+from .scope import SCOPE_MEMBERSHIP_CONFIG, get_or_create_scopes
 from .workspace import get_or_create_workspace
 
 logger = getLogger(__name__)
@@ -97,6 +117,30 @@ async def _fetch_session(
         "configuration": obj.configuration,
         "created_at": obj.created_at,
     }
+
+
+def _reject_resolved_scope_peers(peers: list[models.Peer]) -> None:
+    """Reject scope peers among rows already resolved for a membership upsert.
+
+    The route-level guards check names *before* peers are resolved, which leaves a
+    check-then-upsert window: if a scope is created concurrently between that
+    check and the upsert below, the generic path would attach the now-flagged
+    scope peer with a default ``SessionPeerConfig()``, clobbering its
+    ``observe_others=True/observe_me=False`` membership config. This runs on the
+    resolved rows inside the same transaction as the upsert, so there is no
+    window and no extra query.
+
+    Raises:
+        ValidationException: If any resolved peer is a scope.
+    """
+    offenders = sorted(
+        p.name for p in peers if is_scope_peer(p.name, p.internal_metadata)
+    )
+    if offenders:
+        raise ValidationException(
+            f"Peer name(s) {offenders} are scopes."
+            + " Scope membership is managed via the scopes routes."
+        )
 
 
 def count_observers_in_config(
@@ -262,14 +306,39 @@ async def get_or_create_session(
             db,
             workspace_name=workspace_name,
             peers=[
-                schemas.PeerCreate(name=peer_name) for peer_name in session.peer_names
+                schemas.PeerSpec(name=peer_name) for peer_name in session.peer_names
+            ],
+        )
+        _reject_resolved_scope_peers(peers_result.resource)
+        await _get_or_add_peers_to_session(
+            db,
+            workspace_name=workspace_name,
+            session_name=session.name,
+            peer_names=session.peer_names,
+            fetch_after_upsert=False,
+        )
+
+    # Add the session to any requested scopes: create-or-get each scope peer
+    # and record an observer membership (observe_others=true, observe_me=false).
+    # If the session already has messages, a backfill task is enqueued after
+    # commit (below) so its existing documents are copied into the scope.
+    scopes_result = None
+    if session.scopes:
+        scopes_result = await get_or_create_scopes(
+            db,
+            workspace_name=workspace_name,
+            scopes=[
+                schemas.ScopeCreate(name=scope_name) for scope_name in session.scopes
             ],
         )
         await _get_or_add_peers_to_session(
             db,
             workspace_name=workspace_name,
             session_name=session.name,
-            peer_names=session.peer_names,
+            peer_names={
+                scope_peer_name(scope_name): SCOPE_MEMBERSHIP_CONFIG
+                for scope_name in session.scopes
+            },
             fetch_after_upsert=False,
         )
 
@@ -280,6 +349,32 @@ async def get_or_create_session(
         await ws_result.post_commit()
     if peers_result is not None:
         await peers_result.post_commit()
+    if scopes_result is not None:
+        await scopes_result.post_commit()
+
+    # Backfill (DEV-1999): a pre-existing session added to scopes at
+    # create-or-get time may already have messages; those need a
+    # backfill-by-copy task per scope. Fresh sessions need nothing.
+    if session.scopes:
+        has_messages = await db.scalar(
+            select(
+                exists(
+                    select(models.Message.id)
+                    .where(models.Message.workspace_name == workspace_name)
+                    .where(models.Message.session_name == session.name)
+                )
+            )
+        )
+        if has_messages:
+            # Imported lazily: src.deriver.enqueue imports crud at module level.
+            from src.deriver.enqueue import enqueue_scope_backfill
+
+            for scope_name in session.scopes:
+                await enqueue_scope_backfill(
+                    workspace_name,
+                    scope_peer=scope_peer_name(scope_name),
+                    session_name=session.name,
+                )
 
     # Only update cache if session data changed or was newly created
     if needs_cache_update:
@@ -768,6 +863,8 @@ async def remove_peers_from_session(
     workspace_name: str,
     session_name: str,
     peer_names: set[str],
+    *,
+    _allow_scope_peers: bool = False,
 ) -> bool:
     """
     Remove specified peers from a session.
@@ -777,15 +874,31 @@ async def remove_peers_from_session(
         workspace_name: Name of the workspace
         session_name: Name of the session
         peer_names: Set of peer names to remove from the session
+        _allow_scope_peers: Internal. Set only by the scopes facade, which ends
+            scope membership through this same path and must not be blocked by
+            the guard below.
 
     Returns:
         True if peers were removed successfully
 
     Raises:
         ResourceNotFoundException: If the session does not exist
+        ValidationException: If any named peer is a scope
     """
     # Verify session exists
     await get_session(db, session_name, workspace_name)
+
+    # Scope membership is ended through the scopes routes, which also reconcile
+    # the scope's copies. Rejected up front for a clear 422 rather than a silent
+    # no-op — but this check alone is only advisory: under READ COMMITTED a scope
+    # can be created between it and the UPDATE below.
+    if not _allow_scope_peers:
+        await reject_scope_peers(
+            db,
+            workspace_name,
+            peer_names,
+            action="Scope membership is managed via the scopes routes.",
+        )
 
     # Soft delete specified session peers by setting left_at timestamp
     update_stmt = (
@@ -798,6 +911,20 @@ async def remove_peers_from_session(
         )
         .values(left_at=func.now())
     )
+    if not _allow_scope_peers:
+        # Closes the window the advisory check above cannot: the exclusion is
+        # evaluated by Postgres as part of the UPDATE, so a scope committed after
+        # that check still cannot be detached here. Correlated rather than a join
+        # so the statement stays a plain UPDATE.
+        update_stmt = update_stmt.where(
+            ~exists(
+                select(models.Peer.id)
+                .where(models.Peer.workspace_name == workspace_name)
+                .where(models.Peer.name == models.SessionPeer.peer_name)
+                .where(scope_peer_clause())
+                .correlate(models.SessionPeer)
+            )
+        )
     await db.execute(update_stmt)
 
     await db.commit()
@@ -816,6 +943,13 @@ async def get_peers_from_session(
         workspace_name: Name of the workspace
         session_name: Name of the session
 
+    Scope peers are excluded: a scope's membership is the facade's internal
+    observer wiring, and this is the generic peer surface. Listing them here
+    would show a caller a peer named ``scope.<name>`` with ``observe_others``
+    set, which is exactly the mechanic the facade exists to hide. Mirrors the
+    ``kind``-less default of ``crud.peer.get_peers``; the scopes routes expose
+    membership from the other direction.
+
     Returns:
         Paginated list of Peer objects in the session
     """
@@ -832,6 +966,10 @@ async def get_peers_from_session(
         .where(models.SessionPeer.session_name == session_name)
         .where(models.Peer.workspace_name == workspace_name)
         .where(models.SessionPeer.left_at.is_(None))  # Only active peers
+        # models.Peer is already in the FROM via the join above, so the clause
+        # composes directly — no correlated exists() as in the SessionPeer-only
+        # UPDATE statements elsewhere in this module.
+        .where(~scope_peer_clause())
     )
 
 
@@ -946,13 +1084,27 @@ async def set_peers_for_session(
             f"Session {session_name} not found in workspace {workspace_name}"
         )
 
-    # Soft delete specified session peers by setting left_at timestamp
+    # Soft delete every *ordinary* active membership. Scope memberships are
+    # deliberately preserved: this route replaces the peers the caller names, and a
+    # caller detaches a scope by simply *omitting* it from an otherwise valid
+    # replacement map — never naming it, so no request-level guard can see it.
+    # Without the exclusion a plain replacement silently bypasses the facade that
+    # owns scope membership and its removal reconciliation. Being part of the
+    # UPDATE, this holds regardless of the request body or concurrent scope
+    # creation.
     update_stmt = (
         update(models.SessionPeer)
         .where(
             models.SessionPeer.session_name == session_name,
             models.SessionPeer.workspace_name == workspace_name,
             models.SessionPeer.left_at.is_(None),  # Only update active peers
+            ~exists(
+                select(models.Peer.id)
+                .where(models.Peer.workspace_name == workspace_name)
+                .where(models.Peer.name == models.SessionPeer.peer_name)
+                .where(scope_peer_clause())
+                .correlate(models.SessionPeer)
+            ),
         )
         .values(left_at=func.now())
     )
@@ -962,8 +1114,9 @@ async def set_peers_for_session(
     peers_result = await get_or_create_peers(
         db,
         workspace_name=workspace_name,
-        peers=[schemas.PeerCreate(name=peer_name) for peer_name in peer_names],
+        peers=[schemas.PeerSpec(name=peer_name) for peer_name in peer_names],
     )
+    _reject_resolved_scope_peers(peers_result.resource)
 
     # Add new peers to session
     peers = await _get_or_add_peers_to_session(
@@ -976,6 +1129,30 @@ async def set_peers_for_session(
     await db.commit()
     await peers_result.post_commit()
     return peers
+
+
+async def upsert_session_peers(
+    db: AsyncSession,
+    workspace_name: str,
+    session_name: str,
+    peer_names: dict[str, schemas.SessionPeerConfig],
+    *,
+    fetch_after_upsert: bool = True,
+) -> list[models.SessionPeer]:
+    """Public wrapper around the session-peer membership upsert.
+
+    Exists for other crud modules (currently the scopes facade in
+    ``src/crud/scope.py``) that manage memberships directly, bypassing the
+    route-level scope-peer guardrails. See ``_get_or_add_peers_to_session``
+    for semantics.
+    """
+    return await _get_or_add_peers_to_session(
+        db,
+        workspace_name=workspace_name,
+        session_name=session_name,
+        peer_names=peer_names,
+        fetch_after_upsert=fetch_after_upsert,
+    )
 
 
 async def _get_or_add_peers_to_session(
@@ -1020,8 +1197,17 @@ async def _get_or_add_peers_to_session(
         result = await db.execute(select_stmt)
         return list(result.scalars().all())
 
-    # Only validate observer limit if we're adding peers with observe_others=True
-    new_observer_count = count_observers_in_config(peer_names)
+    # Scope memberships carry observe_others=True but do not count against the
+    # limit. The limit bounds per-observer deriver fan-out for real peers; a scope
+    # costs document rows, not LLM calls, and counting them would
+    # cap scopes-per-session at SESSION_OBSERVERS_LIMIT and surface as an
+    # observer-shaped 400 through a facade that hides observers entirely.
+    scopes_being_added = await scope_peer_names(db, workspace_name, peer_names.keys())
+
+    # Only validate observer limit if we're adding non-scope peers with observe_others=True
+    new_observer_count = count_observers_in_config(
+        {n: c for n, c in peer_names.items() if n not in scopes_being_added}
+    )
 
     if new_observer_count > 0:
         # Use a single efficient query to count existing observers not being updated
@@ -1036,6 +1222,14 @@ async def _get_or_add_peers_to_session(
             models.SessionPeer.configuration["observe_others"].astext.cast(
                 Boolean
             ),  # Only observers
+            # Existing scope memberships are excluded for the same reason as above.
+            ~exists(
+                select(models.Peer.id)
+                .where(models.Peer.workspace_name == workspace_name)
+                .where(models.Peer.name == models.SessionPeer.peer_name)
+                .where(scope_peer_clause())
+                .correlate(models.SessionPeer)
+            ),
         )
         result = await db.execute(existing_observers_stmt)
         existing_observer_count = result.scalar() or 0
@@ -1111,7 +1305,14 @@ async def get_peer_config(
 
     Raises:
         ResourceNotFoundException: If the session or peer does not exist
+        ValidationException: If the peer is a scope
     """
+    # A scope's membership config belongs to the facade, not the caller — the
+    # write path refuses it in set_peer_config below, and reading it back is the
+    # same internal wiring by another route. Checked on the resolved row, so a
+    # legacy peer merely occupying the reserved name keeps working.
+    _reject_resolved_scope_peers([await get_peer(db, workspace_name, peer_id)])
+
     # Get row from session_peer table
     stmt = select(models.SessionPeer).where(
         models.SessionPeer.workspace_name == workspace_name,
@@ -1148,10 +1349,18 @@ async def set_peer_config(
 
     Raises:
         ObserverException: If the update would exceed the observer limit
+        ValidationException: If the peer is a scope
     """
     # First, get the session and peer to ensure they exist
     await get_session(db, session_name, workspace_name)
-    await get_peer(db, workspace_name, schemas.PeerCreate(name=peer_name))
+    peer = await get_peer(db, workspace_name, peer_name)
+
+    # A scope's membership config is the facade's, not the caller's: setting
+    # observe_others=false silently stops all fan-out into the scope, and
+    # observe_me=true makes Honcho form a representation *of* a scope, which
+    # never happens by design. Checked on the row just resolved above, so there
+    # is no check-then-use window and no extra query.
+    _reject_resolved_scope_peers([peer])
 
     # Check if a SessionPeer entry already exists
     stmt = (

@@ -143,8 +143,8 @@ class TraceContentEvent(BaseEvent):
     # Tool calls in a unified {id, name, input} shape (provider-agnostic).
     tool_calls: list[dict[str, Any]] = Field(default_factory=list)
     # Tags Honcho-authored content (system prompts, scaffold) so tenant-facing
-    # views can withhold globally-shared content (the §6.3 access invariant —
-    # dedup is global, the content store has no tenant column).
+    # views can withhold globally-shared content: dedup is global, and the
+    # content store has no tenant column.
     honcho_authored: bool = False
 
     def get_resource_id(self) -> str:

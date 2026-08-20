@@ -4,6 +4,7 @@
 #   cp docker-compose.yml.example docker-compose.yml
 #   cp .env.template .env  # edit with your provider config
 #   docker compose up -d --build
+#   INSTALL_LANCEDB=true docker compose up -d --build  # optional local vector store
 #
 # By default, ports are bound to 127.0.0.1 (localhost only).
 # For development, uncomment the source mounts and monitoring services below.
@@ -13,6 +14,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        INSTALL_LANCEDB: ${INSTALL_LANCEDB:-false}
     entrypoint: ["sh", "docker/entrypoint.sh"]
     depends_on:
       database:
@@ -33,10 +36,12 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
-    # -- Development: mount source for live reload --
-    # volumes:
-    #   - .:/app
-    #   - venv:/app/.venv
+    volumes:
+      # Shared LanceDB data (used when VECTOR_STORE_TYPE=lancedb)
+      - lancedb-data:/app/lancedb_data
+      # -- Development: mount source for live reload --
+      # - .:/app
+      # - venv:/app/.venv
     environment:
       - DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@database:5432/postgres
       - CACHE_URL=redis://redis:6379/0?suppress=true
@@ -50,6 +55,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        INSTALL_LANCEDB: ${INSTALL_LANCEDB:-false}
     entrypoint: ["/app/.venv/bin/python", "-m", "src.deriver"]
     depends_on:
       api:
@@ -58,10 +65,12 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    # -- Development: mount source for live reload --
-    # volumes:
-    #   - .:/app
-    #   - venv:/app/.venv
+    volumes:
+      # Shared LanceDB data (used when VECTOR_STORE_TYPE=lancedb)
+      - lancedb-data:/app/lancedb_data
+      # -- Development: mount source for live reload --
+      # - .:/app
+      # - venv:/app/.venv
     environment:
       - DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@database:5432/postgres
       - CACHE_URL=redis://redis:6379/0?suppress=true
@@ -137,6 +146,7 @@ services:
 volumes:
   pgdata:
   redis-data:
+  lancedb-data:
   # -- Development: uncomment if using source mounts --
   # venv:
   # prometheus-data:

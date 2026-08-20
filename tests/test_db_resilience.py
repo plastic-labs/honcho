@@ -175,6 +175,117 @@ async def test_polling_loop_idle_sleeps_once_per_cycle(
     assert sleeps == [1.0, 2.0, 4.0, 8.0, 8.0]
 
 
+def test_is_tenant_work_ignores_reconciler_only_batches() -> None:
+    from src.deriver.queue_manager import QueueManager
+
+    assert not QueueManager._is_tenant_work(["reconciler:sync_vectors"])  # pyright: ignore[reportPrivateUsage]
+    assert not QueueManager._is_tenant_work(  # pyright: ignore[reportPrivateUsage]
+        ["reconciler:sync_vectors", "reconciler:cleanup_queue"]
+    )
+    # A mixed batch is tenant work: real work is present alongside housekeeping.
+    assert QueueManager._is_tenant_work(  # pyright: ignore[reportPrivateUsage]
+        ["reconciler:sync_vectors", "representation:ws:sess:peer"]
+    )
+    # Unparseable keys count as tenant work so an unknown key can't strand the
+    # loop in a long sleep.
+    assert QueueManager._is_tenant_work(["not-a-real-key"])  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.asyncio
+async def test_reconciler_work_does_not_reset_backoff(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The reconciler enqueues sweeps on its own timer. Claiming one must not
+    look like a busy queue, or the backoff resets every cycle and the pooler
+    never releases an idle tenant's connection."""
+    monkeypatch.setattr(settings.DERIVER, "POLLING_BACKOFF_ENABLED", True)
+    monkeypatch.setattr(settings.DERIVER, "POLLING_SLEEP_INTERVAL_SECONDS", 1.0)
+    monkeypatch.setattr(settings.DERIVER, "POLLING_BACKOFF_MULTIPLIER", 2.0)
+    monkeypatch.setattr(settings.DERIVER, "POLLING_SLEEP_MAX_INTERVAL_SECONDS", 64.0)
+    monkeypatch.setattr(settings.DERIVER, "POLLING_JITTER_RATIO", 0.0)
+
+    import asyncio
+
+    from src.deriver import queue_manager as qm_mod
+
+    qm = qm_mod.QueueManager()
+    sleeps: list[float] = []
+    polls = {"n": 0}
+
+    async def fake_cleanup() -> None:
+        return None
+
+    async def fake_claim() -> dict[str, str]:
+        polls["n"] += 1
+        if polls["n"] >= 5:
+            qm.shutdown_event.set()
+        # Third poll hands back a reconciler sweep; the rest are empty.
+        return {"reconciler:sync_vectors": "aqs-1"} if polls["n"] == 3 else {}
+
+    async def fake_process(_work_unit_key: str, _worker_id: str) -> None:
+        return None
+
+    async def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(qm, "cleanup_stale_work_units", fake_cleanup)
+    monkeypatch.setattr(qm, "get_and_claim_work_units", fake_claim)
+    monkeypatch.setattr(qm, "process_work_unit", fake_process)
+    monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+
+    await qm.polling_loop()
+
+    # Polls 1 and 2 sleep 1 and 2. Poll 3 claims the sweep, so it neither sleeps
+    # nor resets. Polls 4 and 5 resume the schedule at 4 -- not back at 1.
+    assert sleeps == [1.0, 2.0, 4.0, 8.0]
+
+
+@pytest.mark.asyncio
+async def test_tenant_work_still_resets_backoff(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Real tenant work must still snap the interval back for fast pickup."""
+    monkeypatch.setattr(settings.DERIVER, "POLLING_BACKOFF_ENABLED", True)
+    monkeypatch.setattr(settings.DERIVER, "POLLING_SLEEP_INTERVAL_SECONDS", 1.0)
+    monkeypatch.setattr(settings.DERIVER, "POLLING_BACKOFF_MULTIPLIER", 2.0)
+    monkeypatch.setattr(settings.DERIVER, "POLLING_SLEEP_MAX_INTERVAL_SECONDS", 64.0)
+    monkeypatch.setattr(settings.DERIVER, "POLLING_JITTER_RATIO", 0.0)
+
+    import asyncio
+
+    from src.deriver import queue_manager as qm_mod
+
+    qm = qm_mod.QueueManager()
+    sleeps: list[float] = []
+    polls = {"n": 0}
+
+    async def fake_cleanup() -> None:
+        return None
+
+    async def fake_claim() -> dict[str, str]:
+        polls["n"] += 1
+        if polls["n"] >= 5:
+            qm.shutdown_event.set()
+        return {"representation:ws:sess:peer": "aqs-1"} if polls["n"] == 3 else {}
+
+    async def fake_process(_work_unit_key: str, _worker_id: str) -> None:
+        return None
+
+    async def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(qm, "cleanup_stale_work_units", fake_cleanup)
+    monkeypatch.setattr(qm, "get_and_claim_work_units", fake_claim)
+    monkeypatch.setattr(qm, "process_work_unit", fake_process)
+    monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+
+    await qm.polling_loop()
+
+    # Poll 3 finds tenant work, so polls 4 and 5 start over from the base
+    # interval rather than continuing from 4.
+    assert sleeps == [1.0, 2.0, 1.0, 2.0]
+
+
 def test_inflight_gauge_no_drift(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings.METRICS, "NAMESPACE", "test")
     child: Any = db_queries_in_flight_gauge.labels(instance_type="api")

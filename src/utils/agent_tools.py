@@ -1010,7 +1010,7 @@ async def create_observations(
                     workspace_name=workspace_name,
                     observer=observer,
                     observed=observed,
-                    deduplicate=True,
+                    deduplicate=settings.DERIVER.DEDUPLICATE,
                 )
             ).created_documents
         logger.info(
