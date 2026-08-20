@@ -155,6 +155,7 @@ def format_assistant_tool_message(
     tool_calls: list[dict[str, Any]],
     thinking_blocks: list[dict[str, Any]] | None = None,
     reasoning_details: list[dict[str, Any]] | None = None,
+    thinking_content: str | None = None,
 ) -> dict[str, Any]:
     """Format an assistant message with tool calls in provider-native shape."""
     from .backend import CompletionResult as BackendCompletionResult
@@ -172,6 +173,7 @@ def format_assistant_tool_message(
             )
             for tool_call in tool_calls
         ],
+        thinking_content=thinking_content,
         thinking_blocks=thinking_blocks or [],
         reasoning_details=reasoning_details or [],
     )
@@ -470,6 +472,7 @@ async def execute_tool_loop(
             response.tool_calls_made,
             response.thinking_blocks,
             response.reasoning_details,
+            response.thinking_content,
         )
         conversation_messages.append(assistant_message)
 

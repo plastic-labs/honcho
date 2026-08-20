@@ -1,3 +1,5 @@
+import pytest
+
 from src.llm.backend import CompletionResult, ToolCallResult
 from src.llm.history_adapters import (
     AnthropicHistoryAdapter,
@@ -65,3 +67,49 @@ def test_openai_history_adapter_preserves_reasoning_details() -> None:
     assert message["role"] == "assistant"
     assert message["reasoning_details"] == [{"type": "reasoning", "content": "step 1"}]
     assert message["tool_calls"][0]["function"]["name"] == "search"
+
+
+def test_openai_history_adapter_preserves_thinking_content() -> None:
+    adapter = OpenAIHistoryAdapter()
+    result = CompletionResult(
+        content="Calling a tool",
+        thinking_content="step 1",
+        tool_calls=[
+            ToolCallResult(id="tool_1", name="search", input={"query": "honcho"})
+        ],
+    )
+
+    message = adapter.format_assistant_tool_message(result)
+
+    assert message["reasoning_content"] == "step 1"
+    assert "reasoning_details" not in message
+
+
+def test_openai_history_adapter_prefers_reasoning_details() -> None:
+    adapter = OpenAIHistoryAdapter()
+    reasoning_details = [{"type": "reasoning", "content": "step 1"}]
+    result = CompletionResult(
+        content="Calling a tool",
+        thinking_content="duplicate step 1",
+        reasoning_details=reasoning_details,
+    )
+
+    message = adapter.format_assistant_tool_message(result)
+
+    assert message["reasoning_details"] == reasoning_details
+    assert "reasoning_content" not in message
+
+
+@pytest.mark.parametrize("thinking_content", [None, ""])
+def test_openai_history_adapter_omits_empty_thinking_content(
+    thinking_content: str | None,
+) -> None:
+    adapter = OpenAIHistoryAdapter()
+    result = CompletionResult(
+        content="Calling a tool",
+        thinking_content=thinking_content,
+    )
+
+    message = adapter.format_assistant_tool_message(result)
+
+    assert "reasoning_content" not in message
