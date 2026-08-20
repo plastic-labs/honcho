@@ -13,6 +13,8 @@ from typing import Any, NamedTuple, cast
 import sentry_sdk
 from dotenv import load_dotenv
 from nanoid import generate as generate_nanoid
+from netra import Netra
+from netra.decorators import workflow
 from sentry_sdk.integrations.asyncio import AsyncioIntegration
 from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
 from sqlalchemy import and_, delete, or_, select, update
@@ -623,10 +625,15 @@ class QueueManager:
         if settings.SENTRY.ENABLED:
             sentry_sdk.capture_exception(error)
 
+    @workflow(name="process_work_unit")
     async def process_work_unit(self, work_unit_key: str, worker_id: str) -> None:
         """Process all queue items for a specific work unit by routing to the correct handler."""
         logger.debug(f"Starting to process work unit {work_unit_key}")
         work_unit = parse_work_unit_key(work_unit_key)
+        if work_unit.workspace_name:
+            Netra.set_user_id(work_unit.workspace_name)
+        if work_unit.session_name:
+            Netra.set_session_id(work_unit.session_name)
         async with self.semaphore:
             queue_item_count = 0
             try:

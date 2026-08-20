@@ -2,6 +2,8 @@ import logging
 import time
 
 import sentry_sdk
+from netra import Netra
+from netra.decorators import task
 from pydantic import ValidationError
 from sqlalchemy import select
 
@@ -41,11 +43,14 @@ logger = logging.getLogger(__name__)
 logging.getLogger("sqlalchemy.engine.Engine").disabled = True
 
 
+@task(name="process_queue_item")
 async def process_item(queue_item: models.QueueItem) -> None:
     """Process a single item from the queue."""
     task_type = queue_item.task_type
     queue_payload = queue_item.payload
     workspace_name = queue_item.workspace_name
+    session_name = queue_payload.get("data", {}).get("session_id")
+    Netra.set_session_id(session_name)
 
     # Handle reconciler first - it's the only task type that doesn't require workspace_name
     if task_type == "reconciler":
@@ -68,6 +73,7 @@ async def process_item(queue_item: models.QueueItem) -> None:
     # All other task types require a workspace_name
     if workspace_name is None:
         raise ValueError(f"{task_type} tasks require a workspace_name")
+    Netra.set_user_id(workspace_name)
 
     if task_type == "webhook":
         try:

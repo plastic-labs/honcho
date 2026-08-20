@@ -1,6 +1,8 @@
 import logging
 from typing import Any, Literal
 
+from netra import Netra
+from netra.decorators import task
 from sqlalchemy import exists, insert, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -446,6 +448,7 @@ def create_dream_record(
     }
 
 
+@task(name="enqueue_dream")
 async def enqueue_dream(
     workspace_name: str,
     observer: str,
@@ -477,6 +480,10 @@ async def enqueue_dream(
         session_name: Name of the session to scope the dream to if specified
         rebuild: card_refresh only — rebuild the card without the prior card
     """
+    Netra.set_user_id(workspace_name)
+    if session_name:
+        Netra.set_session_id(session_name)
+
     async with tracked_db("dream_enqueue") as db_session:
         # Authoritative scope check, in the same transaction as the queue insert.
         # A route-level precheck cannot be relied on: it runs in its own session,

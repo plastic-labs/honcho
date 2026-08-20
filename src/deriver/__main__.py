@@ -13,10 +13,15 @@ from src.telemetry import (
     register_db_pool_collector,
     shutdown_telemetry,
 )
+from src.telemetry.netra import init_netra
 
 from .queue_manager import main
 
 logger = logging.getLogger(__name__)
+
+# Netra LLM observability setup. Must run before the instrumented provider
+# SDKs (Anthropic/OpenAI/Google GenAI) are used for best coverage.
+init_netra(app_name="honcho-deriver")
 
 
 def start_metrics_server() -> None:

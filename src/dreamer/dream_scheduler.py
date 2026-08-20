@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 from logging import getLogger
 
 import sentry_sdk
+from netra import Netra
+from netra.decorators import task, workflow
 from sqlalchemy import exists, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -30,6 +32,7 @@ def get_dream_scheduler() -> "DreamScheduler | None":
     return _dream_scheduler
 
 
+@workflow
 class DreamScheduler:
     _instance: "DreamScheduler | None" = None
     _initialized: bool = False
@@ -137,6 +140,7 @@ class DreamScheduler:
 
         return cancelled
 
+    @task(name="delayed_dream")
     async def _delayed_dream(
         self,
         work_unit_key: str,
@@ -173,6 +177,7 @@ class DreamScheduler:
             if settings.SENTRY.ENABLED:
                 sentry_sdk.capture_exception(e)
 
+    @task(name="execute_dream")
     async def execute_dream(
         self,
         workspace_name: str,
@@ -189,6 +194,8 @@ class DreamScheduler:
         from src import crud
         from src.deriver.enqueue import enqueue_dream
         from src.utils.config_helpers import get_configuration
+
+        Netra.set_user_id(workspace_name)
 
         async with tracked_db("dream_session_lookup") as db:
             stmt = (
@@ -209,6 +216,7 @@ class DreamScheduler:
                     f"No documents found for {workspace_name}/{observer}/{observed}, skipping dream"
                 )
                 return
+            Netra.set_session_id(session_name)
 
             session = await crud.get_session(
                 db, workspace_name=workspace_name, session_name=session_name
@@ -245,6 +253,7 @@ class DreamScheduler:
             self.pending_dreams.clear()
 
 
+@workflow(name="check_and_schedule_dream")
 async def check_and_schedule_dream(
     db: AsyncSession,
     collection: models.Collection,
@@ -272,6 +281,8 @@ async def check_and_schedule_dream(
     """
     if not settings.DREAM.ENABLED:
         return False
+
+    Netra.set_user_id(collection.workspace_name)
 
     dream_metadata = collection.internal_metadata.get("dream", {})
     last_dream_document_count = dream_metadata.get("last_dream_document_count", 0)

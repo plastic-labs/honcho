@@ -2,6 +2,8 @@ import logging
 import time
 
 from nanoid import generate as generate_nanoid
+from netra import Netra
+from netra.decorators import task
 
 from src import crud
 from src.config import ConfiguredModelSettings, settings
@@ -35,6 +37,7 @@ def _get_deriver_model_config() -> ConfiguredModelSettings:
     return settings.DERIVER.MODEL_CONFIG
 
 
+@task(name="process_representation_batch")
 @with_sentry_transaction("minimal_deriver_batch", op="deriver")
 async def process_representation_tasks_batch(
     messages: list[Message],
@@ -68,6 +71,9 @@ async def process_representation_tasks_batch(
     messages.sort(key=lambda x: x.id)
     latest_message = messages[-1]
     earliest_message = messages[0]
+
+    Netra.set_user_id(latest_message.workspace_name)
+    Netra.set_session_id(latest_message.session_name)
 
     # Get configuration if not provided
     # TODO: this appears to be a very rare edge case coming out of `get_queue_item_batch` in queue_manager.py,

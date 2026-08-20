@@ -21,6 +21,8 @@ from typing import Any
 
 import sentry_sdk
 from nanoid import generate as generate_nanoid
+from netra import Netra
+from netra.decorators import task, workflow
 from sqlalchemy import func, select
 
 from src import crud, models
@@ -68,6 +70,7 @@ class DreamResult:
     output_tokens: int
 
 
+@task(name="run_dream")
 async def run_dream(
     workspace_name: str,
     observer: str,
@@ -96,8 +99,13 @@ async def run_dream(
         observed: Observed peer name
         session_name: Session identifier if specified
     """
+   
     if not settings.DREAM.ENABLED:
         return None
+
+    Netra.set_user_id(workspace_name)
+    if session_name:
+        Netra.set_session_id(session_name)
 
     run_id = generate_nanoid()
     task_name = f"dream_orchestrator_{run_id}"
@@ -311,6 +319,7 @@ async def run_dream(
     )
 
 
+@task(name="run_card_refresh_dream")
 async def run_card_refresh_dream(
     workspace_name: str,
     observer: str,
@@ -340,6 +349,10 @@ async def run_card_refresh_dream(
     """
     if not settings.DREAM.ENABLED:
         return None
+
+    Netra.set_user_id(workspace_name)
+    if session_name:
+        Netra.set_session_id(session_name)
 
     run_id = generate_nanoid()
     task_name = f"dream_orchestrator_{run_id}"
@@ -480,6 +493,7 @@ def _create_queries_from_surprisal(
     return queries[:10]  # Limit to 10 queries
 
 
+@workflow(name="process_dream")
 @sentry_sdk.trace
 async def process_dream(
     payload: DreamPayload,

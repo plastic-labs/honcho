@@ -38,6 +38,7 @@ from src.telemetry import (
     shutdown_telemetry,
 )
 from src.telemetry.logging import get_route_template
+from src.telemetry.netra import init_netra
 from src.telemetry.sentry import initialize_sentry
 
 
@@ -99,6 +100,10 @@ if SENTRY_ENABLED:
             SqlalchemyIntegration(),
         ],
     )
+
+# Netra LLM observability setup. Must run before the instrumented provider
+# SDKs (Anthropic/OpenAI/Google GenAI) are used for best coverage.
+init_netra(app_name="honcho-api")
 
 
 @asynccontextmanager

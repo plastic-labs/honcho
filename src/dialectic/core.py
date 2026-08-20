@@ -11,6 +11,7 @@ from collections.abc import AsyncIterator, Callable
 from typing import Any, cast
 
 from nanoid import generate as generate_nanoid
+from netra.decorators import task
 from pydantic import BaseModel
 
 from src import crud
@@ -440,6 +441,7 @@ class DialecticAgent:
             )
         )
 
+    @task(name="dialectic_answer")
     async def answer(
         self, query: str, response_model: type[BaseModel] | None = None
     ) -> str:
@@ -516,6 +518,7 @@ class DialecticAgent:
 
         return content
 
+    @task(name="dialectic_answer_stream")
     async def answer_stream(
         self, query: str, response_model: type[BaseModel] | None = None
     ) -> AsyncIterator[str]:

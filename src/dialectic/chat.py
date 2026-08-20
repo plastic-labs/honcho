@@ -8,6 +8,8 @@ using the DialecticAgent.
 import logging
 from collections.abc import AsyncIterator
 
+from netra import Netra
+from netra.decorators import workflow
 from pydantic import BaseModel
 
 from src import crud, models
@@ -45,6 +47,7 @@ def _reject_scope_observed(peer: models.Peer) -> None:
         )
 
 
+@workflow(name="dialectic_chat")
 async def agentic_chat(
     workspace_name: str,
     session_name: str | None,
@@ -72,6 +75,10 @@ async def agentic_chat(
     Returns:
         The synthesized answer string
     """
+    Netra.set_user_id(workspace_name)
+    if session_name:
+        Netra.set_session_id(session_name)
+
     # Short-lived DB session for validation + config
     async with tracked_db("dialectic.preflight", read_only=True) as db:
         observer_peer = await crud.get_peer(db, workspace_name, observer)
@@ -125,6 +132,7 @@ async def agentic_chat(
     return await agent.answer(query, response_model=response_model)
 
 
+@workflow(name="dialectic_chat_stream")
 async def agentic_chat_stream(
     workspace_name: str,
     session_name: str | None,
@@ -153,6 +161,10 @@ async def agentic_chat_stream(
     Yields:
         Chunks of the response text as they are generated
     """
+    Netra.set_user_id(workspace_name)
+    if session_name:
+        Netra.set_session_id(session_name)
+
     # Short-lived DB session for validation + config
     async with tracked_db("dialectic.preflight", read_only=True) as db:
         observer_peer = await crud.get_peer(db, workspace_name, observer)

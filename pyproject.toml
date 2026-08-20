@@ -30,13 +30,14 @@ dependencies = [
     "google-genai>=1.32.0",
     "pdfplumber>=0.11.7",
     "typing-extensions>=4.11.0",
-    "json-repair>=0.49.0",
+    "json-repair>=0.44.1",
     "turbopuffer>=1.8.1",
     "redis>=7.0.0,<8.0.0",
     "cashews[redis]==7.5.0",
     "scikit-learn>=1.6.0",
     "prometheus_client>=0.21.0",
     "cloudevents>=1.12.0,<2.0",
+    "netra-sdk==0.1.99",
 ]
 [project.optional-dependencies]
 lancedb = [
@@ -62,7 +63,7 @@ dev = [
 ]
 
 [tool.uv]
-exclude-newer = "5 days"
+exclude-newer = "2026-08-15"
 
 [tool.uv.workspace]
 members = [
