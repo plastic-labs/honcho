@@ -1,10 +1,11 @@
-from collections.abc import Sequence
+from collections.abc import Callable, Iterator, Sequence
 from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
 from src import models
+from src.config import RepresentationSection, settings
 from src.utils.formatting import parse_datetime_iso
 
 # Conclusion levels whose `session_name` stamp is trustworthy enough to scope on.
@@ -306,6 +307,28 @@ class ContradictionObservation(ContradictionObservationBase, ObservationMetadata
         )
 
 
+RepresentationObservation = (
+    ExplicitObservation
+    | DeductiveObservation
+    | InductiveObservation
+    | ContradictionObservation
+)
+
+
+def _observation_without_timestamp(observation: RepresentationObservation) -> str:
+    """Format an observation without timestamp metadata.
+
+    Args:
+        observation: Observation to format.
+
+    Returns:
+        Raw content for an explicit observation, otherwise timestamp-free text.
+    """
+    if isinstance(observation, ExplicitObservation):
+        return observation.content
+    return observation.str_no_timestamps()
+
+
 class Representation(BaseModel):
     """
     A Representation is a traversable and diffable map of observations.
@@ -406,6 +429,42 @@ class Representation(BaseModel):
             self.inductive = self.inductive[-max_observations:]
             self.contradiction = self.contradiction[-max_observations:]
 
+    def _iter_sections(
+        self,
+    ) -> Iterator[tuple[RepresentationSection, Sequence[RepresentationObservation]]]:
+        """Yield observation sections in the configured injection order.
+
+        Yields:
+            Pairs containing a section name and its observation sequence.
+        """
+        sections: dict[RepresentationSection, Sequence[RepresentationObservation]] = {
+            "explicit": self.explicit,
+            "deductive": self.deductive,
+            "inductive": self.inductive,
+            "contradiction": self.contradiction,
+        }
+        for section in settings.REPRESENTATION_INJECTION_ORDER:
+            yield section, sections[section]
+
+    def _format_sections(
+        self, format_observation: Callable[[RepresentationObservation], str]
+    ) -> str:
+        """Format every section in configured order, including empty headers.
+
+        Args:
+            format_observation: Callable that renders one observation.
+
+        Returns:
+            Newline-delimited sections with observations numbered per section.
+        """
+        parts: list[str] = []
+        for section, observations in self._iter_sections():
+            parts.append(f"{section.upper()}:\n")
+            for index, observation in enumerate(observations, 1):
+                parts.append(f"{index}. {format_observation(observation)}")
+            parts.append("")
+        return "\n".join(parts)
+
     def __str__(self) -> str:
         """
         Format representation into a clean, readable string for LLM prompts.
@@ -424,30 +483,7 @@ class Representation(BaseModel):
                 - The user's dog is 5 years old
 
         """
-
-        parts: list[str] = []
-
-        parts.append("EXPLICIT:\n")
-        for i, observation in enumerate(self.explicit, 1):
-            parts.append(f"{i}. {observation}")
-        parts.append("")
-
-        parts.append("DEDUCTIVE:\n")
-        for i, observation in enumerate(self.deductive, 1):
-            parts.append(f"{i}. {observation}")
-        parts.append("")
-
-        parts.append("INDUCTIVE:\n")
-        for i, observation in enumerate(self.inductive, 1):
-            parts.append(f"{i}. {observation}")
-        parts.append("")
-
-        parts.append("CONTRADICTION:\n")
-        for i, observation in enumerate(self.contradiction, 1):
-            parts.append(f"{i}. {observation}")
-        parts.append("")
-
-        return "\n".join(parts)
+        return self._format_sections(str)
 
     def str_with_ids(self) -> str:
         """
@@ -468,29 +504,7 @@ class Representation(BaseModel):
                 - id:abc123
                 - id:def456
         """
-        parts: list[str] = []
-
-        parts.append("EXPLICIT:\n")
-        for i, observation in enumerate(self.explicit, 1):
-            parts.append(f"{i}. {observation.str_with_id()}")
-        parts.append("")
-
-        parts.append("DEDUCTIVE:\n")
-        for i, observation in enumerate(self.deductive, 1):
-            parts.append(f"{i}. {observation.str_with_id()}")
-        parts.append("")
-
-        parts.append("INDUCTIVE:\n")
-        for i, observation in enumerate(self.inductive, 1):
-            parts.append(f"{i}. {observation.str_with_id()}")
-        parts.append("")
-
-        parts.append("CONTRADICTION:\n")
-        for i, observation in enumerate(self.contradiction, 1):
-            parts.append(f"{i}. {observation.str_with_id()}")
-        parts.append("")
-
-        return "\n".join(parts)
+        return self._format_sections(lambda observation: observation.str_with_id())
 
     def str_no_timestamps(self) -> str:
         """
@@ -513,29 +527,7 @@ class Representation(BaseModel):
                 - id:def456
 
         """
-        parts: list[str] = []
-
-        parts.append("EXPLICIT:\n")
-        for i, observation in enumerate(self.explicit, 1):
-            parts.append(f"{i}. {observation.content}")
-        parts.append("")
-
-        parts.append("DEDUCTIVE:\n")
-        for i, observation in enumerate(self.deductive, 1):
-            parts.append(f"{i}. {observation.str_no_timestamps()}")
-        parts.append("")
-
-        parts.append("INDUCTIVE:\n")
-        for i, observation in enumerate(self.inductive, 1):
-            parts.append(f"{i}. {observation.str_no_timestamps()}")
-        parts.append("")
-
-        parts.append("CONTRADICTION:\n")
-        for i, observation in enumerate(self.contradiction, 1):
-            parts.append(f"{i}. {observation.str_no_timestamps()}")
-        parts.append("")
-
-        return "\n".join(parts)
+        return self._format_sections(_observation_without_timestamp)
 
     def format_as_markdown(self, include_ids: bool = False) -> str:
         """
@@ -551,60 +543,59 @@ class Representation(BaseModel):
 
         parts: list[str] = []
 
-        # Add explicit observations
-        if self.explicit:
-            parts.append("## Explicit Observations\n")
-            for obs in self.explicit:
-                # Don't need IDs for explicit as these are the lowest level of reasoning.
-                # id_prefix = f"[id:{obs.id}] " if include_ids and obs.id else ""
-                parts.append(f"{obs}")
-            parts.append("")
+        for section, observations in self._iter_sections():
+            if not observations:
+                continue
 
-        # Add deductive observations
-        if self.deductive:
-            parts.append("## Deductive Observations\n")
-            for obs in self.deductive:
-                id_prefix = f"[id:{obs.id}] " if include_ids and obs.id else ""
-                timestamp = _strip_microseconds_and_timezone(obs.created_at)
-                parts.append(f"{id_prefix}[{timestamp}] {obs.conclusion}")
-                if obs.premises:
-                    parts.append("   Premises:")
-                    for premise in obs.premises:
-                        parts.append(f"   - {premise}")
+            if section == "explicit":
+                parts.append("## Explicit Observations\n")
+                for obs in self.explicit:
+                    # IDs are unnecessary for the lowest reasoning level.
+                    parts.append(f"{obs}")
                 parts.append("")
-            parts.append("")
 
-        # Add inductive observations
-        if self.inductive:
-            parts.append("## Inductive Observations\n")
-            for obs in self.inductive:
-                id_prefix = f"[id:{obs.id}] " if include_ids and obs.id else ""
-                parts.append(
-                    f"{id_prefix} **Pattern** [{obs.confidence}]: {obs.conclusion}"
-                )
-                if obs.pattern_type:
-                    parts.append(f"   **Type**: {obs.pattern_type}")
-                if obs.sources:
-                    parts.append("   **Sources**:")
-                    for source in obs.sources[:5]:
-                        parts.append(f"   - {source}")
-                    if len(obs.sources) > 5:
-                        parts.append(f"   - ... and {len(obs.sources) - 5} more")
+            elif section == "deductive":
+                parts.append("## Deductive Observations\n")
+                for obs in self.deductive:
+                    id_prefix = f"[id:{obs.id}] " if include_ids and obs.id else ""
+                    timestamp = _strip_microseconds_and_timezone(obs.created_at)
+                    parts.append(f"{id_prefix}[{timestamp}] {obs.conclusion}")
+                    if obs.premises:
+                        parts.append("   Premises:")
+                        for premise in obs.premises:
+                            parts.append(f"   - {premise}")
+                    parts.append("")
                 parts.append("")
-            parts.append("")
 
-        # Add contradiction observations
-        if self.contradiction:
-            parts.append("## Contradictions\n")
-            for obs in self.contradiction:
-                id_prefix = f"[id:{obs.id}] " if include_ids and obs.id else ""
-                parts.append(f"{id_prefix} **CONTRADICTION**: {obs.content}")
-                if obs.sources:
-                    parts.append("   **Conflicting statements**:")
-                    for source in obs.sources:
-                        parts.append(f"   - {source}")
+            elif section == "inductive":
+                parts.append("## Inductive Observations\n")
+                for obs in self.inductive:
+                    id_prefix = f"[id:{obs.id}] " if include_ids and obs.id else ""
+                    parts.append(
+                        f"{id_prefix} **Pattern** [{obs.confidence}]: {obs.conclusion}"
+                    )
+                    if obs.pattern_type:
+                        parts.append(f"   **Type**: {obs.pattern_type}")
+                    if obs.sources:
+                        parts.append("   **Sources**:")
+                        for source in obs.sources[:5]:
+                            parts.append(f"   - {source}")
+                        if len(obs.sources) > 5:
+                            parts.append(f"   - ... and {len(obs.sources) - 5} more")
+                    parts.append("")
                 parts.append("")
-            parts.append("")
+
+            else:
+                parts.append("## Contradictions\n")
+                for obs in self.contradiction:
+                    id_prefix = f"[id:{obs.id}] " if include_ids and obs.id else ""
+                    parts.append(f"{id_prefix} **CONTRADICTION**: {obs.content}")
+                    if obs.sources:
+                        parts.append("   **Conflicting statements**:")
+                        for source in obs.sources:
+                            parts.append(f"   - {source}")
+                    parts.append("")
+                parts.append("")
 
         return "\n".join(parts)
 
