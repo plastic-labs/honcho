@@ -1,4 +1,10 @@
+import datetime
+
+import pytest
+
+from src.exceptions import AuthenticationException
 from src.models import Peer, Workspace
+from src.security import verify_jwt
 from tests.conftest import AuthClient
 
 
@@ -59,17 +65,30 @@ def test_create_key_with_expires_at(
     response = auth_client.post("/v3/keys", params={"expires_at": "2025-01-01"})
 
     # Only admin JWT should be allowed
-    if auth_client.auth_type == "admin":
-        # key with no params should fail
-        assert response.status_code == 422
-        return
-    else:
+    if auth_client.auth_type != "admin":
         assert response.status_code == 401
+        return
+
+    # key with no params should fail
+    assert response.status_code == 422
 
     test_workspace, _ = sample_data
 
-    # assert that the key is expired
+    # Future expiry: mint succeeds and the token verifies (NumericDate exp, #1016)
+    future = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=1)
     response = auth_client.post(
-        "/v3/keys", params={"workspace_id": test_workspace.name}
+        "/v3/keys",
+        params={"workspace_id": test_workspace.name, "expires_at": future.isoformat()},
     )
-    assert response.status_code == 401
+    assert response.status_code == 200
+    verify_jwt(response.json()["key"])  # must not raise "Invalid JWT"
+
+    # Past expiry: mint succeeds but verification reports expired
+    past = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=1)
+    response = auth_client.post(
+        "/v3/keys",
+        params={"workspace_id": test_workspace.name, "expires_at": past.isoformat()},
+    )
+    assert response.status_code == 200
+    with pytest.raises(AuthenticationException, match="JWT expired"):
+        verify_jwt(response.json()["key"])

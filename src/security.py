@@ -8,7 +8,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
 from src.config import settings
-from src.utils.formatting import parse_datetime_iso, utc_now_iso
+from src.utils.formatting import utc_now_iso
 
 from .exceptions import AuthenticationException
 
@@ -48,7 +48,7 @@ class JWTParams(BaseModel):
     Fields (all optional other than `t`):
 
     `t`: a string timestamp of when the JWT was created
-    `exp`: a string timestamp of when the JWT expires (optional)
+    `exp`: when the JWT expires (optional) — a standard NumericDate claim
     `ad`: a boolean flag indicating if the JWT is an admin JWT
     `w`: (string) workspace name
     `p`: (string) peer name
@@ -56,7 +56,7 @@ class JWTParams(BaseModel):
     """
 
     t: str = Field(default_factory=utc_now_iso)
-    exp: str | None = None
+    exp: datetime.datetime | None = None
     ad: bool | None = None
     w: str | None = None
     p: str | None = None
@@ -114,13 +114,6 @@ def verify_jwt(token: str) -> JWTParams:
         )
         if "t" in decoded:
             params.t = decoded["t"]
-        if "exp" in decoded:
-            params.exp = decoded["exp"]
-            if params.exp:
-                exp_time = parse_datetime_iso(params.exp)
-                current_time = datetime.datetime.now(datetime.timezone.utc)
-                if exp_time < current_time:
-                    raise AuthenticationException("JWT expired")
         if "ad" in decoded:
             params.ad = decoded["ad"]
         # Normalize empty-string scope claims to None so a blank `w`/`p`/`s`
@@ -141,6 +134,8 @@ def verify_jwt(token: str) -> JWTParams:
                 "Invalid JWT scope: peer/session token missing workspace"
             )
         return params
+    except jwt.ExpiredSignatureError:
+        raise AuthenticationException("JWT expired") from None
     except jwt.PyJWTError:
         raise AuthenticationException("Invalid JWT") from None
 
