@@ -1,0 +1,64 @@
+name: Bug report
+description: Something is broken or incorrect in Honcho (API, deriver, SDK, managed offering, etc.).
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug. Please search [existing issues](https://github.com/plastic-labs/honcho/issues) first.
+
+        **Security vulnerability?** Do not use this form — report privately via [SECURITY.md](https://github.com/plastic-labs/honcho/blob/main/SECURITY.md).
+
+        **Memory / recall quality** (wrong or noisy conclusions, weak dialectic answers) with no crash? Prefer the **Memory / recall quality** template.
+
+  - type: dropdown
+    id: deploy_mode
+    attributes:
+      label: Deploy mode
+      description: Where are you running Honcho?
+      options:
+        - Managed (api.honcho.dev / app.honcho.dev)
+        - Self-hosted
+        - Unsure
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Describe the bug
+      description: Clear and concise description of what is wrong.
+      placeholder: When I…, Honcho…
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps or a short script/API sequence. Redact secrets, JWTs, and production user content.
+      placeholder: |
+        1. Create a session with …
+        2. POST /v3/... with body …
+        3. Observe …
+      render: markdown
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and evidence
+      description: Relevant API or deriver logs, stack traces, or screenshots. Redact secrets and user content.
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Versions, config knobs, deployment notes, related issues/PRs.
+    validations:
+      required: false
