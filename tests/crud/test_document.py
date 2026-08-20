@@ -7,8 +7,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
+from src.config import settings
 from src.crud.document import SemanticRejectionResult, is_rejected_duplicate
-from src.exceptions import ResourceNotFoundException
+from src.exceptions import ResourceNotFoundException, ValidationException
 
 
 class TestDocumentCRUD:
@@ -275,6 +276,318 @@ class TestDocumentCRUD:
 
         assert len(results) == 1
         assert results[0].id == times_derived_map[2]
+
+    @pytest.mark.asyncio
+    async def test_query_documents_cross_peer_pgvector(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """Omitting observer/observed searches across all peer relationships"""
+        test_workspace, test_peer = sample_data
+        test_peer2, test_session, _ = await self._setup_test_data(
+            db_session, test_workspace, test_peer
+        )
+
+        # A second, distinct (observer, observed) pair with its own collection
+        test_peer3 = models.Peer(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add(test_peer3)
+        await db_session.flush()
+        db_session.add(
+            models.Collection(
+                workspace_name=test_workspace.name,
+                observer=test_peer3.name,
+                observed=test_peer2.name,
+            )
+        )
+        await db_session.flush()
+
+        await crud.create_documents(
+            db_session,
+            [
+                schemas.DocumentCreate(
+                    content="User likes pizza",
+                    embedding=[0.9] * 1536,
+                    session_name=test_session.name,
+                    metadata=schemas.DocumentMetadata(
+                        message_ids=[1],
+                        message_created_at="2025-01-01T00:00:00Z",
+                    ),
+                ),
+            ],
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+        )
+        await crud.create_documents(
+            db_session,
+            [
+                schemas.DocumentCreate(
+                    content="Teammate enjoys hiking",
+                    embedding=[0.8] * 1536,
+                    session_name=test_session.name,
+                    metadata=schemas.DocumentMetadata(
+                        message_ids=[2],
+                        message_created_at="2025-01-01T00:00:00Z",
+                    ),
+                ),
+            ],
+            workspace_name=test_workspace.name,
+            observer=test_peer3.name,
+            observed=test_peer2.name,
+        )
+
+        # Cross-peer: no observer/observed returns documents from both pairs
+        results = await crud.query_documents(
+            db_session,
+            workspace_name=test_workspace.name,
+            query="food preferences",
+            top_k=10,
+        )
+        contents = {doc.content for doc in results}
+        assert "User likes pizza" in contents
+        assert "Teammate enjoys hiking" in contents
+
+        # Partially scoped: only observer given returns just that observer's docs
+        results = await crud.query_documents(
+            db_session,
+            workspace_name=test_workspace.name,
+            query="food preferences",
+            observer=test_peer3.name,
+            top_k=10,
+        )
+        contents = {doc.content for doc in results}
+        assert "Teammate enjoys hiking" in contents
+        assert "User likes pizza" not in contents
+
+    @pytest.mark.asyncio
+    async def test_query_documents_cross_peer_never_crosses_workspace(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """Cross-peer search must never return another workspace's documents,
+        even when the foreign document's embedding would rank first (#520)."""
+        test_workspace, test_peer = sample_data
+        test_peer2, test_session, _ = await self._setup_test_data(
+            db_session, test_workspace, test_peer
+        )
+
+        # A second, distinct (observer, observed) pair in the same workspace
+        test_peer3 = models.Peer(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add(test_peer3)
+        await db_session.flush()
+        db_session.add(
+            models.Collection(
+                workspace_name=test_workspace.name,
+                observer=test_peer3.name,
+                observed=test_peer2.name,
+            )
+        )
+        await db_session.flush()
+
+        # A different workspace with its own (observer, observed) pair
+        other_workspace = models.Workspace(name=str(generate_nanoid()))
+        db_session.add(other_workspace)
+        await db_session.flush()
+        other_observer = models.Peer(
+            name=str(generate_nanoid()), workspace_name=other_workspace.name
+        )
+        other_observed = models.Peer(
+            name=str(generate_nanoid()), workspace_name=other_workspace.name
+        )
+        db_session.add_all([other_observer, other_observed])
+        await db_session.flush()
+        other_session = models.Session(
+            name=str(generate_nanoid()), workspace_name=other_workspace.name
+        )
+        db_session.add(other_session)
+        await db_session.flush()
+        db_session.add(
+            models.Collection(
+                workspace_name=other_workspace.name,
+                observer=other_observer.name,
+                observed=other_observed.name,
+            )
+        )
+        await db_session.flush()
+
+        await crud.create_documents(
+            db_session,
+            [
+                schemas.DocumentCreate(
+                    content="User likes pizza",
+                    embedding=[0.9] * 1536,
+                    session_name=test_session.name,
+                    metadata=schemas.DocumentMetadata(
+                        message_ids=[1],
+                        message_created_at="2025-01-01T00:00:00Z",
+                    ),
+                ),
+            ],
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+        )
+        await crud.create_documents(
+            db_session,
+            [
+                schemas.DocumentCreate(
+                    content="Teammate enjoys hiking",
+                    embedding=[0.8] * 1536,
+                    session_name=test_session.name,
+                    metadata=schemas.DocumentMetadata(
+                        message_ids=[2],
+                        message_created_at="2025-01-01T00:00:00Z",
+                    ),
+                ),
+            ],
+            workspace_name=test_workspace.name,
+            observer=test_peer3.name,
+            observed=test_peer2.name,
+        )
+        # Foreign-workspace document with the same embedding as the first
+        # pair's, so a missing workspace predicate would surface it here.
+        await crud.create_documents(
+            db_session,
+            [
+                schemas.DocumentCreate(
+                    content="Stranger collects stamps",
+                    embedding=[0.9] * 1536,
+                    session_name=other_session.name,
+                    metadata=schemas.DocumentMetadata(
+                        message_ids=[3],
+                        message_created_at="2025-01-01T00:00:00Z",
+                    ),
+                ),
+            ],
+            workspace_name=other_workspace.name,
+            observer=other_observer.name,
+            observed=other_observed.name,
+        )
+
+        results = await crud.query_documents(
+            db_session,
+            workspace_name=test_workspace.name,
+            query="food preferences",
+            top_k=10,
+        )
+        contents = {doc.content for doc in results}
+        assert "User likes pizza" in contents
+        assert "Teammate enjoys hiking" in contents
+        assert "Stranger collects stamps" not in contents
+        assert all(doc.workspace_name == test_workspace.name for doc in results)
+
+    @pytest.mark.asyncio
+    async def test_query_documents_cross_peer_observed_only(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """Passing only observed scopes the cross-peer search to documents
+        about that observed peer (#520)."""
+        test_workspace, test_peer = sample_data
+        test_peer2, test_session, _ = await self._setup_test_data(
+            db_session, test_workspace, test_peer
+        )
+
+        # A second (observer, observed) pair sharing neither peer with the first
+        test_peer3 = models.Peer(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        test_peer4 = models.Peer(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add_all([test_peer3, test_peer4])
+        await db_session.flush()
+        db_session.add(
+            models.Collection(
+                workspace_name=test_workspace.name,
+                observer=test_peer3.name,
+                observed=test_peer4.name,
+            )
+        )
+        await db_session.flush()
+
+        await crud.create_documents(
+            db_session,
+            [
+                schemas.DocumentCreate(
+                    content="User likes pizza",
+                    embedding=[0.9] * 1536,
+                    session_name=test_session.name,
+                    metadata=schemas.DocumentMetadata(
+                        message_ids=[1],
+                        message_created_at="2025-01-01T00:00:00Z",
+                    ),
+                ),
+            ],
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+        )
+        await crud.create_documents(
+            db_session,
+            [
+                schemas.DocumentCreate(
+                    content="Teammate enjoys hiking",
+                    embedding=[0.8] * 1536,
+                    session_name=test_session.name,
+                    metadata=schemas.DocumentMetadata(
+                        message_ids=[2],
+                        message_created_at="2025-01-01T00:00:00Z",
+                    ),
+                ),
+            ],
+            workspace_name=test_workspace.name,
+            observer=test_peer3.name,
+            observed=test_peer4.name,
+        )
+
+        # Observed-only: returns docs about test_peer2, never docs about a
+        # different observed peer.
+        results = await crud.query_documents(
+            db_session,
+            workspace_name=test_workspace.name,
+            query="food preferences",
+            observed=test_peer2.name,
+            top_k=10,
+        )
+        contents = {doc.content for doc in results}
+        assert "User likes pizza" in contents
+        assert "Teammate enjoys hiking" not in contents
+        assert all(doc.observed == test_peer2.name for doc in results)
+
+    @pytest.mark.asyncio
+    async def test_query_documents_external_store_requires_observer_observed(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """External vector stores still require observer and observed"""
+        test_workspace, _test_peer = sample_data
+        monkeypatch.setattr(settings.VECTOR_STORE, "MIGRATED", True)
+        monkeypatch.setattr(settings.VECTOR_STORE, "TYPE", "external")
+
+        # Both omitted, and each parameter omitted on its own, all 422
+        for kwargs in (
+            {},
+            {"observer": "some-peer"},
+            {"observed": "some-peer"},
+        ):
+            with pytest.raises(ValidationException, match="Cross-peer"):
+                await crud.query_documents(
+                    db_session,
+                    workspace_name=test_workspace.name,
+                    query="food preferences",
+                    top_k=10,
+                    **kwargs,
+                )
 
     @pytest.mark.asyncio
     async def test_most_derived_orders_by_recency_when_reinforcement_ties(
