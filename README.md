@@ -218,6 +218,14 @@ hermes memory setup   # select "honcho", point at api.honcho.dev or your local s
 
 Details: [Hermes guide](https://honcho.dev/docs/v3/guides/integrations/hermes).
 
+### DeepSeek Harness
+
+```bash
+dsh plugin --profile web add link:https://github.com/nanpaidashi/dsh-honcho-sync dsh web
+```
+
+Auto-syncs every conversation turn to Honcho with built-in recall, search, remember, and context tools. Configure via the visual settings panel (DSH Settings → "Honcho Memory") — no YAML editing required. Details: [dsh-honcho-sync](https://github.com/nanpaidashi/dsh-honcho-sync).
+
 ### Add Honcho to your own codebase (agent skill)
 
 For wiring the Honcho SDK into an existing application, install the integration skill — it explores your codebase, asks about integration preferences, generates the SDK setup, and verifies it works:
