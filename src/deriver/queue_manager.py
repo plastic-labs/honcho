@@ -478,8 +478,7 @@ class QueueManager:
 
     @staticmethod
     def _is_tenant_work(work_unit_keys: Iterable[str]) -> bool:
-        """True if any claimed work unit is real tenant work, not housekeeping.
-        """
+        """True if any claimed work unit is real tenant work, not housekeeping."""
         for key in work_unit_keys:
             try:
                 if parse_work_unit_key(key).task_type != "reconciler":

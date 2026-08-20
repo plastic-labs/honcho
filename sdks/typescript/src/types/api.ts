@@ -133,6 +133,28 @@ export interface SessionCreateParams {
   metadata?: Record<string, unknown>
   configuration?: SessionConfigApi
   peers?: Record<string, SessionPeerConfigParams>
+  scopes?: string[]
+}
+
+export interface ScopeResponse {
+  id: string
+  metadata: Record<string, unknown>
+  created_at: string
+}
+
+/**
+ * Per-session backfill job state for a scope.
+ *
+ * `docs_copied` is present only once a backfill completes.
+ */
+export interface ScopeBackfillJob {
+  state: 'pending' | 'completed' | 'failed'
+  updated_at: string
+  docs_copied?: number
+}
+
+export interface ScopeStatusResponse {
+  backfill_status: Record<string, ScopeBackfillJob>
 }
 
 export interface SessionUpdateParams {

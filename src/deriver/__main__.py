@@ -10,6 +10,7 @@ from src.db import engine, register_db_query_instrumentation
 from src.startup import validate_embedding_schema
 from src.telemetry import (
     initialize_telemetry_async,
+    prometheus_metrics,
     register_db_pool_collector,
     shutdown_telemetry,
 )
@@ -25,6 +26,12 @@ def start_metrics_server() -> None:
     # Expose DB connection-pool stats for this deriver instance.
     register_db_pool_collector("deriver")
     register_db_query_instrumentation("deriver")
+
+    # region ai
+    # Zero-init bounded-label counters so a missing series signals a broken scrape,
+    # not "no events" — see initialize_bounded_metrics. No-op if metrics off.
+    # endregion
+    prometheus_metrics.initialize_bounded_metrics(instance_type="deriver")
     logger.info("Prometheus metrics server started on port 9090")
 
 

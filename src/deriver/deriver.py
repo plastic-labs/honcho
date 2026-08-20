@@ -7,6 +7,7 @@ from src import crud
 from src.config import ConfiguredModelSettings, settings
 from src.crud.representation import RepresentationManager
 from src.dependencies import tracked_db
+from src.exceptions import RepresentationSaveError
 from src.llm import honcho_llm_call
 from src.llm.types import LLMTelemetryContext
 from src.models import Message
@@ -196,6 +197,7 @@ async def process_representation_tasks_batch(
 
     agg_representation_result = crud.CreateDocumentsResult()
     successful_observer_count = 0
+    save_errors: list[tuple[str, Exception]] = []
     if observations.is_empty() or not message_ids:
         logger.warning(
             "Deriver generated zero observations for messages %s:%s in %s/%s!",
@@ -236,10 +238,11 @@ async def process_representation_tasks_batch(
                     representation_result.semantic_dup_replaced_count
                 )
                 successful_observer_count += 1
-            except Exception as e:
-                logger.error(
-                    "Failed to save representation for observer %s: %s", observer, e
+            except Exception as e:  # noqa: BLE001
+                logger.exception(
+                    "Failed to save representation for observer %s", observer
                 )
+                save_errors.append((observer, e))
 
     # Log metrics
     overall_duration = (time.perf_counter() - overall_start) * 1000
@@ -337,5 +340,16 @@ async def process_representation_tasks_batch(
             exact_dup_in_batch_count=agg_representation_result.exact_dup_in_batch_count,
             semantic_dup_rejected_count=agg_representation_result.semantic_dup_rejected_count,
             semantic_dup_replaced_count=agg_representation_result.semantic_dup_replaced_count,
+            failed_observer_count=len(save_errors),
         )
     )
+
+    if save_errors and successful_observer_count == 0:
+        details = "; ".join(
+            f"{observer}: {exc.__class__.__name__}: {exc}"
+            for observer, exc in save_errors
+        )
+        raise RepresentationSaveError(
+            f"save_representation failed for all {len(save_errors)} observer(s): "
+            + details
+        ) from save_errors[0][1]
