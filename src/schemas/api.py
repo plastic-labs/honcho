@@ -61,6 +61,15 @@ def _sanitize_value(v: Any) -> Any:
     return v
 
 
+def _strip_nul(v: str) -> str:
+    """Strip NUL bytes from a string field (Postgres TEXT rejects \\x00)."""
+    return v.replace("\x00", "")
+
+
+# Reusable annotation for query fields; composes with a per-field Field(...).
+NulStripped = AfterValidator(_strip_nul)
+
+
 def _check_metadata_limits(
     data: dict[str, Any],
     *,
@@ -717,7 +726,7 @@ class ConclusionBatchCreate(BaseModel):
 
 
 class MessageSearchOptions(BaseModel):
-    query: Annotated[str, Field(..., description="Search query")]
+    query: Annotated[str, Field(..., description="Search query"), NulStripped]
     filters: dict[str, Any] | None = Field(
         default=None, description="Filters to scope the search"
     )
@@ -727,11 +736,6 @@ class MessageSearchOptions(BaseModel):
         le=100,
         description="Number of results to return",
     )
-
-    @field_validator("query", mode="after")
-    @classmethod
-    def sanitize_query(cls, v: str) -> str:
-        return v.replace("\x00", "")
 
 
 class WorkspaceMessageSearchOptions(MessageSearchOptions):
@@ -785,7 +789,9 @@ class DialecticOptions(BaseModel):
         description="Optional peer to get the representation for, from the perspective of this peer",
     )
     query: Annotated[
-        str, Field(min_length=1, max_length=10000, description="Dialectic API Prompt")
+        str,
+        Field(min_length=1, max_length=10000, description="Dialectic API Prompt"),
+        NulStripped,
     ]
     stream: bool = False
     reasoning_level: ReasoningLevel = Field(
@@ -803,10 +809,39 @@ class DialecticOptions(BaseModel):
         ),
     )
 
-    @field_validator("query", mode="after")
-    @classmethod
-    def sanitize_query(cls, v: str) -> str:
-        return v.replace("\x00", "")
+
+class WorkspaceChatOptions(BaseModel):
+    """Options for workspace-level chat (no anchor peer; see DialecticOptions)."""
+
+    session_id: str | None = Field(
+        None, description="Optional session to scope message tools to"
+    )
+    query: Annotated[
+        str,
+        Field(min_length=1, max_length=10000, description="Workspace chat prompt"),
+        NulStripped,
+    ]
+    stream: bool = False
+    reasoning_level: ReasoningLevel = Field(
+        default="low",
+        description="Level of reasoning to apply: minimal, low, medium, high, or max",
+    )
+    response_format: dict[str, Any] | None = Field(
+        None,
+        description=(
+            "Optional JSON Schema (root type 'object') the response must conform"
+            " to. When provided, `content` is a JSON string matching this schema."
+        ),
+    )
+    scope: _ScopeOption | None = Field(
+        None,
+        description=(
+            "Optional (unprefixed) scope name(s) restricting recall to the "
+            "union of the scopes' member sessions (explicit allowlist, "
+            "fail-closed: an empty union recalls nothing). Mutually exclusive "
+            "with `session_id`. Requires a workspace- or admin-level key."
+        ),
+    )
 
 
 class DialecticResponse(BaseModel):

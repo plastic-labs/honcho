@@ -386,6 +386,17 @@ class UnifiedTestExecutor:
         raise TimeoutError("Deriver queue did not empty within timeout")
 
     async def perform_query(self, step: QueryAction) -> Any:
+        if step.target == "workspace_chat":
+            if step.input is None:
+                raise ValueError("input required for workspace_chat")
+            return await self.client.aio.chat(
+                step.input,
+                session=step.session_id,
+                reasoning_level=step.reasoning_level,
+                response_format=step.response_format,
+                scope=step.scope,
+            )
+
         if step.scope is not None:
             return await self._perform_scoped_query(step)
 
@@ -626,7 +637,8 @@ class UnifiedTestRunner:
             AsyncAnthropic(api_key=self.api_key) if self.api_key else None
         )
 
-    async def run(self):
+    async def run(self) -> int:
+        """Run the suite and return the number of tests that did not pass."""
         try:
             # 1. Start Harness
             logger.info("Starting Honcho Harness...")
@@ -784,6 +796,8 @@ class UnifiedTestRunner:
 
                 await send_discord_message(discord_webhook_url, message)
 
+            return failed_count
+
         finally:
             # 7. Cleanup
             logger.info("Cleaning up harness...")
@@ -798,4 +812,4 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     runner = UnifiedTestRunner(Path(args.test_dir))
-    asyncio.run(runner.run())
+    sys.exit(1 if asyncio.run(runner.run()) else 0)
