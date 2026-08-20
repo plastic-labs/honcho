@@ -302,7 +302,9 @@ async def _sync_documents(
                 EmbeddingCallPurpose.VECTOR_SYNC.value,
                 parent_category="reconciliation",
             ):
-                new_embeddings = await embedding_client.simple_batch_embed(contents)
+                new_embeddings = await embedding_client.simple_batch_embed(
+                    contents, on_oversize="truncate"
+                )
 
             if len(new_embeddings) != len(docs_needing_embed):
                 logger.warning(

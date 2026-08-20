@@ -321,39 +321,78 @@ class _EmbeddingClient:
             fn=_call_openai,
         )
 
-    async def simple_batch_embed(self, texts: list[str]) -> list[list[float]]:
+    def _truncate_to_token_limit(self, text: str) -> tuple[str, int]:
+        """Return a prefix of `text` whose re-encoded token count fits the cap.
+
+        Decode/re-encode after slicing: BPE boundaries can re-expand past the cap.
         """
-        Batch-embed a list of text strings. Each input must already fit within
-        `max_embedding_tokens`; this method does not sub-chunk oversized inputs.
+        token_ids = self.encoding.encode(text)
+        keep = self.max_embedding_tokens
+        while len(token_ids) > self.max_embedding_tokens:
+            keep = min(keep, len(token_ids) - 1)
+            if keep < 1:
+                return "", 0
+            text = self.encoding.decode(token_ids[:keep])
+            token_ids = self.encoding.encode(text)
+            keep -= 1
+        return text, len(token_ids)
+
+    async def simple_batch_embed(
+        self,
+        texts: list[str],
+        *,
+        on_oversize: Literal["raise", "truncate"] = "raise",
+    ) -> list[list[float]]:
+        """
+        Batch-embed a list of text strings. Does not sub-chunk oversized inputs.
 
         Internally goes through the same token-aware batching pipeline as
         `batch_embed()` so the per-request token cap is respected.
 
         Args:
             texts: List of text strings to embed
+            on_oversize: ``"raise"`` (default) errors; ``"truncate"`` embeds a
+                token-capped prefix.
 
         Returns:
             List of embedding vectors, one per input text (in order)
 
         Raises:
-            ValueError: If any text exceeds token limits
+            ValueError: If any text exceeds token limits and `on_oversize` is
+                ``"raise"``
         """
         if not texts:
             return []
 
-        # Validate per-input token limit and collect token counts for batching
+        # Validate / cap per-input token limit and collect counts for batching
+        prepared_texts: list[str] = []
         token_counts: list[int] = []
         for idx, text in enumerate(texts):
-            tokens = len(self.encoding.encode(text))
-            if tokens > self.max_embedding_tokens:
-                raise ValueError(
-                    f"Text at index {idx} exceeds maximum token limit of {self.max_embedding_tokens} tokens (got {tokens} tokens)"
-                )
+            token_ids = self.encoding.encode(text)
+            if len(token_ids) > self.max_embedding_tokens:
+                if on_oversize == "truncate":
+                    original_count = len(token_ids)
+                    text, tokens = self._truncate_to_token_limit(text)
+                    logger.warning(
+                        "truncated oversize embedding input at idx %d: %d->%d tokens",
+                        idx,
+                        original_count,
+                        tokens,
+                    )
+                else:
+                    raise ValueError(
+                        f"Text at index {idx} exceeds maximum token limit of "
+                        + f"{self.max_embedding_tokens} tokens (got {len(token_ids)} tokens)"
+                    )
+            else:
+                tokens = len(token_ids)
+            prepared_texts.append(text)
             token_counts.append(tokens)
 
         # Use positional indices as text_ids so we can reassemble in input order.
         text_chunks: dict[str, list[tuple[str, int]]] = {
-            str(i): [(text, token_counts[i])] for i, text in enumerate(texts)
+            str(i): [(prepared_texts[i], token_counts[i])]
+            for i in range(len(prepared_texts))
         }
 
         batches = self._create_batches(text_chunks)
@@ -695,9 +734,16 @@ class EmbeddingClient:
         """Embed a single query string."""
         return await self._get_client().embed(query)
 
-    async def simple_batch_embed(self, texts: list[str]) -> list[list[float]]:
+    async def simple_batch_embed(
+        self,
+        texts: list[str],
+        *,
+        on_oversize: Literal["raise", "truncate"] = "raise",
+    ) -> list[list[float]]:
         """Batch embed a list of text strings (each must fit token limit)."""
-        return await self._get_client().simple_batch_embed(texts)
+        return await self._get_client().simple_batch_embed(
+            texts, on_oversize=on_oversize
+        )
 
     def prepare_chunks(self, id_resource_dict: dict[str, str]) -> dict[str, list[str]]:
         """Chunk texts using the same rules as `batch_embed` (no network)."""

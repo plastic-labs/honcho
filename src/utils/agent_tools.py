@@ -930,7 +930,9 @@ async def create_observations(
             run_id=run_id,
             parent_category=parent_category,
         ):
-            embeddings = await embedding_client.simple_batch_embed(contents)
+            embeddings = await embedding_client.simple_batch_embed(
+                contents, on_oversize="truncate"
+            )
         embeddings_by_index = dict(
             zip(range(len(normalized_observations)), embeddings, strict=True)
         )

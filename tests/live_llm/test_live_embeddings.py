@@ -198,6 +198,26 @@ async def test_live_openai_float_encoding_matches_base64(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("spec", ALL_SPECS, ids=lambda spec: spec.id)
+async def test_live_batch_embed_truncates_oversize_instead_of_dropping_batch(
+    spec: LiveEmbeddingSpec,
+) -> None:
+    """on_oversize='truncate' keeps one vector per input when an item exceeds the cap."""
+    # Tiny cap so the oversize input stays cheap to tokenize and send.
+    client = make_embedding_client(spec, max_input_tokens=32)
+    oversize = " ".join(f"oversize-token-{index}" for index in range(200))
+    assert len(client.encoding.encode(oversize)) > client.max_embedding_tokens
+
+    texts = [BATCH_TEXTS[0], oversize, BATCH_TEXTS[1]]
+    embeddings = await client.simple_batch_embed(texts, on_oversize="truncate")
+
+    assert len(embeddings) == len(texts)
+    assert all(len(embedding) == spec.dimensions for embedding in embeddings)
+    # A collapsed or dropped batch would reuse a vector or return fewer.
+    assert len({tuple(embedding) for embedding in embeddings}) == len(texts)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("spec", GEMINI_SPECS, ids=lambda spec: spec.id)
 async def test_live_gemini_batch_embed_survives_batch_split(
     spec: LiveEmbeddingSpec,

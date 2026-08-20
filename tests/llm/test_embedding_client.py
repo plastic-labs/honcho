@@ -13,6 +13,7 @@ from src.config import (
 )
 from src.embedding_client import (
     BatchItem,
+    EmbeddingClient,
     _EmbeddingClient,  # pyright: ignore[reportPrivateUsage]
 )
 
@@ -908,6 +909,131 @@ async def test_simple_batch_embed_rejects_oversized_input(
     too_long = ("word " * 50).strip()
     with pytest.raises(ValueError, match="maximum token limit"):
         await client.simple_batch_embed([too_long])
+
+
+@pytest.mark.asyncio
+async def test_simple_batch_embed_truncates_oversize_when_requested(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """on_oversize='truncate' embeds a prefix instead of failing the batch."""
+    fake_embeddings = FakeOpenAIEmbeddingsAPI([0.1] * 4)
+
+    class FakeOpenAIClient:
+        def __init__(self, *, api_key: str | None, base_url: str | None) -> None:
+            self.embeddings: FakeOpenAIEmbeddingsAPI = fake_embeddings
+
+    monkeypatch.setattr("openai.AsyncOpenAI", FakeOpenAIClient)
+
+    client = _EmbeddingClient(
+        EmbeddingModelConfig(
+            transport="openai",
+            model="text-embedding-3-small",
+            api_key="test-key",
+            base_url=None,
+        ),
+        vector_dimensions=4,
+        max_input_tokens=10,
+        max_tokens_per_request=1000,
+        send_dimensions=False,
+    )
+
+    short = "hello"
+    too_long = ("word " * 50).strip()
+    assert len(client.encoding.encode(too_long)) > client.max_embedding_tokens
+
+    out = await client.simple_batch_embed([short, too_long], on_oversize="truncate")
+
+    assert len(out) == 2
+    assert fake_embeddings.calls, "expected a provider call after truncation"
+    received = fake_embeddings.calls[0]["input"]
+    assert received[0] == short
+    truncated = received[1]
+    assert isinstance(truncated, str)
+    assert truncated != too_long
+    assert len(client.encoding.encode(truncated)) <= client.max_embedding_tokens
+
+
+@pytest.mark.asyncio
+async def test_simple_batch_embed_truncate_reencodes_until_under_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """decode(ids[:n]) can re-encode past n; truncate must re-verify the count."""
+    fake_embeddings = FakeOpenAIEmbeddingsAPI([0.1] * 4)
+
+    class FakeOpenAIClient:
+        def __init__(self, *, api_key: str | None, base_url: str | None) -> None:
+            self.embeddings: FakeOpenAIEmbeddingsAPI = fake_embeddings
+
+    monkeypatch.setattr("openai.AsyncOpenAI", FakeOpenAIClient)
+
+    client = _EmbeddingClient(
+        EmbeddingModelConfig(
+            transport="openai",
+            model="text-embedding-3-small",
+            api_key="test-key",
+            base_url=None,
+        ),
+        vector_dimensions=4,
+        max_input_tokens=10,
+        max_tokens_per_request=1000,
+        send_dimensions=False,
+    )
+
+    encode_calls = {"n": 0}
+
+    def encode(text: str) -> list[int]:
+        encode_calls["n"] += 1
+        if text.startswith("LONG"):
+            # 1: original oversize; 2: still over after first slice; 3+: fits.
+            if encode_calls["n"] == 1:
+                return list(range(20))
+            if encode_calls["n"] == 2:
+                return list(range(12))
+            return list(range(8))
+        return [1]
+
+    def decode(ids: list[int]) -> str:
+        return "LONG" + "x" * len(ids)
+
+    monkeypatch.setattr(client.encoding, "encode", encode)
+    monkeypatch.setattr(client.encoding, "decode", decode)
+
+    out = await client.simple_batch_embed(["LONG-input"], on_oversize="truncate")
+
+    assert len(out) == 1
+    received = fake_embeddings.calls[0]["input"][0]
+    assert isinstance(received, str)
+    # The provider must see the post-loop text, which encodes to 8 (<= cap).
+    assert encode(received) == list(range(8))
+    assert encode_calls["n"] >= 3
+
+
+@pytest.mark.asyncio
+async def test_public_embedding_client_forwards_on_oversize(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The singleton wrapper must forward on_oversize to the inner client."""
+    captured: dict[str, object] = {}
+
+    class FakeInner:
+        async def simple_batch_embed(
+            self,
+            texts: list[str],
+            *,
+            on_oversize: str = "raise",
+        ) -> list[list[float]]:
+            captured["texts"] = texts
+            captured["on_oversize"] = on_oversize
+            return [[0.1]]
+
+    wrapper = EmbeddingClient()
+    monkeypatch.setattr(wrapper, "_get_client", lambda: FakeInner())
+
+    out = await wrapper.simple_batch_embed(["hi"], on_oversize="truncate")
+
+    assert out == [[0.1]]
+    assert captured["texts"] == ["hi"]
+    assert captured["on_oversize"] == "truncate"
 
 
 def test_prepare_chunks_returns_ordered_chunks(

@@ -51,6 +51,7 @@ class TestRepresentationV2AdditiveFields:
         assert event.exact_dup_existing_count == 0
         assert event.semantic_dup_rejected_count == 0
         assert event.semantic_dup_replaced_count == 0
+        assert event.failed_observer_count == 0
 
     def test_input_tokens_semantics_preserved(self):
         """The downstream metering key must remain 'queued-message tokens'.
@@ -161,6 +162,7 @@ class TestRepresentationV2AdditiveFields:
             "exact_dup_existing_count",
             "semantic_dup_rejected_count",
             "semantic_dup_replaced_count",
+            "failed_observer_count",
         ):
             assert field in data, f"missing field: {field}"
         assert data["hit_batch_token_cap"] is True
