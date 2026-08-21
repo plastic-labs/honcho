@@ -8,6 +8,48 @@
 #
 # The workflow gates only understand individual @usernames (no @org/team
 # entries).
+#
+# Order matters: GitHub applies the LAST matching pattern, so narrower rules
+# go further down. Paths not listed here have no automatic reviewer.
+
+# Telemetry, tracing, metrics.
+/src/telemetry/              @akattelu @Rajat-Ahuja1997
+
+# Data model, connections, configuration, LLM transport.
+/src/db.py                   @akattelu @eisene @VVoruganti
+/src/models.py               @akattelu @eisene @VVoruganti
+/src/config.py               @akattelu @eisene @VVoruganti
+/src/cache/                  @akattelu @eisene @VVoruganti
+/src/crud/                   @akattelu @eisene @VVoruganti
+/migrations/                 @akattelu @eisene @VVoruganti
+/src/llm/                    @akattelu @eisene @VVoruganti
+
+# Client-facing surfaces and API shape.
+/sdks/                       @ajspig @akattelu
+/mcp/                        @ajspig @akattelu
+/honcho-cli/                 @ajspig @akattelu
+/src/routers/                @ajspig @akattelu
+/src/schemas/                @ajspig @akattelu
+
+# The reasoning agents, their prompts, and shared agent tooling.
+/src/deriver/                @eisene @akattelu @matthewlanders
+/src/dreamer/                @eisene @akattelu @matthewlanders
+/src/dialectic/              @eisene @akattelu @matthewlanders
+/src/utils/                  @eisene @akattelu @matthewlanders
+
+# Deployment, and swappable storage and inference backends.
+# /src/llm/backends/ must stay below /src/llm/ above — last match wins.
+/docker/                     @eisene @Rajat-Ahuja1997 @akattelu
+/Dockerfile                  @eisene @Rajat-Ahuja1997 @akattelu
+/docker-compose.yml.example  @eisene @Rajat-Ahuja1997 @akattelu
+/src/vector_store/           @eisene @Rajat-Ahuja1997 @akattelu
+/src/llm/backends/           @eisene @Rajat-Ahuja1997 @akattelu
+
+# Documentation and contributor-facing policy.
+/docs/                       @ajspig @akattelu @VVoruganti
+/README.md                   @ajspig @akattelu @VVoruganti
+/CONTRIBUTING.md             @akattelu @ajspig @VVoruganti
+/SECURITY.md                 @akattelu @ajspig @VVoruganti
 
 # Reviewers auto-requested on changes under .github/ (workflows, this file,
 # templates).
@@ -16,4 +58,4 @@
 # CI-trigger allowlist only: this path matches no real file, so these people
 # are never auto-requested for review, but the workflow gates still pick
 # them up.
-/ci-trigger-allowlist @3un01a @adavyas @ajspig @courtlandleer @erosika @lowyelling @matthewlanders @vintrocode
+/ci-trigger-allowlist @ajspig @courtlandleer @erosika @lowyelling @vintrocode
