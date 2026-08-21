@@ -23,6 +23,7 @@ uv tool install honcho-cli
 
 ```bash
 honcho init        # confirm/set apiKey + Honcho URL in ~/.honcho/config.json
+honcho start       # optional: local API + deriver + Postgres + Redis (Docker)
 honcho doctor      # verify your config + connectivity
 honcho             # show banner + command list
 ```
@@ -31,6 +32,31 @@ honcho             # show banner + command list
 
 Per-command scoping (workspace / peer / session) is handled via `-w` / `-p` / `-s` flags or `HONCHO_*` env vars — not persisted as CLI defaults.
 
+### Local stack
+
+`honcho start` runs a personal Honcho server on your machine (API, deriver, Postgres, Redis) via Docker. Inference is cloud-side: you provide an OpenAI-compatible API key. Stack files live under `~/.honcho/profiles/local/` and are not committed to a project.
+
+On first start, the CLI pulls `ghcr.io/plastic-labs/honcho:latest` and **pins that digest** in `profile.json`, then copies the image's `config.toml.example` to `config.toml` in the same directory. `honcho start` never overwrites `config.toml` after that — including when you re-pin the image. Delete the file yourself if you want a fresh copy from a new image.
+
+Pass `--setup basic` or `--setup advanced` for an interactive wizard that writes curated LLM/feature overrides into the profile `.env` (env wins over `config.toml`). TTY only; re-runnable. `basic` asks provider + chat model; `advanced` also covers embeddings, deriver/dialectic models, dreams, and snappy deriver flush. Everything else stays in `config.toml`.
+
+`honcho start` does **not** change `environmentUrl` in `~/.honcho/config.json` (that file is shared with plugins). To talk to the local stack for one command:
+
+```bash
+HONCHO_BASE_URL=http://127.0.0.1:8000 honcho workspace list
+```
+
+To make local the default, run `honcho init --base-url http://127.0.0.1:8000`.
+
+```bash
+honcho start --llm-api-key "$LLM_OPENAI_API_KEY"
+honcho start --setup basic
+honcho start --setup advanced
+honcho status
+honcho stop            # keep data
+honcho stop --wipe     # also delete volumes
+```
+
 ## Commands
 
 ### Onboarding
@@ -38,6 +64,9 @@ Per-command scoping (workspace / peer / session) is handled via `-w` / `-p` / `-
 | Command | Description |
 |---------|-------------|
 | `honcho init` | Confirm/set `apiKey` + `environmentUrl` in `~/.honcho/config.json` |
+| `honcho start` | Start a local Honcho stack (API, deriver, Postgres, Redis). Requires Docker and a cloud LLM key. `--setup basic` / `--setup advanced` runs an interactive config wizard (TTY only). Does not change `environmentUrl`. |
+| `honcho stop` | Stop the local stack. `--wipe` also deletes volumes. |
+| `honcho status` | Show every local stack (or `--profile` for one). |
 | `honcho doctor` | Health check: config, connectivity, workspace, peer, queue |
 
 ### Workspaces
@@ -157,6 +186,9 @@ Precedence (highest first): **flag → env var → config file → default**.
 | `HONCHO_PEER_ID` | `-p` / `--peer` | Peer scope |
 | `HONCHO_SESSION_ID` | `-s` / `--session` | Session scope |
 | `HONCHO_JSON` | `--json` | Force JSON output (`1` / `true`) |
+| `HONCHO_PROFILE` | `--profile` (start/stop/status) | Local stack profile (default: `local`) |
+| `HONCHO_LLM_API_KEY` | `--llm-api-key` (start) | OpenAI-compatible key for local cloud inference |
+| `LLM_OPENAI_API_KEY` | — | Same as `HONCHO_LLM_API_KEY` (read as a fallback) |
 
 ```bash
 # Per-command flags
