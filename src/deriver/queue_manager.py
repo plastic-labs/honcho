@@ -54,10 +54,12 @@ logger = getLogger(__name__)
 
 load_dotenv(override=True)
 
-# Total processing attempts per work unit for transient errors, counted
-# per instance (N deriver instances give N x this many attempts).
+# Total processing attempts per work unit for transient errors. Count is
+# stored on the oldest unprocessed queue item so every deriver instance
+# shares one budget.
 MAX_RETRYABLE_ATTEMPTS = 3
 RETRY_BACKOFF_SECONDS = 1.0
+_RETRY_ATTEMPTS_PAYLOAD_KEY = "_retry_attempts"
 
 
 class WorkerOwnership(NamedTuple):
@@ -134,10 +136,6 @@ class QueueManager:
         self.active_tasks: set[asyncio.Task[None]] = set()
         self.worker_ownership: dict[str, WorkerOwnership] = {}
         self.queue_empty_flag: asyncio.Event = asyncio.Event()
-
-        # Transient-failure attempts per work-unit key. Entries are removed
-        # on success or terminal failure, never on the retry path itself.
-        self._retry_attempts: dict[str, int] = {}
 
         # Current adaptive polling interval; grows while idle/erroring and
         # resets to the base interval as soon as work is claimed.
@@ -596,6 +594,8 @@ class QueueManager:
 
         Transient errors (is_retryable_error) get up to MAX_RETRYABLE_ATTEMPTS
         attempts per work unit: items stay unprocessed with no error recorded.
+        The attempt count lives on the oldest unprocessed queue item so a
+        different deriver instance continues the same budget after reclaim.
         Reprocessing is safe because a retried batch re-derives the same
         observations and exact dedup collapses them into reinforcement.
 
@@ -610,9 +610,9 @@ class QueueManager:
             context: Context string describing what was being processed (e.g., "processing representation batch")
         """
         if is_retryable_error(error):
-            attempts = self._retry_attempts.get(work_unit_key, 0) + 1
+            attempts = await self._get_work_unit_retry_attempts(work_unit_key) + 1
             if attempts < MAX_RETRYABLE_ATTEMPTS:
-                self._retry_attempts[work_unit_key] = attempts
+                await self._set_work_unit_retry_attempts(work_unit_key, attempts)
                 logger.warning(
                     "Transient error %s for work unit %s (attempt %d/%d); leaving items unprocessed for retry",
                     context,
@@ -623,7 +623,7 @@ class QueueManager:
                 )
                 return True
 
-        self._retry_attempts.pop(work_unit_key, None)
+        await self._clear_work_unit_retry_attempts(work_unit_key)
         error_msg = f"{error.__class__.__name__}: {str(error)}"
         try:
             if items:
@@ -706,7 +706,9 @@ class QueueManager:
                                 await self.mark_queue_items_as_processed(
                                     items_to_process, work_unit_key
                                 )
-                                self._retry_attempts.pop(work_unit_key, None)
+                                await self._clear_work_unit_retry_attempts(
+                                    work_unit_key
+                                )
                                 queue_item_count += len(items_to_process)
                             except Exception as e:
                                 if await self._handle_processing_error(
@@ -737,7 +739,9 @@ class QueueManager:
                                 await self.mark_queue_items_as_processed(
                                     [queue_item], work_unit_key
                                 )
-                                self._retry_attempts.pop(work_unit_key, None)
+                                await self._clear_work_unit_retry_attempts(
+                                    work_unit_key
+                                )
                                 queue_item_count += 1
                             except Exception as e:
                                 if await self._handle_processing_error(
@@ -1101,6 +1105,83 @@ class QueueManager:
             was_flush_enabled=was_flush_enabled,
             batch_max_tokens=batch_max_tokens,
         )
+
+    async def _oldest_unprocessed_item(
+        self,
+        db: AsyncSession,
+        work_unit_key: str,
+        *,
+        for_update: bool = False,
+    ) -> models.QueueItem | None:
+        stmt = (
+            select(models.QueueItem)
+            .where(
+                models.QueueItem.work_unit_key == work_unit_key,
+                models.QueueItem.processed.is_(False),
+            )
+            .order_by(models.QueueItem.id)
+            .limit(1)
+        )
+        if for_update:
+            stmt = stmt.with_for_update()
+        result = await db.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def _get_work_unit_retry_attempts(self, work_unit_key: str) -> int:
+        """Read the shared transient-failure attempt count for a work unit."""
+        async with tracked_db("get_work_unit_retry_attempts") as db:
+            item = await self._oldest_unprocessed_item(db, work_unit_key)
+            if item is None:
+                return 0
+            raw = (item.payload or {}).get(_RETRY_ATTEMPTS_PAYLOAD_KEY, 0)
+            try:
+                return max(0, int(raw))
+            except (TypeError, ValueError):
+                return 0
+
+    async def _set_work_unit_retry_attempts(
+        self, work_unit_key: str, attempts: int
+    ) -> None:
+        """Persist the shared attempt count on the oldest unprocessed item."""
+        async with tracked_db("set_work_unit_retry_attempts") as db:
+            item = await self._oldest_unprocessed_item(
+                db, work_unit_key, for_update=True
+            )
+            if item is None:
+                await db.commit()
+                return
+            new_payload = dict(item.payload or {})
+            new_payload[_RETRY_ATTEMPTS_PAYLOAD_KEY] = attempts
+            await db.execute(
+                update(models.QueueItem)
+                .where(models.QueueItem.id == item.id)
+                .values(payload=new_payload)
+            )
+            await db.commit()
+
+    async def _clear_work_unit_retry_attempts(self, work_unit_key: str) -> None:
+        """Drop the shared attempt count after success or terminal failure."""
+        async with tracked_db("clear_work_unit_retry_attempts") as db:
+            result = await db.execute(
+                select(models.QueueItem)
+                .where(
+                    models.QueueItem.work_unit_key == work_unit_key,
+                    models.QueueItem.processed.is_(False),
+                )
+                .with_for_update()
+            )
+            for item in result.scalars():
+                payload = item.payload or {}
+                if _RETRY_ATTEMPTS_PAYLOAD_KEY not in payload:
+                    continue
+                new_payload = dict(payload)
+                new_payload.pop(_RETRY_ATTEMPTS_PAYLOAD_KEY, None)
+                await db.execute(
+                    update(models.QueueItem)
+                    .where(models.QueueItem.id == item.id)
+                    .values(payload=new_payload)
+                )
+            await db.commit()
 
     async def mark_queue_items_as_processed(
         self, items: list[QueueItem], work_unit_key: str

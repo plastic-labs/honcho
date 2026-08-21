@@ -214,6 +214,7 @@ def _uses_pgvector() -> bool:
 # Shared by is_rejected_duplicate and create_documents candidate resolution.
 _SEMANTIC_DUP_MAX_DISTANCE = 0.05
 _SEMANTIC_DUP_TOP_K = 1
+_SEMANTIC_CANDIDATE_CONCURRENCY = 8
 
 
 def _semantic_dup_filters(doc: schemas.DocumentCreate) -> dict[str, Any] | None:
@@ -538,27 +539,40 @@ async def create_documents(
     docs_with_embeddings: list[tuple[models.Document, list[float]]] = []
 
     # Resolve external-store dup candidates before the first DB statement.
-    # None falls back to in-place resolution (pgvector, or no merge partner).
+    # None = pgvector in-place fallback; [] = skip semantic (no external I/O under db).
     semantic_candidates: list[list[str] | None] = [None] * len(documents)
     if deduplicate and not _uses_pgvector():
+        resolve_sem = asyncio.Semaphore(_SEMANTIC_CANDIDATE_CONCURRENCY)
 
         async def _resolve_candidates(index: int, doc: schemas.DocumentCreate) -> None:
             filters = _semantic_dup_filters(doc)
             if filters is None or not doc.embedding:
+                semantic_candidates[index] = []
                 return
-            semantic_candidates[index] = await query_external_vector_document_ids(
-                workspace_name=workspace_name,
-                observer=observer,
-                observed=observed,
-                embedding=doc.embedding,
-                top_k=_SEMANTIC_DUP_TOP_K,
-                max_distance=_SEMANTIC_DUP_MAX_DISTANCE,
-                filters=filters,
-            )
+            async with resolve_sem:
+                try:
+                    ids = await query_external_vector_document_ids(
+                        workspace_name=workspace_name,
+                        observer=observer,
+                        observed=observed,
+                        embedding=doc.embedding,
+                        top_k=_SEMANTIC_DUP_TOP_K,
+                        max_distance=_SEMANTIC_DUP_MAX_DISTANCE,
+                        filters=filters,
+                    )
+                except Exception:
+                    logger.exception(
+                        "External semantic-candidate resolve failed for %s/%s/%s",
+                        workspace_name,
+                        observer,
+                        observed,
+                    )
+                    semantic_candidates[index] = []
+                    return
+                semantic_candidates[index] = ids or []
 
         await asyncio.gather(
-            *(_resolve_candidates(i, doc) for i, doc in enumerate(documents)),
-            return_exceptions=True,
+            *(_resolve_candidates(i, doc) for i, doc in enumerate(documents))
         )
 
     # exact-content dedup (independent of `deduplicate`): pre-fetch
@@ -740,14 +754,17 @@ async def create_documents(
             if doc.embedding:
                 docs_with_embeddings.append((new_doc, doc.embedding))
 
+        except IntegrityError as e:
+            await db.rollback()
+            raise ValidationException(
+                "Failed to create documents due to integrity constraint violation"
+            ) from e
         except SQLAlchemyError:
-            # The session/transaction is dead; continuing the loop would only
-            # cascade PendingRollbackErrors and lose the whole batch silently.
+            # Dead transaction: continuing would cascade PendingRollbackErrors.
             await db.rollback()
             raise
         except Exception as e:
-            # Genuinely per-document failures (bad content, metadata, token
-            # overflow) skip the document without poisoning the batch.
+            # Per-document failures (bad content, metadata, token overflow).
             logger.error(
                 f"Error adding new document to {workspace_name}/{doc.session_name}/{observer}/{observed}: {e}"
             )
@@ -1304,7 +1321,7 @@ async def _semantic_dup_decision(
             document_ids=candidate_document_ids,
             filters=filters,
         )
-    else:
+    elif _uses_pgvector():
         similar_docs = await query_documents(
             db=db,
             workspace_name=workspace_name,
@@ -1316,6 +1333,8 @@ async def _semantic_dup_decision(
             top_k=_SEMANTIC_DUP_TOP_K,
             embedding=doc.embedding or None,
         )
+    else:
+        return SemanticRejectionResult.NOT_DUPLICATE, None
 
     if not similar_docs:
         return SemanticRejectionResult.NOT_DUPLICATE, None

@@ -1745,3 +1745,45 @@ class TestExternalCandidateHoist:
         assert len(result.created_documents) == 2
         assert events[:2] == ["resolve", "resolve"]
         assert "execute" in events
+
+    @pytest.mark.asyncio
+    async def test_resolve_failure_skips_semantic_without_query_documents(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        from src.config import settings
+
+        test_workspace, test_peer = sample_data
+        observed_peer, test_session = await self._setup(
+            db_session, test_workspace, test_peer
+        )
+        monkeypatch.setattr(settings.VECTOR_STORE, "TYPE", "turbopuffer")
+        monkeypatch.setattr(settings.VECTOR_STORE, "MIGRATED", True)
+
+        with (
+            patch(
+                "src.crud.document.query_external_vector_document_ids",
+                side_effect=RuntimeError("store down"),
+            ),
+            patch(
+                "src.crud.document.get_external_vector_store",
+                return_value=None,
+            ),
+            patch(
+                "src.crud.document.query_documents",
+                new_callable=AsyncMock,
+            ) as mock_query,
+        ):
+            result = await crud.create_documents(
+                db_session,
+                [self._doc("fact one", test_session.name)],
+                workspace_name=test_workspace.name,
+                observer=test_peer.name,
+                observed=observed_peer.name,
+                deduplicate=True,
+            )
+
+        assert len(result.created_documents) == 1
+        mock_query.assert_not_awaited()
