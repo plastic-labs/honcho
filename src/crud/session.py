@@ -16,7 +16,6 @@ from sqlalchemy import (
     exists,
     func,
     insert,
-    or_,
     select,
     update,
 )
@@ -516,6 +515,14 @@ async def update_session(
     return honcho_session
 
 
+# Chunk size for splitting an in-memory ID list before binding it into an
+# `id.in_(...)` predicate, so a large fan-out can't build a single query with
+# an unbounded number of parameters. Separate from _batch_delete_matching's
+# batch_size (that one bounds rows per DELETE via a LIMIT subquery, not bound
+# parameters).
+_ID_CHUNK_SIZE = 5000
+
+
 async def _batch_delete_matching(
     db: AsyncSession,
     model: Any,
@@ -735,19 +742,31 @@ async def delete_session(
 
         # Delete Document entries associated with this session in batches,
         # plus any derived conclusions transitively resting on this session's
-        # evidence (see comment above).
+        # evidence (see comment above). The derived-id list is chunked before
+        # being bound into an `id.in_(...)` predicate so a session with an
+        # unusually large derived closure can't build a single query with an
+        # unbounded number of parameters (mirrors the batch_size=5000 chunking
+        # already used for the rest of this cascade).
         conclusions_deleted = await _batch_delete_matching(
             db,
             models.Document,
             [
-                or_(
-                    models.Document.session_name == session_name,
-                    models.Document.id.in_([d.id for d in derived_documents]),
-                ),
+                models.Document.session_name == session_name,
                 models.Document.workspace_name == workspace_name,
             ],
             batch_size=5000,
         )
+        derived_ids = [d.id for d in derived_documents]
+        for i in range(0, len(derived_ids), _ID_CHUNK_SIZE):
+            conclusions_deleted += await _batch_delete_matching(
+                db,
+                models.Document,
+                [
+                    models.Document.id.in_(derived_ids[i : i + _ID_CHUNK_SIZE]),
+                    models.Document.workspace_name == workspace_name,
+                ],
+                batch_size=5000,
+            )
 
         # Delete Message entries in batches
         messages_deleted = await _batch_delete_matching(

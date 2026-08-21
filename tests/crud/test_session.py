@@ -236,3 +236,85 @@ class TestSessionCRUD:
         assert deductive_id not in remaining_ids
         assert inductive_id not in remaining_ids
         assert unrelated_id in remaining_ids
+
+    @pytest.mark.asyncio
+    async def test_delete_session_chunks_large_derived_conclusion_fanout(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """The derived-conclusion id list is bound into an `id.in_(...)`
+        predicate in chunks (crud/session.py's _ID_CHUNK_SIZE) rather than as
+        one unbounded parameter list, so a session with a large derived
+        closure can't build a single query with an unbounded number of bind
+        parameters. Shrinks the chunk size instead of creating thousands of
+        rows to exercise the multi-chunk path cheaply.
+        """
+        from src.crud import session as session_crud
+
+        monkeypatch.setattr(session_crud, "_ID_CHUNK_SIZE", 2)
+
+        test_workspace, test_peer = sample_data
+
+        test_session = models.Session(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add(test_session)
+
+        collection = models.Collection(
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer.name,
+        )
+        db_session.add(collection)
+        await db_session.flush()
+
+        explicit_doc = models.Document(
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer.name,
+            content="explicit fact from this session",
+            level="explicit",
+            session_name=test_session.name,
+        )
+        db_session.add(explicit_doc)
+        await db_session.flush()
+
+        # Five one-hop deductions resting directly on the session's explicit
+        # doc - with _ID_CHUNK_SIZE monkeypatched to 2, deleting these
+        # requires 3 chunked `id.in_(...)` deletes (2 + 2 + 1).
+        derived_docs = [
+            models.Document(
+                workspace_name=test_workspace.name,
+                observer=test_peer.name,
+                observed=test_peer.name,
+                content=f"deduction {i} resting on this session's evidence",
+                level="deductive",
+                session_name=None,
+                source_ids=[explicit_doc.id],
+            )
+            for i in range(5)
+        ]
+        db_session.add_all(derived_docs)
+        await db_session.commit()
+
+        derived_ids = [d.id for d in derived_docs]
+
+        result = await crud.delete_session(
+            db_session, test_workspace.name, test_session.name
+        )
+
+        remaining = await db_session.execute(
+            select(models.Document.id).where(
+                models.Document.workspace_name == test_workspace.name,
+            )
+        )
+        remaining_ids = {row[0] for row in remaining.all()}
+
+        assert explicit_doc.id not in remaining_ids
+        for derived_id in derived_ids:
+            assert derived_id not in remaining_ids
+        # 1 explicit + 5 derived, deleted across the explicit call plus 3
+        # chunked derived-id calls.
+        assert result.conclusions_deleted == 6
