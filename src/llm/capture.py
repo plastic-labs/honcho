@@ -160,7 +160,7 @@ def _normalize_message(
     tool_call_id: str | None = message.get("tool_call_id")
     tool_calls: list[dict[str, Any]] = []
 
-    if transport == "openai":
+    if transport in ("openai", "orcarouter"):
         for tc in cast("list[dict[str, Any]]", message.get("tool_calls") or []):
             fn = cast("dict[str, Any]", tc.get("function") or {})
             args = fn.get("arguments")

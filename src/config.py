@@ -24,7 +24,7 @@ if not os.getenv("PYTHON_DOTENV_DISABLED"):
 
 logger = logging.getLogger(__name__)
 
-ModelTransport = Literal["anthropic", "openai", "gemini"]
+ModelTransport = Literal["anthropic", "openai", "gemini", "orcarouter"]
 EmbeddingTransport = Literal["openai", "gemini"]
 EmbeddingDimensionsMode = Literal["auto", "always", "never"]
 EmbeddingEncodingFormat = Literal["float", "base64"]
@@ -161,7 +161,7 @@ def _normalize_model_transport(data: Any) -> Any:
     transport_value = update.get("transport")
     if isinstance(model_value, str) and "/" in model_value and transport_value is None:
         prefix, bare_model = model_value.split("/", 1)
-        if prefix in {"anthropic", "openai", "gemini"}:
+        if prefix in {"anthropic", "openai", "gemini", "orcarouter"}:
             update["transport"] = prefix
             update["model"] = bare_model
     return update
@@ -189,11 +189,13 @@ def _validate_structured_output_mode(
     """Reject ``structured_output_mode`` on transports that ignore it.
 
     Only the OpenAI backend honors this setting (it controls the json_schema vs
-    json_object structured-output path). On the anthropic/gemini transports it is
-    a silent no-op, so a value set there is a misconfiguration — fail fast at
-    startup rather than letting the operator wonder why it has no effect.
+    json_object structured-output path). The orcarouter transport is an
+    OpenAI-compatible endpoint routed through the OpenAI backend, so it honors
+    the setting too. On the anthropic/gemini transports it is a silent no-op,
+    so a value set there is a misconfiguration — fail fast at startup rather
+    than letting the operator wonder why it has no effect.
     """
-    if structured_output_mode is not None and transport != "openai":
+    if structured_output_mode is not None and transport not in {"openai", "orcarouter"}:
         raise ValueError(
             "structured_output_mode is only supported on the 'openai' transport; "
             + f"remove it from the '{transport}' model config"
@@ -778,12 +780,14 @@ class LLMSettings(HonchoSettings):
     ANTHROPIC_API_KEY: str | None = None
     OPENAI_API_KEY: str | None = None
     GEMINI_API_KEY: str | None = None
+    ORCAROUTER_API_KEY: str | None = None
 
     # Base URLs for LLM providers (for OpenAI-compatible proxies like
     # OpenRouter, vLLM, Together, Anyscale, self-hosted, etc.)
     ANTHROPIC_BASE_URL: str | None = None
     OPENAI_BASE_URL: str | None = None
     GEMINI_BASE_URL: str | None = None
+    ORCAROUTER_BASE_URL: str | None = None
 
     # General LLM settings
     DEFAULT_MAX_TOKENS: Annotated[int, Field(default=1000, gt=0, le=100_000)] = 2500
