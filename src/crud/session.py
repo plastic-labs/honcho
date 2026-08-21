@@ -19,6 +19,7 @@ from sqlalchemy import (
     select,
     update,
 )
+from sqlalchemy.dialects.postgresql import array
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
@@ -514,6 +515,14 @@ async def update_session(
     return honcho_session
 
 
+# Chunk size for splitting an in-memory ID list before binding it into an
+# `id.in_(...)` predicate, so a large fan-out can't build a single query with
+# an unbounded number of parameters. Separate from _batch_delete_matching's
+# batch_size (that one bounds rows per DELETE via a LIMIT subquery, not bound
+# parameters).
+_ID_CHUNK_SIZE = 5000
+
+
 async def _batch_delete_matching(
     db: AsyncSession,
     model: Any,
@@ -668,11 +677,48 @@ async def delete_session(
         )
         documents = doc_result.all()
 
+        # Dreamer-produced deductive/inductive conclusions are stored with
+        # session_name=None by design (the session-purity invariant, see
+        # crud/document.py:_dedup_key) even though they were derived from this
+        # session's explicit conclusions via `source_ids`. The session_name
+        # filter above therefore can't reach them - walk `source_ids`
+        # transitively (mirrors the fail-closed cascade in
+        # deriver/scope_backfill.py:process_scope_removal) so a deduction
+        # resting on this session's evidence, and any induction resting on
+        # that deduction, are cascaded too. Document ids are globally unique
+        # nanoids, so a plain workspace-scoped `has_any` is enough - no need
+        # to further partition by (observer, observed) collection.
+        derived_documents: list[Any] = []
+        seen_derived: set[str] = set()
+        frontier = [doc.id for doc in documents]
+        while frontier:
+            derived_result = await db.execute(
+                select(
+                    models.Document.id,
+                    models.Document.observer,
+                    models.Document.observed,
+                ).where(
+                    models.Document.workspace_name == workspace_name,
+                    models.Document.level != "explicit",
+                    models.Document.source_ids.has_any(array(frontier)),
+                )
+            )
+            new_rows = [
+                row for row in derived_result.all() if row.id not in seen_derived
+            ]
+            if not new_rows:
+                break
+            seen_derived.update(row.id for row in new_rows)
+            derived_documents.extend(new_rows)
+            frontier = [row.id for row in new_rows]
+
+        all_documents = list(documents) + derived_documents
+
         # Only delete from external vector store if one exists
-        if external_vector_store is not None and documents:
+        if external_vector_store is not None and all_documents:
             # Group document IDs by namespace (observer/observed)
             docs_by_namespace: dict[str, list[str]] = {}
-            for doc in documents:
+            for doc in all_documents:
                 namespace = external_vector_store.get_vector_namespace(
                     "document",
                     workspace_name,
@@ -694,7 +740,13 @@ async def delete_session(
                         f"Failed to delete document vectors from {namespace}: {e}"
                     )
 
-        # Delete Document entries associated with this session in batches
+        # Delete Document entries associated with this session in batches,
+        # plus any derived conclusions transitively resting on this session's
+        # evidence (see comment above). The derived-id list is chunked before
+        # being bound into an `id.in_(...)` predicate so a session with an
+        # unusually large derived closure can't build a single query with an
+        # unbounded number of parameters (mirrors the batch_size=5000 chunking
+        # already used for the rest of this cascade).
         conclusions_deleted = await _batch_delete_matching(
             db,
             models.Document,
@@ -704,6 +756,17 @@ async def delete_session(
             ],
             batch_size=5000,
         )
+        derived_ids = [d.id for d in derived_documents]
+        for i in range(0, len(derived_ids), _ID_CHUNK_SIZE):
+            conclusions_deleted += await _batch_delete_matching(
+                db,
+                models.Document,
+                [
+                    models.Document.id.in_(derived_ids[i : i + _ID_CHUNK_SIZE]),
+                    models.Document.workspace_name == workspace_name,
+                ],
+                batch_size=5000,
+            )
 
         # Delete Message entries in batches
         messages_deleted = await _batch_delete_matching(
