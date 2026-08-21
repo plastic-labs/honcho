@@ -1,3 +1,4 @@
+import json
 import logging
 import time
 
@@ -36,6 +37,30 @@ def _get_deriver_model_config() -> ConfiguredModelSettings:
     return settings.DERIVER.MODEL_CONFIG
 
 
+def _format_deriver_message(message: Message, participants: list[str]) -> str:
+    """Format a message with explicit speaker/addressee roles when unambiguous."""
+    unique_participants = set(participants)
+    other_peers = unique_participants - {message.peer_name}
+    addressee = (
+        next(iter(other_peers))
+        if len(unique_participants) == 2 and message.peer_name in unique_participants
+        else None
+    )
+
+    if addressee is None:
+        return format_new_turn_with_timestamp(
+            message.content, message.created_at, message.peer_name
+        )
+
+    timestamp = message.created_at.strftime("%Y-%m-%d %H:%M:%S")
+    roles = json.dumps(
+        {"speaker": message.peer_name, "addressee": addressee},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return f"{timestamp} {roles}: {message.content}"
+
+
 @with_sentry_transaction("minimal_deriver_batch", op="deriver")
 async def process_representation_tasks_batch(
     messages: list[Message],
@@ -43,6 +68,7 @@ async def process_representation_tasks_batch(
     *,
     observers: list[str],
     observed: str,
+    participants: list[str] | None = None,
     queue_item_message_ids: list[int],
     hit_batch_token_cap: bool = False,
     was_flush_enabled: bool = False,
@@ -56,6 +82,7 @@ async def process_representation_tasks_batch(
         message_level_configuration: Optional configuration override.
         observers: List of observer peer IDs (collections to save to).
         observed: The observed peer ID.
+        participants: Active session peers captured when the work was enqueued.
         queue_item_message_ids: Message IDs from queue items being processed
         hit_batch_token_cap: queue batcher clamped this batch to fit
         was_flush_enabled: DERIVER.FLUSH_ENABLED snapshot at batch time
@@ -104,15 +131,20 @@ async def process_representation_tasks_batch(
         "id",
     )
 
-    # Format messages with timestamps
+    # Format only queued evidence with the participant snapshot captured for that
+    # work item. Interleaved context may predate that snapshot, so assigning it an
+    # addressee could turn an originally ambiguous message into false evidence.
+    queue_item_message_ids_set = set(queue_item_message_ids)
     formatted_messages = "\n".join(
-        format_new_turn_with_timestamp(msg.content, msg.created_at, msg.peer_name)
+        _format_deriver_message(
+            msg,
+            (participants or []) if msg.id in queue_item_message_ids_set else [],
+        )
         for msg in messages
     )
 
     # Track token usage - count only tokens from messages being processed
     prompt_tokens = estimate_deriver_prompt_tokens(custom_instructions)
-    queue_item_message_ids_set = set(queue_item_message_ids)
     messages_tokens = sum(
         msg.token_count for msg in messages if msg.id in queue_item_message_ids_set
     )
@@ -185,7 +217,9 @@ async def process_representation_tasks_batch(
             component=DeriverComponents.OUTPUT_TOTAL.value,
         )
 
-    message_ids = [m.id for m in messages if m.peer_name == observed]
+    # The prompt includes queued messages plus interleaved context, and facts may be
+    # supported by any speaker after cross-speaker target attribution.
+    message_ids = list(dict.fromkeys(message.id for message in messages))
 
     # Convert to Representation and save
     observations = Representation.from_prompt_representation(

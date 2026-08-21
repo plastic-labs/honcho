@@ -196,6 +196,7 @@ async def process_representation_batch(
     *,
     observers: list[str] | None,
     observed: str | None,
+    participants: list[str] | None = None,
     queue_item_message_ids: list[int],
     hit_batch_token_cap: bool = False,
     was_flush_enabled: bool = False,
@@ -209,6 +210,7 @@ async def process_representation_batch(
         message_level_configuration: Resolved configuration for this batch
         observers: List of observers for the messages
         observed: The observed of the messages
+        participants: Active session peers captured when the messages were enqueued
         queue_item_message_ids: Message IDs from queue items
         hit_batch_token_cap: whether the queue batcher clamped this batch to fit
         was_flush_enabled: snapshot of DERIVER.FLUSH_ENABLED at fetch time
@@ -226,6 +228,7 @@ async def process_representation_batch(
         message_level_configuration,
         observers=observers,
         observed=observed,
+        participants=participants,
         queue_item_message_ids=queue_item_message_ids,
         hit_batch_token_cap=hit_batch_token_cap,
         was_flush_enabled=was_flush_enabled,

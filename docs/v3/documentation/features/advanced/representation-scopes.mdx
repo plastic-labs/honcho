@@ -6,14 +6,14 @@ icon: 'circle'
 
 Assuming reasoning is enabled, you can control the perspectives representations are built from. This page covers:
 
-1. **Default Behavior** — Honcho reasons over every message written to a peer
+1. **Default Behavior** — Honcho reasons over facts about each peer
 2. **Observer-Observed Model** — How peers build representations of other peers
 3. **Querying with Target** — Accessing perspective-specific representations
 4. **Use Cases** — When to use directional representations
 
 ## Default: Reasoning On
 
-When `observe_me=true` (the default), Honcho forms one representation per peer, reasoning over every message written to that peer across all sessions.
+When `observe_me=true` (the default), Honcho forms one representation per peer, reasoning over facts about that peer across their sessions.
 
 You can retrieve a subset of conclusions from a peer's representation using `representation()`:
 
@@ -25,7 +25,7 @@ alice_rep = session.representation("alice")
 response = alice.chat("What are Alice's main interests?", session=session.id)
 ```
 
-This is sufficient for most applications—Honcho reasons over every message written to the peer, storing conclusions that any part of your system can retrieve.
+This is sufficient for most applications—Honcho stores conclusions about the peer that any part of your system can retrieve.
 
 ## Observer-Observed Representations
 
@@ -49,19 +49,19 @@ These are stored as separate (observer, observed) pairs in Honcho's internal col
 
 This enables sophisticated scenarios where different agents have different knowledge based on what they've actually witnessed.
 
-**Example**: Bob and Charlie tell different things to Alice in separate sessions.
+**Example**: Alice records different facts about Bob and Charlie in separate sessions.
 
 ```
 Session 1 (Alice + Bob):
-Bob → "I had pancakes for breakfast."
+Alice → "Bob prefers tea."
 
 Session 2 (Alice + Charlie):
-Charlie → "I had pancakes for breakfast. Bob is lying about his breakfast."
+Alice → "Charlie prefers coffee."
 ```
 
 With `observe_others=true` enabled on Alice:
-- **Alice's representation of Bob** only includes Session 1 (she heard Bob say he had pancakes)
-- **Alice's representation of Charlie** only includes Session 2 (she heard Charlie's claim about Bob lying)
+- **Alice's representation of Bob** only includes Session 1 (where Alice stated Bob's preference)
+- **Alice's representation of Charlie** only includes Session 2 (where Alice stated Charlie's preference)
 - **Honcho's representation of Alice** reasons over both sessions
 
 ![](/images/observe_config.png)
@@ -259,11 +259,17 @@ const aliceViewBilling = await session.representation("alice", {
 
 ## When Representations Update
 
-Directional representations update automatically through the reasoning pipeline when:
+Ordinary self-representations update when the message sender has
+`observe_me=true`. Cross-speaker promotion to the other participant additionally
+requires a two-peer session, `observe_others=true` on the sender, and
+`observe_me=true` on the other participant.
 
-1. A message is created in a session
-2. The message sender has `observe_me=true` (or session-level equivalent)
-3. Other peers in the session have `observe_others=true`
+In a two-peer session, a message can update both participants' representations:
+first-person facts apply to the sender, while statements about the other participant
+can apply to that participant. This can create two representation work units for one
+message. Sessions with more than two active peers do not schedule this additional
+target work unit because messages do not identify an addressee. Explicitly named
+facts can still be extracted as context when work for that target already exists.
 
 The pipeline respects scoping—Honcho's representations reason over messages across all sessions, while directional representations only reason over messages from sessions where the observer was an active participant.
 

@@ -145,13 +145,18 @@ async def search_workspace(
     body: schemas.WorkspaceMessageSearchOptions = Body(
         ..., description="Message search parameters"
     ),
-):
-    """
-    Search messages in a Workspace using optional filters. Use `limit` to control the number of
-    results returned.
+) -> list[models.Message]:
+    """Search messages in a workspace with optional scope filtering.
 
-    Pass `scope` to restrict the search to a scope's member sessions. A scope
-    with no member sessions returns no results (fail-closed).
+    Args:
+        workspace_id: Workspace whose messages are searched.
+        body: Query, filters, result limit, and optional peer scope.
+
+    Returns:
+        Matching messages, or an empty list when a scope has no member sessions.
+
+    Raises:
+        ValidationException: If ``scope`` and a ``session_id`` filter conflict.
     """
     # take user-provided filter and add workspace_id to it
     filters = body.filters or {}
@@ -209,7 +214,7 @@ async def get_queue_status(
             workspace_name=workspace_id,
             session_name=session_id,
             observer=observer_id,
-            observed=sender_id,
+            sender=sender_id,
         )
     except ValueError as e:
         logger.warning(f"Invalid request parameters: {str(e)}")
