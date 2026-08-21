@@ -7,6 +7,7 @@ from unittest.mock import patch
 import pytest
 from nanoid import generate as generate_nanoid
 from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
@@ -1874,3 +1875,295 @@ class TestPollingJitter:
         qm.shutdown_event.set()
         # A shutdown already signalled must short-circuit the (long) jitter sleep.
         await asyncio.wait_for(qm._sleep_startup_jitter(), timeout=1.0)  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.asyncio
+class TestQueueRetry:
+    """Bounded retry of transient errors in process_work_unit (DEV-1975).
+
+    A transient failure (deadlock, lost connection, provider transport) must
+    leave the batch's queue items unprocessed and release the work unit for
+    re-claim, up to MAX_RETRYABLE_ATTEMPTS per work unit; terminal failures
+    keep today's burn-one-item behavior.
+    """
+
+    async def _seed_work_unit(
+        self,
+        db_session: AsyncSession,
+        sample_session_with_peers: tuple[models.Session, list[models.Peer]],
+        create_queue_payload: Callable[..., Any],
+        n_messages: int = 1,
+    ) -> tuple[QueueManager, str, str, list[models.QueueItem]]:
+        """Seed a claimed representation work unit owned by a test worker."""
+        session, peers = sample_session_with_peers
+        peer = peers[0]
+
+        messages: list[models.Message] = []
+        for index in range(n_messages):
+            message = models.Message(
+                session_name=session.name,
+                workspace_name=session.workspace_name,
+                peer_name=peer.name,
+                content=f"Message {index}",
+                token_count=10,
+                seq_in_session=index + 1,
+            )
+            db_session.add(message)
+            messages.append(message)
+        await db_session.commit()
+        for message in messages:
+            await db_session.refresh(message)
+
+        queue_items: list[models.QueueItem] = []
+        work_unit_key = ""
+        for message in messages:
+            payload = create_queue_payload(
+                message=message,
+                task_type="representation",
+                observed=peer.name,
+                observer=peer.name,
+            )
+            work_unit_key = work_unit_key or construct_work_unit_key(
+                session.workspace_name, payload
+            )
+            queue_item = models.QueueItem(
+                session_id=session.id,
+                task_type="representation",
+                work_unit_key=work_unit_key,
+                payload=payload,
+                processed=False,
+                workspace_name=session.workspace_name,
+                message_id=message.id,
+            )
+            db_session.add(queue_item)
+            queue_items.append(queue_item)
+        await db_session.commit()
+        for queue_item in queue_items:
+            await db_session.refresh(queue_item)
+
+        qm = QueueManager()
+        worker_id = "test_worker"
+        claimed_units = await qm.claim_work_units(db_session, [work_unit_key])
+        qm.worker_ownership[worker_id] = WorkerOwnership(
+            work_unit_key=work_unit_key, aqs_id=claimed_units[work_unit_key]
+        )
+        await db_session.commit()
+        return qm, work_unit_key, worker_id, queue_items
+
+    @staticmethod
+    def _retryable_error() -> OperationalError:
+        class FakePGError(Exception):
+            sqlstate: str = "40P01"
+
+        return OperationalError("UPDATE documents", {}, FakePGError())
+
+    async def _fetch_items(
+        self, db_session: AsyncSession, work_unit_key: str
+    ) -> list[models.QueueItem]:
+        db_session.expire_all()
+        return list(
+            (
+                await db_session.execute(
+                    select(models.QueueItem)
+                    .where(models.QueueItem.work_unit_key == work_unit_key)
+                    .order_by(models.QueueItem.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    async def _aqs_rows(self, db_session: AsyncSession, work_unit_key: str) -> int:
+        return len(
+            (
+                await db_session.execute(
+                    select(models.ActiveQueueSession).where(
+                        models.ActiveQueueSession.work_unit_key == work_unit_key
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    async def _retry_attempts_on_items(
+        self, db_session: AsyncSession, work_unit_key: str
+    ) -> int | None:
+        items = await self._fetch_items(db_session, work_unit_key)
+        unprocessed = [item for item in items if not item.processed]
+        if not unprocessed:
+            return None
+        raw = (unprocessed[0].payload or {}).get("_retry_attempts")
+        return None if raw is None else int(raw)
+
+    async def test_retryable_error_leaves_items_unprocessed(
+        self,
+        db_session: AsyncSession,
+        sample_session_with_peers: tuple[models.Session, list[models.Peer]],
+        create_queue_payload: Callable[..., Any],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A transient error stops the work unit after ONE batch fetch (no
+        tight loop), leaves items unprocessed with no error, and releases
+        the ActiveQueueSession row."""
+        monkeypatch.setattr("src.deriver.queue_manager.RETRY_BACKOFF_SECONDS", 0.0)
+        qm, work_unit_key, worker_id, _ = await self._seed_work_unit(
+            db_session, sample_session_with_peers, create_queue_payload, n_messages=2
+        )
+        initial_semaphore_value = qm.semaphore._value
+
+        batch_fetches = 0
+        original_get_batch = qm.get_queue_item_batch
+
+        async def counting_get_batch(*args: Any, **kwargs: Any) -> Any:
+            nonlocal batch_fetches
+            batch_fetches += 1
+            return await original_get_batch(*args, **kwargs)
+
+        with (
+            patch.object(qm, "get_queue_item_batch", side_effect=counting_get_batch),
+            patch(
+                "src.deriver.queue_manager.process_representation_batch",
+                side_effect=self._retryable_error(),
+            ),
+        ):
+            await qm.process_work_unit(work_unit_key, worker_id)
+
+        assert batch_fetches == 1
+        items = await self._fetch_items(db_session, work_unit_key)
+        assert all(not item.processed for item in items)
+        assert all(item.error is None for item in items)
+        assert await self._aqs_rows(db_session, work_unit_key) == 0
+        assert await self._retry_attempts_on_items(db_session, work_unit_key) == 1
+        assert qm.semaphore._value == initial_semaphore_value
+
+    async def test_retry_exhaustion_is_terminal(
+        self,
+        db_session: AsyncSession,
+        sample_session_with_peers: tuple[models.Session, list[models.Peer]],
+        create_queue_payload: Callable[..., Any],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """At the attempt cap a transient error burns the first item exactly
+        like today's terminal path and clears the counter."""
+        from src.deriver.queue_manager import MAX_RETRYABLE_ATTEMPTS
+
+        monkeypatch.setattr("src.deriver.queue_manager.RETRY_BACKOFF_SECONDS", 0.0)
+        qm, work_unit_key, worker_id, _ = await self._seed_work_unit(
+            db_session, sample_session_with_peers, create_queue_payload
+        )
+        await qm._set_work_unit_retry_attempts(  # pyright: ignore[reportPrivateUsage]
+            work_unit_key, MAX_RETRYABLE_ATTEMPTS - 1
+        )
+
+        with patch(
+            "src.deriver.queue_manager.process_representation_batch",
+            side_effect=self._retryable_error(),
+        ):
+            await qm.process_work_unit(work_unit_key, worker_id)
+
+        items = await self._fetch_items(db_session, work_unit_key)
+        assert len(items) == 1
+        assert items[0].processed
+        assert items[0].error is not None
+        assert "OperationalError" in items[0].error
+        assert await self._retry_attempts_on_items(db_session, work_unit_key) is None
+
+    async def test_non_retryable_error_burns_immediately(
+        self,
+        db_session: AsyncSession,
+        sample_session_with_peers: tuple[models.Session, list[models.Peer]],
+        create_queue_payload: Callable[..., Any],
+    ) -> None:
+        """A non-retryable error keeps today's behavior verbatim: the first
+        item is marked errored on the first attempt."""
+        qm, work_unit_key, worker_id, _ = await self._seed_work_unit(
+            db_session, sample_session_with_peers, create_queue_payload
+        )
+
+        with patch(
+            "src.deriver.queue_manager.process_representation_batch",
+            side_effect=ValueError("bad batch"),
+        ):
+            await qm.process_work_unit(work_unit_key, worker_id)
+
+        items = await self._fetch_items(db_session, work_unit_key)
+        assert len(items) == 1
+        assert items[0].processed
+        assert items[0].error is not None
+        assert "ValueError" in items[0].error
+        assert await self._retry_attempts_on_items(db_session, work_unit_key) is None
+
+    async def test_counter_cleared_after_success(
+        self,
+        db_session: AsyncSession,
+        sample_session_with_peers: tuple[models.Session, list[models.Peer]],
+        create_queue_payload: Callable[..., Any],
+    ) -> None:
+        """A success wipes the accumulated attempt count for the work unit."""
+        qm, work_unit_key, worker_id, _ = await self._seed_work_unit(
+            db_session, sample_session_with_peers, create_queue_payload
+        )
+        await qm._set_work_unit_retry_attempts(work_unit_key, 1)  # pyright: ignore[reportPrivateUsage]
+
+        async def noop_batch(*_args: Any, **_kwargs: Any) -> None:
+            return None
+
+        with patch(
+            "src.deriver.queue_manager.process_representation_batch",
+            side_effect=noop_batch,
+        ):
+            await qm.process_work_unit(work_unit_key, worker_id)
+
+        items = await self._fetch_items(db_session, work_unit_key)
+        assert all(item.processed for item in items)
+        assert all(item.error is None for item in items)
+        assert await self._retry_attempts_on_items(db_session, work_unit_key) is None
+
+    async def test_retry_budget_survives_reclaim_by_another_manager(
+        self,
+        db_session: AsyncSession,
+        sample_session_with_peers: tuple[models.Session, list[models.Peer]],
+        create_queue_payload: Callable[..., Any],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A second QueueManager continues the durable attempt budget."""
+        from src.deriver.queue_manager import MAX_RETRYABLE_ATTEMPTS
+
+        monkeypatch.setattr("src.deriver.queue_manager.RETRY_BACKOFF_SECONDS", 0.0)
+        qm1, work_unit_key, worker_id, _ = await self._seed_work_unit(
+            db_session, sample_session_with_peers, create_queue_payload
+        )
+
+        with patch(
+            "src.deriver.queue_manager.process_representation_batch",
+            side_effect=self._retryable_error(),
+        ):
+            await qm1.process_work_unit(work_unit_key, worker_id)
+
+        assert await self._retry_attempts_on_items(db_session, work_unit_key) == 1
+        assert await self._aqs_rows(db_session, work_unit_key) == 0
+
+        # Seed the remaining budget so the next reclaim is the terminal attempt.
+        qm2 = QueueManager()
+        await qm2._set_work_unit_retry_attempts(  # pyright: ignore[reportPrivateUsage]
+            work_unit_key, MAX_RETRYABLE_ATTEMPTS - 1
+        )
+        claimed = await qm2.claim_work_units(db_session, [work_unit_key])
+        worker_id_2 = "test_worker_2"
+        qm2.worker_ownership[worker_id_2] = WorkerOwnership(
+            work_unit_key=work_unit_key, aqs_id=claimed[work_unit_key]
+        )
+        await db_session.commit()
+
+        with patch(
+            "src.deriver.queue_manager.process_representation_batch",
+            side_effect=self._retryable_error(),
+        ):
+            await qm2.process_work_unit(work_unit_key, worker_id_2)
+
+        items = await self._fetch_items(db_session, work_unit_key)
+        assert len(items) == 1
+        assert items[0].processed
+        assert items[0].error is not None
+        assert "OperationalError" in items[0].error
