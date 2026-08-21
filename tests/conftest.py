@@ -137,9 +137,12 @@ _RUN_ID_TIME_FORMAT = "%Y%m%d%H%M%S"
 # morning is gone by the afternoon.
 _STALE_DB_AGE_SECONDS = 2 * 60 * 60
 
-# test_db_<14-digit timestamp>_<4 hex>[_gwN] -- only names this function minted.
-# A pinned HONCHO_TEST_RUN_ID deliberately won't match, so it's never swept.
-_SWEEPABLE_DB_NAME = re.compile(r"^test_db_(\d{14})_[0-9a-f]{4}(?:_gw\d+)?$")
+# test_db_<14-digit timestamp>_<4-or-16 hex>[_gwN] -- only names this
+# function minted. The 4-hex form remains sweepable for leaked databases from
+# older test runs. A pinned HONCHO_TEST_RUN_ID deliberately won't match.
+_SWEEPABLE_DB_NAME = re.compile(
+    r"^test_db_(\d{14})_(?:[0-9a-f]{4}|[0-9a-f]{16})(?:_gw\d+)?$"
+)
 
 
 def pytest_configure(config: pytest.Config) -> None:  # pyright: ignore[reportUnusedParameter]
@@ -157,7 +160,7 @@ def pytest_configure(config: pytest.Config) -> None:  # pyright: ignore[reportUn
 
     os.environ.setdefault(
         _RUN_ID_ENV_VAR,
-        f"{time.strftime(_RUN_ID_TIME_FORMAT)}_{uuid.uuid4().hex[:4]}",
+        f"{time.strftime(_RUN_ID_TIME_FORMAT)}_{uuid.uuid4().hex[:16]}",
     )
 
     # Workers inherit the controller's env and would each redo this.
@@ -173,7 +176,7 @@ def _get_test_db_url(worker_id: str) -> URL:
     return CONNECTION_URI.set(database=f"test_db_{run_id}{suffix}")
 
 
-def _drop_database(db_url: URL) -> None:
+def _drop_database(db_url: URL, *, force: bool = True) -> None:
     """Drop a test database, evicting any connections still holding it open.
 
     WITH (FORCE) (pg13+) is what makes this reliable: a pooled connection that
@@ -191,7 +194,32 @@ def _drop_database(db_url: URL) -> None:
     )
     try:
         with engine.connect() as conn:
-            conn.exec_driver_sql(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+            force_clause = " WITH (FORCE)" if force else ""
+            conn.exec_driver_sql(f'DROP DATABASE IF EXISTS "{name}"{force_clause}')
+    finally:
+        engine.dispose()
+
+
+def _is_test_database_idle(db_url: URL) -> bool:
+    """Return whether a database currently has no active backends."""
+
+    name = db_url.database
+    if not name:
+        return False
+
+    engine = create_engine(
+        db_url.set(database="postgres"), isolation_level="AUTOCOMMIT"
+    )
+    try:
+        with engine.connect() as conn:
+            return not bool(
+                conn.exec_driver_sql(
+                    "SELECT EXISTS ("
+                    "SELECT 1 FROM pg_stat_activity WHERE datname = %s"
+                    ")",
+                    (name,),
+                ).scalar()
+            )
     finally:
         engine.dispose()
 
@@ -241,8 +269,11 @@ def _sweep_stale_test_databases() -> None:
             match = _SWEEPABLE_DB_NAME.match(name)
             if match is None or match.group(1) >= cutoff:
                 continue
+            db_url = CONNECTION_URI.set(database=name)
+            if not _is_test_database_idle(db_url):
+                continue
             logger.info(f"Dropping stale test database: {name}")
-            _drop_database(CONNECTION_URI.set(database=name))
+            _drop_database(db_url, force=False)
     except Exception as e:
         logger.warning(f"Could not sweep stale test databases: {e}")
 
@@ -336,35 +367,36 @@ async def _clear_all_tables(engine: AsyncEngine) -> None:
 @pytest_asyncio.fixture(scope="session")
 async def db_engine(worker_id: str):
     test_db_url = _get_test_db_url(worker_id)
-    create_test_database(test_db_url)
-    engine = await setup_test_database(test_db_url)
-
-    # Force the schema to 'public' for tests
-    # Save the original schema to restore later
+    engine: AsyncEngine | None = None
     original_schema = Base.metadata.schema
-    Base.metadata.schema = "public"
-
-    # Update all table schemas to public
-    for table in Base.metadata.tables.values():
-        table.schema = "public"
-
-    # Drop all tables first to ensure clean state
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-        # Then create all tables with current models
-        await conn.run_sync(Base.metadata.create_all)
-
     try:
+        create_test_database(test_db_url)
+        engine = await setup_test_database(test_db_url)
+
+        # Force the schema to 'public' for tests
+        Base.metadata.schema = "public"
+
+        # Update all table schemas to public
+        for table in Base.metadata.tables.values():
+            table.schema = "public"
+
+        # Recreate all tables from the current models.
+        assert engine is not None
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
+            await conn.run_sync(Base.metadata.create_all)
+
         yield engine
     finally:
-        await engine.dispose()
+        try:
+            if engine is not None:
+                await engine.dispose()
+        finally:
+            Base.metadata.schema = original_schema
+            for table in Base.metadata.tables.values():
+                table.schema = original_schema
 
-        # Restore original schema
-        Base.metadata.schema = original_schema
-        for table in Base.metadata.tables.values():
-            table.schema = original_schema
-
-        _drop_database(test_db_url)
+            _drop_database(test_db_url)
 
 
 @pytest_asyncio.fixture(scope="function")
@@ -803,7 +835,7 @@ def mock_honcho_llm_call(request: pytest.FixtureRequest):
 
     from src.utils.representation import (
         # DeductiveObservationBase,
-        ExplicitObservationBase,
+        PromptExplicitObservation,
         PromptRepresentation,
     )
 
@@ -823,7 +855,10 @@ def mock_honcho_llm_call(request: pytest.FixtureRequest):
             if getattr(response_model, "__name__", "") == "ReasoningResponse":
                 _rep = PromptRepresentation(
                     explicit=[
-                        ExplicitObservationBase(content="Test explicit observation")
+                        PromptExplicitObservation(
+                            content="Test explicit observation",
+                            is_durable_target_fact=True,
+                        )
                     ],
                     # deductive=[
                     #     DeductiveObservationBase(
