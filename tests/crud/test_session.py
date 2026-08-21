@@ -1,5 +1,6 @@
 import pytest
 from nanoid import generate as generate_nanoid
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
@@ -132,3 +133,106 @@ class TestSessionCRUD:
             await crud.clone_session(
                 db_session, test_workspace.name, test_session.name, "invalid_message_id"
             )
+
+    @pytest.mark.asyncio
+    async def test_delete_session_cascades_to_derived_conclusions(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """delete_session must also remove Dreamer-produced deductive/inductive
+        conclusions that rest on this session's evidence, even though those
+        documents carry session_name=None by design (the session-purity
+        invariant in crud/document.py:_dedup_key). Reproduces honcho#997's
+        real, still-live gap: such conclusions are invisible to a cascade
+        filtered only on Document.session_name and previously survived
+        session deletion forever.
+        """
+        test_workspace, test_peer = sample_data
+
+        test_session = models.Session(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add(test_session)
+
+        collection = models.Collection(
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer.name,
+        )
+        db_session.add(collection)
+        await db_session.flush()
+
+        explicit_doc = models.Document(
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer.name,
+            content="explicit fact from this session",
+            level="explicit",
+            session_name=test_session.name,
+        )
+        db_session.add(explicit_doc)
+        await db_session.flush()
+
+        # One-hop: a deduction resting directly on the session's explicit doc.
+        deductive_doc = models.Document(
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer.name,
+            content="deduction resting on this session's evidence",
+            level="deductive",
+            session_name=None,
+            source_ids=[explicit_doc.id],
+        )
+        db_session.add(deductive_doc)
+        await db_session.flush()
+
+        # Two-hop: an induction resting on the deduction above, not on the
+        # explicit doc directly - exercises the transitive frontier expansion
+        # (an induction whose support left with a deleted session must leave
+        # too, mirroring scope_backfill.py's process_scope_removal cascade).
+        inductive_doc = models.Document(
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer.name,
+            content="induction resting on the deduction above",
+            level="inductive",
+            session_name=None,
+            source_ids=[deductive_doc.id],
+        )
+        db_session.add(inductive_doc)
+
+        # An unrelated derived doc in the same collection, resting on
+        # unrelated evidence - must survive the session deletion.
+        unrelated_doc = models.Document(
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer.name,
+            content="unrelated deduction",
+            level="deductive",
+            session_name=None,
+            source_ids=["some-other-doc-id-not-in-this-session"],
+        )
+        db_session.add(unrelated_doc)
+        await db_session.commit()
+
+        explicit_id, deductive_id, inductive_id, unrelated_id = (
+            explicit_doc.id,
+            deductive_doc.id,
+            inductive_doc.id,
+            unrelated_doc.id,
+        )
+
+        await crud.delete_session(db_session, test_workspace.name, test_session.name)
+
+        result = await db_session.execute(
+            select(models.Document.id).where(
+                models.Document.workspace_name == test_workspace.name,
+            )
+        )
+        remaining_ids = {row[0] for row in result.all()}
+
+        assert explicit_id not in remaining_ids
+        assert deductive_id not in remaining_ids
+        assert inductive_id not in remaining_ids
+        assert unrelated_id in remaining_ids

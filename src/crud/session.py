@@ -16,9 +16,11 @@ from sqlalchemy import (
     exists,
     func,
     insert,
+    or_,
     select,
     update,
 )
+from sqlalchemy.dialects.postgresql import array
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
@@ -668,11 +670,48 @@ async def delete_session(
         )
         documents = doc_result.all()
 
+        # Dreamer-produced deductive/inductive conclusions are stored with
+        # session_name=None by design (the session-purity invariant, see
+        # crud/document.py:_dedup_key) even though they were derived from this
+        # session's explicit conclusions via `source_ids`. The session_name
+        # filter above therefore can't reach them - walk `source_ids`
+        # transitively (mirrors the fail-closed cascade in
+        # deriver/scope_backfill.py:process_scope_removal) so a deduction
+        # resting on this session's evidence, and any induction resting on
+        # that deduction, are cascaded too. Document ids are globally unique
+        # nanoids, so a plain workspace-scoped `has_any` is enough - no need
+        # to further partition by (observer, observed) collection.
+        derived_documents: list[Any] = []
+        seen_derived: set[str] = set()
+        frontier = [doc.id for doc in documents]
+        while frontier:
+            derived_result = await db.execute(
+                select(
+                    models.Document.id,
+                    models.Document.observer,
+                    models.Document.observed,
+                ).where(
+                    models.Document.workspace_name == workspace_name,
+                    models.Document.level != "explicit",
+                    models.Document.source_ids.has_any(array(frontier)),
+                )
+            )
+            new_rows = [
+                row for row in derived_result.all() if row.id not in seen_derived
+            ]
+            if not new_rows:
+                break
+            seen_derived.update(row.id for row in new_rows)
+            derived_documents.extend(new_rows)
+            frontier = [row.id for row in new_rows]
+
+        all_documents = list(documents) + derived_documents
+
         # Only delete from external vector store if one exists
-        if external_vector_store is not None and documents:
+        if external_vector_store is not None and all_documents:
             # Group document IDs by namespace (observer/observed)
             docs_by_namespace: dict[str, list[str]] = {}
-            for doc in documents:
+            for doc in all_documents:
                 namespace = external_vector_store.get_vector_namespace(
                     "document",
                     workspace_name,
@@ -694,12 +733,17 @@ async def delete_session(
                         f"Failed to delete document vectors from {namespace}: {e}"
                     )
 
-        # Delete Document entries associated with this session in batches
+        # Delete Document entries associated with this session in batches,
+        # plus any derived conclusions transitively resting on this session's
+        # evidence (see comment above).
         conclusions_deleted = await _batch_delete_matching(
             db,
             models.Document,
             [
-                models.Document.session_name == session_name,
+                or_(
+                    models.Document.session_name == session_name,
+                    models.Document.id.in_([d.id for d in derived_documents]),
+                ),
                 models.Document.workspace_name == workspace_name,
             ],
             batch_size=5000,
