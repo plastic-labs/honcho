@@ -48,3 +48,39 @@ def test_openai_transport_credentials_fall_back_to_global_defaults(
         "api_key": "openai-test-key",
         "api_base": None,
     }
+
+
+def test_orcarouter_transport_credentials_fall_back_to_global_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """OrcaRouter credentials resolve from the global LLM_ORCAROUTER_API_KEY."""
+    monkeypatch.setattr(settings.LLM, "ORCAROUTER_API_KEY", "orcarouter-test-key")
+
+    credentials = resolve_credentials(
+        ModelConfig(
+            model="auto",
+            transport="orcarouter",
+        )
+    )
+
+    assert credentials == {
+        "api_key": "orcarouter-test-key",
+        "api_base": None,
+    }
+
+
+def test_orcarouter_transport_credentials_use_per_model_config() -> None:
+    """Per-model key/base_url win over the global OrcaRouter defaults."""
+    credentials = resolve_credentials(
+        ModelConfig(
+            model="auto",
+            transport="orcarouter",
+            api_key="per-model-key",
+            base_url="https://api.orcarouter.ai/v1",
+        )
+    )
+
+    assert credentials == {
+        "api_key": "per-model-key",
+        "api_base": "https://api.orcarouter.ai/v1",
+    }

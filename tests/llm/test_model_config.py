@@ -271,6 +271,24 @@ def test_legacy_prefixed_model_strings_are_normalized() -> None:
     assert configured.model == "claude-haiku-4-5"
 
 
+def test_orcarouter_prefixed_model_string_is_normalized() -> None:
+    """orcarouter/auto shorthand resolves to the orcarouter transport."""
+    config = ModelConfig.model_validate({"model": "orcarouter/auto"})
+
+    assert config.transport == "orcarouter"
+    assert config.model == "auto"
+
+
+def test_structured_output_mode_allowed_on_orcarouter_transport() -> None:
+    """OrcaRouter routes through the OpenAI backend, so json_object is honored."""
+    config = ConfiguredModelSettings(
+        model="auto",
+        transport="orcarouter",
+        structured_output_mode="json_object",
+    )
+    assert config.structured_output_mode == "json_object"
+
+
 def test_dream_specialist_model_configs_are_independent() -> None:
     """Specialist configs carry their own defaults and don't inherit from a parent."""
 
@@ -324,9 +342,9 @@ def test_app_settings_explicit_vector_store_dimensions_warns_and_overrides() -> 
     messages = [
         str(w.message) for w in captured if issubclass(w.category, DeprecationWarning)
     ]
-    assert any(
-        "VECTOR_STORE_DIMENSIONS is deprecated" in m for m in messages
-    ), f"expected deprecation warning, got {messages!r}"
+    assert any("VECTOR_STORE_DIMENSIONS is deprecated" in m for m in messages), (
+        f"expected deprecation warning, got {messages!r}"
+    )
     assert settings.EMBEDDING.VECTOR_DIMENSIONS == 2048
     assert settings.VECTOR_STORE.DIMENSIONS == 2048, (
         "EMBEDDING.VECTOR_DIMENSIONS should always overwrite the operator-supplied "

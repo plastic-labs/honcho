@@ -52,6 +52,12 @@ _DEFAULT_HEADERS_BY_BASE_URL: dict[str, dict[str, str]] = {
     },
 }
 
+# Default base URL for the OrcaRouter transport. OrcaRouter is an
+# OpenAI-compatible gateway (https://api.orcarouter.ai/v1) — the operator can
+# override it per-model via ModelConfig overrides.base_url, mirroring the
+# OpenRouter pattern.
+ORCAROUTER_DEFAULT_BASE_URL = "https://api.orcarouter.ai/v1"
+
 
 def _default_headers_for(base_url: str | None) -> dict[str, str]:
     """Default headers for ``base_url`` (prefix match); these merge under any
@@ -101,6 +107,23 @@ def get_openai_client() -> AsyncOpenAI:
         api_key=settings.LLM.OPENAI_API_KEY,
         base_url=settings.LLM.OPENAI_BASE_URL,
         default_headers=_default_headers_for(settings.LLM.OPENAI_BASE_URL),
+    )
+
+
+@lru_cache(maxsize=1)
+def get_orcarouter_client() -> AsyncOpenAI:
+    """Default OrcaRouter client built from settings.LLM.ORCAROUTER_API_KEY.
+
+    OrcaRouter (https://www.orcarouter.ai) is an OpenAI-compatible gateway, so
+    this reuses the AsyncOpenAI SDK pointed at the OrcaRouter base URL. The
+    operator can point it elsewhere per-model via overrides.base_url.
+    """
+    from openai import AsyncOpenAI
+
+    return AsyncOpenAI(
+        api_key=settings.LLM.ORCAROUTER_API_KEY,
+        base_url=settings.LLM.ORCAROUTER_BASE_URL or ORCAROUTER_DEFAULT_BASE_URL,
+        default_headers=_default_headers_for(settings.LLM.ORCAROUTER_BASE_URL),
     )
 
 
@@ -186,6 +209,10 @@ def default_client(provider: ModelTransport) -> ProviderClient | None:
         if not settings.LLM.GEMINI_API_KEY:
             return None
         client = get_gemini_client()
+    elif provider == "orcarouter":
+        if not settings.LLM.ORCAROUTER_API_KEY:
+            return None
+        client = get_orcarouter_client()
     else:
         assert_never(provider)
 
@@ -219,6 +246,13 @@ def client_for_model_config(
         return get_openai_override_client(base_url, api_key)
     if provider == "gemini":
         return get_gemini_override_client(base_url, api_key)
+    if provider == "orcarouter":
+        # OrcaRouter is OpenAI-compatible; route it through the shared
+        # OpenAI-compatible override client. When no per-model base_url is set,
+        # default to the OrcaRouter endpoint.
+        return get_openai_override_client(
+            base_url or ORCAROUTER_DEFAULT_BASE_URL, api_key
+        )
     assert_never(provider)
 
 
@@ -239,6 +273,10 @@ def backend_for_provider(
         from .backends.gemini import GeminiBackend
 
         return GeminiBackend(client)
+    if provider == "orcarouter":
+        from .backends.openai import OpenAIBackend
+
+        return OpenAIBackend(client)
     assert_never(provider)
 
 

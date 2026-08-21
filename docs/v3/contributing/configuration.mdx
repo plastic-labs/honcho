@@ -57,8 +57,9 @@ You can mix providers freely — for example, use Gemini for the deriver and Cla
 | `openai` | OpenAI or any OpenAI-compatible endpoint (OpenRouter, Together, Fireworks, LiteLLM, vLLM, Ollama) | `LLM_OPENAI_API_KEY` |
 | `anthropic` | Anthropic Claude (direct) | `LLM_ANTHROPIC_API_KEY` |
 | `gemini` | Google Gemini (direct) | `LLM_GEMINI_API_KEY` |
+| `orcarouter` | [OrcaRouter](https://www.orcarouter.ai) — an OpenAI-compatible gateway | `LLM_ORCAROUTER_API_KEY` |
 
-For OpenAI-compatible proxies (OpenRouter, vLLM, Ollama, etc.), use `transport = "openai"` and set `MODEL_CONFIG__OVERRIDES__BASE_URL` on each feature to point at your endpoint.
+For OpenAI-compatible proxies (OpenRouter, vLLM, Ollama, OrcaRouter, etc.), use `transport = "openai"` and set `MODEL_CONFIG__OVERRIDES__BASE_URL` on each feature to point at your endpoint. The `orcarouter` transport is a named variant that defaults to `https://api.orcarouter.ai/v1` and reads `LLM_ORCAROUTER_API_KEY`, so you can route any feature through OrcaRouter without spelling out the base URL.
 
 <Note>
 Some OpenAI-compatible providers don't support OpenAI Structured Outputs (`json_schema`). Set `DERIVER_MODEL_CONFIG__STRUCTURED_OUTPUT_MODE=json_object` to request loose JSON mode and inject the schema into the prompt instead.

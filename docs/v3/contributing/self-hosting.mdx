@@ -36,7 +36,7 @@ You'll need a PostgreSQL database with the pgvector extension. Choose one:
 
 Honcho uses LLMs for memory extraction, summarization, dialectic chat, and dreaming. The server will **fail to start** without a provider configured.
 
-If you keep the built-in defaults, you only need one API key: all text-generation features default to `openai / gpt-5.4-mini`, and embeddings default to `openai / text-embedding-3-small`. Any OpenAI-compatible endpoint works too — OpenRouter, Together, Fireworks, Ollama, vLLM, or LiteLLM. Models must support tool calling (function calling).
+If you keep the built-in defaults, you only need one API key: all text-generation features default to `openai / gpt-5.4-mini`, and embeddings default to `openai / text-embedding-3-small`. Any OpenAI-compatible endpoint works too — OpenRouter, Together, Fireworks, Ollama, vLLM, LiteLLM, or OrcaRouter. Models must support tool calling (function calling).
 
 After copying `.env.template` to `.env`, the default setup is:
 
@@ -53,6 +53,15 @@ LLM_OPENAI_API_KEY=sk-or-v1-...
 DERIVER_MODEL_CONFIG__TRANSPORT=openai
 DERIVER_MODEL_CONFIG__MODEL=google/gemini-2.5-flash
 DERIVER_MODEL_CONFIG__OVERRIDES__BASE_URL=https://openrouter.ai/api/v1
+```
+
+Or use the named `orcarouter` transport to route through [OrcaRouter](https://www.orcarouter.ai) (an OpenAI-compatible gateway) without spelling out a base URL — it defaults to `https://api.orcarouter.ai/v1` and reads `LLM_ORCAROUTER_API_KEY`:
+
+```bash
+LLM_ORCAROUTER_API_KEY=sk-orca-...
+
+DERIVER_MODEL_CONFIG__TRANSPORT=orcarouter
+DERIVER_MODEL_CONFIG__MODEL=auto
 ```
 
 <Info>
