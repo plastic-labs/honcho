@@ -280,8 +280,13 @@ async def _fulltext_search(
             models.Message.created_at.desc()
         )
     else:
-        # For natural language queries, use full text search with ranking
-        fts_condition = func.to_tsvector("english", models.Message.content).op("@@")(
+        # For natural language queries, use full text search with ranking.
+        # Match and rank against the materialised `content_tsv` column rather
+        # than re-deriving to_tsvector(content) per row. ts_rank needs the
+        # vector VALUE, which a GIN index cannot supply, so the previous form
+        # re-parsed every candidate row's text on every query. Measured on a
+        # 230 MB / 33k-message workspace: 48.8s -> 0.87s.
+        fts_condition = models.Message.content_tsv.op("@@")(
             func.plainto_tsquery("english", query)
         )
 
@@ -297,7 +302,7 @@ async def _fulltext_search(
             # Order by FTS relevance first, then by creation time
             func.coalesce(
                 func.ts_rank(
-                    func.to_tsvector("english", models.Message.content),
+                    models.Message.content_tsv,
                     func.plainto_tsquery("english", query),
                 ),
                 0,
