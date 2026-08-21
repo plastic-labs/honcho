@@ -1,7 +1,10 @@
+from typing import Any
+
 import pytest
 from nanoid import generate as generate_nanoid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.operators import in_op
 
 from src import crud, models, schemas
 from src.exceptions import ResourceNotFoundException
@@ -255,6 +258,33 @@ class TestSessionCRUD:
 
         monkeypatch.setattr(session_crud, "_ID_CHUNK_SIZE", 2)
 
+        # Spy on _batch_delete_matching (the function that actually issues
+        # each chunked `id.in_(...)` delete - see the loop in delete_session)
+        # so we can assert the chunking itself happened, not just the end
+        # state. Asserting only remaining rows/counts would pass just as well
+        # if someone reverted to one unbounded `id.in_(derived_ids)` delete.
+        derived_id_chunk_sizes: list[int] = []
+        original_batch_delete = (
+            session_crud._batch_delete_matching  # pyright: ignore[reportPrivateUsage]
+        )
+
+        async def spy_batch_delete_matching(
+            db: AsyncSession, model: Any, filter_conditions: list[Any], **kwargs: Any
+        ) -> int:
+            for condition in filter_conditions:
+                if (
+                    model is models.Document
+                    and getattr(condition, "left", None) is not None
+                    and str(condition.left) == "documents.id"
+                    and condition.operator is in_op
+                ):
+                    derived_id_chunk_sizes.append(len(condition.right.value))
+            return await original_batch_delete(db, model, filter_conditions, **kwargs)
+
+        monkeypatch.setattr(
+            session_crud, "_batch_delete_matching", spy_batch_delete_matching
+        )
+
         test_workspace, test_peer = sample_data
 
         test_session = models.Session(
@@ -318,3 +348,12 @@ class TestSessionCRUD:
         # 1 explicit + 5 derived, deleted across the explicit call plus 3
         # chunked derived-id calls.
         assert result.conclusions_deleted == 6
+
+        # The actual assertion this test exists for: the derived ids were
+        # bound into 3 separate `id.in_(...)` deletes (chunk sizes 2, 2, 1),
+        # not one unbounded `id.in_(derived_ids)` call. Without this, a
+        # revert to the unbounded form would still pass every assertion
+        # above (the end state - which rows are gone - is identical either
+        # way).
+        assert derived_id_chunk_sizes == [2, 2, 1]
+        assert all(size <= 2 for size in derived_id_chunk_sizes)
