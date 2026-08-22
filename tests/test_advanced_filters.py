@@ -4,13 +4,19 @@ comparison operators, and wildcards across multiple models.
 """
 
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, TypedDict
 
 import pytest
 from fastapi.testclient import TestClient
 from nanoid import generate as generate_nanoid
 
 from src.models import Peer, Workspace
+
+
+class MessageConfig(TypedDict):
+    content: str
+    peer_id: str
+    metadata: dict[str, Any]
 
 
 @pytest.mark.parametrize(
@@ -255,7 +261,7 @@ async def test_nested_metadata_ne_includes_missing_and_empty_metadata(
     )
     assert session_response.status_code == 201
 
-    message_configs = [
+    message_configs: list[MessageConfig] = [
         {
             "content": "High priority, score 10",
             "peer_id": test_peer.name,
