@@ -214,6 +214,119 @@ def test_get_sessions(client: TestClient, sample_data: tuple[Workspace, Peer]):
     assert data["items"][0]["workspace_id"] == test_workspace.name
 
 
+def test_session_response_exposes_null_last_message_at_without_messages(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """A newly created session reports that no message activity exists yet."""
+    test_workspace, test_peer = sample_data
+    session_id = f"last-activity-empty-{generate_nanoid()}"
+
+    response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions",
+        json={
+            "id": session_id,
+            "peer_names": {test_peer.name: {}},
+        },
+    )
+
+    assert response.status_code in [200, 201]
+    assert response.json()["last_message_at"] is None
+
+
+def test_session_response_tracks_latest_message_timestamp_after_cached_create(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Appending messages refreshes the cached session activity timestamp."""
+    test_workspace, test_peer = sample_data
+    session_id = f"last-activity-cached-{generate_nanoid()}"
+    older_timestamp = "2026-01-01T12:00:00Z"
+    latest_timestamp = "2026-01-03T12:00:00Z"
+
+    created = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions",
+        json={
+            "id": session_id,
+            "peer_names": {test_peer.name: {}},
+        },
+    )
+    assert created.status_code in [200, 201]
+    assert created.json()["last_message_at"] is None
+
+    messages = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/messages",
+        json={
+            "messages": [
+                {
+                    "content": "older activity",
+                    "peer_id": test_peer.name,
+                    "created_at": older_timestamp,
+                },
+                {
+                    "content": "latest activity",
+                    "peer_id": test_peer.name,
+                    "created_at": latest_timestamp,
+                },
+            ]
+        },
+    )
+    assert messages.status_code == 201
+
+    refreshed = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions",
+        json={"id": session_id},
+    )
+
+    assert refreshed.status_code == 200
+    assert datetime.datetime.fromisoformat(
+        refreshed.json()["last_message_at"].replace("Z", "+00:00")
+    ) == datetime.datetime(2026, 1, 3, 12, 0, tzinfo=datetime.timezone.utc)
+
+
+def test_session_last_message_at_does_not_move_backwards_for_backdated_message(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Appending historical data cannot make a session appear less recent."""
+    test_workspace, test_peer = sample_data
+    session_id = f"last-activity-backfill-{generate_nanoid()}"
+
+    created = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions",
+        json={
+            "id": session_id,
+            "peer_names": {test_peer.name: {}},
+        },
+    )
+    assert created.status_code in [200, 201]
+
+    for content, created_at in (
+        ("current activity", "2026-01-03T12:00:00Z"),
+        ("historical import", "2026-01-01T12:00:00Z"),
+    ):
+        message_response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/messages",
+            json={
+                "messages": [
+                    {
+                        "content": content,
+                        "peer_id": test_peer.name,
+                        "created_at": created_at,
+                    }
+                ]
+            },
+        )
+        assert message_response.status_code == 201
+
+    refreshed = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions",
+        json={"id": session_id},
+    )
+
+    assert refreshed.status_code == 200
+    assert datetime.datetime.fromisoformat(
+        refreshed.json()["last_message_at"].replace("Z", "+00:00")
+    ) == datetime.datetime(2026, 1, 3, 12, 0, tzinfo=datetime.timezone.utc)
+
+
 def test_get_sessions_with_empty_filter(
     client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
@@ -278,6 +391,75 @@ def test_get_sessions_with_reverse(
         second_session,
         first_session,
     ]
+
+
+@pytest.mark.asyncio
+async def test_get_sessions_sort_by_last_message_at_reverses_activity_and_keeps_nulls_last(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+):
+    """Activity sorting differs from creation order and leaves empty sessions last."""
+    test_workspace, test_peer = sample_data
+    activity_group = f"last-activity-sort-{generate_nanoid()}"
+    most_recent_session = f"activity-recent-{generate_nanoid()}"
+    older_session = f"activity-older-{generate_nanoid()}"
+    empty_session = f"activity-empty-{generate_nanoid()}"
+
+    db_session.add_all(
+        [
+            models.Session(
+                name=most_recent_session,
+                workspace_name=test_workspace.name,
+                created_at=datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc),
+                h_metadata={"activity_group": activity_group},
+            ),
+            models.Session(
+                name=older_session,
+                workspace_name=test_workspace.name,
+                created_at=datetime.datetime(2026, 1, 2, tzinfo=datetime.timezone.utc),
+                h_metadata={"activity_group": activity_group},
+            ),
+            models.Session(
+                name=empty_session,
+                workspace_name=test_workspace.name,
+                created_at=datetime.datetime(2026, 1, 3, tzinfo=datetime.timezone.utc),
+                h_metadata={"activity_group": activity_group},
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    for session_id, created_at in (
+        (most_recent_session, "2026-01-10T00:00:00Z"),
+        (older_session, "2026-01-05T00:00:00Z"),
+    ):
+        message_response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/messages",
+            json={
+                "messages": [
+                    {
+                        "content": f"activity for {session_id}",
+                        "peer_id": test_peer.name,
+                        "created_at": created_at,
+                    }
+                ]
+            },
+        )
+        assert message_response.status_code == 201
+
+    response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions/list?sort_by=last_message_at&reverse=true",
+        json={"filters": {"metadata": {"activity_group": activity_group}}},
+    )
+
+    assert response.status_code == 200
+    assert [item["id"] for item in response.json()["items"]] == [
+        most_recent_session,
+        older_session,
+        empty_session,
+    ]
+    assert response.json()["items"][-1]["last_message_at"] is None
 
 
 @pytest.mark.asyncio
@@ -580,6 +762,10 @@ def test_clone_session(client: TestClient, sample_data: tuple[Workspace, Peer]):
     assert response.status_code == 201
     data = response.json()
     assert data["metadata"] == {"test": "key"}
+    assert data["last_message_at"] is not None
+    cloned_last_message_at = datetime.datetime.fromisoformat(
+        data["last_message_at"].replace("Z", "+00:00")
+    )
 
     # Check messages were cloned
     response = client.post(
@@ -597,6 +783,10 @@ def test_clone_session(client: TestClient, sample_data: tuple[Workspace, Peer]):
 
     assert data["items"][1]["content"] == "Test message 2"
     assert data["items"][1]["metadata"] == {"key": "value2"}
+    assert cloned_last_message_at == max(
+        datetime.datetime.fromisoformat(item["created_at"].replace("Z", "+00:00"))
+        for item in data["items"]
+    )
 
 
 def test_clone_session_with_cutoff(

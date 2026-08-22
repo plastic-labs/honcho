@@ -1,3 +1,6 @@
+import datetime
+from typing import cast
+
 import pytest
 
 from sdks.python.src.honcho.api_types import QueueStatusResponse
@@ -90,6 +93,108 @@ async def test_session_fetch_methods_refresh_cached_status_fields(
         assert configuration is not None
         assert session.created_at is not None
         assert session.is_active is True
+
+
+@pytest.mark.asyncio
+async def test_session_refresh_populates_last_message_at(
+    client_fixture: tuple[Honcho, str],
+):
+    """Session.refresh exposes the newest message timestamp cached by the SDK."""
+    honcho_client, client_type = client_fixture
+    session_id = f"test-session-last-message-at-{client_type}"
+    peer_id = f"test-peer-last-message-at-{client_type}"
+    message_time = datetime.datetime(2026, 1, 3, 12, 0, tzinfo=datetime.timezone.utc)
+
+    if client_type == "async":
+        peer = await honcho_client.aio.peer(id=peer_id)
+        created = await honcho_client.aio.session(id=session_id, peers=[peer])
+        await created.aio.add_messages(
+            peer.message("session activity", created_at=message_time)
+        )
+        session = Session(session_id, honcho_client)
+        await session.aio.refresh()
+    else:
+        peer = honcho_client.peer(id=peer_id)
+        created = honcho_client.session(id=session_id, peers=[peer])
+        created.add_messages(peer.message("session activity", created_at=message_time))
+        session = Session(session_id, honcho_client)
+        session.refresh()
+
+    assert session.last_message_at == message_time
+
+
+@pytest.mark.asyncio
+async def test_client_sessions_sort_by_last_message_at(
+    client_fixture: tuple[Honcho, str],
+):
+    """Workspace session listing exposes and preserves activity ordering."""
+    honcho_client, client_type = client_fixture
+    group = f"sdk-last-activity-sort-{client_type}"
+    peer_id = f"sdk-last-activity-peer-{client_type}"
+    recent_id = f"sdk-last-activity-recent-{client_type}"
+    older_id = f"sdk-last-activity-older-{client_type}"
+    empty_id = f"sdk-last-activity-empty-{client_type}"
+    recent_time = datetime.datetime(2026, 1, 10, tzinfo=datetime.timezone.utc)
+    older_time = datetime.datetime(2026, 1, 5, tzinfo=datetime.timezone.utc)
+
+    if client_type == "async":
+        peer = await honcho_client.aio.peer(id=peer_id)
+        older = await honcho_client.aio.session(
+            id=older_id, metadata={"activity_group": group}, peers=[peer]
+        )
+        recent = await honcho_client.aio.session(
+            id=recent_id, metadata={"activity_group": group}, peers=[peer]
+        )
+        await honcho_client.aio.session(
+            id=empty_id, metadata={"activity_group": group}, peers=[peer]
+        )
+        await recent.aio.add_messages(
+            peer.message("recent activity", created_at=recent_time)
+        )
+        await older.aio.add_messages(
+            peer.message("older activity", created_at=older_time)
+        )
+        page = await honcho_client.aio.sessions(
+            {"metadata": {"activity_group": group}},
+            sort_by="last_message_at",
+            reverse=True,
+            size=1,
+        )
+        sessions = cast(list[Session], page.items)
+        while page.has_next_page():
+            next_page = await page.get_next_page()
+            assert next_page is not None
+            sessions.extend(cast(list[Session], next_page.items))
+            page = next_page
+    else:
+        peer = honcho_client.peer(id=peer_id)
+        older = honcho_client.session(
+            id=older_id, metadata={"activity_group": group}, peers=[peer]
+        )
+        recent = honcho_client.session(
+            id=recent_id, metadata={"activity_group": group}, peers=[peer]
+        )
+        honcho_client.session(
+            id=empty_id, metadata={"activity_group": group}, peers=[peer]
+        )
+        recent.add_messages(peer.message("recent activity", created_at=recent_time))
+        older.add_messages(peer.message("older activity", created_at=older_time))
+        page = honcho_client.sessions(
+            {"metadata": {"activity_group": group}},
+            sort_by="last_message_at",
+            reverse=True,
+            size=1,
+        )
+        sessions = cast(list[Session], page.items)
+        while page.has_next_page():
+            next_page = page.get_next_page()
+            assert next_page is not None
+            sessions.extend(cast(list[Session], next_page.items))
+            page = next_page
+
+    assert [session.id for session in sessions] == [recent_id, older_id, empty_id]
+    assert sessions[0].last_message_at == recent_time
+    assert sessions[-1].last_message_at is None
 
 
 @pytest.mark.asyncio
@@ -624,6 +729,7 @@ async def test_session_clone(client_fixture: tuple[Honcho, str]):
         cloned = await session.aio.clone()
         assert isinstance(cloned, Session)
         assert cloned.id != session.id  # Should have a different ID
+        assert cloned.last_message_at is not None
 
         # Verify cloned session has the same messages
         cloned_messages_page = await cloned.aio.messages()
@@ -652,6 +758,7 @@ async def test_session_clone(client_fixture: tuple[Honcho, str]):
         cloned = session.clone()
         assert isinstance(cloned, Session)
         assert cloned.id != session.id  # Should have a different ID
+        assert cloned.last_message_at is not None
 
         # Verify cloned session has the same messages
         cloned_messages_page = cloned.messages()

@@ -87,6 +87,7 @@ export class Session {
   private _metadata?: Record<string, unknown>
   private _configuration?: SessionConfig
   private _createdAt?: string
+  private _lastMessageAt?: string | null
   private _isActive?: boolean
   private _ensureWorkspace: () => Promise<void>
 
@@ -120,6 +121,13 @@ export class Session {
   }
 
   /**
+   * Timestamp of the newest message. Null when the fetched session is empty.
+   */
+  get lastMessageAt(): string | null | undefined {
+    return this._lastMessageAt
+  }
+
+  /**
    * Whether this session is active. Only available if fetched from the API.
    */
   get isActive(): boolean | undefined {
@@ -134,6 +142,7 @@ export class Session {
    * @param http - Reference to the HTTP client instance
    * @param metadata - Optional metadata to initialize the cached value
    * @param configuration - Optional configuration to initialize the cached value
+   * @param lastMessageAt - Optional newest-message timestamp from the API
    */
   constructor(
     id: string,
@@ -143,7 +152,8 @@ export class Session {
     configuration?: SessionConfig,
     ensureWorkspace: () => Promise<void> = async () => undefined,
     createdAt?: string,
-    isActive?: boolean
+    isActive?: boolean,
+    lastMessageAt?: string | null
   ) {
     this.id = id
     this.workspaceId = workspaceId
@@ -153,12 +163,14 @@ export class Session {
     this._ensureWorkspace = ensureWorkspace
     this._createdAt = createdAt
     this._isActive = isActive
+    this._lastMessageAt = lastMessageAt
   }
 
   private _applySessionResponse(session: SessionResponse): void {
     this._metadata = session.metadata || {}
     this._configuration = sessionConfigFromApi(session.configuration) || {}
     this._createdAt = session.created_at
+    this._lastMessageAt = session.last_message_at
     this._isActive = session.is_active
   }
 
@@ -741,7 +753,8 @@ export class Session {
       sessionConfigFromApi(clonedSessionData.configuration) ?? undefined,
       () => this._ensureWorkspace(),
       clonedSessionData.created_at,
-      clonedSessionData.is_active
+      clonedSessionData.is_active,
+      clonedSessionData.last_message_at
     )
   }
 

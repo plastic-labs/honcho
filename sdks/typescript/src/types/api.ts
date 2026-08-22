@@ -126,6 +126,7 @@ export interface SessionResponse {
   metadata: Record<string, unknown>
   configuration: SessionConfigApi
   created_at: string
+  last_message_at?: string | null
 }
 
 export interface SessionCreateParams {

@@ -359,6 +359,7 @@ export class Honcho {
       page?: number
       size?: number
       reverse?: boolean
+      sortBy?: 'created_at' | 'last_message_at'
     }
   ): Promise<PageResponse<SessionResponse>> {
     return this._http.post<PageResponse<SessionResponse>>(
@@ -369,6 +370,10 @@ export class Honcho {
           page: params?.page,
           size: params?.size,
           reverse: params?.reverse ? 'true' : undefined,
+          sort_by:
+            params?.sortBy && params.sortBy !== 'created_at'
+              ? params.sortBy
+              : undefined,
         },
       }
     )
@@ -593,7 +598,8 @@ export class Honcho {
       sessionConfigFromApi(sessionData.configuration) ?? undefined,
       () => this._ensureWorkspace(),
       sessionData.created_at,
-      sessionData.is_active
+      sessionData.is_active,
+      sessionData.last_message_at
     )
   }
 
@@ -688,7 +694,7 @@ export class Honcho {
    * the current workspace.
    *
    * @param options - Either a legacy raw filter object or an options object with
-   *                  `filters`, `page`, `size`, and `reverse`. See
+   *                  `filters`, `page`, `size`, `reverse`, and `sortBy`. See
    *                  [search filters documentation](https://honcho.dev/docs/v3/documentation/core-concepts/features/using-filters).
    * @returns Promise resolving to a Page of Session objects representing all sessions
    *          in the workspace. Returns an empty page if no sessions exist
@@ -701,6 +707,7 @@ export class Honcho {
           page?: number
           size?: number
           reverse?: boolean
+          sortBy?: 'created_at' | 'last_message_at'
         }
   ): Promise<Page<Session, SessionResponse>> {
     await this._ensureWorkspace()
@@ -709,16 +716,19 @@ export class Honcho {
       'page',
       'size',
       'reverse',
+      'sortBy',
     ])
     const validatedFilter = normalizedOptions.filters
       ? FilterSchema.parse(normalizedOptions.filters)
       : undefined
     const reverse = normalizedOptions.reverse
+    const sortBy = normalizedOptions.sortBy
     const sessionsPage = await this._listSessions(this.workspaceId, {
       filters: validatedFilter,
       page: normalizedOptions.page,
       size: normalizedOptions.size,
       reverse,
+      sortBy,
     })
 
     const fetchNextPage = async (
@@ -730,6 +740,7 @@ export class Honcho {
         page,
         size,
         reverse,
+        sortBy,
       })
     }
 
@@ -744,7 +755,8 @@ export class Honcho {
           sessionConfigFromApi(session.configuration) ?? undefined,
           () => this._ensureWorkspace(),
           session.created_at,
-          session.is_active
+          session.is_active,
+          session.last_message_at
         ),
       fetchNextPage
     )

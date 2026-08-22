@@ -63,6 +63,13 @@ export function assertSessionShape(session: SessionResponse): void {
   expect(typeof session.configuration).toBe('object')
   expect(typeof session.created_at).toBe('string')
   expectValidDateString(session.created_at)
+  expect(
+    session.last_message_at === null ||
+      typeof session.last_message_at === 'string'
+  ).toBe(true)
+  if (typeof session.last_message_at === 'string') {
+    expectValidDateString(session.last_message_at)
+  }
 }
 
 /**

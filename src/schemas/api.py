@@ -464,6 +464,7 @@ class Session(SessionBase):
     )
     configuration: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime.datetime
+    last_message_at: datetime.datetime | None = None
 
     model_config = ConfigDict(  # pyright: ignore
         from_attributes=True, populate_by_name=True
