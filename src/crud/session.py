@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 from logging import getLogger
-from typing import Any
+from typing import Any, Literal
 from typing import cast as typing_cast
 
 from cashews import NOT_NONE
@@ -66,8 +66,8 @@ class SessionDeletionResult:
     conclusions_deleted: int
 
 
-SESSION_CACHE_KEY_TEMPLATE = "v2:workspace:{workspace_name}:session:{session_name}"
-SESSION_LOCK_PREFIX = f"{get_cache_namespace()}:lock:v2"
+SESSION_CACHE_KEY_TEMPLATE = "v3:workspace:{workspace_name}:session:{session_name}"
+SESSION_LOCK_PREFIX = f"{get_cache_namespace()}:lock:v3"
 
 
 def session_cache_key(workspace_name: str, session_name: str) -> str:
@@ -116,6 +116,7 @@ async def _fetch_session(
         "internal_metadata": obj.internal_metadata,
         "configuration": obj.configuration,
         "created_at": obj.created_at,
+        "last_message_at": obj.last_message_at,
     }
 
 
@@ -162,6 +163,7 @@ async def get_sessions(
     workspace_name: str,
     filters: dict[str, Any] | None = None,
     reverse: bool = False,
+    sort_by: Literal["created_at", "last_message_at"] = "created_at",
 ) -> Select[tuple[models.Session]]:
     """
     Get all active sessions in a workspace.
@@ -169,7 +171,8 @@ async def get_sessions(
     Args:
         workspace_name: Name of the workspace
         filters: Optional filters to apply to the query
-        reverse: If True, order by created_at descending; if False, ascending
+        reverse: If True, order descending; if False, ascending
+        sort_by: Session timestamp used for ordering
 
     Returns:
         Select statement for Session objects
@@ -182,9 +185,22 @@ async def get_sessions(
 
     stmt = apply_filter(stmt, models.Session, filters)
 
+    sort_column = (
+        models.Session.last_message_at
+        if sort_by == "last_message_at"
+        else models.Session.created_at
+    )
     if reverse:
-        return stmt.order_by(models.Session.created_at.desc(), models.Session.id.desc())
-    return stmt.order_by(models.Session.created_at.asc(), models.Session.id.asc())
+        primary_order = sort_column.desc()
+        id_order = models.Session.id.desc()
+    else:
+        primary_order = sort_column.asc()
+        id_order = models.Session.id.asc()
+
+    if sort_by == "last_message_at":
+        primary_order = primary_order.nulls_last()
+
+    return stmt.order_by(primary_order, id_order)
 
 
 async def get_or_create_session(
@@ -390,6 +406,7 @@ async def get_or_create_session(
                 "internal_metadata": honcho_session.internal_metadata,
                 "configuration": honcho_session.configuration,
                 "created_at": honcho_session.created_at,
+                "last_message_at": honcho_session.last_message_at,
             },
             expire=settings.CACHE.DEFAULT_TTL_SECONDS,
         )
@@ -835,6 +852,8 @@ async def clone_session(
 
     insert_stmt = insert(models.Message).returning(models.Message)
     result = await db.execute(insert_stmt, new_messages)
+    cloned_messages = result.scalars().all()
+    new_session.last_message_at = max(message.created_at for message in cloned_messages)
 
     # Clone peers from original session to new session (including their configurations)
     stmt = select(models.SessionPeer).where(

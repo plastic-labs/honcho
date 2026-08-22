@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Session responses now expose nullable `last_message_at`, backfilled and maintained from the newest message timestamp. `POST /v3/workspaces/{workspace_id}/sessions/list` accepts `sort_by=created_at|last_message_at` alongside the existing `reverse` parameter, with stable ID tie-breaking and sessions without messages placed last in either direction (#965).
+
 ## [3.0.12] - 2026-08-10
 
 ### Added

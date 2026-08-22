@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- `Session.lastMessageAt` exposes the newest message timestamp, and `Honcho.sessions()` accepts `sortBy: 'created_at' | 'last_message_at'` while preserving `reverse` across pagination. Requires a Honcho server with the matching API support.
+
 ## [2.3.0] - 2026-08-10
 
 ### Added

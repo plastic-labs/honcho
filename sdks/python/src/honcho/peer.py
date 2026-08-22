@@ -469,6 +469,7 @@ class Peer(PeerBase, MetadataConfigMixin):
                     session.configuration.model_dump()
                 ),
                 created_at=session.created_at,
+                last_message_at=session.last_message_at,
                 is_active=session.is_active,
             )
 

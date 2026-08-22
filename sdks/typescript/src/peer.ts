@@ -634,7 +634,8 @@ export class Peer {
           sessionConfigFromApi(session.configuration) ?? undefined,
           () => this._ensureWorkspace(),
           session.created_at,
-          session.is_active
+          session.is_active,
+          session.last_message_at
         ),
       fetchNextPage
     )

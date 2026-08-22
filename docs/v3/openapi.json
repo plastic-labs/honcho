@@ -1096,6 +1096,19 @@
             "description": "Whether to reverse the order of results"
           },
           {
+            "name": "sort_by",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": ["created_at", "last_message_at"],
+              "type": "string",
+              "description": "Session timestamp used to order results",
+              "default": "created_at",
+              "title": "Sort By"
+            },
+            "description": "Session timestamp used to order results"
+          },
+          {
             "name": "page",
             "in": "query",
             "required": false,
@@ -3561,6 +3574,13 @@
             "type": "string",
             "format": "date-time",
             "title": "Created At"
+          },
+          "last_message_at": {
+            "anyOf": [
+              { "type": "string", "format": "date-time" },
+              { "type": "null" }
+            ],
+            "title": "Last Message At"
           }
         },
         "type": "object",

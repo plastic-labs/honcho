@@ -60,11 +60,13 @@ class Session(SessionBase, MetadataConfigMixin):
             fetched. Call get_metadata() for fresh data.
         configuration: Cached configuration for this session. May be stale if not
             recently fetched. Call get_configuration() for fresh data.
+        last_message_at: Cached timestamp of the newest message, or None when empty.
     """
 
     _metadata: dict[str, object] | None = PrivateAttr(default=None)
     _configuration: SessionConfiguration | None = PrivateAttr(default=None)
     _created_at: datetime | None = PrivateAttr(default=None)
+    _last_message_at: datetime | None = PrivateAttr(default=None)
     _is_active: bool | None = PrivateAttr(default=None)
     _honcho: "Honcho" = PrivateAttr()
 
@@ -82,6 +84,11 @@ class Session(SessionBase, MetadataConfigMixin):
     def created_at(self) -> datetime | None:
         """Timestamp when this session was created. Only available if fetched from the API."""
         return self._created_at
+
+    @property
+    def last_message_at(self) -> datetime | None:
+        """Timestamp of the newest message, or None when the session is empty."""
+        return self._last_message_at
 
     @property
     def is_active(self) -> bool | None:
@@ -117,6 +124,7 @@ class Session(SessionBase, MetadataConfigMixin):
             session.configuration.model_dump()
         )
         self._created_at = session.created_at
+        self._last_message_at = session.last_message_at
         self._is_active = session.is_active
 
     def get_metadata(self) -> dict[str, object]:
@@ -223,6 +231,10 @@ class Session(SessionBase, MetadataConfigMixin):
             None,
             description="Timestamp when this session was created.",
         ),
+        last_message_at: datetime | None = Field(
+            None,
+            description="Timestamp of the newest message in this session.",
+        ),
         is_active: bool | None = Field(
             None,
             description="Whether this session is active.",
@@ -241,6 +253,7 @@ class Session(SessionBase, MetadataConfigMixin):
                 If set, will get/create session immediately with metadata.
             configuration: Optional configuration to set for this session.
                 If set, will get/create session immediately with flags.
+            last_message_at: Timestamp of the newest message, if fetched.
         """
         super().__init__(
             id=session_id,
@@ -250,6 +263,7 @@ class Session(SessionBase, MetadataConfigMixin):
         self._metadata = metadata
         self._configuration = configuration  # pyright: ignore[reportIncompatibleVariableOverride]
         self._created_at = created_at
+        self._last_message_at = last_message_at
         self._is_active = is_active
 
     def add_peers(
@@ -553,6 +567,7 @@ class Session(SessionBase, MetadataConfigMixin):
             metadata=cloned.metadata,
             configuration=cloned.configuration,
             created_at=cloned.created_at,
+            last_message_at=cloned.last_message_at,
             is_active=cloned.is_active,
         )
 
