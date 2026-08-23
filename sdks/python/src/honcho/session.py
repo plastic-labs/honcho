@@ -127,6 +127,17 @@ class Session(SessionBase, MetadataConfigMixin):
         self._last_message_at = session.last_message_at
         self._is_active = session.is_active
 
+    def _update_last_message_at_from_messages(
+        self, messages: Sequence[Message]
+    ) -> None:
+        """Advance the cached activity timestamp from locally written messages."""
+        if not messages:
+            return
+
+        newest_message_at = max(message.created_at for message in messages)
+        if self._last_message_at is None or newest_message_at > self._last_message_at:
+            self._last_message_at = newest_message_at
+
     def get_metadata(self) -> dict[str, object]:
         """
         Get metadata from the server and update the cache.
@@ -451,10 +462,12 @@ class Session(SessionBase, MetadataConfigMixin):
             routes.messages(self.workspace_id, self.id),
             body={"messages": messages_data},
         )
-        return [
+        created_messages = [
             Message.from_api_response(MessageResponse.model_validate(msg))
             for msg in data
         ]
+        self._update_last_message_at_from_messages(created_messages)
+        return created_messages
 
     @validate_call
     def messages(
@@ -906,10 +919,12 @@ class Session(SessionBase, MetadataConfigMixin):
             data=data_dict,
         )
 
-        return [
+        created_messages = [
             Message.from_api_response(MessageResponse.model_validate(msg))
             for msg in response
         ]
+        self._update_last_message_at_from_messages(created_messages)
+        return created_messages
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     def representation(

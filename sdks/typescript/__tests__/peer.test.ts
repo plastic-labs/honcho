@@ -222,7 +222,7 @@ describe('Peer', () => {
       const sessionIds = sessions.items.map((s) => s.id)
       expect(sessionIds).toContain('peer-sessions-test')
       const returned = sessions.items.find((item) => item.id === session.id)
-      expect(returned?.lastMessageAt).toBeDefined()
+      expect(typeof returned?.lastMessageAt).toBe('string')
     })
 
     test('sessions returns empty for peer in no sessions', async () => {

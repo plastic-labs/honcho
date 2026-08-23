@@ -1256,10 +1256,12 @@ class SessionAio(AsyncMetadataConfigMixin):
             routes.messages(self._session.workspace_id, self._session.id),
             body={"messages": messages_data},
         )
-        return [
+        created_messages = [
             Message.from_api_response(MessageResponse.model_validate(msg))
             for msg in data
         ]
+        self._session._update_last_message_at_from_messages(created_messages)
+        return created_messages
 
     async def messages(
         self,
@@ -1559,10 +1561,12 @@ class SessionAio(AsyncMetadataConfigMixin):
             data=data_dict,
         )
 
-        return [
+        created_messages = [
             Message.from_api_response(MessageResponse.model_validate(msg))
             for msg in response
         ]
+        self._session._update_last_message_at_from_messages(created_messages)
+        return created_messages
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     async def representation(

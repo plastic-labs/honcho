@@ -1,13 +1,102 @@
 import datetime
+from types import SimpleNamespace
 from typing import cast
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from sdks.python.src.honcho.api_types import QueueStatusResponse
+from sdks.python.src.honcho.api_types import MessageCreateParams, QueueStatusResponse
 from sdks.python.src.honcho.client import Honcho
 from sdks.python.src.honcho.message import Message
 from sdks.python.src.honcho.peer import Peer
 from sdks.python.src.honcho.session import Session, SessionPeerConfig
+
+
+def _message_response(
+    message_id: str, created_at: datetime.datetime
+) -> dict[str, object]:
+    """Build a complete message response fixture for SDK boundary tests."""
+    return {
+        "id": message_id,
+        "content": message_id,
+        "peer_id": "peer-1",
+        "session_id": "session-1",
+        "workspace_id": "workspace-1",
+        "metadata": {},
+        "created_at": created_at,
+        "token_count": 1,
+    }
+
+
+def _session_write_honcho() -> (
+    tuple[SimpleNamespace, datetime.datetime, datetime.datetime]
+):
+    """Build sync and async HTTP stubs for local session write tests."""
+    newest_time = datetime.datetime(2026, 1, 10, 12, 0, tzinfo=datetime.timezone.utc)
+    older_time = datetime.datetime(2026, 1, 5, 12, 0, tzinfo=datetime.timezone.utc)
+    older_response = [_message_response("backdated activity", older_time)]
+    newest_response = [_message_response("newest activity", newest_time)]
+    sync_http = SimpleNamespace(
+        post=MagicMock(side_effect=[older_response, older_response]),
+        upload=MagicMock(side_effect=[newest_response, older_response]),
+    )
+    async_http = SimpleNamespace(
+        post=AsyncMock(side_effect=[older_response, older_response]),
+        upload=AsyncMock(side_effect=[newest_response, older_response]),
+    )
+    honcho = SimpleNamespace(
+        workspace_id="workspace-1",
+        _http=sync_http,
+        _async_http_client=async_http,
+        _ensure_workspace=MagicMock(return_value=None),
+        _ensure_workspace_async=AsyncMock(return_value=None),
+    )
+    return honcho, older_time, newest_time
+
+
+def test_session_sync_writes_update_last_message_at_monotonically() -> None:
+    """Sync message and file writes keep the newest cached activity timestamp."""
+    honcho, older_time, newest_time = _session_write_honcho()
+    session = Session("session-1", honcho)
+
+    session.add_messages(MessageCreateParams(content="activity", peer_id="peer-1"))
+    assert session.last_message_at == older_time
+
+    session.upload_file(("activity.txt", b"activity", "text/plain"), peer="peer-1")
+    assert session.last_message_at == newest_time
+
+    session.add_messages(MessageCreateParams(content="activity", peer_id="peer-1"))
+    assert session.last_message_at == newest_time
+
+    session.upload_file(("activity.txt", b"activity", "text/plain"), peer="peer-1")
+    assert session.last_message_at == newest_time
+
+
+@pytest.mark.asyncio
+async def test_session_async_writes_update_last_message_at_monotonically() -> None:
+    """Async message and file writes keep the newest cached activity timestamp."""
+    honcho, older_time, newest_time = _session_write_honcho()
+    session = Session("session-1", honcho)
+
+    await session.aio.add_messages(
+        MessageCreateParams(content="activity", peer_id="peer-1")
+    )
+    assert session.last_message_at == older_time
+
+    await session.aio.upload_file(
+        ("activity.txt", b"activity", "text/plain"), peer="peer-1"
+    )
+    assert session.last_message_at == newest_time
+
+    await session.aio.add_messages(
+        MessageCreateParams(content="activity", peer_id="peer-1")
+    )
+    assert session.last_message_at == newest_time
+
+    await session.aio.upload_file(
+        ("activity.txt", b"activity", "text/plain"), peer="peer-1"
+    )
+    assert session.last_message_at == newest_time
 
 
 @pytest.mark.asyncio
@@ -729,12 +818,14 @@ async def test_session_clone(client_fixture: tuple[Honcho, str]):
         cloned = await session.aio.clone()
         assert isinstance(cloned, Session)
         assert cloned.id != session.id  # Should have a different ID
-        assert cloned.last_message_at is not None
 
         # Verify cloned session has the same messages
         cloned_messages_page = await cloned.aio.messages()
         cloned_messages = cloned_messages_page.items
         assert len(cloned_messages) == 2
+        assert cloned.last_message_at == max(
+            message.created_at for message in cloned_messages
+        )
 
         # Verify original session still has messages
         original_messages_page = await session.aio.messages()
@@ -758,12 +849,14 @@ async def test_session_clone(client_fixture: tuple[Honcho, str]):
         cloned = session.clone()
         assert isinstance(cloned, Session)
         assert cloned.id != session.id  # Should have a different ID
-        assert cloned.last_message_at is not None
 
         # Verify cloned session has the same messages
         cloned_messages_page = cloned.messages()
         cloned_messages = list(cloned_messages_page)
         assert len(cloned_messages) == 2
+        assert cloned.last_message_at == max(
+            message.created_at for message in cloned_messages
+        )
 
         # Verify original session still has messages
         original_messages_page = session.messages()
