@@ -419,11 +419,17 @@ class OpenAIBackend:
         # ChatGPT's Codex Responses endpoint currently omits ``output`` from
         # response.completed, even though it streams all deltas/items. Rebuild
         # that losslessly while retaining status/usage from the completed event.
-        if text_parts or output_items:
-            metadata = completed_response or response
+        metadata = completed_response or response
+        existing_output = self._response_value(
+            response, "output"
+        ) or self._response_value(metadata, "output")
+        existing_text = self._response_value(
+            response, "output_text"
+        ) or self._response_value(metadata, "output_text")
+        if (text_parts and not existing_text) or (output_items and not existing_output):
             response = {
-                "output_text": "".join(text_parts),
-                "output": output_items,
+                "output_text": existing_text or "".join(text_parts),
+                "output": existing_output or output_items,
                 "status": self._response_value(metadata, "status"),
                 "incomplete_details": self._response_value(
                     metadata, "incomplete_details"

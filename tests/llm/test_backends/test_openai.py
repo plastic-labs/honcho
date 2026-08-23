@@ -1511,6 +1511,41 @@ async def test_responses_mode_supports_tools_with_structured_output() -> None:
 
 
 @pytest.mark.asyncio
+async def test_responses_completion_preserves_terminal_output_with_text_deltas() -> (
+    None
+):
+    client = Mock()
+    function_call = SimpleNamespace(
+        type="function_call",
+        call_id="call_terminal",
+        name="lookup",
+        arguments='{"topic":"terminal"}',
+    )
+    final = _responses_final_response(text="", output=[function_call])
+    client.responses.stream = Mock(
+        return_value=_FakeResponsesStream(
+            [
+                SimpleNamespace(type="response.output_text.delta", delta="streamed"),
+                SimpleNamespace(type="response.completed", response=final),
+            ],
+            final,
+        )
+    )
+
+    result = await OpenAIBackend(client).complete(
+        model="gpt-5.6-luna",
+        messages=[{"role": "user", "content": "Look it up"}],
+        max_tokens=100,
+        extra_params={"api_mode": "responses"},
+    )
+
+    assert result.content == "streamed"
+    assert result.tool_calls[0].id == "call_terminal"
+    assert result.tool_calls[0].name == "lookup"
+    assert result.tool_calls[0].input == {"topic": "terminal"}
+
+
+@pytest.mark.asyncio
 async def test_responses_dict_events_reconstruct_completion_without_usage() -> None:
     client = Mock()
     final = {"status": "completed", "usage": None}
@@ -1568,7 +1603,7 @@ async def test_responses_dict_stream_fallback_preserves_refusal() -> None:
     )
 
     chunks: list[StreamChunk] = []
-    with pytest.raises(ValidationException, match="^Responses provider refusal$"):
+    with pytest.raises(ValidationException, match=r"^Responses provider refusal$"):
         async for chunk in OpenAIBackend(client).stream(
             model="gpt-5.6-luna",
             messages=[{"role": "user", "content": "Hello"}],
@@ -1826,7 +1861,7 @@ async def test_responses_completed_output_refusal_raises() -> None:
         )
     )
 
-    with pytest.raises(ValidationException, match="^Responses provider refusal$"):
+    with pytest.raises(ValidationException, match=r"^Responses provider refusal$"):
         await OpenAIBackend(client).complete(
             model="gpt-5.6-luna",
             messages=[{"role": "user", "content": "Hello"}],
@@ -1892,7 +1927,7 @@ async def test_responses_stream_output_refusal_raises_without_terminal_chunk() -
     )
 
     chunks: list[StreamChunk] = []
-    with pytest.raises(ValidationException, match="^Responses provider refusal$"):
+    with pytest.raises(ValidationException, match=r"^Responses provider refusal$"):
         async for chunk in OpenAIBackend(client).stream(
             model="gpt-5.6-luna",
             messages=[{"role": "user", "content": "Hello"}],
