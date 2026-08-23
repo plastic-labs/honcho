@@ -1701,6 +1701,27 @@ def test_responses_json_object_mode_injects_schema_instructions() -> None:
     assert "answer" in params["instructions"]
 
 
+def test_responses_json_object_mode_keeps_tool_calls_available() -> None:
+    backend = OpenAIBackend(Mock())
+    params = backend._build_responses_params(  # pyright: ignore[reportPrivateUsage]
+        model="gpt-5.6-luna",
+        messages=[{"role": "user", "content": "Search, then answer."}],
+        max_tokens=100,
+        tools=[AGENT_TOOL],
+        tool_choice="auto",
+        response_format=_StructuredResponse,
+        thinking_effort=None,
+        extra_params={
+            "api_mode": "responses",
+            "structured_output_mode": "json_object",
+        },
+    )
+
+    assert params["text"]["format"] == {"type": "json_object"}
+    assert params["tools"][0]["name"] == "search"
+    assert "If not responding with a tool call" in params["instructions"]
+
+
 def test_openai_backend_responses_mode_can_omit_max_output_tokens() -> None:
     backend = OpenAIBackend(Mock())
     params = backend._build_responses_params(  # pyright: ignore[reportPrivateUsage]
