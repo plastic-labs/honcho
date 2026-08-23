@@ -532,6 +532,14 @@ class OpenAIBackend:
         extra_params: dict[str, Any],
     ) -> dict[str, Any]:
         instructions, response_input = self._messages_to_responses_input(messages)
+        if (
+            isinstance(response_format, type)
+            and self._structured_output_mode(extra_params) == "json_object"
+        ):
+            schema_instruction = _json_object_instruction(response_format)
+            instructions = "\n\n".join(
+                part for part in (instructions, schema_instruction) if part
+            )
         params: dict[str, Any] = {
             "model": model,
             "input": response_input,
@@ -606,14 +614,24 @@ class OpenAIBackend:
     def _messages_to_responses_input(
         cls, messages: list[dict[str, Any]]
     ) -> tuple[str, list[dict[str, Any]]]:
+        """Convert canonical and Anthropic tool history to Responses input.
+
+        Unsupported provider-specific content blocks fail explicitly so a
+        fallback cannot silently discard conversation history.
+        """
         instructions: list[str] = []
         response_input: list[dict[str, Any]] = []
+        seen_function_call_ids: set[str] = set()
         for message in messages:
             role = str(message.get("role") or "user")
             content = message.get("content")
             if role in {"system", "developer"}:
                 if isinstance(content, str) and content:
                     instructions.append(content)
+                elif content is not None and not isinstance(content, str):
+                    raise ValidationException(
+                        "Responses system/developer content must be plain text"
+                    )
                 continue
             if role == "tool":
                 response_input.append(
@@ -637,8 +655,62 @@ class OpenAIBackend:
                         continue
                     if reasoning.get("type") == "reasoning":
                         response_input.append(reasoning)
-            if isinstance(content, str) and content:
-                response_input.append({"role": role, "content": content})
+            if isinstance(content, str):
+                if content:
+                    response_input.append({"role": role, "content": content})
+            elif isinstance(content, list):
+                for raw_block in cast(list[Any], content):
+                    if not isinstance(raw_block, dict):
+                        raise ValidationException(
+                            "Unsupported Responses content block: expected an object"
+                        )
+                    block = cast(dict[str, Any], raw_block)
+                    block_type = block.get("type")
+                    if block_type == "text":
+                        text = block.get("text")
+                        if isinstance(text, str) and text:
+                            response_input.append({"role": role, "content": text})
+                    elif block_type == "tool_use":
+                        call_id = str(block.get("id") or "")
+                        tool_input = block.get("input")
+                        if not isinstance(tool_input, dict):
+                            raise ValidationException(
+                                "Unsupported Responses content block: "
+                                + "tool_use input must be an object"
+                            )
+                        response_input.append(
+                            {
+                                "type": "function_call",
+                                "call_id": call_id,
+                                "name": str(block.get("name") or ""),
+                                "arguments": json.dumps(tool_input),
+                            }
+                        )
+                        seen_function_call_ids.add(call_id)
+                    elif block_type == "tool_result":
+                        result = block.get("content")
+                        response_input.append(
+                            {
+                                "type": "function_call_output",
+                                "call_id": str(block.get("tool_use_id") or ""),
+                                "output": result
+                                if isinstance(result, str)
+                                else json.dumps(result),
+                            }
+                        )
+                    else:
+                        raise ValidationException(
+                            f"Unsupported Responses content block type: {block_type or '<missing>'}"
+                        )
+            elif content is not None:
+                raise ValidationException(
+                    "Unsupported Responses message content: expected text or blocks"
+                )
+            if content is None and message.get("parts") is not None:
+                raise ValidationException(
+                    "Unsupported Responses message shape: "
+                    + "Gemini parts require provider-specific conversion"
+                )
             raw_tool_calls = message.get("tool_calls")
             if isinstance(raw_tool_calls, list):
                 tool_call_values = cast(list[Any], raw_tool_calls)
@@ -646,6 +718,9 @@ class OpenAIBackend:
                     if not isinstance(raw_tool_call, dict):
                         continue
                     tool_call = cast(dict[str, Any], raw_tool_call)
+                    call_id = str(tool_call.get("id") or "")
+                    if call_id in seen_function_call_ids:
+                        continue
                     raw_function = tool_call.get("function")
                     function = (
                         cast(dict[str, Any], raw_function)
@@ -655,11 +730,12 @@ class OpenAIBackend:
                     response_input.append(
                         {
                             "type": "function_call",
-                            "call_id": str(tool_call.get("id") or ""),
+                            "call_id": call_id,
                             "name": str(function.get("name") or ""),
                             "arguments": str(function.get("arguments") or "{}"),
                         }
                     )
+                    seen_function_call_ids.add(call_id)
         return "\n\n".join(instructions), response_input
 
     @staticmethod
@@ -694,12 +770,15 @@ class OpenAIBackend:
         if verbosity:
             text["verbosity"] = verbosity
         if isinstance(response_format, type):
-            text["format"] = {
-                "type": "json_schema",
-                "name": response_format.__name__,
-                "schema": to_strict_json_schema(response_format),
-                "strict": True,
-            }
+            if extra_params.get("structured_output_mode") == "json_object":
+                text["format"] = {"type": "json_object"}
+            else:
+                text["format"] = {
+                    "type": "json_schema",
+                    "name": response_format.__name__,
+                    "schema": to_strict_json_schema(response_format),
+                    "strict": True,
+                }
         elif isinstance(response_format, dict):
             if response_format.get("type") == "json_schema":
                 raw_schema = response_format.get("json_schema")

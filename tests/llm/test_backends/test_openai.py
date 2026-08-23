@@ -1615,6 +1615,92 @@ async def test_responses_dict_stream_fallback_preserves_refusal() -> None:
     assert not any(chunk.is_done for chunk in chunks)
 
 
+def test_responses_converts_anthropic_tool_history_without_dropping_blocks() -> None:
+    instructions, response_input = OpenAIBackend._messages_to_responses_input(  # pyright: ignore[reportPrivateUsage]
+        [
+            {"role": "user", "content": "Find this."},
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": "I will search."},
+                    {
+                        "type": "tool_use",
+                        "id": "call_anthropic",
+                        "name": "lookup",
+                        "input": {"topic": "history"},
+                    },
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "call_anthropic",
+                        "content": "found it",
+                        "is_error": False,
+                    }
+                ],
+            },
+        ]
+    )
+
+    assert instructions == ""
+    assert response_input == [
+        {"role": "user", "content": "Find this."},
+        {"role": "assistant", "content": "I will search."},
+        {
+            "type": "function_call",
+            "call_id": "call_anthropic",
+            "name": "lookup",
+            "arguments": '{"topic": "history"}',
+        },
+        {
+            "type": "function_call_output",
+            "call_id": "call_anthropic",
+            "output": "found it",
+        },
+    ]
+
+
+def test_responses_rejects_unsupported_list_content_instead_of_dropping_it() -> None:
+    with pytest.raises(
+        ValidationException, match="Unsupported Responses content block"
+    ):
+        OpenAIBackend._messages_to_responses_input(  # pyright: ignore[reportPrivateUsage]
+            [{"role": "assistant", "content": [{"type": "thinking", "text": "secret"}]}]
+        )
+
+
+def test_responses_rejects_gemini_parts_instead_of_dropping_them() -> None:
+    with pytest.raises(
+        ValidationException, match="Unsupported Responses message shape"
+    ):
+        OpenAIBackend._messages_to_responses_input(  # pyright: ignore[reportPrivateUsage]
+            [{"role": "model", "parts": [{"text": "I will search."}]}]
+        )
+
+
+def test_responses_json_object_mode_injects_schema_instructions() -> None:
+    backend = OpenAIBackend(Mock())
+    params = backend._build_responses_params(  # pyright: ignore[reportPrivateUsage]
+        model="gpt-5.6-luna",
+        messages=[{"role": "user", "content": "Answer."}],
+        max_tokens=100,
+        tools=None,
+        tool_choice=None,
+        response_format=_StructuredResponse,
+        thinking_effort=None,
+        extra_params={
+            "api_mode": "responses",
+            "structured_output_mode": "json_object",
+        },
+    )
+
+    assert params["text"]["format"] == {"type": "json_object"}
+    assert "answer" in params["instructions"]
+
+
 def test_openai_backend_responses_mode_can_omit_max_output_tokens() -> None:
     backend = OpenAIBackend(Mock())
     params = backend._build_responses_params(  # pyright: ignore[reportPrivateUsage]
