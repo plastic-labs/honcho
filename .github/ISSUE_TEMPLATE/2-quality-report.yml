@@ -23,6 +23,15 @@ body:
     validations:
       required: true
 
+  - type: input
+    id: version
+    attributes:
+      label: Honcho version
+      description: Server image tag or release, and SDK version if you use one. Write "managed" if you are not self-hosting.
+      placeholder: e.g. server v2.4.1, honcho-ai 2.1.0
+    validations:
+      required: true
+
   - type: textarea
     id: description
     attributes:
@@ -44,7 +53,6 @@ body:
         1. Peers: alice (user), bot (agent); session S
         2. Messages ingested: …
         3. Query / conclusion listing shows: …
-      render: markdown
     validations:
       required: true
 
@@ -67,7 +75,6 @@ body:
     attributes:
       label: Evidence
       description: Redacted conclusion text, chat excerpts, or counts that show the failure. No production PII.
-      render: markdown
     validations:
       required: false
 
