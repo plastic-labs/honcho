@@ -15,6 +15,7 @@ Include as much of the following as you have:
 
 - **Version** — a git commit SHA, or the release tag you are running
 - **Deployment** — self-hosted or the managed service at `api.honcho.dev`
+- **Affected component** — API, deriver, dialectic, auth/JWT, an SDK, or the managed offering
 - **Reproduction** — the exact steps, requests, or script that trigger it
 - **Proof of concept** — the smallest thing that demonstrates the issue actually works
 - **Impact** — what an attacker gains, and what they need to already have to get it

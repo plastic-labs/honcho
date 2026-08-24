@@ -5,7 +5,6 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import suppress
 from time import perf_counter
-from typing import Any
 
 from fastapi import APIRouter, Body, Depends, Path, Query, Response
 from fastapi.responses import StreamingResponse
@@ -35,6 +34,7 @@ from src.utils.scopes import (
     is_scope_peer,
     is_scope_peer_name,
     validate_no_scope_peer_names,
+    validate_scope_read_option,
 )
 from src.utils.search import search
 from src.utils.types import embedding_call_purpose
@@ -45,33 +45,6 @@ router = APIRouter(
     prefix="/workspaces/{workspace_id}/peers",
     tags=["peers"],
 )
-
-
-def _validate_scope_option(
-    *,
-    filters: dict[str, Any] | None,
-    session_id: str | None,
-    jwt_params: JWTParams,
-) -> None:
-    """Enforce the v1 `scope` exclusions and auth rule (chat/representation).
-
-    `scope` is mutually exclusive with `filters` and `session_id` (422), and a
-    scope's member sessions may exceed a peer's own membership, so scoped
-    reads require a workspace- or admin-level key.
-
-    401 rather than 403: every other scope surface refuses a narrow key with 401
-    — the `/scopes` router via `require_auth`, and the `scopes` field on session
-    create — so a peer key would otherwise get two different codes for the same
-    feature depending on which side of it was touched.
-    """
-    if filters is not None:
-        raise ValidationException("`scope` and `filters` are mutually exclusive")
-    if session_id:
-        raise ValidationException("`scope` and `session_id` are mutually exclusive")
-    if jwt_params.p is not None:
-        raise AuthenticationException(
-            "`scope` requires a workspace- or admin-level key"
-        )
 
 
 async def _resolve_scope_option(
@@ -95,16 +68,7 @@ async def _resolve_scope_option(
             )
             return scope_peer, None
 
-        scope_peers = await crud.resolve_scope_peers(scope_db, workspace_id, scope)
-        union: list[str] = []
-        seen: set[str] = set()
-        for scope_peer in scope_peers:
-            for session_name in await get_peer_session_names(
-                scope_db, workspace_id, scope_peer
-            ):
-                if session_name not in seen:
-                    seen.add(session_name)
-                    union.append(session_name)
+        union = await crud.resolve_scope_session_union(scope_db, workspace_id, scope)
 
     if len(union) > MAX_SESSION_ALLOWLIST_ENTRIES:
         raise ValidationException(
@@ -316,7 +280,7 @@ async def chat(
     observer = peer_id
     scope_session_union: list[str] | None = None
     if options.scope is not None:
-        _validate_scope_option(
+        validate_scope_read_option(
             filters=options.filters,
             session_id=options.session_id,
             jwt_params=jwt_params,
@@ -506,7 +470,7 @@ async def get_representation(
     observer = peer_id
     scope_session_union: list[str] | None = None
     if options.scope is not None:
-        _validate_scope_option(
+        validate_scope_read_option(
             filters=options.filters,
             session_id=options.session_id,
             jwt_params=jwt_params,

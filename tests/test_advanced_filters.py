@@ -4,13 +4,19 @@ comparison operators, and wildcards across multiple models.
 """
 
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, TypedDict
 
 import pytest
 from fastapi.testclient import TestClient
 from nanoid import generate as generate_nanoid
 
 from src.models import Peer, Workspace
+
+
+class MessageConfig(TypedDict):
+    content: str
+    peer_id: str
+    metadata: dict[str, Any]
 
 
 @pytest.mark.parametrize(
@@ -233,6 +239,83 @@ async def test_comparison_operators_filters(
             assert (
                 message_config["content"] not in found_contents
             ), f"Unexpected message '{message_config['content']}' found in results for {description}"
+
+
+@pytest.mark.asyncio
+async def test_nested_metadata_ne_includes_missing_and_empty_metadata(
+    client: TestClient,
+    sample_data: tuple[Workspace, Peer],
+):
+    """`ne` on a nested metadata key must not silently drop rows where the
+    key is absent. Under SQL's three-valued logic, comparing NULL (a missing
+    key or empty metadata) with `<>` yields NULL, which excludes the row —
+    the filter builds and executes cleanly either way, so this has to be
+    checked by counting the rows actually returned.
+    """
+    test_workspace, test_peer = sample_data
+
+    session_id = str(generate_nanoid())
+    session_response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions",
+        json={"id": session_id, "peer_names": {test_peer.name: {}}},
+    )
+    assert session_response.status_code == 201
+
+    message_configs: list[MessageConfig] = [
+        {
+            "content": "High priority, score 10",
+            "peer_id": test_peer.name,
+            "metadata": {"priority": "high", "score": 10},
+        },
+        {
+            "content": "Low priority, score 5",
+            "peer_id": test_peer.name,
+            "metadata": {"priority": "low", "score": 5},
+        },
+        {
+            "content": "Metadata present, no priority or score key",
+            "peer_id": test_peer.name,
+            "metadata": {"other": "value"},
+        },
+        {
+            "content": "Empty metadata",
+            "peer_id": test_peer.name,
+            "metadata": {},
+        },
+    ]
+    messages_response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/messages",
+        json={"messages": message_configs},
+    )
+    assert messages_response.status_code == 201
+
+    def list_contents(filter_config: dict[str, Any]) -> list[str]:
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
+            json={"filters": filter_config},
+        )
+        assert response.status_code == 200
+        return [item["content"] for item in response.json()["items"]]
+
+    # String value: excludes only the row where priority actually equals "high"
+    string_ne_contents = list_contents({"metadata": {"priority": {"ne": "high"}}})
+    assert sorted(string_ne_contents) == sorted(
+        [
+            message_configs[1]["content"],
+            message_configs[2]["content"],
+            message_configs[3]["content"],
+        ]
+    )
+
+    # Numeric value: excludes only the row where score actually equals 5
+    numeric_ne_contents = list_contents({"metadata": {"score": {"ne": 5}}})
+    assert sorted(numeric_ne_contents) == sorted(
+        [
+            message_configs[0]["content"],
+            message_configs[2]["content"],
+            message_configs[3]["content"],
+        ]
+    )
 
 
 @pytest.mark.asyncio
