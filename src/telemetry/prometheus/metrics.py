@@ -208,6 +208,25 @@ db_queries_in_flight_gauge = NamespacedGauge(
     ["namespace", "instance_type"],
 )
 
+# Physical DB connections, tracked via SQLAlchemy connection-lifecycle events
+# (see DBConnectionTracker in src/db.py) rather than the pool object, so they are
+# visible under EVERY pool class — including NullPool, whose pool holds no records
+# for the scrape-time db_pool_connections collector to read.
+db_connections_open_gauge = NamespacedGauge(
+    "db_connections_open",
+    "Physical DB connections currently open by this instance, across all pool "
+    + "classes (tracks concurrency of DB work under NullPool, pool occupancy "
+    + "under QueuePool)",
+    ["namespace", "instance_type"],
+)
+
+db_connections_established_counter = NamespacedCounter(
+    "db_connections_established",
+    "Physical DB connections established since process start. Under NullPool, "
+    + "rate() approximates request rate (one connect per DB checkout)",
+    ["namespace", "instance_type"],
+)
+
 
 @final
 class PrometheusMetrics:
