@@ -1,20 +1,27 @@
 name: Issue Gate
 
-# Closes pull requests that are not linked to an issue carrying the
-# `maintainer-approved` label. See CONTRIBUTING.md for the policy.
+# Labels pull requests that are not linked to an issue carrying the
+# `maintainer-approved` label, and comments explaining how to fix it.
 #
-# `pull_request_target` is required so the job has write access on PRs from
-# forks. This workflow must therefore NEVER check out or execute code from the
-# pull request — it only calls the GitHub API.
+# This workflow never closes anything. `pr-sweeper.yml` re-checks later and closes
+# only after the grace period — that gives contributors time to link an issue, and
+# gives maintainers time to wave through a one-line fix. It is also the only thing
+# that can notice a sidebar issue link, which fires no webhook of its own.
 #
-# Not triggered on `synchronize`: re-running the gate on every push to an
-# in-flight PR would be noise. Drafts are ignored until marked ready.
+# `pull_request_target` is required so the job has write access on pull requests
+# from forks. It must therefore NEVER run code from the pull request. The checkout
+# below is safe because on `pull_request_target` actions/checkout defaults to the
+# BASE ref, which is repo-trusted code. Never point it at `pr.head.sha`.
+#
+# Not triggered on `synchronize`: re-running on every push would be noise.
+# Drafts are ignored until marked ready.
 
 on:
   pull_request_target:
     types: [opened, edited, reopened, ready_for_review]
 
 permissions:
+  contents: read
   issues: write
   pull-requests: write
 
@@ -22,99 +29,9 @@ jobs:
   gate:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/github-script@v7
         with:
           script: |
-            const pr = context.payload.pull_request;
-            const { owner, repo } = context.repo;
-            const GATE_LABEL = 'needs-approved-issue';
-            const EXEMPT_LABEL = 'gate-exempt';
-            const REQUIRED_LABEL = 'maintainer-approved';
-            const MARKER = '<!-- issue-gate -->';
-
-            const skip = (why) => core.info(`Skipping gate: ${why}`);
-
-            if (pr.state !== 'open') return skip('pull request is not open');
-            if (pr.draft) return skip('pull request is a draft');
-            if (pr.user.type === 'Bot') return skip('author is a bot');
-            if (['OWNER', 'MEMBER', 'COLLABORATOR'].includes(pr.author_association)) {
-              return skip(`author_association is ${pr.author_association}`);
-            }
-            if ((pr.labels || []).some((l) => l.name === EXEMPT_LABEL)) {
-              return skip(`pull request carries the ${EXEMPT_LABEL} label`);
-            }
-
-            // Collect candidate issue numbers from the PR body. HTML comments are
-            // stripped first so the commented-out `Fixes #XXX` hint in the template
-            // never counts. Any `#123` is treated as a candidate, not just the
-            // closing keywords — being generous here only risks letting a PR
-            // through, while being strict risks closing a legitimate one.
-            const body = (pr.body || '').replace(/<!--[\s\S]*?-->/g, '');
-            const numbers = new Set();
-            for (const m of body.matchAll(/#(\d+)\b/g)) numbers.add(Number(m[1]));
-            const urlPattern = new RegExp(`github\\.com/${owner}/${repo}/issues/(\\d+)`, 'gi');
-            for (const m of body.matchAll(urlPattern)) numbers.add(Number(m[1]));
-
-            let approved = null;
-            const seen = [];
-            for (const n of [...numbers].slice(0, 10)) {
-              let issue;
-              try {
-                ({ data: issue } = await github.rest.issues.get({ owner, repo, issue_number: n }));
-              } catch (e) {
-                if (e.status === 404) { seen.push(`#${n} (not found)`); continue; }
-                throw e;
-              }
-              if (issue.pull_request) { seen.push(`#${n} (is a pull request)`); continue; }
-              if (issue.labels.some((l) => (l.name || l) === REQUIRED_LABEL)) { approved = n; break; }
-              seen.push(`#${n} (not approved)`);
-            }
-
-            if (approved) {
-              core.info(`Gate passed via #${approved}`);
-              if ((pr.labels || []).some((l) => l.name === GATE_LABEL)) {
-                await github.rest.issues.removeLabel({
-                  owner, repo, issue_number: pr.number, name: GATE_LABEL,
-                }).catch(() => {});
-              }
-              return;
-            }
-
-            const reason = numbers.size === 0
-              ? 'This pull request does not reference an issue in its description.'
-              : `The referenced ${seen.length === 1 ? 'issue does' : 'issues do'} not have the \`${REQUIRED_LABEL}\` label: ${seen.join(', ')}.`;
-
-            core.warning(`Gate failed: ${reason}`);
-
-            await github.rest.issues.addLabels({
-              owner, repo, issue_number: pr.number, labels: [GATE_LABEL],
-            });
-
-            const comments = await github.paginate(github.rest.issues.listComments, {
-              owner, repo, issue_number: pr.number, per_page: 100,
-            });
-            if (!comments.some((c) => (c.body || '').includes(MARKER))) {
-              await github.rest.issues.createComment({
-                owner, repo, issue_number: pr.number,
-                body: [
-                  MARKER,
-                  'Thanks for the contribution. Closing this for now, because it does not clear our issue gate.',
-                  '',
-                  `**${reason}**`,
-                  '',
-                  `Every pull request to Honcho needs to be linked to an issue carrying the \`${REQUIRED_LABEL}\` label. We do this so the review queue only holds work we have already agreed should be built — it means nobody spends time on a change we cannot merge.`,
-                  '',
-                  'To get this moving:',
-                  '',
-                  `1. Find or open an issue describing the change. [Approved issues are here](https://github.com/${owner}/${repo}/issues?q=is%3Aissue+is%3Aopen+label%3A${REQUIRED_LABEL}).`,
-                  '2. Make the case for it in [Discord](http://discord.gg/honcho) — maintainers are most active there, and it is by far the fastest route to a decision.',
-                  `3. Once the issue has the \`${REQUIRED_LABEL}\` label, add \`Fixes #<number>\` to this pull request's description and reopen it.`,
-                  '',
-                  `See [CONTRIBUTING.md](https://github.com/${owner}/${repo}/blob/main/CONTRIBUTING.md) for the full process. If you think this was closed in error, comment here and a maintainer will take a look.`,
-                ].join('\n'),
-              });
-            }
-
-            await github.rest.pulls.update({
-              owner, repo, pull_number: pr.number, state: 'closed',
-            });
+            const gate = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/issue-gate.js`);
+            await gate.runGate({ github, core, context });

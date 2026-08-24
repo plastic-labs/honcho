@@ -15,10 +15,12 @@ The rules below exist so that the work you do has somewhere to land — not to k
 
 **Every pull request needs an issue, and that issue needs the `maintainer-approved` label.**
 
-A pull request that is not linked to an issue, or that is linked to an issue without the
-label, will be closed without review. This is automated. We do this because an unreviewable
-backlog helps nobody: a PR against an unapproved issue is work you did that we may not be
-able to merge, no matter how good it is.
+A pull request that is not linked to an approved issue gets labelled
+`needs-approved-issue`, with a comment explaining why. You then have 72 hours to link one
+before it is closed automatically. Reopening costs nothing once the link is in place. This
+is automated. We do this because an unreviewable backlog helps nobody: a PR against an
+unapproved issue is work you did that we may not be able to merge, no matter how good it
+is.
 
 So, in order:
 
@@ -36,7 +38,8 @@ So, in order:
    issue tracker, and a five-minute conversation about what you want to build usually
    resolves whether it fits before either side spends real time on it.
 
-4. **Then open the PR**, with `Fixes #123` in the body.
+4. **Then open the PR** and link the issue — either `Fixes #123` in the description, or
+   **Development → link an issue** in the sidebar. Both work.
 
 Small exceptions we will not be pedantic about: fixing a typo, a broken link, or an
 obviously wrong code sample. Open the PR, explain it in one line, and we will sort out the
@@ -306,8 +309,9 @@ If you have the choice, fork from your personal account.
 a screenshot, the failing case before and after. This is the section that most determines
 how fast your PR gets reviewed. Do not add sections to the template.
 
-Include `Fixes #123` so the issue link is machine-readable — the automated gate reads the PR
-body.
+Link the issue so the gate can see it: `Fixes #123` in the description, or the
+**Development** section of the sidebar. The gate reads GitHub's own resolved issue links, so
+either route works — but a bare `#123` mention is only a reference and does not count.
 
 ### Review
 
