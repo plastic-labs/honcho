@@ -66,7 +66,7 @@ class SessionDeletionResult:
     conclusions_deleted: int
 
 
-SESSION_CACHE_KEY_TEMPLATE = "v2:workspace:{workspace_name}:session:{session_name}"
+SESSION_CACHE_KEY_TEMPLATE = "v2:workspace:{{{workspace_name}}}:session:{session_name}"
 SESSION_LOCK_PREFIX = f"{get_cache_namespace()}:lock:v2"
 
 

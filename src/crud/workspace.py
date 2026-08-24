@@ -39,7 +39,7 @@ class WorkspaceDeletionResult:
     conclusions_deleted: int
 
 
-WORKSPACE_CACHE_KEY_TEMPLATE = "v2:workspace:{workspace_name}"
+WORKSPACE_CACHE_KEY_TEMPLATE = "v2:workspace:{{{workspace_name}}}"
 WORKSPACE_LOCK_PREFIX = f"{get_cache_namespace()}:lock:v2"
 
 

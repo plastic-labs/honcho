@@ -20,7 +20,7 @@ from src.exceptions import ConflictException, ResourceNotFoundException
 logger = getLogger(__name__)
 
 COLLECTION_CACHE_KEY_TEMPLATE = (
-    "v2:workspace:{workspace_name}:collection:{observer}:{observed}"
+    "v2:workspace:{{{workspace_name}}}:collection:{observer}:{observed}"
 )
 COLLECTION_LOCK_PREFIX = f"{get_cache_namespace()}:lock:v2"
 

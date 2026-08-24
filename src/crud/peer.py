@@ -31,7 +31,7 @@ logger = getLogger(__name__)
 # Matches the peers.name CHECK constraint and PeerCreate's max_length.
 PEER_NAME_MAX_LENGTH = 512
 
-PEER_CACHE_KEY_TEMPLATE = "v2:workspace:{workspace_name}:peer:{peer_name}"
+PEER_CACHE_KEY_TEMPLATE = "v2:workspace:{{{workspace_name}}}:peer:{peer_name}"
 PEER_LOCK_PREFIX = f"{get_cache_namespace()}:lock:v2"
 
 
