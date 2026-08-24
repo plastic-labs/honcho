@@ -29,7 +29,8 @@ from sqlalchemy.types import BigInteger, Boolean
 from src import models, schemas
 from src.cache.client import (
     cache,
-    get_cache_namespace,
+    cache_key_namespace,
+    cache_prefix_namespace,
     safe_cache_delete,
     safe_cache_set,
 )
@@ -67,13 +68,13 @@ class SessionDeletionResult:
 
 
 SESSION_CACHE_KEY_TEMPLATE = "v2:workspace:{workspace_name}:session:{session_name}"
-SESSION_LOCK_PREFIX = f"{get_cache_namespace()}:lock:v2"
+SESSION_LOCK_PREFIX = f"{cache_prefix_namespace()}:lock:v2"
 
 
 def session_cache_key(workspace_name: str, session_name: str) -> str:
     """Generate cache key for session."""
     return (
-        get_cache_namespace()
+        cache_key_namespace()
         + ":"
         + SESSION_CACHE_KEY_TEMPLATE.format(
             workspace_name=workspace_name,
@@ -85,7 +86,7 @@ def session_cache_key(workspace_name: str, session_name: str) -> str:
 @cache(
     key=SESSION_CACHE_KEY_TEMPLATE,
     ttl=f"{settings.CACHE.DEFAULT_TTL_SECONDS}s",
-    prefix=get_cache_namespace(),
+    prefix=cache_prefix_namespace(),
     condition=NOT_NONE,
 )
 @cache.locked(
