@@ -494,6 +494,9 @@ class _DocumentRowOp:
     kind: Literal["reinforce", "replace"]
     document_id: str
     incoming_times_derived: int = 1
+    # When a reinforce skipped insert and the locked target is gone/deleted,
+    # insert this document instead of dropping it.
+    fallback_document: schemas.DocumentCreate | None = None
 
 
 @dataclass
@@ -667,7 +670,12 @@ async def create_documents(
                     current_td + 1, doc.times_derived
                 )
                 row_ops.append(
-                    _DocumentRowOp("reinforce", existing_match.id, doc.times_derived)
+                    _DocumentRowOp(
+                        "reinforce",
+                        existing_match.id,
+                        doc.times_derived,
+                        fallback_document=doc,
+                    )
                 )
                 exact_dup_existing_count += 1
                 continue
@@ -703,54 +711,21 @@ async def create_documents(
                         current_td + 1, doc.times_derived
                     )
                     row_ops.append(
-                        _DocumentRowOp("reinforce", existing_dup.id, doc.times_derived)
+                        _DocumentRowOp(
+                            "reinforce",
+                            existing_dup.id,
+                            doc.times_derived,
+                            fallback_document=doc,
+                        )
                     )
                     semantic_dup_rejected_count += 1
                     continue
 
-            metadata_dict = doc.metadata.model_dump(exclude_none=True)
-
-            # Determine if we need to persist embeddings to postgres
-            # True when: TYPE=pgvector OR still migrating (dual-write to both stores)
-            store_embeddings_in_postgres = (
-                settings.VECTOR_STORE.TYPE == "pgvector"
-                or not settings.VECTOR_STORE.MIGRATED
+            new_doc = _document_model_from_create(
+                doc, workspace_name=workspace_name, observer=observer, observed=observed
             )
-
-            if store_embeddings_in_postgres and doc.embedding:
-                new_doc = models.Document(
-                    workspace_name=workspace_name,
-                    observer=observer,
-                    observed=observed,
-                    content=doc.content,
-                    level=doc.level,
-                    times_derived=doc.times_derived,
-                    internal_metadata=metadata_dict,
-                    session_name=doc.session_name,
-                    embedding=doc.embedding,
-                    # Tree linkage column
-                    source_ids=doc.source_ids,
-                )
-            else:
-                new_doc = models.Document(
-                    workspace_name=workspace_name,
-                    observer=observer,
-                    observed=observed,
-                    content=doc.content,
-                    level=doc.level,
-                    times_derived=doc.times_derived,
-                    internal_metadata=metadata_dict,
-                    session_name=doc.session_name,
-                    # Tree linkage column
-                    source_ids=doc.source_ids,
-                )
-
-            if doc.embedding:
-                new_doc.sync_state = "pending"
             honcho_documents.append(new_doc)
             accepted_documents.append(doc)
-
-            # Track embedding for vector store (ID will be available after commit)
             if doc.embedding:
                 docs_with_embeddings.append((new_doc, doc.embedding))
 
@@ -771,13 +746,24 @@ async def create_documents(
             continue
 
     try:
-        await _apply_document_row_updates(
+        fallback_docs = await _apply_document_row_updates(
             db,
             row_ops,
             workspace_name=workspace_name,
             observer=observer,
             observed=observed,
         )
+        for fallback_doc in fallback_docs:
+            new_doc = _document_model_from_create(
+                fallback_doc,
+                workspace_name=workspace_name,
+                observer=observer,
+                observed=observed,
+            )
+            honcho_documents.append(new_doc)
+            accepted_documents.append(fallback_doc)
+            if fallback_doc.embedding:
+                docs_with_embeddings.append((new_doc, fallback_doc.embedding))
         db.add_all(honcho_documents)
         # NOTE
         # If the process crashes after this commit but before vector upsert completes,
@@ -1253,6 +1239,47 @@ async def create_observations(
     return honcho_documents
 
 
+def _document_model_from_create(
+    doc: schemas.DocumentCreate,
+    *,
+    workspace_name: str,
+    observer: str,
+    observed: str,
+) -> models.Document:
+    metadata_dict = doc.metadata.model_dump(exclude_none=True)
+    store_embeddings_in_postgres = (
+        settings.VECTOR_STORE.TYPE == "pgvector" or not settings.VECTOR_STORE.MIGRATED
+    )
+    if store_embeddings_in_postgres and doc.embedding:
+        new_doc = models.Document(
+            workspace_name=workspace_name,
+            observer=observer,
+            observed=observed,
+            content=doc.content,
+            level=doc.level,
+            times_derived=doc.times_derived,
+            internal_metadata=metadata_dict,
+            session_name=doc.session_name,
+            embedding=doc.embedding,
+            source_ids=doc.source_ids,
+        )
+    else:
+        new_doc = models.Document(
+            workspace_name=workspace_name,
+            observer=observer,
+            observed=observed,
+            content=doc.content,
+            level=doc.level,
+            times_derived=doc.times_derived,
+            internal_metadata=metadata_dict,
+            session_name=doc.session_name,
+            source_ids=doc.source_ids,
+        )
+    if doc.embedding:
+        new_doc.sync_state = "pending"
+    return new_doc
+
+
 async def _apply_document_row_updates(
     db: AsyncSession,
     ops: list[_DocumentRowOp],
@@ -1260,10 +1287,10 @@ async def _apply_document_row_updates(
     workspace_name: str,
     observer: str,
     observed: str,
-) -> None:
-    """Lock target rows by id, then apply reinforcements and replacements."""
+) -> list[schemas.DocumentCreate]:
+    """Lock target rows by id, apply ops, return fallbacks for vanished targets."""
     if not ops:
-        return
+        return []
     ids = sorted({op.document_id for op in ops})
     result = await db.execute(
         select(models.Document)
@@ -1279,17 +1306,21 @@ async def _apply_document_row_updates(
     )
     locked = {doc.id: doc for doc in result.scalars()}
     now = datetime.datetime.now(datetime.timezone.utc)
+    fallbacks: list[schemas.DocumentCreate] = []
     for op in ops:
         row = locked.get(op.document_id)
-        if row is None:
-            continue
         if op.kind == "replace":
-            row.deleted_at = now
+            if row is not None and row.deleted_at is None:
+                row.deleted_at = now
             continue
-        if row.deleted_at is not None:
+        # reinforce
+        if row is None or row.deleted_at is not None:
+            if op.fallback_document is not None:
+                fallbacks.append(op.fallback_document)
             continue
         row.times_derived = max(row.times_derived + 1, op.incoming_times_derived)
     await db.flush()
+    return fallbacks
 
 
 class SemanticRejectionResult(Enum):
@@ -1322,6 +1353,9 @@ async def _semantic_dup_decision(
             filters=filters,
         )
     elif _uses_pgvector():
+        if not doc.embedding:
+            # Match external-store path: never embed under an open session.
+            return SemanticRejectionResult.NOT_DUPLICATE, None
         similar_docs = await query_documents(
             db=db,
             workspace_name=workspace_name,
@@ -1331,7 +1365,7 @@ async def _semantic_dup_decision(
             filters=filters,
             max_distance=_SEMANTIC_DUP_MAX_DISTANCE,
             top_k=_SEMANTIC_DUP_TOP_K,
-            embedding=doc.embedding or None,
+            embedding=doc.embedding,
         )
     else:
         return SemanticRejectionResult.NOT_DUPLICATE, None

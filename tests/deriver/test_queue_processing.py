@@ -2118,6 +2118,7 @@ class TestQueueRetry:
         items = await self._fetch_items(db_session, work_unit_key)
         assert all(item.processed for item in items)
         assert all(item.error is None for item in items)
+        assert all("_retry_attempts" not in (item.payload or {}) for item in items)
         assert await self._retry_attempts_on_items(db_session, work_unit_key) is None
 
     async def test_retry_budget_survives_reclaim_by_another_manager(

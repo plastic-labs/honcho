@@ -1653,6 +1653,119 @@ class TestCreateDocumentsErrorHandling:
             "good fact two",
         ]
 
+    @pytest.mark.asyncio
+    async def test_empty_embedding_skips_semantic_without_embed(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """Empty embeddings must not trigger embed() under an open session."""
+        from src.config import settings
+
+        test_workspace, test_peer = sample_data
+        test_peer2, test_session = await self._setup(
+            db_session, test_workspace, test_peer
+        )
+        monkeypatch.setattr(settings.VECTOR_STORE, "TYPE", "pgvector")
+        monkeypatch.setattr(settings.VECTOR_STORE, "MIGRATED", True)
+
+        empty = self._doc("fact without vector", test_session.name)
+        empty.embedding = []
+
+        with patch(
+            "src.crud.document.embedding_client.embed",
+            new_callable=AsyncMock,
+        ) as mock_embed:
+            result = await crud.create_documents(
+                db_session,
+                [empty],
+                workspace_name=test_workspace.name,
+                observer=test_peer.name,
+                observed=test_peer2.name,
+                deduplicate=True,
+            )
+
+        assert len(result.created_documents) == 1
+        mock_embed.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_stale_reinforce_target_falls_back_to_insert(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """If a reinforce target vanishes under lock, insert the incoming doc."""
+        from src.crud import document as document_module
+
+        test_workspace, test_peer = sample_data
+        test_peer2, test_session = await self._setup(
+            db_session, test_workspace, test_peer
+        )
+        workspace_name = test_workspace.name
+        observer = test_peer.name
+        observed = test_peer2.name
+        session_name = test_session.name
+
+        seeded = await crud.create_documents(
+            db_session,
+            [self._doc("shared fact", session_name)],
+            workspace_name=workspace_name,
+            observer=observer,
+            observed=observed,
+        )
+        assert len(seeded.created_documents) == 1
+
+        existing = (
+            await db_session.execute(
+                select(models.Document).where(
+                    models.Document.workspace_name == workspace_name,
+                    models.Document.observer == observer,
+                    models.Document.observed == observed,
+                    models.Document.deleted_at.is_(None),
+                )
+            )
+        ).scalar_one()
+
+        real_apply = document_module._apply_document_row_updates  # pyright: ignore[reportPrivateUsage]
+
+        async def delete_then_apply(*args: Any, **kwargs: Any) -> Any:
+            existing.deleted_at = datetime.datetime.now(datetime.timezone.utc)
+            await db_session.flush()
+            return await real_apply(*args, **kwargs)
+
+        with patch.object(
+            document_module,
+            "_apply_document_row_updates",
+            side_effect=delete_then_apply,
+        ):
+            result = await crud.create_documents(
+                db_session,
+                [self._doc("shared fact", session_name)],
+                workspace_name=workspace_name,
+                observer=observer,
+                observed=observed,
+            )
+
+        assert len(result.created_documents) == 1
+        live = (
+            (
+                await db_session.execute(
+                    select(models.Document).where(
+                        models.Document.workspace_name == workspace_name,
+                        models.Document.observer == observer,
+                        models.Document.observed == observed,
+                        models.Document.deleted_at.is_(None),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(live) == 1
+        assert live[0].id != existing.id
+        assert live[0].content == "shared fact"
+
 
 class TestExternalCandidateHoist:
     """External-store dup candidates resolve before the first DB statement."""

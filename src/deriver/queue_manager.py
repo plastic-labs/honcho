@@ -623,13 +623,15 @@ class QueueManager:
                 )
                 return True
 
-        await self._clear_work_unit_retry_attempts(work_unit_key)
         error_msg = f"{error.__class__.__name__}: {str(error)}"
         try:
             if items:
+                # Clear retry metadata only after the terminal mark commits so a
+                # failed mark leaves the shared budget intact for the next claim.
                 await self.mark_queue_item_as_errored(
                     items[0], work_unit_key, error_msg
                 )
+            await self._clear_work_unit_retry_attempts(work_unit_key)
         except Exception as mark_error:
             logger.error(
                 f"Failed to mark queue items as errored for work unit {work_unit_key}: {mark_error}",
@@ -1159,8 +1161,16 @@ class QueueManager:
             )
             await db.commit()
 
+    @staticmethod
+    def _payload_without_retry_attempts(
+        payload: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        cleaned = dict(payload or {})
+        cleaned.pop(_RETRY_ATTEMPTS_PAYLOAD_KEY, None)
+        return cleaned
+
     async def _clear_work_unit_retry_attempts(self, work_unit_key: str) -> None:
-        """Drop the shared attempt count after success or terminal failure."""
+        """Drop the shared attempt count from remaining unprocessed items."""
         async with tracked_db("clear_work_unit_retry_attempts") as db:
             result = await db.execute(
                 select(models.QueueItem)
@@ -1174,12 +1184,10 @@ class QueueManager:
                 payload = item.payload or {}
                 if _RETRY_ATTEMPTS_PAYLOAD_KEY not in payload:
                     continue
-                new_payload = dict(payload)
-                new_payload.pop(_RETRY_ATTEMPTS_PAYLOAD_KEY, None)
                 await db.execute(
                     update(models.QueueItem)
                     .where(models.QueueItem.id == item.id)
-                    .values(payload=new_payload)
+                    .values(payload=self._payload_without_retry_attempts(payload))
                 )
             await db.commit()
 
@@ -1191,12 +1199,23 @@ class QueueManager:
         async with tracked_db("process_queue_item_batch") as db:
             work_unit = parse_work_unit_key(work_unit_key)
             item_ids = [item.id for item in items]
-            await db.execute(
-                update(models.QueueItem)
+            result = await db.execute(
+                select(models.QueueItem)
                 .where(models.QueueItem.id.in_(item_ids))
                 .where(models.QueueItem.work_unit_key == work_unit_key)
-                .values(processed=True)
+                .with_for_update()
             )
+            for queue_item in result.scalars():
+                await db.execute(
+                    update(models.QueueItem)
+                    .where(models.QueueItem.id == queue_item.id)
+                    .values(
+                        processed=True,
+                        payload=self._payload_without_retry_attempts(
+                            queue_item.payload
+                        ),
+                    )
+                )
             await db.execute(
                 update(models.ActiveQueueSession)
                 .where(models.ActiveQueueSession.work_unit_key == work_unit_key)
@@ -1222,11 +1241,24 @@ class QueueManager:
         if not item:
             return
         async with tracked_db("mark_queue_item_as_errored") as db:
-            await db.execute(
-                update(models.QueueItem)
+            result = await db.execute(
+                select(models.QueueItem)
                 .where(models.QueueItem.id == item.id)
                 .where(models.QueueItem.work_unit_key == work_unit_key)
-                .values(processed=True, error=error[:65535])  # Truncate to TEXT limit
+                .with_for_update()
+            )
+            queue_item = result.scalar_one_or_none()
+            if queue_item is None:
+                await db.commit()
+                return
+            await db.execute(
+                update(models.QueueItem)
+                .where(models.QueueItem.id == queue_item.id)
+                .values(
+                    processed=True,
+                    error=error[:65535],  # Truncate to TEXT limit
+                    payload=self._payload_without_retry_attempts(queue_item.payload),
+                )
             )
             await db.execute(
                 update(models.ActiveQueueSession)
