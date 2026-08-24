@@ -1084,20 +1084,21 @@ async def set_peers_for_session(
             f"Session {session_name} not found in workspace {workspace_name}"
         )
 
-    # Soft delete every *ordinary* active membership. Scope memberships are
-    # deliberately preserved: this route replaces the peers the caller names, and a
-    # caller detaches a scope by simply *omitting* it from an otherwise valid
-    # replacement map — never naming it, so no request-level guard can see it.
-    # Without the exclusion a plain replacement silently bypasses the facade that
-    # owns scope membership and its removal reconciliation. Being part of the
-    # UPDATE, this holds regardless of the request body or concurrent scope
-    # creation.
+    # Soft delete every *ordinary* active membership not in the incoming map.
+    # Scope memberships are deliberately preserved: this route replaces the peers
+    # the caller names, and a caller detaches a scope by simply *omitting* it from
+    # an otherwise valid replacement map — never naming it, so no request-level
+    # guard can see it. Without the exclusion a plain replacement silently
+    # bypasses the facade that owns scope membership and its removal
+    # reconciliation. Being part of the UPDATE, this holds regardless of the
+    # request body or concurrent scope creation.
     update_stmt = (
         update(models.SessionPeer)
         .where(
             models.SessionPeer.session_name == session_name,
             models.SessionPeer.workspace_name == workspace_name,
             models.SessionPeer.left_at.is_(None),  # Only update active peers
+            models.SessionPeer.peer_name.notin_(peer_names.keys()),
             ~exists(
                 select(models.Peer.id)
                 .where(models.Peer.workspace_name == workspace_name)
@@ -1254,13 +1255,14 @@ async def _get_or_add_peers_to_session(
         ]
     )
 
-    # On conflict, update joined_at and clear left_at (rejoin scenario)
-    # If left_at is not None (peer has left the session): Use the new configuration (stmt.excluded.configuration)
-    # If left_at is None (peer is still active): Keep the existing configuration (models.SessionPeer.configuration)
+    # On conflict, rejoin departed peers and leave active memberships unchanged.
     stmt = stmt.on_conflict_do_update(
         index_elements=["session_name", "peer_name", "workspace_name"],
         set_={
-            "joined_at": func.now(),
+            "joined_at": case(
+                (models.SessionPeer.left_at.is_not(None), func.now()),
+                else_=models.SessionPeer.joined_at,
+            ),
             "left_at": None,
             "configuration": case(
                 (models.SessionPeer.left_at.is_not(None), stmt.excluded.configuration),
