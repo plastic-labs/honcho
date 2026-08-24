@@ -136,6 +136,44 @@ class TestRepresentationManagerSoftDelete:
         assert doc_deleted.id not in result_ids
 
     @pytest.mark.asyncio
+    async def test_query_documents_recent_excludes_selected_documents(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """An excluded recent document must not consume the query limit."""
+        test_workspace, test_peer = sample_data
+        test_peer2, test_session, _, manager = await self._setup(
+            db_session, test_workspace, test_peer
+        )
+        older_doc = models.Document(
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+            content="Older observation",
+            session_name=test_session.name,
+            created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
+        selected_doc = models.Document(
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+            content="Already selected observation",
+            session_name=test_session.name,
+            created_at=datetime(2026, 1, 2, tzinfo=timezone.utc),
+        )
+        db_session.add_all([older_doc, selected_doc])
+        await db_session.commit()
+
+        results = await manager._query_documents_recent(  # pyright: ignore[reportPrivateUsage]
+            db_session,
+            top_k=1,
+            excluded_document_ids={selected_doc.id},
+        )
+
+        assert [document.id for document in results] == [older_doc.id]
+
+    @pytest.mark.asyncio
     async def test_query_documents_most_derived_excludes_soft_deleted(
         self,
         db_session: AsyncSession,
@@ -866,4 +904,58 @@ class TestVectorQueryTopKFloor:
         assert [obs.content for obs in representation.explicit] == [
             "derived result",
             "recent result",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_recent_results_fill_capacity_after_semantic_overlap(self) -> None:
+        """Recent retrieval must skip selected documents before applying its limit."""
+        db_session = MagicMock(spec=AsyncSession)
+        manager = RepresentationManager("workspace", observer="peer", observed="peer")
+        documents = [
+            models.Document(
+                id=generate_nanoid(),
+                workspace_name="workspace",
+                observer="peer",
+                observed="peer",
+                content=f"observation {index}",
+                level="explicit",
+                created_at=datetime(2026, 1, index, tzinfo=timezone.utc),
+                internal_metadata={},
+            )
+            for index in range(1, 6)
+        ]
+
+        async def recent_documents(
+            _db: AsyncSession,
+            top_k: int,
+            session_allowlist: list[str] | None = None,
+            excluded_document_ids: set[str] | None = None,
+        ) -> list[models.Document]:
+            del session_allowlist
+            excluded_document_ids = excluded_document_ids or set()
+            return [
+                document
+                for document in documents
+                if document.id not in excluded_document_ids
+            ][:top_k]
+
+        with (
+            patch.object(
+                manager,
+                "_query_documents_semantic",
+                new=AsyncMock(return_value=[documents[0]]),
+            ),
+            patch.object(manager, "_query_documents_recent", new=recent_documents),
+        ):
+            representation = await manager._get_working_representation_internal(  # pyright: ignore[reportPrivateUsage]
+                db_session,
+                include_semantic_query="what do they like?",
+                embedding=[0.1],
+                semantic_search_top_k=1,
+                max_observations=5,
+            )
+
+        assert representation.len() == 5
+        assert [observation.id for observation in representation.explicit] == [
+            document.id for document in documents
         ]
