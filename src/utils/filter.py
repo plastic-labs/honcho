@@ -689,7 +689,9 @@ def _build_comparison_condition(
                 "lte": lambda a, v: a <= v,
                 "gt": lambda a, v: a > v,
                 "lt": lambda a, v: a < v,
-                "ne": lambda a, v: a != v,
+                # IS DISTINCT FROM, not <>: (metadata ->> key) is NULL for an
+                # absent key, and `NULL <> v` is NULL, so <> drops those rows.
+                "ne": lambda a, v: a.is_distinct_from(v),
             }
             return operator_map[operator](safe_accessor, safe_value)
         except Exception as e:
