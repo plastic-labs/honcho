@@ -14,6 +14,7 @@ from src import crud, models, schemas
 from src.config import settings
 from src.dependencies import tracked_db
 from src.embedding_client import embedding_client
+from src.exceptions import ResourceNotFoundException
 from src.models import Document
 from src.schemas import ResolvedConfiguration
 from src.telemetry.events import (
@@ -2305,6 +2306,16 @@ async def _handle_get_session_summary(
 async def _handle_get_peer_card(ctx: ToolContext, tool_input: dict[str, Any]) -> str:
     """Handle get_peer_card tool."""
     _ = tool_input
+    # A peer card lives in Peer.internal_metadata as a single cross-session
+    # aggregate, so it carries no session attribution and cannot be filtered
+    # to an allowlist. Fail closed rather than leak facts derived from
+    # out-of-scope sessions, the same rule get_reasoning_chain follows.
+    # No-op for agents that never set an allowlist (dreamer, pair dialectic).
+    if ctx.session_allowlist is not None:
+        return (
+            "Peer cards are unavailable for session-scoped queries. "
+            "Use search_memory instead."
+        )
     async with tracked_db("tool.get_peer_card", read_only=True) as db:
         peer_card = await crud.get_peer_card(
             db,
@@ -2923,7 +2934,13 @@ async def _handle_get_peer_card_by_name(
     if not observer or not observed:
         return "ERROR: 'observer' and 'observed' are required parameters"
     pair_ctx = replace(ctx, observer=observer, observed=observed)
-    return await _handle_get_peer_card(pair_ctx, tool_input)
+    try:
+        return await _handle_get_peer_card(pair_ctx, tool_input)
+    except ResourceNotFoundException:
+        # The workspace agent names peers from its own routing, so guessing a
+        # peer that doesn't exist is an expected turn, not a fault. Answer the
+        # model instead of letting the executor log it as an unexpected error.
+        return f"No peer named '{observer}' exists in this workspace"
 
 
 # Peers listed by get_workspace_stats. Fixed rather than a tool argument:
@@ -2932,21 +2949,21 @@ async def _handle_get_peer_card_by_name(
 _STATS_ACTIVE_PEERS = 10
 
 
-async def _handle_get_workspace_stats(
-    ctx: ToolContext, tool_input: dict[str, Any]
+# Peer-card facts listed per peer when cards are supplied.
+_STATS_CARD_FACTS = 8
+
+
+def format_workspace_stats(
+    stats: "crud.WorkspaceStats",
+    peers: "Sequence[crud.ActivePeer]",
+    cards: dict[str, list[str]] | None = None,
 ) -> str:
-    """Workspace-level counts, message date range, and most active peers."""
-    _ = tool_input
-    async with tracked_db("workspace_tool.get_workspace_stats", read_only=True) as db:
-        stats = await crud.get_workspace_stats(
-            db, ctx.workspace_name, session_names=ctx.session_allowlist
-        )
-        peers = await crud.get_active_peers(
-            db,
-            ctx.workspace_name,
-            limit=_STATS_ACTIVE_PEERS,
-            session_names=ctx.session_allowlist,
-        )
+    """Render workspace counts and most-active peers as prompt-ready lines.
+
+    Shared by the get_workspace_stats tool and WorkspaceDialecticAgent's
+    routing prefetch; the prefetch passes ``cards`` to nest each peer's
+    known biographical facts under it.
+    """
     lines = [
         f"Peers: {stats.peer_count}",
         f"Sessions: {stats.session_count}",
@@ -2966,14 +2983,27 @@ async def _handle_get_workspace_stats(
                 else ""
             )
             lines.append(f"- {peer.name} ({peer.message_count} messages{last_active})")
-    return "Workspace stats:\n" + "\n".join(lines)
+            for fact in (cards or {}).get(peer.name, [])[:_STATS_CARD_FACTS]:
+                lines.append(f"    - {fact}")
+    return "\n".join(lines)
 
 
-async def _handle_get_observation_context_workspace(
+async def _handle_get_workspace_stats(
     ctx: ToolContext, tool_input: dict[str, Any]
-) -> "str | ToolResult":
-    """get_observation_context without perspective scoping (workspace read)."""
-    return await _handle_get_observation_context(replace(ctx, observer=""), tool_input)
+) -> str:
+    """Workspace-level counts, message date range, and most active peers."""
+    _ = tool_input
+    async with tracked_db("workspace_tool.get_workspace_stats", read_only=True) as db:
+        stats = await crud.get_workspace_stats(
+            db, ctx.workspace_name, session_names=ctx.session_allowlist
+        )
+        peers = await crud.get_active_peers(
+            db,
+            ctx.workspace_name,
+            limit=_STATS_ACTIVE_PEERS,
+            session_names=ctx.session_allowlist,
+        )
+    return "Workspace stats:\n" + format_workspace_stats(stats, peers)
 
 
 # Dispatch table consulted before _TOOL_HANDLERS by the workspace executor.
@@ -2981,7 +3011,6 @@ _WORKSPACE_TOOL_HANDLERS: dict[str, Callable[[ToolContext, dict[str, Any]], Any]
     "search_memory": _handle_search_memory_workspace,
     "get_workspace_stats": _handle_get_workspace_stats,
     "get_peer_card": _handle_get_peer_card_by_name,
-    "get_observation_context": _handle_get_observation_context_workspace,
     "get_reasoning_chain": _handle_get_reasoning_chain,  # already workspace-scoped
 }
 
@@ -2989,6 +3018,7 @@ _WORKSPACE_TOOL_HANDLERS: dict[str, Callable[[ToolContext, dict[str, Any]], Any]
 # (they only read messages, treating observer="" as unscoped visibility).
 _WORKSPACE_SAFE_FALLTHROUGH_TOOLS: frozenset[str] = frozenset(
     {
+        "get_observation_context",
         "search_messages",
         "grep_messages",
         "get_messages_by_date_range",

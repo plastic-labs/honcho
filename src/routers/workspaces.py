@@ -2,11 +2,13 @@
 
 import json
 import logging
+from collections.abc import AsyncIterator
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Response
 from fastapi.responses import StreamingResponse
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import apaginate
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
@@ -308,10 +310,6 @@ async def chat(
     Pass `scope` to restrict recall to the union of those scopes' member
     sessions. A scope with no member sessions recalls nothing (fail-closed).
     """
-    from collections.abc import AsyncIterator
-
-    from pydantic import BaseModel as _BaseModel
-
     session_allowlist: list[str] | None = None
     if options.scope is not None:
         validate_scope_read_option(
@@ -332,7 +330,7 @@ async def chat(
                 + f"{MAX_SESSION_ALLOWLIST_ENTRIES} sessions per request"
             )
 
-    response_model: type[_BaseModel] | None = None
+    response_model: type[BaseModel] | None = None
     if options.response_format is not None:
         try:
             response_model = json_response_schema_to_pydantic(options.response_format)

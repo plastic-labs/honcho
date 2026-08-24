@@ -29,6 +29,7 @@ from src.utils.agent_tools import (
     WORKSPACE_DIALECTIC_TOOLS,
     WORKSPACE_TOOLS_MINIMAL,
     create_workspace_tool_executor,
+    format_workspace_stats,
 )
 
 logger = logging.getLogger(__name__)
@@ -98,16 +99,22 @@ class WorkspaceDialecticAgent(DialecticAgent):
                     limit=_PREFETCH_ACTIVE_PEERS,
                     session_names=self.session_allowlist,
                 )
+                # `peers` is already allowlist-filtered, but a peer card is a
+                # single cross-session aggregate: an in-scope peer's card can
+                # still carry facts derived from sessions outside the scope.
+                # Drop cards entirely under an allowlist — same rule the
+                # get_peer_card tool enforces — and route on stats alone.
                 cards: dict[str, list[str]] = {}
-                for peer in peers:
-                    card = await crud.get_peer_card(
-                        db,
-                        workspace_name=self.workspace_name,
-                        observer=peer.name,
-                        observed=peer.name,
-                    )
-                    if card:
-                        cards[peer.name] = card
+                if self.session_allowlist is None:
+                    for peer in peers:
+                        card = await crud.get_peer_card(
+                            db,
+                            workspace_name=self.workspace_name,
+                            observer=peer.name,
+                            observed=peer.name,
+                        )
+                        if card:
+                            cards[peer.name] = card
         except Exception:
             logger.warning(
                 "Failed to prefetch workspace overview for workspace=%s",
@@ -116,33 +123,11 @@ class WorkspaceDialecticAgent(DialecticAgent):
             )
             return None
 
-        lines: list[str] = [
-            f"Peers: {stats.peer_count}",
-            f"Sessions: {stats.session_count}",
-            f"Messages: {stats.message_count}",
-        ]
-        if stats.oldest_message_at and stats.newest_message_at:
-            date_range = f"{stats.oldest_message_at:%Y-%m-%d} to {stats.newest_message_at:%Y-%m-%d}"
-            lines.append(f"Date range: {date_range}")
-        if peers:
-            lines.append("")
-            lines.append(f"Most active peers (top {len(peers)}):")
-            for peer in peers:
-                last_active = (
-                    f", last active {peer.last_message_at:%Y-%m-%d}"
-                    if peer.last_message_at
-                    else ""
-                )
-                lines.append(
-                    f"- {peer.name} ({peer.message_count} messages{last_active})"
-                )
-                for fact in cards.get(peer.name, [])[:8]:
-                    lines.append(f"    - {fact}")
-        return "\n".join(lines)
+        return format_workspace_stats(stats, peers, cards)
 
     def _prefetch_intro(self) -> str:
         return (
-            "Workspace overview and most-active peers with their known "
+            "Workspace overview and most-active peers with any known "
             "biographical facts. Use this to route: query a specific peer's "
             "memory with search_memory (observer and observed set to that "
             "peer's name), or use search_messages / get_workspace_stats to "
@@ -155,10 +140,15 @@ class WorkspaceDialecticAgent(DialecticAgent):
             if self.reasoning_level == "minimal"
             else WORKSPACE_DIALECTIC_TOOLS
         )
-        # Mirror the base agent's allowlist rule: reasoning chains traverse
-        # provenance across sessions, so the tool can't honor an allowlist.
+        # Mirror the base agent's allowlist rule, for both tools that cannot
+        # honor an allowlist: reasoning chains traverse provenance across
+        # sessions, and a peer card is one cross-session aggregate with no
+        # per-session attribution. Both fail closed in their handlers too;
+        # dropping them here avoids paying the schema tokens and a wasted
+        # turn on a tool that can only refuse.
         if self.session_allowlist is not None:
-            tools = [t for t in tools if t.get("name") != "get_reasoning_chain"]
+            unscopable = {"get_reasoning_chain", "get_peer_card"}
+            tools = [t for t in tools if t.get("name") not in unscopable]
         return tools
 
     async def _create_tool_executor(self) -> Callable[[str, dict[str, Any]], Any]:
@@ -172,8 +162,8 @@ class WorkspaceDialecticAgent(DialecticAgent):
             parent_category="dialectic",
         )
 
-    # _trace_name is inherited: workspace chat shares the "dialectic_chat"
-    # trace name; scope is distinguished by agent_type/track_name below.
+    # Workspace chat shares the base "dialectic_chat" Langfuse trace name;
+    # scope is distinguished by the agent_type/track_name below.
 
     def _telemetry_context(self, track_name: str | None = None) -> LLMTelemetryContext:
         return LLMTelemetryContext(

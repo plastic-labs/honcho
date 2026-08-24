@@ -3,7 +3,6 @@
 Tests cover:
 - Route-level: POST /workspaces/{workspace_id}/chat endpoint
 - Tool handlers: workspace-specific tool handlers and executor
-- Utility: format_documents_with_attribution()
 """
 
 import asyncio
@@ -23,14 +22,13 @@ from src.dialectic.chat import workspace_chat, workspace_chat_stream
 from src.models import Peer, Workspace
 from src.utils.agent_tools import (
     ToolContext,
-    _handle_get_observation_context_workspace,  # pyright: ignore[reportPrivateUsage]
+    _handle_get_observation_context,  # pyright: ignore[reportPrivateUsage]
     _handle_get_peer_card_by_name,  # pyright: ignore[reportPrivateUsage]
     _handle_get_reasoning_chain,  # pyright: ignore[reportPrivateUsage]
     _handle_get_workspace_stats,  # pyright: ignore[reportPrivateUsage]
     _handle_search_memory_workspace,  # pyright: ignore[reportPrivateUsage]
     create_workspace_tool_executor,
 )
-from src.utils.representation import format_documents_with_attribution
 from src.utils.scopes import SCOPE_KIND, scope_peer_name
 
 # =============================================================================
@@ -797,6 +795,48 @@ class TestGetPeerCardByName:
 
         assert "No peer card" in result
 
+    async def test_session_allowlist_refuses(
+        self,
+        db_session: AsyncSession,
+        make_workspace_ctx: Callable[..., ToolContext],
+        workspace_test_data: Any,
+    ):
+        """A peer card is a cross-session aggregate, so a scoped query must not
+        get one — otherwise `scope` leaks facts derived outside its sessions."""
+        workspace, peer1, peer2, _peer3, session, *_ = workspace_test_data
+
+        await crud.set_peer_card(
+            db_session,
+            workspace_name=workspace.name,
+            observer=peer1.name,
+            observed=peer2.name,
+            peer_card=["Secret: derived from an out-of-scope session"],
+        )
+
+        ctx = make_workspace_ctx(session_allowlist=[session.name])
+        result = await _handle_get_peer_card_by_name(
+            ctx, {"observer": peer1.name, "observed": peer2.name}
+        )
+
+        assert "Secret" not in result
+        assert "unavailable for session-scoped queries" in result
+
+    async def test_unknown_peer_is_answered_not_raised(
+        self,
+        make_workspace_ctx: Callable[..., ToolContext],
+        workspace_test_data: Any,
+    ):
+        """The agent supplies peer names from its own routing, so a name that
+        doesn't exist is an expected turn, not an unhandled exception."""
+        _, peer1, *_ = workspace_test_data
+        ctx = make_workspace_ctx()
+
+        result = await _handle_get_peer_card_by_name(
+            ctx, {"observer": "no-such-peer", "observed": peer1.name}
+        )
+
+        assert "No peer named 'no-such-peer'" in result
+
     async def test_missing_params_returns_error(
         self,
         make_workspace_ctx: Callable[..., ToolContext],
@@ -822,7 +862,11 @@ class TestGetPeerCardByName:
 
 @pytest.mark.asyncio
 class TestGetObservationContextWorkspace:
-    """Tests for _handle_get_observation_context_workspace."""
+    """Tests for get_observation_context under the workspace executor.
+
+    The workspace loadout routes this straight to the shared handler: its
+    observer="" sentinel already normalizes to None ("no perspective
+    scoping") at the crud boundary."""
 
     async def test_retrieves_messages_by_id(
         self,
@@ -833,7 +877,7 @@ class TestGetObservationContextWorkspace:
         _, _, _, _, _, messages, _, _ = workspace_test_data
         ctx = make_workspace_ctx()
 
-        result = await _handle_get_observation_context_workspace(
+        result = await _handle_get_observation_context(
             ctx, {"message_ids": [messages[0].public_id]}
         )
 
@@ -846,7 +890,7 @@ class TestGetObservationContextWorkspace:
         """Returns appropriate message for nonexistent IDs."""
         ctx = make_workspace_ctx()
 
-        result = await _handle_get_observation_context_workspace(
+        result = await _handle_get_observation_context(
             ctx, {"message_ids": ["nonexistent_id"]}
         )
 
@@ -881,7 +925,7 @@ class TestGetObservationContextWorkspace:
         await db_session.commit()
 
         ctx = make_workspace_ctx(session_name=session.name)
-        result = await _handle_get_observation_context_workspace(
+        result = await _handle_get_observation_context(
             ctx, {"message_ids": [messages[0].public_id]}
         )
 
@@ -1093,85 +1137,6 @@ class TestWorkspaceToolExecutor:
         assert isinstance(result, str)
         # Should be from workspace handler (accepts observer/observed params)
         assert "peer card" in result.lower() or "No peer card" in result
-
-
-# =============================================================================
-# Utility Tests: format_documents_with_attribution()
-# =============================================================================
-
-
-class TestFormatDocumentsWithAttribution:
-    """Tests for format_documents_with_attribution()."""
-
-    def test_empty_documents(self):
-        """Returns fallback message for empty list."""
-        result = format_documents_with_attribution([])
-        assert result == "No observations found."
-
-    def test_groups_by_peer_pair(
-        self,
-        workspace_test_data: Any,
-    ):
-        """Groups documents by observer/observed pair."""
-        _, peer1, peer2, peer3, _, _, docs_peer2, docs_peer3 = workspace_test_data
-
-        result = format_documents_with_attribution(docs_peer2 + docs_peer3)
-
-        # Should have headers for both peer pairs
-        assert f"About {peer2.name}" in result
-        assert f"About {peer3.name}" in result
-        assert f"observed by {peer1.name}" in result
-
-    def test_self_observation_header(self):
-        """Self-observation (observer==observed) uses simpler header."""
-        doc = models.Document(
-            workspace_name="test",
-            observer="alice",
-            observed="alice",
-            content="I like coffee",
-            level="explicit",
-            embedding=[0.1] * 1536,
-            internal_metadata={
-                "message_ids": [1],
-                "message_created_at": "2025-01-01T00:00:00Z",
-            },
-        )
-        doc.id = "test_id"
-
-        result = format_documents_with_attribution([doc])
-
-        assert "### About alice\n" in result
-        # Should NOT have "observed by" for self-observation
-        assert "observed by" not in result
-
-    def test_include_ids(
-        self,
-        workspace_test_data: Any,
-    ):
-        """include_ids=True includes observation IDs in output."""
-        _, _, _, _, _, _, docs_peer2, _ = workspace_test_data
-
-        result_with_ids = format_documents_with_attribution(
-            docs_peer2, include_ids=True
-        )
-        result_without_ids = format_documents_with_attribution(
-            docs_peer2, include_ids=False
-        )
-
-        # With IDs should be longer or have [id: markers
-        assert len(result_with_ids) >= len(result_without_ids)
-
-    def test_contains_document_content(
-        self,
-        workspace_test_data: Any,
-    ):
-        """Output contains the actual document content."""
-        _, _, _, _, _, _, docs_peer2, _ = workspace_test_data
-
-        result = format_documents_with_attribution(docs_peer2)
-
-        assert "coffee" in result.lower() or "programming" in result.lower()
-        assert "remotely" in result.lower() or "works" in result.lower()
 
 
 # =============================================================================

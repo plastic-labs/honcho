@@ -336,10 +336,6 @@ class DialecticAgent:
             parent_category="dialectic",
         )
 
-    def _trace_name(self) -> str:
-        """Langfuse trace name for this agent's LLM calls."""
-        return "dialectic_chat"
-
     def _prefetch_intro(self) -> str:
         """Sentence introducing the prefetched block in the user message."""
         return (
@@ -502,7 +498,7 @@ class DialecticAgent:
                 max_tool_iterations=level_settings.MAX_TOOL_ITERATIONS,
                 messages=self.messages,
                 max_input_tokens=settings.DIALECTIC.MAX_INPUT_TOKENS,
-                trace_name=self._trace_name(),
+                trace_name="dialectic_chat",
                 telemetry=self._telemetry_context(track_name="Dialectic Agent"),
                 response_model=response_model,
             ),
@@ -578,7 +574,7 @@ class DialecticAgent:
                 max_tool_iterations=level_settings.MAX_TOOL_ITERATIONS,
                 messages=self.messages,
                 max_input_tokens=settings.DIALECTIC.MAX_INPUT_TOKENS,
-                trace_name=self._trace_name(),
+                trace_name="dialectic_chat",
                 telemetry=self._telemetry_context(track_name="Dialectic Agent Stream"),
                 response_model=response_model,
             ),
