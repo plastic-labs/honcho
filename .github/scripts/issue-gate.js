@@ -27,6 +27,24 @@ const DRAFT_STALE_DAYS = 30;
 
 const hasLabel = (pr, name) => (pr.labels || []).some((l) => l.name === name);
 
+const isBot = (account) => Boolean(account) && account.type === 'Bot';
+
+/**
+ * Why this pull request is exempt from the gate, or null if it is not.
+ *
+ * Single source of truth: every caller that acts on a pull request runs this.
+ * The stale-draft sweep previously re-listed these checks and silently lost the
+ * bot case.
+ */
+const exemptReason = (pr) => {
+  if (isBot(pr.user)) return 'author is a bot';
+  if (WRITE_ACCESS.includes(pr.author_association)) {
+    return `author_association is ${pr.author_association}`;
+  }
+  if (hasLabel(pr, EXEMPT_LABEL)) return `carries the ${EXEMPT_LABEL} label`;
+  return null;
+};
+
 // Write access to the repository. CONTRIBUTOR is deliberately absent: GitHub uses
 // it for "has previously committed to the repository", which describes every
 // returning outside contributor, not a maintainer. Do not add it.
@@ -60,13 +78,8 @@ const CLOSING_ISSUES = `
 async function checkGate({ github, owner, repo, pr }) {
   if (pr.state !== 'open') return { passed: true, skipped: 'pull request is not open' };
   if (pr.draft) return { passed: true, skipped: 'pull request is a draft' };
-  if (pr.user && pr.user.type === 'Bot') return { passed: true, skipped: 'author is a bot' };
-  if (WRITE_ACCESS.includes(pr.author_association)) {
-    return { passed: true, skipped: `author_association is ${pr.author_association}` };
-  }
-  if (hasLabel(pr, EXEMPT_LABEL)) {
-    return { passed: true, skipped: `carries the ${EXEMPT_LABEL} label` };
-  }
+  const exempt = exemptReason(pr);
+  if (exempt) return { passed: true, skipped: exempt };
 
   const data = await github.graphql(CLOSING_ISSUES, { owner, repo, number: pr.number });
   const issues = data.repository.pullRequest.closingIssuesReferences.nodes;
@@ -112,12 +125,21 @@ function noticeBody({ owner, repo, reason }) {
   ].join('\n');
 }
 
-/** Every gate notice on a pull request, oldest first. */
+/**
+ * Every gate notice this bot posted on a pull request, oldest first.
+ *
+ * Authorship is part of the test, not decoration. MARKER is an invisible HTML
+ * comment, so anyone who can comment on a public repository can paste it. If
+ * user comments counted, a third party could post one on someone else's pull
+ * request: `runGate` posts a notice only when none exists, so the author would
+ * never be told, and `runSweep` would then measure the grace window from the
+ * stranger's timestamp and close them unwarned.
+ */
 async function findNotices({ github, owner, repo, number }) {
   const comments = await github.paginate(github.rest.issues.listComments, {
     owner, repo, issue_number: number, per_page: 100,
   });
-  return comments.filter((c) => (c.body || '').includes(MARKER));
+  return comments.filter((c) => isBot(c.user) && (c.body || '').includes(MARKER));
 }
 
 /**
@@ -227,10 +249,13 @@ async function runSweep({ github, core, context, dryRun }) {
   }
 
   // Stale drafts. The gate skips drafts entirely, so they never carry the label;
-  // this pass keys off inactivity and re-applies the exemptions itself.
+  // this pass keys off inactivity and applies the shared exemptions itself.
   for (const pr of prs.filter((p) => p.draft)) {
-    if (WRITE_ACCESS.includes(pr.author_association)) continue;
-    if (hasLabel(pr, EXEMPT_LABEL)) continue;
+    const exempt = exemptReason(pr);
+    if (exempt) {
+      core.info(`#${pr.number}: leaving stale draft alone — ${exempt}`);
+      continue;
+    }
 
     const days = (Date.now() - Date.parse(pr.updated_at)) / 86_400_000;
     if (days < DRAFT_STALE_DAYS) continue;
@@ -242,6 +267,6 @@ async function runSweep({ github, core, context, dryRun }) {
 }
 
 module.exports = {
-  checkGate, runGate, runSweep, noticeBody,
+  checkGate, runGate, runSweep, noticeBody, findNotices, exemptReason,
   REQUIRED_LABEL, GATE_LABEL, EXEMPT_LABEL, MARKER, GRACE_HOURS, DRAFT_STALE_DAYS,
 };

@@ -6,7 +6,9 @@
 // exercised against the real API via `pr-sweeper.yml`'s dry_run dispatch.
 
 const assert = require('node:assert');
-const { checkGate, REQUIRED_LABEL, EXEMPT_LABEL } = require('./issue-gate.js');
+const {
+  checkGate, findNotices, runSweep, REQUIRED_LABEL, EXEMPT_LABEL, MARKER,
+} = require('./issue-gate.js');
 
 const pull = (over = {}) => ({
   number: 1, state: 'open', draft: false,
@@ -56,8 +58,73 @@ const cases = [
     (r) => r.passed === false],
 ];
 
+// --- findNotices: only the bot's own notices count -------------------------
+// A stranger pasting the invisible MARKER into a comment must not suppress the
+// notice or become the grace-window clock.
+const commentsStub = (comments) => ({
+  paginate: async () => comments,
+  rest: { issues: { listComments: null } },
+});
+
+const noticeCases = [
+  ['a user comment carrying MARKER is not a notice',
+    [{ id: 1, user: { type: 'User' }, body: `sneaky ${MARKER}`, created_at: 'x' }], 0],
+  ['a bot comment carrying MARKER is a notice',
+    [{ id: 2, user: { type: 'Bot' }, body: `${MARKER}\nnotice`, created_at: 'x' }], 1],
+  ['a bot comment without MARKER is not a notice',
+    [{ id: 3, user: { type: 'Bot' }, body: 'unrelated', created_at: 'x' }], 0],
+  ['a user MARKER does not mask the real bot notice',
+    [{ id: 4, user: { type: 'User' }, body: MARKER, created_at: 'x' },
+     { id: 5, user: { type: 'Bot' }, body: MARKER, created_at: 'y' }], 1],
+];
+
+// --- runSweep: the stale-draft pass must honour every exemption ------------
+const draft = (over) => ({
+  number: 9, draft: true, state: 'open', labels: [],
+  user: { type: 'User' }, author_association: 'NONE',
+  updated_at: new Date(Date.now() - 400 * 86400_000).toISOString(),
+  ...over,
+});
+
+async function sweepClosed(pr) {
+  const closed = [];
+  const github = {
+    paginate: async (route) => (route === 'pulls' ? [pr] : []),
+    rest: {
+      pulls: {
+        list: 'pulls',
+        update: async ({ pull_number }) => closed.push(pull_number),
+      },
+      issues: { listComments: 'comments', createComment: async () => {} },
+    },
+  };
+  await runSweep({
+    github, core: { info() {}, warning() {} },
+    context: { repo: { owner: 'o', repo: 'r' } }, dryRun: false,
+  });
+  return closed;
+}
+
+const sweepCases = [
+  ['stale draft from an outside author closes', draft({}), 1],
+  ['stale draft from a bot is left alone', draft({ user: { type: 'Bot' } }), 0],
+  ['stale draft from a maintainer is left alone', draft({ author_association: 'MEMBER' }), 0],
+  [`stale draft with ${EXEMPT_LABEL} is left alone`, draft({ labels: [{ name: EXEMPT_LABEL }] }), 0],
+  ['recent draft is left alone', draft({ updated_at: new Date().toISOString() }), 0],
+];
+
 (async () => {
   let failed = 0;
+  for (const [name, comments, want] of noticeCases) {
+    const got = (await findNotices({ github: commentsStub(comments), owner: 'o', repo: 'r', number: 1 })).length;
+    if (got === want) console.log(`  ok   ${name}`);
+    else { failed++; console.log(`  FAIL ${name} -> ${got} notices, wanted ${want}`); }
+  }
+  for (const [name, pr, want] of sweepCases) {
+    const got = (await sweepClosed(pr)).length;
+    if (got === want) console.log(`  ok   ${name}`);
+    else { failed++; console.log(`  FAIL ${name} -> closed ${got}, wanted ${want}`); }
+  }
   for (const [name, thunk, ok] of cases) {
     const result = await thunk();
     if (ok(result)) {
@@ -68,5 +135,5 @@ const cases = [
     }
   }
   assert.strictEqual(failed, 0, `${failed} case(s) failed`);
-  console.log(`\n${cases.length} passed`);
+  console.log(`\n${cases.length + noticeCases.length + sweepCases.length} passed`);
 })();
