@@ -8,6 +8,10 @@ assignees: ""
 ---
 # **📚 Documentation Issue Report**
 
+**Security vulnerability?** Do not use this form — report privately via [SECURITY.md](https://github.com/plastic-labs/honcho/blob/main/SECURITY.md).
+
+GitHub issues are public. Redact secrets, JWTs, and production user content.
+
 ## **Describe the bug**
 <!-- A clear and concise description of what the bug is. -->
 
@@ -33,8 +37,8 @@ assignees: ""
 
 ---
 
-### **Media prove**
-<!-- If applicable, add screenshots or videos to help explain your problem. -->
+### **Screenshots and videos**
+<!-- If applicable, add screenshots or videos to help explain your problem. Redact secrets and production content. -->
 
 ---
 
@@ -46,7 +50,7 @@ assignees: ""
 ---
 
 ### **Additional context**
-<!-- Add any other context or additional information about the problem here.-->
+<!-- Add any other context about the problem. Redact secrets and production user content. -->
 
 *
 
