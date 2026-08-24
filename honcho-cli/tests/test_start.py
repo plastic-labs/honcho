@@ -17,7 +17,7 @@ def cfg(tmp_path, monkeypatch):
     monkeypatch.setattr("honcho_cli.config.CONFIG_DIR", tmp_path)
     monkeypatch.setattr("honcho_cli.config.CONFIG_FILE", f)
     monkeypatch.setattr("honcho_cli.commands.setup.CONFIG_FILE", f)
-    for k in [k for k in os.environ if k.startswith("HONCHO_")]:
+    for k in [k for k in os.environ if k.startswith(("HONCHO_", "LLM_"))]:
         monkeypatch.delenv(k)
     return f
 
@@ -59,7 +59,8 @@ def test_start_does_not_rewrite_environment_url(cfg, runner, monkeypatch):
     monkeypatch.setattr("honcho_cli.commands.stack.compose_up", lambda profile, **k: None)
     monkeypatch.setattr("honcho_cli.commands.stack.wait_for_health", lambda *a, **k: True)
     monkeypatch.setattr("honcho_cli.commands.stack.compose_ps", lambda profile: _PS)
-    result = runner.invoke(app, ["start", "--llm-api-key", "sk-test", "--json"])
+    monkeypatch.setenv("LLM_OPENAI_API_KEY", "sk-test")
+    result = runner.invoke(app, ["start", "--json"])
     assert result.exit_code == 0, result.stderr
     payload = json.loads(result.stdout)
     assert payload["endpoints"]["api"] == "http://127.0.0.1:8000"
@@ -140,7 +141,7 @@ def test_start_setup_recreates_when_already_running(cfg, runner, monkeypatch):
     monkeypatch.setattr("honcho_cli.commands.stack.compose_ps", lambda profile: _PS)
     monkeypatch.setattr(
         "honcho_cli.commands.stack.run_setup",
-        lambda mode, path, llm_api_key_flag=None, config_path=None: SetupAnswers(
+        lambda mode, path, config_path=None: SetupAnswers(
             mode="basic",
             provider="openai",
             api_key="sk-wiz",

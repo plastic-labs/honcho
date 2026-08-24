@@ -40,7 +40,7 @@ HONCHO_BASE_URL=http://127.0.0.1:8000 honcho workspace list
 ```
 
 ```bash
-honcho start --llm-api-key "$LLM_OPENAI_API_KEY"
+LLM_OPENAI_API_KEY=sk-... honcho start
 honcho start --setup basic
 honcho status
 honcho stop            # keep data

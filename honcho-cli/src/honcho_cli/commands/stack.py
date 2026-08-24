@@ -7,8 +7,6 @@ and a one-shot ``HONCHO_BASE_URL=...`` hint instead.
 
 from __future__ import annotations
 
-import os
-
 import typer
 from rich.console import Console
 
@@ -29,7 +27,7 @@ from honcho_cli.local.docker import (
     seed_config_toml,
     services_running,
 )
-from honcho_cli.local.env import is_placeholder_key, read_env_value, render_stack
+from honcho_cli.local.env import has_provider_key, render_stack, settings_from_environ
 from honcho_cli.local.health import stack_healthy, wait_for_health
 from honcho_cli.local.profile import (
     LocalProfile,
@@ -42,7 +40,6 @@ from honcho_cli.local.setup import (
     SETUP_MODES,
     answers_drop_keys,
     answers_to_env,
-    openai_key_for_managed,
     run_setup,
 )
 from honcho_cli.output import (
@@ -56,8 +53,8 @@ from honcho_cli.output import (
 _console = Console(stderr=True)
 
 _MISSING_LLM_KEY = (
-    "Cloud inference needs an OpenAI-compatible API key. "
-    "Pass --llm-api-key or set LLM_OPENAI_API_KEY / HONCHO_LLM_API_KEY."
+    "Set LLM_OPENAI_API_KEY, LLM_ANTHROPIC_API_KEY, or LLM_GEMINI_API_KEY, "
+    "or run honcho start --setup basic."
 )
 
 
@@ -79,40 +76,6 @@ def _ok(msg: str) -> None:
 def _fail(msg: str) -> None:
     if not use_json():
         _console.print(f"  {ICON_FAIL}  {msg}")
-
-
-def _resolve_llm_key(flag: str | None, profile: LocalProfile) -> str:
-    for candidate in (
-        flag,
-        os.environ.get("HONCHO_LLM_API_KEY"),
-        os.environ.get("LLM_OPENAI_API_KEY"),
-        read_env_value(profile.env_file(), "LLM_OPENAI_API_KEY"),
-    ):
-        if candidate and not is_placeholder_key(candidate):
-            return candidate.strip()
-
-    env_file = profile.env_file()
-    for alt in ("LLM_ANTHROPIC_API_KEY", "LLM_GEMINI_API_KEY"):
-        stored = read_env_value(env_file, alt)
-        if stored and not is_placeholder_key(stored):
-            return (read_env_value(env_file, "LLM_OPENAI_API_KEY") or "").strip()
-
-    if use_json():
-        _die("MISSING_LLM_KEY", _MISSING_LLM_KEY)
-
-    _console.print(
-        "  [dim]OpenAI-compatible API key for the local deriver (not a Honcho API key)[/dim]"
-    )
-    raw = typer.prompt(
-        "  LLM API key",
-        default="",
-        show_default=False,
-        hide_input=True,
-        prompt_suffix=": ",
-    ).strip()
-    if not raw or is_placeholder_key(raw):
-        _die("MISSING_LLM_KEY", _MISSING_LLM_KEY)
-    return raw
 
 
 def _validate_setup(setup: str | None) -> str | None:
@@ -198,12 +161,6 @@ def start(
     redis_port: int | None = typer.Option(
         None, "--redis-port", min=1, max=65535, help="Host port for Redis"
     ),
-    llm_api_key: str | None = typer.Option(
-        None,
-        "--llm-api-key",
-        envvar="HONCHO_LLM_API_KEY",
-        help="OpenAI-compatible key for cloud inference",
-    ),
     setup: str | None = typer.Option(
         None,
         "--setup",
@@ -270,29 +227,27 @@ def start(
             profile = profile.overlay(image=pinned_image)
             _ok(pinned_image)
 
-        extra: dict[str, str] | None = None
+        extra = settings_from_environ()
         drop: tuple[str, ...] = ()
         _seed_config(profile)
         if setup:
             answers = run_setup(
                 setup,
                 profile.env_file(),
-                llm_api_key_flag=llm_api_key,
                 config_path=profile.config_file(),
             )
-            extra = answers_to_env(answers)
+            extra.update(answers_to_env(answers))
             drop = answers_drop_keys(answers)
-            key = openai_key_for_managed(answers)
             _ok(f"Wrote overrides to {profile.env_file()}")
             _console.print(
                 f"  [dim]Other settings live in {profile.config_file()}[/dim]"
             )
-        else:
-            key = _resolve_llm_key(llm_api_key, profile)
+        elif not has_provider_key(profile, extra):
+            _die("MISSING_LLM_KEY", _MISSING_LLM_KEY)
 
         _step(f"Writing stack config to {profile.dir()}")
         save_profile(profile)
-        render_stack(profile, key, extra=extra, drop=drop)
+        render_stack(profile, extra=extra, drop=drop)
         _ok(f"Profile '{profile.name}'")
 
         _step("Starting containers" if not already_running else "Recreating api + deriver")

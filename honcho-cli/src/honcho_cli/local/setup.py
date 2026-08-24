@@ -14,7 +14,11 @@ from pathlib import Path
 import typer
 from rich.console import Console
 
-from honcho_cli.local.env import is_placeholder_key, read_env_file
+from honcho_cli.local.env import (
+    is_placeholder_key,
+    read_env_file,
+    settings_from_environ,
+)
 from honcho_cli.output import print_error
 
 SETUP_MODES = ("basic", "advanced")
@@ -189,26 +193,15 @@ def answers_drop_keys(answers: SetupAnswers) -> tuple[str, ...]:
     return ("LLM_OPENAI_BASE_URL",)
 
 
-def openai_key_for_managed(answers: SetupAnswers) -> str:
-    """Value for the managed ``LLM_OPENAI_API_KEY`` line."""
-    if answers.provider in ("openai", "openai-compatible"):
-        return answers.api_key
-    if answers.embedding_key_transport == "openai" and answers.embedding_api_key:
-        return answers.embedding_api_key
-    if answers.embedding_transport == "openai" and answers.embedding_api_key:
-        return answers.embedding_api_key
-    return ""
-
-
 def run_setup(
     mode: str,
     env_path: Path,
     *,
-    llm_api_key_flag: str | None = None,
     config_path: Path | None = None,
 ) -> SetupAnswers:
     """Prompt for ``basic`` or ``advanced`` knobs. Enter keeps the default."""
     env = read_env_file(env_path)
+    env.update(settings_from_environ())
     defaults = load_toml_setup_defaults(config_path)
     _console.print()
     _console.print(
@@ -239,14 +232,7 @@ def run_setup(
         )
 
     key_env = _PROVIDER_KEY_ENV[provider]
-    current_key = env.get(key_env)
-    if (
-        provider in ("openai", "openai-compatible")
-        and llm_api_key_flag
-        and not is_placeholder_key(llm_api_key_flag)
-    ):
-        current_key = llm_api_key_flag
-    api_key = _prompt_secret("API key", current_key)
+    api_key = _prompt_secret("API key", env.get(key_env))
 
     chat_default = chat_model_default(
         provider, env, defaults, inferred=inferred

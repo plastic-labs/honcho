@@ -13,11 +13,25 @@ from honcho_cli.local.profile import LocalProfile
 MANAGED_KEYS = (
     "AUTH_USE_AUTH",
     "LOG_LEVEL",
-    "LLM_OPENAI_API_KEY",
     "HONCHO_IMAGE",
     "API_PORT",
     "DB_PORT",
     "REDIS_PORT",
+)
+
+# Host env forwarded into the profile .env (overrides config.toml).
+_SETTINGS_PREFIXES = (
+    "LLM_",
+    "EMBEDDING_",
+    "DERIVER_",
+    "DIALECTIC_",
+    "DREAM_",
+    "SUMMARY_",
+)
+_LLM_KEYS = (
+    "LLM_OPENAI_API_KEY",
+    "LLM_ANTHROPIC_API_KEY",
+    "LLM_GEMINI_API_KEY",
 )
 
 _HEADER = (
@@ -39,6 +53,15 @@ def is_placeholder_key(value: str | None) -> bool:
     if value is None:
         return True
     return value.strip() in _PLACEHOLDERS
+
+
+def settings_from_environ() -> dict[str, str]:
+    """Host env vars that map to Honcho settings. Empty/placeholder values skipped."""
+    return {
+        k: v
+        for k, v in os.environ.items()
+        if k.startswith(_SETTINGS_PREFIXES) and not is_placeholder_key(v)
+    }
 
 
 def read_env_file(path: Path) -> dict[str, str]:
@@ -64,12 +87,17 @@ def read_env_value(path: Path, key: str) -> str | None:
     return read_env_file(path).get(key)
 
 
-def managed_env(profile: LocalProfile, llm_api_key: str) -> dict[str, str]:
+def has_provider_key(profile: LocalProfile, extra: dict[str, str]) -> bool:
+    """True when host extra or profile ``.env`` has a real LLM API key."""
+    stored = {**read_env_file(profile.env_file()), **extra}
+    return any(not is_placeholder_key(stored.get(k)) for k in _LLM_KEYS)
+
+
+def managed_env(profile: LocalProfile) -> dict[str, str]:
     """Values written into the managed block of ``.env``."""
     return {
         "AUTH_USE_AUTH": "false",
         "LOG_LEVEL": "INFO",
-        "LLM_OPENAI_API_KEY": llm_api_key,
         "HONCHO_IMAGE": profile.image,
         "API_PORT": str(profile.api_port),
         "DB_PORT": str(profile.db_port),
@@ -129,7 +157,6 @@ def upsert_env(
 
 def render_stack(
     profile: LocalProfile,
-    llm_api_key: str,
     extra: dict[str, str] | None = None,
     drop: tuple[str, ...] = (),
 ) -> None:
@@ -144,7 +171,7 @@ def render_stack(
     init_sql = templates.joinpath("init.sql").read_text(encoding="utf-8")
     profile.compose_file().write_text(compose)
     (directory / "init.sql").write_text(init_sql)
-    updates = managed_env(profile, llm_api_key)
+    updates = managed_env(profile)
     if extra:
         updates.update(extra)
     upsert_env(profile.env_file(), updates, drop=drop)

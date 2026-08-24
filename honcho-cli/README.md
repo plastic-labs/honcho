@@ -34,7 +34,7 @@ Per-command scoping (workspace / peer / session) is handled via `-w` / `-p` / `-
 
 ### Local stack
 
-`honcho start` runs a personal Honcho server on your machine (API, deriver, Postgres, Redis) via Docker. Inference is cloud-side: you provide an OpenAI-compatible API key. Stack files live under `~/.honcho/profiles/local/` and are not committed to a project.
+`honcho start` runs a personal Honcho server on your machine (API, deriver, Postgres, Redis) via Docker. Inference is cloud-side: set `LLM_OPENAI_API_KEY`, `LLM_ANTHROPIC_API_KEY`, or `LLM_GEMINI_API_KEY` (env overrides `config.toml`). Stack files live under `~/.honcho/profiles/local/` and are not committed to a project.
 
 On first start, the CLI pulls `ghcr.io/plastic-labs/honcho:latest` and **pins that digest** in `profile.json`, then copies the image's `config.toml.example` to `config.toml` in the same directory. `honcho start` never overwrites `config.toml` after that — including when you re-pin the image. Delete the file yourself if you want a fresh copy from a new image.
 
@@ -49,7 +49,7 @@ HONCHO_BASE_URL=http://127.0.0.1:8000 honcho workspace list
 To make local the default, run `honcho init --base-url http://127.0.0.1:8000`.
 
 ```bash
-honcho start --llm-api-key "$LLM_OPENAI_API_KEY"
+LLM_OPENAI_API_KEY=sk-... honcho start
 honcho start --setup basic
 honcho start --setup advanced
 honcho status
@@ -187,8 +187,7 @@ Precedence (highest first): **flag → env var → config file → default**.
 | `HONCHO_SESSION_ID` | `-s` / `--session` | Session scope |
 | `HONCHO_JSON` | `--json` | Force JSON output (`1` / `true`) |
 | `HONCHO_PROFILE` | `--profile` (start/stop/status) | Local stack profile (default: `local`) |
-| `HONCHO_LLM_API_KEY` | `--llm-api-key` (start) | OpenAI-compatible key for local cloud inference |
-| `LLM_OPENAI_API_KEY` | — | Same as `HONCHO_LLM_API_KEY` (read as a fallback) |
+| `LLM_OPENAI_API_KEY` | — | Provider key for `honcho start` (also `LLM_ANTHROPIC_API_KEY`, `LLM_GEMINI_API_KEY`) |
 
 ```bash
 # Per-command flags
