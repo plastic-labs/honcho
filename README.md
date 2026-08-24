@@ -458,75 +458,15 @@ Contributors: see [`CONTRIBUTING.md`](./CONTRIBUTING.md) for pre-commit setup. D
 
 Honcho uses a flexible configuration system that supports both TOML files and environment variables. Configuration values are loaded in priority order: **environment variables > `.env` file > `config.toml` > defaults**.
 
-<!-- markdownlint-disable MD033 -->
-<details>
-<summary>Full configuration reference</summary>
-
-### Using config.toml
-
-Copy the example configuration file to get started:
+Copy the example file to get started:
 
 ```bash
 cp config.toml.example config.toml
 ```
 
-Then modify the values as needed. The TOML file is organized into sections:
+The file is organized by subsystem — `[app]`, `[db]`, `[auth]`, `[cache]`, `[llm]`, `[deriver]`, `[dialectic]`, `[summary]`, `[dream]`, `[peer_card]`, `[webhook]`, `[metrics]`, `[telemetry]`, `[vector_store]`, and `[sentry]`. Any value can be overridden by an environment variable named `{SECTION}_{KEY}`, using `__` for nesting (`DIALECTIC_LEVELS__low__MODEL_CONFIG__MODEL`), or just `{KEY}` for app-level settings.
 
-- `[app]` - Application-level settings (log level, session limits, embedding settings, namespace)
-- `[db]` - Database connection and pool settings
-- `[auth]` - Authentication configuration
-- `[cache]` - Redis cache configuration
-- `[llm]` - LLM provider API keys and general settings
-- `[deriver]` - Background worker settings and representation configuration
-- `[peer_card]` - Peer card generation settings
-- `[dialectic]` - Chat Endpoint configuration with per-level reasoning settings
-- `[summary]` - Session summarization settings
-- `[dream]` - Dream processing configuration (including specialist models and surprisal settings)
-- `[webhook]` - Webhook configuration
-- `[metrics]` - Prometheus pull-based metrics
-- `[telemetry]` - CloudEvents telemetry for analytics
-- `[vector_store]` - Vector store configuration (pgvector, turbopuffer, or lancedb)
-- `[sentry]` - Error tracking and monitoring settings
-
-### Using Environment Variables
-
-All configuration values can be overridden using environment variables. The environment variable names follow this pattern:
-
-- `{SECTION}_{KEY}` for top-level section settings
-- Use `__` inside `{KEY}` for nested settings
-- Just `{KEY}` for app-level settings
-
-Examples:
-
-- `DB_CONNECTION_URI` - Database connection string
-- `AUTH_JWT_SECRET` - JWT secret key
-- `DERIVER_MODEL_CONFIG__TRANSPORT` - Transport for the background deriver
-- `SUMMARY_MODEL_CONFIG__MODEL` - Summary model override
-- `DIALECTIC_LEVELS__low__MODEL_CONFIG__MODEL` - Model for low reasoning level
-- `LOG_LEVEL` - Application log level
-- `METRICS_ENABLED` - Enable Prometheus metrics
-- `TELEMETRY_ENABLED` - Enable CloudEvents telemetry
-
-### Example
-
-If you have this in `config.toml`:
-
-```toml
-[db]
-CONNECTION_URI = "postgresql+psycopg://localhost/honcho_dev"
-POOL_SIZE = 10
-```
-
-You can override just the connection URI in production:
-
-```bash
-export DB_CONNECTION_URI="postgresql+psycopg://prod-server/honcho_prod"
-```
-
-The application will use the production connection URI while keeping the pool size from config.toml.
-
-</details>
-<!-- markdownlint-enable MD033 -->
+See the [configuration reference](https://honcho.dev/docs/v3/contributing/configuration) for every available option, and [`.env.template`](./.env.template) for an annotated list of environment variables.
 
 ## Architecture
 
@@ -680,7 +620,9 @@ See the [SDK Reference](https://honcho.dev/docs/v3/documentation/reference/sdk) 
 
 ## Contributing
 
-We welcome contributions to Honcho! Please read our [Contributing Guide](./CONTRIBUTING.md) for details on our development process, coding conventions, and how to submit pull requests.
+We welcome contributions to Honcho. One thing to know before you start: **pull requests must be linked to an issue carrying the `maintainer-approved` label**, or they are closed automatically. [Browse the approved queue](https://github.com/plastic-labs/honcho/issues?q=is%3Aissue+is%3Aopen+label%3Amaintainer-approved), or make your case in [Discord](http://discord.gg/honcho) — that is where maintainers are most active.
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for the full process, an architecture walkthrough, and a map of where to change what. For vulnerabilities, see [SECURITY.md](./SECURITY.md) — note that Honcho does not operate a bug bounty.
 
 ## License
 

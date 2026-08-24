@@ -26,3 +26,11 @@ jobs:
         run: uv sync --all-extras --dev
       - name: run basedpyright
         run: uv run basedpyright
+
+  issue-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The gate runs from `pull_request_target`, where a crash is invisible until
+      # a contributor's PR is silently ungated. Check it here instead.
+      - run: node .github/scripts/issue-gate.test.js
