@@ -16,13 +16,13 @@
 /src/telemetry/              @akattelu @Rajat-Ahuja1997
 
 # Data model, connections, configuration, LLM transport.
-/src/db.py                   @akattelu @eisene @VVoruganti
-/src/models.py               @akattelu @eisene @VVoruganti
-/src/config.py               @akattelu @eisene @VVoruganti
-/src/cache/                  @akattelu @eisene @VVoruganti
-/src/crud/                   @akattelu @eisene @VVoruganti
-/migrations/                 @akattelu @eisene @VVoruganti
-/src/llm/                    @akattelu @eisene @VVoruganti
+/src/db.py                   @akattelu @eisene
+/src/models.py               @akattelu @eisene
+/src/config.py               @akattelu @eisene
+/src/cache/                  @akattelu @eisene
+/src/crud/                   @akattelu @eisene
+/migrations/                 @akattelu @eisene
+/src/llm/                    @akattelu @eisene
 
 # Client-facing surfaces and API shape.
 /sdks/                       @ajspig @akattelu
@@ -32,24 +32,24 @@
 /src/schemas/                @ajspig @akattelu
 
 # The reasoning agents, their prompts, and shared agent tooling.
-/src/deriver/                @eisene @akattelu @matthewlanders
-/src/dreamer/                @eisene @akattelu @matthewlanders
-/src/dialectic/              @eisene @akattelu @matthewlanders
-/src/utils/                  @eisene @akattelu @matthewlanders
+/src/deriver/                @eisene @akattelu
+/src/dreamer/                @eisene @akattelu
+/src/dialectic/              @eisene @akattelu
+/src/utils/                  @eisene @akattelu
 
 # Deployment, and swappable storage and inference backends.
 # /src/llm/backends/ must stay below /src/llm/ above — last match wins.
-/docker/                     @eisene @Rajat-Ahuja1997 @akattelu
-/Dockerfile                  @eisene @Rajat-Ahuja1997 @akattelu
-/docker-compose.yml.example  @eisene @Rajat-Ahuja1997 @akattelu
-/src/vector_store/           @eisene @Rajat-Ahuja1997 @akattelu
-/src/llm/backends/           @eisene @Rajat-Ahuja1997 @akattelu
+/docker/                     @eisene @Rajat-Ahuja1997
+/Dockerfile                  @eisene @Rajat-Ahuja1997
+/docker-compose.yml.example  @eisene @Rajat-Ahuja1997
+/src/vector_store/           @eisene @Rajat-Ahuja1997
+/src/llm/backends/           @eisene @Rajat-Ahuja1997
 
 # Documentation and contributor-facing policy.
-/docs/                       @ajspig @akattelu @VVoruganti
-/README.md                   @ajspig @akattelu @VVoruganti
-/CONTRIBUTING.md             @akattelu @ajspig @VVoruganti
-/SECURITY.md                 @akattelu @ajspig @VVoruganti
+/docs/                       @ajspig @akattelu
+/README.md                   @ajspig @akattelu
+/CONTRIBUTING.md             @akattelu @ajspig
+/SECURITY.md                 @Rajat-Ahuja1997 @ajspig
 
 # Reviewers auto-requested on changes under .github/ (workflows, this file,
 # templates).
