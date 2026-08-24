@@ -10,7 +10,7 @@ from __future__ import annotations
 import typer
 from rich.console import Console
 
-from honcho_cli.branding import BRAND, ICON_FAIL, ICON_OK, ICON_RUN
+from honcho_cli.branding import BRAND, ICON_FAIL, ICON_OK
 from honcho_cli.local import (
     DEFAULT_HEALTH_TIMEOUT,
     DEFAULT_IMAGE,
@@ -43,10 +43,13 @@ from honcho_cli.local.setup import (
     run_setup,
 )
 from honcho_cli.output import (
+    fail,
+    ok,
     print_error,
     print_json,
     print_result,
     set_json_mode,
+    step,
     use_json,
 )
 
@@ -61,21 +64,6 @@ _MISSING_LLM_KEY = (
 def _die(code: str, message: str, details: dict | None = None) -> None:
     print_error(code, message, details)
     raise typer.Exit(1)
-
-
-def _step(msg: str) -> None:
-    if not use_json():
-        _console.print(f"  {ICON_RUN}  {msg}")
-
-
-def _ok(msg: str) -> None:
-    if not use_json():
-        _console.print(f"  {ICON_OK}  {msg}")
-
-
-def _fail(msg: str) -> None:
-    if not use_json():
-        _console.print(f"  {ICON_FAIL}  {msg}")
 
 
 def _validate_setup(setup: str | None) -> str | None:
@@ -137,7 +125,7 @@ def _print_running(profile: LocalProfile) -> None:
 
 def _seed_config(profile: LocalProfile) -> None:
     if seed_config_toml(profile):
-        _ok("config.toml")
+        ok("config.toml")
 
 
 def _inspect(profile: LocalProfile) -> tuple[dict[str, str], bool]:
@@ -213,19 +201,19 @@ def start(
     try:
         already_running = stack_healthy(profile)
         if already_running and not setup:
-            _ok(f"Already running ({profile.base_url})")
+            ok(f"Already running ({profile.base_url})")
             _print_running(profile)
             return
 
         if not already_running:
             profile, remapped = allocate_host_ports(profile, pinned=pinned_ports)
             for service, (old, new) in remapped.items():
-                _step(f"Port {old} in use; {service} on {new}")
+                step(f"Port {old} in use; {service} on {new}")
 
-            _step(f"Pinning {profile.image}")
+            step(f"Pinning {profile.image}")
             pinned_image = pin_image(profile.image)
             profile = profile.overlay(image=pinned_image)
-            _ok(pinned_image)
+            ok(pinned_image)
 
         extra = settings_from_environ()
         drop: tuple[str, ...] = ()
@@ -238,27 +226,27 @@ def start(
             )
             extra.update(answers_to_env(answers))
             drop = answers_drop_keys(answers)
-            _ok(f"Wrote overrides to {profile.env_file()}")
+            ok(f"Wrote overrides to {profile.env_file()}")
             _console.print(
                 f"  [dim]Other settings live in {profile.config_file()}[/dim]"
             )
         elif not has_provider_key(profile, extra):
             _die("MISSING_LLM_KEY", _MISSING_LLM_KEY)
 
-        _step(f"Writing stack config to {profile.dir()}")
+        step(f"Writing stack config to {profile.dir()}")
         save_profile(profile)
         render_stack(profile, extra=extra, drop=drop)
-        _ok(f"Profile '{profile.name}'")
+        ok(f"Profile '{profile.name}'")
 
-        _step("Starting containers" if not already_running else "Recreating api + deriver")
+        step("Starting containers" if not already_running else "Recreating api + deriver")
         compose_up(
             profile,
             recreate=("api", "deriver") if already_running else (),
         )
 
-        _step(f"Waiting for API at {profile.base_url}/health")
+        step(f"Waiting for API at {profile.base_url}/health")
         if not wait_for_health(profile, timeout=float(timeout)):
-            _fail("Timed out waiting for /health")
+            fail("Timed out waiting for /health")
             _die(
                 "HEALTH_TIMEOUT",
                 f"Stack started but {profile.base_url}/health did not become ready within {timeout}s. "
@@ -270,7 +258,7 @@ def start(
                 },
             )
 
-        _ok("Honcho is running")
+        ok("Honcho is running")
         _print_running(profile)
     except DockerError as e:
         e.exit()
@@ -321,7 +309,7 @@ def stop(
         e.exit()
 
     state = "wiped" if wipe else "stopped"
-    _ok(f"Stopped profile '{profile.name}'" + (" (volumes removed)" if wipe else ""))
+    ok(f"Stopped profile '{profile.name}'" + (" (volumes removed)" if wipe else ""))
     if use_json():
         print_json(_payload(profile, state))
 
