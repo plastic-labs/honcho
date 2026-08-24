@@ -149,7 +149,13 @@ class JsonMatchAssertion(Assertion):
 
 class QueryAction(TestStep):
     step_type: Literal["query"] = "query"
-    target: Literal["chat", "get_context", "get_peer_card", "get_representation"]
+    target: Literal[
+        "chat",
+        "get_context",
+        "get_peer_card",
+        "get_representation",
+        "workspace_chat",
+    ]
 
     session_id: str | None = None
 
@@ -168,9 +174,9 @@ class QueryAction(TestStep):
     # for chat - optional JSON Schema the response must conform to
     response_format: dict[str, Any] | None = None
 
-    # Confine the read to one scope (observer swap) or to the union of several
-    # scopes' member sessions. Forces the raw-HTTP path, since the SDK has no
-    # `scope` parameter. Valid for chat, get_representation and get_context.
+    # Confine the read to one scope (observer swap on peer chat) or to the
+    # union of several scopes' member sessions. Peer-chat/representation/
+    # context go over raw HTTP; workspace_chat uses the SDK `scope` argument.
     scope: str | list[str] | None = None
 
     assertions: list[

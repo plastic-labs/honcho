@@ -1,5 +1,9 @@
 import { API_VERSION } from './api-version'
 import { HonchoHTTPClient } from './http/client'
+import {
+  createDialecticStream,
+  type DialecticStreamResponse,
+} from './http/streaming'
 import { Message } from './message'
 import { Page } from './pagination'
 import { Peer } from './peer'
@@ -14,6 +18,8 @@ import type {
   QueueStatusResponse,
   ScopeResponse,
   SessionResponse,
+  WorkspaceChatParams,
+  WorkspaceChatResponse,
   WorkspaceResponse,
 } from './types/api'
 import { resolveId, transformQueueStatus } from './utils'
@@ -53,6 +59,7 @@ import {
 } from './validation'
 
 const DEFAULT_BASE_URL = 'https://api.honcho.dev'
+type ReasoningLevel = 'minimal' | 'low' | 'medium' | 'high' | 'max'
 
 /**
  * Main client for the Honcho TypeScript SDK.
@@ -396,6 +403,34 @@ export class Honcho {
           configuration: sessionConfigToApi(params.configuration),
           peers: params.peers,
           scopes: params.scopes,
+        },
+      }
+    )
+  }
+
+  private async _workspaceChat(
+    workspaceId: string,
+    params: WorkspaceChatParams
+  ): Promise<WorkspaceChatResponse> {
+    await this._ensureWorkspace()
+    return this._http.post<WorkspaceChatResponse>(
+      `/${API_VERSION}/workspaces/${workspaceId}/chat`,
+      { body: params }
+    )
+  }
+
+  private async _workspaceChatStream(
+    workspaceId: string,
+    params: Omit<WorkspaceChatParams, 'stream'>
+  ): Promise<Response> {
+    await this._ensureWorkspace()
+    return this._http.stream(
+      'POST',
+      `/${API_VERSION}/workspaces/${workspaceId}/chat`,
+      {
+        body: {
+          ...params,
+          stream: true,
         },
       }
     )
@@ -946,6 +981,106 @@ export class Honcho {
       limit: validatedLimit,
     })
     return response.map(Message.fromApiResponse)
+  }
+
+  /**
+   * Query the workspace's collective knowledge using natural language.
+   *
+   * Performs agentic search and reasoning across ALL peers and observations
+   * in the workspace to synthesize a comprehensive answer. Useful for
+   * cross-peer analysis, discovering common themes, and workspace-wide queries.
+   *
+   * @param query - The natural language question to ask
+   * @param options.session - Optional session to scope message search to. Can be a session
+   *                          ID string or a Session object.
+   * @param options.reasoningLevel - Optional reasoning level for the query: "minimal", "low",
+   *                                 "medium", "high", or "max". Defaults to "low" if not provided.
+   * @param options.responseFormat - Optional JSON Schema (root type "object") the response
+   *                                 must conform to. When provided, the response content is a
+   *                                 JSON string matching this schema.
+   * @returns Promise resolving to the response string, or null if no relevant information
+   *
+   * @example
+   * ```typescript
+   * const response = await honcho.chat('What are common themes across all users?')
+   * ```
+   */
+  async chat(
+    query: string,
+    options?: {
+      session?: string | Session
+      reasoningLevel?: ReasoningLevel
+      responseFormat?: Record<string, unknown>
+      scope?: string | string[]
+    }
+  ): Promise<string | null> {
+    const validatedQuery = SearchQuerySchema.parse(query)
+    const resolvedSessionId = options?.session
+      ? resolveId(options.session)
+      : undefined
+
+    const response = await this._workspaceChat(this.workspaceId, {
+      query: validatedQuery,
+      stream: false,
+      session_id: resolvedSessionId,
+      reasoning_level: options?.reasoningLevel,
+      response_format: options?.responseFormat,
+      scope: options?.scope,
+    })
+    if (!response.content) {
+      return null
+    }
+    return response.content
+  }
+
+  /**
+   * Query the workspace's collective knowledge with streaming response.
+   *
+   * Performs agentic search and reasoning across ALL peers and observations
+   * in the workspace to synthesize a comprehensive answer, streaming the
+   * response as it is generated.
+   *
+   * @param query - The natural language question to ask
+   * @param options.session - Optional session to scope message search to. Can be a session
+   *                          ID string or a Session object.
+   * @param options.reasoningLevel - Optional reasoning level for the query: "minimal", "low",
+   *                                 "medium", "high", or "max". Defaults to "low" if not provided.
+   * @param options.responseFormat - Optional JSON Schema (root type "object") the response
+   *                                 must conform to. When provided, the response content is a
+   *                                 JSON string matching this schema.
+   * @returns Promise resolving to a DialecticStreamResponse that can be iterated over
+   *
+   * @example
+   * ```typescript
+   * const stream = await honcho.chatStream('What do all peers have in common?')
+   * for await (const chunk of stream) {
+   *   process.stdout.write(chunk)
+   * }
+   * ```
+   */
+  async chatStream(
+    query: string,
+    options?: {
+      session?: string | Session
+      reasoningLevel?: ReasoningLevel
+      responseFormat?: Record<string, unknown>
+      scope?: string | string[]
+    }
+  ): Promise<DialecticStreamResponse> {
+    const validatedQuery = SearchQuerySchema.parse(query)
+    const resolvedSessionId = options?.session
+      ? resolveId(options.session)
+      : undefined
+
+    const response = await this._workspaceChatStream(this.workspaceId, {
+      query: validatedQuery,
+      session_id: resolvedSessionId,
+      reasoning_level: options?.reasoningLevel,
+      response_format: options?.responseFormat,
+      scope: options?.scope,
+    })
+
+    return createDialecticStream(response)
   }
 
   /**
