@@ -289,8 +289,12 @@ def register_db_connection_instrumentation(instance_type: str) -> None:
     _connection_tracker = DBConnectionTracker(open_child, established_child)
     sync_engine = engine.sync_engine
     event.listen(sync_engine, "connect", _connection_tracker.on_connect)
-    # close AND invalidate both tear a connection down; the marker dedupes them.
-    for teardown_event in ("close", "invalidate"):
+    # A connection is torn down by close (normal return / recycle discard),
+    # invalidate (broken connection), or detach — the last fires on GC-cleanup of an
+    # abandoned async connection, where NullPool's close is a no-op so `close` never
+    # fires. All three carry the ConnectionRecord; the marker dedupes if more than
+    # one fires for the same connection.
+    for teardown_event in ("close", "invalidate", "detach"):
         event.listen(sync_engine, teardown_event, _connection_tracker.on_close)
     _db_connection_instrumentation_registered = True
 

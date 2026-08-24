@@ -7,7 +7,7 @@ pool keeps no records for the scrape-time ``db_pool_connections`` collector to r
 
 Asserts two properties:
 - zero-init — resolving a labeled child materializes it at 0, so an absent series
-  means a broken scrape rather than "no connections" (the #927 convention);
+  means a broken scrape rather than "no connections";
 - ``DBConnectionTracker`` semantics — increment once per connect, decrement at most
   once per connection (marker-guarded, so it can't leak upward or go negative), and
   the establishment counter is monotonic (closes never decrement it).
