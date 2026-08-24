@@ -18,7 +18,8 @@ class TestSessionCRUD:
         db_session: AsyncSession,
         sample_data: tuple[models.Workspace, models.Peer],
     ):
-        """Active re-adds keep joined_at and config; a genuine rejoin starts a new window."""
+        """Active re-adds keep joined_at and config; a genuine rejoin starts a
+        new window."""
         test_workspace, test_peer = sample_data
         session_name = str(generate_nanoid())
         original_config = schemas.SessionPeerConfig(

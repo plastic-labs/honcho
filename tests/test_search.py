@@ -711,7 +711,8 @@ async def test_grep_messages_observer_scoping_left_session_still_visible(
 async def test_peer_perspective_search_after_active_readd(
     db_session: AsyncSession,
 ):
-    """Active re-add keeps existing messages visible; a genuine rejoin starts a new window."""
+    """Active re-add keeps existing messages visible; a genuine rejoin starts a
+    new window."""
     workspace = models.Workspace(name=generate_nanoid())
     peer1 = models.Peer(name="peer1", workspace_name=workspace.name)
     peer2 = models.Peer(name="peer2", workspace_name=workspace.name)

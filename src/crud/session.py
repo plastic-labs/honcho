@@ -1050,14 +1050,16 @@ async def set_peers_for_session(
     peer_names: dict[str, schemas.SessionPeerConfig],
 ) -> list[models.SessionPeer]:
     """
-    Set peers for a session, overwriting any existing peers.
-    If peers don't exist, they will be created.
+    Replace a session's ordinary peer set with ``peer_names``.
+
+    Active members keep their joined_at and configuration. Departed members
+    rejoin with the incoming configuration. Scope memberships are preserved.
 
     Args:
         db: Database session
         workspace_name: Name of the workspace
         session_name: Name of the session
-        peer_names: Set of peer names to set for the session
+        peer_names: Mapping of peer names to session-level configuration
 
     Returns:
         List of SessionPeer objects for all peers in the session
