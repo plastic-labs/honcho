@@ -6,8 +6,8 @@ api/docker-compose.yml
 *.db
 data
 redis-data
-docker-compose.yml
-compose.yml
+/docker-compose.yml
+/compose.yml
 
 
 

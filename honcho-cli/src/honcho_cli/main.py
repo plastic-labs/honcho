@@ -64,9 +64,13 @@ def main(
 
 # Register top-level commands
 from honcho_cli.commands.setup import doctor, init
+from honcho_cli.commands.stack import start, status, stop
 
 app.command()(init)
 app.command()(doctor)
+app.command()(start)
+app.command()(stop)
+app.command()(status)
 
 
 @app.command("help", hidden=True)
