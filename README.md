@@ -8,7 +8,7 @@
 
 ---
 
-![Static Badge](https://img.shields.io/badge/Server-3.0.9-blue)
+![Static Badge](https://img.shields.io/badge/Server-3.1.0-blue)
 [![PyPI version](https://img.shields.io/pypi/v/honcho-ai.svg)](https://pypi.org/project/honcho-ai/)
 [![NPM version](https://img.shields.io/npm/v/@honcho-ai/sdk.svg)](https://npmjs.org/package/@honcho-ai/sdk)
 [![Discord](https://img.shields.io/discord/1016845111637839922?style=flat&logo=discord&logoColor=23ffffff&label=Plastic%20Labs&labelColor=235865F2)](https://discord.gg/honcho)
@@ -246,6 +246,7 @@ Peers exchange messages within sessions; Honcho reasons over those messages to b
 - **Workspace** (formerly App): top-level container; isolates data between use cases.
 - **Peer** (formerly User): any participant — human user or AI agent.
 - **Session**: a conversation context; many-to-many with peers.
+- **Scope**: a named grouping of sessions that bounds recall (chat, representation, search) to those members.
 - **Message**: an atomic data unit (peer-to-peer communication or ingested document chunk).
 
 What you query out of Honcho:
@@ -470,7 +471,7 @@ See the [configuration reference](https://honcho.dev/docs/v3/contributing/config
 
 ## Architecture
 
-Honcho splits into two services: **Storage** (workspaces, peers, sessions, messages, internal collections) and **Insights** (reasoning, conclusions, representations, summaries, the chat endpoint). Storage is synchronous via the API; Insights is asynchronous via a background queue consumed by the deriver worker process.
+Honcho splits into two services: **Storage** (workspaces, peers, sessions, scopes, messages, internal collections) and **Insights** (reasoning, conclusions, representations, summaries, the chat endpoint). Storage is synchronous via the API; Insights is asynchronous via a background queue consumed by the deriver worker process.
 
 **Key features:**
 
@@ -498,16 +499,18 @@ Workspaces
 │   ├── Sessions             │
 │   └── (internal collections, keyed by observer/observed peer pair)
 │                            │
+├── Scopes ←─────────────────┤ (many-to-many with sessions)
 │                            │
-└── Sessions ←───────────────┤ (many-to-many)
+└── Sessions ←───────────────┤ (many-to-many with peers)
     ├── Peers ───────────────┘
     └── Messages (session-level)
 ```
 
 **Relationship Details:**
 
-- A **Workspace** contains multiple **Peers**.
+- A **Workspace** contains multiple **Peers** and **Scopes**.
 - **Peers** and **Sessions** have a many-to-many relationship (peers can participate in multiple sessions, sessions can have multiple peers).
+- **Scopes** and **Sessions** have a many-to-many relationship (a session can belong to several scopes; a scope groups many sessions).
 - **Messages** belong to a session and are labelled by their source peer.
 - **Internal collections** of vector-embedded **documents** are keyed by `(observer, observed)` peer pairs. They are not directly exposed via the API; the observations stored in them are exposed as **Conclusions**.
 
@@ -531,6 +534,28 @@ This unified model enables complex multi-participant interactions.
 The `Session` object represents a set of interactions between `Peers` within a
 `Workspace`. Other applications may refer to this as a thread or conversation.
 Sessions can involve multiple peers with configurable observation settings.
+A session can optionally join one or more **Scopes** at creation, or later via
+the scopes API.
+
+#### Scopes
+
+A `Scope` is a named grouping of sessions inside a `Workspace`. It is a
+visibility boundary on recall: chat, representation, session context, and
+workspace search answered through a scope see only what happened in that
+scope's member sessions. The underlying peers keep their unified
+representations across everything they have participated in.
+
+Developers manage scopes through the scopes API (`honcho.scope(...)` /
+`honcho.scopes()`) and an optional `scopes` field on session create — not
+through observer/observed configuration. Adding a session that already has
+messages copies its existing explicit conclusions into the scope (no
+re-derivation); removing one reconciles those copies back out. Query
+backfill progress with the scope `status` endpoint.
+
+A single scope name answers from that scope's collection and card. A list of
+scopes restricts recall to the union of their member sessions. Empty scopes
+fail closed. `scope` is mutually exclusive with `session` / `filters` on the
+same read.
 
 #### Messages
 

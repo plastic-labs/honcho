@@ -27,7 +27,45 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 ### Honcho API and SDK Changelogs
 <Tabs>
     <Tab title="Honcho API">
-        <Update label="v3.0.12 (Current)">
+        <Update label="v3.1.0 (Current)">
+        ### Added
+
+        - Scopes: a named grouping of sessions that acts as a visibility boundary on recall, implemented as a facade over an observer peer (`scope.{name}` with `{"kind": "scope"}`). Developers manage them exclusively through `/v3/workspaces/{workspace_id}/scopes` (create-or-get, list, get, add/list/remove session membership) and an optional `scopes` field on session create — never through the observer/observed mechanics. Scope peers cannot author messages, cannot be a chat or representation `target`, are excluded from `peers.list` by default (`PeerGet.kind` = `"scope"` / `"all"` switches the view), and are rejected on the generic session-peer routes. Workspace-level key required; peer- and session-scoped keys get 401. Legacy peers occupying a reserved `scope.` name without the kind flag are refused with 409, never adopted (#884)
+        - `scope` read option on chat, representation, session context, and workspace search. A single scope swaps the observer to the backing scope peer so conclusion recall, peer cards, and message tools stay inside that scope's membership. A list of scopes takes the union of member sessions (capped at `MAX_SESSION_ALLOWLIST_ENTRIES`) and executes via the session-allowlist path. Empty scopes fail closed. `scope` is mutually exclusive with `filters` and `session_id`. Workspace- or admin-level key required (403 otherwise). Scope peers are also rejected as `peer_target` / `peer_perspective` on session context and as the path peer or `target` on `GET /peers/{id}/context` (#897)
+        - Scope backfill-by-copy and removal reconciliation. Adding a session that already has messages copies its explicit-level documents into the scope's collections (no LLM re-derivation; idempotent via `copied_from`). Removing a session soft-deletes those copies and fail-closed cascades to derived documents whose `source_ids` intersect anything removed, then enqueues a `card_refresh` dream with `rebuild=True` plus an omni dream. `GET /v3/workspaces/{workspace_id}/scopes/{scope_id}/status` reports per-session backfill state (`pending` / `completed` / `failed`, plus `docs_copied`) (#904)
+        - Workspace-level chat at `POST /v3/workspaces/{workspace_id}/chat`: agentic dialectic over the whole workspace instead of a single (observer, observed) pair. Prefetches workspace stats and the top active peers' self cards, then searches pair-scoped memory with `[observer->observed]` attribution. Supports `session_id`, `scope`, `reasoning_level`, `response_format`, and SSE streaming (#931)
+        - MCP workspace discovery: tools accept `workspace_id`, the worker honors an optional `X-Honcho-Workspace-ID` connection header, and `list_workspace` / `create_workspace` tools let clients pick or create a workspace instead of relying on the SDK default (#1020)
+        - MCP `search` also queries conclusions in parallel with messages when `peer_id` is given, returning `{messages, conclusions}`. The conclusions leg degrades to `[]` on error so search never gets worse than before (#974)
+        - Prometheus metrics for physical DB connections, visible even under `DB_POOL_CLASS=null`: `db_connections_open` (gauge) and `db_connections_established` (counter), hooked to SQLAlchemy connection-lifecycle events and registered on both the API and the deriver (#1055)
+        - Bounded-label Prometheus series are zero-initialized at process start so an absent series means a broken scrape rather than "nothing happened" (#927)
+
+        ### Changed
+
+        - Workspace and pair chat system prompts now describe Honcho, peers, and the harness on their own terms, and render only the tools the request actually offers. The pair prompt no longer advertises a write tool that is not in the loadout (#1066)
+        - Deriver idle polling backoff is longer and no longer reset by periodic reconciler work, so downstream connection pools can cull idle DB connections (#1015)
+        - LLM provider SDKs are lazy-loaded so idle API and deriver processes no longer pay for every provider at import time (#1011)
+        - Production image is a multi-stage build: LanceDB/PyArrow move behind an optional `lancedb` extra (`INSTALL_LANCEDB=true` to restore them), FastAPI's unused cloud CLI is dropped, and the venv is copied into the runtime image with final ownership so Docker does not double the layer. Default unpacked image is about 663 MB (was 1.7 GB) (#1014)
+        - Redis Cluster cache keys hash-tag the namespace so one deployment's keys land on a single shard instead of opening a connection to every node. No behaviour change on a non-cluster backend; existing keys age out by TTL (#1058)
+        - Deriver extraction prompt no longer leaks its own few-shot examples into extracted conclusions (#1028)
+
+        ### Fixed
+
+        - Observer-scoped `get_observation_context` no longer materializes every session the observer has ever joined into a `session_name IN (...)` list (twice in one statement). Past ~32k sessions that hit psycopg's bind-parameter ceiling and 500'd. The observer half is now a correlated `EXISTS` over `session_peers`, two bind parameters regardless of membership size (#1065)
+        - Re-adding an already-active session peer no longer advances `joined_at`, so `peer_perspective` search keeps messages from the original join. Genuine leave-and-rejoin still starts a new window (#1059)
+        - Transient embedding-provider errors (for example an OpenAI-compatible 200 with empty `data: []`) were relabeled as token-limit errors. Only genuine oversize input raises `EmbeddingTokenLimitError`; other provider errors propagate unchanged (#791)
+        - The filter DSL now fails closed with a 422 instead of a 500 on bad shapes, coerces operands by column type (so `{"session_id": {"ne": "abc"}}` is a string inequality rather than "invalid numeric"), and treats `NOT` / `ne` as null-safe (`IS NOT TRUE` / `IS DISTINCT FROM`) so negation no longer drops rows whose field is unset. Closed-set columns like `level` reject unknown values. Session-allowlist entries must be well-formed ids (`*` is 422, not a silent widen) (#947)
+        - `ne` on JSONB metadata keys is null-safe: a missing key is not equal to the compared value, so `{"metadata": {"foo": {"ne": "bar"}}}` includes rows where `foo` is unset (#1036)
+        - Oversized texts in `simple_batch_embed` are truncated to the embedding token cap instead of failing the whole batch. Representation processing reports failed observer saves in `RepresentationCompletedEvent` and raises when every observer save fails (#1019)
+        - Assistant `reasoning_content` (DeepSeek / some OpenRouter models) is preserved across tool-loop turns. Previously the tool loop dropped thinking content before building the next assistant history message, so continuation requests failed. `reasoning_details` still takes precedence when both are present (#1034)
+        - `create_observations` now honors `DERIVER_DEDUPLICATE` instead of hardcoding `deduplicate=True`, matching the representation write path (#1018)
+        - `provider_params.timeout` is forwarded to the OpenAI-compatible embedding client, not just the LLM client (#1024)
+        - Conclusions semantic-search validation errors name the field and the constraint instead of returning a generic 422 (#960)
+        - OpenAI-compatible embedding calls request `encoding_format=float` so providers that default to base64 do not break pgvector inserts (#938)
+        - Gemini batch embedding works for `gemini-embedding-2*` models, which rejected the previous request shape (#745)
+        - MCP OAuth with no advertised scopes no longer defaults to read-only (which 403'd chat and search POSTs). Protected-resource metadata advertises read and write (#1004)
+        </Update>
+
+        <Update label="v3.0.12">
         ### Added
 
         - Session allowlist on the Dialectic and representation via a constrained `filters` body on `POST /peers/{peer_id}/chat` and `/representation`, supporting only the `session_id` key (a session id, a bare list, or `{"in": [...]}`). Unsupported keys and shapes are rejected with 422 rather than silently ignored, it composes with `session_id` (which must be included in the allowlist when both are given), and it is capped at 1,000 sessions per request. Enforcement is uniform and fail-closed at every recall chokepoint: scoped conclusion recall is restricted to `level == "explicit"` (dream-derived conclusions carry a single `session_name` but are synthesized across all sessions, so that stamp can't be scoped on), `get_reasoning_chain` is unavailable under an allowlist, and an empty allowlist short-circuits to empty results everywhere. Workspace keys pass the allowlist as-given; peer-scoped JWTs must be an active member of every allowlisted session (401 otherwise) (#882)
@@ -747,6 +785,17 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 
     <Tab title="Python SDK">
         [Python SDK](https://pypi.org/project/honcho-ai/)
+        <Update label="v2.4.0 (Current)">
+            ### Added
+
+            - Scopes: `Honcho.scope()` / `HonchoAio.scope()` get-or-create a named visibility boundary, `Honcho.scopes()` lists them, and a `Scope` object adds/removes sessions, lists membership, and reads backfill `status()`. `Honcho.session(..., scopes=[...])` joins a new session to scopes at creation. Requires a Honcho server with the matching API support (Honcho v3.1.0+).
+            - `scope` option on `Peer.chat()` / `chat_stream()`, representation, session context, and workspace search. A single scope answers from that scope's collection and card; a list of scopes restricts recall to the union of their member sessions (explicit-only). Mutually exclusive with `session` / `sessions` / `filters`.
+            - Workspace-level chat: `Honcho.chat()` / `HonchoAio.chat()` and `chat_stream()` ask a question across every peer in the workspace, with the same `session`, `scope`, `reasoning_level`, and `response_format` options as `Peer.chat()`. Requires a Honcho server with the matching API support (Honcho v3.1.0+).
+
+            ### Changed
+
+            - `ConclusionScope` is renamed to `ConclusionsView`. The old name remains as a deprecated alias for one more minor version. "Scope" now means a named set of sessions (`Scope`); these objects are views over one observer/observed pair.
+        </Update>
         <Update label="v2.3.0">
         ### Added
 
@@ -915,6 +964,17 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 
     <Tab title="TypeScript SDK">
         [TypeScript SDK](https://www.npmjs.com/package/@honcho-ai/sdk)
+        <Update label="v2.4.0 (Current)">
+            ### Added
+
+            - Scopes: `honcho.scope()` get-or-creates a named visibility boundary, `honcho.scopes()` lists them, and a `Scope` object adds/removes sessions, lists membership, and reads backfill `status()`. `honcho.session({ scopes: [...] })` joins a new session to scopes at creation. Requires a Honcho server with the matching API support (Honcho v3.1.0+).
+            - `scope` option on `peer.chat()` / `chatStream()`, representation, session context, and workspace search. A single scope answers from that scope's collection and card; a list of scopes restricts recall to the union of their member sessions (explicit-only). Mutually exclusive with `session` / `sessions` / `filters`.
+            - Workspace-level chat: `honcho.chat()` / `honcho.chatStream()` ask a question across every peer in the workspace, with the same `session`, `scope`, `reasoningLevel`, and `responseFormat` options as `peer.chat()`. Requires a Honcho server with the matching API support (Honcho v3.1.0+).
+
+            ### Changed
+
+            - `ConclusionScope` is renamed to `ConclusionsView`. The old name remains as a deprecated alias for one more minor version. "Scope" now means a named set of sessions (`Scope`); these objects are views over one observer/observed pair.
+        </Update>
         <Update label="v2.3.0">
         ### Added
 
@@ -1110,6 +1170,16 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
     </Tab>
     <Tab title="Honcho CLI">
         [Honcho CLI](https://pypi.org/project/honcho-cli/)
+        <Update label="v0.1.3 (Current)">
+        ### Added
+
+        - `honcho start`, `honcho stop`, and `honcho status` — run a personal Honcho stack in Docker (API, deriver, Postgres, Redis). Profiles live under `~/.honcho/profiles/`. First start pins `ghcr.io/plastic-labs/honcho:latest` by digest and copies the image `config.toml`. Optional `--setup basic` / `--setup advanced` wizard writes LLM overrides to `.env` (#1029)
+        - `honcho session view` — session transcript table (`--last N`, `--page N --size M`, `--all`, `--reverse`, `--ids`, peer filter via `-p`). Content is shown verbatim, timestamps are normalized to UTC, and the command is read-only: unlike the other session commands it never get-or-creates the session (#1006)
+
+        ### Fixed
+
+        - `honcho message list --last N` no longer stops at the first page of 50 — it walks pages to fill the requested window (#1006)
+        </Update>
         <Update label="v0.1.2">
         ### Added
 
