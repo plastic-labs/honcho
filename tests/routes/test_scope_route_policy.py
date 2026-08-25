@@ -58,9 +58,29 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
+from src.config import settings
 from src.main import app
 from src.models import Peer, Workspace
 from src.utils.scopes import scope_peer_name
+
+
+@pytest.fixture(autouse=True)
+def _dreams_enabled(monkeypatch: pytest.MonkeyPatch):
+    """Force DREAM.ENABLED on so this file works regardless of local config.
+
+    This module enumerates the scope policy of every peer-carrying route,
+    `schedule_dream` among them. That route short-circuits with a 400
+    ("Dreams are not enabled in the system configuration") before any scope
+    check runs, so an operator `.env` carrying DREAM_ENABLED=false turns the
+    schedule_dream cases into false failures. Note `src/config.py` calls
+    `load_dotenv(override=True)`, so a `.env` beats a real environment
+    variable — pinning the setting here is the only reliable fix.
+
+    Same intent as tests/dreamer/test_dream_scheduler.py and
+    tests/routes/test_workspaces.py, which already pin it per-test.
+    """
+    monkeypatch.setattr(settings.DREAM, "ENABLED", True)
+
 
 # Request parameters and model fields that carry a peer name, in any position.
 _PEER_PARAM_NAMES = {
@@ -744,9 +764,9 @@ def test_policy_entries_are_well_formed():
                     "status is 422 — missing_status is for the permissive cases"
                 )
             else:
-                assert (
-                    len(case.missing_reason.strip()) > 30
-                ), f"{case.key} tolerates a missing reserved name; say why"
+                assert len(case.missing_reason.strip()) > 30, (
+                    f"{case.key} tolerates a missing reserved name; say why"
+                )
                 assert case.missing_status, (
                     f"{case.key} tolerates a missing reserved name; name the exact "
                     "status(es) it should get, so a 5xx cannot satisfy the case"
@@ -757,9 +777,9 @@ def test_policy_entries_are_well_formed():
                 f"{case.key}: an allow case needs a builder and an expected "
                 "allow_status together, or neither"
             )
-            assert (
-                case.refuse_missing is None
-            ), f"{case.key}: refuse_missing applies to REFUSE cases only"
+            assert case.refuse_missing is None, (
+                f"{case.key}: refuse_missing applies to REFUSE cases only"
+            )
 
 
 _REFUSING = tuple(case for case in POLICY if case.refuse)
@@ -823,9 +843,9 @@ def test_refusing_position_rejects_a_real_scope(
     # A 422 alone proves nothing — a malformed body would also produce one.
     detail = result.text
     if case.schema_level:
-        assert (
-            "pattern" in detail
-        ), f"{case.key} expected a schema-level refusal; detail: {detail[:200]}"
+        assert "pattern" in detail, (
+            f"{case.key} expected a schema-level refusal; detail: {detail[:200]}"
+        )
     else:
         assert "scope" in detail.lower() and backing in detail, (
             f"{case.key} returned 422 but not because of the scope; "

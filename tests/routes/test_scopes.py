@@ -1054,6 +1054,7 @@ async def test_dream_cannot_be_queued_for_a_future_scope(
     client: TestClient,
     db_session: AsyncSession,
     sample_data: tuple[Workspace, Peer],
+    monkeypatch: pytest.MonkeyPatch,
 ):
     """A refused dream leaves no queue row behind.
 
@@ -1062,6 +1063,11 @@ async def test_dream_cannot_be_queued_for_a_future_scope(
     is not flagged yet — so the check has to sit in the transaction that inserts
     the queue item, and a check placed after the insert would still 422.
     """
+    # The route 400s on `not settings.DREAM.ENABLED` before reaching the
+    # scope check, and src/config.py load_dotenv(override=True) lets an
+    # operator .env beat the environment, so pin it here.
+    monkeypatch.setattr(settings.DREAM, "ENABLED", True)
+
     test_workspace, test_peer = sample_data
     future = scope_peer_name(str(generate_nanoid()))
 
