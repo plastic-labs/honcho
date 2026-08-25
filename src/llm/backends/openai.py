@@ -441,6 +441,7 @@ class OpenAIBackend:
                 )
 
         cache_creation, cache_read = extract_openai_cache_tokens(usage)
+        # content_override=None means no override, not "force content to None"
         if content_override is not None:
             content: Any = content_override
         elif message.content is not None:
