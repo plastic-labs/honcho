@@ -557,6 +557,12 @@ DB_SQL_DEBUG=false
 # Per-connection establish timeout (seconds) so a single connection attempt
 # fails fast instead of hanging when the server/pooler is unreachable.
 DB_CONNECT_TIMEOUT_SECONDS=2
+
+# pgvector HNSW iterative scan (requires pgvector >= 0.8.0)
+# When set, each new pool connection gets the GUC applied so filtered
+# HNSW queries return full top_k results instead of silently under-returning.
+# Valid values: "off", "strict_order", "relaxed_order", or unset (None).
+DB_HNSW_ITERATIVE_SCAN=strict_order
 ```
 
 ### Authentication
