@@ -23,29 +23,6 @@ connect_args: dict[str, Any] = {
     "connect_timeout": settings.DB.CONNECT_TIMEOUT_SECONDS,
 }
 
-# Apply pgvector HNSW iterative scan setting per-connection so filtered
-# approximate searches return full top_k results. We use a pool "connect"
-# event listener instead of connect_args["server_settings"] because
-# SQLAlchemy's psycopg dialect passes connect_args to AsyncConnection.connect(),
-# and psycopg 3.3.x rejects "server_settings" at connect() time (it's a
-# constructor kwarg, not a connect kwarg). The event listener runs SET on the
-# raw DBAPI connection right after it's established.
-if settings.DB.HNSW_ITERATIVE_SCAN:
-
-    def _set_hnsw_iterative_scan(
-        dbapi_connection: Any, _connection_record: Any
-    ) -> None:
-        cursor = dbapi_connection.cursor()
-        try:
-            cursor.execute(
-                "SET hnsw.iterative_scan = %s",
-                (settings.DB.HNSW_ITERATIVE_SCAN,),
-            )
-        finally:
-            cursor.close()
-
-    event.listen(engine.sync_engine, "connect", _set_hnsw_iterative_scan)
-
 # Context variable to store request context
 request_context: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "request_context", default=None
@@ -106,6 +83,29 @@ ReadSessionLocal = async_sessionmaker(
     bind=read_engine,
     class_=AsyncSession,
 )
+
+# Apply pgvector HNSW iterative scan setting per-connection so filtered
+# approximate searches return full top_k results. We use a pool "connect"
+# event listener instead of connect_args["server_settings"] because
+# SQLAlchemy's psycopg dialect passes connect_args to AsyncConnection.connect(),
+# and psycopg 3.3.x rejects "server_settings" at connect() time (it's a
+# constructor kwarg, not a connect kwarg). The event listener runs SET on the
+# raw DBAPI connection right after it's established.
+if settings.DB.HNSW_ITERATIVE_SCAN:
+
+    def _set_hnsw_iterative_scan(
+        dbapi_connection: Any, _connection_record: Any
+    ) -> None:
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute(
+                "SET hnsw.iterative_scan = %s",
+                (settings.DB.HNSW_ITERATIVE_SCAN,),
+            )
+        finally:
+            cursor.close()
+
+    event.listen(engine.sync_engine, "connect", _set_hnsw_iterative_scan)
 
 
 def _set_application_name_on_checkout(
