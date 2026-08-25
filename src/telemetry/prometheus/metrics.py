@@ -208,6 +208,27 @@ db_queries_in_flight_gauge = NamespacedGauge(
     ["namespace", "instance_type"],
 )
 
+# Physical DB connections, tracked via SQLAlchemy connection-lifecycle events
+# (see DBConnectionTracker in src/db.py) rather than the pool object, so they are
+# visible under EVERY pool class — including NullPool, whose pool holds no records
+# for the scrape-time db_pool_connections collector to read. Under QueuePool this
+# roughly equals db_pool_connections{checked_in} + {checked_out}; its unique value
+# is under NullPool, where that collector reads zero.
+db_connections_open_gauge = NamespacedGauge(
+    "db_connections_open",
+    "Physical DB connections currently open by this instance, across all pool "
+    + "classes (tracks concurrency of DB work under NullPool, pool occupancy "
+    + "under QueuePool)",
+    ["namespace", "instance_type"],
+)
+
+db_connections_established_counter = NamespacedCounter(
+    "db_connections_established",
+    "Physical DB connections established since process start. Under NullPool, "
+    + "rate() approximates request rate (one connect per DB checkout)",
+    ["namespace", "instance_type"],
+)
+
 
 @final
 class PrometheusMetrics:
@@ -408,6 +429,11 @@ class PrometheusMetrics:
     def initialize_bounded_metrics(self, *, instance_type: str) -> None:
         """Pre-create bounded-label counter children at 0 for this process, so an
         absent series means a broken scrape rather than "nothing happened".
+
+        Note: the DB-instrumentation metrics (db_queries_in_flight,
+        db_connections_open, db_connections_established) are NOT initialized here —
+        they zero-init via the pre-resolved labeled children in their register_db_*
+        functions in src/db.py, so an auditor should not read them as forgotten.
 
         Args:
             instance_type: "api" or "deriver" — selects the process-specific

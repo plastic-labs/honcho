@@ -17,7 +17,12 @@ from sentry_sdk.integrations.starlette import StarletteIntegration
 from src._version import HONCHO_VERSION
 from src.cache.client import close_cache, init_cache
 from src.config import settings
-from src.db import engine, register_db_query_instrumentation, request_context
+from src.db import (
+    engine,
+    register_db_connection_instrumentation,
+    register_db_query_instrumentation,
+    request_context,
+)
 from src.exceptions import HonchoException
 from src.routers import (
     conclusions,
@@ -109,6 +114,7 @@ async def lifespan(_: FastAPI):
     # Expose DB connection-pool stats for this API instance (no-op if metrics off)
     register_db_pool_collector("api")
     register_db_query_instrumentation("api")
+    register_db_connection_instrumentation("api")
 
     # region ai
     # Zero-init bounded-label counters so a missing series signals a broken scrape,
