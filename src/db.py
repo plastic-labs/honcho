@@ -20,7 +20,7 @@ from src.telemetry.prometheus.metrics import (
 
 logger = logging.getLogger(__name__)
 
-connect_args = {
+connect_args: dict[str, Any] = {
     "prepare_threshold": None,
     # Bound a single connection attempt so it fails fast instead of hanging when
     # the server/pooler is unreachable or stalled (psycopg, seconds).
@@ -87,6 +87,50 @@ ReadSessionLocal = async_sessionmaker(
     bind=read_engine,
     class_=AsyncSession,
 )
+
+
+def _set_hnsw_iterative_scan_on_connect(
+    dbapi_connection: Any, _connection_record: Any
+) -> None:
+    """Apply pgvector HNSW iterative scan GUC per-connection.
+
+    Registered when ``DB.HNSW_ITERATIVE_SCAN`` is set. Fires once per new
+    pool connection so filtered HNSW queries return full top_k results
+    instead of silently under-returning when out-of-scope rows consume the
+    scan budget. Uses ``set_config`` with a bind parameter (same pattern as
+    ``_set_application_name_on_checkout``) rather than an f-string ``SET``
+    to avoid special-casing utility-statement parameter binding.
+
+    Runs in autocommit so it never leaves the connection 'idle in
+    transaction': this hook fires BEFORE the dialect applies execution-option
+    isolation levels, and psycopg refuses to switch a connection into
+    AUTOCOMMIT (which the read engine does) while a transaction opened by
+    this statement is still in progress. ``set_config(..., is_local=false)``
+    is session-scoped, so it persists past the autocommit boundary.
+    """
+    value = settings.DB.HNSW_ITERATIVE_SCAN
+    try:
+        previous_autocommit = dbapi_connection.autocommit
+        if not previous_autocommit:
+            dbapi_connection.autocommit = True
+        try:
+            cursor = dbapi_connection.cursor()
+            try:
+                cursor.execute(
+                    "SELECT set_config('hnsw.iterative_scan', %s, false)",
+                    (value,),
+                )
+            finally:
+                cursor.close()
+        finally:
+            if not previous_autocommit:
+                dbapi_connection.autocommit = False
+    except Exception:
+        logger.debug("setting hnsw.iterative_scan on connect failed", exc_info=True)
+
+
+if settings.DB.HNSW_ITERATIVE_SCAN:
+    event.listen(engine.sync_engine, "connect", _set_hnsw_iterative_scan_on_connect)
 
 
 def _set_application_name_on_checkout(
