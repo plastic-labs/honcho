@@ -99,12 +99,24 @@ if settings.DB.HNSW_ITERATIVE_SCAN:
         # SET is a utility command — psycopg doesn't expand bind parameters ($1)
         # in utility statements, so we interpolate the value directly. It's a
         # controlled config setting (strict_order | on | off), not user input.
+        #
+        # The "connect" event fires before the dialect applies execution-option
+        # isolation levels. The read engine sets AUTOCOMMIT, and psycopg refuses
+        # to change autocommit while a transaction from SET is in progress. So we
+        # run in autocommit mode (same pattern as _set_application_name_on_checkout).
         value = settings.DB.HNSW_ITERATIVE_SCAN
-        cursor = dbapi_connection.cursor()
+        previous_autocommit = dbapi_connection.autocommit
+        if not previous_autocommit:
+            dbapi_connection.autocommit = True
         try:
-            cursor.execute(f"SET hnsw.iterative_scan = {value}")
+            cursor = dbapi_connection.cursor()
+            try:
+                cursor.execute(f"SET hnsw.iterative_scan = {value}")
+            finally:
+                cursor.close()
         finally:
-            cursor.close()
+            if not previous_autocommit:
+                dbapi_connection.autocommit = False
 
     event.listen(engine.sync_engine, "connect", _set_hnsw_iterative_scan)
 
