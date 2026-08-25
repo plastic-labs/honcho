@@ -123,6 +123,28 @@ def get_cache_namespace() -> str:
     return cast(str, settings.CACHE.NAMESPACE)
 
 
+# On Redis Cluster a key's slot is derived from the substring inside the first
+# {...}, when one is present. Tagging the namespace puts every key an instance
+# writes on a single slot, and therefore a single shard, so its client holds
+# connections to one node rather than to all of them. Namespaces still hash
+# independently of one another, so keys stay spread across the cluster.
+#
+# Two spellings, because the two ways a key gets built treat the string
+# differently: cashews runs `prefix=` through format substitution, so braces
+# have to be doubled to survive as literals, while direct construction does no
+# substitution and needs them single. Both render to the same bytes, which
+# tests/cache/test_cache_namespace_hash_tag.py asserts -- a mismatch would send
+# writes and deletes to different keys with nothing raised.
+def cache_key_namespace() -> str:
+    """Tagged namespace for keys built by string concatenation."""
+    return "{" + get_cache_namespace() + "}"
+
+
+def cache_prefix_namespace() -> str:
+    """Tagged namespace for cashews `prefix=`, which format-substitutes."""
+    return "{{" + get_cache_namespace() + "}}"
+
+
 async def init_cache() -> None:
     """Initialize and verify cache connection if enabled."""
     async with _cache_lock:
@@ -256,6 +278,8 @@ __all__ = [
     "init_cache",
     "close_cache",
     "cache",
+    "cache_key_namespace",
+    "cache_prefix_namespace",
     "safe_cache_delete",
     "safe_cache_set",
 ]
