@@ -24,12 +24,27 @@ connect_args: dict[str, Any] = {
 }
 
 # Apply pgvector HNSW iterative scan setting per-connection so filtered
-# approximate searches return full top_k results. psycopg3 passes
-# server_settings as RUNTIME SET on every new connection.
+# approximate searches return full top_k results. We use a pool "connect"
+# event listener instead of connect_args["server_settings"] because
+# SQLAlchemy's psycopg dialect passes connect_args to AsyncConnection.connect(),
+# and psycopg 3.3.x rejects "server_settings" at connect() time (it's a
+# constructor kwarg, not a connect kwarg). The event listener runs SET on the
+# raw DBAPI connection right after it's established.
 if settings.DB.HNSW_ITERATIVE_SCAN:
-    connect_args["server_settings"] = {
-        "hnsw.iterative_scan": settings.DB.HNSW_ITERATIVE_SCAN,
-    }
+
+    def _set_hnsw_iterative_scan(
+        dbapi_connection: Any, _connection_record: Any
+    ) -> None:
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute(
+                "SET hnsw.iterative_scan = %s",
+                (settings.DB.HNSW_ITERATIVE_SCAN,),
+            )
+        finally:
+            cursor.close()
+
+    event.listen(engine.sync_engine, "connect", _set_hnsw_iterative_scan)
 
 # Context variable to store request context
 request_context: contextvars.ContextVar[str | None] = contextvars.ContextVar(
