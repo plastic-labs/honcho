@@ -2,11 +2,12 @@ from datetime import datetime, timezone
 
 import pytest
 from nanoid import generate as generate_nanoid
-from sqlalchemy import select
+from sqlalchemy import Boolean, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
-from src.exceptions import ResourceNotFoundException
+from src.config import settings
+from src.exceptions import ObserverException, ResourceNotFoundException
 
 
 class TestSessionCRUD:
@@ -165,7 +166,9 @@ class TestSessionCRUD:
         ).one()
         assert active_joined_at == datetime(2020, 1, 1, tzinfo=timezone.utc)
         assert active_left_at is None
-        assert active_config == original_config.model_dump()
+        # A replace states the desired end state, so the incoming config lands even
+        # though the membership window is untouched.
+        assert active_config == updated_config.model_dump()
 
         await crud.set_peers_for_session(
             db_session,
@@ -185,6 +188,152 @@ class TestSessionCRUD:
         assert rejoined_joined_at > active_joined_at
         assert rejoined_left_at is None
         assert rejoined_config == updated_config.model_dump()
+
+    @pytest.mark.asyncio
+    async def test_observer_limit_counts_preserved_config(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """On the add path an already-active observer keeps its stored config, so
+        it still counts against the limit when re-sent as a non-observer."""
+        monkeypatch.setattr(settings, "SESSION_OBSERVERS_LIMIT", 2)
+        test_workspace, _ = sample_data
+        # Bound to a local: rollback below expires the ORM instance, and reloading
+        # it would lazy-load outside the greenlet context.
+        workspace_name = test_workspace.name
+        session_name = str(generate_nanoid())
+        observer = schemas.SessionPeerConfig(observe_others=True, observe_me=False)
+        bystander = schemas.SessionPeerConfig(observe_others=False, observe_me=True)
+        existing = [str(generate_nanoid()) for _ in range(2)]
+
+        await crud.get_or_create_session(
+            db_session,
+            schemas.SessionCreate(
+                name=session_name, peers=dict.fromkeys(existing, observer)
+            ),
+            workspace_name,
+        )
+
+        # Adding cannot demote an active member, so re-sending the two observers as
+        # non-observers leaves them observing and the third peer makes three.
+        with pytest.raises(ObserverException):
+            await crud.get_or_create_session(
+                db_session,
+                schemas.SessionCreate(
+                    name=session_name,
+                    peers={
+                        **dict.fromkeys(existing, bystander),
+                        str(generate_nanoid()): observer,
+                    },
+                ),
+                workspace_name,
+            )
+
+        # The rejected request left nothing behind.
+        await db_session.rollback()
+        observer_count = await db_session.scalar(
+            select(func.count()).where(
+                models.SessionPeer.session_name == session_name,
+                models.SessionPeer.workspace_name == workspace_name,
+                models.SessionPeer.left_at.is_(None),
+                models.SessionPeer.configuration["observe_others"].astext.cast(Boolean),
+            )
+        )
+        assert observer_count == 2
+
+    @pytest.mark.asyncio
+    async def test_set_peers_observer_limit_counts_replaced_config(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """The replace path applies the incoming config, so demoting active
+        observers frees room under the limit in the same request."""
+        monkeypatch.setattr(settings, "SESSION_OBSERVERS_LIMIT", 2)
+        test_workspace, _ = sample_data
+        workspace_name = test_workspace.name
+        session_name = str(generate_nanoid())
+        db_session.add(models.Session(name=session_name, workspace_name=workspace_name))
+        await db_session.flush()
+        observer = schemas.SessionPeerConfig(observe_others=True, observe_me=False)
+        bystander = schemas.SessionPeerConfig(observe_others=False, observe_me=True)
+        existing = [str(generate_nanoid()) for _ in range(2)]
+
+        await crud.set_peers_for_session(
+            db_session,
+            workspace_name=workspace_name,
+            session_name=session_name,
+            peer_names=dict.fromkeys(existing, observer),
+        )
+
+        # Demoting both active observers while adding a new one leaves exactly one.
+        await crud.set_peers_for_session(
+            db_session,
+            workspace_name=workspace_name,
+            session_name=session_name,
+            peer_names={
+                **dict.fromkeys(existing, bystander),
+                str(generate_nanoid()): observer,
+            },
+        )
+        observer_count = await db_session.scalar(
+            select(func.count()).where(
+                models.SessionPeer.session_name == session_name,
+                models.SessionPeer.workspace_name == workspace_name,
+                models.SessionPeer.left_at.is_(None),
+                models.SessionPeer.configuration["observe_others"].astext.cast(Boolean),
+            )
+        )
+        assert observer_count == 1
+
+    @pytest.mark.asyncio
+    async def test_observer_limit_lets_over_limit_session_take_non_observers(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """A session already past the limit still accepts non-observers, so
+        sessions that grew over it before enforcement do not become unusable."""
+        monkeypatch.setattr(settings, "SESSION_OBSERVERS_LIMIT", 2)
+        test_workspace, _ = sample_data
+        workspace_name = test_workspace.name
+        session_name = str(generate_nanoid())
+        observer = schemas.SessionPeerConfig(observe_others=True, observe_me=False)
+        bystander = schemas.SessionPeerConfig(observe_others=False, observe_me=True)
+
+        await crud.get_or_create_session(
+            db_session,
+            schemas.SessionCreate(
+                name=session_name,
+                peers=dict.fromkeys(
+                    [str(generate_nanoid()) for _ in range(2)], observer
+                ),
+            ),
+            workspace_name,
+        )
+
+        # Now the limit is below what the session already holds.
+        monkeypatch.setattr(settings, "SESSION_OBSERVERS_LIMIT", 1)
+        await crud.get_or_create_session(
+            db_session,
+            schemas.SessionCreate(
+                name=session_name, peers={str(generate_nanoid()): bystander}
+            ),
+            workspace_name,
+        )
+
+        active_count = await db_session.scalar(
+            select(func.count()).where(
+                models.SessionPeer.session_name == session_name,
+                models.SessionPeer.workspace_name == workspace_name,
+                models.SessionPeer.left_at.is_(None),
+            )
+        )
+        assert active_count == 3
 
     @pytest.mark.asyncio
     async def test_get_session_peer_configuration(
