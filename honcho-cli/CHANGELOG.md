@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- `--setup` for openai-compatible writes `EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL` into the profile `.env` alongside `LLM_OPENAI_BASE_URL`
+
 ## [0.1.3] - 2026-08-25
 
 ### Added
