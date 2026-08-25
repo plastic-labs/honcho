@@ -16,12 +16,20 @@ from src.telemetry.prometheus.metrics import db_queries_in_flight_gauge
 
 logger = logging.getLogger(__name__)
 
-connect_args = {
+connect_args: dict[str, Any] = {
     "prepare_threshold": None,
     # Bound a single connection attempt so it fails fast instead of hanging when
     # the server/pooler is unreachable or stalled (psycopg, seconds).
     "connect_timeout": settings.DB.CONNECT_TIMEOUT_SECONDS,
 }
+
+# Apply pgvector HNSW iterative scan setting per-connection so filtered
+# approximate searches return full top_k results. psycopg3 passes
+# server_settings as RUNTIME SET on every new connection.
+if settings.DB.HNSW_ITERATIVE_SCAN:
+    connect_args["server_settings"] = {
+        "hnsw.iterative_scan": settings.DB.HNSW_ITERATIVE_SCAN,
+    }
 
 # Context variable to store request context
 request_context: contextvars.ContextVar[str | None] = contextvars.ContextVar(
