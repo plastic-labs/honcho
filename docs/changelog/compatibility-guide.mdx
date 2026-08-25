@@ -8,7 +8,7 @@ This guide helps you match the right SDK version to your Honcho API version. New
 
 ## Current Versions
 
-<CardGroup cols={2}>
+<CardGroup cols={3}>
   <Card title="TypeScript SDK" icon="js">
     **Latest:** v2.4.0
 
@@ -23,8 +23,16 @@ This guide helps you match the right SDK version to your Honcho API version. New
     pip install honcho-ai
     ```
   </Card>
+  <Card title="CLI" icon="terminal">
+    **Latest:** v0.1.3
+
+    ```bash
+    uv tool install honcho-cli
+    ```
+  </Card>
 </CardGroup>
 
+CLI 0.1.3+ can start a local stack (`honcho start`) from `ghcr.io/plastic-labs/honcho:latest`. It talks to any v3 API — managed, self-hosted, or that local stack.
 
 ## Version Compatibility Table
 

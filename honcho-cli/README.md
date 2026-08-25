@@ -28,13 +28,13 @@ honcho doctor      # verify your config + connectivity
 honcho             # show banner + command list
 ```
 
-`honcho init` reads `apiKey` and `environmentUrl` from the top-level of `~/.honcho/config.json` (the same file other Honcho tools — plugins, host integrations — share). If both are present, it confirms them with you; if either is missing (or you decline), it prompts for the missing value(s) and writes them back. Host-specific entries under `hosts` are left untouched.
+`honcho init` reads `apiKey` and `environmentUrl` from the top-level of `~/.honcho/config.json` (the same file other Honcho tools — plugins, host integrations — share). If both are present, it confirms them with you; if either is missing (or you decline), it prompts for the missing value(s) and writes them back. On managed servers that advertise the device grant, you can log in via the browser instead of pasting a key. Host-specific entries under `hosts` are left untouched.
 
 Per-command scoping (workspace / peer / session) is handled via `-w` / `-p` / `-s` flags or `HONCHO_*` env vars — not persisted as CLI defaults.
 
 ### Local stack
 
-`honcho start` runs a personal Honcho server on your machine (API, deriver, Postgres, Redis) via Docker. Inference is cloud-side: set `LLM_OPENAI_API_KEY`, `LLM_ANTHROPIC_API_KEY`, or `LLM_GEMINI_API_KEY` (env overrides `config.toml`). Stack files live under `~/.honcho/profiles/local/` and are not committed to a project.
+`honcho start` runs a personal Honcho server on your machine (API, deriver, Postgres, Redis) via Docker. You do **not** need to clone this repo. Inference is cloud-side: set `LLM_OPENAI_API_KEY`, `LLM_ANTHROPIC_API_KEY`, or `LLM_GEMINI_API_KEY` (env overrides `config.toml`). Stack files live under `~/.honcho/profiles/local/` and are not committed to a project.
 
 On first start, the CLI pulls `ghcr.io/plastic-labs/honcho:latest` and **pins that digest** in `profile.json`, then copies the image's `config.toml.example` to `config.toml` in the same directory. `honcho start` never overwrites `config.toml` after that — including when you re-pin the image. Delete the file yourself if you want a fresh copy from a new image.
 
@@ -63,7 +63,7 @@ honcho stop --wipe     # also delete volumes
 
 | Command | Description |
 |---------|-------------|
-| `honcho init` | Confirm/set `apiKey` + `environmentUrl` in `~/.honcho/config.json` |
+| `honcho init` | Confirm/set `apiKey` + `environmentUrl` in `~/.honcho/config.json`. Browser login on managed servers. |
 | `honcho start` | Start a local Honcho stack (API, deriver, Postgres, Redis). Requires Docker and a cloud LLM key. `--setup basic` / `--setup advanced` runs an interactive config wizard (TTY only). Does not change `environmentUrl`. |
 | `honcho stop` | Stop the local stack. `--wipe` also deletes volumes. |
 | `honcho status` | Show every local stack (or `--profile` for one). |

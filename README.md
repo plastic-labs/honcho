@@ -11,11 +11,12 @@
 ![Static Badge](https://img.shields.io/badge/Server-3.1.0-blue)
 [![PyPI version](https://img.shields.io/pypi/v/honcho-ai.svg)](https://pypi.org/project/honcho-ai/)
 [![NPM version](https://img.shields.io/npm/v/@honcho-ai/sdk.svg)](https://npmjs.org/package/@honcho-ai/sdk)
+[![CLI](https://img.shields.io/pypi/v/honcho-cli.svg?label=honcho-cli)](https://pypi.org/project/honcho-cli/)
 [![Discord](https://img.shields.io/discord/1016845111637839922?style=flat&logo=discord&logoColor=23ffffff&label=Plastic%20Labs&labelColor=235865F2)](https://discord.gg/honcho)
 
 **Honcho is memory infrastructure for building stateful agents that understand changing people, agents, groups, projects, and ideas over time.**
 
-Store messages and events, let Honcho reason in the background, then query peer representations, session context, search results, or natural-language insights from any model or framework. Use it managed at [api.honcho.dev](https://api.honcho.dev) or self-host the FastAPI server yourself.
+Store messages and events, let Honcho reason in the background, then query peer representations, session context, search results, or natural-language insights from any model or framework. Use it managed at [api.honcho.dev](https://api.honcho.dev), run a local stack with [`honcho start`](#cli), or self-host the FastAPI server yourself.
 
 Using Honcho as your memory system will earn your agents higher retention, more trust, and help you build data moats to out-compete incumbents.
 
@@ -29,6 +30,7 @@ Using Honcho as your memory system will earn your agents higher retention, more 
 - [Quickstart](#quickstart)
 - [What Honcho Gives You](#what-honcho-gives-you)
 - [Integrations](#integrations)
+- [CLI](#cli)
 - [Core Concepts](#core-concepts)
 - [Benchmarks & Evals](#benchmarks--evals)
 - [Self-hosting](#self-hosting)
@@ -39,7 +41,7 @@ Using Honcho as your memory system will earn your agents higher retention, more 
 - [Contributing](#contributing)
 - [License](#license)
 
-The Honcho project is split between several repositories, with this one hosting the core service logic — implemented as a FastAPI server. Client SDKs for Python and TypeScript live in the [`sdks/`](./sdks) directory.
+The Honcho project is split between several repositories, with this one hosting the core service logic — implemented as a FastAPI server. Client SDKs for Python and TypeScript live in the [`sdks/`](./sdks) directory. The [`honcho-cli`](./honcho-cli) package lives here too.
 
 ## Start Here
 
@@ -47,7 +49,8 @@ The Honcho project is split between several repositories, with this one hosting 
 | -------------------------------------- | ---------------------------------------------------------- | ----------------------------- |
 | Give my coding agent persistent memory | Claude Code, OpenCode, OpenClaw, Hermes, or any MCP client | [Integrations](#integrations) |
 | Add memory to my product               | Python or TypeScript SDK                                   | [Quickstart](#quickstart)     |
-| Self-host Honcho                       | Docker / local development                                 | [Self-hosting](#self-hosting) |
+| Run Honcho locally, or inspect one     | `honcho start` / `honcho-cli`                              | [CLI](#cli)                   |
+| Self-host from source                  | Docker Compose or local development                        | [Self-hosting](#self-hosting) |
 
 ## Why Honcho
 
@@ -56,7 +59,7 @@ The Honcho project is split between several repositories, with this one hosting 
 | Reasoning-first memory  | Extracts conclusions from conversations and events, not just matching chunks.        |
 | Peer-centric model      | Tracks users, agents, groups, projects, and ideas as entities that change over time. |
 | Multi-peer perspective  | Models what one peer knows about another when configured.                            |
-| Managed or self-hosted  | Use `api.honcho.dev` or run the FastAPI server yourself.                             |
+| Managed or self-hosted  | Use `api.honcho.dev`, `honcho start` locally, or run the FastAPI server yourself.    |
 | Agent-tool integrations | MCP, Claude Code, OpenCode, OpenClaw, Hermes, Cursor-compatible clients.             |
 
 ## The Honcho Loop
@@ -70,7 +73,7 @@ Concretely: workspaces hold peers, peers participate in sessions, messages live 
 
 ## Quickstart
 
-Get an API key at [app.honcho.dev](https://app.honcho.dev) — when you sign up you'll be prompted to join an organization, which gets its own dedicated Honcho instance and $100 free credits. Or [self-host](#self-hosting) and run against `http://localhost:8000`.
+Get an API key at [app.honcho.dev](https://app.honcho.dev) — when you sign up you'll be prompted to join an organization, which gets its own dedicated Honcho instance and $100 free credits. Or run a local stack with [`honcho start`](#cli) and point the SDK at `http://localhost:8000`.
 
 ### Python
 
@@ -226,11 +229,65 @@ For wiring the Honcho SDK into an existing application, install the integration 
 npx skills add plastic-labs/honcho
 ```
 
-Then invoke `/honcho-integration` in Claude Code (or `/honcho-dev:integrate` via the plugin marketplace). The same command also installs the memory skills — `honcho-memory` (concepts: the recall/record loop, session and peer strategy, plus how to connect and drive an MCP-connected Honcho) and `honcho-cli` (inspecting and debugging a deployment). Details: [agentic development guide](https://honcho.dev/docs/v3/documentation/introduction/vibecoding).
+Then invoke `/honcho-integration` in Claude Code (or `/honcho-dev:integrate` via the plugin marketplace). The same command also installs the memory skills — `honcho-memory` (concepts: the recall/record loop, session and peer strategy, plus how to connect and drive an MCP-connected Honcho) and `honcho-cli` (inspecting a deployment, or running a local stack with `honcho start`). Details: [agentic development guide](https://honcho.dev/docs/v3/documentation/introduction/vibecoding).
 
 ### Other MCP clients
 
 The same `claude mcp add` form (or its client-specific equivalent) works in any MCP-compatible client. See [MCP guide](https://honcho.dev/docs/v3/guides/integrations/mcp).
+
+## CLI
+
+[`honcho-cli`](https://pypi.org/project/honcho-cli/) is a terminal for Honcho: inspect workspaces, peers, sessions, and memory, or run a personal local stack. It wraps the Python SDK with agent-friendly defaults — JSON when piped, structured errors, and exit codes for scripts.
+
+```bash
+uv tool install honcho-cli
+
+honcho init        # API key or browser login, plus server URL → ~/.honcho/config.json
+honcho doctor      # verify config + connectivity
+honcho             # banner + command list
+```
+
+`honcho init` shares `~/.honcho/config.json` with plugins and other Honcho tools. It owns `apiKey` and `environmentUrl` at the top level; everything else (`hosts`, `sessions`, …) is left untouched. On managed servers that advertise the device grant, init can log you in via the browser instead of pasting a key. Workspace / peer / session scope is per-command (`-w` / `-p` / `-s` or `HONCHO_*` env vars) — never persisted as CLI defaults.
+
+### Local stack (no clone)
+
+`honcho start` is the fastest way to run Honcho on your machine. It pulls the published image (`ghcr.io/plastic-labs/honcho:latest`), **pins that digest**, and brings up API + deriver + Postgres + Redis in Docker. You do not need to clone this repo. Inference stays cloud-side: pass `LLM_OPENAI_API_KEY`, `LLM_ANTHROPIC_API_KEY`, or `LLM_GEMINI_API_KEY` (or run `--setup`).
+
+```bash
+LLM_OPENAI_API_KEY=sk-... honcho start
+honcho start --setup basic      # interactive provider + chat model
+honcho start --setup advanced   # embeddings, deriver/dialectic models, dreams, flush
+honcho status
+honcho stop                     # keep data
+honcho stop --wipe              # also delete volumes
+```
+
+Stack files live under `~/.honcho/profiles/local/` (override with `--profile` / `HONCHO_PROFILE`). First start copies the image `config.toml`; later starts never overwrite it, including when you re-pin the image. `--setup` writes curated LLM overrides into the profile `.env` (env wins over `config.toml`). Auth is off. Ports bind to `127.0.0.1`; if 8000/5432/6379 are taken, the CLI remaps them (or pass `--api-port` / `--db-port` / `--redis-port`).
+
+`honcho start` does **not** change `environmentUrl` in the shared config — plugins keep pointing at `api.honcho.dev`. Talk to the local stack for one command, or make it the default:
+
+```bash
+HONCHO_BASE_URL=http://127.0.0.1:8000 honcho workspace list
+honcho init --base-url http://127.0.0.1:8000   # persist local as the CLI default
+```
+
+To develop the server itself (live reload, from-source image), see [Self-hosting](#self-hosting). Full flags, profiles, and `--image`: [CLI reference](https://honcho.dev/docs/v3/documentation/reference/cli).
+
+### Inspect and debug
+
+| Command | What it shows |
+| ------- | ------------- |
+| `honcho workspace inspect` | Peers, sessions, config |
+| `honcho workspace queue-status` | Whether the deriver is processing |
+| `honcho peer inspect <id>` | Card, session count, recent conclusions |
+| `honcho peer chat "<query>"` | Dialectic about a peer (`-p` / `-w`) |
+| `honcho session view <id> --last 20` | Read-only transcript table |
+| `honcho session context <id>` | Exactly what an agent would see |
+| `honcho conclusion list` | Observations (filter with `--observer` / `--observed`) |
+
+Piped or `--json` emits JSON (arrays for collections, objects for single resources). `honcho doctor --json` is a machine-parseable health checklist.
+
+The `honcho-cli` agent skill teaches coding agents these commands — install with `npx skills add plastic-labs/honcho` and pick `honcho-cli`. Source and extra examples: [`honcho-cli/README.md`](./honcho-cli/README.md).
 
 ## Core Concepts
 
@@ -275,9 +332,9 @@ Honcho's evals span LongMemEval, LoCoMo, and other long-conversation benchmarks.
 
 ## Self-hosting
 
-Honcho is open source under AGPL-3.0. You can run the full server locally with Docker, then point the SDKs at `http://localhost:8000`.
+Honcho is open source under AGPL-3.0. To **run** a personal instance, prefer [`honcho start`](#cli) — no clone, published GHCR image, Docker. The paths below are for building from source, contributing, or deploying without the CLI.
 
-### Quick start (Docker)
+### Quick start (from source, Docker)
 
 ```bash
 git clone https://github.com/plastic-labs/honcho.git
@@ -633,14 +690,16 @@ For low-latency use cases, Honcho provides access to a `representation` endpoint
 
 - **Python** — [`honcho-ai`](https://pypi.org/project/honcho-ai/) on PyPI · source in [`sdks/python/`](./sdks/python)
 - **TypeScript** — [`@honcho-ai/sdk`](https://www.npmjs.com/package/@honcho-ai/sdk) on npm · source in [`sdks/typescript/`](./sdks/typescript)
+- **CLI** — [`honcho-cli`](https://pypi.org/project/honcho-cli/) on PyPI · source in [`honcho-cli/`](./honcho-cli) · [CLI reference](https://honcho.dev/docs/v3/documentation/reference/cli)
 
-SDKs are versioned independently of the server. Current SDK versions track each other; the server badge above reflects the deployed server version.
+SDKs are versioned independently of the server. Current SDK versions track each other; the server badge above reflects the deployed server version. The CLI is versioned on its own (`honcho-cli` 0.1.3+ includes `honcho start`).
 
 See the [SDK Reference](https://honcho.dev/docs/v3/documentation/reference/sdk) for full API surface, the [API Reference](https://honcho.dev/docs/v3/api-reference/introduction) for the raw HTTP API, and per-SDK example folders for runnable demos.
 
 ## Learn More
 
 - [Developer documentation](https://honcho.dev/docs/) — full API surface, guides, integrations.
+- [CLI reference](https://honcho.dev/docs/v3/documentation/reference/cli) — local stack, inspect/debug commands, scripting.
 - [Plastic Labs blog](https://blog.plasticlabs.ai/) — design philosophy and history of the project.
 
 ## Contributing
