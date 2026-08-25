@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import crud, models, schemas
 from src.config import settings
 from src.dependencies import tracked_db
-from src.embedding_client import embedding_client
+from src.embedding_client import EmbeddingTokenLimitError, embedding_client
 from src.exceptions import ResourceNotFoundException
 from src.models import Document
 from src.schemas import ResolvedConfiguration
@@ -1884,11 +1884,15 @@ async def _handle_search_memory(
             parent_category=ctx.parent_category,
         ):
             query_embedding = await embedding_client.embed(query)
-    except ValueError:
+    except EmbeddingTokenLimitError:
         return (
             "ERROR: Query exceeds maximum token limit of "
             + f"{settings.EMBEDDING.MAX_INPUT_TOKENS}. Please use a shorter query."
         )
+    except ValueError as e:
+        # Provider/config failure, not an oversized query. Keep returning a
+        # string so the tool loop can continue, but don't blame the query.
+        return f"ERROR: Embedding the query failed: {e}"
 
     # Base telemetry metadata; results_count gets filled in below.
     search_meta: dict[str, Any] = {

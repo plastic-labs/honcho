@@ -159,6 +159,17 @@ def _publish_embedding_event(
         logger.debug("Failed to emit EmbeddingCallCompletedEvent", exc_info=True)
 
 
+class EmbeddingTokenLimitError(ValueError):
+    """Raised when input text genuinely exceeds the model's token limit.
+
+    Subclasses ``ValueError`` so existing broad handlers keep working, while
+    letting callers tell a real "content too long" condition apart from a
+    transient provider or configuration failure (dimension mismatch, empty
+    response, upstream error). Only the pre-flight token checks raise this;
+    provider failures keep raising plain ``ValueError``.
+    """
+
+
 class BatchItem(NamedTuple):
     """A single item in a batch with its metadata."""
 
@@ -272,7 +283,7 @@ class _EmbeddingClient:
         token_count = len(self.encoding.encode(query))
 
         if token_count > self.max_embedding_tokens:
-            raise ValueError(
+            raise EmbeddingTokenLimitError(
                 f"Query exceeds maximum token limit of {self.max_embedding_tokens} tokens (got {token_count} tokens)"
             )
 
@@ -358,8 +369,8 @@ class _EmbeddingClient:
             List of embedding vectors, one per input text (in order)
 
         Raises:
-            ValueError: If any text exceeds token limits and `on_oversize` is
-                ``"raise"``
+            EmbeddingTokenLimitError: If any text exceeds token limits and
+                `on_oversize` is ``"raise"``
         """
         if not texts:
             return []
@@ -380,7 +391,7 @@ class _EmbeddingClient:
                         tokens,
                     )
                 else:
-                    raise ValueError(
+                    raise EmbeddingTokenLimitError(
                         f"Text at index {idx} exceeds maximum token limit of "
                         + f"{self.max_embedding_tokens} tokens (got {len(token_ids)} tokens)"
                     )

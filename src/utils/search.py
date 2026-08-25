@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import models
 from src.config import settings
 from src.dependencies import tracked_db
-from src.embedding_client import embedding_client
+from src.embedding_client import EmbeddingTokenLimitError, embedding_client
 from src.exceptions import ValidationException
 from src.models import session_peers_table
 from src.telemetry.events import EmbeddingCallPurpose
@@ -388,7 +388,7 @@ async def search(
                 parent_category="api",
             ):
                 query_embedding = await embedding_client.embed(query)
-        except ValueError as e:
+        except EmbeddingTokenLimitError as e:
             raise ValidationException(
                 f"Query exceeds maximum token limit of {settings.EMBEDDING.MAX_INPUT_TOKENS}."
             ) from e
