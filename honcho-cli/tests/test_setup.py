@@ -5,6 +5,7 @@ from __future__ import annotations
 from honcho_cli.local.setup import (
     DIALECTIC_LEVELS,
     SetupAnswers,
+    answers_drop_keys,
     answers_to_env,
     chat_model_default,
     load_toml_setup_defaults,
@@ -44,6 +45,33 @@ def test_basic_anthropic_keeps_openai_embeddings_default():
     assert env["LLM_OPENAI_API_KEY"] == "sk-embed"
     assert env["DERIVER_MODEL_CONFIG__TRANSPORT"] == "anthropic"
     assert "EMBEDDING_MODEL_CONFIG__TRANSPORT" not in env
+
+
+def test_openai_compatible_copies_base_url_to_embeddings():
+    env = answers_to_env(
+        SetupAnswers(
+            mode="basic",
+            provider="openai-compatible",
+            api_key="sk-or-test",
+            chat_model="gpt-test",
+            base_url="https://openrouter.ai/api/v1",
+        )
+    )
+    assert env["LLM_OPENAI_BASE_URL"] == "https://openrouter.ai/api/v1"
+    assert (
+        env["EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL"]
+        == "https://openrouter.ai/api/v1"
+    )
+
+
+def test_leaving_openai_compatible_drops_proxy_urls():
+    dropped = answers_drop_keys(
+        SetupAnswers(
+            mode="basic", provider="openai", api_key="sk", chat_model="gpt-test"
+        )
+    )
+    assert "LLM_OPENAI_BASE_URL" in dropped
+    assert "EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL" in dropped
 
 
 def test_chat_default_comes_from_image_toml(tmp_path):

@@ -14,11 +14,7 @@ from pathlib import Path
 import typer
 from rich.console import Console
 
-from honcho_cli.local.env import (
-    is_placeholder_key,
-    read_env_file,
-    settings_from_environ,
-)
+from honcho_cli.local.env import is_placeholder_key, read_env_file, settings_from_environ
 from honcho_cli.output import print_error
 
 SETUP_MODES = ("basic", "advanced")
@@ -145,6 +141,10 @@ def answers_to_env(answers: SetupAnswers) -> dict[str, str]:
     env[_PROVIDER_KEY_ENV[answers.provider]] = answers.api_key
     if answers.base_url:
         env["LLM_OPENAI_BASE_URL"] = answers.base_url
+        # Embeddings do not inherit this URL; write it so OpenRouter/vLLM
+        # keys are not sent to api.openai.com.
+        if (answers.embedding_transport or "openai") == "openai":
+            env["EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL"] = answers.base_url
 
     if answers.embedding_api_key and answers.embedding_key_transport:
         embed_key = (
@@ -188,9 +188,13 @@ def answers_to_env(answers: SetupAnswers) -> dict[str, str]:
 
 def answers_drop_keys(answers: SetupAnswers) -> tuple[str, ...]:
     """Keys to remove so a previous wizard run cannot leak into this one."""
-    if answers.provider == "openai-compatible":
-        return ()
-    return ("LLM_OPENAI_BASE_URL",)
+    drop: list[str] = []
+    if answers.provider != "openai-compatible":
+        drop.append("LLM_OPENAI_BASE_URL")
+    embed_openai = (answers.embedding_transport or "openai") == "openai"
+    if answers.provider != "openai-compatible" or not embed_openai:
+        drop.append("EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL")
+    return tuple(drop)
 
 
 def run_setup(
