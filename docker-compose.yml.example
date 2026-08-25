@@ -57,7 +57,7 @@ services:
       dockerfile: Dockerfile
       args:
         INSTALL_LANCEDB: ${INSTALL_LANCEDB:-false}
-    entrypoint: ["/app/.venv/bin/python", "-m", "src.deriver"]
+    entrypoint: ["/app/.venv/bin/python", "-m", "scripts.deriver_supervisor"]
     depends_on:
       api:
         condition: service_healthy

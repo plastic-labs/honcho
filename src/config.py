@@ -913,6 +913,25 @@ class DeriverSettings(HonchoSettings):
         float, Field(default=60.0, ge=0.0, le=3600.0)
     ] = 60.0
 
+    # The Deriver supervisor probes pending work as well as database reachability.
+    # A value of 0 disables the age alarm, but malformed work-unit keys are always
+    # unhealthy because the worker cannot safely process them.
+    HEALTH_MAX_PENDING_SECONDS: Annotated[
+        int, Field(default=3600, ge=0, le=7 * 24 * 60 * 60)
+    ] = 3600
+    # Give the supervisor longer than the default 30-second Deriver startup jitter
+    # before it starts probing the queue.
+    HEALTHCHECK_START_PERIOD_SECONDS: Annotated[
+        int, Field(default=60, ge=0, le=3600)
+    ] = 60
+    HEALTHCHECK_INTERVAL_SECONDS: Annotated[int, Field(default=30, gt=0, le=3600)] = 30
+    HEALTHCHECK_FAILURES_BEFORE_RESTART: Annotated[
+        int, Field(default=3, gt=0, le=100)
+    ] = 3
+    HEALTHCHECK_COMMAND_TIMEOUT_SECONDS: Annotated[
+        int, Field(default=10, gt=0, le=300)
+    ] = 10
+
     # Retention window (seconds) for keeping errored items in the queue
     QUEUE_ERROR_RETENTION_SECONDS: Annotated[
         int, Field(default=30 * 24 * 3600, gt=0)

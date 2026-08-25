@@ -1,5 +1,4 @@
 import asyncio
-import contextlib
 import random
 import signal
 import time
@@ -59,6 +58,15 @@ class WorkerOwnership(NamedTuple):
 
     work_unit_key: str
     aqs_id: str  # The ID of the ActiveQueueSession that the worker is processing
+
+
+class QuarantinePersistenceError(RuntimeError):
+    """An invalid work unit could not be durably quarantined.
+
+    A process that cannot prove that its queue update and lease deletion committed
+    must preserve the lease and exit. A replacement Deriver will recover it only
+    through the existing stale-lease protocol.
+    """
 
 
 @dataclass(frozen=True)
@@ -128,6 +136,7 @@ class QueueManager:
         self.active_tasks: set[asyncio.Task[None]] = set()
         self.worker_ownership: dict[str, WorkerOwnership] = {}
         self.queue_empty_flag: asyncio.Event = asyncio.Event()
+        self._fatal_error: QuarantinePersistenceError | None = None
 
         # Current adaptive polling interval; grows while idle/erroring and
         # resets to the base interval as soon as work is claimed.
@@ -196,6 +205,38 @@ class QueueManager:
         """Get the total number of work units owned by all workers"""
         return len(self.worker_ownership)
 
+    def _request_fatal_shutdown(self, error: QuarantinePersistenceError) -> None:
+        """Latch a fail-closed error and stop accepting more work immediately."""
+        if self._fatal_error is None:
+            self._fatal_error = error
+            logger.critical(
+                "Fatal queue-integrity error; preserving %d owned leases for stale recovery: %s",
+                self.get_total_owned_work_units(),
+                error,
+            )
+        self.shutdown_event.set()
+
+    async def _shutdown_after_fatal_error(self) -> None:
+        """Stop local activity without deleting durable leases after uncertainty."""
+        logger.critical(
+            "Stopping Deriver after fatal queue-integrity error; skipping graceful lease cleanup"
+        )
+
+        for scheduler_name, scheduler in (
+            ("dream", self.dream_scheduler),
+            ("reconciler", self.reconciler_scheduler),
+        ):
+            try:
+                await scheduler.shutdown()
+            except Exception:
+                logger.exception("Failed to stop %s scheduler during fatal shutdown", scheduler_name)
+
+        pending_tasks = [task for task in self.active_tasks if not task.done()]
+        for task in pending_tasks:
+            task.cancel()
+        if pending_tasks:
+            await asyncio.gather(*pending_tasks, return_exceptions=True)
+
     async def initialize(self) -> None:
         """Setup signal handlers, initialize client, and start the main polling loop"""
         logger.debug(f"Initializing QueueManager with {self.workers} workers")
@@ -221,7 +262,13 @@ class QueueManager:
             await self._sleep_startup_jitter()
             await self.polling_loop()
         finally:
-            await self.cleanup()
+            if self._fatal_error is None:
+                await self.cleanup()
+            else:
+                await self._shutdown_after_fatal_error()
+
+        if self._fatal_error is not None:
+            raise self._fatal_error
 
     async def shutdown(self, sig: signal.Signals) -> None:
         """Handle graceful shutdown"""
@@ -242,6 +289,12 @@ class QueueManager:
 
     async def cleanup(self) -> None:
         """Clean up owned work units"""
+        if self._fatal_error is not None:
+            logger.critical(
+                "Skipping graceful queue cleanup after fatal queue-integrity error; durable leases are retained for stale recovery"
+            )
+            return
+
         total_work_units = self.get_total_owned_work_units()
         if total_work_units > 0:
             logger.debug(f"Cleaning up {total_work_units} owned work units...")
@@ -513,8 +566,30 @@ class QueueManager:
         logger.debug(f"Startup poll jitter: sleeping {delay:.1f}s before first poll")
         # Timeout (slept the full delay without a shutdown) is the normal path;
         # an early return means shutdown fired and polling_loop will exit at once.
-        with contextlib.suppress(asyncio.TimeoutError):
-            await asyncio.wait_for(self.shutdown_event.wait(), timeout=delay)
+        await self._wait_for_shutdown_or_timeout(delay)
+
+    async def _wait_for_shutdown_or_timeout(self, delay: float) -> None:
+        """Wait for a delay, but wake promptly when shutdown is requested."""
+        if delay <= 0.0:
+            return
+
+        # Keep the normal sleep task visible to existing polling/backoff
+        # instrumentation while allowing a fatal shutdown event to win the race.
+        # Cancelling the losing task makes a current backoff sleep wake promptly
+        # without changing the one-delay-per-poll behavior.
+        shutdown_task = asyncio.create_task(self.shutdown_event.wait())
+        sleep_task = asyncio.create_task(asyncio.sleep(delay))
+        tasks = (shutdown_task, sleep_task)
+        try:
+            await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            pending_tasks: list[asyncio.Task[Any]] = [
+                cast(asyncio.Task[Any], task) for task in tasks if not task.done()
+            ]
+            for task in pending_tasks:
+                task.cancel()
+            if pending_tasks:
+                await asyncio.gather(*pending_tasks, return_exceptions=True)
 
     def _advance_poll_interval(self) -> float:
         """Return the current idle/backoff sleep, then grow it toward the cap."""
@@ -544,7 +619,7 @@ class QueueManager:
                 # when capacity frees rather than backing off.
                 if self.semaphore.locked():
                     # logger.debug("All workers busy, waiting")
-                    await asyncio.sleep(
+                    await self._wait_for_shutdown_or_timeout(
                         self._jitter(settings.DERIVER.POLLING_SLEEP_INTERVAL_SECONDS)
                     )
                     continue
@@ -570,14 +645,18 @@ class QueueManager:
                                 self.add_task(task)
                     else:
                         self.queue_empty_flag.set()
-                        await asyncio.sleep(self._advance_poll_interval())
+                        await self._wait_for_shutdown_or_timeout(
+                            self._advance_poll_interval()
+                        )
                 except Exception as e:
                     logger.exception("Error in polling loop")
                     if settings.SENTRY.ENABLED:
                         sentry_sdk.capture_exception(e)
                     # Note: rollback is handled by tracked_db dependency.
                     # Back off so a down/saturated DB isn't hammered every cycle.
-                    await asyncio.sleep(self._advance_poll_interval())
+                    await self._wait_for_shutdown_or_timeout(
+                        self._advance_poll_interval()
+                    )
         finally:
             logger.info("Polling loop stopped")
 
@@ -622,10 +701,110 @@ class QueueManager:
         if settings.SENTRY.ENABLED:
             sentry_sdk.capture_exception(error)
 
+    async def _quarantine_invalid_work_unit(
+        self,
+        work_unit_key: str,
+        worker_id: str,
+        error: ValueError,
+    ) -> bool:
+        """Atomically quarantine malformed work while this worker still owns it.
+
+        The lease is locked before queue rows are changed.  If persistence is
+        uncertain, this worker deliberately retains its durable lease and asks the
+        process to exit so only stale-lease recovery can make the work claimable.
+        """
+        ownership = self.worker_ownership.get(worker_id)
+        if ownership is None or ownership.work_unit_key != work_unit_key:
+            logger.warning(
+                "Worker %s lost local ownership before invalid work-unit quarantine: %s",
+                worker_id,
+                work_unit_key,
+            )
+            return False
+
+        error_message = (
+            f"Invalid work unit key: {error.__class__.__name__}: {error}"
+        )[:65535]
+
+        try:
+            async with tracked_db("quarantine_invalid_work_unit") as db:
+                locked_lease = (
+                    (
+                        await db.execute(
+                            select(models.ActiveQueueSession)
+                            .where(models.ActiveQueueSession.id == ownership.aqs_id)
+                            .where(
+                                models.ActiveQueueSession.work_unit_key
+                                == work_unit_key
+                            )
+                            .with_for_update()
+                        )
+                    )
+                    .scalars()
+                    .one_or_none()
+                )
+                if locked_lease is None:
+                    # This worker no longer owns a durable lease.  Do not mutate
+                    # queue rows: another worker may have already taken the work.
+                    await db.commit()
+                    self.untrack_worker_work_unit(worker_id, work_unit_key)
+                    logger.warning(
+                        "Worker %s lost durable ownership before invalid work-unit quarantine: %s",
+                        worker_id,
+                        work_unit_key,
+                    )
+                    return False
+
+                await db.execute(
+                    update(models.QueueItem)
+                    .where(models.QueueItem.work_unit_key == work_unit_key)
+                    .where(~models.QueueItem.processed)
+                    .values(processed=True, error=error_message)
+                )
+                released = cast(
+                    CursorResult[Any],
+                    await db.execute(
+                        delete(models.ActiveQueueSession)
+                        .where(models.ActiveQueueSession.id == ownership.aqs_id)
+                        .where(
+                            models.ActiveQueueSession.work_unit_key == work_unit_key
+                        )
+                    ),
+                )
+                if released.rowcount != 1:
+                    raise RuntimeError(
+                        "owned ActiveQueueSession disappeared before quarantine release"
+                    )
+                await db.commit()
+        except Exception as quarantine_error:
+            fatal_error = QuarantinePersistenceError(
+                "Could not durably quarantine invalid work unit; retaining its lease for stale recovery"
+            )
+            logger.critical(
+                "Failed to quarantine invalid work unit %s; preserving durable lease: %s",
+                work_unit_key,
+                quarantine_error,
+                exc_info=True,
+            )
+            if settings.SENTRY.ENABLED:
+                sentry_sdk.capture_exception(quarantine_error)
+            self._request_fatal_shutdown(fatal_error)
+            return False
+
+        self.untrack_worker_work_unit(worker_id, work_unit_key)
+        logger.error("Quarantined invalid work unit %s: %s", work_unit_key, error)
+        if settings.SENTRY.ENABLED:
+            sentry_sdk.capture_exception(error)
+        return True
+
     async def process_work_unit(self, work_unit_key: str, worker_id: str) -> None:
         """Process all queue items for a specific work unit by routing to the correct handler."""
         logger.debug(f"Starting to process work unit {work_unit_key}")
-        work_unit = parse_work_unit_key(work_unit_key)
+        try:
+            work_unit = parse_work_unit_key(work_unit_key)
+        except ValueError as error:
+            await self._quarantine_invalid_work_unit(work_unit_key, worker_id, error)
+            return
         async with self.semaphore:
             queue_item_count = 0
             try:
@@ -734,41 +913,49 @@ class QueueManager:
                         break
 
             finally:
-                # Remove work unit from active_queue_sessions when done
-                ownership: WorkerOwnership | None = self.worker_ownership.get(worker_id)
-                if ownership and ownership.work_unit_key == work_unit_key:
-                    removed = await self._cleanup_work_unit(
-                        ownership.aqs_id, work_unit_key
+                if self._fatal_error is not None:
+                    logger.critical(
+                        "Preserving lease for %s because another worker hit a fatal queue-integrity error",
+                        work_unit_key,
                     )
                 else:
-                    removed = False
+                    # Remove work unit from active_queue_sessions when done.
+                    ownership: WorkerOwnership | None = self.worker_ownership.get(
+                        worker_id
+                    )
+                    if ownership and ownership.work_unit_key == work_unit_key:
+                        removed = await self._cleanup_work_unit(
+                            ownership.aqs_id, work_unit_key
+                        )
+                    else:
+                        removed = False
 
-                self.untrack_worker_work_unit(worker_id, work_unit_key)
-                if removed and queue_item_count > 0:
-                    # Only publish webhook if we actually removed an active session
-                    try:
-                        if (
-                            work_unit.task_type in ["representation", "summary"]
-                            and work_unit.workspace_name is not None
-                        ):
-                            logger.debug(
-                                f"Publishing queue.empty event for {work_unit_key} in workspace {work_unit.workspace_name}"
-                            )
-                            await publish_webhook_event(
-                                QueueEmptyEvent(
-                                    workspace_id=work_unit.workspace_name,
-                                    queue_type=work_unit.task_type,
-                                    session_id=work_unit.session_name,
-                                    observer=work_unit.observer,
-                                    observed=work_unit.observed,
+                    self.untrack_worker_work_unit(worker_id, work_unit_key)
+                    if removed and queue_item_count > 0:
+                        # Only publish webhook if we actually removed an active session
+                        try:
+                            if (
+                                work_unit.task_type in ["representation", "summary"]
+                                and work_unit.workspace_name is not None
+                            ):
+                                logger.debug(
+                                    f"Publishing queue.empty event for {work_unit_key} in workspace {work_unit.workspace_name}"
                                 )
-                            )
-                    except Exception:
-                        logger.exception("Error triggering queue_empty webhook")
-                else:
-                    logger.debug(
-                        f"Work unit {work_unit_key} already cleaned up by another worker, skipping webhook"
-                    )
+                                await publish_webhook_event(
+                                    QueueEmptyEvent(
+                                        workspace_id=work_unit.workspace_name,
+                                        queue_type=work_unit.task_type,
+                                        session_id=work_unit.session_name,
+                                        observer=work_unit.observer,
+                                        observed=work_unit.observed,
+                                    )
+                                )
+                        except Exception:
+                            logger.exception("Error triggering queue_empty webhook")
+                    else:
+                        logger.debug(
+                            f"Work unit {work_unit_key} already cleaned up by another worker, skipping webhook"
+                        )
 
     @sentry_sdk.trace
     async def get_next_queue_item(
@@ -1154,6 +1341,9 @@ async def main():
     manager = QueueManager()
     try:
         await manager.initialize()
+    except QuarantinePersistenceError:
+        logger.critical("Queue manager stopping after fatal quarantine persistence error")
+        raise
     except Exception as e:
         logger.error(f"Error in main: {str(e)}")
         sentry_sdk.capture_exception(e)

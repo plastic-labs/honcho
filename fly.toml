@@ -9,7 +9,13 @@ kill_timeout = '5s'
 
 [processes]
   api = 'fastapi run src/main.py'
-  deriver = 'python -m src.deriver'
+  deriver = 'python -m scripts.deriver_supervisor'
+
+[[restart]]
+  # The supervisor exits nonzero after bounded health-probe failures.  Keep this
+  # always-on worker eligible for restart even if a child exits cleanly by mistake.
+  policy = 'always'
+  processes = ['deriver']
 
 [http_service]
   internal_port = 8000

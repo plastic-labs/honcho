@@ -1,8 +1,9 @@
 import asyncio
 from collections.abc import Callable
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from nanoid import generate as generate_nanoid
@@ -11,7 +12,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
 from src.config import settings
-from src.deriver.queue_manager import QueueManager, WorkerOwnership
+from src.deriver.queue_manager import (
+    QuarantinePersistenceError,
+    QueueManager,
+    WorkerOwnership,
+)
 from src.utils.work_unit import construct_work_unit_key
 
 
@@ -294,6 +299,255 @@ class TestQueueProcessing:
             )
         ).scalar_one_or_none()
         assert remaining is None
+
+    async def test_invalid_work_unit_quarantine_commits_items_and_releases_owned_aqs(
+        self,
+        db_session: AsyncSession,
+    ) -> None:
+        """Malformed work is atomically marked processed and released after commit."""
+        work_unit_key = "summary:workspace:session"
+        queue_item = models.QueueItem(
+            work_unit_key=work_unit_key,
+            task_type="summary",
+            payload={},
+            processed=False,
+        )
+        active_session = models.ActiveQueueSession(work_unit_key=work_unit_key)
+        db_session.add_all([queue_item, active_session])
+        await db_session.commit()
+        await db_session.refresh(queue_item)
+        await db_session.refresh(active_session)
+        queue_item_id = queue_item.id
+        active_session_id = active_session.id
+
+        manager = QueueManager()
+        worker_id = "invalid-key-worker"
+        manager.track_worker_work_unit(worker_id, work_unit_key, active_session_id)
+
+        await manager.process_work_unit(work_unit_key, worker_id)
+
+        db_session.expire_all()
+        persisted_item = await db_session.get(models.QueueItem, queue_item_id)
+        persisted_session = await db_session.get(
+            models.ActiveQueueSession, active_session_id
+        )
+        assert persisted_item is not None
+        assert persisted_item.processed is True
+        assert persisted_item.error is not None
+        assert persisted_item.error.startswith("Invalid work unit key: ValueError:")
+        assert persisted_session is None
+        assert worker_id not in manager.worker_ownership
+        assert manager.shutdown_event.is_set() is False
+
+    async def test_invalid_work_unit_does_not_quarantine_after_lease_is_lost(
+        self,
+        db_session: AsyncSession,
+    ) -> None:
+        """An old worker must not mutate queue rows after its durable lease is gone."""
+        work_unit_key = "summary:workspace:session"
+        queue_item = models.QueueItem(
+            work_unit_key=work_unit_key,
+            task_type="summary",
+            payload={},
+            processed=False,
+        )
+        active_session = models.ActiveQueueSession(work_unit_key=work_unit_key)
+        db_session.add_all([queue_item, active_session])
+        await db_session.commit()
+        await db_session.refresh(queue_item)
+        await db_session.refresh(active_session)
+        queue_item_id = queue_item.id
+        active_session_id = active_session.id
+
+        manager = QueueManager()
+        worker_id = "stale-worker"
+        manager.track_worker_work_unit(worker_id, work_unit_key, "lost-aqs-id")
+
+        await manager.process_work_unit(work_unit_key, worker_id)
+
+        db_session.expire_all()
+        persisted_item = await db_session.get(models.QueueItem, queue_item_id)
+        persisted_session = await db_session.get(
+            models.ActiveQueueSession, active_session_id
+        )
+        assert persisted_item is not None
+        assert persisted_item.processed is False
+        assert persisted_item.error is None
+        assert persisted_session is not None
+        assert worker_id not in manager.worker_ownership
+        assert manager.shutdown_event.is_set() is False
+
+    async def test_invalid_work_unit_commit_failure_preserves_durable_state(
+        self,
+        db_session: AsyncSession,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An unconfirmed quarantine commit is fatal and never treated as release."""
+        work_unit_key = "summary:workspace:session"
+        queue_item = models.QueueItem(
+            work_unit_key=work_unit_key,
+            task_type="summary",
+            payload={},
+            processed=False,
+        )
+        active_session = models.ActiveQueueSession(work_unit_key=work_unit_key)
+        db_session.add_all([queue_item, active_session])
+        await db_session.commit()
+        await db_session.refresh(queue_item)
+        await db_session.refresh(active_session)
+        queue_item_id = queue_item.id
+        active_session_id = active_session.id
+
+        manager = QueueManager()
+        worker_id = "failing-worker"
+        manager.track_worker_work_unit(worker_id, work_unit_key, active_session_id)
+
+        @asynccontextmanager
+        async def failing_tracked_db(*_args: Any, **_kwargs: Any):
+            async def fail_commit() -> None:
+                raise OSError("forced quarantine commit failure")
+
+            with patch.object(db_session, "commit", new=AsyncMock(side_effect=fail_commit)):
+                try:
+                    yield db_session
+                except Exception:
+                    await db_session.rollback()
+                    raise
+
+        monkeypatch.setattr(
+            "src.deriver.queue_manager.tracked_db", failing_tracked_db
+        )
+
+        await manager.process_work_unit(work_unit_key, worker_id)
+
+        db_session.expire_all()
+        persisted_item = await db_session.get(models.QueueItem, queue_item_id)
+        persisted_session = await db_session.get(
+            models.ActiveQueueSession, active_session_id
+        )
+        assert persisted_item is not None
+        assert persisted_item.processed is False
+        assert persisted_item.error is None
+        assert persisted_session is not None
+        assert persisted_session.id == active_session_id
+        assert manager.worker_ownership[worker_id] == WorkerOwnership(
+            work_unit_key=work_unit_key,
+            aqs_id=active_session_id,
+        )
+        assert manager.shutdown_event.is_set() is True
+        assert isinstance(
+            manager._fatal_error, QuarantinePersistenceError  # pyright: ignore[reportPrivateUsage]
+        )
+
+    async def test_fatal_cleanup_preserves_owned_leases(
+        self,
+        db_session: AsyncSession,
+    ) -> None:
+        """Fatal finalization must not turn uncertain ownership into a release."""
+        work_unit_key = "summary:workspace:session"
+        active_session = models.ActiveQueueSession(work_unit_key=work_unit_key)
+        db_session.add(active_session)
+        await db_session.commit()
+        await db_session.refresh(active_session)
+        active_session_id = active_session.id
+
+        manager = QueueManager()
+        worker_id = "fatal-worker"
+        manager.track_worker_work_unit(worker_id, work_unit_key, active_session_id)
+        manager._request_fatal_shutdown(  # pyright: ignore[reportPrivateUsage]
+            QuarantinePersistenceError("simulated uncertain quarantine")
+        )
+
+        await manager.cleanup()
+
+        db_session.expire_all()
+        persisted_session = await db_session.get(
+            models.ActiveQueueSession, active_session_id
+        )
+        assert persisted_session is not None
+        assert worker_id in manager.worker_ownership
+
+    async def test_fatal_shutdown_wakes_a_pending_poll_delay(self) -> None:
+        """A latched quarantine failure must not wait through a normal backoff."""
+        manager = QueueManager()
+        delay_task = asyncio.create_task(
+            manager._wait_for_shutdown_or_timeout(60.0)  # pyright: ignore[reportPrivateUsage]
+        )
+        await asyncio.sleep(0)
+        manager.shutdown_event.set()
+
+        await asyncio.wait_for(delay_task, timeout=0.1)
+
+    async def test_restart_recovers_stale_failed_quarantine_then_quarantines(
+        self,
+        db_session: AsyncSession,
+    ) -> None:
+        """A replacement worker only reclaims the retained lease after it is stale."""
+        work_unit_key = "summary:workspace:session"
+        queue_item = models.QueueItem(
+            work_unit_key=work_unit_key,
+            task_type="summary",
+            payload={},
+            processed=False,
+        )
+        active_session = models.ActiveQueueSession(
+            work_unit_key=work_unit_key,
+            last_updated=datetime.now(timezone.utc)
+            - timedelta(minutes=settings.DERIVER.STALE_SESSION_TIMEOUT_MINUTES + 1),
+        )
+        db_session.add_all([queue_item, active_session])
+        await db_session.commit()
+        await db_session.refresh(queue_item)
+        await db_session.refresh(active_session)
+        queue_item_id = queue_item.id
+        active_session_id = active_session.id
+
+        replacement = QueueManager()
+        await replacement.cleanup_stale_work_units()
+
+        db_session.expire_all()
+        assert (
+            await db_session.get(models.ActiveQueueSession, active_session_id)
+        ) is None
+
+        claimed = await replacement.get_and_claim_work_units()
+        replacement_aqs_id = claimed[work_unit_key]
+        replacement_worker_id = "replacement-worker"
+        replacement.track_worker_work_unit(
+            replacement_worker_id, work_unit_key, replacement_aqs_id
+        )
+
+        await replacement.process_work_unit(work_unit_key, replacement_worker_id)
+
+        db_session.expire_all()
+        persisted_item = await db_session.get(models.QueueItem, queue_item_id)
+        assert persisted_item is not None
+        assert persisted_item.processed is True
+        assert (
+            await db_session.get(models.ActiveQueueSession, replacement_aqs_id)
+        ) is None
+
+    async def test_fatal_quarantine_error_is_not_swallowed_by_main(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The process boundary must receive the fatal error after cache cleanup."""
+        from src.deriver import queue_manager as queue_manager_module
+
+        fatal_error = QuarantinePersistenceError("forced fatal quarantine error")
+
+        class FailingQueueManager:
+            async def initialize(self) -> None:
+                raise fatal_error
+
+        close_cache = AsyncMock()
+        monkeypatch.setattr(queue_manager_module, "QueueManager", FailingQueueManager)
+        monkeypatch.setattr(queue_manager_module, "init_cache", AsyncMock())
+        monkeypatch.setattr(queue_manager_module, "close_cache", close_cache)
+
+        with pytest.raises(QuarantinePersistenceError, match="forced fatal"):
+            await queue_manager_module.main()
+        close_cache.assert_awaited_once()
 
     async def test_stale_work_unit_cleanup(
         self,

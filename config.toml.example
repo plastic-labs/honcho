@@ -108,6 +108,13 @@ STALE_SESSION_TIMEOUT_MINUTES = 5
 # Staleness is a minutes-timescale condition, so cleanup doesn't need to run on
 # every seconds-scale poll (0.0 = run every poll, legacy behavior).
 STALE_WORK_UNIT_CLEANUP_INTERVAL_SECONDS = 60.0
+# Queue-health supervisor defaults. The probe checks parser validity and work
+# units with no observed progress for this long; 0 disables only the age alarm.
+HEALTH_MAX_PENDING_SECONDS = 3600
+HEALTHCHECK_START_PERIOD_SECONDS = 60
+HEALTHCHECK_INTERVAL_SECONDS = 30
+HEALTHCHECK_FAILURES_BEFORE_RESTART = 3
+HEALTHCHECK_COMMAND_TIMEOUT_SECONDS = 10
 # QUEUE_ERROR_RETENTION_SECONDS = 2592000  # 30 days
 DEDUPLICATE = true
 LOG_OBSERVATIONS = false

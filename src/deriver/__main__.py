@@ -15,7 +15,7 @@ from src.telemetry import (
     shutdown_telemetry,
 )
 
-from .queue_manager import main
+from .queue_manager import QuarantinePersistenceError, main
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +84,8 @@ async def run_deriver():
         await shutdown_telemetry()
 
 
-if __name__ == "__main__":
+def run() -> int:
+    """Run the Deriver process and return a supervisor-visible exit status."""
     # Setup logging before starting the main loop
     setup_logging()
     logger.info("Starting deriver queue processor")
@@ -99,7 +100,21 @@ if __name__ == "__main__":
         asyncio.run(run_deriver())
     except KeyboardInterrupt:
         logger.info("Shutdown initiated via KeyboardInterrupt")
+        return 0
+    except QuarantinePersistenceError as error:
+        logger.critical(
+            "Deriver exiting nonzero because malformed work could not be durably quarantined: %s",
+            error,
+        )
+        return 1
     except Exception as e:
         logger.exception("Error in main process: %s", e)
+        return 1
     finally:
         logger.info("Deriver process exiting")
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(run())
