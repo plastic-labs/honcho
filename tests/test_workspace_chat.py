@@ -1220,3 +1220,36 @@ async def test_workspace_prefetch_failure_degrades_to_none(
     result = await agent._prefetch_relevant_observations("q")  # pyright: ignore[reportPrivateUsage]
 
     assert result is None
+
+
+class TestWorkspaceChatPrompt:
+    def test_teaches_honcho_world_without_sibling_agent(self) -> None:
+        from src.dialectic.prompts import workspace_agent_system_prompt
+
+        prompt = workspace_agent_system_prompt().lower()
+        assert "peer-level" not in prompt
+        assert "unlike a peer" not in prompt
+        for term in (
+            "honcho",
+            "workspace",
+            "peer",
+            "session",
+            "message",
+            "conclusion",
+            "observer",
+            "observed",
+        ):
+            assert term in prompt
+
+    def test_agent_uses_workspace_prompt_and_prefetch_heading(self) -> None:
+        from src.dialectic.prompts import workspace_agent_system_prompt
+        from src.dialectic.workspace import WorkspaceDialecticAgent
+
+        agent = WorkspaceDialecticAgent(workspace_name="w")
+        offered = {
+            name
+            for tool in agent._select_tools()  # pyright: ignore[reportPrivateUsage]
+            if isinstance((name := tool.get("name")), str)
+        }
+        assert agent.messages[0]["content"] == workspace_agent_system_prompt(offered)
+        assert agent._prefetch_heading() == "Workspace overview (prefetched)"  # pyright: ignore[reportPrivateUsage]

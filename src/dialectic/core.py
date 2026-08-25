@@ -105,7 +105,15 @@ class DialecticAgent:
             {
                 "role": "system",
                 "content": prompts.agent_system_prompt(
-                    observer, observed, observer_peer_card, observed_peer_card
+                    observer,
+                    observed,
+                    observer_peer_card,
+                    observed_peer_card,
+                    available_tools={
+                        name
+                        for tool in self._select_tools()
+                        if isinstance((name := tool.get("name")), str)
+                    },
                 ),
             }
         ]
@@ -303,7 +311,7 @@ class DialecticAgent:
         if prefetched_observations:
             user_content = (
                 f"Query: {query}\n\n"
-                f"## Relevant Observations (prefetched)\n"
+                f"## {self._prefetch_heading()}\n"
                 f"{self._prefetch_intro()}\n\n"
                 f"{prefetched_observations}"
             )
@@ -335,6 +343,10 @@ class DialecticAgent:
             agent_type="dialectic",
             parent_category="dialectic",
         )
+
+    def _prefetch_heading(self) -> str:
+        """Heading for the prefetched block in the user message."""
+        return "Relevant Observations (prefetched)"
 
     def _prefetch_intro(self) -> str:
         """Sentence introducing the prefetched block in the user message."""
