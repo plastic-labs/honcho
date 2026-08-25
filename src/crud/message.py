@@ -6,6 +6,7 @@ from typing import Any
 from nanoid import generate as generate_nanoid
 from sqlalchemy import ColumnElement, Select, and_, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import InstrumentedAttribute
 
 from src import models, schemas
 from src.config import settings
@@ -157,6 +158,91 @@ async def resolve_session_scope(
         allowed = [s for s in allowed if s in scope]
 
     return (allowed, False) if allowed else (None, True)
+
+
+def observer_scope_clause(
+    workspace_name: str,
+    observer: str,
+    session_column: InstrumentedAttribute[str],
+) -> ColumnElement[bool]:
+    """Correlated EXISTS restricting ``session_column`` to the observer's sessions.
+
+    The in-database equivalent of filtering on :func:`get_peer_session_names`.
+    Prefer it whenever the scope feeds a single SQL statement: a peer's
+    membership count is unbounded, and materializing the names turns each one
+    into its own bind parameter. The PostgreSQL wire protocol caps parameters
+    at 65535 per statement, so a peer in enough sessions produces a query the
+    driver cannot serialize at all — and the resulting error carries every
+    parameter in its text.
+
+    Matches the loose membership definition ``get_peer_session_names`` uses by
+    default: any membership record grants visibility, whether or not the peer
+    has since left the session.
+    """
+    session_peers = models.session_peers_table
+    return (
+        select(1)
+        .where(session_peers.c.workspace_name == workspace_name)
+        .where(session_peers.c.peer_name == observer)
+        .where(session_peers.c.session_name == session_column)
+        .exists()
+    )
+
+
+def resolve_session_scope_clauses(
+    workspace_name: str,
+    session_name: str | None,
+    session_allowlist: list[str] | None,
+    observer: str | None,
+    session_column: InstrumentedAttribute[str],
+) -> tuple[list[ColumnElement[bool]], bool]:
+    """SQL-side counterpart to :func:`resolve_session_scope`.
+
+    Returns ``(clauses, deny)``, where ``clauses`` are ANDed onto the caller's
+    statement and ``deny=True`` means return an empty result without querying.
+    Unlike :func:`resolve_session_scope` this touches no database and grows no
+    bind parameters with the observer's session count — the observer half
+    becomes a correlated EXISTS instead of an ``IN`` over fetched names.
+
+    Scoping matches :func:`resolve_session_scope` case for case, with one
+    deliberate difference: where that function returns ``deny=True`` because an
+    observer's membership (or its intersection with the allowlist) is empty,
+    this returns clauses that simply match no rows. Callers reach the same empty
+    result, at the cost of running one indexed query that returns nothing.
+
+    ``session_allowlist`` stays an ``IN`` clause: it is caller-supplied and
+    therefore bounded, so it carries none of the unbounded-growth risk.
+
+    Args:
+        workspace_name: Name of the workspace
+        session_name: A single pinned session, if the caller named one. The
+            caller applies its own equality filter; this function only checks
+            the allowlist permits it.
+        session_allowlist: Optional session allowlist. ``None`` is
+            unrestricted; an empty list fails closed.
+        observer: When set, scope is limited to this peer's sessions
+        session_column: The session-name column to scope, e.g.
+            ``models.Message.session_name``
+    """
+    if session_name:
+        # Fail closed when the allowlist forbids the pinned session, matching
+        # `resolve_session_scope` — routes guard this too, but the dialectic
+        # tools reach CRUD directly, so enforce it at the boundary.
+        if session_allowlist is not None and session_name not in session_allowlist:
+            return [], True
+        return [], False
+
+    clauses: list[ColumnElement[bool]] = []
+
+    if observer is not None:
+        clauses.append(observer_scope_clause(workspace_name, observer, session_column))
+
+    if session_allowlist is not None:
+        if not session_allowlist:
+            return [], True
+        clauses.append(session_column.in_(session_allowlist))
+
+    return clauses, False
 
 
 def _apply_token_limit(

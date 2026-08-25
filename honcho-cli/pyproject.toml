@@ -1,6 +1,6 @@
 [project]
 name = "honcho-cli"
-version = "0.1.2"
+version = "0.1.3"
 description = "A terminal for Honcho — memory that reasons."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -37,6 +37,10 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/honcho_cli"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/honcho_cli/local/templates/docker-compose.yml" = "honcho_cli/local/templates/docker-compose.yml"
+"src/honcho_cli/local/templates/init.sql" = "honcho_cli/local/templates/init.sql"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

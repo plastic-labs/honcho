@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import crud, models, schemas
 from src.config import settings
 from src.dependencies import tracked_db
-from src.embedding_client import embedding_client
+from src.embedding_client import EmbeddingTokenLimitError, embedding_client
 from src.exceptions import ResourceNotFoundException
 from src.models import Document
 from src.schemas import ResolvedConfiguration
@@ -1273,10 +1273,19 @@ async def get_observation_context(
     if not message_ids:
         return []
 
-    from src.crud.message import resolve_session_scope
+    from src.crud.message import resolve_session_scope_clauses
 
-    allowed_session_names, deny = await resolve_session_scope(
-        db, workspace_name, session_name, session_allowlist, observer
+    # Scope as SQL rather than as a fetched name list. The scope is applied to
+    # both the CTE and the outer select, so a materialized list would spend two
+    # bind parameters per session the observer belongs to — enough sessions and
+    # the statement exceeds the driver's 65535-parameter ceiling and cannot be
+    # sent at all.
+    scope_clauses, deny = resolve_session_scope_clauses(
+        workspace_name,
+        session_name,
+        session_allowlist,
+        observer,
+        models.Message.session_name,
     )
     if deny:
         return []
@@ -1290,8 +1299,8 @@ async def get_observation_context(
 
     if session_name:
         stmt = stmt.where(models.Message.session_name == session_name)
-    elif allowed_session_names is not None:
-        stmt = stmt.where(models.Message.session_name.in_(allowed_session_names))
+    for clause in scope_clauses:
+        stmt = stmt.where(clause)
 
     target_seqs_cte = stmt.cte("target_seqs")
 
@@ -1314,8 +1323,8 @@ async def get_observation_context(
 
     if session_name:
         stmt = stmt.where(models.Message.session_name == session_name)
-    elif allowed_session_names is not None:
-        stmt = stmt.where(models.Message.session_name.in_(allowed_session_names))
+    for clause in scope_clauses:
+        stmt = stmt.where(clause)
 
     result = await db.execute(stmt)
     messages = list(result.scalars().all())
@@ -1884,11 +1893,15 @@ async def _handle_search_memory(
             parent_category=ctx.parent_category,
         ):
             query_embedding = await embedding_client.embed(query)
-    except ValueError:
+    except EmbeddingTokenLimitError:
         return (
             "ERROR: Query exceeds maximum token limit of "
             + f"{settings.EMBEDDING.MAX_INPUT_TOKENS}. Please use a shorter query."
         )
+    except ValueError as e:
+        # Provider/config failure, not an oversized query. Keep returning a
+        # string so the tool loop can continue, but don't blame the query.
+        return f"ERROR: Embedding the query failed: {e}"
 
     # Base telemetry metadata; results_count gets filled in below.
     search_meta: dict[str, Any] = {

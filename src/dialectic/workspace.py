@@ -65,7 +65,13 @@ class WorkspaceDialecticAgent(DialecticAgent):
         # Replace the pair-oriented system prompt with the workspace one.
         self.messages[0] = {
             "role": "system",
-            "content": prompts.workspace_agent_system_prompt(),
+            "content": prompts.workspace_agent_system_prompt(
+                {
+                    name
+                    for tool in self._select_tools()
+                    if isinstance((name := tool.get("name")), str)
+                }
+            ),
         }
 
     # ------------------------------------------------------------------
@@ -125,13 +131,17 @@ class WorkspaceDialecticAgent(DialecticAgent):
 
         return format_workspace_stats(stats, peers, cards)
 
+    def _prefetch_heading(self) -> str:
+        return "Workspace overview (prefetched)"
+
     def _prefetch_intro(self) -> str:
         return (
-            "Workspace overview and most-active peers with any known "
-            "biographical facts. Use this to route: query a specific peer's "
-            "memory with search_memory (observer and observed set to that "
-            "peer's name), or use search_messages / get_workspace_stats to "
-            "discover peers this overview does not cover."
+            "Workspace scale, the most active peers, and any known "
+            "biographical facts about them. Use this to decide who is "
+            "relevant, then search that peer's own representation with "
+            "search_memory (observer and observed both set to their name), "
+            "or search_messages / get_workspace_stats to find peers not "
+            "listed here."
         )
 
     def _select_tools(self) -> list[dict[str, Any]]:

@@ -18,7 +18,7 @@ from src.crud.collection import get_or_create_collection
 from src.crud.peer import get_peer, reject_scope_observed
 from src.crud.session import get_session
 from src.dependencies import tracked_db
-from src.embedding_client import embedding_client
+from src.embedding_client import EmbeddingTokenLimitError, embedding_client
 from src.exceptions import (
     ResourceNotFoundException,
     ValidationException,
@@ -362,7 +362,7 @@ async def query_documents(
     if embedding is None:
         try:
             embedding = await embedding_client.embed(query)
-        except ValueError as e:
+        except EmbeddingTokenLimitError as e:
             raise ValidationException(
                 "Query exceeds maximum token limit of "
                 + f"{settings.EMBEDDING.MAX_INPUT_TOKENS}."
@@ -987,7 +987,7 @@ async def create_observations(
         embeddings = await embedding_client.simple_batch_embed(
             contents, on_oversize="truncate"
         )
-    except ValueError as e:
+    except EmbeddingTokenLimitError as e:
         raise ValidationException(str(e)) from e
 
     # Create document objects and track embeddings for vector store

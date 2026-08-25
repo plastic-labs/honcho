@@ -22,8 +22,29 @@ uvx honcho-cli
 
 ```bash
 honcho init        # confirm/set apiKey + Honcho URL in ~/.honcho/config.json
+honcho start       # optional: local API + deriver + Postgres + Redis (Docker)
 honcho doctor      # verify your config + connectivity
 honcho             # show banner + command list
+```
+
+## Local stack
+
+`honcho start` runs a personal Honcho server on your machine via Docker (API, deriver, Postgres, Redis). It is not the managed service at `api.honcho.dev`. Deriver and dialectic call your cloud LLM provider (OpenAI, Anthropic, or Gemini) with a key you supply. Stack files live under `~/.honcho/profiles/local/`. The first start writes `config.toml` there from the image; later starts leave that file alone so your edits persist.
+
+Pass `--setup basic` or `--setup advanced` for an interactive wizard that writes curated LLM/feature overrides into the profile `.env` (environment variables win over `config.toml`). This is TTY-only. `basic` covers provider and chat model; `advanced` also covers embeddings, deriver/dialectic models, dreams, and deriver flush. Re-running `--setup` while the stack is up recreates the API and deriver containers.
+
+This does **not** change `environmentUrl` in the shared config file. To talk to the local stack:
+
+```bash
+HONCHO_BASE_URL=http://127.0.0.1:8000 honcho workspace list
+```
+
+```bash
+LLM_OPENAI_API_KEY=sk-... honcho start
+honcho start --setup basic
+honcho status
+honcho stop            # keep data
+honcho stop --wipe     # also delete volumes
 ```
 
 ## Configuration
