@@ -96,12 +96,13 @@ if settings.DB.HNSW_ITERATIVE_SCAN:
     def _set_hnsw_iterative_scan(
         dbapi_connection: Any, _connection_record: Any
     ) -> None:
+        # SET is a utility command — psycopg doesn't expand bind parameters ($1)
+        # in utility statements, so we interpolate the value directly. It's a
+        # controlled config setting (strict_order | on | off), not user input.
+        value = settings.DB.HNSW_ITERATIVE_SCAN
         cursor = dbapi_connection.cursor()
         try:
-            cursor.execute(
-                "SET hnsw.iterative_scan = %s",
-                (settings.DB.HNSW_ITERATIVE_SCAN,),
-            )
+            cursor.execute(f"SET hnsw.iterative_scan = {value}")
         finally:
             cursor.close()
 
