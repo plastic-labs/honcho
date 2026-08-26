@@ -5,7 +5,7 @@
   var loaded = false
 
   function granted() {
-    var m = document.cookie.match(/CookieConsent=([^;]*)/)
+    var m = document.cookie.match(/(?:^|;\s*)CookieConsent=([^;]*)/)
     if (!m) return false
     var v = decodeURIComponent(m[1])
     // "-1" is Cookiebot's consent-not-required marker.
@@ -18,6 +18,9 @@
     var s = document.createElement('script')
     s.src = 'https://us-assets.i.posthog.com/static/array.js'
     s.async = true
+    s.onerror = function () {
+      loaded = false
+    }
     s.onload = function () {
       window.posthog.init(KEY, {
         api_host: 'https://us.i.posthog.com',
@@ -29,15 +32,32 @@
     document.head.appendChild(s)
   }
 
-  if (granted()) {
-    loadPosthog()
-    return
+  function sync() {
+    if (granted()) {
+      if (!loaded) {
+        loadPosthog()
+      } else if (
+        window.posthog &&
+        window.posthog.has_opted_out_capturing &&
+        window.posthog.has_opted_out_capturing()
+      ) {
+        window.posthog.opt_in_capturing()
+      }
+      return
+    }
+    // Withdrawal mid-session: an already running instance must stop.
+    if (loaded && window.posthog && window.posthog.opt_out_capturing) {
+      window.posthog.opt_out_capturing()
+    }
   }
-  // A grant made on the docs banner itself (step 2) loads it live.
-  var events = ['CookiebotOnConsentReady', 'CookiebotOnAccept']
+
+  sync()
+  var events = [
+    'CookiebotOnConsentReady',
+    'CookiebotOnAccept',
+    'CookiebotOnDecline',
+  ]
   for (var i = 0; i < events.length; i++) {
-    window.addEventListener(events[i], function () {
-      if (granted()) loadPosthog()
-    })
+    window.addEventListener(events[i], sync)
   }
 })()
