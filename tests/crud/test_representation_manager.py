@@ -757,3 +757,48 @@ class TestVectorQueryTopKFloor:
             top_k = mock_query.await_args.kwargs["top_k"]
             assert top_k >= 1, f"max_observations={max_observations} gave top_k={top_k}"
             assert top_k <= max_observations
+
+    @pytest.mark.asyncio
+    async def test_search_messages_external_returns_empty_without_querying_on_zero_limit(
+        self,
+    ):
+        """Message vector search is the remaining path that still hit Turbopuffer."""
+        from src.crud import message as message_crud
+
+        with patch(
+            "src.crud.message.get_external_vector_store",
+            return_value=AsyncMock(),
+        ) as mock_get_store:
+            for limit in (0, -1):
+                assert (
+                    await message_crud._search_messages_external(  # pyright: ignore[reportPrivateUsage]
+                        "workspace",
+                        [0.1, 0.2, 0.3],
+                        limit,
+                    )
+                    == []
+                )
+
+        mock_get_store.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_query_external_vector_message_ids_skips_store_on_zero_limit(
+        self,
+    ):
+        from src.utils import search as search_utils
+
+        with patch(
+            "src.utils.search.get_external_vector_store",
+            return_value=AsyncMock(),
+        ) as mock_get_store:
+            for limit in (0, -1):
+                assert (
+                    await search_utils.query_external_vector_message_ids(
+                        "workspace",
+                        [0.1, 0.2, 0.3],
+                        limit,
+                    )
+                    == []
+                )
+
+        mock_get_store.assert_not_called()

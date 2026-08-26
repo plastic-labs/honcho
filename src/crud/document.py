@@ -231,6 +231,9 @@ async def query_external_vector_document_ids(
     if _uses_pgvector():
         return None
 
+    if top_k <= 0:
+        return []
+
     external_vector_store = get_external_vector_store()
     if external_vector_store is None:
         return []
