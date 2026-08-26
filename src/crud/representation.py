@@ -344,10 +344,8 @@ class RepresentationManager:
             # no derived observations requested
             top_observations = 0
 
-        # remaining observations are recent
-        recent_observations = total - semantic_observations - top_observations
-
         representation = Representation()
+        selected_document_ids: set[str] = set()
 
         # Get semantic observations if requested
         if include_semantic_query:
@@ -362,19 +360,33 @@ class RepresentationManager:
             representation.merge_representation(
                 Representation.from_documents(semantic_docs)
             )
+            selected_document_ids.update(document.id for document in semantic_docs)
 
-        # Get most derived observations if requested
+        # Get most derived observations if requested. The semantic query may
+        # return fewer documents than requested, so cap this query by the
+        # actual remaining representation capacity rather than the configured
+        # budget alone.
         if include_most_derived:
+            remaining_observations = max(0, total - representation.len())
             derived_docs = await self._query_documents_most_derived(
-                db, top_k=top_observations, session_allowlist=session_allowlist
+                db,
+                top_k=min(top_observations, remaining_observations),
+                session_allowlist=session_allowlist,
             )
             representation.merge_representation(
                 Representation.from_documents(derived_docs)
             )
+            selected_document_ids.update(document.id for document in derived_docs)
 
-        # Get recent observations
+        # Reclaim any capacity left by queries that returned fewer unique
+        # documents than requested. This keeps the final representation from
+        # shrinking when semantic or most-derived search underfills its slice.
+        recent_observations = max(0, total - representation.len())
         recent_docs = await self._query_documents_recent(
-            db, top_k=recent_observations, session_allowlist=session_allowlist
+            db,
+            top_k=recent_observations,
+            session_allowlist=session_allowlist,
+            excluded_document_ids=selected_document_ids,
         )
 
         representation.merge_representation(Representation.from_documents(recent_docs))
@@ -426,7 +438,11 @@ class RepresentationManager:
             return []
 
     async def _query_documents_recent(
-        self, db: AsyncSession, top_k: int, session_allowlist: list[str] | None = None
+        self,
+        db: AsyncSession,
+        top_k: int,
+        session_allowlist: list[str] | None = None,
+        excluded_document_ids: set[str] | None = None,
     ) -> list[models.Document]:
         """Query most recent documents."""
         stmt = (
@@ -437,6 +453,11 @@ class RepresentationManager:
                 models.Document.observer == self.observer,
                 models.Document.observed == self.observed,
                 models.Document.deleted_at.is_(None),
+                *(
+                    [models.Document.id.notin_(excluded_document_ids)]
+                    if excluded_document_ids
+                    else []
+                ),
                 *(
                     [
                         models.Document.session_name.in_(session_allowlist),
