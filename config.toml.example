@@ -288,8 +288,8 @@ NAMESPACE = "honcho"
 # TURBOPUFFER_API_KEY = "your-turbopuffer-api-key"
 # TURBOPUFFER_REGION = "us-east-1"
 LANCEDB_PATH = "./lancedb_data"
-# Milvus Lite local storage by default. Use http://localhost:19530 for Milvus
-# server, or a Zilliz Cloud URI with TOKEN.
+# Milvus Lite is only for single-process development. The API + deriver Docker
+# deployment requires a remote Milvus Server or Zilliz Cloud URI with TOKEN.
 MILVUS_URI = "./milvus.db"
 # MILVUS_TOKEN = ""
 # MILVUS_DB_NAME = ""

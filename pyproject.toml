@@ -37,12 +37,17 @@ dependencies = [
     "scikit-learn>=1.6.0",
     "prometheus_client>=0.21.0",
     "cloudevents>=1.12.0,<2.0",
-    "pymilvus[milvus-lite]>=3.0.0",
 ]
 [project.optional-dependencies]
 lancedb = [
     "lancedb>=0.25.3; sys_platform != \"darwin\" or platform_machine != \"x86_64\"",
     "pyarrow>=19.0.0",
+]
+milvus = [
+    "pymilvus>=3.0.0",
+]
+milvus-lite = [
+    "pymilvus[milvus-lite]>=3.0.0",
 ]
 [dependency-groups]
 dev = [
@@ -104,6 +109,7 @@ testpaths = ["tests"]
 pythonpath = ["src"]
 markers = [
     "live_llm: calls live LLM provider APIs and requires --live-llm",
+    "milvus_server: requires HONCHO_TEST_MILVUS_URI for a real Milvus Server",
     "requires_anthropic: requires LLM_ANTHROPIC_API_KEY",
     "requires_openai: requires LLM_OPENAI_API_KEY",
     "requires_gemini: requires LLM_GEMINI_API_KEY",

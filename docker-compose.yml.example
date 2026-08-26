@@ -5,6 +5,7 @@
 #   cp .env.template .env  # edit with your provider config
 #   docker compose up -d --build
 #   INSTALL_LANCEDB=true docker compose up -d --build  # optional local vector store
+#   INSTALL_MILVUS=true docker compose up -d --build   # remote Milvus/Zilliz only
 #
 # By default, ports are bound to 127.0.0.1 (localhost only).
 # For development, uncomment the source mounts and monitoring services below.
@@ -16,6 +17,7 @@ services:
       dockerfile: Dockerfile
       args:
         INSTALL_LANCEDB: ${INSTALL_LANCEDB:-false}
+        INSTALL_MILVUS: ${INSTALL_MILVUS:-false}
     entrypoint: ["sh", "docker/entrypoint.sh"]
     depends_on:
       database:
@@ -46,6 +48,8 @@ services:
       - DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@database:5432/postgres
       - CACHE_URL=redis://redis:6379/0?suppress=true
       - CACHE_ENABLED=true
+      # Reject process-local Milvus Lite files in this API + deriver deployment.
+      - HONCHO_DOCKER_MULTI_PROCESS=true
     env_file:
       - path: .env
         required: false
@@ -57,6 +61,7 @@ services:
       dockerfile: Dockerfile
       args:
         INSTALL_LANCEDB: ${INSTALL_LANCEDB:-false}
+        INSTALL_MILVUS: ${INSTALL_MILVUS:-false}
     entrypoint: ["/app/.venv/bin/python", "-m", "src.deriver"]
     depends_on:
       api:
@@ -75,6 +80,8 @@ services:
       - DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@database:5432/postgres
       - CACHE_URL=redis://redis:6379/0?suppress=true
       - CACHE_ENABLED=true
+      # Reject process-local Milvus Lite files in this API + deriver deployment.
+      - HONCHO_DOCKER_MULTI_PROCESS=true
     env_file:
       - path: .env
         required: false

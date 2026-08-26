@@ -330,6 +330,8 @@ uv sync
 ```
 
 This will create a virtual environment and install the dependencies for Honcho.
+Milvus is optional: use `uv sync --extra milvus` for Milvus Server or Zilliz
+Cloud, or `uv sync --extra milvus-lite` for local single-process development.
 The default virtual environment will be located at `honcho/.venv`. Activate the
 virtual environment via:
 

@@ -1129,7 +1129,6 @@ dependencies = [
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "pyjwt" },
-    { name = "pymilvus", extra = ["milvus-lite"] },
     { name = "python-dotenv" },
     { name = "redis" },
     { name = "rich" },
@@ -1146,6 +1145,12 @@ dependencies = [
 lancedb = [
     { name = "lancedb", marker = "platform_machine != 'x86_64' or sys_platform != 'darwin'" },
     { name = "pyarrow" },
+]
+milvus = [
+    { name = "pymilvus" },
+]
+milvus-lite = [
+    { name = "pymilvus", extra = ["milvus-lite"] },
 ]
 
 [package.dev-dependencies]
@@ -1189,7 +1194,8 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.11.7" },
     { name = "pydantic-settings", specifier = ">=2.10.1" },
     { name = "pyjwt", specifier = ">=2.10.0" },
-    { name = "pymilvus", extras = ["milvus-lite"], specifier = ">=3.0.0" },
+    { name = "pymilvus", marker = "extra == 'milvus'", specifier = ">=3.0.0" },
+    { name = "pymilvus", extras = ["milvus-lite"], marker = "extra == 'milvus-lite'", specifier = ">=3.0.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "redis", specifier = ">=7.0.0,<8.0.0" },
     { name = "rich", specifier = ">=13.7.1" },
@@ -1201,7 +1207,7 @@ requires-dist = [
     { name = "turbopuffer", specifier = ">=1.8.1" },
     { name = "typing-extensions", specifier = ">=4.11.0" },
 ]
-provides-extras = ["lancedb"]
+provides-extras = ["lancedb", "milvus", "milvus-lite"]
 
 [package.metadata.requires-dev]
 dev = [

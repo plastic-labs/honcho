@@ -73,21 +73,45 @@ class MilvusVectorStore(VectorStore):
         """Initialize the Milvus vector store."""
         super().__init__()
 
-        client_kwargs: dict[str, Any] = {"uri": settings.VECTOR_STORE.MILVUS_URI}
+        uri = settings.VECTOR_STORE.MILVUS_URI
+        if "://" not in uri:
+            try:
+                package_version("milvus-lite")
+            except PackageNotFoundError as exc:
+                raise RuntimeError(
+                    "A local VECTOR_STORE_MILVUS_URI requires Honcho's "
+                    + "'milvus-lite' extra (`uv sync --extra milvus-lite`); use the "
+                    + "'milvus' extra only with Milvus Server or Zilliz Cloud"
+                ) from exc
+
+        client_kwargs: dict[str, Any] = {"uri": uri}
         if settings.VECTOR_STORE.MILVUS_TOKEN:
             client_kwargs["token"] = settings.VECTOR_STORE.MILVUS_TOKEN
         if settings.VECTOR_STORE.MILVUS_DB_NAME:
             client_kwargs["db_name"] = settings.VECTOR_STORE.MILVUS_DB_NAME
 
-        self.client = MilvusClient(**client_kwargs)
+        try:
+            self.client = MilvusClient(**client_kwargs)
+        except MilvusException as exc:
+            raise VectorStoreError(
+                "Failed to initialize Milvus client for the configured URI"
+            ) from exc
         self._collection_locks: dict[str, asyncio.Lock] = {}
         self._collection_locks_guard: asyncio.Lock = asyncio.Lock()
+        self._validated_collections: set[str] = set()
 
     async def _run_client_call(
-        self, func: Callable[P, T], *args: P.args, **kwargs: P.kwargs
+        self,
+        operation: str,
+        func: Callable[P, T],
+        *args: P.args,
+        **kwargs: P.kwargs,
     ) -> T:
-        """Run a synchronous MilvusClient call off the event loop."""
-        return await asyncio.to_thread(func, *args, **kwargs)
+        """Run a Milvus call off the event loop and normalize SDK failures."""
+        try:
+            return await asyncio.to_thread(func, *args, **kwargs)
+        except MilvusException as exc:
+            raise VectorStoreError(f"Milvus operation failed: {operation}") from exc
 
     def _collection_name(self, namespace: str) -> str:
         """Map a Honcho namespace to a valid, deterministic Milvus collection."""
@@ -120,7 +144,9 @@ class MilvusVectorStore(VectorStore):
         """Return whether a Milvus collection exists."""
         has_collection = cast(Callable[..., bool], self.client.has_collection)
         return await self._run_client_call(
-            has_collection, collection_name=collection_name
+            f"check collection {collection_name!r}",
+            has_collection,
+            collection_name=collection_name,
         )
 
     async def _get_or_create_collection(self, namespace: str) -> str:
@@ -135,7 +161,8 @@ class MilvusVectorStore(VectorStore):
 
         async with lock:
             if await self._has_collection(collection_name):
-                await self._validate_collection_schema(collection_name)
+                if collection_name not in self._validated_collections:
+                    await self._validate_collection_schema(collection_name)
                 return collection_name
 
             schema = self.client.create_schema(auto_id=False, enable_dynamic_field=True)
@@ -182,7 +209,7 @@ class MilvusVectorStore(VectorStore):
 
             create_collection = cast(Callable[..., None], self.client.create_collection)
             try:
-                await self._run_client_call(create_collection, **create_kwargs)
+                await asyncio.to_thread(create_collection, **create_kwargs)
             except MilvusException as exc:
                 if await self._has_collection(collection_name):
                     await self._validate_collection_schema(collection_name)
@@ -190,10 +217,8 @@ class MilvusVectorStore(VectorStore):
                 raise VectorStoreError(
                     f"Failed to create Milvus collection {collection_name!r}"
                 ) from exc
-            except Exception as exc:
-                raise VectorStoreError(
-                    f"Failed to create Milvus collection {collection_name!r}"
-                ) from exc
+
+            self._validated_collections.add(collection_name)
 
         return collection_name
 
@@ -203,7 +228,9 @@ class MilvusVectorStore(VectorStore):
             Callable[..., dict[str, Any]], self.client.describe_collection
         )
         return await self._run_client_call(
-            describe_collection, collection_name=collection_name
+            f"describe collection {collection_name!r}",
+            describe_collection,
+            collection_name=collection_name,
         )
 
     async def _validate_collection_schema(self, collection_name: str) -> None:
@@ -211,6 +238,15 @@ class MilvusVectorStore(VectorStore):
         description = await self._describe_collection(collection_name)
         fields = cast(list[dict[str, Any]], description.get("fields", []))
         by_name = {str(field.get("name")): field for field in fields}
+
+        if description.get("enable_dynamic_field") is not True:
+            raise VectorStoreError(
+                f"Milvus collection {collection_name!r} must enable dynamic fields"
+            )
+        if description.get("auto_id") is not False:
+            raise VectorStoreError(
+                f"Milvus collection {collection_name!r} must disable auto-generated IDs"
+            )
 
         id_field = by_name.get(ID_FIELD)
         if id_field is None or not id_field.get("is_primary"):
@@ -223,6 +259,41 @@ class MilvusVectorStore(VectorStore):
                 f"Milvus collection {collection_name!r} primary key must be VARCHAR"
             )
 
+        metadata_field = by_name.get(METADATA_FIELD)
+        if metadata_field is None:
+            raise VectorStoreError(
+                f"Milvus collection {collection_name!r} is missing required JSON field"
+                + f" {METADATA_FIELD!r}"
+            )
+        if metadata_field.get("type") != DataType.JSON:
+            raise VectorStoreError(
+                f"Milvus collection {collection_name!r} field {METADATA_FIELD!r}"
+                + " must be JSON"
+            )
+        if metadata_field.get("nullable") is not True:
+            raise VectorStoreError(
+                f"Milvus collection {collection_name!r} field {METADATA_FIELD!r}"
+                + " must be nullable"
+            )
+
+        for field_name in STANDARD_METADATA_FIELDS:
+            field = by_name.get(field_name)
+            if field is None:
+                raise VectorStoreError(
+                    f"Milvus collection {collection_name!r} is missing required field"
+                    + f" {field_name!r}"
+                )
+            if field.get("type") != DataType.VARCHAR:
+                raise VectorStoreError(
+                    f"Milvus collection {collection_name!r} field {field_name!r}"
+                    + " must be VARCHAR"
+                )
+            if field.get("nullable") is not True:
+                raise VectorStoreError(
+                    f"Milvus collection {collection_name!r} field {field_name!r}"
+                    + " must be nullable"
+                )
+
         actual_dim = self._extract_vector_dim(description)
         expected_dim = settings.EMBEDDING.VECTOR_DIMENSIONS
         if actual_dim != expected_dim:
@@ -230,6 +301,42 @@ class MilvusVectorStore(VectorStore):
                 f"Milvus collection {collection_name!r} vector dim ({actual_dim})"
                 + f" does not match EMBEDDING_VECTOR_DIMENSIONS ({expected_dim})"
             )
+
+        list_indexes = cast(Callable[..., list[str]], self.client.list_indexes)
+        index_names = await self._run_client_call(
+            f"list indexes for collection {collection_name!r}",
+            list_indexes,
+            collection_name=collection_name,
+        )
+        vector_index: dict[str, Any] | None = None
+        describe_index = cast(Callable[..., dict[str, Any]], self.client.describe_index)
+        for index_name in index_names:
+            index = await self._run_client_call(
+                f"describe index {index_name!r} for collection {collection_name!r}",
+                describe_index,
+                collection_name=collection_name,
+                index_name=index_name,
+            )
+            if index.get("field_name") == VECTOR_FIELD:
+                vector_index = index
+                break
+
+        if vector_index is None:
+            raise VectorStoreError(
+                f"Milvus collection {collection_name!r} has no index for"
+                + f" vector field {VECTOR_FIELD!r}"
+            )
+        if str(vector_index.get("metric_type", "")).upper() != DISTANCE_METRIC:
+            raise VectorStoreError(
+                f"Milvus collection {collection_name!r} vector index must use"
+                + f" {DISTANCE_METRIC} metric"
+            )
+        if str(vector_index.get("index_type", "")).upper() != "AUTOINDEX":
+            raise VectorStoreError(
+                f"Milvus collection {collection_name!r} vector index must use AUTOINDEX"
+            )
+
+        self._validated_collections.add(collection_name)
 
     def _extract_vector_dim(self, description: dict[str, Any]) -> int:
         """Extract the vector dimension from a Milvus collection description."""
@@ -245,7 +352,12 @@ class MilvusVectorStore(VectorStore):
             dim = params.get("dim")
             if dim is None:
                 break
-            return int(dim)
+            try:
+                return int(dim)
+            except (TypeError, ValueError) as exc:
+                raise VectorStoreError(
+                    "Milvus collection vector dimension must be an integer"
+                ) from exc
         raise VectorStoreError(
             f"Milvus collection exists but has no {VECTOR_FIELD!r} field"
             + " with a declared dimension"
@@ -308,26 +420,17 @@ class MilvusVectorStore(VectorStore):
         rows = [self._row_to_dict(vector) for vector in vectors]
 
         upsert = cast(Callable[..., dict[str, Any]], self.client.upsert)
-        try:
-            await self._run_client_call(
-                upsert,
-                collection_name=collection_name,
-                data=rows,
-            )
-            logger.debug(
-                "Upserted %s vectors to Milvus namespace %s",
-                len(vectors),
-                namespace,
-            )
-        except Exception as exc:
-            logger.exception(
-                "Failed to upsert %s vectors to Milvus namespace %s",
-                len(vectors),
-                namespace,
-            )
-            raise VectorStoreError(
-                f"Failed to upsert {len(vectors)} vectors to namespace {namespace}"
-            ) from exc
+        await self._run_client_call(
+            f"upsert {len(vectors)} vectors into namespace {namespace!r}",
+            upsert,
+            collection_name=collection_name,
+            data=rows,
+        )
+        logger.debug(
+            "Upserted %s vectors to Milvus namespace %s",
+            len(vectors),
+            namespace,
+        )
 
     async def query(
         self,
@@ -360,6 +463,8 @@ class MilvusVectorStore(VectorStore):
                 "Milvus namespace %s does not exist, returning empty", namespace
             )
             return []
+        if collection_name not in self._validated_collections:
+            await self._validate_collection_schema(collection_name)
 
         expected_dim = settings.EMBEDDING.VECTOR_DIMENSIONS
         if len(embedding) != expected_dim:
@@ -383,12 +488,10 @@ class MilvusVectorStore(VectorStore):
         if output_fields is not None:
             search_kwargs["output_fields"] = output_fields
 
-        try:
-            search = cast(Callable[..., list[list[dict[str, Any]]]], self.client.search)
-            batches = await self._run_client_call(search, **search_kwargs)
-        except Exception as exc:
-            logger.exception("Failed to query Milvus namespace %s", namespace)
-            raise VectorStoreError(f"Failed to query namespace {namespace}") from exc
+        search = cast(Callable[..., list[list[dict[str, Any]]]], self.client.search)
+        batches = await self._run_client_call(
+            f"query namespace {namespace!r}", search, **search_kwargs
+        )
 
         results: list[VectorQueryResult] = []
         for hit in batches[0] if batches else []:
@@ -508,24 +611,13 @@ class MilvusVectorStore(VectorStore):
             return
 
         delete = cast(Callable[..., dict[str, int]], self.client.delete)
-        try:
-            await self._run_client_call(
-                delete,
-                collection_name=collection_name,
-                ids=ids,
-            )
-            logger.debug(
-                "Deleted %s vectors from Milvus namespace %s", len(ids), namespace
-            )
-        except Exception as exc:
-            logger.exception(
-                "Failed to delete %s vectors from Milvus namespace %s",
-                len(ids),
-                namespace,
-            )
-            raise VectorStoreError(
-                f"Failed to delete {len(ids)} vectors from namespace {namespace}"
-            ) from exc
+        await self._run_client_call(
+            f"delete {len(ids)} vectors from namespace {namespace!r}",
+            delete,
+            collection_name=collection_name,
+            ids=ids,
+        )
+        logger.debug("Deleted %s vectors from Milvus namespace %s", len(ids), namespace)
 
     async def delete_namespace(self, namespace: str) -> None:
         """
@@ -542,19 +634,17 @@ class MilvusVectorStore(VectorStore):
             return
 
         drop_collection = cast(Callable[..., None], self.client.drop_collection)
-        try:
-            await self._run_client_call(
-                drop_collection,
-                collection_name=collection_name,
-            )
-            logger.debug("Deleted Milvus namespace %s", namespace)
-        except Exception as exc:
-            logger.exception("Failed to delete Milvus namespace %s", namespace)
-            raise VectorStoreError(f"Failed to delete namespace {namespace}") from exc
+        await self._run_client_call(
+            f"delete namespace {namespace!r}",
+            drop_collection,
+            collection_name=collection_name,
+        )
+        self._validated_collections.discard(collection_name)
+        logger.debug("Deleted Milvus namespace %s", namespace)
 
     async def close(self) -> None:
         """Close the Milvus client connection and release resources."""
-        await self._run_client_call(self.client.close)
+        await self._run_client_call("close client", self.client.close)
         logger.debug("Milvus client closed")
 
     async def probe_namespace_dim(self, namespace: str) -> int | None:
@@ -568,5 +658,6 @@ class MilvusVectorStore(VectorStore):
         if not await self._has_collection(collection_name):
             return None
 
-        description = await self._describe_collection(collection_name)
-        return self._extract_vector_dim(description)
+        if collection_name not in self._validated_collections:
+            await self._validate_collection_schema(collection_name)
+        return settings.EMBEDDING.VECTOR_DIMENSIONS

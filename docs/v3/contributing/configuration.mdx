@@ -603,9 +603,8 @@ VECTOR_STORE_TURBOPUFFER_REGION=us-east-1
 # LanceDB-specific
 VECTOR_STORE_LANCEDB_PATH=./lancedb_data
 
-# Milvus-specific
-# Default uses Milvus Lite local storage. Use http://localhost:19530 for
-# Milvus server, or a Zilliz Cloud URI with VECTOR_STORE_MILVUS_TOKEN.
+# Milvus-specific. Lite is only for single-process development. The API +
+# deriver Docker deployment requires a remote Milvus Server or Zilliz Cloud.
 VECTOR_STORE_MILVUS_URI=./milvus.db
 VECTOR_STORE_MILVUS_TOKEN=
 VECTOR_STORE_MILVUS_DB_NAME=
@@ -613,6 +612,8 @@ VECTOR_STORE_MILVUS_CONSISTENCY_LEVEL=Session
 ```
 
 LanceDB is an optional extra and is not included in the default Docker image. Build with `docker build --build-arg INSTALL_LANCEDB=true .` (or `INSTALL_LANCEDB=true docker compose up -d --build`), or run `uv sync --extra lancedb` for manual setups. Note the extra is unavailable on Intel macOS.
+
+Milvus is also optional. For a manual Milvus Server or Zilliz Cloud setup, run `uv sync --extra milvus`; for local single-process Milvus Lite development, run `uv sync --extra milvus-lite`. The Docker Compose deployment runs API and deriver in separate containers, so a local Lite database would create isolated, non-durable files. Use a remote Milvus Server or Zilliz Cloud URI and build with `INSTALL_MILVUS=true docker compose up -d --build`. The compose configuration rejects a local Lite URI when `VECTOR_STORE_TYPE=milvus`.
 
 ## Monitoring
 
@@ -756,6 +757,8 @@ ENABLED = false
 
 [vector_store]
 TYPE = "pgvector"
+# Milvus Lite is only for single-process development. Docker Compose requires a
+# remote Milvus Server or Zilliz Cloud URI.
 MILVUS_URI = "./milvus.db"
 MILVUS_CONSISTENCY_LEVEL = "Session"
 
@@ -784,4 +787,4 @@ uv run alembic revision --autogenerate -m "Description"  # Create new migration
 
 5. **Dialectic level issues** — Unset level fields inherit from the built-in defaults. For Anthropic, `THINKING_BUDGET_TOKENS` must be >= 1024 when enabled. For providers without budgeted thinking, omit it or set it to `0`. `MAX_OUTPUT_TOKENS` must exceed `THINKING_BUDGET_TOKENS`.
 
-6. **Vector store issues** — For Turbopuffer, set the API key. For Milvus Lite, keep `VECTOR_STORE_MILVUS_URI` pointed at a local `.db` path; for Milvus server or Zilliz Cloud, set the URI and token as needed. Check that `EMBEDDING_VECTOR_DIMENSIONS` matches your embedding model — the startup validator will refuse to boot on a mismatch.
+6. **Vector store issues** — For Turbopuffer, set the API key. Install the selected optional extra for LanceDB or Milvus. Milvus Lite requires a local `.db` path and a single-process development setup; Docker Compose requires a remote Milvus Server or Zilliz Cloud URI. Check that `EMBEDDING_VECTOR_DIMENSIONS` matches your embedding model and any existing collection — schema reuse fails before query or upsert when fields, dynamic-field support, index metric, or dimensions are incompatible.

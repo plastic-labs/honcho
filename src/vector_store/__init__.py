@@ -215,7 +215,17 @@ def _create_store_by_type(store_type: str) -> VectorStore:
 
         return LanceDBVectorStore()
     elif store_type == "milvus":
-        from src.vector_store.milvus import MilvusVectorStore
+        try:
+            from src.vector_store.milvus import MilvusVectorStore
+        except ImportError as exc:
+            raise RuntimeError(
+                "VECTOR_STORE.TYPE is set to 'milvus', but the 'pymilvus' package "
+                + "could not be imported. Install Honcho's 'milvus' extra for "
+                + "Milvus Server or Zilliz Cloud (`uv sync --extra milvus`), or "
+                + "the 'milvus-lite' extra for local single-process development "
+                + "(`uv sync --extra milvus-lite`). "
+                + f"Original import error: {exc}"
+            ) from exc
 
         return MilvusVectorStore()
     else:

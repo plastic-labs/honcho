@@ -38,6 +38,8 @@ _EMBEDDING_KNOWN_REJECTING_MODELS: frozenset[str] = frozenset(
 # Hosts known to serve base64 embeddings, which are ~3.6x smaller on the wire.
 _EMBEDDING_BASE64_CAPABLE_HOSTS: frozenset[str] = frozenset({"api.openai.com"})
 
+_TRUE_ENV_VALUES: frozenset[str] = frozenset({"1", "true", "yes", "on"})
+
 
 def _default_embedding_model_for_transport(transport: EmbeddingTransport) -> str:
     if transport == "gemini":
@@ -1456,7 +1458,7 @@ class VectorStoreSettings(HonchoSettings):
     # LanceDB-specific settings (local embedded mode)
     LANCEDB_PATH: str = "./lancedb_data"
 
-    # Milvus-specific settings. The default URI uses Milvus Lite local storage.
+    # Milvus-specific settings. The Lite default is for single-process development.
     MILVUS_URI: str = "./milvus.db"
     MILVUS_TOKEN: str | None = None
     MILVUS_DB_NAME: str | None = None
@@ -1469,10 +1471,25 @@ class VectorStoreSettings(HonchoSettings):
     )
 
     @model_validator(mode="after")
-    def _require_api_key_for_turbopuffer(self) -> "VectorStoreSettings":
+    def _validate_backend_configuration(self) -> "VectorStoreSettings":
         if self.TYPE == "turbopuffer" and not self.TURBOPUFFER_API_KEY:
             raise ValueError(
                 "VECTOR_STORE_TURBOPUFFER_API_KEY must be set when TYPE is 'turbopuffer'"
+            )
+        docker_multi_process = (
+            os.getenv("HONCHO_DOCKER_MULTI_PROCESS", "").strip().lower()
+            in _TRUE_ENV_VALUES
+        )
+        if (
+            self.TYPE == "milvus"
+            and docker_multi_process
+            and "://" not in self.MILVUS_URI
+        ):
+            raise ValueError(
+                "VECTOR_STORE_MILVUS_URI must be a remote Milvus Server or Zilliz "
+                + "Cloud URI when Honcho runs API and deriver as separate Docker "
+                + "services; Milvus Lite database files are process-local and are not "
+                + "supported by this deployment"
             )
         return self
 
