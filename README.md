@@ -238,59 +238,18 @@ The same `claude mcp add` form (or its client-specific equivalent) works in any 
 
 ## CLI
 
-[`honcho-cli`](https://pypi.org/project/honcho-cli/) is a terminal for Honcho: inspect workspaces, peers, sessions, and memory, or run a personal local stack. It wraps the Python SDK with agent-friendly defaults — JSON when piped, structured errors, and exit codes for scripts.
+[`honcho-cli`](https://pypi.org/project/honcho-cli/) inspects a Honcho deployment from the terminal, or runs a personal local stack with Docker.
 
 ```bash
 uv tool install honcho-cli
-
-honcho init        # API key or browser login, plus server URL → ~/.honcho/config.json
-honcho doctor      # verify config + connectivity
-honcho             # banner + command list
+honcho init                 # Honcho API key or browser login + server URL
+honcho start --setup basic  # local stack: LLM provider key + Docker
+honcho doctor
 ```
 
-`uv tool install` only puts `honcho` on your PATH. `honcho init` / `honcho doctor` store a **Honcho** API key (or browser login) so the CLI can call the server. That is not the LLM provider key a local stack needs — `honcho start --setup` (Docker + provider key) is below.
+`honcho init` authenticates the CLI against a Honcho server. `honcho start --setup` is a separate step: it writes the LLM provider key the local deriver needs and starts API + deriver + Postgres + Redis.
 
-`honcho init` shares `~/.honcho/config.json` with plugins and other Honcho tools. It owns `apiKey` and `environmentUrl` at the top level; everything else (`hosts`, `sessions`, …) is left untouched. On managed servers that advertise the device grant, init can log you in via the browser instead of pasting a key. Workspace / peer / session scope is per-command (`-w` / `-p` / `-s` or `HONCHO_*` env vars) — never persisted as CLI defaults.
-
-### Local stack (no clone)
-
-`honcho start --setup basic` is the fastest way to run Honcho on your machine. It prompts for an LLM provider and API key (OpenAI, Anthropic, Gemini, or OpenAI-compatible), writes those into the profile `.env`, pulls `ghcr.io/plastic-labs/honcho:latest`, **pins that digest**, and brings up API + deriver + Postgres + Redis in Docker. You do not need to clone this repo. `honcho init` cannot replace this step — its `apiKey` is for calling a Honcho server, not for the deriver's LLM calls.
-
-```bash
-honcho start --setup basic      # interactive provider + chat model (writes LLM keys)
-honcho start --setup advanced   # embeddings, deriver/dialectic models, dreams, flush
-LLM_OPENAI_API_KEY=sk-... honcho start   # skip the wizard if the key is already in the env
-honcho status
-honcho stop                     # keep data
-honcho stop --wipe              # also delete volumes
-```
-
-Stack files live under `~/.honcho/profiles/local/` (override with `--profile` / `HONCHO_PROFILE`). First start copies the image `config.toml`; later starts never overwrite it, including when you re-pin the image. `--setup` writes curated LLM overrides into the profile `.env` (env wins over `config.toml`). Auth is off. Ports bind to `127.0.0.1`; if 8000/5432/6379 are taken, the CLI remaps them (or pass `--api-port` / `--db-port` / `--redis-port`).
-
-`honcho start` does **not** change `environmentUrl` in the shared config — plugins keep pointing at `api.honcho.dev`. Talk to the local stack for one command, or make it the default:
-
-```bash
-HONCHO_BASE_URL=http://127.0.0.1:8000 honcho workspace list
-honcho init --base-url http://127.0.0.1:8000   # persist local as the CLI default
-```
-
-To develop the server itself (live reload, from-source image), see [Self-hosting](#self-hosting). Full flags, profiles, and `--image`: [CLI reference](https://honcho.dev/docs/v3/documentation/reference/cli).
-
-### Inspect and debug
-
-| Command | What it shows |
-| ------- | ------------- |
-| `honcho workspace inspect` | Peers, sessions, config |
-| `honcho workspace queue-status` | Whether the deriver is processing |
-| `honcho peer inspect <id>` | Card, session count, recent conclusions |
-| `honcho peer chat "<query>"` | Dialectic about a peer (`-p` / `-w`) |
-| `honcho session view <id> --last 20` | Read-only transcript table |
-| `honcho session context <id>` | Exactly what an agent would see |
-| `honcho conclusion list` | Observations (filter with `--observer` / `--observed`) |
-
-Piped or `--json` emits JSON (arrays for collections, objects for single resources). `honcho doctor --json` is a machine-parseable health checklist.
-
-The `honcho-cli` agent skill teaches coding agents these commands — install with `npx skills add plastic-labs/honcho` and pick `honcho-cli`. Source and extra examples: [`honcho-cli/README.md`](./honcho-cli/README.md).
+Full commands and local-stack details: [CLI reference](https://honcho.dev/docs/v3/documentation/reference/cli) · [`honcho-cli/README.md`](./honcho-cli/README.md). To develop the server from source, see [Self-hosting](#self-hosting).
 
 ## Core Concepts
 
@@ -695,7 +654,7 @@ For low-latency use cases, Honcho provides access to a `representation` endpoint
 - **TypeScript** — [`@honcho-ai/sdk`](https://www.npmjs.com/package/@honcho-ai/sdk) on npm · source in [`sdks/typescript/`](./sdks/typescript)
 - **CLI** — [`honcho-cli`](https://pypi.org/project/honcho-cli/) on PyPI · source in [`honcho-cli/`](./honcho-cli) · [CLI reference](https://honcho.dev/docs/v3/documentation/reference/cli)
 
-SDKs are versioned independently of the server. Current SDK versions track each other; the server badge above reflects the deployed server version. The CLI is versioned on its own (`honcho-cli` 0.1.4+ includes `honcho start`).
+SDKs are versioned independently of the server. Current SDK versions track each other; the server badge above reflects the deployed server version.
 
 See the [SDK Reference](https://honcho.dev/docs/v3/documentation/reference/sdk) for full API surface, the [API Reference](https://honcho.dev/docs/v3/api-reference/introduction) for the raw HTTP API, and per-SDK example folders for runnable demos.
 
