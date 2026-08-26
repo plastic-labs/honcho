@@ -1,14 +1,18 @@
 from collections.abc import Sequence
+from datetime import timedelta
 from logging import getLogger
 from typing import Any
 
-from sqlalchemy import Select, case, func, or_, select
+from sqlalchemy import ColumnElement, Select, case, func, or_, select
 from sqlalchemy.engine import Row
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models, schemas
+from src.config import settings
 
 logger = getLogger(__name__)
+
+REPRESENTATION_WORK_UNIT_PREFIX = "representation:"
 
 
 async def get_queue_status(
@@ -72,6 +76,121 @@ async def get_deriver_status(
         session_name=session_name,
         observer=observer,
         observed=observed,
+    )
+
+
+def representation_batch_threshold_clause(
+    *,
+    work_unit_key: ColumnElement[str],
+    total_tokens: ColumnElement[Any],
+    oldest_created_at: ColumnElement[Any],
+) -> ColumnElement[bool] | None:
+    if settings.DERIVER.FLUSH_ENABLED:
+        return None
+
+    target_tokens = settings.DERIVER.REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS
+    if target_tokens <= 0:
+        return None
+
+    threshold: ColumnElement[bool] = func.coalesce(total_tokens, 0) >= target_tokens
+
+    max_age_seconds = settings.DERIVER.REPRESENTATION_BATCH_MAX_AGE_SECONDS
+    if max_age_seconds > 0:
+        threshold = or_(
+            threshold,
+            oldest_created_at <= func.now() - timedelta(seconds=max_age_seconds),
+        )
+
+    return or_(
+        ~work_unit_key.startswith(REPRESENTATION_WORK_UNIT_PREFIX),
+        threshold,
+    )
+
+
+def unclaimed_work_unit_clause(
+    work_unit_key: ColumnElement[str],
+    *,
+    tolerate_stale_claims: bool = False,
+) -> ColumnElement[bool]:
+    claim = select(models.ActiveQueueSession.id).where(
+        models.ActiveQueueSession.work_unit_key == work_unit_key
+    )
+
+    if tolerate_stale_claims:
+        claim = claim.where(
+            models.ActiveQueueSession.last_updated
+            >= func.now()
+            - timedelta(minutes=settings.DERIVER.STALE_SESSION_TIMEOUT_MINUTES)
+        )
+
+    return ~claim.exists()
+
+
+async def get_deriver_backlog(db: AsyncSession) -> schemas.DeriverBacklog:
+    """Count outstanding deriver work across the whole database.
+
+    Read-only, and deliberately unfiltered by workspace: the caller wants the
+    service-wide total, not one tenant's share of it.
+    """
+    token_stats = (
+        select(
+            models.QueueItem.work_unit_key,
+            func.sum(models.Message.token_count).label("total_tokens"),
+            func.min(models.QueueItem.created_at).label("oldest_created_at"),
+        )
+        .join(models.Message, models.QueueItem.message_id == models.Message.id)
+        .where(~models.QueueItem.processed)
+        .where(
+            models.QueueItem.work_unit_key.startswith(REPRESENTATION_WORK_UNIT_PREFIX)
+        )
+        .group_by(models.QueueItem.work_unit_key)
+        .subquery()
+    )
+
+    work_units = (
+        select(models.QueueItem.work_unit_key)
+        .where(~models.QueueItem.processed)
+        .group_by(models.QueueItem.work_unit_key)
+        .subquery()
+    )
+
+    eligible = (
+        select(func.count())
+        .select_from(work_units)
+        .outerjoin(
+            token_stats,
+            work_units.c.work_unit_key == token_stats.c.work_unit_key,
+        )
+        .where(
+            unclaimed_work_unit_clause(
+                work_units.c.work_unit_key, tolerate_stale_claims=True
+            )
+        )
+    )
+
+    threshold_clause = representation_batch_threshold_clause(
+        work_unit_key=work_units.c.work_unit_key,
+        total_tokens=token_stats.c.total_tokens,
+        oldest_created_at=token_stats.c.oldest_created_at,
+    )
+    if threshold_clause is not None:
+        eligible = eligible.where(threshold_clause)
+
+    pending = select(
+        func.count(models.QueueItem.id),
+        func.coalesce(
+            func.extract("epoch", func.now() - func.min(models.QueueItem.created_at)),
+            0,
+        ),
+    ).where(~models.QueueItem.processed)
+
+    eligible_count = (await db.execute(eligible)).scalar_one()
+    pending_count, oldest_age = (await db.execute(pending)).one()
+
+    return schemas.DeriverBacklog(
+        eligible_work_units=int(eligible_count),
+        pending_items=int(pending_count),
+        oldest_pending_age_seconds=float(oldest_age),
     )
 
 

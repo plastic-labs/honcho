@@ -15,13 +15,13 @@ from dotenv import load_dotenv
 from nanoid import generate as generate_nanoid
 from sentry_sdk.integrations.asyncio import AsyncioIntegration
 from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
-from sqlalchemy import and_, delete, or_, select, update
+from sqlalchemy import and_, delete, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import func
 
-from src import models
+from src import crud, models
 from src.cache.client import close_cache, init_cache
 from src.config import settings
 from src.dependencies import tracked_db
@@ -31,15 +31,11 @@ from src.deriver.consumer import (
 )
 from src.dreamer.dream_scheduler import (
     DreamScheduler,
+    check_and_schedule_dream,
     get_dream_scheduler,
     set_dream_scheduler,
 )
 from src.models import QueueItem
-from src.reconciler import (
-    ReconcilerScheduler,
-    get_reconciler_scheduler,
-    set_reconciler_scheduler,
-)
 from src.schemas import ResolvedConfiguration
 from src.telemetry import prometheus_metrics
 from src.telemetry.sentry import initialize_sentry
@@ -157,14 +153,6 @@ class QueueManager:
         else:
             self.dream_scheduler = existing_scheduler
 
-        # Get or create the singleton reconciler scheduler
-        existing_reconciler = get_reconciler_scheduler()
-        if existing_reconciler is None:
-            self.reconciler_scheduler: ReconcilerScheduler = ReconcilerScheduler()
-            set_reconciler_scheduler(self.reconciler_scheduler)
-        else:
-            self.reconciler_scheduler = existing_reconciler
-
         # Initialize Sentry if enabled, using settings
         if settings.SENTRY.ENABLED:
             initialize_sentry(
@@ -209,11 +197,10 @@ class QueueManager:
             )
         logger.debug("Signal handlers registered")
 
-        # Start the reconciler scheduler
         try:
-            await self.reconciler_scheduler.start()
+            await self._reschedule_pending_dreams()
         except Exception:
-            logger.exception("Failed to start reconciler scheduler")
+            logger.exception("Failed to reschedule pending dreams at startup")
 
         # Run the polling loop directly in this task
         logger.debug("Starting polling loop directly")
@@ -223,6 +210,20 @@ class QueueManager:
         finally:
             await self.cleanup()
 
+    async def _reschedule_pending_dreams(self) -> None:
+        if not settings.DREAM.ENABLED:
+            return
+
+        async with tracked_db("reschedule_pending_dreams") as db:
+            collections = (await db.execute(select(models.Collection))).scalars().all()
+            rescheduled = 0
+            for collection in collections:
+                if await check_and_schedule_dream(db, collection):
+                    rescheduled += 1
+
+        if rescheduled:
+            logger.info("Rescheduled %d dream(s) at startup", rescheduled)
+
     async def shutdown(self, sig: signal.Signals) -> None:
         """Handle graceful shutdown"""
         logger.info(f"Received exit signal {sig.name}...")
@@ -230,9 +231,6 @@ class QueueManager:
 
         # Cancel all pending dreams
         await self.dream_scheduler.shutdown()
-
-        # Stop the reconciler scheduler
-        await self.reconciler_scheduler.shutdown()
 
         if self.active_tasks:
             logger.info(
@@ -345,7 +343,7 @@ class QueueManager:
         )
 
         async with tracked_db("get_available_work_units") as db:
-            representation_prefix = "representation:"
+            representation_prefix = crud.deriver.REPRESENTATION_WORK_UNIT_PREFIX
             token_stats_subq = (
                 select(
                     models.QueueItem.work_unit_key,
@@ -383,12 +381,9 @@ class QueueManager:
                     work_units_subq.c.work_unit_key == token_stats_subq.c.work_unit_key,
                 )
                 .where(
-                    ~select(models.ActiveQueueSession.id)
-                    .where(
-                        models.ActiveQueueSession.work_unit_key
-                        == work_units_subq.c.work_unit_key
+                    crud.deriver.unclaimed_work_unit_clause(
+                        work_units_subq.c.work_unit_key
                     )
-                    .exists()
                 )
                 .order_by(
                     work_units_subq.c.oldest_created_at.asc(),
@@ -397,27 +392,13 @@ class QueueManager:
                 .limit(limit)
             )
 
-            # Apply batch threshold filter (skip if FLUSH_ENABLED is True)
-            if not settings.DERIVER.FLUSH_ENABLED and work_unit_target_tokens > 0:
-                max_age_seconds = settings.DERIVER.REPRESENTATION_BATCH_MAX_AGE_SECONDS
-                threshold_clause = (
-                    func.coalesce(token_stats_subq.c.total_tokens, 0)
-                    >= work_unit_target_tokens
-                )
-                if max_age_seconds > 0:
-                    threshold_clause = or_(
-                        threshold_clause,
-                        token_stats_subq.c.oldest_created_at
-                        <= func.now() - timedelta(seconds=max_age_seconds),
-                    )
-                query = query.where(
-                    or_(
-                        ~work_units_subq.c.work_unit_key.startswith(
-                            representation_prefix
-                        ),
-                        threshold_clause,
-                    )
-                )
+            threshold_clause = crud.deriver.representation_batch_threshold_clause(
+                work_unit_key=work_units_subq.c.work_unit_key,
+                total_tokens=token_stats_subq.c.total_tokens,
+                oldest_created_at=token_stats_subq.c.oldest_created_at,
+            )
+            if threshold_clause is not None:
+                query = query.where(threshold_clause)
 
             result = await db.execute(query)
             available_rows = result.all()

@@ -131,6 +131,16 @@ def test_deriver_token_combos_are_valid_and_complete():
     ) not in ingestion
 
 
+_API_BUCKET_3_GAUGES = (
+    "message_embeddings_pending",
+    "deriver_queue_work_units_eligible",
+    "deriver_queue_items_pending",
+    "deriver_queue_oldest_pending_age_seconds",
+    "seconds_since_last_vector_sync",
+    "dreams_pending",
+)
+
+
 # ---------------------------------------------------------------------------
 # API-process zero-init
 # ---------------------------------------------------------------------------
@@ -161,6 +171,15 @@ def test_api_init_materializes_dialectic_and_embed():
             )
     assert sample("embed_now_tasks_shed_total") is not None
     assert sample("embed_now_tasks_in_flight") == 0.0  # gauge, explicit .set(0)
+    for gauge in _API_BUCKET_3_GAUGES:
+        assert sample(gauge) is not None, f"{gauge} was not zero-initialized"
+    assert sample("message_embeddings_pending") == 0.0
+    assert sample("deriver_queue_work_units_eligible") == 0.0
+    assert sample("deriver_queue_items_pending") == 0.0
+    assert sample("deriver_queue_oldest_pending_age_seconds") == 0.0
+    assert sample("dreams_pending") == 0.0
+    # -1, not 0: "never synced" must not read as "just synced" to a threshold
+    assert sample("seconds_since_last_vector_sync") == -1.0
 
 
 @pytest.mark.usefixtures("metrics_enabled")
@@ -212,7 +231,6 @@ def test_deriver_init_materializes_token_and_backlog():
             )
             is not None
         ), f"specialist {specialist_name!r} was not zero-initialized"
-    assert sample("message_embeddings_pending") == 0.0  # gauge zero-init
 
 
 @pytest.mark.usefixtures("metrics_enabled")
@@ -310,6 +328,8 @@ def test_deriver_init_does_not_touch_api_counters():
     # the API-process embed_now counters are equally off-limits
     assert sample("embed_now_tasks_shed_total") is None
     assert sample("embed_now_tasks_in_flight") is None
+    for gauge in _API_BUCKET_3_GAUGES:
+        assert sample(gauge) is None, f"{gauge} must be API-only"
 
 
 # ---------------------------------------------------------------------------

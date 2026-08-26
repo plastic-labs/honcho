@@ -111,7 +111,7 @@ class ReconcilerScheduler:
             logger.warning("ReconcilerScheduler already running")
             return
 
-        self._shutdown_event.clear()
+        self._shutdown_event = asyncio.Event()
         # Initialize next run times to first interval
         now = datetime.now(timezone.utc)
         for task_name, task in RECONCILER_TASKS.items():

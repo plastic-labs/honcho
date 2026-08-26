@@ -187,15 +187,55 @@ telemetry_buffer_size_gauge = NamespacedGauge(
 # region ai
 # Distinct from embed_now_tasks_in_flight (in-flight fast-path work in the API
 # process) — this is the durable, DB-wide backlog the reconciler drains. Every
-# deriver replica refreshes it on its own timer from
+# API replica refreshes it on its own timer from
 # ReconcilerScheduler._scheduler_loop, so replicas disagree by at most one interval.
 # Service-wide, not per-process — hence the help string's "never sum()".
 # endregion
 message_embeddings_pending_gauge = NamespacedGauge(
     "message_embeddings_pending",
     "MessageEmbedding rows awaiting embedding (sync_state='pending'). "
-    + "Service-wide DB count, reported independently by every replica — "
+    + "Service-wide DB count, reported independently by every API replica — "
     + "aggregate with max() or avg(), never sum()",
+    ["namespace"],
+)
+
+deriver_queue_work_units_eligible_gauge = NamespacedGauge(
+    "deriver_queue_work_units_eligible",
+    "Work units a deriver could claim right now. "
+    + "Service-wide DB count, reported independently by every API replica — "
+    + "aggregate with max() or avg(), never sum()",
+    ["namespace"],
+)
+
+deriver_queue_items_pending_gauge = NamespacedGauge(
+    "deriver_queue_items_pending",
+    "Unprocessed queue rows, whether or not they are claimable yet. "
+    + "Service-wide DB count, reported independently by every API replica — "
+    + "aggregate with max() or avg(), never sum()",
+    ["namespace"],
+)
+
+deriver_queue_oldest_pending_age_seconds_gauge = NamespacedGauge(
+    "deriver_queue_oldest_pending_age_seconds",
+    "Age of the oldest unprocessed queue row, 0 when the queue is empty. "
+    + "Service-wide DB value, reported independently by every API replica — "
+    + "aggregate with max() or avg(), never sum()",
+    ["namespace"],
+)
+
+seconds_since_last_vector_sync_gauge = NamespacedGauge(
+    "seconds_since_last_vector_sync",
+    "Seconds since the newest MessageEmbedding.last_sync_at, -1 when none exists. "
+    + "Service-wide DB value, reported independently by every API replica — "
+    + "aggregate with max() or avg(), never sum()",
+    ["namespace"],
+)
+
+dreams_pending_gauge = NamespacedGauge(
+    "dreams_pending",
+    "Collections past the dream document threshold and the min-hours gate with "
+    + "no dream already queued. Service-wide DB count, reported independently by "
+    + "every API replica — aggregate with max() or avg(), never sum()",
     ["namespace"],
 )
 
@@ -467,10 +507,11 @@ class PrometheusMetrics:
         #    replica count. Scale-preserving aggregations (``max()``, ``avg()``,
         #    quantiles) ARE correct, but only while the witnesses disagree by a bounded
         #    amount — which requires every instance to refresh on its own timer (see
-        #    ``message_embeddings_pending``, refreshed per replica from
-        #    ``ReconcilerScheduler._scheduler_loop``). A bucket-3 metric that cannot
-        #    meet that bar does not belong in the app at all — it belongs in an exporter
-        #    that yields exactly one series.
+        #    ``message_embeddings_pending``, refreshed per API replica from
+        #    ``ReconcilerScheduler._scheduler_loop``, and the deriver-queue gauges,
+        #    refreshed per API replica from ``BacklogMetricsPoller``). A bucket-3
+        #    metric that cannot meet that bar does not belong in the app at all — it
+        #    belongs in an exporter that yields exactly one series.
         #
         # Prometheus stamps ``instance``/``job`` at scrape time, which is why buckets 1
         # and 2 need no special handling. ``telemetry_events_dropped`` is handled
@@ -507,6 +548,14 @@ class PrometheusMetrics:
             # ai: embed_now fast path runs as an API-process background task
             self._touch(embed_now_tasks_shed_counter)
             self.set_embed_now_tasks_in_flight(0)
+            self.set_message_embeddings_pending(count=0)
+            self.set_deriver_backlog(
+                eligible_work_units=0,
+                pending_items=0,
+                oldest_pending_age_seconds=0,
+            )
+            self.set_seconds_since_last_vector_sync(seconds=-1)
+            self.set_dreams_pending(count=0)
 
         elif instance_type == "deriver":
             # deriver tokens: only the valid (token_type, component) tuples per
@@ -533,8 +582,6 @@ class PrometheusMetrics:
                         specialist_name=specialist.name,
                         token_type=token_type.value,
                     )
-            # ai: init at 0 so the gauge is visible before its first per-replica refresh
-            self.set_message_embeddings_pending(count=0)
 
     def set_telemetry_buffer_size(self, *, size: int) -> None:
         try:
@@ -547,6 +594,34 @@ class PrometheusMetrics:
             message_embeddings_pending_gauge.labels().set(count)
         except Exception as e:
             self._handle_metric_error("set_message_embeddings_pending", e)
+
+    def set_deriver_backlog(
+        self,
+        *,
+        eligible_work_units: int,
+        pending_items: int,
+        oldest_pending_age_seconds: float,
+    ) -> None:
+        try:
+            deriver_queue_work_units_eligible_gauge.labels().set(eligible_work_units)
+            deriver_queue_items_pending_gauge.labels().set(pending_items)
+            deriver_queue_oldest_pending_age_seconds_gauge.labels().set(
+                oldest_pending_age_seconds
+            )
+        except Exception as e:
+            self._handle_metric_error("set_deriver_backlog", e)
+
+    def set_seconds_since_last_vector_sync(self, *, seconds: float) -> None:
+        try:
+            seconds_since_last_vector_sync_gauge.labels().set(seconds)
+        except Exception as e:
+            self._handle_metric_error("set_seconds_since_last_vector_sync", e)
+
+    def set_dreams_pending(self, *, count: int) -> None:
+        try:
+            dreams_pending_gauge.labels().set(count)
+        except Exception as e:
+            self._handle_metric_error("set_dreams_pending", e)
 
 
 prometheus_metrics = PrometheusMetrics()

@@ -972,6 +972,8 @@ class DeriverSettings(HonchoSettings):
     # When enabled, bypasses the batch token threshold and processes work immediately
     FLUSH_ENABLED: bool = False
 
+    BACKLOG_METRICS_POLL_INTERVAL_SECONDS: Annotated[int, Field(default=30, ge=1)] = 30
+
     @model_validator(mode="before")
     @classmethod
     def _merge_model_config_defaults(cls, data: Any) -> Any:

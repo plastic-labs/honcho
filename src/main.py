@@ -15,6 +15,7 @@ from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
 
 from src._version import HONCHO_VERSION
+from src.backlog import BacklogMetricsPoller
 from src.cache.client import close_cache, init_cache
 from src.config import settings
 from src.db import (
@@ -24,6 +25,7 @@ from src.db import (
     request_context,
 )
 from src.exceptions import HonchoException
+from src.reconciler import ReconcilerScheduler, set_reconciler_scheduler
 from src.routers import (
     conclusions,
     keys,
@@ -135,12 +137,26 @@ async def lifespan(_: FastAPI):
             "Error initializing cache in api process; proceeding without cache: %s", e
         )
 
+    reconciler_scheduler = ReconcilerScheduler()
+    set_reconciler_scheduler(reconciler_scheduler)
+    backlog_metrics_poller = BacklogMetricsPoller()
+    try:
+        await reconciler_scheduler.start()
+    except Exception as e:
+        logger.error("Failed to start reconciler scheduler: %s", e)
+    try:
+        await backlog_metrics_poller.start()
+    except Exception as e:
+        logger.error("Failed to start backlog metrics poller: %s", e)
+
     try:
         yield
     finally:
         # Import here to avoid circular import at module load time
         from src.vector_store import close_external_vector_store
 
+        await backlog_metrics_poller.shutdown()
+        await reconciler_scheduler.shutdown()
         await close_external_vector_store()
         await close_cache()
         await engine.dispose()

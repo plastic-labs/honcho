@@ -78,6 +78,7 @@ from src.schemas.configuration import (
     WorkspaceConfiguration,
 )
 from src.schemas.internal import (
+    DeriverBacklog,
     DocumentBase,
     DocumentCreate,
     DocumentMetadata,
@@ -163,6 +164,7 @@ __all__ = [
     "WorkspaceMessageSearchOptions",
     "WorkspaceUpdate",
     # internal
+    "DeriverBacklog",
     "DocumentBase",
     "DocumentCreate",
     "DocumentMetadata",
