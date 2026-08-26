@@ -224,7 +224,12 @@ class QueueManager:
             await self.cleanup()
 
     async def shutdown(self, sig: signal.Signals) -> None:
-        """Handle graceful shutdown"""
+        """Hand work-unit claims back before the process dies.
+
+        The shutdown budget can be shorter than one work unit takes, so finishing
+        the work is not the goal. A claim still held at exit strands its work
+        until the stale sweep reclaims it.
+        """
         logger.info(f"Received exit signal {sig.name}...")
         self.shutdown_event.set()
 
@@ -236,9 +241,24 @@ class QueueManager:
 
         if self.active_tasks:
             logger.info(
-                f"Waiting for {len(self.active_tasks)} active tasks to complete..."
+                "Waiting up to %ss for %d active tasks to complete...",
+                settings.DERIVER.SHUTDOWN_DRAIN_TIMEOUT_SECONDS,
+                len(self.active_tasks),
             )
-            await asyncio.gather(*self.active_tasks, return_exceptions=True)
+            drain = asyncio.gather(*self.active_tasks, return_exceptions=True)
+            try:
+                await asyncio.wait_for(
+                    drain, timeout=settings.DERIVER.SHUTDOWN_DRAIN_TIMEOUT_SECONDS
+                )
+            except (TimeoutError, asyncio.TimeoutError):
+                # wait_for already cancelled the gather. The work is
+                # reclaimable; the remaining budget is not.
+                logger.warning(
+                    "Drain timed out; abandoning in-flight work units for reclaim"
+                )
+
+        # Not left to the finally in initialize(): a hard kill skips it.
+        await self.cleanup()
 
     async def cleanup(self) -> None:
         """Clean up owned work units"""

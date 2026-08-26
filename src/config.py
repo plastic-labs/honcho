@@ -908,6 +908,11 @@ class DeriverSettings(HonchoSettings):
     # to 0.0 to disable.
     POLLING_JITTER_RATIO: Annotated[float, Field(default=0.5, ge=0.0, le=1.0)] = 0.5
     STALE_SESSION_TIMEOUT_MINUTES: Annotated[int, Field(default=5, gt=0, le=1440)] = 5
+    # How long shutdown waits for in-flight work before abandoning it. Must
+    # leave room in the shutdown budget for the claim release that follows.
+    SHUTDOWN_DRAIN_TIMEOUT_SECONDS: Annotated[
+        float, Field(default=8.0, ge=0.0, le=600.0)
+    ] = 8.0
     # Minimum (jittered) spacing between stale-work-unit cleanup runs
     STALE_WORK_UNIT_CLEANUP_INTERVAL_SECONDS: Annotated[
         float, Field(default=60.0, ge=0.0, le=3600.0)
