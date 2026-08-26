@@ -57,7 +57,10 @@ jobs:
     name: Run Unified Tests
     runs-on: ${{ fromJSON(format('[{0}]', needs.start-runner.outputs.runner-labels)) }}
     needs: start-runner
-    if: needs.start-runner.outputs.runner-ready == 'true'
+    # !cancelled() so this doesn't inherit gate's skip on push events.
+    if: >-
+      !cancelled() &&
+      needs.start-runner.outputs.runner-ready == 'true'
     timeout-minutes: 90
     environment: unified-tests
     permissions:
