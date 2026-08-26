@@ -228,6 +228,9 @@ async def query_external_vector_document_ids(
         empty list when the external store has no results,
         or None when the pgvector (DB-only) path should be used instead.
     """
+    if top_k <= 0:
+        return []
+
     if _uses_pgvector():
         return None
 

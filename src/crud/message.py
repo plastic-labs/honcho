@@ -747,6 +747,9 @@ async def _search_messages_external(
     Multiple vector records can map to the same message (chunked embeddings),
     so we oversample from the vector store and deduplicate by message_id.
     """
+    if limit <= 0:
+        return []
+
     external_vector_store = get_external_vector_store()
     if external_vector_store is None:
         return []
