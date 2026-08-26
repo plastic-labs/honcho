@@ -59,6 +59,7 @@ The CLI resolves config in this order: **flag → env var → config file → de
 | Peer        | —                 | `HONCHO_PEER_ID`       | `-p` / `--peer`        | No         |
 | Session     | —                 | `HONCHO_SESSION_ID`    | `-s` / `--session`     | No         |
 | JSON output | —                 | `HONCHO_JSON`          | `--json`               | No         |
+| Update nag  | —                 | `HONCHO_NO_UPDATE_CHECK` | —                    | No         |
 
 ### Persisted config
 
@@ -109,6 +110,8 @@ Every command adapts its output to the context:
 - **TTY** — human-readable tables via Rich.
 - **Piped or redirected** — JSON automatically (detected via `isatty`).
 - **`--json` flag / `HONCHO_JSON=1`** — force JSON regardless of terminal.
+
+Interactive sessions may print a one-line upgrade hint on stderr at most once a day when a newer `honcho-cli` is on PyPI (`uv tool upgrade honcho-cli`). JSON/piped output skips it; set `HONCHO_NO_UPDATE_CHECK=1` to disable it.
 
 Collection commands emit JSON arrays; single-resource commands emit JSON objects. Errors are always structured:
 

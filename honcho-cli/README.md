@@ -186,6 +186,7 @@ Precedence (highest first): **flag → env var → config file → default**.
 | `HONCHO_PEER_ID` | `-p` / `--peer` | Peer scope |
 | `HONCHO_SESSION_ID` | `-s` / `--session` | Session scope |
 | `HONCHO_JSON` | `--json` | Force JSON output (`1` / `true`) |
+| `HONCHO_NO_UPDATE_CHECK` | — | Disable the once-a-day upgrade notice (`1` / `true`) |
 | `HONCHO_PROFILE` | `--profile` (start/stop/status) | Local stack profile (default: `local`) |
 | `LLM_OPENAI_API_KEY` | — | Provider key for `honcho start` (also `LLM_ANTHROPIC_API_KEY`, `LLM_GEMINI_API_KEY`) |
 
