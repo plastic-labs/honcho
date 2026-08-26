@@ -189,10 +189,10 @@ conventions, and is worth skimming even if you are not using an agent.
 
 ## Local setup
 
-To **run** Honcho locally without developing the server, `uv tool install honcho-cli`
-then `honcho start` is enough — see the [CLI reference](/v3/documentation/reference/cli).
-For development of this repo, [Self-hosting](/v3/contributing/self-hosting) covers
-the Docker Compose path and a manual Postgres setup. Then:
+To run a personal instance, install the CLI (`uv tool install honcho-cli`) and then run
+`honcho start --setup` (Docker + an LLM provider key) — [CLI reference](/v3/documentation/reference/cli).
+
+To **develop this repo**, clone it and:
 
 ```bash
 uv sync                          # create the venv and install dependencies

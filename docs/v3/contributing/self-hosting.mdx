@@ -7,7 +7,7 @@ icon: 'computer'
 
 This guide helps you set up a local environment to run Honcho for development, testing, or self-hosting.
 
-**Just want a running instance?** Skip the clone — [`honcho start`](/v3/documentation/reference/cli#local-stack) pulls a published image and starts API, deriver, Postgres, and Redis. The rest of this page is for building from source, contributing, or deploying without the CLI.
+**Just want a running instance?** `uv tool install honcho-cli` only installs the `honcho` command. Then run [`honcho start --setup`](/v3/documentation/reference/cli#local-stack) (Docker + an LLM provider key) — that pulls a published image and starts API, deriver, Postgres, and Redis. The rest of this page is for building from source, contributing, or deploying without the CLI.
 
 ## Overview
 
@@ -63,12 +63,11 @@ For recommended model tiers per feature, using multiple providers, or direct ven
 
 ## Personal local stack (CLI)
 
-Recommended if you want Honcho running locally without cloning this repo or building an image.
+Recommended if you want Honcho running locally without cloning this repo or building an image. Install the CLI, then run the setup wizard:
 
 ```bash
 uv tool install honcho-cli
-LLM_OPENAI_API_KEY=sk-... honcho start
-# or: honcho start --setup basic
+honcho start --setup basic   # prompts for LLM provider + key, then starts Docker
 ```
 
 `honcho start` pulls `ghcr.io/plastic-labs/honcho:latest`, pins that digest, and starts API + deriver + Postgres + Redis. Stack files live under `~/.honcho/profiles/local/`. It does **not** rewrite `environmentUrl` in `~/.honcho/config.json` (that file is shared with plugins). Talk to the stack with `HONCHO_BASE_URL=http://127.0.0.1:8000`, or run `honcho init --base-url http://127.0.0.1:8000` to persist local as the CLI default.
@@ -333,7 +332,7 @@ const client = new Honcho({
 ### Next Steps
 
 - **Configure Honcho**: Visit the [Configuration Guide](./configuration) for model tiers, provider options, and tuning
-- **Use the CLI**: [`honcho start`](/v3/documentation/reference/cli#local-stack) for a no-clone local stack; inspect with `honcho workspace inspect` / `honcho doctor`
+- **Use the CLI**: install with `uv tool install honcho-cli`, then [`honcho start --setup`](/v3/documentation/reference/cli#local-stack) for a local stack; inspect with `honcho workspace inspect` / `honcho doctor`
 - **Explore the API**: Check out the [API Reference](../api-reference/introduction)
 - **Try the SDKs**: See our [guides](../guides) for examples
 - **Join the community**: [Discord](https://discord.gg/honcho)

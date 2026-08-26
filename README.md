@@ -49,7 +49,8 @@ The Honcho project is split between several repositories, with this one hosting 
 | -------------------------------------- | ---------------------------------------------------------- | ----------------------------- |
 | Give my coding agent persistent memory | Claude Code, OpenCode, OpenClaw, Hermes, or any MCP client | [Integrations](#integrations) |
 | Add memory to my product               | Python or TypeScript SDK                                   | [Quickstart](#quickstart)     |
-| Run Honcho locally, or inspect one     | `honcho start` / `honcho-cli`                              | [CLI](#cli)                   |
+| Run Honcho locally                     | Install CLI, then `honcho start --setup`                   | [CLI](#cli)                   |
+| Inspect a deployment                   | `honcho workspace inspect`, `honcho doctor`                | [CLI](#cli)                   |
 | Self-host from source                  | Docker Compose or local development                        | [Self-hosting](#self-hosting) |
 
 ## Why Honcho
@@ -73,7 +74,7 @@ Concretely: workspaces hold peers, peers participate in sessions, messages live 
 
 ## Quickstart
 
-Get an API key at [app.honcho.dev](https://app.honcho.dev) — when you sign up you'll be prompted to join an organization, which gets its own dedicated Honcho instance and $100 free credits. Or run a local stack with [`honcho start`](#cli) and point the SDK at `http://localhost:8000`.
+Get an API key at [app.honcho.dev](https://app.honcho.dev) — when you sign up you'll be prompted to join an organization, which gets its own dedicated Honcho instance and $100 free credits. Or install the CLI and run [`honcho start --setup`](#cli), then point the SDK at `http://localhost:8000`.
 
 ### Python
 
@@ -247,16 +248,18 @@ honcho doctor      # verify config + connectivity
 honcho             # banner + command list
 ```
 
+`uv tool install` only puts `honcho` on your PATH. `honcho init` / `honcho doctor` store a **Honcho** API key (or browser login) so the CLI can call the server. That is not the LLM provider key a local stack needs — `honcho start --setup` (Docker + provider key) is below.
+
 `honcho init` shares `~/.honcho/config.json` with plugins and other Honcho tools. It owns `apiKey` and `environmentUrl` at the top level; everything else (`hosts`, `sessions`, …) is left untouched. On managed servers that advertise the device grant, init can log you in via the browser instead of pasting a key. Workspace / peer / session scope is per-command (`-w` / `-p` / `-s` or `HONCHO_*` env vars) — never persisted as CLI defaults.
 
 ### Local stack (no clone)
 
-`honcho start` is the fastest way to run Honcho on your machine. It pulls the published image (`ghcr.io/plastic-labs/honcho:latest`), **pins that digest**, and brings up API + deriver + Postgres + Redis in Docker. You do not need to clone this repo. Inference stays cloud-side: pass `LLM_OPENAI_API_KEY`, `LLM_ANTHROPIC_API_KEY`, or `LLM_GEMINI_API_KEY` (or run `--setup`).
+`honcho start --setup basic` is the fastest way to run Honcho on your machine. It prompts for an LLM provider and API key (OpenAI, Anthropic, Gemini, or OpenAI-compatible), writes those into the profile `.env`, pulls `ghcr.io/plastic-labs/honcho:latest`, **pins that digest**, and brings up API + deriver + Postgres + Redis in Docker. You do not need to clone this repo. `honcho init` cannot replace this step — its `apiKey` is for calling a Honcho server, not for the deriver's LLM calls.
 
 ```bash
-LLM_OPENAI_API_KEY=sk-... honcho start
-honcho start --setup basic      # interactive provider + chat model
+honcho start --setup basic      # interactive provider + chat model (writes LLM keys)
 honcho start --setup advanced   # embeddings, deriver/dialectic models, dreams, flush
+LLM_OPENAI_API_KEY=sk-... honcho start   # skip the wizard if the key is already in the env
 honcho status
 honcho stop                     # keep data
 honcho stop --wipe              # also delete volumes
@@ -332,7 +335,7 @@ Honcho's evals span LongMemEval, LoCoMo, and other long-conversation benchmarks.
 
 ## Self-hosting
 
-Honcho is open source under AGPL-3.0. To **run** a personal instance, prefer [`honcho start`](#cli) — no clone, published GHCR image, Docker. The paths below are for building from source, contributing, or deploying without the CLI.
+Honcho is open source under AGPL-3.0. To **run** a personal instance, install the CLI (`uv tool install honcho-cli`) and then [`honcho start --setup`](#cli). The paths below are for building from source, contributing, or deploying without the CLI.
 
 ### Quick start (from source, Docker)
 
@@ -692,7 +695,7 @@ For low-latency use cases, Honcho provides access to a `representation` endpoint
 - **TypeScript** — [`@honcho-ai/sdk`](https://www.npmjs.com/package/@honcho-ai/sdk) on npm · source in [`sdks/typescript/`](./sdks/typescript)
 - **CLI** — [`honcho-cli`](https://pypi.org/project/honcho-cli/) on PyPI · source in [`honcho-cli/`](./honcho-cli) · [CLI reference](https://honcho.dev/docs/v3/documentation/reference/cli)
 
-SDKs are versioned independently of the server. Current SDK versions track each other; the server badge above reflects the deployed server version. The CLI is versioned on its own (`honcho-cli` 0.1.3+ includes `honcho start`).
+SDKs are versioned independently of the server. Current SDK versions track each other; the server badge above reflects the deployed server version. The CLI is versioned on its own (`honcho-cli` 0.1.4+ includes `honcho start`).
 
 See the [SDK Reference](https://honcho.dev/docs/v3/documentation/reference/sdk) for full API surface, the [API Reference](https://honcho.dev/docs/v3/api-reference/introduction) for the raw HTTP API, and per-SDK example folders for runnable demos.
 

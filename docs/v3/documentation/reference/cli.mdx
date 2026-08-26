@@ -18,18 +18,22 @@ uvx honcho-cli
 ```
 </CodeGroup>
 
+This only installs the `honcho` command. It does not start a server. Use `honcho start --setup` (Docker + an LLM provider key) when you want a local stack.
+
 ## Quick Start
 
 ```bash
-honcho init        # confirm/set apiKey + Honcho URL in ~/.honcho/config.json
-honcho start       # optional: local API + deriver + Postgres + Redis (Docker)
-honcho doctor      # verify your config + connectivity
-honcho             # show banner + command list
+honcho init                 # Honcho API key or browser login + server URL (talk *to* Honcho)
+honcho start --setup basic  # local stack: LLM provider key + Docker (not set by init)
+honcho doctor               # verify your config + connectivity
+honcho                      # show banner + command list
 ```
+
+`honcho init` authenticates the CLI against a Honcho server. It does **not** configure the LLM key a local stack needs — that is `honcho start --setup`.
 
 ## Local stack
 
-`honcho start` is the fastest way to run Honcho on your machine. It does **not** require cloning the Honcho repo. The CLI pulls the published image (`ghcr.io/plastic-labs/honcho:latest`), **pins that digest** in `~/.honcho/profiles/<name>/profile.json`, and starts API + deriver + Postgres + Redis via Docker. It is not the managed service at `api.honcho.dev`. Deriver and dialectic call your cloud LLM provider (OpenAI, Anthropic, or Gemini) with a key you supply.
+`honcho start --setup basic` is the fastest way to run Honcho on your machine. It does **not** require cloning the Honcho repo. The wizard prompts for an LLM provider and API key (the key `honcho init` stores cannot be reused here), writes them into the profile `.env`, pulls `ghcr.io/plastic-labs/honcho:latest`, **pins that digest**, and starts API + deriver + Postgres + Redis via Docker. It is not the managed service at `api.honcho.dev`.
 
 Default profile is `local` (`--profile` / `HONCHO_PROFILE`). First start copies the image `config.toml.example` into the profile directory; later starts leave that file alone so your edits persist — including when you re-pin the image. Delete `config.toml` yourself if you want a fresh copy from a new image. Pass `--image` to pin a different tag or digest. Ports bind to `127.0.0.1`; if 8000/5432/6379 are taken, the CLI remaps them (or pass `--api-port` / `--db-port` / `--redis-port`). Auth is off (`AUTH_USE_AUTH=false`).
 
@@ -43,9 +47,9 @@ honcho init --base-url http://127.0.0.1:8000   # persist local as the CLI defaul
 ```
 
 ```bash
-LLM_OPENAI_API_KEY=sk-... honcho start
 honcho start --setup basic
 honcho start --setup advanced
+LLM_OPENAI_API_KEY=sk-... honcho start   # skip the wizard if the key is already in the env
 honcho status
 honcho stop            # keep data
 honcho stop --wipe     # also delete volumes

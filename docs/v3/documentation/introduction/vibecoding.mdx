@@ -74,12 +74,12 @@ Inspect and debug a running Honcho deployment from your terminal, or run a perso
 
 ```bash
 uv tool install honcho-cli
-honcho init      # API key or browser login, plus server URL
-honcho doctor    # verify connectivity
-honcho start     # optional: local API + deriver + Postgres + Redis (Docker)
+honcho init                  # Honcho API key / browser login (talk *to* a server)
+honcho start --setup basic   # local stack: LLM provider key + Docker
+honcho doctor                # verify connectivity
 ```
 
-`honcho start` pulls the published GHCR image — no clone required. It does not rewrite `environmentUrl` in the shared config file; prefix commands with `HONCHO_BASE_URL=http://127.0.0.1:8000` to talk to local. Pass `--setup basic` for an interactive LLM wizard.
+`honcho start --setup` pulls the published GHCR image — no clone required. It does not rewrite `environmentUrl` in the shared config file; prefix commands with `HONCHO_BASE_URL=http://127.0.0.1:8000` to talk to local.
 
 The CLI also ships an agent skill. Install it with `npx skills add plastic-labs/honcho` and pick `honcho-cli` from the list.
 
