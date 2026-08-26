@@ -30,15 +30,17 @@ def test_hnsw_iterative_scan_accepts_none() -> None:
 
 def test_hnsw_iterative_scan_rejects_invalid_value() -> None:
     with pytest.raises((ValueError, TypeError)):
-        DBSettings(HNSW_ITERATIVE_SCAN="on")  # not a valid pgvector enum
+        DBSettings(HNSW_ITERATIVE_SCAN="on")  # pyright: ignore[reportArgumentType]  # not a valid pgvector enum
 
 
 def test_hnsw_iterative_scan_rejects_arbitrary_string() -> None:
     with pytest.raises((ValueError, TypeError)):
-        DBSettings(HNSW_ITERATIVE_SCAN="DROP TABLE users; --")
+        DBSettings(HNSW_ITERATIVE_SCAN="DROP TABLE users; --")  # pyright: ignore[reportArgumentType]
 
 
-def test_connect_listener_registered_when_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_connect_listener_registered_when_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The connect event listener is attached when HNSW_ITERATIVE_SCAN is set."""
 
     from src import db as db_module
@@ -51,7 +53,9 @@ def test_connect_listener_registered_when_enabled(monkeypatch: pytest.MonkeyPatc
     assert callable(db_module._set_hnsw_iterative_scan_on_connect)
 
 
-def test_connect_listener_not_registered_when_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_connect_listener_not_registered_when_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """When HNSW_ITERATIVE_SCAN is None, no listener should fire."""
     from src.config import settings
 
