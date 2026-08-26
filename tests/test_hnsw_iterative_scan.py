@@ -47,10 +47,10 @@ def test_connect_listener_registered_when_enabled(
     from src.config import settings
 
     monkeypatch.setattr(settings.DB, "HNSW_ITERATIVE_SCAN", "strict_order")
-    db_module._set_hnsw_iterative_scan_on_connect  # type: attr-defined  # noqa: B018
+    db_module._set_hnsw_iterative_scan_on_connect  # type: attr-defined  # noqa: B018  # pyright: ignore[reportPrivateUsage]
     # The listener is registered at import time when the setting is truthy.
     # We verify the function exists and is callable.
-    assert callable(db_module._set_hnsw_iterative_scan_on_connect)
+    assert callable(db_module._set_hnsw_iterative_scan_on_connect)  # pyright: ignore[reportPrivateUsage]
 
 
 def test_connect_listener_not_registered_when_disabled(
