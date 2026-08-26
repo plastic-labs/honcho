@@ -1170,7 +1170,17 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
     </Tab>
     <Tab title="Honcho CLI">
         [Honcho CLI](https://pypi.org/project/honcho-cli/)
-        <Update label="v0.1.3 (Current)">
+        <Update label="v0.1.4 (Current)">
+        ### Added
+
+        - A TTY notice when a newer `honcho-cli` is on PyPI (`uv tool upgrade honcho-cli`). Skipped in JSON mode; disable with `HONCHO_NO_UPDATE_CHECK`
+
+        ### Fixed
+
+        - `--setup` for openai-compatible writes `EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL` into the profile `.env` alongside `LLM_OPENAI_BASE_URL` (#1068)
+        - `--setup` API key prompts echo `*` per character so a paste is visibly received instead of a blank getpass field
+        </Update>
+        <Update label="v0.1.3">
         ### Added
 
         - `honcho start`, `honcho stop`, and `honcho status` — run a personal Honcho stack in Docker (API, deriver, Postgres, Redis). Profiles live under `~/.honcho/profiles/`. First start pins `ghcr.io/plastic-labs/honcho:latest` by digest and copies the image `config.toml`. Optional `--setup basic` / `--setup advanced` wizard writes LLM overrides to `.env` (#1029)

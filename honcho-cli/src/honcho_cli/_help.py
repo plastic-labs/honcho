@@ -24,6 +24,7 @@ from typer.core import TyperGroup
 from honcho_cli import __version__
 from honcho_cli.branding import BANNER, BRAND
 from honcho_cli.output import use_json
+from honcho_cli.update_check import maybe_print_update_nag
 
 
 # Theme Typer's rich help renderer. Module-level side effect limited to
@@ -113,6 +114,7 @@ def print_welcome(console: Console) -> None:
     console.print(_welcome_panel("memory", memory_rows))
     console.print(_welcome_panel("options", option_rows))
     console.print()
+    maybe_print_update_nag()
 
 
 class HonchoTyperGroup(TyperGroup):

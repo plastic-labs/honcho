@@ -7,9 +7,16 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-08-26
+
+### Added
+
+- A TTY notice when a newer `honcho-cli` is on PyPI (`uv tool upgrade honcho-cli`). Skipped in JSON mode; disable with `HONCHO_NO_UPDATE_CHECK`
+
 ### Fixed
 
-- `--setup` for openai-compatible writes `EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL` into the profile `.env` alongside `LLM_OPENAI_BASE_URL`
+- `--setup` for openai-compatible writes `EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL` into the profile `.env` alongside `LLM_OPENAI_BASE_URL` (#1068)
+- `--setup` API key prompts echo `*` per character so a paste is visibly received instead of a blank getpass field
 
 ## [0.1.3] - 2026-08-25
 
