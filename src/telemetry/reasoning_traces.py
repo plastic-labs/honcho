@@ -4,11 +4,25 @@ Utility for logging traces from LLM calls.
 This module provides structured JSONL logging of LLM inputs/outputs.
 """
 
-import fcntl
+import contextlib
 import json
+import os
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import IO, Any
+
+try:  # POSIX
+    import fcntl
+except ImportError:  # pragma: no cover - platform dependent
+    fcntl = None  # type: ignore[assignment]
+
+try:  # Windows
+    import msvcrt
+except ImportError:  # pragma: no cover - platform dependent
+    msvcrt = None  # type: ignore[assignment]
+
 
 from pydantic import BaseModel
 
@@ -17,6 +31,37 @@ from src.config import (
     ModelConfig,
     settings,
 )
+
+
+@contextmanager
+def _locked(f: IO[str]) -> Iterator[None]:
+    """Exclusively lock an open file for the duration of the block.
+
+    Multiple processes (API server and deriver) append to the same traces file, so
+    writes must be serialized. POSIX uses fcntl.flock; Windows uses msvcrt.locking,
+    which locks a byte range from the current offset. If neither is available the
+    write still proceeds unlocked rather than losing the trace.
+    """
+    if fcntl is not None:
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+    elif msvcrt is not None:
+        f.seek(0, os.SEEK_END)
+        try:
+            msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)
+        except OSError:  # lock unavailable after retries — do not drop the trace
+            yield
+            return
+        try:
+            yield
+        finally:
+            with contextlib.suppress(OSError):
+                msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+    else:  # pragma: no cover - no locking primitive available
+        yield
 
 
 def get_reasoning_traces_file_path() -> Path | None:
@@ -97,7 +142,5 @@ def log_reasoning_trace(
         trace_entry["output"]["tool_calls"] = response.tool_calls_made
 
     # Use file locking to handle concurrent writes from multiple processes
-    with open(traces_file, "a") as f:
-        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+    with open(traces_file, "a") as f, _locked(f):
         f.write(json.dumps(trace_entry) + "\n")
-        fcntl.flock(f.fileno(), fcntl.LOCK_UN)

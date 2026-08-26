@@ -2,6 +2,7 @@ import asyncio
 import contextlib
 import random
 import signal
+import sys
 import time
 from asyncio import Task
 from collections.abc import Iterable, Sequence
@@ -200,14 +201,30 @@ class QueueManager:
         """Setup signal handlers, initialize client, and start the main polling loop"""
         logger.debug(f"Initializing QueueManager with {self.workers} workers")
 
-        # Set up signal handlers
+        # Set up signal handlers.
+        # loop.add_signal_handler() is not implemented on Windows (it raises
+        # NotImplementedError, whose str() is empty). Fall back to signal.signal(),
+        # which Windows does support for SIGINT/SIGTERM, so Ctrl+C and a service
+        # stop still trigger the same graceful shutdown path.
         loop = asyncio.get_running_loop()
         signals = (signal.SIGTERM, signal.SIGINT)
-        for sig in signals:
-            loop.add_signal_handler(
-                sig, lambda s=sig: asyncio.create_task(self.shutdown(s))
-            )
-        logger.debug("Signal handlers registered")
+        if sys.platform != "win32":
+            for sig in signals:
+                loop.add_signal_handler(
+                    sig, lambda s=sig: asyncio.create_task(self.shutdown(s))
+                )
+            logger.debug("Signal handlers registered")
+        else:
+
+            def _win_signal_handler(signum: int, _frame: object) -> None:
+                # Runs in the main thread outside the loop; hand off thread-safely.
+                loop.call_soon_threadsafe(
+                    lambda: asyncio.create_task(self.shutdown(signal.Signals(signum)))
+                )
+
+            for sig in signals:
+                signal.signal(sig, _win_signal_handler)
+            logger.debug("Signal handlers registered via signal.signal (Windows)")
 
         # Start the reconciler scheduler
         try:
