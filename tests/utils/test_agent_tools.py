@@ -1733,6 +1733,22 @@ class TestToolExecutor:
 
         assert "Unknown tool" in result
 
+    async def test_executor_accepts_search_message_alias(self, tool_test_data: Any):
+        """The singular "search_message" resolves to the search handler."""
+        workspace, peer1, peer2, session, _, _ = tool_test_data
+
+        executor = await create_tool_executor(
+            workspace_name=workspace.name,
+            observer=peer1.name,
+            observed=peer2.name,
+            session_name=session.name,
+        )
+
+        result = await executor("search_message", {"query": "coffee"})
+
+        # The alias must dispatch to the search handler, not the unknown-tool path.
+        assert "Unknown tool: search_message" not in result
+
     async def test_executor_handles_exceptions_gracefully(self, tool_test_data: Any):
         """Executor converts exceptions to error strings instead of raising."""
         workspace, peer1, peer2, session, _, _ = tool_test_data

@@ -2588,6 +2588,8 @@ _TOOL_HANDLERS: dict[str, Callable[[ToolContext, dict[str, Any]], Any]] = {
     "search_memory": _handle_search_memory,
     "get_observation_context": _handle_get_observation_context,
     "search_messages": _handle_search_messages,
+    # Some models drop the plural and emit "search_message"; accept it as an alias.
+    "search_message": _handle_search_messages,
     "grep_messages": _handle_grep_messages,
     "get_messages_by_date_range": _handle_get_messages_by_date_range,
     "search_messages_temporal": _handle_search_messages_temporal,
