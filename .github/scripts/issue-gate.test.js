@@ -12,12 +12,18 @@ const {
 
 const pull = (over = {}) => ({
   number: 1, state: 'open', draft: false,
-  user: { type: 'User' }, author_association: 'NONE', labels: [],
+  user: { type: 'User', login: 'alice' }, labels: [],
   ...over,
 });
 
+const notCollaborator = () => {
+  const err = new Error('Not Found');
+  err.status = 404;
+  throw err;
+};
+
 // `linked` is the list of issues GitHub resolves as closing references.
-const stub = (linked) => ({
+const stub = (linked, permission) => ({
   graphql: async () => ({
     repository: { pullRequest: { closingIssuesReferences: {
       nodes: linked.map((i) => ({
@@ -26,10 +32,18 @@ const stub = (linked) => ({
       })),
     } } },
   }),
+  rest: {
+    repos: {
+      getCollaboratorPermissionLevel: async () => {
+        if (!permission) return notCollaborator();
+        return { data: { permission } };
+      },
+    },
+  },
 });
 
-const run = (linked, over) =>
-  checkGate({ github: stub(linked), owner: 'o', repo: 'r', pr: pull(over) });
+const run = (linked, over, permission) =>
+  checkGate({ github: stub(linked, permission), owner: 'o', repo: 'r', pr: pull(over) });
 
 const cases = [
   ['no linked issue fails', () => run([]), (r) => r.passed === false],
@@ -45,17 +59,19 @@ const cases = [
     (r) => r.passed === true && r.issue === 8],
 
   // Exemptions.
-  ['maintainer skips', () => run([], { author_association: 'MEMBER' }), (r) => r.passed === true],
-  ['collaborator skips', () => run([], { author_association: 'COLLABORATOR' }), (r) => r.passed === true],
+  ['write permission skips', () => run([], {}, 'write'), (r) => r.passed === true],
+  ['maintain permission skips', () => run([], {}, 'maintain'), (r) => r.passed === true],
   ['bot skips', () => run([], { user: { type: 'Bot' } }), (r) => r.passed === true],
   ['draft skips', () => run([], { draft: true }), (r) => r.passed === true],
   [`${EXEMPT_LABEL} skips`, () => run([], { labels: [{ name: EXEMPT_LABEL }] }), (r) => r.passed === true],
 
-  // Regression guard: GitHub hands CONTRIBUTOR to anyone who has previously
-  // committed, i.e. every returning outside contributor. It must stay gated.
-  ['CONTRIBUTOR is still gated',
-    () => run([], { author_association: 'CONTRIBUTOR' }),
+  ['triage permission is still gated', () => run([], {}, 'triage'), (r) => r.passed === false],
+  ['MEMBER association without write is still gated',
+    () => run([], { author_association: 'MEMBER' }),
     (r) => r.passed === false],
+  ['CONTRIBUTOR with write skips',
+    () => run([], { author_association: 'CONTRIBUTOR' }, 'write'),
+    (r) => r.passed === true],
 ];
 
 // --- findNotices: only the bot's own notices count -------------------------
@@ -81,12 +97,12 @@ const noticeCases = [
 // --- runSweep: the stale-draft pass must honour every exemption ------------
 const draft = (over) => ({
   number: 9, draft: true, state: 'open', labels: [],
-  user: { type: 'User' }, author_association: 'NONE',
+  user: { type: 'User', login: 'alice' },
   updated_at: new Date(Date.now() - 400 * 86400_000).toISOString(),
   ...over,
 });
 
-async function sweepClosed(pr) {
+async function sweepClosed(pr, permission) {
   const closed = [];
   const github = {
     paginate: async (route) => (route === 'pulls' ? [pr] : []),
@@ -96,6 +112,12 @@ async function sweepClosed(pr) {
         update: async ({ pull_number }) => closed.push(pull_number),
       },
       issues: { listComments: 'comments', createComment: async () => {} },
+      repos: {
+        getCollaboratorPermissionLevel: async () => {
+          if (!permission) return notCollaborator();
+          return { data: { permission } };
+        },
+      },
     },
   };
   await runSweep({
@@ -108,7 +130,7 @@ async function sweepClosed(pr) {
 const sweepCases = [
   ['stale draft from an outside author closes', draft({}), 1],
   ['stale draft from a bot is left alone', draft({ user: { type: 'Bot' } }), 0],
-  ['stale draft from a maintainer is left alone', draft({ author_association: 'MEMBER' }), 0],
+  ['stale draft from a writer is left alone', draft({}), 0, 'write'],
   [`stale draft with ${EXEMPT_LABEL} is left alone`, draft({ labels: [{ name: EXEMPT_LABEL }] }), 0],
   ['recent draft is left alone', draft({ updated_at: new Date().toISOString() }), 0],
 ];
@@ -120,8 +142,8 @@ const sweepCases = [
     if (got === want) console.log(`  ok   ${name}`);
     else { failed++; console.log(`  FAIL ${name} -> ${got} notices, wanted ${want}`); }
   }
-  for (const [name, pr, want] of sweepCases) {
-    const got = (await sweepClosed(pr)).length;
+  for (const [name, pr, want, permission] of sweepCases) {
+    const got = (await sweepClosed(pr, permission)).length;
     if (got === want) console.log(`  ok   ${name}`);
     else { failed++; console.log(`  FAIL ${name} -> closed ${got}, wanted ${want}`); }
   }

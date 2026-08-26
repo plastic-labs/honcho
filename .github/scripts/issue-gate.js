@@ -33,22 +33,36 @@ const isBot = (account) => Boolean(account) && account.type === 'Bot';
  * Why this pull request is exempt from the gate, or null if it is not.
  *
  * Single source of truth: every caller that acts on a pull request runs this.
- * The stale-draft sweep previously re-listed these checks and silently lost the
- * bot case.
  */
-const exemptReason = (pr) => {
+const exemptReason = async ({ github, owner, repo, pr }) => {
   if (isBot(pr.user)) return 'author is a bot';
-  if (WRITE_ACCESS.includes(pr.author_association)) {
-    return `author_association is ${pr.author_association}`;
-  }
   if (hasLabel(pr, EXEMPT_LABEL)) return `carries the ${EXEMPT_LABEL} label`;
+
+  const username = pr.user && pr.user.login;
+  if (!username) return null;
+
+  const permission = await repoPermission({ github, owner, repo, username });
+  if (WRITE_PERMISSIONS.includes(permission)) {
+    return `author has ${permission} permission`;
+  }
   return null;
 };
 
-// Write access to the repository. CONTRIBUTOR is deliberately absent: GitHub uses
-// it for "has previously committed to the repository", which describes every
-// returning outside contributor, not a maintainer. Do not add it.
-const WRITE_ACCESS = ['OWNER', 'MEMBER', 'COLLABORATOR'];
+// Repo roles that skip the gate. `read` / `triage` do not.
+const WRITE_PERMISSIONS = ['admin', 'maintain', 'write'];
+
+/** Highest repo permission for `username`, or null if they are not a collaborator. */
+async function repoPermission({ github, owner, repo, username }) {
+  try {
+    const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
+      owner, repo, username,
+    });
+    return data.permission;
+  } catch (err) {
+    if (err && err.status === 404) return null;
+    throw err;
+  }
+}
 
 const CLOSING_ISSUES = `
   query($owner: String!, $repo: String!, $number: Int!) {
@@ -78,7 +92,7 @@ const CLOSING_ISSUES = `
 async function checkGate({ github, owner, repo, pr }) {
   if (pr.state !== 'open') return { passed: true, skipped: 'pull request is not open' };
   if (pr.draft) return { passed: true, skipped: 'pull request is a draft' };
-  const exempt = exemptReason(pr);
+  const exempt = await exemptReason({ github, owner, repo, pr });
   if (exempt) return { passed: true, skipped: exempt };
 
   const data = await github.graphql(CLOSING_ISSUES, { owner, repo, number: pr.number });
@@ -251,7 +265,7 @@ async function runSweep({ github, core, context, dryRun }) {
   // Stale drafts. The gate skips drafts entirely, so they never carry the label;
   // this pass keys off inactivity and applies the shared exemptions itself.
   for (const pr of prs.filter((p) => p.draft)) {
-    const exempt = exemptReason(pr);
+    const exempt = await exemptReason({ github, owner, repo, pr });
     if (exempt) {
       core.info(`#${pr.number}: leaving stale draft alone — ${exempt}`);
       continue;
