@@ -875,10 +875,34 @@ curl -X POST "$HONCHO_URL/v3/workspaces/my-app/peers/user-123/representation" \
 ```
 </CodeGroup>
 
+Both SDKs expose this as a `sessions` option, which goes on the wire as the
+`filters` body above:
+
+<CodeGroup>
+```python Python
+answer = user.chat("What did the user ask about billing?",
+                   sessions=["support-chat-1", "support-chat-2"])
+
+rep = user.representation(sessions=["support-chat-1", "support-chat-2"])
+```
+
+```typescript TypeScript
+const answer = await user.chat("What did the user ask about billing?", {
+  sessions: ["support-chat-1", "support-chat-2"],
+});
+
+const rep = await user.representation({
+  sessions: ["support-chat-1", "support-chat-2"],
+});
+```
+</CodeGroup>
+
 <Note>
-The session allowlist is REST-only today. The SDKs cover the single-session case
-with `session`, but do not yet expose the allowlist — call the endpoint directly
-when you need a set of sessions.
+If the same set of sessions is a boundary you reuse, name it: a
+[scope](/v3/documentation/features/advanced/scopes) is a persistent version of
+this allowlist, and querying a single scope recalls at full depth rather than
+`explicit`-only. `sessions` is the right tool when the set is decided
+per-request.
 </Note>
 
 ### Rules
