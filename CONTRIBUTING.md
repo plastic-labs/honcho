@@ -200,8 +200,9 @@ conventions, and is worth skimming even if you are not using an agent.
 
 ## Local setup
 
-Get a stack running first — [Self-hosting in the README](./README.md#self-hosting) covers
-both the Docker path and a manual Postgres setup. Then, for development:
+To run a personal instance, install the CLI (`uv tool install honcho-cli`) and then run `honcho start --setup` (Docker + an LLM provider key — not the Honcho API key from `honcho init`) — [CLI in the README](./README.md#cli).
+
+To **develop this repo**, clone it and:
 
 ```bash
 uv sync                          # create the venv and install dependencies
