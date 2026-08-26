@@ -316,11 +316,37 @@ docker compose build --no-cache
 docker compose up -d
 ```
 
+## CLI local stack (`honcho start`)
+
+The CLI local stack lives under `~/.honcho/profiles/` (default profile `local`) and uses the published image `ghcr.io/plastic-labs/honcho:latest`. Logs: `docker compose -p honcho-local logs`. Full flags: [CLI reference](/v3/documentation/reference/cli#local-stack).
+
+### `MISSING_LLM_KEY`
+
+**Cause:** No provider key in the environment or the profile `.env`.
+
+**Fix:** Export `LLM_OPENAI_API_KEY`, `LLM_ANTHROPIC_API_KEY`, or `LLM_GEMINI_API_KEY`, or run `honcho start --setup basic` in a TTY (not with `--json`).
+
+### Timed out waiting for `/health`
+
+**Cause:** The API container started but did not become ready within `--timeout` (default 180s).
+
+**Fix:** Check `docker compose -p honcho-local logs api` and `... logs deriver`. Increase `--timeout`. Confirm Docker is running. A first-time GHCR pull happens *before* this wait (during image pin) — if that step hung, look at Docker pull logs instead.
+
+### CLI still talks to `api.honcho.dev`
+
+**Cause:** `honcho start` does not rewrite `environmentUrl` in `~/.honcho/config.json`.
+
+**Fix:** Prefix commands with `HONCHO_BASE_URL=http://127.0.0.1:8000`, or run `honcho init --base-url http://127.0.0.1:8000` to persist local as the default. `honcho status` prints the one-shot hint.
+
+### Port already in use
+
+The CLI remaps 8000/5432/6379 automatically unless you pinned them with `--api-port` / `--db-port` / `--redis-port`. Pass those flags if you need a specific host port.
+
 ## Getting Help
 
 If your issue isn't covered here:
 
-- **Check the logs** — most issues are diagnosed from server or deriver logs
+- **Check the logs** — most issues are diagnosed from server or deriver logs (`docker compose logs` for from-source compose; `docker compose -p honcho-local logs` for `honcho start`)
 - **GitHub Issues** — [Report bugs](https://github.com/plastic-labs/honcho/issues)
 - **Discord** — [Join our community](https://discord.gg/plasticlabs)
 - **Configuration** — See the [Configuration Guide](./configuration) for all available settings
