@@ -69,8 +69,6 @@ def test_connect_listener_not_registered_when_disabled(
     the setting disabled does NOT register the connect listener.
     """
 
-    from sqlalchemy import event
-
     from src.config import settings
 
     monkeypatch.setattr(settings.DB, "HNSW_ITERATIVE_SCAN", None)
