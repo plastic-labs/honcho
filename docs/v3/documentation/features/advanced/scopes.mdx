@@ -16,9 +16,8 @@ own tickets, a multi-tenant deployment where one human works across tenants.
 
 ## Projection, Not Partition
 
-A scope does not split a peer into pieces. The peer's representation stays
-whole; a scope is a **projection** of it — a view built only from the evidence
-in that scope's member sessions.
+The peer keeps one representation. A scope is a **projection** of it: a view
+built only from evidence in the member sessions.
 
 ```mermaid
 graph TB
@@ -41,8 +40,6 @@ graph TB
       style SC1 fill:#FFE0B2,stroke:#333,color:#000
       style SC2 fill:#FFE0B2,stroke:#333,color:#000
 ```
-
-Three consequences worth internalizing:
 
 - **Sessions can belong to more than one scope.** Membership is many-to-many.
 - **Sessions can belong to no scope.** `onboarding-1` above is reachable
@@ -95,7 +92,7 @@ answer = user.chat("What did they say?", scope=["therapy", "intake"])
 
 Reach for this when the set of sessions is decided per-request, or when you want
 a quick boundary without provisioning a scope. See
-[Scoping Recall to Sessions](/v3/documentation/features/advanced/using-filters#scoping-recall-to-sessions)
+[Restricting Recall to Sessions](/v3/documentation/features/advanced/using-filters#restricting-recall-to-sessions)
 for the full allowlist rules.
 
 <Info>
@@ -296,7 +293,7 @@ requires `peer_target`). Like the session allowlist, it **fails closed**: a
 contradiction is rejected with a `422` rather than silently widened, a scope
 with no member sessions recalls nothing, and an empty list (`scope=[]`) is
 rejected rather than treated as "no boundary". Per-surface caps and error
-shapes are in the [API reference](/v3/api-reference/endpoint/peers/chat).
+shapes are in the [API reference](/v3/api-reference/endpoint/scopes/get-or-create-scope).
 
 ## Provenance, Not Topic
 
@@ -333,9 +330,7 @@ A few behaviors follow from how scopes are built:
   add-peers, set-peers, and remove-peers routes reject scope names and point you
   at `/scopes/{scope_id}/sessions` or the `scopes` field on session create.
 
-Honcho is open source — if you want to understand how scopes work under the
-hood, read the implementation:
-[`src/routers/scopes.py`](https://github.com/plastic-labs/honcho/blob/main/src/routers/scopes.py),
+If you want the exact mechanics for scopes, read: [`src/routers/scopes.py`](https://github.com/plastic-labs/honcho/blob/main/src/routers/scopes.py),
 [`src/crud/scope.py`](https://github.com/plastic-labs/honcho/blob/main/src/crud/scope.py),
 and [`src/deriver/scope_backfill.py`](https://github.com/plastic-labs/honcho/blob/main/src/deriver/scope_backfill.py).
 

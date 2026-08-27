@@ -2269,6 +2269,22 @@
               }
             }
           },
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Scope" }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -2533,6 +2549,14 @@
             "content": {
               "application/json": {
                 "schema": { "$ref": "#/components/schemas/ScopeStatus" }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
               }
             }
           },
