@@ -7,7 +7,7 @@ collection's internal_metadata on successful dreams — and critically,
 does NOT land on failures or exceptions.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -17,12 +17,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
+from src.backlog import find_due_dreams
 from src.deriver.enqueue import enqueue_dream
-from src.dreamer.dream_scheduler import (
-    DreamScheduler,
-    check_and_schedule_dream,
-    set_dream_scheduler,
-)
+from src.dreamer.dream_scheduler import execute_dream
 from src.dreamer.orchestrator import DreamResult, process_dream
 from src.schemas import (
     DreamType,
@@ -286,7 +283,7 @@ class TestExecuteDreamSessionFilter:
     """Regression test for the session lookup asymmetry in execute_dream.
 
     The session_name lookup filters to `level == "explicit"`, symmetric with
-    check_and_schedule_dream's count query. Otherwise a derived doc could win
+    the due-check's count query. Otherwise a derived doc could win
     ORDER BY created_at DESC and the dream would be scoped to a session that
     wasn't in the triggering document cohort.
     """
@@ -305,8 +302,7 @@ class TestExecuteDreamSessionFilter:
 
         Without the explicit filter on the session lookup, the newer deductive
         doc's session_name (B) would be returned. With the filter, A is
-        returned — matching the explicit-only count query in
-        check_and_schedule_dream.
+        returned — matching the explicit-only count query in the due-check.
         """
         workspace, peer = sample_data
 
@@ -380,14 +376,7 @@ class TestExecuteDreamSessionFilter:
                 }
             )
 
-        # Fresh scheduler instance; ENABLED patched so execute_dream runs.
-        DreamScheduler.reset_singleton()
-        scheduler = DreamScheduler()
-        set_dream_scheduler(scheduler)
-
-        try:
-            with (
-                patch("src.dreamer.dream_scheduler.settings.DREAM.ENABLED", True),
+        with (
                 patch(
                     "src.deriver.enqueue.enqueue_dream",
                     side_effect=capture_enqueue_dream,
@@ -406,14 +395,12 @@ class TestExecuteDreamSessionFilter:
                     ),
                 ),
             ):
-                await scheduler.execute_dream(
+                await execute_dream(
                     workspace.name,
                     DreamType.OMNI,
                     observer=peer.name,
                     observed=peer.name,
                 )
-        finally:
-            DreamScheduler.reset_singleton()
 
         assert captured_kwargs, (
             "enqueue_dream must be called — execute_dream returned early, "
@@ -442,30 +429,27 @@ class TestGuardPairCoherence:
     """
 
     @pytest_asyncio.fixture
-    async def _scheduler(self):
-        DreamScheduler.reset_singleton()
-        scheduler = DreamScheduler()
-        set_dream_scheduler(scheduler)
+    async def _dream_config(self):
         with (
-            patch("src.dreamer.dream_scheduler.settings.DREAM.ENABLED", True),
-            patch("src.dreamer.dream_scheduler.settings.DREAM.DOCUMENT_THRESHOLD", 50),
-            patch("src.dreamer.dream_scheduler.settings.DREAM.ENABLED_TYPES", ["omni"]),
+            patch("src.backlog.settings.DREAM.ENABLED", True),
+            patch("src.backlog.settings.DREAM.DOCUMENT_THRESHOLD", 50),
+            patch("src.backlog.settings.DREAM.ENABLED_TYPES", ["omni"]),
+            patch("src.backlog.settings.DREAM.IDLE_TIMEOUT_MINUTES", 60),
         ):
-            yield scheduler
-        DreamScheduler.reset_singleton()
+            yield
 
     @pytest.mark.asyncio
     async def test_pending_queue_item_blocks_second_schedule(
         self,
         db_session: AsyncSession,
         sample_data: tuple[models.Workspace, models.Peer],
-        _scheduler: DreamScheduler,
+        _dream_config: None,
     ):
         """In-flight window: pending QueueItem must block a second schedule.
 
         Walks the stampede timeline: enqueue fires a dream, more explicit
-        docs arrive past the threshold again, but check_and_schedule_dream
-        sees the pending queue row and returns False — no second QueueItem.
+        docs arrive past the threshold again, but the due-check sees the
+        pending queue row and reports nothing due — no second QueueItem.
         """
         workspace, peer = sample_data
         collection = models.Collection(
@@ -475,6 +459,7 @@ class TestGuardPairCoherence:
             internal_metadata={},
         )
         db_session.add(collection)
+        idle_created_at = datetime.now(timezone.utc) - timedelta(minutes=90)
         for i in range(50):
             db_session.add(
                 models.Document(
@@ -483,6 +468,7 @@ class TestGuardPairCoherence:
                     workspace_name=workspace.name,
                     observer=peer.name,
                     observed=peer.name,
+                    created_at=idle_created_at,
                 )
             )
         await db_session.commit()
@@ -515,17 +501,18 @@ class TestGuardPairCoherence:
                     workspace_name=workspace.name,
                     observer=peer.name,
                     observed=peer.name,
+                    created_at=idle_created_at,
                 )
             )
         await db_session.commit()
         await db_session.refresh(collection)
 
-        scheduled = await check_and_schedule_dream(db_session, collection)
+        due = await find_due_dreams(db_session)
 
-        assert scheduled is False, (
-            "check_and_schedule_dream must return False while a dream is "
-            "pending in the queue — the in-flight window must not admit a "
-            "second schedule regardless of how many explicit docs arrive."
+        assert due == [], (
+            "The due-check must report nothing while a dream is pending in "
+            "the queue — the in-flight window must not admit a second "
+            "schedule regardless of how many explicit docs arrive."
         )
         pending_rows_after = (await db_session.execute(pending_q)).scalars().all()
         assert len(pending_rows_after) == 1, (
@@ -538,11 +525,11 @@ class TestGuardPairCoherence:
         self,
         db_session: AsyncSession,
         sample_data: tuple[models.Workspace, models.Peer],
-        _scheduler: DreamScheduler,
+        _dream_config: None,
     ):
         """Failed dream (run_dream returns None) leaves both guard fields
-        untouched, so check_and_schedule_dream re-schedules on the same
-        corpus instead of silently consuming the baseline.
+        untouched, so the due-check re-schedules on the same corpus instead
+        of silently consuming the baseline.
         """
         workspace, peer = sample_data
         collection = models.Collection(
@@ -552,6 +539,7 @@ class TestGuardPairCoherence:
             internal_metadata={},
         )
         db_session.add(collection)
+        idle_created_at = datetime.now(timezone.utc) - timedelta(minutes=90)
         for i in range(50):
             db_session.add(
                 models.Document(
@@ -560,6 +548,7 @@ class TestGuardPairCoherence:
                     workspace_name=workspace.name,
                     observer=peer.name,
                     observed=peer.name,
+                    created_at=idle_created_at,
                 )
             )
         await db_session.commit()
@@ -586,14 +575,10 @@ class TestGuardPairCoherence:
             "last_dream_at" not in dream_meta
         ), "Failed dream must not advance last_dream_at either."
 
-        with patch.object(
-            _scheduler, "schedule_dream", new_callable=AsyncMock
-        ) as mock_schedule:
-            scheduled = await check_and_schedule_dream(db_session, collection)
+        due = await find_due_dreams(db_session)
 
-        assert scheduled is True, (
+        assert len(due) == 1, (
             "After a silent failure both guards should still allow the "
-            "same-corpus retry — 50 explicit docs ≥ threshold, no prior "
+            "same-corpus retry — 50 explicit docs >= threshold, no prior "
             "last_dream_at, no pending queue item."
         )
-        assert mock_schedule.called, "schedule_dream must be invoked on the retry path."

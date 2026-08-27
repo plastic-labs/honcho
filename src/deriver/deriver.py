@@ -222,7 +222,6 @@ async def process_representation_tasks_batch(
                         message_ids,
                         latest_message.session_name,
                         latest_message.created_at,
-                        message_level_configuration,
                     )
                 )
                 agg_representation_result.exact_dup_existing_count += (

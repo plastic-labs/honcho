@@ -12,9 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import crud, exceptions, models, schemas
 from src.config import settings
 from src.dependencies import tracked_db
-from src.dreamer.dream_scheduler import check_and_schedule_dream
 from src.embedding_client import EmbeddingTokenLimitError, embedding_client
-from src.schemas import ResolvedConfiguration
 from src.telemetry.events import EmbeddingCallPurpose
 from src.telemetry.logging import accumulate_metric
 from src.utils.formatting import format_datetime_utc
@@ -65,7 +63,6 @@ class RepresentationManager:
         message_ids: list[int],
         session_name: str,
         message_created_at: datetime.datetime,
-        message_level_configuration: ResolvedConfiguration,
     ) -> crud.CreateDocumentsResult:
         """
         Save Representation objects to the collection as a set of documents.
@@ -133,7 +130,6 @@ class RepresentationManager:
                 message_ids,
                 session_name,
                 message_created_at,
-                message_level_configuration,
             )
 
         create_document_duration = (time.perf_counter() - create_document_start) * 1000
@@ -154,10 +150,9 @@ class RepresentationManager:
         message_ids: list[int],
         session_name: str,
         message_created_at: datetime.datetime,
-        message_level_configuration: ResolvedConfiguration,
     ) -> crud.CreateDocumentsResult:
         # get_or_create_collection already handles IntegrityError with rollback and a retry
-        collection = await crud.get_or_create_collection(
+        await crud.get_or_create_collection(
             db,
             self.workspace_name,
             observer=self.observer,
@@ -202,12 +197,6 @@ class RepresentationManager:
             observed=self.observed,
             deduplicate=settings.DERIVER.DEDUPLICATE,
         )
-
-        if message_level_configuration.dream.enabled:
-            try:
-                await check_and_schedule_dream(db, collection)
-            except Exception as e:
-                logger.warning(f"Failed to check dream scheduling: {e}")
 
         return accepted_documents_result
 

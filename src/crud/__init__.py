@@ -4,6 +4,7 @@ from .collection import (
     update_collection_internal_metadata,
 )
 from .deriver import (
+    cleanup_stale_work_units,
     get_deriver_backlog,
     get_deriver_status,
     get_queue_status,
@@ -109,6 +110,7 @@ __all__ = [
     "get_or_create_collection",
     "update_collection_internal_metadata",
     # Deriver
+    "cleanup_stale_work_units",
     "get_deriver_backlog",
     "get_deriver_status",
     "get_queue_status",

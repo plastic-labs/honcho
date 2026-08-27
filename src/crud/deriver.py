@@ -1,14 +1,15 @@
 from collections.abc import Sequence
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from logging import getLogger
 from typing import Any
 
-from sqlalchemy import ColumnElement, Select, case, func, or_, select
+from sqlalchemy import ColumnElement, Select, case, delete, func, or_, select
 from sqlalchemy.engine import Row
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models, schemas
 from src.config import settings
+from src.dependencies import tracked_db
 
 logger = getLogger(__name__)
 
@@ -109,29 +110,46 @@ def representation_batch_threshold_clause(
 
 def unclaimed_work_unit_clause(
     work_unit_key: ColumnElement[str],
-    *,
-    tolerate_stale_claims: bool = False,
 ) -> ColumnElement[bool]:
-    claim = select(models.ActiveQueueSession.id).where(
-        models.ActiveQueueSession.work_unit_key == work_unit_key
+    return (
+        ~select(models.ActiveQueueSession.id)
+        .where(models.ActiveQueueSession.work_unit_key == work_unit_key)
+        .exists()
     )
 
-    if tolerate_stale_claims:
-        claim = claim.where(
-            models.ActiveQueueSession.last_updated
-            >= func.now()
-            - timedelta(minutes=settings.DERIVER.STALE_SESSION_TIMEOUT_MINUTES)
+
+async def cleanup_stale_work_units() -> None:
+    """Clean up stale work units"""
+    async with tracked_db("cleanup_stale_work_units") as db:
+        cutoff = datetime.now(timezone.utc) - timedelta(
+            minutes=settings.DERIVER.STALE_SESSION_TIMEOUT_MINUTES
         )
 
-    return ~claim.exists()
+        stale_ids = (
+            (
+                await db.execute(
+                    select(models.ActiveQueueSession.id)
+                    .where(models.ActiveQueueSession.last_updated < cutoff)
+                    .order_by(models.ActiveQueueSession.last_updated)
+                    .with_for_update(skip_locked=True)
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+        # Delete only the records we successfully got locks for
+        if stale_ids:
+            await db.execute(
+                delete(models.ActiveQueueSession).where(
+                    models.ActiveQueueSession.id.in_(stale_ids)
+                )
+            )
+        await db.commit()
 
 
 async def get_deriver_backlog(db: AsyncSession) -> schemas.DeriverBacklog:
-    """Count outstanding deriver work across the whole database.
-
-    Read-only, and deliberately unfiltered by workspace: the caller wants the
-    service-wide total, not one tenant's share of it.
-    """
+    """Count outstanding deriver work across the whole database"""
     token_stats = (
         select(
             models.QueueItem.work_unit_key,
@@ -161,11 +179,7 @@ async def get_deriver_backlog(db: AsyncSession) -> schemas.DeriverBacklog:
             token_stats,
             work_units.c.work_unit_key == token_stats.c.work_unit_key,
         )
-        .where(
-            unclaimed_work_unit_clause(
-                work_units.c.work_unit_key, tolerate_stale_claims=True
-            )
-        )
+        .where(unclaimed_work_unit_clause(work_units.c.work_unit_key))
     )
 
     threshold_clause = representation_batch_threshold_clause(

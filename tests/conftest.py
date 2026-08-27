@@ -954,6 +954,7 @@ def mock_tracked_db(request: pytest.FixtureRequest):
     # Use ExitStack (not a parenthesized `with`) to stay under CPython's
     # 20-statically-nested-block limit as this list grows.
     tracked_db_targets = [
+        "src.backlog.tracked_db",
         "src.dependencies.tracked_db",
         "src.deriver.queue_manager.tracked_db",
         "src.deriver.consumer.tracked_db",
@@ -969,6 +970,7 @@ def mock_tracked_db(request: pytest.FixtureRequest):
         "src.webhooks.webhook_delivery.tracked_db",
         "src.utils.agent_tools.tracked_db",
         "src.utils.search.tracked_db",
+        "src.crud.deriver.tracked_db",
         "src.crud.document.tracked_db",
         "src.crud.message.tracked_db",
         "src.reconciler.sync_vectors.tracked_db",

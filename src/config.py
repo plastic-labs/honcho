@@ -918,6 +918,11 @@ class DeriverSettings(HonchoSettings):
         int, Field(default=30 * 24 * 3600, gt=0)
     ] = 30 * 24 * 3600  # 30 days default
 
+    # Spacing between runs of the processed-queue-item cleanup
+    QUEUE_CLEANUP_INTERVAL_SECONDS: Annotated[int, Field(default=12 * 3600, ge=1)] = (
+        12 * 3600
+    )
+
     @staticmethod
     def _MODEL_CONFIG_DEFAULT() -> ConfiguredModelSettings:
         # Minimal default: transport + model only. Any other knobs would merge
@@ -1352,6 +1357,7 @@ class DreamSettings(HonchoSettings):
     ENABLED: bool = True
     DOCUMENT_THRESHOLD: Annotated[int, Field(default=50, gt=0, le=1000)] = 50
     IDLE_TIMEOUT_MINUTES: Annotated[int, Field(default=60, gt=0, le=1440)] = 60
+    POLL_INTERVAL_SECONDS: Annotated[int, Field(default=300, ge=1)] = 300
     MIN_HOURS_BETWEEN_DREAMS: Annotated[int, Field(default=8, gt=0, le=72)] = 8
     ENABLED_TYPES: list[str] = ["omni"]
 

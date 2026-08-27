@@ -516,7 +516,6 @@ class TestRepresentationManagerSave:
                 message_ids=[1],
                 session_name="session",
                 message_created_at=datetime.now(timezone.utc),
-                message_level_configuration=_resolved_config(),
             )
 
         assert len(saved.created_documents) == 1
@@ -574,7 +573,6 @@ class TestRepresentationManagerSave:
                 message_ids=[1],
                 session_name="session",
                 message_created_at=datetime.now(timezone.utc),
-                message_level_configuration=_resolved_config(),
             )
 
         assert len(saved.created_documents) == 1
@@ -627,7 +625,6 @@ class TestRepresentationManagerSave:
                 message_ids=[1],
                 session_name="session",
                 message_created_at=datetime.now(timezone.utc),
-                message_level_configuration=_resolved_config(),
             )
 
         assert len(saved.created_documents) == 0
@@ -682,7 +679,6 @@ class TestRepresentationManagerSave:
                 message_ids=[1],
                 session_name="session",
                 message_created_at=datetime.now(timezone.utc),
-                message_level_configuration=_resolved_config(),
             )
 
         mock_embed.assert_awaited_once_with(

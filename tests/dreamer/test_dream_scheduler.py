@@ -1,338 +1,50 @@
-"""Regression tests for dream scheduler bug fixes."""
+"""Tests for the API-side dream due-check and for enqueueing a due dream."""
 
-from typing import Any
+import datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
-from src.dreamer.dream_scheduler import (
-    DreamScheduler,
-    check_and_schedule_dream,
-    set_dream_scheduler,
-)
+from src.backlog import find_due_dreams
+from src.dreamer.dream_scheduler import execute_dream
 from src.schemas import DreamType
 from src.utils.work_unit import construct_work_unit_key
 
 
-@pytest.fixture
-def dream_scheduler():
-    """Create a fresh DreamScheduler instance for each test."""
-    # Reset the singleton before each test
-    DreamScheduler.reset_singleton()
-    scheduler = DreamScheduler()
-    set_dream_scheduler(scheduler)
-    # Patch DREAM.ENABLED to True so tests work regardless of local config
-    with patch("src.dreamer.dream_scheduler.settings.DREAM.ENABLED", True):
-        yield scheduler
-    # Cleanup
-    DreamScheduler.reset_singleton()
+def _now() -> datetime.datetime:
+    return datetime.datetime.now(datetime.timezone.utc)
 
 
-class TestCancelDreamsForObserved:
-    """Regression tests for Bug #1: Peer-to-peer observation dreams not cancelled on activity.
-
-    Previously, when a message arrived from peer Bob, only the self-observation dream
-    (observer=Bob, observed=Bob) was cancelled. Peer-to-peer observation dreams
-    (observer=Alice, observed=Bob) were NOT cancelled, allowing dreams to fire
-    during active conversation.
-    """
-
-    @pytest.mark.asyncio
-    async def test_cancel_self_observation_dream(self, dream_scheduler: DreamScheduler):
-        """Cancelling dreams for observed peer should cancel self-observation dreams."""
-        workspace_name = "test_workspace"
-        peer_name = "bob"
-
-        # Schedule a self-observation dream (observer=bob, observed=bob)
-        work_unit_key = construct_work_unit_key(
-            workspace_name,
-            {
-                "task_type": "dream",
-                "observer": peer_name,
-                "observed": peer_name,
-                "dream_type": "omni",
-            },
-        )
-
-        with patch.object(dream_scheduler, "execute_dream", new_callable=AsyncMock):
-            await dream_scheduler.schedule_dream(
-                work_unit_key,
-                workspace_name,
-                delay_minutes=60,
-                dream_type=DreamType.OMNI,
-                observer=peer_name,
-                observed=peer_name,
-            )
-
-            # Verify dream is pending
-            assert work_unit_key in dream_scheduler.pending_dreams
-
-            # Cancel dreams for observed peer
-            cancelled = await dream_scheduler.cancel_dreams_for_observed(
-                workspace_name, peer_name
-            )
-
-            # Verify the dream was cancelled
-            assert work_unit_key in cancelled
-            assert work_unit_key not in dream_scheduler.pending_dreams
-
-    @pytest.mark.asyncio
-    async def test_cancel_peer_to_peer_observation_dream(
-        self, dream_scheduler: DreamScheduler
-    ):
-        """Cancelling dreams for observed peer should also cancel peer-to-peer dreams.
-
-        This is the core regression test for Bug #1: previously, if Alice was
-        observing Bob and Bob sent a message, the dream for (observer=Alice,
-        observed=Bob) would NOT be cancelled.
-        """
-        workspace_name = "test_workspace"
-        observer = "alice"  # Alice is watching Bob
-        observed = "bob"  # Bob sends a message
-
-        # Schedule a peer-to-peer observation dream (observer=alice, observed=bob)
-        work_unit_key = construct_work_unit_key(
-            workspace_name,
-            {
-                "task_type": "dream",
-                "observer": observer,
-                "observed": observed,
-                "dream_type": "omni",
-            },
-        )
-
-        with patch.object(dream_scheduler, "execute_dream", new_callable=AsyncMock):
-            await dream_scheduler.schedule_dream(
-                work_unit_key,
-                workspace_name,
-                delay_minutes=60,
-                dream_type=DreamType.OMNI,
-                observer=observer,
-                observed=observed,
-            )
-
-            # Verify dream is pending
-            assert work_unit_key in dream_scheduler.pending_dreams
-
-            # When Bob sends a message, cancel all dreams where observed=bob
-            cancelled = await dream_scheduler.cancel_dreams_for_observed(
-                workspace_name, observed
-            )
-
-            # Verify the peer-to-peer dream was cancelled
-            assert work_unit_key in cancelled
-            assert work_unit_key not in dream_scheduler.pending_dreams
-
-    @pytest.mark.asyncio
-    async def test_cancel_multiple_observers_same_observed(
-        self, dream_scheduler: DreamScheduler
-    ):
-        """When observed peer sends a message, ALL dreams observing them should cancel."""
-        workspace_name = "test_workspace"
-        observed = "bob"
-        observers = ["alice", "charlie", "bob"]  # Multiple observers including self
-
-        work_unit_keys: list[str] = []
-
-        with patch.object(dream_scheduler, "execute_dream", new_callable=AsyncMock):
-            for observer in observers:
-                work_unit_key = construct_work_unit_key(
-                    workspace_name,
-                    {
-                        "task_type": "dream",
-                        "observer": observer,
-                        "observed": observed,
-                        "dream_type": "omni",
-                    },
-                )
-                work_unit_keys.append(work_unit_key)
-
-                await dream_scheduler.schedule_dream(
-                    work_unit_key,
-                    workspace_name,
-                    delay_minutes=60,
-                    dream_type=DreamType.OMNI,
-                    observer=observer,
-                    observed=observed,
-                )
-
-            # Verify all dreams are pending
-            assert len(dream_scheduler.pending_dreams) == 3
-
-            # Cancel all dreams where observed=bob
-            cancelled = await dream_scheduler.cancel_dreams_for_observed(
-                workspace_name, observed
-            )
-
-            # All three should be cancelled
-            assert len(cancelled) == 3
-            for key in work_unit_keys:
-                assert key in cancelled
-            assert len(dream_scheduler.pending_dreams) == 0
-
-    @pytest.mark.asyncio
-    async def test_does_not_cancel_dreams_for_different_observed(
-        self, dream_scheduler: DreamScheduler
-    ):
-        """Cancelling dreams for one observed peer should not affect others."""
-        workspace_name = "test_workspace"
-
-        # Dream for Alice observing Bob
-        key_alice_bob = construct_work_unit_key(
-            workspace_name,
-            {
-                "task_type": "dream",
-                "observer": "alice",
-                "observed": "bob",
-                "dream_type": "omni",
-            },
-        )
-
-        # Dream for Alice observing Charlie (should NOT be cancelled)
-        key_alice_charlie = construct_work_unit_key(
-            workspace_name,
-            {
-                "task_type": "dream",
-                "observer": "alice",
-                "observed": "charlie",
-                "dream_type": "omni",
-            },
-        )
-
-        with patch.object(dream_scheduler, "execute_dream", new_callable=AsyncMock):
-            await dream_scheduler.schedule_dream(
-                key_alice_bob,
-                workspace_name,
-                delay_minutes=60,
-                dream_type=DreamType.OMNI,
-                observer="alice",
-                observed="bob",
-            )
-            await dream_scheduler.schedule_dream(
-                key_alice_charlie,
-                workspace_name,
-                delay_minutes=60,
-                dream_type=DreamType.OMNI,
-                observer="alice",
-                observed="charlie",
-            )
-
-            assert len(dream_scheduler.pending_dreams) == 2
-
-            # Cancel only dreams where observed=bob
-            cancelled = await dream_scheduler.cancel_dreams_for_observed(
-                workspace_name, "bob"
-            )
-
-            # Only the bob dream should be cancelled
-            assert key_alice_bob in cancelled
-            assert key_alice_charlie not in cancelled
-            assert key_alice_charlie in dream_scheduler.pending_dreams
-
-    @pytest.mark.asyncio
-    async def test_does_not_cancel_dreams_for_different_workspace(
-        self, dream_scheduler: DreamScheduler
-    ):
-        """Cancelling dreams should be scoped to the correct workspace."""
-        observed = "bob"
-
-        key_ws1 = construct_work_unit_key(
-            "workspace1",
-            {
-                "task_type": "dream",
-                "observer": "alice",
-                "observed": observed,
-                "dream_type": "omni",
-            },
-        )
-        key_ws2 = construct_work_unit_key(
-            "workspace2",
-            {
-                "task_type": "dream",
-                "observer": "alice",
-                "observed": observed,
-                "dream_type": "omni",
-            },
-        )
-
-        with patch.object(dream_scheduler, "execute_dream", new_callable=AsyncMock):
-            await dream_scheduler.schedule_dream(
-                key_ws1,
-                "workspace1",
-                delay_minutes=60,
-                dream_type=DreamType.OMNI,
-                observer="alice",
-                observed=observed,
-            )
-            await dream_scheduler.schedule_dream(
-                key_ws2,
-                "workspace2",
-                delay_minutes=60,
-                dream_type=DreamType.OMNI,
-                observer="alice",
-                observed=observed,
-            )
-
-            # Cancel only in workspace1
-            cancelled = await dream_scheduler.cancel_dreams_for_observed(
-                "workspace1", observed
-            )
-
-            assert key_ws1 in cancelled
-            assert key_ws2 not in cancelled
-            assert key_ws2 in dream_scheduler.pending_dreams
+async def _make_collection(
+    db_session: AsyncSession,
+    sample_data: tuple[models.Workspace, models.Peer],
+    internal_metadata: dict[str, object] | None = None,
+) -> models.Collection:
+    workspace, peer = sample_data
+    collection = models.Collection(
+        observer=peer.name,
+        observed=peer.name,
+        workspace_name=workspace.name,
+        internal_metadata=internal_metadata or {},
+    )
+    db_session.add(collection)
+    await db_session.commit()
+    return collection
 
 
-class TestThresholdFilter:
-    """Regression tests for Finding 2: threshold must count only explicit-level docs.
-
-    Previously the threshold counted all documents in a collection, including
-    dreamer output (deductive/inductive/contradiction). This created a feedback
-    loop where each dream's output inflated the trigger for the next dream.
-    The fix filters the count to `level == "explicit"` only.
-    """
-
-    @pytest.fixture(autouse=True)
-    def _pin_dream_config(self):
-        """Pin DOCUMENT_THRESHOLD=50 and ENABLED_TYPES=['omni'] for this class.
-
-        These tests assume the default thresholds; a developer's local env
-        (e.g. DREAM_DOCUMENT_THRESHOLD=5 for faster manual testing) would
-        otherwise invalidate the 30/60/10 fixtures below. Scoped to this
-        class only — do NOT widen; other tests may have different assumptions.
-        """
-        with (
-            patch("src.dreamer.dream_scheduler.settings.DREAM.DOCUMENT_THRESHOLD", 50),
-            patch("src.dreamer.dream_scheduler.settings.DREAM.ENABLED_TYPES", ["omni"]),
-        ):
-            yield
-
-    async def _make_collection(
-        self,
-        db_session: AsyncSession,
-        sample_data: tuple[models.Workspace, models.Peer],
-    ) -> models.Collection:
-        """Helper: create a Collection in the test workspace with no dream metadata."""
-        workspace, peer = sample_data
-        collection = models.Collection(
-            observer=peer.name,
-            observed=peer.name,
-            workspace_name=workspace.name,
-            internal_metadata={},
-        )
-        db_session.add(collection)
-        await db_session.commit()
-        return collection
-
-    async def _insert_doc(
-        self,
-        db_session: AsyncSession,
-        collection: models.Collection,
-        level: str,
-    ) -> None:
-        """Helper: insert one Document at the given level."""
+async def _insert_docs(
+    db_session: AsyncSession,
+    collection: models.Collection,
+    level: str,
+    count: int,
+    *,
+    age_minutes: int = 0,
+    session_name: str | None = None,
+) -> None:
+    created_at = _now() - datetime.timedelta(minutes=age_minutes)
+    for _ in range(count):
         db_session.add(
             models.Document(
                 content="test",
@@ -340,133 +52,293 @@ class TestThresholdFilter:
                 workspace_name=collection.workspace_name,
                 observer=collection.observer,
                 observed=collection.observed,
+                session_name=session_name,
+                created_at=created_at,
             )
         )
+    await db_session.commit()
 
-    @pytest.mark.asyncio
-    async def test_mixed_levels_below_explicit_threshold(
+
+async def _insert_dream_item(
+    db_session: AsyncSession,
+    collection: models.Collection,
+    *,
+    age_minutes: int,
+    processed: bool,
+    error: str | None = None,
+) -> None:
+    work_unit_key = construct_work_unit_key(
+        collection.workspace_name,
+        {
+            "task_type": "dream",
+            "observer": collection.observer,
+            "observed": collection.observed,
+            "dream_type": DreamType.OMNI.value,
+        },
+    )
+    db_session.add(
+        models.QueueItem(
+            work_unit_key=work_unit_key,
+            payload={"task_type": "dream"},
+            task_type="dream",
+            workspace_name=collection.workspace_name,
+            processed=processed,
+            error=error,
+            created_at=_now() - datetime.timedelta(minutes=age_minutes),
+        )
+    )
+    await db_session.commit()
+
+
+@pytest.fixture(autouse=True)
+def _pin_dream_config():
+    with (
+        patch("src.backlog.settings.DREAM.ENABLED", True),
+        patch("src.backlog.settings.DREAM.DOCUMENT_THRESHOLD", 50),
+        patch("src.backlog.settings.DREAM.ENABLED_TYPES", ["omni"]),
+        patch("src.backlog.settings.DREAM.IDLE_TIMEOUT_MINUTES", 60),
+        patch("src.backlog.settings.DREAM.MIN_HOURS_BETWEEN_DREAMS", 8),
+    ):
+        yield
+
+
+@pytest.mark.asyncio
+class TestFindDueDreams:
+    async def test_below_threshold_is_not_due(
         self,
-        dream_scheduler: DreamScheduler,
         db_session: AsyncSession,
         sample_data: tuple[models.Workspace, models.Peer],
     ):
-        """30 explicit + 40 deductive + 10 inductive → should NOT trigger.
+        collection = await _make_collection(db_session, sample_data)
+        await _insert_docs(db_session, collection, "explicit", 30, age_minutes=90)
 
-        Total doc count = 80 (would trigger under the buggy unfiltered count),
-        but explicit count = 30 < threshold 50, so the correct behavior is to
-        NOT schedule a dream. This is the core regression: the fix must reject
-        this scenario.
-        """
-        collection = await self._make_collection(db_session, sample_data)
-        for _ in range(30):
-            await self._insert_doc(db_session, collection, "explicit")
-        for _ in range(40):
-            await self._insert_doc(db_session, collection, "deductive")
-        for _ in range(10):
-            await self._insert_doc(db_session, collection, "inductive")
-        await db_session.commit()
+        assert await find_due_dreams(db_session) == []
 
-        with patch.object(dream_scheduler, "schedule_dream", new_callable=AsyncMock):
-            scheduled = await check_and_schedule_dream(db_session, collection)
+    async def test_derived_levels_do_not_count(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        collection = await _make_collection(db_session, sample_data)
+        await _insert_docs(db_session, collection, "explicit", 30, age_minutes=90)
+        await _insert_docs(db_session, collection, "deductive", 40, age_minutes=90)
+        await _insert_docs(db_session, collection, "contradiction", 40, age_minutes=90)
 
-        assert scheduled is False, (
-            "Threshold should filter on explicit level only — dreamer output "
-            "(deductive/inductive) must not count toward the trigger."
+        assert await find_due_dreams(db_session) == []
+
+    async def test_threshold_met_but_not_idle_is_not_due(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        collection = await _make_collection(db_session, sample_data)
+        await _insert_docs(db_session, collection, "explicit", 60, age_minutes=1)
+
+        assert await find_due_dreams(db_session) == []
+
+    async def test_threshold_met_and_idle_is_due(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        collection = await _make_collection(db_session, sample_data)
+        await _insert_docs(db_session, collection, "explicit", 60, age_minutes=90)
+
+        due = await find_due_dreams(db_session)
+
+        assert len(due) == 1
+        assert due[0].observer == collection.observer
+        assert due[0].observed == collection.observed
+        assert due[0].dream_type is DreamType.OMNI
+        assert due[0].documents_since_last_dream == 60
+
+    async def test_documents_since_last_dream_uses_stored_count(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        collection = await _make_collection(
+            db_session, sample_data, {"dream": {"last_dream_document_count": 40}}
+        )
+        await _insert_docs(db_session, collection, "explicit", 60, age_minutes=90)
+
+        assert await find_due_dreams(db_session) == []
+
+    async def test_min_hours_gate_blocks_a_recent_dream(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        last_dream_at = (_now() - datetime.timedelta(hours=2)).isoformat()
+        collection = await _make_collection(
+            db_session, sample_data, {"dream": {"last_dream_at": last_dream_at}}
+        )
+        await _insert_docs(db_session, collection, "explicit", 60, age_minutes=90)
+
+        assert await find_due_dreams(db_session) == []
+
+    async def test_pending_dream_item_blocks(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        collection = await _make_collection(db_session, sample_data)
+        await _insert_docs(db_session, collection, "explicit", 60, age_minutes=90)
+        await _insert_dream_item(
+            db_session, collection, age_minutes=10, processed=False
         )
 
-    @pytest.mark.asyncio
-    async def test_explicit_only_at_threshold(
+        assert await find_due_dreams(db_session) == []
+
+    async def test_failed_dream_waits_for_new_documents(
         self,
-        dream_scheduler: DreamScheduler,
         db_session: AsyncSession,
         sample_data: tuple[models.Workspace, models.Peer],
     ):
-        """60 explicit + 0 derived → should trigger (60 ≥ threshold 50)."""
-        collection = await self._make_collection(db_session, sample_data)
-        for _ in range(60):
-            await self._insert_doc(db_session, collection, "explicit")
-        await db_session.commit()
+        collection = await _make_collection(db_session, sample_data)
+        await _insert_docs(db_session, collection, "explicit", 60, age_minutes=90)
+        await _insert_dream_item(
+            db_session, collection, age_minutes=80, processed=True, error="boom"
+        )
 
-        with patch.object(
-            dream_scheduler, "schedule_dream", new_callable=AsyncMock
-        ) as mock_schedule:
-            scheduled = await check_and_schedule_dream(db_session, collection)
+        assert await find_due_dreams(db_session) == []
 
-        assert scheduled is True
-        assert mock_schedule.called, "schedule_dream should fire when threshold met"
-
-    @pytest.mark.asyncio
-    async def test_contradiction_excluded_from_count(
+    async def test_failed_dream_retries_after_new_documents(
         self,
-        dream_scheduler: DreamScheduler,
         db_session: AsyncSession,
         sample_data: tuple[models.Workspace, models.Peer],
     ):
-        """Contradiction-level docs are dreamer output — must not count.
+        collection = await _make_collection(db_session, sample_data)
+        await _insert_docs(db_session, collection, "explicit", 60, age_minutes=90)
+        await _insert_dream_item(
+            db_session, collection, age_minutes=80, processed=True, error="boom"
+        )
+        await _insert_docs(db_session, collection, "explicit", 1, age_minutes=70)
 
-        100 contradictions + 10 explicit → explicit=10 < threshold=50, no trigger.
-        Confirms the positive `== "explicit"` filter excludes contradiction by
-        construction (same as deductive/inductive).
-        """
-        collection = await self._make_collection(db_session, sample_data)
-        for _ in range(100):
-            await self._insert_doc(db_session, collection, "contradiction")
-        for _ in range(10):
-            await self._insert_doc(db_session, collection, "explicit")
+        due = await find_due_dreams(db_session)
+
+        assert len(due) == 1
+        assert due[0].documents_since_last_dream == 61
+
+    async def test_dreams_disabled_returns_nothing(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        collection = await _make_collection(db_session, sample_data)
+        await _insert_docs(db_session, collection, "explicit", 60, age_minutes=90)
+
+        with patch("src.backlog.settings.DREAM.ENABLED", False):
+            assert await find_due_dreams(db_session) == []
+
+    async def test_card_refresh_is_never_enqueued(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        collection = await _make_collection(db_session, sample_data)
+        await _insert_docs(db_session, collection, "explicit", 60, age_minutes=90)
+
+        with patch("src.backlog.settings.DREAM.ENABLED_TYPES", ["card_refresh"]):
+            assert await find_due_dreams(db_session) == []
+
+
+@pytest.mark.asyncio
+class TestExecuteDream:
+    async def test_enqueues_the_dream(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        workspace, peer = sample_data
+        session = models.Session(
+            name=f"dream-session-{peer.name}", workspace_name=workspace.name
+        )
+        db_session.add(session)
         await db_session.commit()
 
-        with patch.object(dream_scheduler, "schedule_dream", new_callable=AsyncMock):
-            scheduled = await check_and_schedule_dream(db_session, collection)
+        collection = await _make_collection(db_session, sample_data)
+        await _insert_docs(
+            db_session,
+            collection,
+            "explicit",
+            1,
+            age_minutes=90,
+            session_name=session.name,
+        )
 
-        assert scheduled is False
+        with patch(
+            "src.deriver.enqueue.enqueue_dream", new_callable=AsyncMock
+        ) as mock_enqueue:
+            await execute_dream(
+                workspace.name,
+                DreamType.OMNI,
+                observer=peer.name,
+                observed=peer.name,
+                trigger_reason="document_threshold",
+                delay_reason="idle_timeout",
+            )
 
+        assert mock_enqueue.called
+        assert mock_enqueue.call_args.kwargs["session_name"] == session.name
 
-class TestEnqueueCancelsDreamsCorrectly:
-    """Integration test verifying the full flow of message enqueue cancelling dreams."""
-
-    @pytest.mark.asyncio
-    async def test_enqueue_cancels_peer_to_peer_dreams(
-        self, dream_scheduler: DreamScheduler
+    async def test_skips_when_no_documents(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
     ):
-        """When a message is enqueued, it should cancel all dreams for that observed peer."""
+        workspace, peer = sample_data
+        await _make_collection(db_session, sample_data)
 
-        workspace_name = "test_workspace"
-        observed = "bob"
-
-        # Schedule dreams for multiple observers watching bob
-        keys: list[Any] = []
-        for observer in ["alice", "charlie", "bob"]:
-            key = construct_work_unit_key(
-                workspace_name,
-                {
-                    "task_type": "dream",
-                    "observer": observer,
-                    "observed": observed,
-                    "dream_type": "omni",
-                },
-            )
-            keys.append(key)
-
-            with patch.object(dream_scheduler, "execute_dream", new_callable=AsyncMock):
-                await dream_scheduler.schedule_dream(
-                    key,
-                    workspace_name,
-                    delay_minutes=60,
-                    dream_type=DreamType.OMNI,
-                    observer=observer,
-                    observed=observed,
-                )
-
-        assert len(dream_scheduler.pending_dreams) == 3
-
-        # Mock the database operations in enqueue
-        with patch("src.deriver.enqueue.tracked_db"):
-            # The enqueue function should cancel dreams via cancel_dreams_for_observed
-            # We just test that the scheduler method was called correctly
-            cancelled = await dream_scheduler.cancel_dreams_for_observed(
-                workspace_name, observed
+        with patch(
+            "src.deriver.enqueue.enqueue_dream", new_callable=AsyncMock
+        ) as mock_enqueue:
+            await execute_dream(
+                workspace.name,
+                DreamType.OMNI,
+                observer=peer.name,
+                observed=peer.name,
             )
 
-        # All three dreams should be cancelled
-        assert len(cancelled) == 3
-        assert len(dream_scheduler.pending_dreams) == 0
+        assert not mock_enqueue.called
+
+
+@pytest.mark.asyncio
+class TestPollerEnqueueFailures:
+    async def test_one_failing_dream_does_not_block_the_others(
+        self,
+        db_session: AsyncSession,  # pyright: ignore[reportUnusedParameter]
+    ):
+        from src.backlog import BacklogMetricsPoller, DueDream
+
+        due = [
+            DueDream(
+                workspace_name="ws",
+                observer=name,
+                observed=name,
+                dream_type=DreamType.OMNI,
+                documents_since_last_dream=60,
+            )
+            for name in ("first", "second", "third")
+        ]
+        attempted: list[str] = []
+
+        async def flaky(
+            _workspace_name: str,
+            _dream_type: DreamType,
+            *,
+            observer: str,
+            observed: str,  # pyright: ignore[reportUnusedParameter]
+            **_kwargs: object,
+        ) -> None:
+            attempted.append(observer)
+            if observer == "first":
+                raise ValueError("boom")
+
+        with (
+            patch("src.backlog.find_due_dreams", new=AsyncMock(return_value=due)),
+            patch("src.backlog.execute_dream", new=AsyncMock(side_effect=flaky)),
+        ):
+            await BacklogMetricsPoller()._refresh()  # pyright: ignore[reportPrivateUsage]
+
+        assert attempted == ["first", "second", "third"]

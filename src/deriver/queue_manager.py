@@ -2,11 +2,9 @@ import asyncio
 import contextlib
 import random
 import signal
-import time
 from asyncio import Task
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
 from logging import getLogger
 from typing import Any, NamedTuple, cast
 
@@ -28,12 +26,6 @@ from src.dependencies import tracked_db
 from src.deriver.consumer import (
     process_item,
     process_representation_batch,
-)
-from src.dreamer.dream_scheduler import (
-    DreamScheduler,
-    check_and_schedule_dream,
-    get_dream_scheduler,
-    set_dream_scheduler,
 )
 from src.models import QueueItem
 from src.schemas import ResolvedConfiguration
@@ -131,27 +123,9 @@ class QueueManager:
             settings.DERIVER.POLLING_SLEEP_INTERVAL_SECONDS
         )
 
-        # Monotonic timestamp of the last stale-work-unit cleanup ATTEMPT.
-        # None -> the first poll always runs cleanup (recovers rows left stale
-        # by a crashed predecessor immediately).
-        self._last_stale_cleanup_attempt: float | None = None
-        # Jittered gate width (seconds) sampled ONCE per attempt, so the deadline
-        # for the next run is fixed when the timestamp is set rather than
-        # re-rolled on every poll (which would make the effective spacing a
-        # random walk and untestable at non-zero jitter ratios).
-        self._stale_cleanup_gate_seconds: float = 0.0
-
         # Initialize from settings
         self.workers: int = settings.DERIVER.WORKERS
         self.semaphore: asyncio.Semaphore = asyncio.Semaphore(self.workers)
-
-        # Get or create the singleton dream scheduler
-        existing_scheduler = get_dream_scheduler()
-        if existing_scheduler is None:
-            self.dream_scheduler: DreamScheduler = DreamScheduler()
-            set_dream_scheduler(self.dream_scheduler)
-        else:
-            self.dream_scheduler = existing_scheduler
 
         # Initialize Sentry if enabled, using settings
         if settings.SENTRY.ENABLED:
@@ -197,11 +171,6 @@ class QueueManager:
             )
         logger.debug("Signal handlers registered")
 
-        try:
-            await self._reschedule_pending_dreams()
-        except Exception:
-            logger.exception("Failed to reschedule pending dreams at startup")
-
         # Run the polling loop directly in this task
         logger.debug("Starting polling loop directly")
         try:
@@ -210,27 +179,10 @@ class QueueManager:
         finally:
             await self.cleanup()
 
-    async def _reschedule_pending_dreams(self) -> None:
-        if not settings.DREAM.ENABLED:
-            return
-
-        async with tracked_db("reschedule_pending_dreams") as db:
-            collections = (await db.execute(select(models.Collection))).scalars().all()
-            rescheduled = 0
-            for collection in collections:
-                if await check_and_schedule_dream(db, collection):
-                    rescheduled += 1
-
-        if rescheduled:
-            logger.info("Rescheduled %d dream(s) at startup", rescheduled)
-
     async def shutdown(self, sig: signal.Signals) -> None:
         """Handle graceful shutdown"""
         logger.info(f"Received exit signal {sig.name}...")
         self.shutdown_event.set()
-
-        # Cancel all pending dreams
-        await self.dream_scheduler.shutdown()
 
         if self.active_tasks:
             logger.info(
@@ -266,64 +218,6 @@ class QueueManager:
     ##########################
     # Polling and Scheduling #
     ##########################
-
-    async def _maybe_cleanup_stale_work_units(self) -> None:
-        """Run stale-work-unit cleanup at most once per (jittered) interval.
-
-        Staleness is a minutes-timescale condition (STALE_SESSION_TIMEOUT_MINUTES),
-        but the polling loop fires on a seconds timescale on every deriver
-        instance — running cleanup unconditionally per poll multiplies into
-        unnecessary write transactions. Gate it locally:
-        concurrent cleaners on other instances remain safe via FOR UPDATE SKIP
-        LOCKED, so no cross-instance coordination is required, and the jittered
-        gate (sampled once per attempt) keeps instances from re-synchronizing
-        their cleanup runs. The gate tracks the last ATTEMPT (set before
-        running), so a failing cleanup waits a full interval instead of retrying
-        every poll against a DB that is already struggling. An interval of 0
-        preserves run-every-poll behavior.
-        """
-        interval = settings.DERIVER.STALE_WORK_UNIT_CLEANUP_INTERVAL_SECONDS
-        if (
-            interval > 0.0
-            and self._last_stale_cleanup_attempt is not None
-            and time.monotonic() - self._last_stale_cleanup_attempt
-            < self._stale_cleanup_gate_seconds
-        ):
-            return
-        # Record the attempt and fix the next deadline before running, so the
-        # gate width is stable for this cycle and a failing cleanup still waits.
-        self._last_stale_cleanup_attempt = time.monotonic()
-        self._stale_cleanup_gate_seconds = self._jitter(interval)
-        await self.cleanup_stale_work_units()
-
-    async def cleanup_stale_work_units(self) -> None:
-        """Clean up stale work units"""
-        async with tracked_db("cleanup_stale_work_units") as db:
-            cutoff = datetime.now(timezone.utc) - timedelta(
-                minutes=settings.DERIVER.STALE_SESSION_TIMEOUT_MINUTES
-            )
-
-            stale_ids = (
-                (
-                    await db.execute(
-                        select(models.ActiveQueueSession.id)
-                        .where(models.ActiveQueueSession.last_updated < cutoff)
-                        .order_by(models.ActiveQueueSession.last_updated)
-                        .with_for_update(skip_locked=True)
-                    )
-                )
-                .scalars()
-                .all()
-            )
-
-            # Delete only the records we successfully got locks for
-            if stale_ids:
-                await db.execute(
-                    delete(models.ActiveQueueSession).where(
-                        models.ActiveQueueSession.id.in_(stale_ids)
-                    )
-                )
-            await db.commit()
 
     async def get_and_claim_work_units(self) -> dict[str, str]:
         """
@@ -531,7 +425,6 @@ class QueueManager:
                     continue
 
                 try:
-                    await self._maybe_cleanup_stale_work_units()
                     claimed_work_units = await self.get_and_claim_work_units()
                     if claimed_work_units:
                         if self._is_tenant_work(claimed_work_units):

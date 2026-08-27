@@ -738,7 +738,7 @@ async def test_crud_get_peer_resolves_scope_and_dotted_names(
 ):
     """crud.get_peer must accept names outside RESOURCE_NAME_PATTERN.
 
-    This is the Dreamer's preflight path: DreamScheduler passes
+    This is the Dreamer's preflight path: the dream check passes
     ``collection.observer`` straight through, and scope peers have
     ``observe_others=true``, so ``(scope.x, peer)`` collections exist and get
     dreamt. While get_peer took a PeerCreate, every such dream died at preflight

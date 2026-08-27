@@ -192,7 +192,7 @@ class TestDeriverBacklog:
 
         assert backlog.eligible_work_units == 0
 
-    async def test_stale_claim_does_not_hide_work(
+    async def test_stale_claim_is_reaped_and_stops_hiding_work(
         self,
         db_session: AsyncSession,
         sample_data: tuple[models.Workspace, models.Peer],
@@ -221,9 +221,12 @@ class TestDeriverBacklog:
         )
         await db_session.commit()
 
-        backlog = await crud.get_deriver_backlog(db_session)
+        assert (await crud.get_deriver_backlog(db_session)).eligible_work_units == 0
 
-        assert backlog.eligible_work_units == 1
+        await crud.cleanup_stale_work_units()
+        await db_session.commit()
+
+        assert (await crud.get_deriver_backlog(db_session)).eligible_work_units == 1
 
     async def test_processed_items_are_not_counted(
         self,

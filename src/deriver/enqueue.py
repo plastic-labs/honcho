@@ -7,7 +7,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import crud, models, schemas
 from src.config import settings
 from src.dependencies import tracked_db
-from src.dreamer.dream_scheduler import get_dream_scheduler
 from src.exceptions import ValidationException
 from src.models import QueueItem
 from src.schemas import MessageConfiguration, ResolvedConfiguration
@@ -30,26 +29,6 @@ async def enqueue(payload: list[dict[str, Any]]) -> None:
     Args:
         payload: List of message payload dictionaries
     """
-
-    # Cancel any pending dreams for affected collections since user is active again.
-    # This cancels dreams for all collections where observed=peer_name, which covers
-    # both self-observation and peer-to-peer observation cases.
-    dream_scheduler = get_dream_scheduler()
-    if dream_scheduler and payload:
-        cancelled_dreams: set[str] = set()
-        for message in payload:
-            workspace_name = message.get("workspace_name")
-            peer_name = message.get("peer_name")
-            if workspace_name and peer_name:
-                cancelled = await dream_scheduler.cancel_dreams_for_observed(
-                    workspace_name, peer_name
-                )
-                cancelled_dreams.update(cancelled)
-
-        if cancelled_dreams:
-            logger.info(
-                f"Cancelled {len(cancelled_dreams)} pending dreams due to new activity"
-            )
 
     async with tracked_db("message_enqueue") as db_session:
         try:

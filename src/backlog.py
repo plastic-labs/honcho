@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, cast
 
@@ -13,12 +14,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import crud, models
 from src.config import settings
 from src.dependencies import tracked_db
+from src.dreamer import execute_dream
+from src.schemas import DreamType
 from src.telemetry.prometheus import metrics as prometheus_metrics
 from src.utils.work_unit import construct_work_unit_key
 
 logger = logging.getLogger(__name__)
 
-DREAM_POLL_INTERVAL_SECONDS = 300
+
+@dataclass
+class DueDream:
+    workspace_name: str
+    observer: str
+    observed: str
+    dream_type: DreamType
+    documents_since_last_dream: int
 
 
 class BacklogMetricsPoller:
@@ -75,6 +85,8 @@ class BacklogMetricsPoller:
                 continue
 
     async def _refresh(self) -> None:
+        due_dreams: list[DueDream] | None = None
+
         async with tracked_db("backlog_metrics", read_only=True) as db:
             backlog = await crud.get_deriver_backlog(db)
             prometheus_metrics.prometheus_metrics.set_deriver_backlog(
@@ -88,15 +100,43 @@ class BacklogMetricsPoller:
             )
 
             if self._dream_poll_due():
-                prometheus_metrics.prometheus_metrics.set_dreams_pending(
-                    count=await count_pending_dreams(db)
+                due_dreams = await find_due_dreams(db)
+
+        if due_dreams is None:
+            return
+
+        prometheus_metrics.prometheus_metrics.set_dreams_pending(count=len(due_dreams))
+
+        for dream in due_dreams:
+            try:
+                await execute_dream(
+                    dream.workspace_name,
+                    dream.dream_type,
+                    observer=dream.observer,
+                    observed=dream.observed,
+                    trigger_reason="document_threshold",
+                    delay_reason="idle_timeout",
+                    documents_since_last_dream_at_schedule=dream.documents_since_last_dream,
+                    document_threshold=settings.DREAM.DOCUMENT_THRESHOLD,
                 )
+            except Exception as e:
+                logger.error(
+                    "Failed to enqueue dream for %s/%s/%s: %s",
+                    dream.workspace_name,
+                    dream.observer,
+                    dream.observed,
+                    e,
+                )
+                if settings.SENTRY.ENABLED:
+                    sentry_sdk.capture_exception(e)
 
     def _dream_poll_due(self) -> bool:
         now = datetime.now(timezone.utc)
         if self._next_dream_poll is not None and now < self._next_dream_poll:
             return False
-        self._next_dream_poll = now + timedelta(seconds=DREAM_POLL_INTERVAL_SECONDS)
+        self._next_dream_poll = now + timedelta(
+            seconds=settings.DREAM.POLL_INTERVAL_SECONDS
+        )
         return True
 
 
@@ -108,9 +148,21 @@ async def _seconds_since_last_vector_sync(db: AsyncSession) -> float:
     return (datetime.now(timezone.utc) - newest).total_seconds()
 
 
-async def count_pending_dreams(db: AsyncSession) -> int:
-    if not settings.DREAM.ENABLED:
-        return 0
+async def find_due_dreams(db: AsyncSession) -> list[DueDream]:
+    """Collections whose next dream is due, read-only.
+
+    A dream is due when the collection has gained DOCUMENT_THRESHOLD explicit
+    documents since its last dream, has been quiet for IDLE_TIMEOUT_MINUTES, is
+    past the MIN_HOURS_BETWEEN_DREAMS gate, and has no dream queued or attempted
+    since its newest explicit document.
+    """
+    dream_types = [
+        DreamType(dream_type)
+        for dream_type in settings.DREAM.ENABLED_TYPES
+        if dream_type == DreamType.OMNI.value
+    ]
+    if not settings.DREAM.ENABLED or not dream_types:
+        return []
 
     explicit_counts = (
         select(
@@ -118,6 +170,7 @@ async def count_pending_dreams(db: AsyncSession) -> int:
             models.Document.observer,
             models.Document.observed,
             func.count(models.Document.id).label("explicit_count"),
+            func.max(models.Document.created_at).label("newest_created_at"),
         )
         .where(models.Document.level == "explicit")
         .group_by(
@@ -136,6 +189,7 @@ async def count_pending_dreams(db: AsyncSession) -> int:
                 models.Collection.observed,
                 models.Collection.internal_metadata,
                 func.coalesce(explicit_counts.c.explicit_count, 0),
+                explicit_counts.c.newest_created_at,
             ).outerjoin(
                 explicit_counts,
                 (models.Collection.workspace_name == explicit_counts.c.workspace_name)
@@ -146,7 +200,8 @@ async def count_pending_dreams(db: AsyncSession) -> int:
     ).all()
 
     now = datetime.now(timezone.utc)
-    due: list[str] = []
+    idle_cutoff = now - timedelta(minutes=settings.DREAM.IDLE_TIMEOUT_MINUTES)
+    candidates: dict[str, tuple[DueDream, datetime]] = {}
 
     for row in rows:
         workspace_name = cast(str, row[0])
@@ -154,6 +209,7 @@ async def count_pending_dreams(db: AsyncSession) -> int:
         observed = cast(str, row[2])
         internal_metadata = cast("dict[str, Any] | None", row[3])
         explicit_count = cast(int, row[4])
+        newest_created_at = cast("datetime | None", row[5])
 
         dream_metadata: dict[str, Any] = (internal_metadata or {}).get("dream", {})
         since_last_dream = explicit_count - int(
@@ -162,41 +218,60 @@ async def count_pending_dreams(db: AsyncSession) -> int:
         if since_last_dream < settings.DREAM.DOCUMENT_THRESHOLD:
             continue
 
+        if newest_created_at is None or newest_created_at > idle_cutoff:
+            continue
+
         last_dream_at = cast("str | None", dream_metadata.get("last_dream_at"))
         if last_dream_at and _within_min_hours_gate(last_dream_at, now):
             continue
 
-        for dream_type in settings.DREAM.ENABLED_TYPES:
-            due.append(
-                construct_work_unit_key(
-                    workspace_name,
-                    {
-                        "task_type": "dream",
-                        "observer": observer,
-                        "observed": observed,
-                        "dream_type": dream_type,
-                    },
-                )
+        for dream_type in dream_types:
+            work_unit_key = construct_work_unit_key(
+                workspace_name,
+                {
+                    "task_type": "dream",
+                    "observer": observer,
+                    "observed": observed,
+                    "dream_type": dream_type.value,
+                },
+            )
+            candidates[work_unit_key] = (
+                DueDream(
+                    workspace_name=workspace_name,
+                    observer=observer,
+                    observed=observed,
+                    dream_type=dream_type,
+                    documents_since_last_dream=since_last_dream,
+                ),
+                newest_created_at,
             )
 
-    if not due:
-        return 0
+    if not candidates:
+        return []
 
-    already_queued = set(
-        (
-            await db.execute(
-                select(models.QueueItem.work_unit_key).where(
-                    models.QueueItem.task_type == "dream",
-                    ~models.QueueItem.processed,
-                    models.QueueItem.work_unit_key.in_(due),
-                )
+    attempt_rows = (
+        await db.execute(
+            select(
+                models.QueueItem.work_unit_key,
+                func.max(models.QueueItem.created_at),
             )
+            .where(
+                models.QueueItem.task_type == "dream",
+                models.QueueItem.work_unit_key.in_(candidates.keys()),
+            )
+            .group_by(models.QueueItem.work_unit_key)
         )
-        .scalars()
-        .all()
-    )
+    ).all()
+    newest_attempts: dict[str, datetime] = {
+        cast(str, row[0]): cast(datetime, row[1]) for row in attempt_rows
+    }
 
-    return len([key for key in due if key not in already_queued])
+    return [
+        due
+        for work_unit_key, (due, newest_created_at) in candidates.items()
+        if work_unit_key not in newest_attempts
+        or newest_attempts[work_unit_key] < newest_created_at
+    ]
 
 
 def _within_min_hours_gate(last_dream_at: str, now: datetime) -> bool:

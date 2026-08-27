@@ -17,7 +17,7 @@ from pydantic import BaseModel
 from sqlalchemy import exists, select
 from sqlalchemy.exc import IntegrityError
 
-from src import models
+from src import crud, models
 from src.config import settings
 from src.dependencies import tracked_db
 from src.models import QueueItem
@@ -34,9 +34,6 @@ class ReconcilerTask(BaseModel):
     interval_seconds: int
 
 
-# Task intervals
-QUEUE_CLEANUP_INTERVAL_SECONDS = 12 * 3600  # 12 hours
-
 # Task registry - add new tasks here
 RECONCILER_TASKS: dict[str, ReconcilerTask] = {
     "sync_vectors": ReconcilerTask(
@@ -47,7 +44,7 @@ RECONCILER_TASKS: dict[str, ReconcilerTask] = {
     "cleanup_queue": ReconcilerTask(
         name="cleanup_queue",
         work_unit_key="reconciler:cleanup_queue",
-        interval_seconds=QUEUE_CLEANUP_INTERVAL_SECONDS,
+        interval_seconds=settings.DERIVER.QUEUE_CLEANUP_INTERVAL_SECONDS,
     ),
 }
 
@@ -97,6 +94,7 @@ class ReconcilerScheduler:
             self._shutdown_event: asyncio.Event = asyncio.Event()
             # Track next run time for each task
             self._next_run: dict[str, datetime] = {}
+            self._next_stale_cleanup: datetime | None = None
             ReconcilerScheduler._initialized = True
 
     @classmethod
@@ -116,6 +114,7 @@ class ReconcilerScheduler:
         now = datetime.now(timezone.utc)
         for task_name, task in RECONCILER_TASKS.items():
             self._next_run[task_name] = now + timedelta(seconds=task.interval_seconds)
+        self._next_stale_cleanup = now
 
         self._scheduler_task = asyncio.create_task(self._scheduler_loop())
         logger.info(
@@ -142,6 +141,7 @@ class ReconcilerScheduler:
 
         self._scheduler_task = None
         self._next_run.clear()
+        self._next_stale_cleanup = None
         logger.info("ReconcilerScheduler stopped")
 
     async def _scheduler_loop(self) -> None:
@@ -166,6 +166,20 @@ class ReconcilerScheduler:
                 # endregion
                 await record_pending_embeddings_backlog()
 
+                if (
+                    self._next_stale_cleanup is not None
+                    and now >= self._next_stale_cleanup
+                ):
+                    try:
+                        await crud.cleanup_stale_work_units()
+                    except Exception as e:
+                        logger.exception("Error cleaning up stale work units")
+                        if settings.SENTRY.ENABLED:
+                            sentry_sdk.capture_exception(e)
+                    self._next_stale_cleanup = now + timedelta(
+                        seconds=settings.DERIVER.STALE_WORK_UNIT_CLEANUP_INTERVAL_SECONDS
+                    )
+
                 # Check each task and enqueue if due
                 for task_name, task in RECONCILER_TASKS.items():
                     next_run = self._next_run.get(task_name, now)
@@ -186,8 +200,11 @@ class ReconcilerScheduler:
                         )
 
                 # Calculate sleep time until next task is due
-                if self._next_run:
-                    next_task_time = min(self._next_run.values())
+                next_run_times = list(self._next_run.values())
+                if self._next_stale_cleanup is not None:
+                    next_run_times.append(self._next_stale_cleanup)
+                if next_run_times:
+                    next_task_time = min(next_run_times)
                     sleep_seconds = max(
                         1.0,  # At least 1 second to avoid busy loop
                         (next_task_time - datetime.now(timezone.utc)).total_seconds(),
