@@ -214,6 +214,18 @@
                 ]
               },
               {
+                "group": "scopes",
+                "pages": [
+                  "v3/api-reference/endpoint/scopes/get-or-create-scope",
+                  "v3/api-reference/endpoint/scopes/get-scopes",
+                  "v3/api-reference/endpoint/scopes/get-scope",
+                  "v3/api-reference/endpoint/scopes/add-sessions-to-scope",
+                  "v3/api-reference/endpoint/scopes/get-scope-sessions",
+                  "v3/api-reference/endpoint/scopes/remove-session-from-scope",
+                  "v3/api-reference/endpoint/scopes/get-scope-status"
+                ]
+              },
+              {
                 "group": "messages",
                 "pages": [
                   "v3/api-reference/endpoint/messages/create-messages-for-session",

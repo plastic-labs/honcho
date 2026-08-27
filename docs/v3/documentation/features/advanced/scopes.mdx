@@ -51,10 +51,7 @@ Three consequences worth internalizing:
   that name it; it does not hide the sessions from requests that don't.
 
 <Warning>
-Scopes are a recall boundary, not an authorization boundary. Anyone holding a
-workspace key can read any session with or without a scope. Enforcing that a
-given caller *must* go through a given scope is a separate feature (scope-bound
-API keys) and is not shipped.
+Scopes are a recall boundary, not an authorization boundary. Access can be scoped by workspace, session, or peer boundaries.
 </Warning>
 
 ## The Two Arms
@@ -359,31 +356,26 @@ Design accordingly: keep the session boundary aligned with the confidentiality
 boundary you actually care about, since that session boundary is the one scopes
 can enforce.
 
-## Underneath the Facade
+## Guardrails
 
-The `/scopes` routes are a facade. A scope named `therapy` is a peer named
-`scope.therapy` that observes its member sessions (`observe_others=true`) and
-never speaks (`observe_me=false`), marked with `{"kind": "scope"}` in
-server-controlled internal metadata. That is why the single-scope arm has depth:
-the scope occupies an observer position, so the deriver and dreamer build a real
-representation there, exactly as they do for a peer observing another peer — see
-[Directional Representations](/v3/documentation/features/advanced/directional-representations)
-for that mechanism.
-
-You never need this detail to use scopes, but it explains the guardrails:
+A few behaviors follow from how scopes are built:
 
 - **The `scope.` prefix is reserved.** Creating a peer, or adding a peer to a
-  session, with a `scope.`-prefixed name is rejected — the prefix contains `.`,
-  which is outside the peer-name charset, so no validated API call can occupy the
-  namespace.
-- **Scope peers are hidden from peer listings by default.** Pass
-  `kind="scope"` to list only scopes, or `kind="all"` to see both.
+  session, with a `scope.`-prefixed name is rejected.
+- **Scopes are hidden from peer listings by default.** Pass `kind="scope"` to
+  list only scopes, or `kind="all"` to see both.
 - **A scope can't be observed.** No representation is formed *of* a scope, so a
   scope is rejected in any `target` / observed position, including as a dream
   target.
 - **Membership is managed only through the scopes surface.** The session
-  add-peers, set-peers, and remove-peers routes reject scope peers and point you
+  add-peers, set-peers, and remove-peers routes reject scope names and point you
   at `/scopes/{scope_id}/sessions` or the `scopes` field on session create.
+
+Honcho is open source — if you want to understand how scopes work under the
+hood, read the implementation:
+[`src/routers/scopes.py`](https://github.com/plastic-labs/honcho/blob/main/src/routers/scopes.py),
+[`src/crud/scope.py`](https://github.com/plastic-labs/honcho/blob/main/src/crud/scope.py),
+and [`src/deriver/scope_backfill.py`](https://github.com/plastic-labs/honcho/blob/main/src/deriver/scope_backfill.py).
 
 ## Limits
 
@@ -395,3 +387,6 @@ You never need this detail to use scopes, but it explains the guardrails:
 | Scopes in one `scope` read option | 100 |
 | Scopes on session create | 100 |
 | Sessions in a resolved allowlist | 1,000 |
+
+Full request and response shapes are in the
+[API reference](/v3/api-reference/endpoint/scopes/get-or-create-scope).
