@@ -372,6 +372,27 @@ async def init_db():
         await connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         await connection.commit()
 
+    # Validate pgvector version when HNSW iterative scan is enabled
+    # (requires pgvector >= 0.8.0). Fail startup with a clear error
+    # rather than relying on silent query-time failures.
+    if settings.DB.HNSW_ITERATIVE_SCAN:
+        async with engine.connect() as connection:
+            result = await connection.execute(
+                text("SELECT extversion FROM pg_extension WHERE extname = 'vector'")
+            )
+            row = result.fetchone()
+            if row is not None:
+                version_str = row[0]
+                version_parts = version_str.split(".")
+                major = int(version_parts[0]) if len(version_parts) > 0 else 0
+                minor = int(version_parts[1]) if len(version_parts) > 1 else 0
+                if (major, minor) < (0, 8):
+                    raise RuntimeError(
+                        f"pgvector version {version_str} is installed but "
+                        f"HNSW_ITERATIVE_SCAN requires pgvector >= 0.8.0. "
+                        f"Upgrade pgvector or set HNSW_ITERATIVE_SCAN=None."
+                    )
+
     # Run Alembic migrations
     alembic_cfg = Config("alembic.ini")
     command.upgrade(alembic_cfg, "head")
