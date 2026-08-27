@@ -16,6 +16,10 @@ def workspace(workspace_id: str) -> str:
     return f"/{API_VERSION}/workspaces/{workspace_id}"
 
 
+def workspace_chat(workspace_id: str) -> str:
+    return f"/{API_VERSION}/workspaces/{workspace_id}/chat"
+
+
 def workspace_search(workspace_id: str) -> str:
     return f"/{API_VERSION}/workspaces/{workspace_id}/search"
 

@@ -19,6 +19,7 @@ from src.utils.agent_tools import (
     PEER_CARD_ALLOWED_PREFIXES,
     ObservationsCreatedResult,
     ToolContext,
+    _bounded_int,  # pyright: ignore[reportPrivateUsage]
     _handle_create_observations,  # pyright: ignore[reportPrivateUsage]
     _handle_delete_observations,  # pyright: ignore[reportPrivateUsage]
     _handle_extract_preferences,  # pyright: ignore[reportPrivateUsage]
@@ -952,6 +953,21 @@ class TestSearchMemory:
         assert query_embeddings[0] == fallback_embeddings[0]
 
 
+class TestBoundedInt:
+    """Unit tests for tool-input clamping."""
+
+    def test_floors_nonpositive_to_one(self) -> None:
+        assert _bounded_int(0, 10, hi=20) == 1
+        assert _bounded_int(-5, 10, hi=20) == 1
+
+    def test_caps_at_hi(self) -> None:
+        assert _bounded_int(100, 10, hi=20) == 20
+
+    def test_falls_back_on_bad_input(self) -> None:
+        assert _bounded_int("Infinity", 10, hi=20) == 10
+        assert _bounded_int(None, 10, hi=20) == 10
+
+
 @pytest.mark.asyncio
 class TestSearchMessages:
     """Tests for _handle_search_messages."""
@@ -970,6 +986,39 @@ class TestSearchMessages:
         from src.utils.types import ToolResult
 
         assert isinstance(result, str | ToolResult)
+
+    async def test_limit_zero_is_floored_to_one(
+        self,
+        make_tool_context: Callable[..., ToolContext],
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """LLM-supplied limit=0 must not reach the vector store as top_k=0."""
+        ctx = make_tool_context()
+        seen_limits: list[int] = []
+
+        async def fake_embed(query: str) -> list[float]:
+            _ = query
+            return [0.1, 0.2, 0.3]
+
+        async def fake_search_messages(
+            workspace_name: str,
+            session_name: str | None,
+            query: str,
+            limit: int = 10,
+            **_kwargs: Any,
+        ) -> list[Any]:
+            _ = (workspace_name, session_name, query)
+            seen_limits.append(limit)
+            return []
+
+        monkeypatch.setattr("src.utils.agent_tools.embedding_client.embed", fake_embed)
+        monkeypatch.setattr(
+            "src.utils.agent_tools.crud.search_messages", fake_search_messages
+        )
+
+        await _handle_search_messages(ctx, {"query": "anything", "limit": 0})
+
+        assert seen_limits == [1]
 
 
 @pytest.mark.asyncio

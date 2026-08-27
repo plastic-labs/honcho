@@ -18,13 +18,44 @@ uvx honcho-cli
 ```
 </CodeGroup>
 
+This only installs the `honcho` command. It does not start a server. Use `honcho start --setup` (Docker + an LLM provider key) when you want a local stack.
+
 ## Quick Start
 
 ```bash
-honcho init        # confirm/set apiKey + Honcho URL in ~/.honcho/config.json
-honcho doctor      # verify your config + connectivity
-honcho             # show banner + command list
+honcho init                 # Honcho API key or browser login + server URL (talk *to* Honcho)
+honcho start --setup basic  # local stack: LLM provider key + Docker (not set by init)
+honcho doctor               # verify your config + connectivity
+honcho                      # show banner + command list
 ```
+
+`honcho init` authenticates the CLI against a Honcho server. It does **not** configure the LLM key a local stack needs — that is `honcho start --setup`.
+
+## Local stack
+
+`honcho start --setup basic` is the fastest way to run Honcho on your machine. It does **not** require cloning the Honcho repo. The wizard prompts for an LLM provider and API key, writes them into the profile `.env`, pulls `ghcr.io/plastic-labs/honcho:latest`, **pins that digest**, and starts API + deriver + Postgres + Redis via Docker.
+
+Default profile is `local` (`--profile` / `HONCHO_PROFILE`). First start copies the image `config.toml.example` into the profile directory; later starts leave that file alone so your edits persist — including when you re-pin the image. Delete `config.toml` yourself if you want a fresh copy from a new image. Pass `--image` to pin a different tag or digest. Ports bind to `127.0.0.1`; if 8000/5432/6379 are taken, the CLI remaps them (or pass `--api-port` / `--db-port` / `--redis-port`). Auth is off (`AUTH_USE_AUTH=false`).
+
+Pass `--setup basic` or `--setup advanced` for an interactive wizard that writes curated LLM/feature overrides into the profile `.env` (environment variables win over `config.toml`). This is TTY-only. `basic` covers provider and chat model; `advanced` also covers embeddings, deriver/dialectic models, dreams, and deriver flush. Re-running `--setup` while the stack is up recreates the API and deriver containers.
+
+This does **not** change `environmentUrl` in the shared config file. To talk to the local stack:
+
+```bash
+HONCHO_BASE_URL=http://127.0.0.1:8000 honcho workspace list
+honcho init --base-url http://127.0.0.1:8000   # persist local as the CLI default
+```
+
+```bash
+honcho start --setup basic
+honcho start --setup advanced
+LLM_OPENAI_API_KEY=sk-... honcho start   # skip the wizard if the key is already in the env
+honcho status
+honcho stop            # keep data
+honcho stop --wipe     # also delete volumes
+```
+
+To **develop the server** (live reload, from-source image), see [Local Environment Setup](/v3/contributing/self-hosting).
 
 ## Configuration
 
@@ -38,12 +69,17 @@ The CLI resolves config in this order: **flag → env var → config file → de
 | Peer        | —                 | `HONCHO_PEER_ID`       | `-p` / `--peer`        | No         |
 | Session     | —                 | `HONCHO_SESSION_ID`    | `-s` / `--session`     | No         |
 | JSON output | —                 | `HONCHO_JSON`          | `--json`               | No         |
+| Update nag  | —                 | `HONCHO_NO_UPDATE_CHECK` | —                    | No         |
+| Local stack | —                 | `HONCHO_PROFILE`       | `--profile`            | No         |
 
 ### Persisted config
 
-The CLI shares `~/.honcho/config.json` with sibling Honcho tools. It owns only
+The CLI shares `~/.honcho/config.json` with sibling Honcho tools. It owns
 `apiKey` and `environmentUrl` at the top level — everything else (`hosts`,
 `sessions`, etc.) is written by other tools and left untouched on save.
+On managed servers that advertise the device grant in OAuth metadata,
+`honcho init` can log you in via the browser; tokens auto-refresh
+and are stored under `oauth` without deleting a shared `apiKey`.
 
 ```json
 {
@@ -88,6 +124,8 @@ Every command adapts its output to the context:
 - **TTY** — human-readable tables via Rich.
 - **Piped or redirected** — JSON automatically (detected via `isatty`).
 - **`--json` flag / `HONCHO_JSON=1`** — force JSON regardless of terminal.
+
+Interactive sessions may print a one-line upgrade hint on stderr at most once a day when a newer `honcho-cli` is on PyPI (`uv tool upgrade honcho-cli`). JSON/piped output skips it; set `HONCHO_NO_UPDATE_CHECK=1` to disable it.
 
 Collection commands emit JSON arrays; single-resource commands emit JSON objects. Errors are always structured:
 
