@@ -99,7 +99,7 @@ context = session.context(summary=False, tokens=2000)
 
 ### Peer Representation in Context
 
-You can include a peer's [representation](/v3/documentation/core-concepts/representation) and peer card in the context by specifying `peer_target`. This is useful for providing the LLM with knowledge about a specific peer. Pass `scope` with `peer_target` to use a [named scope](/v3/documentation/features/advanced/scopes) as the perspective source (`scope` is mutually exclusive with `peer_perspective`).
+You can include a peer's [representation](/v3/documentation/core-concepts/representation) and peer card in the context by specifying `peer_target`. This is useful for providing the LLM with knowledge about a specific peer. Pass `scope` with `peer_target` to use a [named scope](/v3/documentation/features/advanced/scopes) as the perspective source (`scope` is mutually exclusive with `peer_perspective` and requires a workspace-level or admin-level key).
 
 <CodeGroup>
 ```python Python
@@ -227,7 +227,7 @@ context = session.context(
 | `tokens` | `int` | Maximum tokens to include |
 | `peer_target` | `str` | Peer ID to include representation for |
 | `peer_perspective` | `str` | Peer ID for perspective (requires peer_target) |
-| `scope` | `str` | Named scope as the perspective source for `peer_target`'s representation and card. Requires `peer_target`; mutually exclusive with `peer_perspective`. See [Scopes](/v3/documentation/features/advanced/scopes) |
+| `scope` | `str` | Named scope as the perspective source for `peer_target`'s representation and card. Requires `peer_target` and a workspace-level or admin-level key; mutually exclusive with `peer_perspective`. See [Scopes](/v3/documentation/features/advanced/scopes) |
 | `search_query` | `str` | Query for semantic search (requires peer_target) |
 | `limit_to_session` | `bool` | Limit to session conclusions only |
 | `search_top_k` | `int` | Semantic search results to include (1-100) |
