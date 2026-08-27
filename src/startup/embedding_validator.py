@@ -6,9 +6,10 @@ that forbade non-1536 dims unless the operator asserted a VECTOR_STORE.MIGRATED
 flag — the schema introspection here is more accurate because it inspects
 actual state instead of operator-asserted state.
 
-For external stores (turbopuffer, lancedb) the check is best-effort: namespaces
-are per-workspace and lazy-created, so this validator can only sample existing
-ones. Full enumeration is available via `uv run python scripts/configure_embeddings.py --report`.
+For external stores (turbopuffer, lancedb, milvus) the check is best-effort:
+namespaces are per-workspace and lazy-created, so this validator can only sample
+existing ones. Full enumeration is available via
+`uv run python scripts/configure_embeddings.py --report`.
 """
 
 from __future__ import annotations
@@ -76,7 +77,7 @@ async def validate_embedding_schema(
     dims = await _introspect_pgvector_dims_with_retry(engine, schema)
     _assert_pgvector_dims_match(dims, schema=schema, target_dim=target_dim)
 
-    if s.VECTOR_STORE.TYPE in ("turbopuffer", "lancedb"):
+    if s.VECTOR_STORE.TYPE in ("turbopuffer", "lancedb", "milvus"):
         await _sample_external_namespaces(engine, target_dim=target_dim)
 
 
@@ -261,7 +262,8 @@ async def _probe_namespace_dim(store: VectorStore, namespace: str) -> int | None
     """Return the namespace's declared dim, or ``None`` if not present.
 
     Delegates to the store's own ``probe_namespace_dim`` implementation
-    (lancedb opens the table, turbopuffer reads the schema). ``None`` means
-    "lazy-create namespace, nothing to validate against."
+    (lancedb opens the table, turbopuffer reads the schema, milvus describes
+    the collection). ``None`` means "lazy-create namespace, nothing to validate
+    against."
     """
     return await store.probe_namespace_dim(namespace)

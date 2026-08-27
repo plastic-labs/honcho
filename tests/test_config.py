@@ -1,6 +1,27 @@
 import pytest
 
-from src.config import ConfiguredModelSettings, DeriverSettings
+from src.config import ConfiguredModelSettings, DeriverSettings, VectorStoreSettings
+
+
+def test_docker_multi_process_rejects_milvus_lite(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HONCHO_DOCKER_MULTI_PROCESS", "true")
+
+    with pytest.raises(ValueError, match="remote Milvus Server or Zilliz Cloud"):
+        VectorStoreSettings(TYPE="milvus", MILVUS_URI="./milvus.db")
+
+
+def test_docker_multi_process_accepts_remote_milvus(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HONCHO_DOCKER_MULTI_PROCESS", "true")
+
+    config = VectorStoreSettings(
+        TYPE="milvus", MILVUS_URI="http://milvus.example:19530"
+    )
+
+    assert config.MILVUS_URI == "http://milvus.example:19530"
 
 
 def _make_deriver_settings(

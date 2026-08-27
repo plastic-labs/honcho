@@ -340,11 +340,15 @@ def test_app_settings_accepts_non_1536_with_any_vector_store_configuration() -> 
     Construction must succeed for every combination at config time."""
     from typing import Literal
 
-    combos: list[tuple[Literal["pgvector", "turbopuffer", "lancedb"], bool]] = [
+    combos: list[
+        tuple[Literal["pgvector", "turbopuffer", "lancedb", "milvus"], bool]
+    ] = [
         ("pgvector", True),
         ("pgvector", False),
         ("lancedb", True),
         ("lancedb", False),
+        ("milvus", True),
+        ("milvus", False),
         ("turbopuffer", True),
         ("turbopuffer", False),
     ]
