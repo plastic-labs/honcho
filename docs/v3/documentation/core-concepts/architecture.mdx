@@ -86,7 +86,7 @@ Honcho runs as two cooperating processes: an **API server** that handles request
 
 **Write path (synchronous).** A message is stored and a reasoning task is enqueued in the same request; the API returns immediately. Nothing about the reasoning that follows blocks the caller.
 
-**Deriver + Summarizer (async, per-message).** The worker picks up queued tasks in small batches. The Deriver reads new messages and extracts conclusions about the peer--explicit statements and direct deductions. In parallel, the Summarizer periodically rolls up recent messages into short- and long-form session summaries. Both run per-message (well, per-batch) rather than on a schedule.
+**Deriver + Summarizer (async, per-message).** The worker picks up queued tasks. The Deriver reads new messages and extracts conclusions about the peer--explicit statements and direct deductions. In parallel, the Summarizer periodically rolls up recent messages into short- and long-form session summaries. Both run per-message rather than on a schedule.
 
 **Dreamer (periodic).** On a schedule (or triggered on demand), the Dreamer revisits existing conclusions to consolidate and deepen them: removing redundant or stale ones, drawing inductive conclusions across patterns that span multiple messages, and updating peer cards--compact biographical summaries of a peer. This is where memory gets richer over time, not just larger.
 

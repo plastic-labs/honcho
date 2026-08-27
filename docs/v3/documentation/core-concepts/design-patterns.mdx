@@ -52,7 +52,7 @@ For unified context across Honcho plugins, set the same user peer ID (`peerName`
 
 ## Session Design
 
-Sessions define the temporal boundaries of an interaction. Where you draw those boundaries affects how summaries are generated, how context is retrieved, and when reasoning fires.
+Sessions define the temporal boundaries of an interaction. Where you draw those boundaries affects how summaries are generated and how context is retrieved.
 
 **Common session patterns**
 
@@ -65,10 +65,6 @@ Sessions define the temporal boundaries of an interaction. Where you draw those 
 | Per-import | A batch of external data | Importing emails or documents for a single peer |
 
 Create a **new** session when context resets (new conversation, new day, new topic); **reuse** one when context should keep accumulating (ongoing channel, persistent thread).
-
-<Warning>
-**Don't slice sessions too thin.** Honcho batches reasoning until a peer accumulates ~1,000 tokens *within a single session*, with a default age-based flush for quiet tails ([token batching](/v3/documentation/core-concepts/reasoning#token-batching)). Low-volume or trickle inputs should still append to one ongoing session rather than fragment across many, so reasoning runs with useful context instead of many small delayed batches.
-</Warning>
 
 **How cross-session reasoning works**
 
@@ -99,7 +95,7 @@ Two things scopes are **not**:
 ## Common Mistakes
 
 - **Splitting one identity across peer IDs** -- If the same user is `alice`, `alice-discord`, and `alice-cursor`, Honcho builds separate representations. Use one stable peer ID when you want unified memory.
-- **Too many tiny sessions** -- Summaries and recent messages are local to one session, and reasoning only fires past ~1,000 tokens per session. Splitting a continuous conversation across many sessions fragments local context and can stall reasoning. Reuse a session when context should flow continuously.
+- **Too many tiny sessions** -- Summaries and recent messages are local to one session. Splitting a continuous conversation across many sessions fragments that local context. Reuse a session when context should flow continuously.
 - **Separating agents that should collaborate** -- If agents need shared product, customer, or team context, put them in the same workspace. Separate workspaces are hard isolation boundaries.
 - **Leaving `observe_me` on for assistants** -- Wastes reasoning compute on a peer you control. Deterministic behavior doesn't need to be modeled.
 - **Turning on `observe_others` everywhere** -- Directional representations are powerful, but they add complexity. Use them when peers need distinct perspectives, not just because a session has multiple peers.
