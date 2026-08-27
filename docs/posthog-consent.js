@@ -22,11 +22,17 @@
       loaded = false
     }
     s.onload = function () {
+      // Consent withdrawn while array.js was downloading: skip init, allow a retry on re-grant.
+      if (!granted()) {
+        loaded = false
+        return
+      }
       window.posthog.init(KEY, {
         api_host: 'https://us.i.posthog.com',
         ui_host: 'https://us.posthog.com',
         cross_subdomain_cookie: true,
         person_profiles: 'identified_only',
+        capture_pageview: 'history_change',
       })
     }
     document.head.appendChild(s)
