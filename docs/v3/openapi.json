@@ -1574,7 +1574,7 @@
       "get": {
         "tags": ["sessions"],
         "summary": "Get Peer Config",
-        "description": "Get the configuration for a Peer in a Session.\n\nMember-read lets a peer-scoped key reach this route, but a peer may only\nread its own per-session config — not a co-member's. Workspace/admin and\nsession-scoped tokens (which already span the whole session) are unaffected.",
+        "description": "Get the configuration for a Peer in a Session.\n\nMember-read lets a peer-scoped key reach this route, but a peer may only\nread its own per-session config \u2014 not a co-member's. Workspace/admin and\nsession-scoped tokens (which already span the whole session) are unaffected.",
         "operationId": "get_peer_config_v3_workspaces__workspace_id__sessions__session_id__peers__peer_id__config_get",
         "security": [{ "HTTPBearer": [] }],
         "parameters": [
@@ -2220,6 +2220,343 @@
             "content": {
               "application/json": {
                 "schema": { "$ref": "#/components/schemas/Message" }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v3/workspaces/{workspace_id}/scopes": {
+      "post": {
+        "tags": ["scopes"],
+        "summary": "Get Or Create Scope",
+        "description": "Get a Scope by ID or create a new Scope with the given ID.\n\nReturns 201 when the scope is created and 200 when it already exists.\nA pre-existing peer occupying the scope's reserved internal name is never\nadopted; that conflict returns 409.",
+        "operationId": "get_or_create_scope_v3_workspaces__workspace_id__scopes_post",
+        "security": [{ "HTTPBearer": [] }],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "title": "Workspace Id" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScopeCreate",
+                "description": "Scope creation parameters"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Scope" }
+              }
+            }
+          },
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Scope" }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v3/workspaces/{workspace_id}/scopes/list": {
+      "post": {
+        "tags": ["scopes"],
+        "summary": "Get Scopes",
+        "description": "Get all Scopes for a Workspace. Results are paginated.",
+        "operationId": "get_scopes_v3_workspaces__workspace_id__scopes_list_post",
+        "security": [{ "HTTPBearer": [] }],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "title": "Workspace Id" }
+          },
+          {
+            "name": "reverse",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Whether to reverse the order of results",
+              "default": false,
+              "title": "Reverse"
+            },
+            "description": "Whether to reverse the order of results"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Page_Scope_" }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v3/workspaces/{workspace_id}/scopes/{scope_id}": {
+      "get": {
+        "tags": ["scopes"],
+        "summary": "Get Scope",
+        "description": "Get a single Scope by ID.",
+        "operationId": "get_scope_v3_workspaces__workspace_id__scopes__scope_id__get",
+        "security": [{ "HTTPBearer": [] }],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "title": "Workspace Id" }
+          },
+          {
+            "name": "scope_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "title": "Scope Id" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Scope" }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v3/workspaces/{workspace_id}/scopes/{scope_id}/sessions": {
+      "post": {
+        "tags": ["scopes"],
+        "summary": "Add Sessions To Scope",
+        "description": "Add Sessions to a Scope.\n\nAll named sessions must already exist (404 otherwise). Adding a session that\nis already a member is a no-op. List the resulting membership with\n`POST /scopes/{scope_id}/sessions/list`.\n\nNote: any added session that already has messages triggers an asynchronous\nbackfill-by-copy of its existing documents into the scope; track progress\nvia ``GET /scopes/{scope_id}/status``.",
+        "operationId": "add_sessions_to_scope_v3_workspaces__workspace_id__scopes__scope_id__sessions_post",
+        "security": [{ "HTTPBearer": [] }],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "title": "Workspace Id" }
+          },
+          {
+            "name": "scope_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "title": "Scope Id" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScopeSessionsAdd",
+                "description": "IDs of the sessions to add to the scope"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": { "description": "Successful Response" },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v3/workspaces/{workspace_id}/scopes/{scope_id}/sessions/{session_id}": {
+      "delete": {
+        "tags": ["scopes"],
+        "summary": "Remove Session From Scope",
+        "description": "Remove a Session from a Scope.\n\nNote: documents copied/derived while the session was a member are\nreconciled asynchronously \u2014 the session's explicit copies are soft-deleted\nfrom the scope, dependent derived documents follow (fail-closed), and the\nscope's card is rebuilt from the remaining evidence.",
+        "operationId": "remove_session_from_scope_v3_workspaces__workspace_id__scopes__scope_id__sessions__session_id__delete",
+        "security": [{ "HTTPBearer": [] }],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "title": "Workspace Id" }
+          },
+          {
+            "name": "scope_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "title": "Scope Id" }
+          },
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "title": "Session Id" }
+          }
+        ],
+        "responses": {
+          "204": { "description": "Successful Response" },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v3/workspaces/{workspace_id}/scopes/{scope_id}/sessions/list": {
+      "post": {
+        "tags": ["scopes"],
+        "summary": "Get Scope Sessions",
+        "description": "Get the Sessions that are members of a Scope, paginated.\n\nOrdered by how long each session has been a member: longest-standing member\nfirst, or most recently added first when `reverse` is true.",
+        "operationId": "get_scope_sessions_v3_workspaces__workspace_id__scopes__scope_id__sessions_list_post",
+        "security": [{ "HTTPBearer": [] }],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "title": "Workspace Id" }
+          },
+          {
+            "name": "scope_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "title": "Scope Id" }
+          },
+          {
+            "name": "reverse",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Whether to reverse the order of results",
+              "default": false,
+              "title": "Reverse"
+            },
+            "description": "Whether to reverse the order of results"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Page_Session_" }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v3/workspaces/{workspace_id}/scopes/{scope_id}/status": {
+      "get": {
+        "tags": ["scopes"],
+        "summary": "Get Scope Status",
+        "description": "Get the backfill/reconciliation job status for a Scope.\n\nReturns a per-session map of the backfill job state (pending / completed /\nfailed) with the number of documents copied once complete. Empty when no\nbackfill has ever been enqueued for the scope.",
+        "operationId": "get_scope_status_v3_workspaces__workspace_id__scopes__scope_id__status_get",
+        "security": [{ "HTTPBearer": [] }],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "title": "Workspace Id" }
+          },
+          {
+            "name": "scope_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "title": "Scope Id" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ScopeStatus" }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
               }
             }
           },
@@ -2917,6 +3254,20 @@
             "title": "Filters",
             "description": "Optional filters to scope recall. This endpoint supports only the 'session_id' key: a session id, a list of session ids, or {\"in\": [...]}. Recall (conclusions and messages) is restricted to the allowlist; unsupported keys are rejected. When session_id is also set, it must be included in the allowlist."
           },
+          "scope": {
+            "anyOf": [
+              { "type": "string" },
+              {
+                "items": { "type": "string" },
+                "type": "array",
+                "maxItems": 100,
+                "minItems": 1
+              },
+              { "type": "null" }
+            ],
+            "title": "Scope",
+            "description": "Optional (unprefixed) scope name(s) to confine recall. A single scope answers from the scope's own representation of the target peer: conclusion recall is confined to what the scope observed and message recall to the scope's member sessions. A list of scopes restricts recall to the union of the scopes' member sessions (explicit allowlist, fail-closed: an empty union recalls nothing). Mutually exclusive with `filters` and `session_id`. Requires a workspace- or admin-level key."
+          },
           "target": {
             "anyOf": [{ "type": "string" }, { "type": "null" }],
             "title": "Target",
@@ -3174,6 +3525,22 @@
         "required": ["items", "total", "page", "size", "pages"],
         "title": "Page[Peer]"
       },
+      "Page_Scope_": {
+        "properties": {
+          "items": {
+            "items": { "$ref": "#/components/schemas/Scope" },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": { "type": "integer", "minimum": 0.0, "title": "Total" },
+          "page": { "type": "integer", "minimum": 1.0, "title": "Page" },
+          "size": { "type": "integer", "minimum": 1.0, "title": "Size" },
+          "pages": { "type": "integer", "minimum": 0.0, "title": "Pages" }
+        },
+        "type": "object",
+        "required": ["items", "total", "page", "size", "pages"],
+        "title": "Page[Scope]"
+      },
       "Page_Session_": {
         "properties": {
           "items": {
@@ -3356,6 +3723,14 @@
               { "type": "null" }
             ],
             "title": "Filters"
+          },
+          "kind": {
+            "anyOf": [
+              { "type": "string", "enum": ["scope", "all"] },
+              { "type": "null" }
+            ],
+            "title": "Kind",
+            "description": "Which kinds of peers to list. Omitted (default): regular peers only (scope peers are excluded). 'scope': scope peers only. 'all': every peer."
           }
         },
         "type": "object",
@@ -3375,6 +3750,20 @@
             ],
             "title": "Filters",
             "description": "Optional filters to scope the representation. This endpoint supports only the 'session_id' key: a session id, a list of session ids, or {\"in\": [...]}. When session_id is also set, it must be included in the allowlist."
+          },
+          "scope": {
+            "anyOf": [
+              { "type": "string" },
+              {
+                "items": { "type": "string" },
+                "type": "array",
+                "maxItems": 100,
+                "minItems": 1
+              },
+              { "type": "null" }
+            ],
+            "title": "Scope",
+            "description": "Optional (unprefixed) scope name(s) to confine the representation. A single scope reads the scope's own representation of the target peer, formed only from the scope's member sessions. A list of scopes restricts the representation to conclusions from the union of the scopes' member sessions (explicit allowlist, fail-closed: an empty union yields an empty representation). Mutually exclusive with `filters` and `session_id`. Requires a workspace- or admin-level key."
           },
           "target": {
             "anyOf": [{ "type": "string" }, { "type": "null" }],
@@ -3542,6 +3931,72 @@
         "required": ["observer", "dream_type"],
         "title": "ScheduleDreamRequest"
       },
+      "Scope": {
+        "properties": {
+          "id": { "type": "string", "title": "Id" },
+          "metadata": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Metadata"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": ["id", "created_at"],
+        "title": "Scope",
+        "description": "Scope response \u2014 external view of the peer backing a scope.\n\nThe ``id`` is the unprefixed scope name; the reserved peer-name prefix is\nan internal implementation detail and never surfaces here."
+      },
+      "ScopeCreate": {
+        "properties": {
+          "id": { "type": "string", "minLength": 1, "title": "Id" },
+          "metadata": {
+            "anyOf": [
+              { "additionalProperties": true, "type": "object" },
+              { "type": "null" }
+            ],
+            "title": "Metadata"
+          }
+        },
+        "type": "object",
+        "required": ["id"],
+        "title": "ScopeCreate",
+        "description": "Schema for creating (or getting) a scope by its unprefixed name."
+      },
+      "ScopeSessionsAdd": {
+        "properties": {
+          "session_ids": {
+            "items": { "type": "string" },
+            "type": "array",
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Session Ids",
+            "description": "IDs of existing sessions to add to the scope"
+          }
+        },
+        "type": "object",
+        "required": ["session_ids"],
+        "title": "ScopeSessionsAdd",
+        "description": "Schema for adding sessions to a scope."
+      },
+      "ScopeStatus": {
+        "properties": {
+          "backfill_status": {
+            "additionalProperties": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "object",
+            "title": "Backfill Status"
+          }
+        },
+        "type": "object",
+        "title": "ScopeStatus",
+        "description": "Per-session backfill/reconciliation job status for a scope.\n\n``backfill_status`` maps each session that has had a backfill enqueued to\nits current job state: ``{state, updated_at[, docs_copied]}`` where\n``state`` is ``pending``/``completed``/``failed`` and ``docs_copied`` is\npresent once a backfill completes."
+      },
       "Session": {
         "properties": {
           "id": { "type": "string", "title": "Id" },
@@ -3669,6 +4124,18 @@
               { "$ref": "#/components/schemas/SessionConfiguration" },
               { "type": "null" }
             ]
+          },
+          "scopes": {
+            "anyOf": [
+              {
+                "items": { "type": "string" },
+                "type": "array",
+                "maxItems": 100
+              },
+              { "type": "null" }
+            ],
+            "title": "Scopes",
+            "description": "Optional list of (unprefixed) scope names to add this session to. Each scope is created if it does not exist yet. If the session already has messages, its existing documents are backfilled into the scope asynchronously."
           }
         },
         "type": "object",
