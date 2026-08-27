@@ -115,6 +115,12 @@ constrained `filters` body on the endpoint. See
 [Scoping Recall to Sessions](/v3/documentation/features/advanced/using-filters#scoping-recall-to-sessions)
 for the accepted shapes and for what an allowlist changes about the answer.
 
+Pass `scope="therapy"` to answer from that [scope](/v3/documentation/features/advanced/scopes)'s
+own representation of the peer. A list (`scope=["therapy", "intake"]`) is an
+allowlist of those scopes' sessions, not named-scope depth.
+`honcho.chat(scope=)` is always the allowlist arm, even with one name. Details
+are on the [scopes page](/v3/documentation/features/advanced/scopes#the-two-arms).
+
 ## Structured Outputs
 
 When your application needs a machine-readable answer instead of prose, pass a schema as `response_format` and the answer is guaranteed to conform to it:

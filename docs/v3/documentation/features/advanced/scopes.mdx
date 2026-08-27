@@ -48,7 +48,8 @@ graph TB
   that name it; it does not hide the sessions from requests that don't.
 
 <Warning>
-Scopes are a recall boundary, not an authorization boundary. Access can be scoped by workspace, session, or peer boundaries.
+Scopes are a recall boundary, not an authorization boundary. Who may call the
+API is still governed by workspace, session, and peer keys.
 </Warning>
 
 ## The Two Arms
@@ -62,7 +63,7 @@ wrong one is the most common mistake with this feature.
 | **Conclusions** | All levels — `explicit`, plus `deductive` / `inductive` reasoned **within** the scope | `explicit` only |
 | **Reasoning chains** | Available | Unavailable |
 | **Setup required** | Yes — create the scope, add sessions, wait for backfill | None — pass session IDs ad hoc |
-| **Accepts** | One scope name, or a list of up to 100 | Up to 1,000 session IDs |
+| **Accepts** | One scope name | A list of up to 100 scope names, or up to 1,000 session IDs |
 
 ### Named scope: depth
 
@@ -109,7 +110,7 @@ from honcho import Honcho
 
 honcho = Honcho(workspace_id="my-app")
 
-# Get or create — idempotent
+# Get or create — idempotent; passing metadata updates the existing scope
 therapy = honcho.scope("therapy")
 
 # Add existing sessions (max 100 per call)
@@ -133,7 +134,7 @@ import { Honcho } from "@honcho-ai/sdk";
 
 const honcho = new Honcho({ workspaceId: "my-app" });
 
-// Get or create — idempotent
+// Get or create — idempotent; passing metadata updates the existing scope
 const therapy = await honcho.scope("therapy");
 
 // Add existing sessions (max 100 per call)
@@ -180,7 +181,8 @@ curl -X DELETE "$HONCHO_URL/v3/workspaces/my-app/scopes/therapy/sessions/therapy
 </CodeGroup>
 
 Scope IDs are unprefixed, must match `^[a-zA-Z0-9_-]+$`, and are at most 506
-characters.
+characters. Get-or-create is idempotent: if the scope already exists, the same
+call returns it, and any `metadata` you pass is written onto it.
 
 <Note>
 Every scopes route — and every read that passes `scope` — requires a
@@ -234,7 +236,7 @@ empty result means none have — not that the scope is empty.
 
 ## Reading Through a Scope
 
-`scope` is accepted on four surfaces:
+`scope` is accepted on these surfaces:
 
 | Surface | Accepts | Notes |
 |---------|---------|-------|
@@ -242,6 +244,7 @@ empty result means none have — not that the scope is empty.
 | `peer.representation()` | one scope or a list | Confines conclusion recall |
 | [`session.context()`](/v3/documentation/features/get-context) | one scope only | Perspective source for `peer_target`'s representation and card. Requires `peer_target`; mutually exclusive with `peer_perspective` |
 | `honcho.search()` | one scope only | Restricts message search to the scope's member sessions |
+| `honcho.chat()` | one scope or a list | Always the allowlist arm — even a single name. There is no observer to swap |
 
 <CodeGroup>
 ```python Python
@@ -321,8 +324,11 @@ A few behaviors follow from how scopes are built:
 
 - **The `scope.` prefix is reserved.** Creating a peer, or adding a peer to a
   session, with a `scope.`-prefixed name is rejected.
-- **Scopes are hidden from peer listings by default.** Pass `kind="scope"` to
-  list only scopes, or `kind="all"` to see both.
+- **List scopes through the scopes surface.** `honcho.scopes()` /
+  `POST /scopes/list` returns unprefixed ids. Peer listings hide scopes by
+  default; `kind="scope"` on `POST /peers/list` returns the backing peers named
+  `scope.<id>`, and `kind="all"` includes both regular peers and those backing
+  peers.
 - **A scope can't be observed.** No representation is formed *of* a scope, so a
   scope is rejected in any `target` / observed position, including as a dream
   target.
