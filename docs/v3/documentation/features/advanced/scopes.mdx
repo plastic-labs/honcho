@@ -197,26 +197,14 @@ with `401`.
 A session added to a scope while empty needs nothing special: messages sent
 after the change flow into the scope through the normal deriver fan-out.
 
-```mermaid
-graph LR
-      M[new message<br/>in therapy-1] --> D[Deriver]
-      D -->|fan-out| PR[peer's own<br/>representation]
-      D -->|fan-out| SR[scope: therapy<br/>representation]
-
-      style M fill:#B6DBFF,stroke:#333,color:#000
-      style D fill:#FFE0B2,stroke:#333,color:#000
-      style PR fill:#B6DBFF,stroke:#333,color:#000
-      style SR fill:#B6DBFF,stroke:#333,color:#000
-```
-
 A session that **already has messages** is handled retroactively by a background
-job rather than by re-running the LLM over its history: adding it enqueues a
-`scope_backfill` that copies the session's existing `explicit` conclusions into
-the scope's collections, and removing it enqueues a `scope_removal` that
-soft-deletes those copies, follows dependent derived conclusions out
-(fail-closed), and rebuilds the scope's peer card from whatever evidence remains.
+job rather than by re-running the LLM over its history: adding it copies the
+session's existing `explicit` conclusions into the scope, and removing it
+retracts that session's contributions — including conclusions derived from them.
 Copying rather than re-deriving is why membership changes are cheap and
-deterministic — and why they are also **asynchronous**.
+deterministic — and why they are also **asynchronous**. It also means a freshly
+backfilled scope starts at explicit depth and accrues deeper reasoning through
+subsequent dreams.
 
 Poll `status()` to tell "the scope hasn't caught up yet" apart from "the scope
 has caught up and there is genuinely nothing to recall":
@@ -248,22 +236,6 @@ backfill completes. Only sessions that have had a backfill enqueued appear, so a
 empty result means none have — not that the scope is empty.
 
 ## Reading Through a Scope
-
-```mermaid
-graph LR
-      Q["chat(..., scope='therapy')"] --> R{scope<br/>resolution}
-      R -->|single scope| O[observer swaps<br/>to the scope]
-      R -->|list of scopes| A[union of member sessions<br/>as an allowlist]
-      O --> D1[all conclusion levels<br/>+ reasoning chains]
-      A --> D2[explicit conclusions only]
-
-      style Q fill:#B6DBFF,stroke:#333,color:#000
-      style R fill:#FFE0B2,stroke:#333,color:#000
-      style O fill:#B6DBFF,stroke:#333,color:#000
-      style A fill:#B6DBFF,stroke:#333,color:#000
-      style D1 fill:#B6DBFF,stroke:#333,color:#000
-      style D2 fill:#B6DBFF,stroke:#333,color:#000
-```
 
 `scope` is accepted on four surfaces:
 
@@ -318,23 +290,13 @@ curl -X POST "$HONCHO_URL/v3/workspaces/my-app/peers/user-123/chat" \
 
 ### Rules
 
-Like the session allowlist, `scope` **fails closed** — a contradiction is
-rejected rather than silently widened, and an empty boundary recalls nothing
-rather than everything.
-
-| Rule | Behavior |
-|------|----------|
-| `scope` with `filters` | `422` |
-| `scope` with `session` / `session_id` | `422` |
-| `scope` with `sessions` | `422` |
-| `scope` with `peer_perspective` (context only) | `422` |
-| `scope` without `peer_target` (context only) | `422` |
-| `scope` with a `session_id` filter (search only) | `422` |
-| A scope with no member sessions | Recalls nothing |
-| An empty list (`scope=[]`) | Rejected — never treated as "no boundary" |
-| More than 100 scopes in one `scope` option | `422` |
-| A resolved session union over 1,000 sessions | `422` |
-| A peer- or session-scoped key | `401` |
+`scope` is mutually exclusive with `filters`, `sessions`, and `session` /
+`session_id` — and on session context, with `peer_perspective` (where it also
+requires `peer_target`). Like the session allowlist, it **fails closed**: a
+contradiction is rejected with a `422` rather than silently widened, a scope
+with no member sessions recalls nothing, and an empty list (`scope=[]`) is
+rejected rather than treated as "no boundary". Per-surface caps and error
+shapes are in the [API reference](/v3/api-reference/endpoint/peers/chat).
 
 ## Provenance, Not Topic
 
