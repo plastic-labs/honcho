@@ -109,7 +109,7 @@ and `aiPeer` there. See the [Hermes guide](/v3/guides/integrations/hermes) for t
 
 A scheduled job feeds external data (emails, meeting notes, CRM records) into Honcho.
 Attribute the messages to the peer the data is *about* — not to an agent — and group
-them into a session. **How you scope that session is the main decision here**, because
+them into a session. **How you bound that session is the main decision here**, because
 it controls when Honcho reasons over the data (more on that below).
 
 ```python
@@ -133,7 +133,7 @@ for i in range(0, len(messages), 100):
 
 Honcho batches reasoning until a peer accumulates ~1,000 tokens *within a single session*,
 with a default age-based flush for quiet tails
-([token batching](/v3/documentation/core-concepts/reasoning#token-batching)). Scope the
+([token batching](/v3/documentation/core-concepts/reasoning#token-batching)). Match the
 session to the volume you ingest:
 
 - **High-volume runs** (a day of emails, a CRM export) clear the threshold easily — a

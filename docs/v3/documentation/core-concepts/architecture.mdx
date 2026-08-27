@@ -20,25 +20,21 @@ Honcho has a hierarchical data model centered around the entities below.
 
       P <-.->|many-to-many| S
 
-      SC[Scopes] -.->|group| S
-
       style W fill:#B6DBFF,stroke:#333,color:#000
       style P fill:#B6DBFF,stroke:#333,color:#000
       style S fill:#B6DBFF,stroke:#333,color:#000
       style SM fill:#B6DBFF,stroke:#333,color:#000
-      style SC fill:#FFE0B2,stroke:#333,color:#000
 ```
 
 - A Workspace has Peers & Sessions
 - A Peer can be in multiple Sessions and can send Messages in a Session
 - A Session can have many Peers and stores Messages sent by its Peers
-- A Scope is a named set of Sessions that bounds recall to just those Sessions
 
 ### <Icon icon="building" /> Workspaces
 
 Workspaces are the top-level containers in Honcho. They provide complete isolation between different applications or environments, essentially serving as a namespace to keep different workloads separate. You might use separate workspaces for development, staging, and production environments, or to isolate different product lines. They also enable multi-tenant SaaS applications where each customer gets their own isolated workspace with complete data separation.
 
-Authentication is scoped to the workspace level, and configuration settings can be applied workspace-wide to control behavior across all peers and sessions within that workspace.
+Authentication is issued at the workspace level, and configuration settings can be applied workspace-wide to control behavior across all peers and sessions within that workspace.
 
 ---
 
@@ -54,19 +50,13 @@ You can use peers for any entity that persists over time--individual users in ch
 
 ### <Icon icon="message" /> Sessions
 
-Sessions represent interaction threads or contexts between peers. A session can involve multiple peers and provides temporal boundaries for when a set of interactions starts and ends. This lets you scope context and memory to specific interactions while still maintaining longer-term peer representations that span sessions.
+Sessions represent interaction threads or contexts between peers. A session can involve multiple peers and provides temporal boundaries for when a set of interactions starts and ends. This lets you confine context and memory to specific interactions while still maintaining longer-term peer representations that span sessions.
 
-Use sessions to scope things like support tickets, meeting transcripts, learning sessions, or conversations. You can also use single-peer sessions as a way to import external data--create a session with just one peer and structure emails, documents, or files as messages to enrich that peer's representation.
+Use sessions for things like support tickets, meeting transcripts, learning sessions, or conversations. You can also use single-peer sessions as a way to import external data--create a session with just one peer and structure emails, documents, or files as messages to enrich that peer's representation.
 
 Session-level configuration gives you fine-grained control over perspective-taking behavior. You can configure whether a peer should form representations of other peers in the session, and whether other peers should form representations of them.
 
----
-
-### <Icon icon="shield-halved" /> Scopes
-
-Scopes are named sets of sessions that act as visibility boundaries for recall. When a query names a scope, Honcho answers only from what happened in that scope's sessions, while the peer keeps its single unified representation across everything. Use them when one peer's history spans contexts that shouldn't leak into each other--clinical sessions that must not inform a billing assistant, or one human working across multiple tenants.
-
-A session can belong to any number of scopes (or none), and queries that don't name a scope still see everything. See [Scopes](/v3/documentation/features/advanced/scopes) for how to create them and read through them.
+Sessions are also the unit of visibility: when one peer's history spans contexts that shouldn't inform each other, you can group sessions into named [scopes](/v3/documentation/features/advanced/scopes) that bound recall to just those sessions.
 
 ---
 

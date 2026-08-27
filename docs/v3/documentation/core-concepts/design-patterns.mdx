@@ -12,14 +12,14 @@ Ready to add Honcho to your codebase? The **`/honcho-integration` skill** applie
 
 ## Quick Reference
 
-**Workspaces isolate, peers persist, and sessions scope the active context.**
+**Workspaces isolate, peers persist, and sessions bound the active context.**
 
 | Decision | Recommendation |
 |----------|---------------|
 | How many workspaces? | One workspace per application, tool, tenant, or collaboration boundary. Split workspaces only when you need hard isolation between products, customers, environments, or agents. |
 | When should agents share a workspace? | When agents collaborate over the same product, project, team, user, customer, or game state. Separate them when they should not see or influence each other's memory. |
 | Who should be a peer? | Any persistent participant whose messages should be attributed or reasoned about: users, agents, assistants, NPCs, students, or customers. Use one peer for the same entity across sessions and platforms. |
-| How should I scope sessions? | Scope sessions to the active interaction: per-conversation, per-channel, per-task run, per-project, per-import, or other bounded context. Reuse a session when local context should keep accumulating. |
+| How should I divide sessions? | Match each session to the active interaction: per-conversation, per-channel, per-task run, per-project, per-import, or other bounded context. Reuse a session when local context should keep accumulating. |
 | How does cross-session reasoning work? | Session memory stays local to one session. Peer representations accumulate across every session where the peer is included, and `session.context()` becomes cross-session when you include a peer target. |
 | Should I set `observe_me: false`? | Yes, for deterministic peers Honcho does not need to model, like bots or tool agents. Still save their messages so other peers have session context. Keep it enabled for users and evolving agents. |
 | Do I need `observe_others`? | Only when a peer needs its own perspective on another participant, such as in games, multi-agent systems, or parent/subagent workflows. |
@@ -52,11 +52,11 @@ For unified context across Honcho plugins, set the same user peer ID (`peerName`
 
 ## Session Design
 
-Sessions define the temporal boundaries of an interaction. How you scope them affects how summaries are generated, how context is retrieved, and when reasoning fires.
+Sessions define the temporal boundaries of an interaction. Where you draw those boundaries affects how summaries are generated, how context is retrieved, and when reasoning fires.
 
 **Common session patterns**
 
-| Pattern | Session scoped to | Example |
+| Pattern | Session covers | Example |
 |---------|-------------------|---------|
 | Per-conversation | Each new chat thread | ChatGPT or Claude Code style UI where each thread is a session |
 | Per-channel | A persistent channel or room | Discord channel, Slack thread |
@@ -67,7 +67,7 @@ Sessions define the temporal boundaries of an interaction. How you scope them af
 Create a **new** session when context resets (new conversation, new day, new topic); **reuse** one when context should keep accumulating (ongoing channel, persistent thread).
 
 <Warning>
-**Don't scope sessions too thin.** Honcho batches reasoning until a peer accumulates ~1,000 tokens *within a single session*, with a default age-based flush for quiet tails ([token batching](/v3/documentation/core-concepts/reasoning#token-batching)). Low-volume or trickle inputs should still append to one ongoing session rather than fragment across many, so reasoning runs with useful context instead of many small delayed batches.
+**Don't slice sessions too thin.** Honcho batches reasoning until a peer accumulates ~1,000 tokens *within a single session*, with a default age-based flush for quiet tails ([token batching](/v3/documentation/core-concepts/reasoning#token-batching)). Low-volume or trickle inputs should still append to one ongoing session rather than fragment across many, so reasoning runs with useful context instead of many small delayed batches.
 </Warning>
 
 **How cross-session reasoning works**
@@ -99,13 +99,13 @@ Two things scopes are **not**:
 ## Common Mistakes
 
 - **Splitting one identity across peer IDs** -- If the same user is `alice`, `alice-discord`, and `alice-cursor`, Honcho builds separate representations. Use one stable peer ID when you want unified memory.
-- **Too many tiny sessions** -- Summaries and recent messages are session-scoped, and reasoning only fires past ~1,000 tokens per session. Splitting a continuous conversation across many sessions fragments local context and can stall reasoning. Reuse a session when context should flow continuously.
+- **Too many tiny sessions** -- Summaries and recent messages are local to one session, and reasoning only fires past ~1,000 tokens per session. Splitting a continuous conversation across many sessions fragments local context and can stall reasoning. Reuse a session when context should flow continuously.
 - **Separating agents that should collaborate** -- If agents need shared product, customer, or team context, put them in the same workspace. Separate workspaces are hard isolation boundaries.
 - **Leaving `observe_me` on for assistants** -- Wastes reasoning compute on a peer you control. Deterministic behavior doesn't need to be modeled.
 - **Turning on `observe_others` everywhere** -- Directional representations are powerful, but they add complexity. Use them when peers need distinct perspectives, not just because a session has multiple peers.
 - **A scope per reader** -- Scopes should map to real confidentiality boundaries, not to consumers. If every assistant gets its own scope, you've rebuilt workspace fragmentation inside one workspace, and each projection reasons over a thin slice. Fewer, boundary-shaped scopes; many readers can share one.
 - **Treating scopes as access control** -- A scope bounds *recall*, not *access*. Enforce who may query what in your application layer; use scopes to keep the answers themselves from drawing on out-of-bounds sessions.
-- **Forgetting `peer_target` on session context** -- `session.context()` defaults to the active session's summary and recent messages, which are session-scoped. It becomes cross-session only through adding a peer_target which includes the peer representation.
+- **Forgetting `peer_target` on session context** -- `session.context()` defaults to the active session's summary and recent messages, which are local to that session. It becomes cross-session only through adding a peer_target which includes the peer representation.
 - **Blocking on processing** -- Messages are processed asynchronously in the background. Don't poll or wait for reasoning to complete before continuing your application flow.
 
 ## Next Steps

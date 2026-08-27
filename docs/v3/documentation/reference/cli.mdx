@@ -89,14 +89,14 @@ and are stored under `oauth` without deleting a shared `apiKey`.
 }
 ```
 <Info>
-Per-command scoping (workspace / peer / session) is handled via `-w` / `-p` / `-s`
+Per-command targeting (workspace / peer / session) is handled via `-w` / `-p` / `-s`
 flags or `HONCHO_*` env vars. **Not** persisted as CLI defaults. This is
 deliberate: every invocation is explicit about what it operates on.
 </Info>
 
 ### Runtime overrides
 
-Workspace, peer, and session scoping are **per-command only** — pass flags or
+Workspace, peer, and session targeting are **per-command only** — pass flags or
 `HONCHO_*` env vars on every invocation.
 
 ```bash
