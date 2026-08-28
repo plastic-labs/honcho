@@ -4,7 +4,7 @@ from logging import getLogger
 from typing import Any
 
 from nanoid import generate as generate_nanoid
-from sqlalchemy import ColumnElement, Select, and_, func, or_, select, text
+from sqlalchemy import ColumnElement, Select, and_, delete, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute
 
@@ -12,6 +12,7 @@ from src import models, schemas
 from src.config import settings
 from src.dependencies import tracked_db
 from src.embedding_client import embedding_client
+from src.exceptions import ResourceNotFoundException
 from src.telemetry.events import EmbeddingCallPurpose
 from src.utils.filter import apply_filter
 from src.utils.formatting import ILIKE_ESCAPE_CHAR, escape_ilike_pattern
@@ -730,6 +731,81 @@ async def update_message(
     await db.commit()
     # await db.refresh(honcho_message)
     return honcho_message
+
+
+async def delete_message(
+    db: AsyncSession,
+    workspace_name: str,
+    session_name: str,
+    message_id: str,
+) -> None:
+    """Hard-delete a single message and the state tied to it.
+
+    Removes the message, its embeddings (and their vectors in an external
+    vector store, if configured), and any queue items that reference it.
+    Conclusions already derived from the message are intentionally left in
+    place — a conclusion can draw on several messages, so cascading here would
+    silently prune a peer's representation. Cannot be undone.
+
+    Raises:
+        ResourceNotFoundException: If the message does not exist in the session.
+    """
+    honcho_message = await get_message(
+        db,
+        workspace_name=workspace_name,
+        session_name=session_name,
+        message_id=message_id,
+    )
+    if honcho_message is None:
+        raise ResourceNotFoundException(f"Message with ID {message_id} not found")
+
+    try:
+        # Drop this message's vectors from an external store before its rows go
+        # away (pgvector embeddings cascade with the message; an external store
+        # doesn't, so it's handled here — best effort).
+        embedding_result = await db.execute(
+            select(models.MessageEmbedding).where(
+                models.MessageEmbedding.message_id == honcho_message.public_id,
+                models.MessageEmbedding.workspace_name == workspace_name,
+            )
+        )
+        embeddings = list(embedding_result.scalars().all())
+        external_vector_store = get_external_vector_store()
+        if external_vector_store is not None and embeddings:
+            embeddings.sort(key=lambda e: e.id)
+            vector_ids = [
+                f"{honcho_message.public_id}_{chunk_idx}"
+                for chunk_idx in range(len(embeddings))
+            ]
+            try:
+                namespace = external_vector_store.get_vector_namespace(
+                    "message", workspace_name
+                )
+                await external_vector_store.delete_many(namespace, vector_ids)
+            except Exception as e:
+                logger.warning(
+                    "Failed to delete message vectors for message %s: %s",
+                    message_id,
+                    e,
+                )
+
+        # Queue items reference messages.id with no ON DELETE rule, so clear them
+        # first or the message delete hits a foreign-key violation.
+        await db.execute(
+            delete(models.QueueItem).where(
+                models.QueueItem.message_id == honcho_message.id
+            )
+        )
+
+        # MessageEmbedding rows cascade via ondelete="CASCADE" on the message FK.
+        await db.delete(honcho_message)
+        await db.commit()
+
+        logger.debug("Message %s deleted", message_id)
+    except Exception as e:
+        logger.error("Failed to delete message %s: %s", message_id, e)
+        await db.rollback()
+        raise e
 
 
 async def _search_messages_external(

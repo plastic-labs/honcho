@@ -392,3 +392,31 @@ async def update_message(
     except ValueError as e:
         logger.warning(f"Failed to update message {message_id}: {str(e)}")
         raise ResourceNotFoundException("Message not found") from e
+
+
+@router.delete(
+    "/{message_id}",
+    status_code=204,
+    response_model=None,
+    dependencies=[Depends(require_session_write)],
+)
+async def delete_message(
+    workspace_id: str = Path(...),
+    session_id: str = Path(...),
+    message_id: str = Path(...),
+    db: AsyncSession = db,
+):
+    """
+    Delete a single message from a Session.
+
+    Removes the message along with its embeddings and any pending queue items.
+    Conclusions already derived from the message are left untouched.
+    This action cannot be undone.
+    """
+    await crud.delete_message(
+        db,
+        workspace_name=workspace_id,
+        session_name=session_id,
+        message_id=message_id,
+    )
+    logger.debug("Message %s deleted successfully", message_id)

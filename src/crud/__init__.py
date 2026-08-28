@@ -23,6 +23,7 @@ from .document import (
 )
 from .message import (
     create_messages,
+    delete_message,
     get_message,
     get_message_seq_in_session,
     get_messages,
@@ -135,6 +136,7 @@ __all__ = [
     "search_messages",
     "search_messages_temporal",
     "update_message",
+    "delete_message",
     # Peer
     "get_or_create_peers",
     "get_peer",
