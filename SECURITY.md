@@ -33,7 +33,7 @@ one.
 
 Test against an instance you operate. Do not run security testing against `api.honcho.dev`
 or against any Honcho deployment that is not yours — self-hosting is a first-class path and
-takes a few minutes to set up, see [Self-hosting](./README.md#self-hosting).
+takes a few minutes to set up — install the CLI (`uv tool install honcho-cli`) then run `honcho start --setup` (Docker + an LLM provider key), or see [Self-hosting](./README.md#self-hosting).
 
 ## What to Expect
 

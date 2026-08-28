@@ -292,6 +292,11 @@ def _safe_int(value: Any, default: int) -> int:
         return default
 
 
+def _bounded_int(value: Any, default: int, *, lo: int = 1, hi: int) -> int:
+    """Coerce a tool int into ``[lo, hi]``, falling back to ``default`` on bad input."""
+    return max(lo, min(_safe_int(value, default), hi))
+
+
 # Module-level lock registry for thread-safe observation creation.
 # Keyed by (workspace_name, observer, observed) to ensure all tool executors
 # operating on the same data share the same lock.
@@ -1883,7 +1888,7 @@ async def _handle_search_memory(
     """Handle search_memory tool."""
     from src.utils.types import ToolResult
 
-    top_k = min(_safe_int(tool_input.get("top_k"), 20), 40)
+    top_k = _bounded_int(tool_input.get("top_k"), 20, hi=40)
     query = tool_input["query"]
     try:
         with embedding_call_purpose(
@@ -1944,7 +1949,7 @@ async def _handle_search_memory(
         # information.
         zero_hit_meta = {**search_meta, "results_count": 0}
         if ctx.agent_type in ("dialectic", "workspace_dialectic"):
-            limit = min(_safe_int(tool_input.get("top_k"), 20), 20)
+            limit = _bounded_int(tool_input.get("top_k"), 20, hi=20)
             message_output = None
             snippets = await crud.search_messages(
                 workspace_name=ctx.workspace_name,
@@ -2021,7 +2026,7 @@ async def _handle_search_messages(
     from src.utils.types import ToolResult
 
     query = tool_input["query"]
-    limit = min(_safe_int(tool_input.get("limit"), 10), 20)  # Cap at 20
+    limit = _bounded_int(tool_input.get("limit"), 10, hi=20)
     # Pre-compute embedding outside DB session to avoid holding a connection
     # during the external API call (same pattern as _handle_search_memory).
     with embedding_call_purpose(
@@ -2064,10 +2069,8 @@ async def _handle_grep_messages(
     text = tool_input.get("text", "")
     if not text:
         return "ERROR: 'text' parameter is required"
-    limit = min(_safe_int(tool_input.get("limit"), 10), 30)  # Cap at 30
-    context_window = min(
-        _safe_int(tool_input.get("context_window"), 2), 2
-    )  # Cap context
+    limit = _bounded_int(tool_input.get("limit"), 10, hi=30)
+    context_window = _bounded_int(tool_input.get("context_window"), 2, lo=0, hi=2)
 
     snippets = await crud.grep_messages(
         workspace_name=ctx.workspace_name,
@@ -2120,7 +2123,7 @@ async def _handle_get_messages_by_date_range(
     """Handle get_messages_by_date_range tool."""
     after_date_str = tool_input.get("after_date")
     before_date_str = tool_input.get("before_date")
-    limit = min(_safe_int(tool_input.get("limit"), 20), 20)
+    limit = _bounded_int(tool_input.get("limit"), 20, hi=20)
     order = tool_input.get("order", "desc")
 
     after_date = _parse_date(after_date_str, "after_date")
@@ -2186,8 +2189,8 @@ async def _handle_search_messages_temporal(
 
     after_date_str = tool_input.get("after_date")
     before_date_str = tool_input.get("before_date")
-    limit = min(_safe_int(tool_input.get("limit"), 10), 10)
-    context_window = min(_safe_int(tool_input.get("context_window"), 2), 2)
+    limit = _bounded_int(tool_input.get("limit"), 10, hi=10)
+    context_window = _bounded_int(tool_input.get("context_window"), 2, lo=0, hi=2)
 
     after_date = _parse_date(after_date_str, "after_date")
     if isinstance(after_date, str):
@@ -2257,7 +2260,7 @@ async def _handle_get_recent_observations(
             workspace_name=ctx.workspace_name,
             observer=ctx.observer,
             observed=ctx.observed,
-            limit=min(_safe_int(tool_input.get("limit"), 10), 100),
+            limit=_bounded_int(tool_input.get("limit"), 10, hi=100),
             session_name=ctx.session_name if session_only else None,
         )
         representation = Representation.from_documents(documents)
@@ -2283,7 +2286,7 @@ async def _handle_get_most_derived_observations(
             workspace_name=ctx.workspace_name,
             observer=ctx.observer,
             observed=ctx.observed,
-            limit=min(_safe_int(tool_input.get("limit"), 10), 100),
+            limit=_bounded_int(tool_input.get("limit"), 10, hi=100),
         )
         representation = Representation.from_documents(documents)
     total_count = representation.len()

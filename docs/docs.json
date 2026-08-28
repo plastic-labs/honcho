@@ -10,6 +10,10 @@
     {
       "source": "/v3/guides/integrations/claudecode",
       "destination": "/v3/guides/integrations/claude-code"
+    },
+    {
+      "source": "/v3/documentation/features/advanced/representation-scopes",
+      "destination": "/v3/documentation/features/advanced/directional-representations"
     }
   ],
   "colors": {
@@ -62,7 +66,8 @@
                       "v3/documentation/features/advanced/reasoning-configuration",
                       "v3/documentation/features/advanced/summarizer",
                       "v3/documentation/features/advanced/peer-card",
-                      "v3/documentation/features/advanced/representation-scopes",
+                      "v3/documentation/features/advanced/directional-representations",
+                      "v3/documentation/features/advanced/scopes",
                       "v3/documentation/features/advanced/dreaming",
                       "v3/documentation/features/advanced/queue-status",
                       "v3/documentation/features/advanced/webhooks",
@@ -206,6 +211,18 @@
                   "v3/api-reference/endpoint/sessions/get-session-context",
                   "v3/api-reference/endpoint/sessions/get-session-summaries",
                   "v3/api-reference/endpoint/sessions/search-session"
+                ]
+              },
+              {
+                "group": "scopes",
+                "pages": [
+                  "v3/api-reference/endpoint/scopes/get-or-create-scope",
+                  "v3/api-reference/endpoint/scopes/get-scopes",
+                  "v3/api-reference/endpoint/scopes/get-scope",
+                  "v3/api-reference/endpoint/scopes/add-sessions-to-scope",
+                  "v3/api-reference/endpoint/scopes/get-scope-sessions",
+                  "v3/api-reference/endpoint/scopes/remove-session-from-scope",
+                  "v3/api-reference/endpoint/scopes/get-scope-status"
                 ]
               },
               {

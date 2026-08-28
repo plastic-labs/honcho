@@ -7,6 +7,7 @@ only — the start command rejects ``--setup`` in JSON / non-TTY mode.
 
 from __future__ import annotations
 
+import sys
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -445,13 +446,7 @@ def _prompt_secret(label: str, current: str | None) -> str:
         if choice != "2":
             return current
     _console.print(f"  [dim]{label}[/dim]")
-    raw = typer.prompt(
-        f"  {label}",
-        default="",
-        show_default=False,
-        hide_input=True,
-        prompt_suffix=": ",
-    ).strip()
+    raw = _prompt_masked(f"  {label}: ").strip()
     if not raw or is_placeholder_key(raw):
         print_error(
             "MISSING_LLM_KEY",
@@ -459,6 +454,69 @@ def _prompt_secret(label: str, current: str | None) -> str:
         )
         raise typer.Exit(1)
     return raw
+
+
+def _prompt_masked(prompt: str) -> str:
+    """Read a secret, echoing ``*`` per character so paste is visibly received."""
+    stream = sys.stderr
+    stream.write(prompt)
+    stream.flush()
+    chars: list[str] = []
+
+    def _write(text: str) -> None:
+        stream.write(text)
+        stream.flush()
+
+    def _feed(ch: str) -> bool:
+        """Return True when input is complete."""
+        if not ch or ch in ("\n", "\r", "\x04"):
+            _write("\n")
+            return True
+        if ch in ("\x7f", "\x08"):
+            if chars:
+                chars.pop()
+                _write("\b \b")
+            return False
+        if ch == "\x1b":
+            return False
+        if ch.isprintable():
+            chars.append(ch)
+            _write("*")
+        return False
+
+    if sys.platform == "win32":
+        import msvcrt
+
+        while True:
+            ch = msvcrt.getwch()
+            if ch in ("\x00", "\xe0"):
+                msvcrt.getwch()
+                continue
+            if _feed(ch):
+                return "".join(chars)
+
+    import termios
+    import tty
+
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    try:
+        tty.setcbreak(fd)
+        while True:
+            ch = sys.stdin.read(1)
+            if ch == "\x1b":
+                nxt = sys.stdin.read(1)
+                if nxt == "[":
+                    while True:
+                        seq = sys.stdin.read(1)
+                        if not seq or "@" <= seq <= "~":
+                            break
+                continue
+            if _feed(ch):
+                return "".join(chars)
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+    return "".join(chars)
 
 
 def _redact(key: str) -> str:

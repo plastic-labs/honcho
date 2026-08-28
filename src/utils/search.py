@@ -82,6 +82,9 @@ async def query_external_vector_message_ids(
     filters: dict[str, Any] | None = None,
 ) -> list[str]:
     """Query the external vector store and return ordered message IDs."""
+    if limit <= 0:
+        return []
+
     external_vector_store = get_external_vector_store()
     if external_vector_store is None:
         return []
