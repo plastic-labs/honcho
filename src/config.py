@@ -741,8 +741,10 @@ class DBSettings(HonchoSettings):
 
     # pgvector HNSW iterative scan mode for filtered approximate searches.
     # When set (default "strict_order"), applied as a per-connection server
-    # setting so filtered HNSW queries return full top_k results instead of
-    # silently under-returning when out-of-scope rows consume the scan budget.
+    # setting so filtered HNSW queries scan additional candidates instead of
+    # silently under-returning when out-of-scope rows consume the initial scan
+    # budget. Note: pgvector may still stop before reaching top_k if
+    # hnsw.max_scan_tuples or hnsw.scan_mem_multiplier thresholds are exceeded.
     # Requires pgvector >= 0.8.0.
     # See: https://github.com/pgvector/pgvector#iterative-index-scans
     HNSW_ITERATIVE_SCAN: Literal["off", "strict_order", "relaxed_order"] | None = (

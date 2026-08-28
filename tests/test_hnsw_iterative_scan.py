@@ -88,24 +88,74 @@ def test_connect_listener_not_registered_when_disabled(
 
     from src import db as db_module
 
-    dummy_conn = types.SimpleNamespace(autocommit=False, cursor=lambda: types.SimpleNamespace(execute=lambda *a, **k: None, close=lambda: None))
+    execute_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    class AssertingCursor:
+        def execute(self, *args: object, **kwargs: object) -> None:
+            execute_calls.append((args, kwargs))
+            raise AssertionError(
+                "execute should not be called when HNSW_ITERATIVE_SCAN is None"
+            )
+
+        def close(self) -> None:
+            pass
+
+    dummy_conn = types.SimpleNamespace(
+        autocommit=False, cursor=lambda: AssertingCursor()
+    )
     # The function reads settings.DB.HNSW_ITERATIVE_SCAN at call time,
     # so with monkeypatch it should return early without executing SQL.
-    # pyright: ignore[reportPrivateUsage]
-    db_module._set_hnsw_iterative_scan_on_connect(dummy_conn, None)
-    # No exception raised — early return worked.
+    db_module._set_hnsw_iterative_scan_on_connect(dummy_conn, None)  # type: ignore[attr-defined]
+    assert execute_calls == [], "No SQL should execute when HNSW_ITERATIVE_SCAN is None"
 
 
 def test_version_gate_skipped_when_off(monkeypatch: pytest.MonkeyPatch) -> None:
     """The pgvector version check should NOT run when
     HNSW_ITERATIVE_SCAN is 'off'. Only 'strict_order' and
     'relaxed_order' require pgvector >= 0.8.0.
+
+    Uses a fake engine/connection to assert that the pg_extension
+    query is never executed when the setting is 'off'.
     """
+    from unittest.mock import AsyncMock, MagicMock, patch
+
     from src.config import settings
+    from src import db as db_module
 
     monkeypatch.setattr(settings.DB, "HNSW_ITERATIVE_SCAN", "off")
     assert settings.DB.HNSW_ITERATIVE_SCAN == "off"
-    # The version gate condition is:
-    #   settings.DB.HNSW_ITERATIVE_SCAN in ("strict_order", "relaxed_order")
-    # "off" is not in that tuple, so the check is skipped.
-    assert settings.DB.HNSW_ITERATIVE_SCAN not in ("strict_order", "relaxed_order")
+
+    execute_calls: list[str] = []
+
+    class FakeResult:
+        def fetchone(self) -> None:
+            return None
+
+    async def fake_execute(stmt: object, *args: object, **kwargs: object) -> FakeResult:
+        execute_calls.append(str(stmt))
+        return FakeResult()
+
+    fake_conn = MagicMock()
+    fake_conn.execute = fake_execute
+    fake_conn.commit = AsyncMock()
+
+    class FakeAsyncCM:
+        async def __aenter__(self) -> MagicMock:
+            return fake_conn
+
+        async def __aexit__(self, *args: object) -> None:
+            pass
+
+    fake_engine = MagicMock()
+    fake_engine.connect = MagicMock(return_value=FakeAsyncCM())
+
+    with patch.object(db_module, "engine", fake_engine), \
+         patch("alembic.command.upgrade"), \
+         patch("alembic.config.Config"):
+        import asyncio
+        asyncio.run(db_module.init_db())
+
+    pg_extension_calls = [c for c in execute_calls if "pg_extension" in c]
+    assert pg_extension_calls == [], (
+        "pg_extension version query should not execute when HNSW_ITERATIVE_SCAN is 'off'"
+    )

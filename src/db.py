@@ -95,9 +95,11 @@ def _set_hnsw_iterative_scan_on_connect(
     """Apply pgvector HNSW iterative scan GUC per-connection.
 
     Registered when ``DB.HNSW_ITERATIVE_SCAN`` is set. Fires once per new
-    pool connection so filtered HNSW queries return full top_k results
+    pool connection so filtered HNSW queries scan additional candidates
     instead of silently under-returning when out-of-scope rows consume the
-    scan budget. Uses ``set_config`` with a bind parameter (same pattern as
+    initial scan budget. Note: pgvector may still stop before reaching top_k
+    if ``hnsw.max_scan_tuples`` or ``hnsw.scan_mem_multiplier`` thresholds are
+    exceeded. Uses ``set_config`` with a bind parameter (same pattern as
     ``_set_application_name_on_checkout``) rather than an f-string ``SET``
     to avoid special-casing utility-statement parameter binding.
 
