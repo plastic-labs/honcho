@@ -4,12 +4,13 @@ These are not part of the public API contract and may change without notice.
 """
 
 from enum import Enum
-from typing import Annotated, Literal, Self
+from typing import Annotated, Any, Literal, Self
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from src.schemas.api import MessageCreate
 from src.schemas.configuration import SessionPeerConfig
+from src.utils.sanitization import strip_nul
 from src.utils.types import DocumentLevel
 
 
@@ -80,6 +81,18 @@ class DocumentCreate(DocumentBase):
         default=None,
         description="Document IDs of source/premise documents -- for deductive and inductive documents",
     )
+
+    @field_validator("content", mode="before")
+    @classmethod
+    def sanitize_content(cls, v: Any) -> Any:
+        """Strip NUL bytes, which Postgres rejects in text columns.
+
+        Callers are expected to have normalized already so that the embedded
+        text matches the stored text; this is the last line of defence. It runs
+        before the length constraint so all-NUL content fails `min_length`
+        instead of being stored as an empty string.
+        """
+        return strip_nul(v) if isinstance(v, str) else v
 
 
 class ObservationInput(BaseModel):

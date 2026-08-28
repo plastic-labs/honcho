@@ -275,3 +275,47 @@ class TestReasoningCustomInstructionsValidation:
         configuration = ReasoningConfiguration(custom_instructions=custom_instructions)
 
         assert configuration.custom_instructions == custom_instructions
+
+
+class TestNulByteSanitization:
+    """Postgres rejects NUL (0x00) in text columns and in jsonb strings.
+
+    Models emit these as `\\u0000` escapes in tool-call arguments, which the
+    JSON parser decodes into real NUL bytes, so model-generated text needs the
+    same treatment as user-supplied input.
+    """
+
+    def test_document_content_strips_nul(self):
+        document = DocumentCreate(
+            content="the key is at c:\\\x00users\\amal",
+            metadata=DocumentMetadata(message_ids=[1], message_created_at="2026-08-28"),
+            embedding=[0.1],
+        )
+
+        assert document.content == "the key is at c:\\users\\amal"
+
+    def test_all_nul_document_content_is_rejected_not_emptied(self):
+        """The validator runs before `min_length`, so content that is nothing
+        but NUL fails validation rather than being stored as an empty string."""
+        with pytest.raises(ValidationError):
+            DocumentCreate(
+                content="\x00\x00",
+                metadata=DocumentMetadata(
+                    message_ids=[1], message_created_at="2026-08-28"
+                ),
+                embedding=[0.1],
+            )
+
+    def test_message_content_strips_nul(self):
+        message = MessageCreate(peer_id="peer", content="before\x00after")
+
+        assert message.content == "beforeafter"
+
+    def test_metadata_strips_nul_at_every_depth(self):
+        message = MessageCreate(
+            peer_id="peer",
+            content="hi",
+            metadata={"a\x00b": {"c": ["d\x00e", 1]}},
+        )
+
+        assert message.metadata == {"ab": {"c": ["de", 1]}}

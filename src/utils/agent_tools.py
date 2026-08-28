@@ -36,6 +36,7 @@ from src.utils.representation import (
     Representation,
     allowlist_safe_levels,
 )
+from src.utils.sanitization import strip_nul
 from src.utils.types import ToolResult, embedding_call_purpose, get_current_iteration
 
 logger = logging.getLogger(__name__)
@@ -77,8 +78,20 @@ def _validate_peer_card_entry(line: str) -> bool:
 def _normalized_observation_input(
     obs: schemas.ObservationInput,
 ) -> schemas.ObservationInput:
-    """Return an observation input with content normalized for persistence/embedding."""
-    return obs.model_copy(update={"content": obs.content.strip()})
+    """Return an observation input with content normalized for persistence/embedding.
+
+    NUL bytes are removed here rather than closer to the database so that the
+    text that gets embedded is the same text that gets stored. `premises` and
+    `sources` ride along in internal_metadata, and jsonb rejects NUL in strings
+    just as text columns do.
+    """
+    return obs.model_copy(
+        update={
+            "content": strip_nul(obs.content).strip(),
+            "premises": strip_nul(obs.premises),
+            "sources": strip_nul(obs.sources),
+        }
+    )
 
 
 def _base_observation_properties() -> dict[str, Any]:
@@ -986,10 +999,12 @@ async def create_observations(
         logger.warning("create_observations called with empty list")
         return ObservationsCreatedResult(created_count=0, created_levels=[], failed=[])
 
+    # Normalize before the emptiness check: str.strip() does not remove NUL,
+    # so content that normalizes away has to be dropped afterwards.
     normalized_observations = [
-        _normalized_observation_input(obs)
-        for obs in observations
-        if obs.content.strip()
+        normalized
+        for normalized in (_normalized_observation_input(obs) for obs in observations)
+        if normalized.content
     ]
     if not normalized_observations:
         logger.info("No non-empty observations to create")
