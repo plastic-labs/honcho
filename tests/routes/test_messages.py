@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi.testclient import TestClient
 from nanoid import generate as generate_nanoid
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
@@ -1372,3 +1373,138 @@ async def test_create_message_with_null_timestamp(
         message["created_at"].replace("Z", "+00:00")
     )
     assert before_request <= message_created_at <= after_request
+
+
+@pytest.mark.asyncio
+async def test_delete_message(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    """Deleting a single message removes only that message, leaving siblings."""
+    test_workspace, test_peer = sample_data
+
+    test_session = models.Session(
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
+    )
+    db_session.add(test_session)
+    await db_session.commit()
+
+    base = f"/v3/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages"
+    created = client.post(
+        base,
+        json={
+            "messages": [
+                {"content": "keep me", "peer_id": test_peer.name},
+                {"content": "delete me", "peer_id": test_peer.name},
+            ]
+        },
+    ).json()
+    keep_id, target_id = created[0]["id"], created[1]["id"]
+
+    response = client.delete(f"{base}/{target_id}")
+    assert response.status_code == 204
+
+    # The deleted message is gone, the sibling remains.
+    assert client.get(f"{base}/{target_id}").status_code == 404
+    remaining = client.post(f"{base}/list", json={}).json()["items"]
+    assert [m["id"] for m in remaining] == [keep_id]
+
+
+@pytest.mark.asyncio
+async def test_delete_message_not_found(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    """Deleting a nonexistent message returns 404."""
+    test_workspace, _test_peer = sample_data
+
+    test_session = models.Session(
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
+    )
+    db_session.add(test_session)
+    await db_session.commit()
+
+    response = client.delete(
+        f"/v3/workspaces/{test_workspace.name}"
+        f"/sessions/{test_session.name}/messages/{generate_nanoid()}"
+    )
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_delete_message_clears_embeddings_and_queue_items(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    """A message's embeddings and queue items are removed with it. Queue items
+    FK messages.id with no ON DELETE rule, so they must be cleared first or the
+    delete fails; embeddings cascade but are asserted gone too."""
+    test_workspace, test_peer = sample_data
+
+    test_session = models.Session(
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
+    )
+    db_session.add(test_session)
+    await db_session.commit()
+    await db_session.refresh(test_session)
+
+    message = models.Message(
+        session_name=test_session.name,
+        content="Test message",
+        workspace_name=test_workspace.name,
+        peer_name=test_peer.name,
+        seq_in_session=1,
+    )
+    db_session.add(message)
+    await db_session.commit()
+    await db_session.refresh(message)
+
+    db_session.add(
+        models.MessageEmbedding(
+            content="Test message",
+            message_id=message.public_id,
+            workspace_name=test_workspace.name,
+            session_name=test_session.name,
+            peer_name=test_peer.name,
+        )
+    )
+    db_session.add(
+        models.QueueItem(
+            session_id=test_session.id,
+            work_unit_key="representation:test",
+            task_type="representation",
+            payload={},
+            workspace_name=test_workspace.name,
+            message_id=message.id,
+        )
+    )
+    await db_session.commit()
+
+    response = client.delete(
+        f"/v3/workspaces/{test_workspace.name}"
+        f"/sessions/{test_session.name}/messages/{message.public_id}"
+    )
+    assert response.status_code == 204
+
+    db_session.expire_all()
+    embeddings = (
+        (
+            await db_session.execute(
+                select(models.MessageEmbedding).where(
+                    models.MessageEmbedding.message_id == message.public_id
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert embeddings == []
+    queue_items = (
+        (
+            await db_session.execute(
+                select(models.QueueItem).where(
+                    models.QueueItem.message_id == message.id
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert queue_items == []
