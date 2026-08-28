@@ -91,8 +91,6 @@ _RUNTIME_MOCK_TEST_BLOCKLIST_PREFIXES = (
     # Pure JWT scope tests — operate on src.security directly, no DB needed.
     "tests/test_security.py",
     "tests/test_generate_jwt_script.py",
-    # Docker entrypoint tests execute the shell boundary with local process stubs.
-    "tests/test_docker_entrypoint.py",
 )
 
 _LIVE_LLM_MARKER = "live_llm"
