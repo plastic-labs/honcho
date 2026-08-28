@@ -5,6 +5,7 @@ Verifies that:
 - An invalid value is rejected at config-load time (fail-closed)
 - The ``connect`` event listener is registered when the setting is enabled
 - The ``connect`` event listener is NOT registered when the setting is ``None``
+- ``_validate_pgvector_version`` raises for pgvector < 0.8.0 and passes for >= 0.8.0
 """
 
 import pytest
@@ -61,8 +62,7 @@ def test_connect_listener_registered_when_enabled() -> None:
     assert event.contains(
         db_module.engine.sync_engine,
         "connect",
-        # pyright: ignore[reportPrivateUsage]
-        db_module._set_hnsw_iterative_scan_on_connect,
+        db_module._set_hnsw_iterative_scan_on_connect,  # pyright: ignore[reportPrivateUsage]
     ), "HNSW iterative scan connect listener should be registered on the engine"
 
 
@@ -91,8 +91,8 @@ def test_connect_listener_not_registered_when_disabled(
     execute_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
 
     class AssertingCursor:
-        def execute(self, *args: object, **kwargs: object) -> None:
-            execute_calls.append((args, kwargs))
+        def execute(self, *args: object, **_kwargs: object) -> None:
+            execute_calls.append((args, _kwargs))
             raise AssertionError(
                 "execute should not be called when HNSW_ITERATIVE_SCAN is None"
             )
@@ -105,57 +105,22 @@ def test_connect_listener_not_registered_when_disabled(
     )
     # The function reads settings.DB.HNSW_ITERATIVE_SCAN at call time,
     # so with monkeypatch it should return early without executing SQL.
-    db_module._set_hnsw_iterative_scan_on_connect(dummy_conn, None)  # type: ignore[attr-defined]
+    db_module._set_hnsw_iterative_scan_on_connect(dummy_conn, None)  # pyright: ignore[reportPrivateUsage]
     assert execute_calls == [], "No SQL should execute when HNSW_ITERATIVE_SCAN is None"
 
 
-def test_version_gate_skipped_when_off(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The pgvector version check should NOT run when
-    HNSW_ITERATIVE_SCAN is 'off'. Only 'strict_order' and
-    'relaxed_order' require pgvector >= 0.8.0.
+def test_validate_pgvector_version_rejects_old_versions() -> None:
+    """_validate_pgvector_version raises RuntimeError for pgvector < 0.8.0."""
+    from src.db import _validate_pgvector_version  # pyright: ignore[reportPrivateUsage]
 
-    Uses a fake engine/connection to assert that the pg_extension
-    query is never executed when the setting is 'off'.
-    """
-    from unittest.mock import AsyncMock, MagicMock, patch
+    for old_version in ("0.7.0", "0.6.1", "0.5.0"):
+        with pytest.raises(RuntimeError, match="requires pgvector >= 0.8.0"):
+            _validate_pgvector_version(old_version)
 
-    from src.config import settings
-    from src import db as db_module
 
-    monkeypatch.setattr(settings.DB, "HNSW_ITERATIVE_SCAN", "off")
-    assert settings.DB.HNSW_ITERATIVE_SCAN == "off"
+def test_validate_pgvector_version_accepts_new_versions() -> None:
+    """_validate_pgvector_version passes silently for pgvector >= 0.8.0."""
+    from src.db import _validate_pgvector_version  # pyright: ignore[reportPrivateUsage]
 
-    execute_calls: list[str] = []
-
-    class FakeResult:
-        def fetchone(self) -> None:
-            return None
-
-    async def fake_execute(stmt: object, *args: object, **kwargs: object) -> FakeResult:
-        execute_calls.append(str(stmt))
-        return FakeResult()
-
-    fake_conn = MagicMock()
-    fake_conn.execute = fake_execute
-    fake_conn.commit = AsyncMock()
-
-    class FakeAsyncCM:
-        async def __aenter__(self) -> MagicMock:
-            return fake_conn
-
-        async def __aexit__(self, *args: object) -> None:
-            pass
-
-    fake_engine = MagicMock()
-    fake_engine.connect = MagicMock(return_value=FakeAsyncCM())
-
-    with patch.object(db_module, "engine", fake_engine), \
-         patch("alembic.command.upgrade"), \
-         patch("alembic.config.Config"):
-        import asyncio
-        asyncio.run(db_module.init_db())
-
-    pg_extension_calls = [c for c in execute_calls if "pg_extension" in c]
-    assert pg_extension_calls == [], (
-        "pg_extension version query should not execute when HNSW_ITERATIVE_SCAN is 'off'"
-    )
+    for new_version in ("0.8.0", "0.8.1", "0.9.0", "1.0.0"):
+        _validate_pgvector_version(new_version)  # should not raise
