@@ -37,10 +37,9 @@ def test_hnsw_iterative_scan_rejects_invalid_value() -> None:
 
 
 def test_hnsw_iterative_scan_rejects_arbitrary_string() -> None:
+    bad: str = "DROP TABLE users; --"
     with pytest.raises((ValueError, TypeError)):
-        DBSettings(
-            HNSW_ITERATIVE_SCAN="DROP TABLE users; --"  # pyright: ignore[reportArgumentType]
-        )
+        DBSettings(HNSW_ITERATIVE_SCAN=bad)  # pyright: ignore[reportArgumentType]
 
 
 def test_connect_listener_registered_when_enabled() -> None:
@@ -56,13 +55,15 @@ def test_connect_listener_registered_when_enabled() -> None:
 
     from src import db as db_module
 
+    _listener = db_module._set_hnsw_iterative_scan_on_connect  # pyright: ignore[reportPrivateUsage]
+
     # The listener is registered at import time when the setting is
     # truthy (the default is "strict_order").  We verify registration via
     # the SQLAlchemy event registry rather than just checking callability.
     assert event.contains(
         db_module.engine.sync_engine,
         "connect",
-        db_module._set_hnsw_iterative_scan_on_connect,  # pyright: ignore[reportPrivateUsage]
+        _listener,
     ), "HNSW iterative scan connect listener should be registered on the engine"
 
 
@@ -88,6 +89,8 @@ def test_connect_listener_not_registered_when_disabled(
 
     from src import db as db_module
 
+    _listener = db_module._set_hnsw_iterative_scan_on_connect  # pyright: ignore[reportPrivateUsage]
+
     execute_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
 
     class AssertingCursor:
@@ -105,7 +108,7 @@ def test_connect_listener_not_registered_when_disabled(
     )
     # The function reads settings.DB.HNSW_ITERATIVE_SCAN at call time,
     # so with monkeypatch it should return early without executing SQL.
-    db_module._set_hnsw_iterative_scan_on_connect(dummy_conn, None)  # pyright: ignore[reportPrivateUsage]
+    _listener(dummy_conn, None)
     assert execute_calls == [], "No SQL should execute when HNSW_ITERATIVE_SCAN is None"
 
 
@@ -114,7 +117,7 @@ def test_validate_pgvector_version_rejects_old_versions() -> None:
     from src.db import _validate_pgvector_version  # pyright: ignore[reportPrivateUsage]
 
     for old_version in ("0.7.0", "0.6.1", "0.5.0"):
-        with pytest.raises(RuntimeError, match="requires pgvector >= 0.8.0"):
+        with pytest.raises(RuntimeError, match=r"requires pgvector >= 0\.8\.0"):
             _validate_pgvector_version(old_version)
 
 
