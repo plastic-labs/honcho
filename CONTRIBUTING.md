@@ -233,10 +233,15 @@ uv run fastapi run --host 0.0.0.0 --port 8106 src/mock_provider/main.py
 Then point Honcho at it. All three variables are required:
 
 ```bash
-export LLM_OPENAI_API_KEY=sandbox          # gates client construction, not just auth
+export LLM_OPENAI_API_KEY=any-non-empty-string   # only truthiness is checked
 export LLM_OPENAI_BASE_URL=http://localhost:8106/v1
 export EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL=http://localhost:8106/v1
 ```
+
+The key's *value* is never checked — the mock reads no Authorization header, and Honcho only
+tests it for truthiness before building the client (`src/llm/registry.py`). Set the base URL
+without it and the client is never constructed, so the base URL is silently ignored. Keep the
+value obviously fake, so a module that ever escapes the override 401s rather than spends.
 
 Embeddings resolve through a separate client that reads the base URL only from the per-module
 override, so without the third variable your embedding calls go to `api.openai.com` for real.

@@ -9,6 +9,15 @@ actually sent, ``$ref`` indirection and all.
 
 Values are derived from a hash of the property path, so the same schema always
 produces the same instance and two different fields never collide.
+
+Not reused from ``src/utils/schema_conversion.py``, despite the overlapping
+``$ref``/``$defs`` handling, because that module answers a different question and
+does so under an incompatible contract. It builds a Pydantic *model class* where
+this needs an *instance*; it raises by design (conversion doubles as validation,
+surfaced to callers as a 422) where a mock must degrade rather than turn its own
+defect into a 500; and it rejects both ``allOf`` and recursive ``$ref`` — the
+latter being ordinary input here, since reasoning-tree schemas nest premises
+inside conclusions.
 """
 
 from __future__ import annotations

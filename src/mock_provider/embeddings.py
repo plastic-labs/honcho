@@ -7,9 +7,9 @@ import hashlib
 import struct
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter
 
-from src.mock_provider.coerce import as_dict, as_int, as_list, as_str
+from src.mock_provider.schemas import EmbeddingsRequest
 
 router = APIRouter(tags=["mock-provider"])
 
@@ -39,47 +39,41 @@ def _encode_base64(vector: list[float]) -> str:
     return base64.b64encode(struct.pack(f"<{len(vector)}f", *vector)).decode()
 
 
-def _normalize_input(raw: object) -> list[str]:
-    """Accept every input shape the OpenAI embeddings API allows.
+def _normalize_input(
+    raw: str | list[str] | list[int] | list[list[int]] | None,
+) -> list[str]:
+    """Flatten the request input into one string per embedding to return.
 
-    Token-array inputs (list[int] / list[list[int]]) are rendered back to a
-    stable string rather than rejected — the vector only has to be deterministic.
+    Token-array inputs are rendered back to a stable string rather than
+    rejected — the vector only has to be deterministic, not meaningful.
     """
     if raw is None:
         return []
-    if (text := as_str(raw)) is not None:
-        return [text]
-
-    items = as_list(raw)
-    if items is None:
-        return [str(raw)]
-
+    if isinstance(raw, str):
+        return [raw]
     # A flat list of ints is one tokenized input, not many single-token ones.
-    if items and all(as_int(item) is not None for item in items):
-        return [",".join(str(item) for item in items)]
+    if raw and all(isinstance(item, int) for item in raw):
+        return [",".join(str(item) for item in raw)]
 
     texts: list[str] = []
-    for item in items:
-        if (item_text := as_str(item)) is not None:
-            texts.append(item_text)
-        elif (parts := as_list(item)) is not None:
-            texts.append(",".join(str(part) for part in parts))
+    for item in raw:
+        if isinstance(item, str):
+            texts.append(item)
+        elif isinstance(item, list):
+            texts.append(",".join(str(part) for part in item))
         else:
             texts.append(str(item))
     return texts
 
 
 @router.post("/embeddings")
-async def embeddings(request: Request) -> Any:
-    payload = as_dict(await request.json()) or {}
-
-    texts = _normalize_input(payload.get("input"))
-    requested = as_int(payload.get("dimensions"))
-    dimensions = requested if requested and requested > 0 else DEFAULT_DIMENSIONS
-
-    # The SDK omits encoding_format only when it wants base64 (it sets the
-    # parameter explicitly for float), so absent means base64.
-    encoding_format = as_str(payload.get("encoding_format")) or "base64"
+async def embeddings(body: EmbeddingsRequest) -> Any:
+    texts = _normalize_input(body.input)
+    dimensions = (
+        body.dimensions
+        if body.dimensions and body.dimensions > 0
+        else DEFAULT_DIMENSIONS
+    )
 
     data: list[dict[str, Any]] = []
     for index, text in enumerate(texts):
@@ -89,7 +83,9 @@ async def embeddings(request: Request) -> Any:
                 "object": "embedding",
                 "index": index,
                 "embedding": (
-                    vector if encoding_format == "float" else _encode_base64(vector)
+                    vector
+                    if body.encoding_format == "float"
+                    else _encode_base64(vector)
                 ),
             }
         )
@@ -98,6 +94,6 @@ async def embeddings(request: Request) -> Any:
     return {
         "object": "list",
         "data": data,
-        "model": as_str(payload.get("model")) or "mock-embedding",
+        "model": body.model or "mock-embedding",
         "usage": {"prompt_tokens": prompt_tokens, "total_tokens": prompt_tokens},
     }

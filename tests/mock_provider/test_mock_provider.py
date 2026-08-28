@@ -397,6 +397,85 @@ def test_health_and_catch_all_get(client: TestClient) -> None:
     assert client.get("/").status_code == 200
 
 
+# --- request validation -----------------------------------------------------
+
+
+def test_malformed_body_returns_an_openai_error_envelope(client: TestClient) -> None:
+    """A bad request must look like the real API's, not like FastAPI's 422.
+
+    Mid-run, a 422 in FastAPI's own error shape reads as a Honcho bug rather
+    than a bad request, and no OpenAI client knows how to interpret it.
+    """
+    response = client.post(
+        "/v1/embeddings", json={"input": "hello", "dimensions": "not-a-number"}
+    )
+
+    assert response.status_code == 400
+    error = response.json()["error"]
+    assert error["type"] == "invalid_request_error"
+    assert error["message"]
+    assert set(error) == {"message", "type", "param", "code"}
+
+
+def test_boolean_dimensions_is_rejected_not_silently_coerced(
+    client: TestClient,
+) -> None:
+    """bool is an int subclass, so `true` would otherwise mean 1 dimension."""
+    response = client.post(
+        "/v1/embeddings", json={"input": "hello", "dimensions": True}
+    )
+
+    assert response.status_code == 400
+
+
+def test_unknown_fields_are_accepted(client: TestClient) -> None:
+    """Validation must fire on wrong types, never on unrecognised parameters.
+
+    A new upstream parameter should not turn a working setup into a hard
+    failure, so every model allows extras.
+    """
+    body = _post_chat(
+        client,
+        temperature=0.7,
+        max_completion_tokens=256,
+        reasoning_effort="minimal",
+        some_parameter_invented_next_year=True,
+    )
+    assert body["choices"][0]["finish_reason"] == "stop"
+
+
+def test_wrongly_typed_messages_are_rejected(client: TestClient) -> None:
+    response = client.post(
+        "/v1/chat/completions", json={"model": "m", "messages": "not-a-list"}
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["type"] == "invalid_request_error"
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        ({"input": "solo"}, 1),
+        ({"input": ["a", "b", "c"]}, 3),
+        ({"input": [1, 2, 3]}, 1),
+        ({"input": [[1, 2], [3, 4]]}, 2),
+        ({"input": None}, 0),
+    ],
+    ids=["string", "list-of-strings", "token-array", "token-arrays", "null"],
+)
+def test_every_documented_input_shape_is_accepted(
+    client: TestClient, payload: dict[str, Any], expected: int
+) -> None:
+    """A flat int list is one tokenized input, not many single-token ones."""
+    response = client.post(
+        "/v1/embeddings", json={**payload, "encoding_format": "float"}
+    )
+
+    assert response.status_code == 200, response.text
+    assert len(response.json()["data"]) == expected
+
+
 # --- streaming --------------------------------------------------------------
 
 

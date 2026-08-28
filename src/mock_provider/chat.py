@@ -8,11 +8,12 @@ import re
 from collections.abc import AsyncIterator
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
-from src.mock_provider.coerce import as_dict, as_list, as_str
+from src.mock_provider.coerce import as_dict, as_str
 from src.mock_provider.schema_gen import generate
+from src.mock_provider.schemas import ChatCompletionRequest, ChatMessage
 
 router = APIRouter(tags=["mock-provider"])
 
@@ -22,10 +23,10 @@ router = APIRouter(tags=["mock-provider"])
 _SCHEMA_HINT = re.compile(r"schema:\s*(\{)", re.IGNORECASE)
 
 
-def _completion_id(payload: dict[str, Any]) -> str:
+def _completion_id(body: ChatCompletionRequest) -> str:
     """Stable id, so a replayed request is byte-identical."""
     digest = hashlib.sha256(
-        json.dumps(payload, sort_keys=True, default=str).encode()
+        body.model_dump_json(exclude_none=True).encode()
     ).hexdigest()
     return f"chatcmpl-mock-{digest[:24]}"
 
@@ -64,13 +65,10 @@ def _extract_balanced_json(text: str, start: int) -> dict[str, Any] | None:
     return None
 
 
-def _schema_from_messages(messages: list[Any]) -> dict[str, Any] | None:
+def _schema_from_messages(messages: list[ChatMessage]) -> dict[str, Any] | None:
     """Recover an injected schema from the prompt, for json_object mode."""
     for message in reversed(messages):
-        message_dict = as_dict(message)
-        if message_dict is None:
-            continue
-        content = as_str(message_dict.get("content"))
+        content = as_str(message.content)
         if content is None:
             continue
         for match in _SCHEMA_HINT.finditer(content):
@@ -80,10 +78,9 @@ def _schema_from_messages(messages: list[Any]) -> dict[str, Any] | None:
     return None
 
 
-def _response_content(payload: dict[str, Any]) -> str:
+def _response_content(body: ChatCompletionRequest) -> str:
     """The assistant message body: schema-conforming JSON, or prose."""
-    response_format = as_dict(payload.get("response_format"))
-    messages = as_list(payload.get("messages")) or []
+    response_format = body.response_format
 
     if response_format is not None:
         kind = as_str(response_format.get("type"))
@@ -98,7 +95,7 @@ def _response_content(payload: dict[str, Any]) -> str:
             # exists to avoid. An empty object at least parses.
             return "{}"
         if kind == "json_object":
-            schema = _schema_from_messages(messages)
+            schema = _schema_from_messages(body.messages)
             return json.dumps(generate(schema)) if schema else "{}"
 
     return (
@@ -107,13 +104,11 @@ def _response_content(payload: dict[str, Any]) -> str:
     )
 
 
-def _usage(payload: dict[str, Any], content: str) -> dict[str, int]:
+def _usage(body: ChatCompletionRequest, content: str) -> dict[str, int]:
     """Rough token accounting, so cost telemetry has plausible numbers."""
-    messages = as_list(payload.get("messages")) or []
     prompt_chars = 0
-    for message in messages:
-        message_dict = as_dict(message)
-        text = as_str(message_dict.get("content")) if message_dict else None
+    for message in body.messages:
+        text = as_str(message.content)
         if text is not None:
             prompt_chars += len(text)
     prompt_tokens = max(1, prompt_chars // 4)
@@ -176,15 +171,13 @@ async def _stream(
 
 
 @router.post("/chat/completions")
-async def chat_completions(request: Request) -> Any:
-    payload = as_dict(await request.json()) or {}
+async def chat_completions(body: ChatCompletionRequest) -> Any:
+    model = body.model or "mock-model"
+    content = _response_content(body)
+    usage = _usage(body, content)
+    completion_id = _completion_id(body)
 
-    model = as_str(payload.get("model")) or "mock-model"
-    content = _response_content(payload)
-    usage = _usage(payload, content)
-    completion_id = _completion_id(payload)
-
-    if payload.get("stream"):
+    if body.stream:
         return StreamingResponse(
             _stream(completion_id, model, content, usage),
             media_type="text/event-stream",
