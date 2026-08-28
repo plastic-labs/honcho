@@ -1,12 +1,13 @@
 """FastAPI routes for peer resources and peer-scoped operations."""
 
+import asyncio
 import json
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable
 from contextlib import suppress
 from time import perf_counter
 
-from fastapi import APIRouter, Body, Depends, Path, Query, Response
+from fastapi import APIRouter, Body, Depends, Path, Query, Request, Response
 from fastapi.responses import StreamingResponse
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import apaginate
@@ -45,6 +46,44 @@ router = APIRouter(
     prefix="/workspaces/{workspace_id}/peers",
     tags=["peers"],
 )
+
+
+class _ClientDisconnected(Exception):
+    """Raised when the client goes away before an awaited operation finishes."""
+
+
+async def _wait_for_disconnect(request: Request) -> None:
+    """Block until the client disconnects, draining the ASGI receive channel."""
+    while True:
+        if (await request.receive())["type"] == "http.disconnect":
+            return
+
+
+async def _run_until_disconnect[T](request: Request, coro: Awaitable[T]) -> T:
+    """Await ``coro``, cancelling it if the client disconnects first.
+
+    Uvicorn surfaces a client disconnect on the ASGI receive channel but does
+    not cancel the running handler, so a non-streaming dialectic would keep the
+    (expensive) LLM call going long after the caller has timed out (#1050).
+    Raises ``_ClientDisconnected`` if the client leaves before ``coro`` returns.
+    """
+    work = asyncio.ensure_future(coro)
+    watcher = asyncio.ensure_future(_wait_for_disconnect(request))
+    try:
+        await asyncio.wait({work, watcher}, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        if not watcher.done():
+            watcher.cancel()
+            with suppress(asyncio.CancelledError):
+                await watcher
+
+    if work.done():
+        return work.result()
+
+    work.cancel()
+    with suppress(asyncio.CancelledError):
+        await work
+    raise _ClientDisconnected
 
 
 async def _resolve_scope_option(
@@ -240,6 +279,7 @@ async def get_sessions_for_peer(
     },
 )
 async def chat(
+    request: Request,
     workspace_id: str = Path(...),
     peer_id: str = Path(...),
     options: schemas.DialecticOptions = Body(...),
@@ -392,19 +432,35 @@ async def chat(
             media_type="text/event-stream",
         )
 
-    response = await agentic_chat(
-        workspace_name=workspace_id,
-        session_name=options.session_id,
-        query=options.query,
-        # a single `scope` swaps the observer to the scope peer
-        observer=observer,
-        # if target is given, that's the observed peer. otherwise, observer==observed
-        # and it's answered from the omniscient Honcho perspective
-        observed=options.target if options.target is not None else peer_id,
-        reasoning_level=options.reasoning_level,
-        session_allowlist=session_allowlist,
-        response_model=response_model,
-    )
+    # Uvicorn detects the client going away but doesn't cancel this handler, so
+    # race the dialectic against the disconnect and drop the LLM work if the
+    # caller leaves first (#1050) — the streaming path already dies with its
+    # generator.
+    try:
+        response = await _run_until_disconnect(
+            request,
+            agentic_chat(
+                workspace_name=workspace_id,
+                session_name=options.session_id,
+                query=options.query,
+                # a single `scope` swaps the observer to the scope peer
+                observer=observer,
+                # if target is given, that's the observed peer. otherwise, observer==observed
+                # and it's answered from the omniscient Honcho perspective
+                observed=options.target if options.target is not None else peer_id,
+                reasoning_level=options.reasoning_level,
+                session_allowlist=session_allowlist,
+                response_model=response_model,
+            ),
+        )
+    except _ClientDisconnected:
+        logger.info(
+            "Client disconnected during dialectic chat; cancelling work "
+            + "(workspace=%s peer=%s)",
+            workspace_id,
+            peer_id,
+        )
+        return Response(status_code=499)
 
     # Prometheus metrics
     if settings.METRICS.ENABLED:
