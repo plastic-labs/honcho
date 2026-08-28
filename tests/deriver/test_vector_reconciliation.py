@@ -506,6 +506,59 @@ class TestReEmbedding:
             assert synced == 3
             assert failed == 0
 
+    async def test_pgvector_only_mode_embeds_and_marks_documents_synced(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ) -> None:
+        """In pgvector-only mode (external_vector_store=None), the reconciler
+        must still re-embed and sync pending documents -- this path was
+        previously skipped entirely (documents got permanently stuck at
+        sync_state='pending' whenever the deployment had no external vector
+        store, e.g. after switching embedding providers)."""
+        workspace, peer1 = sample_data
+
+        collection = models.Collection(
+            workspace_name=workspace.name, observer=peer1.name, observed=peer1.name
+        )
+        db_session.add(collection)
+        await db_session.commit()
+
+        session = models.Session(
+            name=str(generate_nanoid()), workspace_name=workspace.name
+        )
+        db_session.add(session)
+        await db_session.commit()
+
+        doc = models.Document(
+            content="pending doc",
+            workspace_name=workspace.name,
+            observer=peer1.name,
+            observed=peer1.name,
+            session_name=session.name,
+            sync_state="pending",
+            embedding=None,
+        )
+        db_session.add(doc)
+        await db_session.commit()
+        await db_session.refresh(doc)
+
+        with patch("src.reconciler.sync_vectors.embedding_client") as mock_embed_client:
+            mock_embed_client.simple_batch_embed = AsyncMock(
+                return_value=[[1.0] * 1536]
+            )
+
+            synced, failed = await _sync_documents(db_session, [doc], None)
+
+        await db_session.commit()
+        await db_session.refresh(doc)
+
+        assert synced == 1
+        assert failed == 0
+        assert doc.sync_state == "synced"
+        assert doc.sync_attempts == 0
+        assert doc.embedding is not None
+
     async def test_large_documents_embedded_in_single_batch(
         self,
         db_session: AsyncSession,
@@ -993,6 +1046,40 @@ class TestEndToEndReconciliation:
         mock_reconcile_docs.assert_awaited_once()
         mock_reconcile_embs.assert_awaited_once()
         mock_cleanup_docs.assert_awaited_once()
+
+    async def test_pgvector_only_cycle_reconciles_documents_too(self) -> None:
+        """pgvector-only mode (no external vector store) must still reconcile
+        documents, not just message embeddings -- regression test for the gap
+        where `run_vector_reconciliation_cycle`'s pgvector branch never called
+        `_reconcile_documents_batch` at all."""
+        with (
+            patch(
+                "src.reconciler.sync_vectors.get_external_vector_store",
+                return_value=None,
+            ),
+            patch(
+                "src.reconciler.sync_vectors._reconcile_documents_batch",
+                new_callable=AsyncMock,
+            ) as mock_reconcile_docs,
+            patch(
+                "src.reconciler.sync_vectors._reconcile_message_embeddings_batch",
+                new_callable=AsyncMock,
+            ) as mock_reconcile_embs,
+            patch(
+                "src.reconciler.sync_vectors._cleanup_pgvector_batch",
+                new_callable=AsyncMock,
+            ) as mock_cleanup,
+        ):
+            mock_reconcile_docs.return_value = False
+            mock_reconcile_embs.return_value = False
+            mock_cleanup.return_value = False
+
+            metrics = await run_vector_reconciliation_cycle()
+
+        assert isinstance(metrics, ReconciliationMetrics)
+        mock_reconcile_docs.assert_awaited_once_with(None, metrics)
+        mock_reconcile_embs.assert_awaited_once_with(None, metrics)
+        mock_cleanup.assert_awaited_once()
 
 
 @pytest.mark.asyncio

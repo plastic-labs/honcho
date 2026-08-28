@@ -265,7 +265,7 @@ def build_message_vector_record(
 async def _sync_documents(
     db: AsyncSession,
     documents: list[models.Document],
-    external_vector_store: VectorStore,
+    external_vector_store: VectorStore | None,
 ) -> tuple[int, int]:
     """
     Sync a batch of pending documents to the external vector store.
@@ -274,6 +274,11 @@ async def _sync_documents(
     1. Embedding exists in postgres → use it for external upsert
     2. Embedding missing + need postgres storage → re-embed, write to both stores
     3. Embedding missing + external-only mode → re-embed, write to external only
+
+    When `external_vector_store` is None (pgvector-only mode), re-embeds any
+    pending document missing a vector, writes the vector to postgres, and
+    marks sync_state='synced'. No external upsert is performed -- mirrors
+    `_sync_message_embeddings`'s pgvector-only branch.
 
     Returns (synced_count, failed_count).
     """
@@ -324,6 +329,31 @@ async def _sync_documents(
     if failed_to_embed:
         await _bump_document_sync_attempts(db, failed_to_embed)
         failed_count += len(failed_to_embed)
+
+    # pgvector-only mode: no external store to upsert to. Any document that
+    # now has an embedding (either pre-existing or freshly embedded) is fully
+    # synced -- write via per-row UPDATE so the vector persists alongside
+    # sync_state in a single statement (session has autoflush=False).
+    if external_vector_store is None:
+        docs_done: list[models.Document] = []
+        for doc in documents:
+            new_emb = freshly_embedded.get(doc.id)
+            existing = cast(list[float] | None, doc.embedding)
+            if new_emb is None and existing is None:
+                continue
+            await db.execute(
+                update(models.Document)
+                .where(models.Document.id == doc.id)
+                .values(
+                    sync_state="synced",
+                    last_sync_at=func.now(),
+                    sync_attempts=0,
+                    **({"embedding": new_emb} if new_emb is not None else {}),
+                )
+            )
+            docs_done.append(doc)
+        synced_count += len(docs_done)
+        return synced_count, failed_count
 
     # Step 2: Build vector records and upsert to external store (all cases)
     by_namespace: dict[str, list[models.Document]] = {}
@@ -606,7 +636,7 @@ async def _cleanup_soft_deleted_documents_pgvector(
 
 
 async def _reconcile_documents_batch(
-    external_vector_store: VectorStore,
+    external_vector_store: VectorStore | None,
     metrics: ReconciliationMetrics,
 ) -> bool:
     """
@@ -715,10 +745,17 @@ async def run_vector_reconciliation_cycle() -> ReconciliationMetrics:
     external_vector_store = get_external_vector_store()
     deadline = time.monotonic() + RECONCILIATION_TIME_BUDGET_SECONDS
 
-    # pgvector-only mode: still need to embed pending MessageEmbedding rows
-    # (create_messages defers embedding to the reconciler), then clean up.
+    # pgvector-only mode: still need to embed pending Document and
+    # MessageEmbedding rows (create_messages defers embedding to the
+    # reconciler; a re-embed migration -- e.g. switching embedding providers
+    # -- also lands here via cleared embedding+sync_state), then clean up.
     if external_vector_store is None:
         while time.monotonic() < deadline:
+            docs_work = await _reconcile_documents_batch(None, metrics)
+
+            if time.monotonic() >= deadline:
+                break
+
             embs_work = await _reconcile_message_embeddings_batch(None, metrics)
 
             if time.monotonic() >= deadline:
@@ -726,7 +763,7 @@ async def run_vector_reconciliation_cycle() -> ReconciliationMetrics:
 
             cleanup_work = await _cleanup_pgvector_batch(metrics)
 
-            if not (embs_work or cleanup_work):
+            if not (docs_work or embs_work or cleanup_work):
                 break
         logger.debug("Vector reconciliation cycle completed (pgvector mode)")
         return metrics
