@@ -1,0 +1,14 @@
+{
+  "name": "@honcho-ai/harness-core",
+  "version": "0.1.0",
+  "description": "Shared runtime for Honcho coding-agent harnesses",
+  "author": "Plastic Labs <hello@plasticlabs.ai>",
+  "license": "MIT",
+  "type": "module",
+  "main": "src/index.ts",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/plastic-labs/honcho.git",
+    "directory": "harness-core"
+  }
+}
