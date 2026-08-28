@@ -294,22 +294,28 @@ async def fetch_documents_by_ids(
 async def _query_documents_pgvector(
     db: AsyncSession,
     workspace_name: str,
-    observer: str,
-    observed: str,
+    observer: str | None,
+    observed: str | None,
     embedding: list[float],
     filters: dict[str, Any] | None,
     max_distance: float | None,
     top_k: int,
 ) -> list[models.Document]:
-    """pgvector similarity search — pure DB operation."""
+    """pgvector similarity search — pure DB operation.
+
+    A None observer/observed omits that constraint, so omitting both searches
+    across all peer relationships in the workspace (cross-peer search, #520).
+    """
     stmt = (
         select(models.Document)
         .where(models.Document.workspace_name == workspace_name)
-        .where(models.Document.observer == observer)
-        .where(models.Document.observed == observed)
         .where(models.Document.embedding.isnot(None))
         .where(models.Document.deleted_at.is_(None))
     )
+    if observer is not None:
+        stmt = stmt.where(models.Document.observer == observer)
+    if observed is not None:
+        stmt = stmt.where(models.Document.observed == observed)
 
     if max_distance is not None:
         stmt = stmt.where(
@@ -330,8 +336,8 @@ async def query_documents(
     workspace_name: str,
     query: str,
     *,
-    observer: str,
-    observed: str,
+    observer: str | None = None,
+    observed: str | None = None,
     filters: dict[str, Any] | None = None,
     max_distance: float | None = None,
     top_k: int = 5,
@@ -348,8 +354,12 @@ async def query_documents(
         db: Database session, or None to let the function manage its own
         workspace_name: Name of the workspace
         query: Search query text
-        observer: Name of the observing peer
-        observed: Name of the observed peer
+        observer: Name of the observing peer. Optional on the pgvector backend
+            (omitting it searches across observers); required on external
+            vector stores.
+        observed: Name of the observed peer. Optional on the pgvector backend
+            (omitting it searches across observed peers); required on external
+            vector stores.
         filters: Optional filters to apply at vector store level (supports: level, session_name)
         max_distance: Maximum cosine distance for results
         top_k: Number of results to return
@@ -357,6 +367,11 @@ async def query_documents(
 
     Returns:
         Sequence of matching documents
+
+    Raises:
+        ValidationException: If observer or observed is omitted on a deployment
+            using an external vector store, or the query exceeds the embedding
+            token limit.
     """
     if top_k <= 0:
         return []
@@ -399,7 +414,17 @@ async def query_documents(
                 managed_db.expunge(doc)
             return docs
 
-    # External vector store — network call first, DB only for the ID fetch
+    # External vector store — network call first, DB only for the ID fetch.
+    # Namespaces are derived from the (workspace, observer, observed) triple,
+    # so a cross-peer query would need a fan-out across namespaces; require
+    # both until that is supported (#520).
+    if observer is None or observed is None:
+        raise ValidationException(
+            "Cross-peer semantic search is only supported on the pgvector "
+            + "backend. This deployment uses an external vector store, which "
+            + "requires both 'observer' and 'observed' to be specified."
+        )
+
     document_ids = await query_external_vector_document_ids(
         workspace_name=workspace_name,
         observer=observer,
