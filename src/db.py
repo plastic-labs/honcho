@@ -109,6 +109,8 @@ def _set_hnsw_iterative_scan_on_connect(
     is session-scoped, so it persists past the autocommit boundary.
     """
     value = settings.DB.HNSW_ITERATIVE_SCAN
+    if not value:
+        return
     try:
         previous_autocommit = dbapi_connection.autocommit
         if not previous_autocommit:
@@ -375,7 +377,10 @@ async def init_db():
     # Validate pgvector version when HNSW iterative scan is enabled
     # (requires pgvector >= 0.8.0). Fail startup with a clear error
     # rather than relying on silent query-time failures.
-    if settings.DB.HNSW_ITERATIVE_SCAN:
+    # Skip the check for "off" — listener is still registered so the
+    # application can override a server-level setting, but no version
+    # requirement applies.
+    if settings.DB.HNSW_ITERATIVE_SCAN in ("strict_order", "relaxed_order"):
         async with engine.connect() as connection:
             result = await connection.execute(
                 text("SELECT extversion FROM pg_extension WHERE extname = 'vector'")
@@ -388,9 +393,11 @@ async def init_db():
                 minor = int(version_parts[1]) if len(version_parts) > 1 else 0
                 if (major, minor) < (0, 8):
                     raise RuntimeError(
-                        f"pgvector version {version_str} is installed but "
-                        f"HNSW_ITERATIVE_SCAN requires pgvector >= 0.8.0. "
-                        f"Upgrade pgvector or set HNSW_ITERATIVE_SCAN=None."
+                        "pgvector version "
+                        + version_str
+                        + " is installed but HNSW_ITERATIVE_SCAN"
+                        + " requires pgvector >= 0.8.0."
+                        + " Upgrade pgvector or set HNSW_ITERATIVE_SCAN=off."
                     )
 
     # Run Alembic migrations

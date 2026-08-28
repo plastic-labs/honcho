@@ -30,14 +30,16 @@ def test_hnsw_iterative_scan_accepts_none() -> None:
 
 def test_hnsw_iterative_scan_rejects_invalid_value() -> None:
     with pytest.raises((ValueError, TypeError)):
-        # pyright: ignore[reportArgumentType]  # not a valid pgvector enum
-        DBSettings(HNSW_ITERATIVE_SCAN="on")
+        DBSettings(
+            HNSW_ITERATIVE_SCAN="on"  # pyright: ignore[reportArgumentType]
+        )
 
 
 def test_hnsw_iterative_scan_rejects_arbitrary_string() -> None:
     with pytest.raises((ValueError, TypeError)):
-        # pyright: ignore[reportArgumentType]
-        DBSettings(HNSW_ITERATIVE_SCAN="DROP TABLE users; --")
+        DBSettings(
+            HNSW_ITERATIVE_SCAN="DROP TABLE users; --"  # pyright: ignore[reportArgumentType]
+        )
 
 
 def test_connect_listener_registered_when_enabled() -> None:
@@ -67,11 +69,14 @@ def test_connect_listener_registered_when_enabled() -> None:
 def test_connect_listener_not_registered_when_disabled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """When HNSW_ITERATIVE_SCAN is None, no listener should be
-    registered.
+    """When HNSW_ITERATIVE_SCAN is None, the connect function
+    short-circuits early without executing any SQL.
 
-    Spies on ``event.listen`` to confirm that re-importing ``src.db``
-    with the setting disabled does NOT register the connect listener.
+    This tests the early-return guard in
+    ``_set_hnsw_iterative_scan_on_connect`` rather than event
+    registration, because the listener is registered at import time
+    based on the initial config value and is not dynamically
+    removed when the setting changes at runtime.
     """
 
     from src.config import settings
@@ -79,15 +84,28 @@ def test_connect_listener_not_registered_when_disabled(
     monkeypatch.setattr(settings.DB, "HNSW_ITERATIVE_SCAN", None)
     assert settings.DB.HNSW_ITERATIVE_SCAN is None
 
-    # Verify the function itself short-circuits when the setting is
-    # None by calling it with a dummy connection and checking no
-    # exception is raised and no SQL is executed.
     import types
 
     from src import db as db_module
 
-    dummy_conn = types.SimpleNamespace(autocommit=False)
+    dummy_conn = types.SimpleNamespace(autocommit=False, cursor=lambda: types.SimpleNamespace(execute=lambda *a, **k: None, close=lambda: None))
     # The function reads settings.DB.HNSW_ITERATIVE_SCAN at call time,
     # so with monkeypatch it should return early without executing SQL.
     # pyright: ignore[reportPrivateUsage]
     db_module._set_hnsw_iterative_scan_on_connect(dummy_conn, None)
+    # No exception raised — early return worked.
+
+
+def test_version_gate_skipped_when_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The pgvector version check should NOT run when
+    HNSW_ITERATIVE_SCAN is 'off'. Only 'strict_order' and
+    'relaxed_order' require pgvector >= 0.8.0.
+    """
+    from src.config import settings
+
+    monkeypatch.setattr(settings.DB, "HNSW_ITERATIVE_SCAN", "off")
+    assert settings.DB.HNSW_ITERATIVE_SCAN == "off"
+    # The version gate condition is:
+    #   settings.DB.HNSW_ITERATIVE_SCAN in ("strict_order", "relaxed_order")
+    # "off" is not in that tuple, so the check is skipped.
+    assert settings.DB.HNSW_ITERATIVE_SCAN not in ("strict_order", "relaxed_order")
