@@ -35,6 +35,7 @@ from src.telemetry.prometheus.metrics import DialecticComponents, TokenTypes
 from src.utils.agent_tools import (
     DIALECTIC_TOOLS,
     DIALECTIC_TOOLS_MINIMAL,
+    MUTATING_TOOL_NAMES,
     create_tool_executor,
     search_memory,
 )
@@ -508,6 +509,11 @@ class DialecticAgent:
                 tool_choice=level_settings.TOOL_CHOICE,
                 tool_executor=tool_executor,
                 max_tool_iterations=level_settings.MAX_TOOL_ITERATIONS,
+                # Dialectic's loadout is reads today, but say so explicitly rather
+                # than relying on that: the loop keeps any state-changing call
+                # in the order the model asked for, so adding a write tool here
+                # later stays correct without anyone remembering this.
+                mutating_tools=MUTATING_TOOL_NAMES,
                 messages=self.messages,
                 max_input_tokens=settings.DIALECTIC.MAX_INPUT_TOKENS,
                 trace_name="dialectic_chat",
@@ -584,6 +590,11 @@ class DialecticAgent:
                 tool_choice=level_settings.TOOL_CHOICE,
                 tool_executor=tool_executor,
                 max_tool_iterations=level_settings.MAX_TOOL_ITERATIONS,
+                # Dialectic's loadout is reads today, but say so explicitly rather
+                # than relying on that: the loop keeps any state-changing call
+                # in the order the model asked for, so adding a write tool here
+                # later stays correct without anyone remembering this.
+                mutating_tools=MUTATING_TOOL_NAMES,
                 messages=self.messages,
                 max_input_tokens=settings.DIALECTIC.MAX_INPUT_TOKENS,
                 trace_name="dialectic_chat",

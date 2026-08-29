@@ -75,8 +75,13 @@ class _Tracker:
         return "ok"
 
 
-async def _run(tracker: _Tracker, n_calls: int = 2) -> HonchoLLMCallResponse[Any]:
-    names = ["search_memory", "search_messages"]
+async def _run(
+    tracker: _Tracker,
+    n_calls: int = 2,
+    mutating_tools: frozenset[str] | None = frozenset(),
+    names: list[str] | None = None,
+) -> HonchoLLMCallResponse[Any]:
+    names = names or ["search_memory", "search_messages"]
     calls = [
         {"name": names[i % len(names)], "input": {"query": str(i)}, "id": f"t{i}"}
         for i in range(n_calls)
@@ -113,6 +118,7 @@ async def _run(tracker: _Tracker, n_calls: int = 2) -> HonchoLLMCallResponse[Any
             tool_choice="auto",
             tool_executor=tracker.execute,
             max_tool_iterations=5,
+            mutating_tools=mutating_tools,
             response_model=None,
             json_mode=False,
             temperature=None,
@@ -171,3 +177,43 @@ async def test_fan_out_is_capped():
         f"fan-out reached {tracker.peak}, above the {MAX_CONCURRENT_TOOL_CALLS} cap"
     )
     assert tracker.peak > 1, "cap must not serialise execution entirely"
+
+
+@pytest.mark.asyncio
+async def test_mutating_tools_are_not_reordered():
+    """State-changing calls keep the order the model asked for.
+
+    `ctx.db_lock` makes the mutating handlers take turns but does not decide
+    whose turn comes first, so running them concurrently could apply a turn's
+    writes in an order the model did not request.
+    """
+    order: list[str] = []
+
+    class _Recorder(_Tracker):
+        async def execute(self, name: str, _input: dict[str, Any]) -> str:
+            self.in_flight += 1
+            self.peak = max(self.peak, self.in_flight)
+            # Later calls sleep less, so anything concurrent finishes reversed.
+            await asyncio.sleep(TOOL_DELAY_SECONDS / (len(order) + 1))
+            order.append(name)
+            self.in_flight -= 1
+            return "ok"
+
+    await _run(
+        _Recorder(),
+        n_calls=3,
+        mutating_tools=frozenset({"update_peer_card"}),
+        names=["update_peer_card"],
+    )
+
+    assert order == ["update_peer_card"] * 3
+
+
+@pytest.mark.asyncio
+async def test_default_is_fully_sequential():
+    """A caller that does not opt in keeps the old one-at-a-time behaviour."""
+    tracker = _Tracker()
+
+    await _run(tracker, n_calls=4, mutating_tools=None)
+
+    assert tracker.peak == 1

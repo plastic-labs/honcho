@@ -353,6 +353,7 @@ async def execute_tool_loop(
     tool_choice: str | dict[str, Any] | None,
     tool_executor: Callable[[str, dict[str, Any]], Any],
     max_tool_iterations: int,
+    mutating_tools: frozenset[str] | None = None,
     response_model: type[BaseModel] | None,
     json_mode: bool,
     temperature: float | None,
@@ -649,17 +650,37 @@ async def execute_tool_loop(
                         None,
                     )
 
-            # gather preserves argument order, so tool_results and
-            # all_tool_calls stay in the order the model asked for them.
-            outcomes = await asyncio.gather(
-                *(
-                    asyncio.create_task(run_tool_call(seq, tool_call))
-                    for seq, tool_call in enumerate(response.tool_calls_made)
-                )
-            )
+            # Reads may overlap freely; state-changing calls may not, because
+            # `ctx.db_lock` decides that they take turns but not which turn each
+            # one gets. Anything named in `mutating_tools` therefore runs in the
+            # order the model asked for, while the rest run concurrently
+            # alongside it. `mutating_tools=None` means "assume every tool
+            # mutates", so a caller that has not opted in keeps the fully
+            # sequential behaviour it had before.
+            calls = list(enumerate(response.tool_calls_made))
+
+            def _must_stay_ordered(tool_call: dict[str, Any]) -> bool:
+                return mutating_tools is None or tool_call["name"] in mutating_tools
+
+            # create_task even for the ordered ones: each still needs its own
+            # context copy for the telemetry ContextVars, and awaiting them one
+            # at a time is what preserves the order.
+            concurrent = {
+                seq: asyncio.create_task(run_tool_call(seq, tool_call))
+                for seq, tool_call in calls
+                if not _must_stay_ordered(tool_call)
+            }
+
+            outcomes: dict[int, tuple[dict[str, Any], dict[str, Any] | None]] = {}
+            for seq, tool_call in calls:
+                if _must_stay_ordered(tool_call):
+                    outcomes[seq] = await run_tool_call(seq, tool_call)
+            for seq, task in concurrent.items():
+                outcomes[seq] = await task
 
             tool_results: list[dict[str, Any]] = []
-            for result_entry, call_entry in outcomes:
+            for seq, _ in calls:
+                result_entry, call_entry = outcomes[seq]
                 tool_results.append(result_entry)
                 if call_entry is not None:
                     all_tool_calls.append(call_entry)
