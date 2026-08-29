@@ -41,11 +41,17 @@ def _locked(f: IO[str]) -> Generator[bool, None, None]:
     writes must be serialized. POSIX uses fcntl.flock; Windows uses msvcrt.locking
     on a fixed byte range, retried under an explicit policy.
 
-    Yields True when the lock is held. If Windows cannot acquire it within the
-    retry budget the block is entered with False and the caller must skip the
-    write: an unlocked append can interleave with another process and corrupt the
-    JSONL file, so a dropped trace is preferable. Tracing is an opt-in debugging
-    aid, so failure is logged rather than raised into the LLM call path.
+    Acquisition failure is logged rather than raised: tracing is an opt-in
+    debugging aid, and callers invoke it from the LLM call path.
+
+    Args:
+        f: Open file handle to lock for the duration of the block.
+
+    Yields:
+        True while the lock is held, False when Windows cannot acquire it
+            within the retry budget. Callers must skip the write when False,
+            because an unlocked append can interleave with another process
+            and corrupt the JSONL file.
     """
     if sys.platform != "win32":
         locking_module.flock(f.fileno(), locking_module.LOCK_EX)
