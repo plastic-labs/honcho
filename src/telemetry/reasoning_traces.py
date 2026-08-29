@@ -6,25 +6,13 @@ This module provides structured JSONL logging of LLM inputs/outputs.
 
 import contextlib
 import json
-import os
 import sys
 import time
 from collections.abc import Generator
 from contextlib import contextmanager
+from importlib import import_module
 from pathlib import Path
 from typing import IO, Any
-
-fcntl: Any = None
-msvcrt: Any = None
-if sys.platform == "win32":
-    import msvcrt as _msvcrt
-
-    msvcrt = _msvcrt
-else:
-    import fcntl as _fcntl
-
-    fcntl = _fcntl
-
 
 from pydantic import BaseModel
 
@@ -33,6 +21,8 @@ from src.config import (
     ModelConfig,
     settings,
 )
+
+locking_module: Any = import_module("msvcrt" if sys.platform == "win32" else "fcntl")
 
 
 @contextmanager
@@ -45,23 +35,27 @@ def _locked(f: IO[str]) -> Generator[None, None, None]:
     write still proceeds unlocked rather than losing the trace.
     """
     if sys.platform != "win32":
-        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+        locking_module.flock(f.fileno(), locking_module.LOCK_EX)
         try:
             yield
         finally:
-            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+            locking_module.flock(f.fileno(), locking_module.LOCK_UN)
     elif sys.platform == "win32":
-        f.seek(0, os.SEEK_END)
+        # Every writer must coordinate on the same byte range. Keep the lock
+        # offset so it can be restored before LK_UNLCK after the append.
+        lock_offset = 0
+        f.seek(lock_offset)
         try:
-            msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)
+            locking_module.locking(f.fileno(), locking_module.LK_LOCK, 1)
         except OSError:  # lock unavailable after retries — do not drop the trace
             yield
             return
         try:
             yield
         finally:
+            f.seek(lock_offset)
             with contextlib.suppress(OSError):
-                msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+                locking_module.locking(f.fileno(), locking_module.LK_UNLCK, 1)
     else:  # pragma: no cover - no locking primitive available
         yield
 
