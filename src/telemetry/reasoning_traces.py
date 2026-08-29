@@ -7,21 +7,23 @@ This module provides structured JSONL logging of LLM inputs/outputs.
 import contextlib
 import json
 import os
+import sys
 import time
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import IO, Any
 
-try:  # POSIX
-    import fcntl
-except ImportError:  # pragma: no cover - platform dependent
-    fcntl = None  # type: ignore[assignment]
+fcntl: Any = None
+msvcrt: Any = None
+if sys.platform == "win32":
+    import msvcrt as _msvcrt
 
-try:  # Windows
-    import msvcrt
-except ImportError:  # pragma: no cover - platform dependent
-    msvcrt = None  # type: ignore[assignment]
+    msvcrt = _msvcrt
+else:
+    import fcntl as _fcntl
+
+    fcntl = _fcntl
 
 
 from pydantic import BaseModel
@@ -34,7 +36,7 @@ from src.config import (
 
 
 @contextmanager
-def _locked(f: IO[str]) -> Iterator[None]:
+def _locked(f: IO[str]) -> Generator[None, None, None]:
     """Exclusively lock an open file for the duration of the block.
 
     Multiple processes (API server and deriver) append to the same traces file, so
@@ -42,13 +44,13 @@ def _locked(f: IO[str]) -> Iterator[None]:
     which locks a byte range from the current offset. If neither is available the
     write still proceeds unlocked rather than losing the trace.
     """
-    if fcntl is not None:
+    if sys.platform != "win32":
         fcntl.flock(f.fileno(), fcntl.LOCK_EX)
         try:
             yield
         finally:
             fcntl.flock(f.fileno(), fcntl.LOCK_UN)
-    elif msvcrt is not None:
+    elif sys.platform == "win32":
         f.seek(0, os.SEEK_END)
         try:
             msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)
@@ -144,3 +146,4 @@ def log_reasoning_trace(
     # Use file locking to handle concurrent writes from multiple processes
     with open(traces_file, "a") as f, _locked(f):
         f.write(json.dumps(trace_entry) + "\n")
+        f.flush()
