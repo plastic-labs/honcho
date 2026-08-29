@@ -6,6 +6,7 @@ This module provides structured JSONL logging of LLM inputs/outputs.
 
 import contextlib
 import json
+import logging
 import sys
 import time
 from collections.abc import Generator
@@ -22,42 +23,63 @@ from src.config import (
     settings,
 )
 
+logger = logging.getLogger(__name__)
+
 locking_module: Any = import_module("msvcrt" if sys.platform == "win32" else "fcntl")
+
+# Windows has no blocking whole-file lock, so acquisition is retried explicitly
+# rather than relying on msvcrt's implicit LK_LOCK retry policy.
+_LOCK_RETRIES = 10
+_LOCK_RETRY_DELAY_SECONDS = 0.1
 
 
 @contextmanager
-def _locked(f: IO[str]) -> Generator[None, None, None]:
+def _locked(f: IO[str]) -> Generator[bool, None, None]:
     """Exclusively lock an open file for the duration of the block.
 
     Multiple processes (API server and deriver) append to the same traces file, so
-    writes must be serialized. POSIX uses fcntl.flock; Windows uses msvcrt.locking,
-    which locks a byte range from the current offset. If neither is available the
-    write still proceeds unlocked rather than losing the trace.
+    writes must be serialized. POSIX uses fcntl.flock; Windows uses msvcrt.locking
+    on a fixed byte range, retried under an explicit policy.
+
+    Yields True when the lock is held. If Windows cannot acquire it within the
+    retry budget the block is entered with False and the caller must skip the
+    write: an unlocked append can interleave with another process and corrupt the
+    JSONL file, so a dropped trace is preferable. Tracing is an opt-in debugging
+    aid, so failure is logged rather than raised into the LLM call path.
     """
     if sys.platform != "win32":
         locking_module.flock(f.fileno(), locking_module.LOCK_EX)
         try:
-            yield
+            yield True
         finally:
             locking_module.flock(f.fileno(), locking_module.LOCK_UN)
-    elif sys.platform == "win32":
-        # Every writer must coordinate on the same byte range. Keep the lock
-        # offset so it can be restored before LK_UNLCK after the append.
-        lock_offset = 0
+        return
+
+    # Every writer must coordinate on the same byte range. Keep the lock offset
+    # so it can be restored before LK_UNLCK after the append.
+    lock_offset = 0
+    for attempt in range(_LOCK_RETRIES):
         f.seek(lock_offset)
         try:
-            locking_module.locking(f.fileno(), locking_module.LK_LOCK, 1)
-        except OSError:  # lock unavailable after retries — do not drop the trace
-            yield
-            return
+            locking_module.locking(f.fileno(), locking_module.LK_NBLCK, 1)
+        except OSError:
+            if attempt < _LOCK_RETRIES - 1:
+                time.sleep(_LOCK_RETRY_DELAY_SECONDS)
+            continue
         try:
-            yield
+            yield True
         finally:
             f.seek(lock_offset)
             with contextlib.suppress(OSError):
                 locking_module.locking(f.fileno(), locking_module.LK_UNLCK, 1)
-    else:  # pragma: no cover - no locking primitive available
-        yield
+        return
+
+    logger.warning(
+        "Could not lock reasoning traces file after %d attempts; dropping trace "
+        "rather than appending without a lock.",
+        _LOCK_RETRIES,
+    )
+    yield False
 
 
 def get_reasoning_traces_file_path() -> Path | None:
@@ -138,6 +160,7 @@ def log_reasoning_trace(
         trace_entry["output"]["tool_calls"] = response.tool_calls_made
 
     # Use file locking to handle concurrent writes from multiple processes
-    with open(traces_file, "a") as f, _locked(f):
-        f.write(json.dumps(trace_entry) + "\n")
-        f.flush()
+    with open(traces_file, "a") as f, _locked(f) as acquired:
+        if acquired:
+            f.write(json.dumps(trace_entry) + "\n")
+            f.flush()
