@@ -49,6 +49,10 @@ logger = logging.getLogger(__name__)
 # was copied from. The presence of this key is the idempotency marker.
 COPIED_FROM_KEY = "copied_from"
 
+# Specs embedded, written, and synced per pass. Bounds the live embeddings
+# (~40KB each as Python floats) so a large session cannot OOM the deriver.
+BACKFILL_CHUNK_SIZE = 500
+
 
 def _store_embeddings_in_postgres() -> bool:
     """Whether document embeddings are persisted to the postgres column.
@@ -235,6 +239,33 @@ async def _run_backfill(
     if not plans:
         return 0, set()
 
+    # Phases 2-4 run per chunk so only one chunk's embeddings are alive at a
+    # time; each chunk's vectors are dropped once synced.
+    store_in_postgres = _store_embeddings_in_postgres()
+    touched_observed: set[str] = set()
+    copied = 0
+    for start in range(0, len(plans), BACKFILL_CHUNK_SIZE):
+        chunk = plans[start : start + BACKFILL_CHUNK_SIZE]
+        if not await _copy_chunk(
+            workspace_name, scope_peer, session_name, chunk, store_in_postgres
+        ):
+            return None
+        copied += len(chunk)
+        touched_observed.update(spec.observed for spec in chunk)
+        for spec in chunk:
+            spec.embedding = None
+
+    return copied, touched_observed
+
+
+async def _copy_chunk(
+    workspace_name: str,
+    scope_peer: str,
+    session_name: str,
+    plans: list[_CopySpec],
+    store_in_postgres: bool,
+) -> bool:
+    """Embed, write, and sync one chunk. False if the session left the scope."""
     # Phase 2 (no DB): fill missing embeddings. Source rows have NULL
     # embeddings on external-store deployments (and soft-deleted copies may
     # have lost their vectors) — re-embed via the embedding API only; no LLM.
@@ -254,7 +285,6 @@ async def _run_backfill(
             spec.embedding = embedding
 
     # Phase 3 (DB): write the copies.
-    store_in_postgres = _store_embeddings_in_postgres()
     touched_observed = {spec.observed for spec in plans}
     new_rows: list[models.Document] = []
     async with tracked_db("scope_backfill.write") as db:
@@ -264,7 +294,7 @@ async def _run_backfill(
         # these copies exist. Re-checking membership here, in the transaction
         # that inserts, keeps a removed session from being copied back in.
         if not await is_peer_in_session(db, workspace_name, session_name, scope_peer):
-            return None
+            return False
 
         for observed in sorted(touched_observed):
             await crud.get_or_create_collection(
@@ -319,8 +349,7 @@ async def _run_backfill(
     # Phase 4: sync to the external vector store (or mark synced in pgvector
     # mode). Failures leave rows in sync_state='pending' for the reconciler.
     await _sync_copies_to_vector_store(workspace_name, scope_peer, plans, copied_ids)
-
-    return len(plans), touched_observed
+    return True
 
 
 async def _sync_copies_to_vector_store(

@@ -956,3 +956,60 @@ async def test_backfill_status_writes_preserve_the_scope_kind_flag(
     await db_session.commit()
     metadata = await assert_still_a_scope("clearing the status")
     assert session_name not in metadata.get("backfill_status", {})
+
+
+@pytest.mark.asyncio
+async def test_backfill_embeds_and_writes_in_bounded_chunks(
+    db_session: AsyncSession,
+    sample_data: tuple[models.Workspace, models.Peer],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Phases 2-4 run per chunk, so a large session never holds every vector."""
+    from src.deriver import scope_backfill
+    from src.embedding_client import embedding_client
+
+    test_workspace, sender = sample_data
+    workspace_name = test_workspace.name
+    scope_name = str(generate_nanoid())
+    scope_peer = await _create_scope_peer(db_session, workspace_name, scope_name)
+    session = await _create_session(db_session, workspace_name)
+    await _join_scope(db_session, workspace_name, session.name, scope_peer.name)
+    await _create_collection(
+        db_session, workspace_name, observer=sender.name, observed=sender.name
+    )
+    await _create_collection(
+        db_session, workspace_name, observer=scope_peer.name, observed=sender.name
+    )
+    for i in range(3):
+        source = await _create_document(
+            db_session,
+            workspace_name,
+            observer=sender.name,
+            observed=sender.name,
+            session_name=session.name,
+            content=f"fact {i}",
+        )
+        source.embedding = None
+    await db_session.commit()
+
+    batch_sizes: list[int] = []
+    original = embedding_client.simple_batch_embed
+
+    async def recording_embed(texts: list[str], **kwargs: Any) -> list[list[float]]:
+        batch_sizes.append(len(texts))
+        return await original(texts, **kwargs)
+
+    monkeypatch.setattr(scope_backfill, "BACKFILL_CHUNK_SIZE", 2)
+    monkeypatch.setattr(embedding_client, "simple_batch_embed", recording_embed)
+
+    await process_scope_backfill(
+        ScopeBackfillPayload(scope_peer=scope_peer.name, session_name=session.name),
+        workspace_name,
+    )
+
+    assert batch_sizes == [2, 1]
+    copies = await _get_docs(
+        db_session, workspace_name, observer=scope_peer.name, observed=sender.name
+    )
+    assert len(copies) == 3
+    assert all(copy.embedding is not None for copy in copies)
