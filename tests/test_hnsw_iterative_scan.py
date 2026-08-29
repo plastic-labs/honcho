@@ -55,8 +55,7 @@ def test_connect_listener_registered_when_enabled() -> None:
 
     from src import db as db_module
 
-    _listener = db_module._set_hnsw_iterative_scan_on_connect
-    # pyright: ignore[reportPrivateUsage]
+    _listener = db_module._set_hnsw_iterative_scan_on_connect  # pyright: ignore[reportPrivateUsage]
 
     # The listener is registered at import time when the setting is
     # truthy (the default is "strict_order").  We verify registration via
@@ -90,8 +89,7 @@ def test_connect_listener_not_registered_when_disabled(
 
     from src import db as db_module
 
-    _listener = db_module._set_hnsw_iterative_scan_on_connect
-    # pyright: ignore[reportPrivateUsage]
+    _listener = db_module._set_hnsw_iterative_scan_on_connect  # pyright: ignore[reportPrivateUsage]
 
     execute_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
 
