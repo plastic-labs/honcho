@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Optional per-call `timeout` on synchronous and asynchronous `Peer.chat()`. It overrides the timeout for each HTTP attempt; when omitted or set to `None`, the client-wide timeout configured on `Honcho` remains in effect.
+
 ## [2.4.0] - 2026-08-25
 
 ### Added
