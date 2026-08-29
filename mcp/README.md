@@ -45,6 +45,7 @@ Every workspace-scoped tool takes a `workspace_id` argument. If you set `X-Honch
 ```
 src/
   index.ts              # Worker entry point — parse config, delegate to MCP handler
+  stdio.ts              # Local stdio host (bun run stdio)
   server.ts             # createServer() — registers all tools on an McpServer
   config.ts             # HonchoConfig, parseConfig(), createClientFactory()
   types.ts              # ToolContext, result helpers
@@ -83,6 +84,25 @@ wrangler secret put HONCHO_API_URL
 
 When `HONCHO_API_URL` is unset the Worker routes to `https://api.honcho.dev`,
 so this change is backward-compatible.
+
+## Local stdio
+
+For a local Honcho instance, or any MCP client that spawns a process, run the
+stdio host instead of the Worker. Point the client at `src/stdio.ts` directly
+— `bun run stdio` writes lifecycle output to stdout and breaks the protocol.
+
+```bash
+cd mcp && bun install
+
+claude mcp add honcho -- \
+  -e HONCHO_API_KEY=hch-your-key-here \
+  -e HONCHO_API_URL=http://127.0.0.1:28000 \
+  -e HONCHO_WORKSPACE_ID=my-workspace \
+  bun "$(pwd)/src/stdio.ts"
+```
+
+`HONCHO_API_URL` defaults to `https://api.honcho.dev`. `HONCHO_WORKSPACE_ID` is
+optional; without it, pass `workspace_id` on each tool call.
 
 ## Development
 
