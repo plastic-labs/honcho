@@ -20,7 +20,7 @@ from src.main import app
 
 # (method, path) pairs intentionally granting member peers read access. Adding a
 # route here is a deliberate security decision: it must be read-only. Never add
-# a mutating route. See CLAUDE.md "Auth scoping" for the rule.
+# a mutating route. See AGENTS.md "Auth scoping" for the rule.
 EXPECTED_MEMBER_READ_ROUTES = {
     ("POST", "/v3/workspaces/{workspace_id}/sessions/{session_id}/messages/list"),
     (

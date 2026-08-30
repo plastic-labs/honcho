@@ -177,14 +177,14 @@ public and internal vocabularies are being reconciled deliberately.
 | A prompt | `src/deriver/prompts.py`, `src/dialectic/prompts.py`, `src/dreamer/specialists.py` |
 | LLM provider behavior | `src/llm/backends/` — `anthropic.py`, `gemini.py`, `openai.py` |
 | Embeddings or vector storage | `src/embedding_client.py`, `src/vector_store/` |
-| Telemetry or metrics | `src/telemetry/` — see the notes in `CLAUDE.md` before adding an event type |
+| Telemetry or metrics | `src/telemetry/` — see the notes in `AGENTS.md` before adding an event type |
 | Authentication and scoping | `src/security.py`, `src/dependencies.py` |
 | The Python or TypeScript SDK | `sdks/python/`, `sdks/typescript/` |
 | The CLI | `honcho-cli/` |
 | The MCP server | `mcp/` |
 | Public documentation | `docs/v3/` — Mintlify; nav lives in `docs/docs.json` |
 
-Tests in `tests/` mirror `src/`. `CLAUDE.md` at the repo root has more detail on house
+Tests in `tests/` mirror `src/`. `AGENTS.md` at the repo root has more detail on house
 conventions, and is worth skimming even if you are not using an agent.
 
 ## Local setup
