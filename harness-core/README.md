@@ -44,9 +44,6 @@ Pass `telemetryHeaders()` as the SDK's `defaultHeaders`. Arbitrary headers are a
 | `X-Honcho-Plugin` | Honcho plugin version | `0.1.3` |
 | `X-Honcho-Runtime` | This package's version (always sent) | `0.1.0` |
 | `X-Honcho-Agent-Model` | The agent's completion model, not a Honcho model | `claude-sonnet-4-5` |
-| `X-Honcho-Api` | Where Honcho is running: `cloud` / `custom` | `cloud` |
-
-`X-Honcho-Api` is classified from the resolved `baseUrl` (`api.honcho.dev` → `cloud`, anything else → `custom`). The raw URL is never sent.
 
 ```ts
 import { Honcho } from '@honcho-ai/sdk'
@@ -63,7 +60,6 @@ const honcho = new Honcho({
     hostVersion: '1.3.13',
     pluginVersion: '0.1.3',
     model: 'claude-sonnet-4-5', // omit when the host does not know it
-    baseUrl: cfg.baseUrl, // localhost or a self-hosted origin → X-Honcho-Api: custom
   }),
 })
 ```

@@ -1,5 +1,4 @@
 import { version } from './index.ts'
-import { normalizeBaseUrl } from './config.ts'
 
 /** Optional identity a host plugin knows at Honcho-client construction time. */
 export interface TelemetryIdentity {
@@ -11,17 +10,12 @@ export interface TelemetryIdentity {
   pluginVersion?: string
   /** Agent completion model, e.g. `claude-sonnet-4-5`. Not a Honcho deriver/dialectic model. */
   model?: string
-  /** Resolved Honcho API origin. Classified into `cloud` / `custom`; the raw URL is never sent. */
-  baseUrl?: string
 }
-
-export type ApiTarget = 'cloud' | 'custom'
 
 export const HEADER_HOST = 'X-Honcho-Host'
 export const HEADER_PLUGIN = 'X-Honcho-Plugin'
 export const HEADER_RUNTIME = 'X-Honcho-Runtime'
 export const HEADER_AGENT_MODEL = 'X-Honcho-Agent-Model'
-export const HEADER_API = 'X-Honcho-Api'
 
 function sanitize(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined
@@ -36,20 +30,6 @@ function hostValue(id: TelemetryIdentity): string | undefined {
   return name || ver
 }
 
-/** Classify a Honcho base URL without leaking the hostname. */
-export function apiTarget(baseUrl: string): ApiTarget | undefined {
-  const raw = sanitize(baseUrl)
-  if (!raw) return undefined
-  const normalized = normalizeBaseUrl(raw)
-  let hostname: string
-  try {
-    hostname = new URL(normalized).hostname.toLowerCase()
-  } catch {
-    return 'custom'
-  }
-  return hostname === 'api.honcho.dev' ? 'cloud' : 'custom'
-}
-
 /**
  * Headers to pass as the SDK's `defaultHeaders`. Missing fields are omitted.
  * `X-Honcho-Runtime` is always this package's version.
@@ -62,11 +42,9 @@ export function telemetryHeaders(
   const host = hostValue(id)
   const plugin = sanitize(id.pluginVersion)
   const model = sanitize(id.model)
-  const api = id.baseUrl ? apiTarget(id.baseUrl) : undefined
   if (host) headers[HEADER_HOST] = host
   if (plugin) headers[HEADER_PLUGIN] = plugin
   if (model) headers[HEADER_AGENT_MODEL] = model
-  if (api) headers[HEADER_API] = api
   if (extra) {
     for (const [k, v] of Object.entries(extra)) {
       const value = sanitize(v)
