@@ -1,0 +1,41 @@
+{
+  "workspace": "sandbox",
+  "session": "sandbox-session",
+
+  "_comment": "Peer topology is stated explicitly because it is the thing that silently breaks (DEV-2462 asserts on it). alice is observed and does not observe; the assistant observes and is not observed - the standard harness shape.",
+  "peers": [
+    { "id": "alice", "observe_me": true, "observe_others": false },
+    { "id": "assistant", "observe_me": false, "observe_others": true }
+  ],
+
+  "_messages_comment": "Facts are deliberately distinctive and lexically searchable, so a recall assertion can look for an exact token. Under the mock provider, embeddings carry no semantic similarity, so full-text is the only thing that can work.",
+  "messages": [
+    {
+      "peer": "alice",
+      "content": "I'm Alice Nakamura, I work as a structural engineer in Rotterdam."
+    },
+    {
+      "peer": "assistant",
+      "content": "Good to meet you, Alice. What are you working on in Rotterdam?"
+    },
+    {
+      "peer": "alice",
+      "content": "A pedestrian bridge over the Nieuwe Maas. We're using weathering steel because the maintenance budget is basically zero."
+    },
+    {
+      "peer": "assistant",
+      "content": "Weathering steel is a reasonable call for a low-maintenance span. How long is the crossing?"
+    },
+    {
+      "peer": "alice",
+      "content": "About 240 metres, with a single cable-stayed pylon. My cat Marzipan is named after the pylon's colour, which tells you how much I think about this bridge."
+    },
+    {
+      "peer": "assistant",
+      "content": "240 metres on a single pylon is ambitious. And Marzipan is a good name for a cat."
+    }
+  ],
+
+  "_dreams_comment": "Dreams never fire on their own here - the document threshold is 50 and the minimum gap is 8 hours - so the seed schedules one directly.",
+  "dreams": [{ "observer": "assistant", "observed": "alice" }]
+}

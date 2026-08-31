@@ -1,0 +1,50 @@
+# Provider overlay: deterministic, free, no network egress. The sandbox default.
+#
+# Adds src/mock_provider (PR #1094) as its own service. It runs from the standard
+# Honcho image under a different entrypoint, the way api and deriver already differ,
+# so there is no second image to build or keep in digest-sync.
+
+services:
+  mock-provider:
+    image: ${HONCHO_SANDBOX_IMAGE:?set by sandbox.sh from sandbox/image.env}
+    entrypoint:
+      ["/app/.venv/bin/fastapi", "run", "--host", "0.0.0.0", "src/mock_provider/main.py"]
+    healthcheck:
+      # The app exposes only POST /chat/completions and POST /embeddings — no health
+      # or models route — so liveness is checked against the schema FastAPI always
+      # serves. A GET keeps the check side-effect free.
+      test:
+        [
+          "CMD",
+          "/app/.venv/bin/python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/openapi.json', timeout=2).read()",
+        ]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+    restart: "no"
+
+  api: &provider-wiring
+    depends_on:
+      mock-provider:
+        condition: service_healthy
+    environment:
+      # All three are required (src/mock_provider/main.py).
+      #
+      # The key's value is never checked — the mock reads no Authorization header,
+      # and Honcho only tests it for truthiness before building the client
+      # (src/llm/registry.py). Set the base URL without it and the client is never
+      # constructed, so the base URL is silently ignored. Keep the value obviously
+      # fake: a module that ever escapes the override then 401s rather than spends.
+      LLM_OPENAI_API_KEY: sandbox-not-a-real-key
+      LLM_OPENAI_BASE_URL: http://mock-provider:8000/v1
+      # Embeddings resolve through a separate client that reads the base URL only
+      # from this per-module override. Without it, embedding calls go to
+      # api.openai.com for real. Do not add a per-module credential override
+      # (..._OVERRIDES__API_KEY / API_KEY_ENV) — that makes the module ignore the
+      # global base URL above.
+      EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL: http://mock-provider:8000/v1
+
+  deriver: *provider-wiring
