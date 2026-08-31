@@ -25,6 +25,7 @@ from src.utils.representation import (
     Representation,
     allowlist_safe_levels,
 )
+from src.utils.sanitization import strip_nul
 from src.utils.types import embedding_call_purpose
 
 logger = logging.getLogger(__name__)
@@ -38,10 +39,21 @@ def _observation_text(obs: ExplicitObservation | DeductiveObservation) -> str:
 def _normalized_observation(
     obs: ExplicitObservation | DeductiveObservation,
 ) -> ExplicitObservation | DeductiveObservation:
-    """Return an observation with its persisted/embed text normalized."""
-    text = _observation_text(obs).strip()
+    """Return an observation with its persisted/embed text normalized.
+
+    NUL bytes are removed here rather than closer to the database so that the
+    text that gets embedded is the same text that gets stored.
+    """
+    text = strip_nul(_observation_text(obs)).strip()
     if isinstance(obs, DeductiveObservation):
-        return obs.model_copy(update={"conclusion": text})
+        return obs.model_copy(
+            update={
+                "conclusion": text,
+                # Premises ride along in internal_metadata, and jsonb rejects
+                # NUL in strings just as text columns do.
+                "premises": strip_nul(obs.premises),
+            }
+        )
     return obs.model_copy(update={"content": text})
 
 
@@ -87,10 +99,15 @@ class RepresentationManager:
             logger.debug("No observations to save")
             return empty_result
 
+        # Normalize before the emptiness check: str.strip() does not remove
+        # NUL, so content that normalizes away has to be dropped afterwards.
         all_observations = [
-            _normalized_observation(obs)
-            for obs in representation.deductive + representation.explicit
-            if _observation_text(obs).strip()
+            normalized
+            for normalized in (
+                _normalized_observation(obs)
+                for obs in representation.deductive + representation.explicit
+            )
+            if _observation_text(normalized)
         ]
         if not all_observations:
             logger.debug("No non-empty observations to save")
