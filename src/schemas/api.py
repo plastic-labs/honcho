@@ -31,6 +31,7 @@ from src.schemas.configuration import (
     SessionPeerConfig,
     WorkspaceConfiguration,
 )
+from src.utils.sanitization import NulStripped, strip_nul
 from src.utils.scopes import (
     SCOPE_PEER_PREFIX,
     is_scope_peer_name,
@@ -46,19 +47,6 @@ RESOURCE_NAME_PATTERN = r"^[a-zA-Z0-9_-]+$"
 
 _METADATA_MAX_KEYS = 100
 _METADATA_MAX_DEPTH = 5
-
-
-def _sanitize_value(v: Any) -> Any:
-    """Recursively strip NUL bytes from strings in nested data structures."""
-    if isinstance(v, str):
-        return v.replace("\x00", "")
-    if isinstance(v, dict):
-        d = cast(dict[str, Any], v)
-        return {_sanitize_value(k): _sanitize_value(val) for k, val in d.items()}
-    if isinstance(v, list):
-        lst = cast(list[Any], v)
-        return [_sanitize_value(item) for item in lst]
-    return v
 
 
 def _check_metadata_limits(
@@ -88,7 +76,7 @@ def _validate_metadata(v: Any) -> Any:
         return v
     data = cast(dict[str, Any], v)
     _check_metadata_limits(data)
-    return _sanitize_value(data)
+    return strip_nul(data)
 
 
 _SanitizedMetadata = Annotated[dict[str, Any], BeforeValidator(_validate_metadata)]
@@ -322,7 +310,7 @@ class PeerCardSet(BaseModel):
     def sanitize_peer_card(cls, v: Any) -> Any:
         if isinstance(v, list):
             return [
-                item.replace("\x00", "") if isinstance(item, str) else item
+                strip_nul(item) if isinstance(item, str) else item
                 for item in cast(list[Any], v)
             ]
         return v
@@ -349,7 +337,7 @@ class MessageCreate(MessageBase):
     @field_validator("content", mode="after")
     @classmethod
     def sanitize_content(cls, v: str) -> str:
-        return v.replace("\x00", "")
+        return strip_nul(v)
 
     @property
     def encoded_message(self) -> list[int]:
@@ -694,7 +682,7 @@ class ConclusionCreate(BaseModel):
     @field_validator("content", mode="after")
     @classmethod
     def sanitize_content(cls, v: str) -> str:
-        return v.replace("\x00", "")
+        return strip_nul(v)
 
     @model_validator(mode="after")
     def validate_token_count(self) -> Self:
@@ -729,7 +717,7 @@ class ConclusionBatchCreate(BaseModel):
 
 
 class MessageSearchOptions(BaseModel):
-    query: Annotated[str, Field(..., description="Search query")]
+    query: Annotated[str, Field(..., description="Search query"), NulStripped]
     filters: dict[str, Any] | None = Field(
         default=None, description="Filters to scope the search"
     )
@@ -739,11 +727,6 @@ class MessageSearchOptions(BaseModel):
         le=100,
         description="Number of results to return",
     )
-
-    @field_validator("query", mode="after")
-    @classmethod
-    def sanitize_query(cls, v: str) -> str:
-        return v.replace("\x00", "")
 
 
 class WorkspaceMessageSearchOptions(MessageSearchOptions):
@@ -797,7 +780,9 @@ class DialecticOptions(BaseModel):
         description="Optional peer to get the representation for, from the perspective of this peer",
     )
     query: Annotated[
-        str, Field(min_length=1, max_length=10000, description="Dialectic API Prompt")
+        str,
+        Field(min_length=1, max_length=10000, description="Dialectic API Prompt"),
+        NulStripped,
     ]
     stream: bool = False
     reasoning_level: ReasoningLevel = Field(
@@ -815,10 +800,39 @@ class DialecticOptions(BaseModel):
         ),
     )
 
-    @field_validator("query", mode="after")
-    @classmethod
-    def sanitize_query(cls, v: str) -> str:
-        return v.replace("\x00", "")
+
+class WorkspaceChatOptions(BaseModel):
+    """Options for workspace-level chat (no anchor peer; see DialecticOptions)."""
+
+    session_id: str | None = Field(
+        None, description="Optional session to scope message tools to"
+    )
+    query: Annotated[
+        str,
+        Field(min_length=1, max_length=10000, description="Workspace chat prompt"),
+        NulStripped,
+    ]
+    stream: bool = False
+    reasoning_level: ReasoningLevel = Field(
+        default="low",
+        description="Level of reasoning to apply: minimal, low, medium, high, or max",
+    )
+    response_format: dict[str, Any] | None = Field(
+        None,
+        description=(
+            "Optional JSON Schema (root type 'object') the response must conform"
+            " to. When provided, `content` is a JSON string matching this schema."
+        ),
+    )
+    scope: _ScopeOption | None = Field(
+        None,
+        description=(
+            "Optional (unprefixed) scope name(s) restricting recall to the "
+            "union of the scopes' member sessions (explicit allowlist, "
+            "fail-closed: an empty union recalls nothing). Mutually exclusive "
+            "with `session_id`. Requires a workspace- or admin-level key."
+        ),
+    )
 
 
 class DialecticResponse(BaseModel):

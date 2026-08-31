@@ -6,7 +6,13 @@ export { Honcho } from './client'
 export {
   Conclusion,
   type ConclusionCreateParams,
-  ConclusionScope,
+  /**
+   * @deprecated Renamed to `ConclusionsView`. "Scope" now means a named set of
+   * sessions (see `Scope`), which this class is not — it is a view over one
+   * observer/observed pair. Kept as an alias for one more minor version.
+   */
+  ConclusionsView as ConclusionScope,
+  ConclusionsView,
   WorkspaceConclusions,
 } from './conclusions'
 // HTTP infrastructure
@@ -31,6 +37,11 @@ export {
 export { Message, type MessageInput } from './message'
 export { Page } from './pagination'
 export { Peer, PeerContext } from './peer'
+export {
+  Scope,
+  type ScopeBackfillState,
+  type ScopeStatus,
+} from './scope'
 export { Session } from './session'
 export {
   SessionContext,
@@ -51,11 +62,15 @@ export type {
   QueueStatus,
   QueueStatusResponse,
   RepresentationOptions,
+  ScopeBackfillJob,
+  ScopeResponse,
+  ScopeStatusResponse,
   SessionContextResponse,
   SessionQueueStatus,
   SessionResponse,
   SessionSummariesResponse,
   SummaryResponse,
+  WorkspaceChatResponse,
   WorkspaceResponse,
 } from './types/api'
 

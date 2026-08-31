@@ -1,9 +1,14 @@
 import { API_VERSION } from './api-version'
 import { WorkspaceConclusions } from './conclusions'
 import { HonchoHTTPClient } from './http/client'
+import {
+  createDialecticStream,
+  type DialecticStreamResponse,
+} from './http/streaming'
 import { Message } from './message'
 import { Page } from './pagination'
 import { Peer } from './peer'
+import { Scope } from './scope'
 import { Session } from './session'
 import type {
   MessageResponse,
@@ -12,7 +17,10 @@ import type {
   QueueStatus,
   QueueStatusParams,
   QueueStatusResponse,
+  ScopeResponse,
   SessionResponse,
+  WorkspaceChatParams,
+  WorkspaceChatResponse,
   WorkspaceResponse,
 } from './types/api'
 import { resolveId, transformQueueStatus } from './utils'
@@ -33,12 +41,14 @@ import {
   peerConfigFromApi,
   peerConfigToApi,
   type QueueStatusOptions,
+  ScopeIdSchema,
   SearchQuerySchema,
   type SessionConfig,
   SessionConfigSchema,
   SessionIdSchema,
   type SessionMetadata,
   SessionMetadataSchema,
+  SessionScopesSchema,
   sessionConfigFromApi,
   sessionConfigToApi,
   type WorkspaceConfig,
@@ -50,6 +60,7 @@ import {
 } from './validation'
 
 const DEFAULT_BASE_URL = 'https://api.honcho.dev'
+type ReasoningLevel = 'minimal' | 'low' | 'medium' | 'high' | 'max'
 
 /**
  * Main client for the Honcho TypeScript SDK.
@@ -267,6 +278,7 @@ export class Honcho {
     params: {
       query: string
       filters?: Record<string, unknown>
+      scope?: string
       limit?: number
     }
   ): Promise<MessageResponse[]> {
@@ -327,6 +339,39 @@ export class Honcho {
     )
   }
 
+  private async _getOrCreateScope(
+    workspaceId: string,
+    params: {
+      id: string
+      metadata?: Record<string, unknown>
+    }
+  ): Promise<ScopeResponse> {
+    return this._http.post<ScopeResponse>(
+      `/${API_VERSION}/workspaces/${workspaceId}/scopes`,
+      { body: params }
+    )
+  }
+
+  private async _listScopes(
+    workspaceId: string,
+    params?: {
+      page?: number
+      size?: number
+      reverse?: boolean
+    }
+  ): Promise<PageResponse<ScopeResponse>> {
+    return this._http.post<PageResponse<ScopeResponse>>(
+      `/${API_VERSION}/workspaces/${workspaceId}/scopes/list`,
+      {
+        query: {
+          page: params?.page,
+          size: params?.size,
+          reverse: params?.reverse ? 'true' : undefined,
+        },
+      }
+    )
+  }
+
   private async _listSessions(
     workspaceId: string,
     params?: {
@@ -359,6 +404,7 @@ export class Honcho {
         string,
         { observe_me?: boolean | null; observe_others?: boolean | null }
       >
+      scopes?: string[]
     }
   ): Promise<SessionResponse> {
     return this._http.post<SessionResponse>(
@@ -369,6 +415,35 @@ export class Honcho {
           metadata: params.metadata,
           configuration: sessionConfigToApi(params.configuration),
           peers: params.peers,
+          scopes: params.scopes,
+        },
+      }
+    )
+  }
+
+  private async _workspaceChat(
+    workspaceId: string,
+    params: WorkspaceChatParams
+  ): Promise<WorkspaceChatResponse> {
+    await this._ensureWorkspace()
+    return this._http.post<WorkspaceChatResponse>(
+      `/${API_VERSION}/workspaces/${workspaceId}/chat`,
+      { body: params }
+    )
+  }
+
+  private async _workspaceChatStream(
+    workspaceId: string,
+    params: Omit<WorkspaceChatParams, 'stream'>
+  ): Promise<Response> {
+    await this._ensureWorkspace()
+    return this._http.stream(
+      'POST',
+      `/${API_VERSION}/workspaces/${workspaceId}/chat`,
+      {
+        body: {
+          ...params,
+          stream: true,
         },
       }
     )
@@ -517,6 +592,10 @@ export class Honcho {
    * @param options.peers - Optional peers to attach to the session at creation.
    *                Accepts the same shape as `session.addPeers()` (peer ID strings,
    *                Peer objects, arrays of either, or a record with per-peer config).
+   * @param options.scopes - Optional scopes this session should join. Each scope is
+   *                created if it does not exist yet. Attaching at creation avoids the
+   *                asynchronous backfill that a later `scope.addSessions()` triggers,
+   *                since there is no history to copy.
    * @returns Promise resolving to a Session object that can be used to add peers,
    *          send messages, and manage conversation context
    * @throws Error if the session ID is empty or invalid
@@ -527,6 +606,7 @@ export class Honcho {
       metadata?: SessionMetadata
       configuration?: SessionConfig
       peers?: PeerAddition
+      scopes?: (string | Scope)[]
     }
   ): Promise<Session> {
     await this._ensureWorkspace()
@@ -541,12 +621,17 @@ export class Honcho {
       options?.peers !== undefined
         ? PeerAdditionToApiSchema.parse(options.peers)
         : undefined
+    const validatedScopes =
+      options?.scopes !== undefined
+        ? SessionScopesSchema.parse(options.scopes.map(resolveId))
+        : undefined
 
     const sessionData = await this._getOrCreateSession(this.workspaceId, {
       id: validatedId,
       configuration: validatedConfiguration,
       metadata: validatedMetadata,
       peers: validatedPeers,
+      scopes: validatedScopes,
     })
     return new Session(
       validatedId,
@@ -557,6 +642,90 @@ export class Honcho {
       () => this._ensureWorkspace(),
       sessionData.created_at,
       sessionData.is_active
+    )
+  }
+
+  /**
+   * Get or create a scope with the given ID.
+   *
+   * A scope is a named set of sessions that acts as a visibility boundary: recall
+   * performed through the scope sees only what happened in its sessions, while the
+   * underlying peer keeps its single unified representation of everything.
+   *
+   * @param id - Unprefixed scope name, unique within the workspace
+   * @param options.metadata - Optional metadata to associate with this scope
+   * @returns Promise resolving to a Scope object for managing membership
+   * @throws Error if the scope ID is empty or invalid, or if a peer already occupies
+   *         the scope's reserved internal name
+   *
+   * @example
+   * ```typescript
+   * const therapy = await honcho.scope('therapy')
+   * await therapy.addSessions([session1, session2])
+   * ```
+   */
+  async scope(
+    id: string,
+    options?: {
+      metadata?: Record<string, unknown>
+    }
+  ): Promise<Scope> {
+    await this._ensureWorkspace()
+    const validatedId = ScopeIdSchema.parse(id)
+
+    const scopeData = await this._getOrCreateScope(this.workspaceId, {
+      id: validatedId,
+      metadata: options?.metadata,
+    })
+    return new Scope(
+      validatedId,
+      this.workspaceId,
+      this._http,
+      scopeData.metadata ?? undefined,
+      () => this._ensureWorkspace(),
+      scopeData.created_at
+    )
+  }
+
+  /**
+   * Get all scopes in the current workspace.
+   *
+   * @param options - Pagination options: `page`, `size`, and `reverse`
+   * @returns Promise resolving to a Page of Scope objects. Returns an empty page if
+   *          no scopes exist
+   */
+  async scopes(options?: {
+    page?: number
+    size?: number
+    reverse?: boolean
+  }): Promise<Page<Scope, ScopeResponse>> {
+    await this._ensureWorkspace()
+    const reverse = options?.reverse
+    const scopesPage = await this._listScopes(this.workspaceId, {
+      page: options?.page,
+      size: options?.size,
+      reverse,
+    })
+
+    const fetchNextPage = async (
+      page: number,
+      size: number
+    ): Promise<PageResponse<ScopeResponse>> => {
+      return this._listScopes(this.workspaceId, { page, size, reverse })
+    }
+
+    return new Page(
+      scopesPage,
+      (scope) =>
+        new Scope(
+          scope.id,
+          this.workspaceId,
+          this._http,
+          scope.metadata ?? undefined,
+          () => this._ensureWorkspace(),
+          scope.created_at
+        ),
+      fetchNextPage
     )
   }
 
@@ -788,6 +957,9 @@ export class Honcho {
    *
    * @param query - The search query to use
    * @param filters - Optional filters to scope the search. See [search filters documentation](https://honcho.dev/docs/v3/documentation/core-concepts/features/using-filters).
+   * @param options.scope - Optional scope to restrict the search to that scope's member
+   *                        sessions. Mutually exclusive with a `session_id` filter. A scope
+   *                        with no member sessions matches nothing rather than everything.
    * @param limit - Number of results to return (1-100, default: 10).
    * @returns Promise resolving to an array of Message objects representing the search results.
    *          Returns an empty array if no messages are found.
@@ -797,6 +969,7 @@ export class Honcho {
     query: string,
     options?: {
       filters?: Filters
+      scope?: string | Scope
       limit?: number
     }
   ): Promise<Message[]> {
@@ -805,15 +978,122 @@ export class Honcho {
     const validatedFilters = options?.filters
       ? FilterSchema.parse(options.filters)
       : undefined
+    // Checked against undefined, not truthiness: `scope: ''` is invalid, and
+    // dropping it silently would diverge from the Python SDK, which rejects it.
+    const validatedScope =
+      options?.scope !== undefined
+        ? ScopeIdSchema.parse(resolveId(options.scope))
+        : undefined
     const validatedLimit = options?.limit
       ? LimitSchema.parse(options.limit)
       : undefined
     const response = await this._searchWorkspace(this.workspaceId, {
       query: validatedQuery,
       filters: validatedFilters,
+      scope: validatedScope,
       limit: validatedLimit,
     })
     return response.map(Message.fromApiResponse)
+  }
+
+  /**
+   * Query the workspace's collective knowledge using natural language.
+   *
+   * Performs agentic search and reasoning across ALL peers and observations
+   * in the workspace to synthesize a comprehensive answer. Useful for
+   * cross-peer analysis, discovering common themes, and workspace-wide queries.
+   *
+   * @param query - The natural language question to ask
+   * @param options.session - Optional session to scope message search to. Can be a session
+   *                          ID string or a Session object.
+   * @param options.reasoningLevel - Optional reasoning level for the query: "minimal", "low",
+   *                                 "medium", "high", or "max". Defaults to "low" if not provided.
+   * @param options.responseFormat - Optional JSON Schema (root type "object") the response
+   *                                 must conform to. When provided, the response content is a
+   *                                 JSON string matching this schema.
+   * @returns Promise resolving to the response string, or null if no relevant information
+   *
+   * @example
+   * ```typescript
+   * const response = await honcho.chat('What are common themes across all users?')
+   * ```
+   */
+  async chat(
+    query: string,
+    options?: {
+      session?: string | Session
+      reasoningLevel?: ReasoningLevel
+      responseFormat?: Record<string, unknown>
+      scope?: string | string[]
+    }
+  ): Promise<string | null> {
+    const validatedQuery = SearchQuerySchema.parse(query)
+    const resolvedSessionId = options?.session
+      ? resolveId(options.session)
+      : undefined
+
+    const response = await this._workspaceChat(this.workspaceId, {
+      query: validatedQuery,
+      stream: false,
+      session_id: resolvedSessionId,
+      reasoning_level: options?.reasoningLevel,
+      response_format: options?.responseFormat,
+      scope: options?.scope,
+    })
+    if (!response.content) {
+      return null
+    }
+    return response.content
+  }
+
+  /**
+   * Query the workspace's collective knowledge with streaming response.
+   *
+   * Performs agentic search and reasoning across ALL peers and observations
+   * in the workspace to synthesize a comprehensive answer, streaming the
+   * response as it is generated.
+   *
+   * @param query - The natural language question to ask
+   * @param options.session - Optional session to scope message search to. Can be a session
+   *                          ID string or a Session object.
+   * @param options.reasoningLevel - Optional reasoning level for the query: "minimal", "low",
+   *                                 "medium", "high", or "max". Defaults to "low" if not provided.
+   * @param options.responseFormat - Optional JSON Schema (root type "object") the response
+   *                                 must conform to. When provided, the response content is a
+   *                                 JSON string matching this schema.
+   * @returns Promise resolving to a DialecticStreamResponse that can be iterated over
+   *
+   * @example
+   * ```typescript
+   * const stream = await honcho.chatStream('What do all peers have in common?')
+   * for await (const chunk of stream) {
+   *   process.stdout.write(chunk)
+   * }
+   * ```
+   */
+  async chatStream(
+    query: string,
+    options?: {
+      session?: string | Session
+      reasoningLevel?: ReasoningLevel
+      responseFormat?: Record<string, unknown>
+      scope?: string | string[]
+    }
+  ): Promise<DialecticStreamResponse> {
+    const validatedQuery = SearchQuerySchema.parse(query)
+    const resolvedSessionId = options?.session
+      ? resolveId(options.session)
+      : undefined
+
+    const response = await this._workspaceChatStream(this.workspaceId, {
+      query: validatedQuery,
+      session_id: resolvedSessionId,
+      reasoning_level: options?.reasoningLevel,
+      response_format: options?.responseFormat,
+      scope: options?.scope,
+    })
+
+    return createDialecticStream(response)
   }
 
   /**

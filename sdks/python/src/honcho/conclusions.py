@@ -15,31 +15,31 @@ from .pagination import SyncPage
 from .utils import resolve_id
 
 if TYPE_CHECKING:
-    from .aio import ConclusionScopeAio, WorkspaceConclusionsAio
+    from .aio import ConclusionsViewAio, WorkspaceConclusionsAio
     from .client import Honcho
 
 __all__ = [
     "Conclusion",
-    "ConclusionScope",
+    "ConclusionsView",
     "ConclusionCreateParams",
     "WorkspaceConclusions",
 ]
 
 _LIST_PAGE_CAP = 100
 
-# Filter keys that define a conclusion scope (the observer/observed peer pair).
-# They are set from the scope itself, so a caller must not pass them in `filters`.
-_SCOPE_RESERVED = ("observer", "observed", "observer_id", "observed_id")
+# Filter keys that define a conclusions view (the observer/observed peer pair).
+# They are set from the view itself, so a caller must not pass them in `filters`.
+_VIEW_RESERVED = ("observer", "observed", "observer_id", "observed_id")
 
 
 def _reject_reserved_filter_keys(
     filters: dict[str, Any] | None, reserved: tuple[str, ...]
 ) -> None:
-    """Raise if ``filters`` contains keys managed by the conclusion scope.
+    """Raise if ``filters`` contains keys managed by the conclusions view.
 
     The observer/observed peer pair (and, on ``list``, the session) is fixed by
-    the scope, so letting a user filter override it would silently return data
-    from a different scope than requested. Fail loud instead.
+    the view, so letting a user filter override it would silently return data
+    from a different pair than requested. Fail loud instead.
     """
     if not filters:
         return
@@ -51,7 +51,7 @@ def _reject_reserved_filter_keys(
         if "session" in reserved or "session_id" in reserved:
             guidance += "; use the session= parameter to filter by session"
         raise ValueError(
-            f"Filter key(s) {clash} are managed by this conclusion scope and "
+            f"Filter key(s) {clash} are managed by this conclusions view and "
             + f"cannot be passed in filters. {guidance}."
         )
 
@@ -73,7 +73,7 @@ def _get_conclusion(honcho: "Honcho", conclusion_id: str) -> Conclusion:
     return _conclusion_from_item(data)
 
 
-def _require_scope(
+def _require_view(
     conclusion: Conclusion, observer_id: str, observed_id: str
 ) -> Conclusion:
     if conclusion.observer_id != observer_id or conclusion.observed_id != observed_id:
@@ -282,7 +282,7 @@ class WorkspaceConclusions:
         return f"WorkspaceConclusions(workspace_id={self.workspace_id!r})"
 
 
-class ConclusionScope:
+class ConclusionsView:
     """
     Scoped access to conclusions for a specific observer/observed relationship.
 
@@ -321,7 +321,7 @@ class ConclusionScope:
         observed: str,
     ):
         """
-        Initialize a ConclusionScope.
+        Initialize a ConclusionsView.
 
         Args:
             honcho: The Honcho client instance
@@ -335,12 +335,12 @@ class ConclusionScope:
         self.observed = observed
 
     @property
-    def aio(self) -> "ConclusionScopeAio":
+    def aio(self) -> "ConclusionsViewAio":
         """
-        Access async versions of all ConclusionScope methods.
+        Access async versions of all ConclusionsView methods.
 
-        Returns a ConclusionScopeAio view that provides async versions of all methods
-        while sharing state with this ConclusionScope instance.
+        Returns a ConclusionsViewAio view that provides async versions of all methods
+        while sharing state with this ConclusionsView instance.
 
         Example:
             ```python
@@ -350,9 +350,9 @@ class ConclusionScope:
             ```
         """
         # Import here to avoid circular import (aio.py imports from this module)
-        from .aio import ConclusionScopeAio
+        from .aio import ConclusionsViewAio
 
-        return ConclusionScopeAio(self)
+        return ConclusionsViewAio(self)
 
     def list(
         self,
@@ -384,7 +384,7 @@ class ConclusionScope:
             Paginated response containing Conclusion objects
         """
         _reject_reserved_filter_keys(
-            filters, _SCOPE_RESERVED + ("session", "session_id")
+            filters, _VIEW_RESERVED + ("session", "session_id")
         )
         resolved_session_id = resolve_id(session)
         filters = {
@@ -421,7 +421,7 @@ class ConclusionScope:
         Returns:
             List of matching Conclusion objects
         """
-        _reject_reserved_filter_keys(filters, _SCOPE_RESERVED)
+        _reject_reserved_filter_keys(filters, _VIEW_RESERVED)
         self._honcho._ensure_workspace()
         filters = {
             "observer_id": self.observer,
@@ -462,7 +462,7 @@ class ConclusionScope:
                 observer/observed pair. Use ``honcho.conclusions.get`` for a
                 workspace-wide lookup.
         """
-        return _require_scope(
+        return _require_view(
             _get_conclusion(self._honcho, conclusion_id),
             self.observer,
             self.observed,
@@ -662,6 +662,6 @@ class ConclusionScope:
 
     def __repr__(self) -> str:
         return (
-            f"ConclusionScope(workspace_id={self.workspace_id!r}, "
+            f"ConclusionsView(workspace_id={self.workspace_id!r}, "
             f"observer={self.observer!r}, observed={self.observed!r})"
         )

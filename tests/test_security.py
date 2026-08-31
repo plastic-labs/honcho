@@ -1,4 +1,4 @@
-"""Auth scope tests — DEV-1736 regression coverage.
+"""Auth scope tests — regression coverage.
 
 Prior to this fix `auth()` walked the route's declared scope first and fell
 through to a workspace check, so a `{w, p}` token authorized any peer in `w`.

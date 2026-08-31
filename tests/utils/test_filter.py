@@ -228,6 +228,20 @@ def test_ne_is_null_safe():
     assert "IS DISTINCT FROM" in where
 
 
+def test_nested_metadata_ne_string_is_null_safe():
+    """`ne` on a JSONB metadata key went through the operator map as plain <>,
+    unlike the scalar path, so a row missing that key was silently dropped."""
+    where = _where(Document, {"metadata": {"priority": {"ne": "high"}}})
+    assert "IS DISTINCT FROM" in where
+    assert "!=" not in where
+
+
+def test_nested_metadata_ne_numeric_is_null_safe():
+    where = _where(Document, {"metadata": {"score": {"ne": 5}}})
+    assert "IS DISTINCT FROM" in where
+    assert "!=" not in where
+
+
 def test_not_is_null_safe_over_a_compound_condition():
     """Negation has to survive nesting, not just single comparisons."""
     where = _where(

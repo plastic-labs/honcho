@@ -19,7 +19,7 @@ from src.crud.collection import get_or_create_collection
 from src.crud.peer import get_peer, reject_scope_observed
 from src.crud.session import get_session
 from src.dependencies import tracked_db
-from src.embedding_client import embedding_client
+from src.embedding_client import EmbeddingTokenLimitError, embedding_client
 from src.exceptions import (
     ResourceNotFoundException,
     ValidationException,
@@ -255,6 +255,9 @@ async def query_external_vector_document_ids(
     if _uses_pgvector():
         return None
 
+    if top_k <= 0:
+        return []
+
     external_vector_store = get_external_vector_store()
     if external_vector_store is None:
         return []
@@ -386,7 +389,7 @@ async def query_documents(
     if embedding is None:
         try:
             embedding = await embedding_client.embed(query)
-        except ValueError as e:
+        except EmbeddingTokenLimitError as e:
             raise ValidationException(
                 "Query exceeds maximum token limit of "
                 + f"{settings.EMBEDDING.MAX_INPUT_TOKENS}."
@@ -1006,8 +1009,10 @@ async def create_observations(
     # Generate embeddings in batch
     contents = [obs.content for obs in observations]
     try:
-        embeddings = await embedding_client.simple_batch_embed(contents)
-    except ValueError as e:
+        embeddings = await embedding_client.simple_batch_embed(
+            contents, on_oversize="truncate"
+        )
+    except EmbeddingTokenLimitError as e:
         raise ValidationException(str(e)) from e
 
     # Create document objects and track embeddings for vector store
@@ -1255,7 +1260,7 @@ async def is_rejected_duplicate(
         # another derivation rather than resetting times_derived to 1.
         doc.times_derived = max(doc.times_derived, existing_doc.times_derived + 1)
         # Soft-delete the existing document - reconciliation will clean up vectors and hard-delete
-        existing_doc.deleted_at = datetime.datetime.now(datetime.timezone.utc)
+        existing_doc.deleted_at = datetime.datetime.now(datetime.UTC)
         await db.flush()
         return (
             SemanticRejectionResult.REPLACED_EXISTING
@@ -1301,7 +1306,7 @@ async def cleanup_soft_deleted_documents(
     Returns:
         Count of documents cleaned up (only those where vector deletion succeeded).
     """
-    cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(
+    cutoff = datetime.datetime.now(datetime.UTC) - datetime.timedelta(
         minutes=older_than_minutes
     )
 

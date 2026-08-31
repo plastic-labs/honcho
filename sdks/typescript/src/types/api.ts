@@ -81,6 +81,19 @@ export interface PeerChatResponse {
   content: string | null
 }
 
+export interface WorkspaceChatParams {
+  query: string
+  stream?: boolean
+  session_id?: string
+  reasoning_level?: 'minimal' | 'low' | 'medium' | 'high' | 'max'
+  response_format?: Record<string, unknown>
+  scope?: string | string[]
+}
+
+export interface WorkspaceChatResponse {
+  content: string | null
+}
+
 export interface PeerRepresentationParams {
   session_id?: string
   target?: string
@@ -133,6 +146,28 @@ export interface SessionCreateParams {
   metadata?: Record<string, unknown>
   configuration?: SessionConfigApi
   peers?: Record<string, SessionPeerConfigParams>
+  scopes?: string[]
+}
+
+export interface ScopeResponse {
+  id: string
+  metadata: Record<string, unknown>
+  created_at: string
+}
+
+/**
+ * Per-session backfill job state for a scope.
+ *
+ * `docs_copied` is present only once a backfill completes.
+ */
+export interface ScopeBackfillJob {
+  state: 'pending' | 'completed' | 'failed'
+  updated_at: string
+  docs_copied?: number
+}
+
+export interface ScopeStatusResponse {
+  backfill_status: Record<string, ScopeBackfillJob>
 }
 
 export interface SessionUpdateParams {
