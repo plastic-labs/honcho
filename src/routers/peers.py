@@ -53,10 +53,23 @@ class _ClientDisconnected(Exception):
 
 
 async def _wait_for_disconnect(request: Request) -> None:
-    """Block until the client disconnects, draining the ASGI receive channel."""
+    """Block until the client disconnects, draining the ASGI receive channel.
+
+    Args:
+        request: The request whose receive channel is drained.
+    """
     while True:
         if (await request.receive())["type"] == "http.disconnect":
             return
+
+
+async def _cancel_and_wait[T](task: asyncio.Future[T]) -> None:
+    """Cancel ``task`` if it is still pending and wait for it to unwind."""
+    if task.done():
+        return
+    task.cancel()
+    with suppress(asyncio.CancelledError):
+        await task
 
 
 async def _run_until_disconnect[T](request: Request, coro: Awaitable[T]) -> T:
@@ -65,25 +78,26 @@ async def _run_until_disconnect[T](request: Request, coro: Awaitable[T]) -> T:
     Uvicorn surfaces a client disconnect on the ASGI receive channel but does
     not cancel the running handler, so a non-streaming dialectic would keep the
     (expensive) LLM call going long after the caller has timed out (#1050).
-    Raises ``_ClientDisconnected`` if the client leaves before ``coro`` returns.
+
+    Args:
+        request: The in-flight request, whose receive channel is watched.
+        coro: The work to run for as long as the client is still listening.
+
+    Raises:
+        _ClientDisconnected: If the client leaves before ``coro`` returns.
     """
     work = asyncio.ensure_future(coro)
     watcher = asyncio.ensure_future(_wait_for_disconnect(request))
     try:
         await asyncio.wait({work, watcher}, return_when=asyncio.FIRST_COMPLETED)
+        if work.done():
+            return work.result()
+        raise _ClientDisconnected
     finally:
-        if not watcher.done():
-            watcher.cancel()
-            with suppress(asyncio.CancelledError):
-                await watcher
-
-    if work.done():
-        return work.result()
-
-    work.cancel()
-    with suppress(asyncio.CancelledError):
-        await work
-    raise _ClientDisconnected
+        # Also covers the wrapper itself being cancelled: without this the LLM
+        # call would outlive the request it was started for.
+        await _cancel_and_wait(watcher)
+        await _cancel_and_wait(work)
 
 
 async def _resolve_scope_option(
