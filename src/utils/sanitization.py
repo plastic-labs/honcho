@@ -9,7 +9,7 @@ arguments, which the JSON parser decodes into a real NUL byte.
 
 from typing import Any, cast, overload
 
-from pydantic import AfterValidator
+from pydantic import BeforeValidator
 
 __all__ = ["NulStripped", "strip_nul"]
 
@@ -41,6 +41,6 @@ def strip_nul(value: Any) -> Any:
 
 
 # Reusable annotation for string fields; composes with a per-field Field(...).
-# Only safe on fields without a `min_length` constraint, since the constraint is
-# checked before this runs -- use a `mode="before"` field validator otherwise.
-NulStripped = AfterValidator(strip_nul)
+# Runs *before* the field's own constraints, so `min_length` is checked against
+# the stripped value and all-NUL input is rejected instead of becoming "".
+NulStripped = BeforeValidator(strip_nul)

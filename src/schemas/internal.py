@@ -109,10 +109,16 @@ class ObservationInput(BaseModel):
     ) = None
     confidence: Literal["high", "medium", "low"] | None = None
 
-    @field_validator("content", mode="after")
+    @field_validator("content", mode="before")
     @classmethod
-    def sanitize_content(cls, v: str) -> str:
-        return v.replace("\x00", "")
+    def sanitize_content(cls, v: Any) -> Any:
+        """Strip NUL bytes, which Postgres rejects in text columns.
+
+        Runs before the length constraint so all-NUL content fails
+        `min_length` and is reported back to the model as a validation
+        failure, rather than validating into an empty string.
+        """
+        return strip_nul(v) if isinstance(v, str) else v
 
     @model_validator(mode="after")
     def validate_level_fields(self) -> Self:

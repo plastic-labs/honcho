@@ -5,9 +5,11 @@ from pydantic import ValidationError
 
 from src.config import settings
 from src.schemas import (
+    DialecticOptions,
     DocumentCreate,
     DocumentMetadata,
     MessageCreate,
+    ObservationInput,
     PeerCreate,
     ReasoningConfiguration,
     ResolvedConfiguration,
@@ -319,3 +321,24 @@ class TestNulByteSanitization:
         )
 
         assert message.metadata == {"ab": {"c": ["de", 1]}}
+
+    def test_observation_content_strips_nul(self):
+        observation = ObservationInput(content="before\x00after")
+
+        assert observation.content == "beforeafter"
+
+    def test_all_nul_observation_content_is_rejected_not_emptied(self):
+        """Sanitization runs before `min_length`, so an all-NUL observation is
+        reported back to the model as a validation failure rather than saved
+        as an empty document."""
+        with pytest.raises(ValidationError):
+            ObservationInput(content="\x00\x00")
+
+    def test_all_nul_query_is_rejected_not_emptied(self):
+        """`NulStripped` runs before the field's own constraints, so a query
+        that is nothing but NUL fails `min_length` instead of reaching the
+        dialectic as an empty prompt."""
+        options = DialecticOptions.model_validate({"query": "before\x00after"})
+        assert options.query == "beforeafter"
+        with pytest.raises(ValidationError):
+            DialecticOptions.model_validate({"query": "\x00"})
