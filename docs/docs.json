@@ -610,8 +610,8 @@
     }
   },
   "integrations": {
-    "posthog": {
-      "apiKey": "phc_1yrzzcgywqXGcerkkI4g7C0YfyPMcAKNOOvGcjTCiUk"
+    "gtm": {
+      "tagId": "GTM-NSPT9PJF"
     }
   }
 }
