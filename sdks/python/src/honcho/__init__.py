@@ -41,7 +41,14 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 import re
 
-from .aio import ConclusionsViewAio, HonchoAio, PeerAio, ScopeAio, SessionAio
+from .aio import (
+    ConclusionsViewAio,
+    HonchoAio,
+    PeerAio,
+    ScopeAio,
+    SessionAio,
+    WorkspaceConclusionsAio,
+)
 from .api_types import (
     MessageCreateParams,
     ScopeBackfillJob,
@@ -50,7 +57,7 @@ from .api_types import (
 )
 from .base import PeerBase, ScopeBase, SessionBase
 from .client import Honcho
-from .conclusions import Conclusion, ConclusionsView
+from .conclusions import Conclusion, ConclusionsView, WorkspaceConclusions
 from .http.exceptions import (
     APIError,
     AuthenticationError,
@@ -108,6 +115,7 @@ __all__ = [
     # Domain classes
     "Conclusion",
     "ConclusionsView",
+    "WorkspaceConclusions",
     "Message",
     "MessageCreateParams",
     "Peer",
@@ -115,6 +123,7 @@ __all__ = [
     "Session",
     # Aio views (for type hints)
     "ConclusionsViewAio",
+    "WorkspaceConclusionsAio",
     "HonchoAio",
     "PeerAio",
     "ScopeAio",

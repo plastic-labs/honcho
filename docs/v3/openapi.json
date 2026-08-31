@@ -2760,6 +2760,45 @@
       }
     },
     "/v3/workspaces/{workspace_id}/conclusions/{conclusion_id}": {
+      "get": {
+        "tags": ["conclusions"],
+        "summary": "Get Conclusion",
+        "description": "Get a single Conclusion by ID.",
+        "operationId": "get_conclusion_v3_workspaces__workspace_id__conclusions__conclusion_id__get",
+        "security": [{ "HTTPBearer": [] }],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "title": "Workspace Id" }
+          },
+          {
+            "name": "conclusion_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "title": "Conclusion Id" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Conclusion" }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        }
+      },
       "delete": {
         "tags": ["conclusions"],
         "summary": "Delete Conclusion",
@@ -3126,6 +3165,20 @@
             "title": "Level",
             "description": "Reasoning level of the conclusion: 'explicit' (directly extracted from messages) or 'deductive'/'inductive'/'contradiction' (derived during dreaming).",
             "default": "explicit"
+          },
+          "source_ids": {
+            "anyOf": [
+              { "items": { "type": "string" }, "type": "array" },
+              { "type": "null" }
+            ],
+            "title": "Source Ids",
+            "description": "IDs of the conclusions this one was derived from: premises for 'deductive', supporting sources for 'inductive', conflicting conclusions for 'contradiction'. None for 'explicit' conclusions."
+          },
+          "times_derived": {
+            "type": "integer",
+            "title": "Times Derived",
+            "description": "Number of times this conclusion has been independently derived.",
+            "default": 1
           },
           "created_at": {
             "type": "string",

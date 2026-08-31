@@ -241,6 +241,7 @@
                   "v3/api-reference/endpoint/conclusions/create-conclusions",
                   "v3/api-reference/endpoint/conclusions/list-conclusions",
                   "v3/api-reference/endpoint/conclusions/query-conclusions",
+                  "v3/api-reference/endpoint/conclusions/get-conclusion",
                   "v3/api-reference/endpoint/conclusions/delete-conclusion"
                 ]
               },

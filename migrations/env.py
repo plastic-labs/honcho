@@ -6,6 +6,7 @@ from urllib.parse import urlparse, urlunparse
 
 from alembic import context
 from sqlalchemy import engine_from_config, text
+from sqlalchemy.engine import Connection
 
 from src.config import settings
 
@@ -150,37 +151,44 @@ def run_migrations_online() -> None:
         },
     )
 
-    with connectable.connect() as connection:
-        # Create schema and commit it outside the main migration transaction
-        connection.execute(
-            text(f"CREATE SCHEMA IF NOT EXISTS {target_metadata.schema};")
-        )
-        connection.execute(
-            text(f"GRANT ALL ON SCHEMA {target_metadata.schema} TO current_user")
-        )
-        # Install pgvector extension if it doesn't exist
-        connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-        # Set and verify search_path
-        connection.execute(
-            text(f"SET search_path TO {target_metadata.schema}, public, extensions")
-        )
-        connection.commit()
+    try:
+        with connectable.connect() as connection:
+            _run_migrations_with_connection(connection)
+    finally:
+        # Release pooled connections immediately; lingering ones block
+        # DROP DATABASE in test harnesses that invoke alembic repeatedly.
+        connectable.dispose()
 
-        context.configure(
-            connection=connection,
-            target_metadata=target_metadata,
-            version_table_schema=target_metadata.schema,
-            include_schemas=True,
-            include_object=lambda obj, name, type_, reflected, compare_to: (
-                # Only include objects from our target schema
-                getattr(obj, "schema", None) == target_metadata.schema
-                if hasattr(obj, "schema")
-                else True
-            ),
-        )
 
-        with context.begin_transaction():
-            context.run_migrations()
+def _run_migrations_with_connection(connection: Connection) -> None:
+    # Create schema and commit it outside the main migration transaction
+    connection.execute(text(f"CREATE SCHEMA IF NOT EXISTS {target_metadata.schema};"))
+    connection.execute(
+        text(f"GRANT ALL ON SCHEMA {target_metadata.schema} TO current_user")
+    )
+    # Install pgvector extension if it doesn't exist
+    connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+    # Set and verify search_path
+    connection.execute(
+        text(f"SET search_path TO {target_metadata.schema}, public, extensions")
+    )
+    connection.commit()
+
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        version_table_schema=target_metadata.schema,
+        include_schemas=True,
+        include_object=lambda obj, name, type_, reflected, compare_to: (
+            # Only include objects from our target schema
+            getattr(obj, "schema", None) == target_metadata.schema
+            if hasattr(obj, "schema")
+            else True
+        ),
+    )
+
+    with context.begin_transaction():
+        context.run_migrations()
 
 
 if context.is_offline_mode():
