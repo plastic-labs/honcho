@@ -13,12 +13,47 @@ from collections.abc import Awaitable, Callable
 import pytest
 from starlette.requests import Request
 
-from src.routers.peers import _ClientDisconnected, _run_until_disconnect
+from src.routers.peers import (
+    _ClientDisconnected,  # pyright: ignore[reportPrivateUsage]
+    _run_until_disconnect,  # pyright: ignore[reportPrivateUsage]
+)
 
 
 def _request(receive: Callable[[], Awaitable[dict[str, object]]]) -> Request:
-    """A minimal ASGI request whose receive channel is scripted per test."""
+    """A minimal ASGI request whose receive channel is scripted per test.
+
+    Args:
+        receive: The scripted ASGI receive callable for this test.
+    """
     return Request({"type": "http", "method": "POST", "headers": []}, receive)
+
+
+async def test_cancelling_the_wrapper_cancels_the_work():
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def slow_work() -> str:
+        started.set()
+        try:
+            await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+        return "should not get here"
+
+    # Never disconnects — the only thing ending this request is the server
+    # tearing the handler down (shutdown, timeout middleware, worker restart).
+    async def receive() -> dict[str, object]:
+        await asyncio.Event().wait()
+        return {"type": "http.disconnect"}
+
+    task = asyncio.ensure_future(_run_until_disconnect(_request(receive), slow_work()))
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert cancelled.is_set()
 
 
 async def test_disconnect_cancels_inflight_work():
