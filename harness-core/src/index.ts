@@ -16,3 +16,15 @@ export type {
   ResolvedConfig,
   RootConfig,
 } from './config.ts'
+
+export {
+  apiTarget,
+  telemetryHeaders,
+  HEADER_AGENT_MODEL,
+  HEADER_API,
+  HEADER_HOST,
+  HEADER_PLUGIN,
+  HEADER_RUNTIME,
+} from './telemetry.ts'
+
+export type { ApiTarget, TelemetryIdentity } from './telemetry.ts'
