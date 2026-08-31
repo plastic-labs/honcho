@@ -4,7 +4,6 @@ import {
   createClientFactory,
   createUnscopedClient,
   parseConfig,
-  parseEnvConfig,
   type Env,
 } from "./config.js";
 import { createServer } from "./server.js";
@@ -40,9 +39,33 @@ const MCP_PATHS = new Set(["/", "/mcp"]);
 type Session = {
   transport: WebStandardStreamableHTTPServerTransport;
   server: McpServer;
+  lastSeen: number;
 };
 
 const sessions = new Map<string, Session>();
+const DEFAULT_SESSION_IDLE_MS = 30 * 60 * 1000;
+const DEFAULT_SESSION_MAX = 128;
+
+function envInt(name: string, fallback: number): number {
+  const n = Number(process.env[name]);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+function dropSession(id: string): void {
+  const session = sessions.get(id);
+  if (!session) return;
+  sessions.delete(id);
+  void session.transport.close();
+  void session.server.close();
+}
+
+function sweepSessions(): void {
+  const idleMs = envInt("MCP_SESSION_IDLE_MS", DEFAULT_SESSION_IDLE_MS);
+  const now = Date.now();
+  for (const [id, session] of sessions) {
+    if (now - session.lastSeen > idleMs) dropSession(id);
+  }
+}
 
 function envBindings(): Env {
   return { HONCHO_API_URL: process.env.HONCHO_API_URL };
@@ -80,25 +103,7 @@ function jsonResponse(
 }
 
 function configForRequest(request: Request) {
-  const auth = request.headers.get("Authorization")?.trim();
-  if (auth) {
-    return parseConfig(request, envBindings());
-  }
-  if (process.env.HONCHO_API_KEY?.trim()) {
-    const envConfig = parseEnvConfig({
-      HONCHO_API_KEY: process.env.HONCHO_API_KEY,
-      HONCHO_API_URL: process.env.HONCHO_API_URL,
-      HONCHO_WORKSPACE_ID: process.env.HONCHO_WORKSPACE_ID,
-    });
-    const headerWorkspace =
-      request.headers.get("X-Honcho-Workspace-ID")?.trim() || undefined;
-    return headerWorkspace
-      ? { ...envConfig, workspaceId: headerWorkspace }
-      : envConfig;
-  }
-  throw new Error(
-    "Missing Authorization header. Provide 'Authorization: Bearer <your-honcho-key>'.",
-  );
+  return parseConfig(request, envBindings());
 }
 
 function unauthorized(request: Request, message: string): Response {
@@ -113,10 +118,12 @@ function unauthorized(request: Request, message: string): Response {
 }
 
 async function handleMcp(request: Request): Promise<Response> {
+  sweepSessions();
   const sessionId = request.headers.get("mcp-session-id");
   if (sessionId) {
     const existing = sessions.get(sessionId);
     if (existing) {
+      existing.lastSeen = Date.now();
       return withCors(await existing.transport.handleRequest(request));
     }
   }
@@ -178,10 +185,25 @@ async function handleMcp(request: Request): Promise<Response> {
     unscoped: createUnscopedClient(config),
   });
 
+  const maxSessions = envInt("MCP_SESSION_MAX", DEFAULT_SESSION_MAX);
+  if (sessions.size >= maxSessions) {
+    return jsonResponse(
+      {
+        jsonrpc: "2.0",
+        error: {
+          code: -32000,
+          message: "Too many active sessions",
+        },
+        id: null,
+      },
+      503,
+    );
+  }
+
   const transport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: () => crypto.randomUUID(),
     onsessioninitialized: (id) => {
-      sessions.set(id, { transport, server });
+      sessions.set(id, { transport, server, lastSeen: Date.now() });
     },
   });
   transport.onclose = () => {

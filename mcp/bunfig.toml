@@ -1,2 +1,5 @@
 [loader]
 ".md" = "text"
+
+[run]
+silent = true

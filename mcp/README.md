@@ -93,13 +93,13 @@ bunx mcp-remote http://127.0.0.1:3000 \
   --header "Authorization:Bearer <key>"
 ```
 
-Auth is the `Authorization: Bearer` header (same as the Worker). If that header
-is omitted, `HONCHO_API_KEY` in the environment is used. Optional
-`HONCHO_WORKSPACE_ID` or `X-Honcho-Workspace-ID` fills `workspace_id` when the
-tool argument is omitted.
+Auth is the `Authorization: Bearer` header (same as the Worker). Optional
+`X-Honcho-Workspace-ID` fills `workspace_id` when the tool argument is omitted.
 
 `HOST` defaults to `0.0.0.0`, `PORT` to `3000`. `GET /health` is unauthenticated.
-MCP is served at `/` and `/mcp`.
+MCP is served at `/` and `/mcp`. Idle sessions expire after
+`MCP_SESSION_IDLE_MS` (default 30 minutes); `MCP_SESSION_MAX` (default 128)
+caps concurrent sessions.
 
 A platform start command is `bun src/http.ts` (or `bun run http` from `mcp/`).
 This repo does not ship a `vercel.json`; serverless replicas do not share the
@@ -120,8 +120,7 @@ docker run --rm -p 3000:3000 \
 ## Local stdio
 
 For a local Honcho instance, or any MCP client that spawns a process, run the
-stdio host instead of the Worker. Point the client at `src/stdio.ts` directly
-— `bun run stdio` writes lifecycle output to stdout and breaks the protocol.
+stdio host. `--cwd` loads `mcp/bunfig.toml` (Markdown loader) from this package.
 
 ```bash
 cd mcp && bun install
@@ -130,7 +129,7 @@ claude mcp add honcho -- \
   -e HONCHO_API_KEY=hch-your-key-here \
   -e HONCHO_API_URL=http://127.0.0.1:28000 \
   -e HONCHO_WORKSPACE_ID=my-workspace \
-  bun "$(pwd)/src/stdio.ts"
+  bun --cwd "$(pwd)" src/stdio.ts
 ```
 
 `HONCHO_API_URL` defaults to `https://api.honcho.dev`. `HONCHO_WORKSPACE_ID` is
