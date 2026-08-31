@@ -54,7 +54,7 @@ export function parseConfig(request: Request, env: Env = {}): HonchoConfig {
   };
 }
 
-/** Parse configuration from process env for the stdio host. */
+/** Parse configuration from process env. */
 export function parseEnvConfig(env: EnvConfig): HonchoConfig {
   const apiKey = env.HONCHO_API_KEY?.trim();
   if (!apiKey) {
