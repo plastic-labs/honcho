@@ -36,7 +36,6 @@ from sqlalchemy.sql.functions import func
 from src import crud, models
 from src.config import settings
 from src.crud.scope import ScopeBackfillState
-from src.crud.session import is_peer_in_session
 from src.dependencies import tracked_db
 from src.embedding_client import embedding_client
 from src.schemas import DreamType
@@ -338,12 +337,18 @@ async def _copy_chunk(
     touched_observed = {spec.observed for spec in plans}
     new_rows: list[models.Document] = []
     async with tracked_db("scope_backfill.write") as db:
-        # scope_backfill and scope_removal carry different work-unit keys, so
-        # nothing orders them: a removal enqueued right after the add (or one
-        # that landed while phase 2 was embedding) can sweep the scope before
-        # these copies exist. Re-checking membership here, in the transaction
-        # that inserts, keeps a removed session from being copied back in.
-        if not await is_peer_in_session(db, workspace_name, session_name, scope_peer):
+        # Row-lock active membership for this txn so a concurrent leave
+        # (``left_at``) cannot commit between the check and the inserts.
+        membership = await db.scalar(
+            select(models.SessionPeer.peer_name)
+            .where(models.SessionPeer.workspace_name == workspace_name)
+            .where(models.SessionPeer.session_name == session_name)
+            .where(models.SessionPeer.peer_name == scope_peer)
+            .where(models.SessionPeer.left_at.is_(None))
+            .with_for_update()
+            .limit(1)
+        )
+        if membership is None:
             return False
 
         for observed in sorted(touched_observed):
