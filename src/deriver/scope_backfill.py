@@ -30,6 +30,7 @@ from typing import Any
 
 from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import array
+from sqlalchemy.orm import load_only
 from sqlalchemy.sql.functions import func
 
 from src import crud, models
@@ -177,7 +178,23 @@ async def _run_backfill(
     plans: list[_CopySpec] = []
     async with tracked_db("scope_backfill.plan") as db:
         source_result = await db.execute(
-            select(models.Document).where(
+            select(models.Document)
+            .options(
+                load_only(
+                    models.Document.id,
+                    models.Document.workspace_name,
+                    models.Document.observer,
+                    models.Document.observed,
+                    models.Document.content,
+                    models.Document.level,
+                    models.Document.times_derived,
+                    models.Document.internal_metadata,
+                    models.Document.session_name,
+                    models.Document.source_ids,
+                    models.Document.deleted_at,
+                )
+            )
+            .where(
                 models.Document.workspace_name == workspace_name,
                 models.Document.session_name == session_name,
                 models.Document.level == "explicit",
@@ -200,7 +217,19 @@ async def _run_backfill(
         # by (observed, copied_from). Includes soft-deleted rows: those are
         # restore candidates, not blockers.
         copies_result = await db.execute(
-            select(models.Document).where(
+            select(models.Document)
+            .options(
+                load_only(
+                    models.Document.id,
+                    models.Document.workspace_name,
+                    models.Document.observer,
+                    models.Document.observed,
+                    models.Document.session_name,
+                    models.Document.internal_metadata,
+                    models.Document.deleted_at,
+                )
+            )
+            .where(
                 models.Document.workspace_name == workspace_name,
                 models.Document.observer == scope_peer,
                 models.Document.session_name == session_name,
@@ -220,12 +249,13 @@ async def _run_backfill(
             key = (source.observed, source.id)
             if key in live_copies:
                 continue
+            # Vectors hydrate per chunk; plans only carry ids + content.
             plans.append(
                 _CopySpec(
                     observed=source.observed,
                     source_id=source.id,
                     content=source.content,
-                    embedding=_embedding_as_list(source.embedding),
+                    embedding=None,
                     internal_metadata=dict(source.internal_metadata),
                     times_derived=source.times_derived,
                     source_ids=list(source.source_ids)
@@ -258,6 +288,23 @@ async def _run_backfill(
     return copied, touched_observed
 
 
+async def _hydrate_chunk_embeddings(
+    workspace_name: str, plans: list[_CopySpec]
+) -> None:
+    """Load this chunk's source embeddings from postgres (if any)."""
+    source_ids = [spec.source_id for spec in plans]
+    async with tracked_db("scope_backfill.hydrate_embeddings") as db:
+        result = await db.execute(
+            select(models.Document.id, models.Document.embedding).where(
+                models.Document.workspace_name == workspace_name,
+                models.Document.id.in_(source_ids),
+            )
+        )
+        by_id = {row.id: _embedding_as_list(row.embedding) for row in result.all()}
+    for spec in plans:
+        spec.embedding = by_id.get(spec.source_id)
+
+
 async def _copy_chunk(
     workspace_name: str,
     scope_peer: str,
@@ -266,7 +313,10 @@ async def _copy_chunk(
     store_in_postgres: bool,
 ) -> bool:
     """Embed, write, and sync one chunk. False if the session left the scope."""
-    # Phase 2 (no DB): fill missing embeddings. Source rows have NULL
+    # Phase 2a (DB): pull this chunk's embeddings only.
+    await _hydrate_chunk_embeddings(workspace_name, plans)
+
+    # Phase 2b (no DB): fill missing embeddings. Source rows have NULL
     # embeddings on external-store deployments (and soft-deleted copies may
     # have lost their vectors) — re-embed via the embedding API only; no LLM.
     missing = [spec for spec in plans if spec.embedding is None]
