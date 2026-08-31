@@ -214,6 +214,9 @@ class LanceDBVectorStore(VectorStore):
         Returns:
             List of VectorQueryResult objects, ordered by similarity (most similar first)
         """
+        if top_k <= 0:
+            return []
+
         table = await self._get_table(namespace)
         if table is None:
             logger.debug(f"Table {namespace} does not exist, returning empty results")

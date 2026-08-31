@@ -7,17 +7,26 @@ authoritative, user-unwritable flag) and ``{"observe_me": false}`` in
 and never speaks.
 See ``src/utils/scopes.py`` for the namespace helpers.
 
-Membership only affects messages ingested *after* a session is added to a
-scope. Conclusions already derived are neither backfilled on add nor
-reconciled on removal.
+Messages ingested after a membership change flow to the scope via the normal
+deriver fan-out. Retroactive changes are handled by queue jobs: adding a session
+that already has messages enqueues a ``scope_backfill`` task (copy of the
+session's explicit documents into the scope's collections) and removing a
+session enqueues a ``scope_removal`` task (soft-delete of the session's
+documents plus dependent derived documents).
 """
 
 from collections.abc import Sequence
+from datetime import datetime, timezone
 from logging import getLogger
+from typing import Any, Literal
+from typing import cast as py_cast
 
-from sqlalchemy import Select, select
+from sqlalchemy import Select, Text, cast, select, update
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, array
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.functions import func
 
 from src import models, schemas
 from src.cache.client import safe_cache_delete
@@ -38,11 +47,21 @@ from .workspace import get_or_create_workspace
 
 logger = getLogger(__name__)
 
+# Key inside the scope peer's internal_metadata that holds per-session
+# backfill job status: {<session_name>: {state, updated_at[, docs_copied]}}.
+BACKFILL_STATUS_KEY = "backfill_status"
+
+ScopeBackfillState = Literal["pending", "completed", "failed"]
+
 # Internal metadata stamped on every scope peer at creation. `kind` is the
 # authoritative scope flag and lives here — NOT in `configuration` — because
 # `configuration` is user-writable (`PeerCreate`/`PeerUpdate` accept a free-form
 # dict, and `update_peer` replaces it wholesale), so a user could forge or clear
 # the flag. `internal_metadata` appears in no API schema at all.
+#
+# Backfill job status shares this field under BACKFILL_STATUS_KEY below. Every
+# write to it must be a JSONB merge scoped to that key, never a wholesale
+# replacement, or the `kind` flag goes with it and the peer stops being a scope.
 SCOPE_PEER_INTERNAL_METADATA: dict[str, str] = {
     "kind": SCOPE_KIND,
 }
@@ -300,6 +319,26 @@ async def resolve_scope_peers(
     return resolved
 
 
+async def resolve_scope_session_union(
+    db: AsyncSession,
+    workspace_name: str,
+    scope_names: Sequence[str],
+) -> list[str]:
+    """Return the union of member sessions across the given scopes."""
+    from src.crud.message import get_peer_session_names
+
+    union: list[str] = []
+    seen: set[str] = set()
+    for scope_peer in await resolve_scope_peers(db, workspace_name, scope_names):
+        for session_name in await get_peer_session_names(
+            db, workspace_name, scope_peer
+        ):
+            if session_name not in seen:
+                seen.add(session_name)
+                union.append(session_name)
+    return union
+
+
 async def get_scope_sessions(
     workspace_name: str,
     scope_name: str,
@@ -355,9 +394,9 @@ async def add_sessions_to_scope(
 
     Each membership is a ``session_peers`` row for the scope peer with
     ``observe_others=true, observe_me=false`` — exactly what a hand-built
-    observer peer would carry. No backfill happens here: membership only affects
-    messages ingested after this call, and conclusions already derived are left
-    as they are.
+    observer peer would carry. Sessions that already have messages get a
+    ``scope_backfill`` queue task so their existing explicit documents are
+    copied into the scope's collections; fresh sessions need nothing.
 
     Args:
         db: Database session
@@ -400,6 +439,23 @@ async def add_sessions_to_scope(
 
     await db.commit()
 
+    # Backfill: only sessions that already have messages need it.
+    # Imported lazily: src.deriver.enqueue imports crud at module level.
+    from src.deriver.enqueue import enqueue_scope_backfill
+
+    msg_result = await db.execute(
+        select(models.Message.session_name)
+        .where(models.Message.workspace_name == workspace_name)
+        .where(models.Message.session_name.in_(requested))
+        .distinct()
+    )
+    for session_with_messages in sorted({row[0] for row in msg_result.all()}):
+        await enqueue_scope_backfill(
+            workspace_name,
+            scope_peer=scope_peer_name(scope_name),
+            session_name=session_with_messages,
+        )
+
 
 async def remove_session_from_scope(
     db: AsyncSession,
@@ -411,8 +467,9 @@ async def remove_session_from_scope(
     Remove a session from a scope by ending the scope peer's membership.
 
     Ends the membership the same way the generic remove-peer path does (sets
-    ``left_at``). Conclusions derived while the session was a member are left in
-    place — nothing reconciles them.
+    ``left_at``), then enqueues a ``scope_removal`` reconciliation task that
+    soft-deletes the session's documents from the scope's collections along
+    with any derived documents whose support left the scope.
 
     Args:
         db: Database session
@@ -424,6 +481,8 @@ async def remove_session_from_scope(
         ResourceNotFoundException: If the scope or session does not exist
     """
     # Lazy import for the same circular-import reason as add_sessions_to_scope.
+    from src.deriver.enqueue import enqueue_scope_removal
+
     from .session import remove_peers_from_session
 
     await get_scope_or_raise(db, workspace_name, scope_name)
@@ -436,3 +495,124 @@ async def remove_session_from_scope(
         # This *is* the supported path for ending scope membership.
         _allow_scope_peers=True,
     )
+
+    await enqueue_scope_removal(
+        workspace_name,
+        scope_peer=scope_peer_name(scope_name),
+        session_name=session_name,
+    )
+
+
+async def update_scope_backfill_status(
+    db: AsyncSession,
+    workspace_name: str,
+    scope_peer: str,
+    session_name: str,
+    *,
+    state: ScopeBackfillState,
+    docs_copied: int | None = None,
+) -> None:
+    """
+    Merge one session's backfill status into the scope peer's internal_metadata.
+
+    Uses a single-statement nested JSONB merge so concurrent writers updating
+    *different* session keys never clobber each other (the merge is computed
+    from the row's current committed value under the row lock, never from a
+    stale Python-side read):
+
+        internal_metadata || {"backfill_status":
+            coalesce(internal_metadata->'backfill_status', '{}') || {<session>: <entry>}}
+
+    Does not commit; the caller owns the transaction. Callers should
+    invalidate the peer cache after committing (``peer_cache_key``).
+    """
+    entry: dict[str, Any] = {
+        "state": state,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if docs_copied is not None:
+        entry["docs_copied"] = docs_copied
+
+    # NOTE: the JSONB operand must be a Python dict, not a json.dumps() string.
+    # cast(<already-serialized-str>, JSONB) double-encodes: psycopg's JSONB
+    # bind adapter serializes the *string* again, producing a JSONB string
+    # scalar instead of an object. `||` between two non-array jsonb scalars
+    # doesn't merge keys — it silently wraps both sides into a 2-element
+    # array, corrupting backfill_status into a list and later crashing
+    # clear_scope_backfill_status's `#-` path delete (which then sees an
+    # array where it expects an object).
+    merged_status = func.coalesce(
+        models.Peer.internal_metadata.op("->")(BACKFILL_STATUS_KEY),
+        cast({}, JSONB),
+    ).op("||")(cast({session_name: entry}, JSONB))
+
+    stmt = (
+        update(models.Peer)
+        .where(models.Peer.workspace_name == workspace_name)
+        .where(models.Peer.name == scope_peer)
+        .values(
+            internal_metadata=models.Peer.internal_metadata.op("||")(
+                func.jsonb_build_object(BACKFILL_STATUS_KEY, merged_status)
+            )
+        )
+    )
+    result = py_cast(CursorResult[Any], await db.execute(stmt))
+    if result.rowcount == 0:
+        raise ResourceNotFoundException(
+            f"Scope peer {scope_peer} not found in workspace {workspace_name}"
+        )
+
+
+async def clear_scope_backfill_status(
+    db: AsyncSession,
+    workspace_name: str,
+    scope_peer: str,
+    session_name: str,
+) -> None:
+    """
+    Drop one session's entry from the scope peer's backfill status.
+
+    Called by the removal reconciliation job: once a session leaves a scope its
+    backfill status is moot, and clearing it keeps add→remove→re-add cycles
+    honest (the re-add starts from a fresh ``pending``). Single-statement
+    ``#-`` delete, safe against concurrent per-key merges. Does not commit.
+    Missing peers are a no-op (removal is idempotent).
+    """
+    stmt = (
+        update(models.Peer)
+        .where(models.Peer.workspace_name == workspace_name)
+        .where(models.Peer.name == scope_peer)
+        .values(
+            internal_metadata=models.Peer.internal_metadata.op("#-")(
+                cast(array([BACKFILL_STATUS_KEY, session_name]), ARRAY(Text))
+            )
+        )
+    )
+    await db.execute(stmt)
+
+
+async def invalidate_scope_peer_cache(workspace_name: str, scope_peer: str) -> None:
+    """Invalidate the cached peer row after a status write commits."""
+    await safe_cache_delete(peer_cache_key(workspace_name, scope_peer))
+
+
+async def get_scope_backfill_status(
+    db: AsyncSession,
+    workspace_name: str,
+    scope_name: str,
+) -> dict[str, Any]:
+    """
+    Read the per-session backfill job status map for a scope.
+
+    Returns:
+        ``{<session_name>: {state, updated_at[, docs_copied]}}`` (empty when no
+        backfill has ever been enqueued for the scope)
+
+    Raises:
+        ResourceNotFoundException: If the scope does not exist
+    """
+    peer = await get_scope_or_raise(db, workspace_name, scope_name)
+    status = peer.internal_metadata.get(BACKFILL_STATUS_KEY, {})
+    if not isinstance(status, dict):
+        return {}
+    return py_cast(dict[str, Any], status)

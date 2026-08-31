@@ -105,7 +105,15 @@ class DialecticAgent:
             {
                 "role": "system",
                 "content": prompts.agent_system_prompt(
-                    observer, observed, observer_peer_card, observed_peer_card
+                    observer,
+                    observed,
+                    observer_peer_card,
+                    observed_peer_card,
+                    available_tools={
+                        name
+                        for tool in self._select_tools()
+                        if isinstance((name := tool.get("name")), str)
+                    },
                 ),
             }
         ]
@@ -303,9 +311,8 @@ class DialecticAgent:
         if prefetched_observations:
             user_content = (
                 f"Query: {query}\n\n"
-                f"## Relevant Observations (prefetched)\n"
-                f"The following observations were found to be semantically relevant to your query. "
-                f"Use these as primary context. You may still use tools to find additional information if needed.\n\n"
+                f"## {self._prefetch_heading()}\n"
+                f"{self._prefetch_intro()}\n\n"
                 f"{prefetched_observations}"
             )
             accumulate_metric(
@@ -318,7 +325,14 @@ class DialecticAgent:
 
         tool_executor: Callable[
             [str, dict[str, Any]], Any
-        ] = await create_tool_executor(
+        ] = await self._create_tool_executor()
+
+        return tool_executor, task_name, run_id, start_time
+
+    async def _create_tool_executor(self) -> Callable[[str, dict[str, Any]], Any]:
+        """Build the tool executor. Subclasses override to change tool scoping
+        (e.g. WorkspaceDialecticAgent uses the workspace executor)."""
+        return await create_tool_executor(
             workspace_name=self.workspace_name,
             session_name=self.session_name,
             session_allowlist=self.session_allowlist,
@@ -330,7 +344,16 @@ class DialecticAgent:
             parent_category="dialectic",
         )
 
-        return tool_executor, task_name, run_id, start_time
+    def _prefetch_heading(self) -> str:
+        """Heading for the prefetched block in the user message."""
+        return "Relevant Observations (prefetched)"
+
+    def _prefetch_intro(self) -> str:
+        """Sentence introducing the prefetched block in the user message."""
+        return (
+            "The following observations were found to be semantically relevant to your query. "
+            "Use these as primary context. You may still use tools to find additional information if needed."
+        )
 
     def _telemetry_context(self, track_name: str | None = None) -> LLMTelemetryContext:
         """Build the LLMTelemetryContext shared by answer() and answer_stream().

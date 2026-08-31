@@ -441,10 +441,19 @@ class OpenAIBackend:
                 )
 
         cache_creation, cache_read = extract_openai_cache_tokens(usage)
+        # content_override=None means no override, not "force content to None"
+        if content_override is not None:
+            content: Any = content_override
+        elif message.content is not None:
+            content = message.content
+        elif tool_calls:
+            # Preserve null content on tool-call turns for history replay
+            content = None
+        else:
+            content = ""
+
         return CompletionResult(
-            content=content_override
-            if content_override is not None
-            else (message.content or ""),
+            content=content,
             input_tokens=usage.prompt_tokens if usage else 0,
             output_tokens=usage.completion_tokens if usage else 0,
             cache_creation_input_tokens=cache_creation,

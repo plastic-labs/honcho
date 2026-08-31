@@ -551,9 +551,12 @@ class TestReEmbedding:
         # Mock embedding client to track batch calls
         batch_call_count = 0
 
-        async def track_batch_embed(contents: list[str]) -> list[list[float]]:
+        async def track_batch_embed(
+            contents: list[str], *, on_oversize: str, **_kwargs: object
+        ) -> list[list[float]]:
             nonlocal batch_call_count
             batch_call_count += 1
+            assert on_oversize == "truncate"
             return [[1.0] * 1536 for _ in contents]
 
         with patch("src.reconciler.sync_vectors.embedding_client") as mock_embed_client:

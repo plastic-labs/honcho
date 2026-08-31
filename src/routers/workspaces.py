@@ -1,10 +1,14 @@
 """FastAPI routes for workspace resources and workspace-scoped operations."""
 
+import json
 import logging
+from collections.abc import AsyncIterator
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Response
+from fastapi.responses import StreamingResponse
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import apaginate
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
@@ -12,8 +16,13 @@ from src.config import settings
 from src.crud.message import get_peer_session_names
 from src.dependencies import db, read_db, tracked_db
 from src.deriver.enqueue import enqueue_deletion, enqueue_dream
+from src.dialectic.chat import workspace_chat, workspace_chat_stream
 from src.exceptions import AuthenticationException, ValidationException
 from src.security import JWTParams, require_auth
+from src.telemetry import prometheus_metrics
+from src.utils.filter import MAX_SESSION_ALLOWLIST_ENTRIES
+from src.utils.schema_conversion import json_response_schema_to_pydantic
+from src.utils.scopes import validate_scope_read_option
 from src.utils.search import search
 
 logger = logging.getLogger(__name__)
@@ -276,3 +285,92 @@ async def schedule_dream(
         observed,
         request.session_id,
     )
+
+
+@router.post(
+    "/{workspace_id}/chat",
+    responses={
+        200: {
+            "content": {
+                "application/json": {
+                    "schema": schemas.DialecticResponse.model_json_schema()
+                },
+                "text/event-stream": {},
+            },
+        },
+    },
+)
+async def chat(
+    workspace_id: str = Path(...),
+    options: schemas.WorkspaceChatOptions = Body(...),
+    jwt_params: JWTParams = Depends(require_auth(workspace_name="workspace_id")),
+):
+    """Query the entire workspace using natural language.
+
+    Pass `scope` to restrict recall to the union of those scopes' member
+    sessions. A scope with no member sessions recalls nothing (fail-closed).
+    """
+    session_allowlist: list[str] | None = None
+    if options.scope is not None:
+        validate_scope_read_option(
+            filters=None,
+            session_id=options.session_id,
+            jwt_params=jwt_params,
+        )
+        names = [options.scope] if isinstance(options.scope, str) else options.scope
+        async with tracked_db(
+            "workspaces.chat.resolve_scope", read_only=True
+        ) as scope_db:
+            session_allowlist = await crud.resolve_scope_session_union(
+                scope_db, workspace_id, names
+            )
+        if len(session_allowlist) > MAX_SESSION_ALLOWLIST_ENTRIES:
+            raise ValidationException(
+                "The scopes' combined membership exceeds the maximum of "
+                + f"{MAX_SESSION_ALLOWLIST_ENTRIES} sessions per request"
+            )
+
+    response_model: type[BaseModel] | None = None
+    if options.response_format is not None:
+        try:
+            response_model = json_response_schema_to_pydantic(options.response_format)
+        except ValueError as e:
+            raise ValidationException(f"Invalid response_format: {e}") from None
+
+    if settings.METRICS.ENABLED:
+        prometheus_metrics.record_dialectic_call(
+            workspace_name=workspace_id,
+            reasoning_level=options.reasoning_level,
+        )
+
+    if options.stream:
+
+        async def format_sse_stream(chunks: AsyncIterator[str]) -> AsyncIterator[str]:
+            """Format chunks as SSE events."""
+            async for chunk in chunks:
+                yield f"data: {json.dumps({'delta': {'content': chunk}, 'done': False})}\n\n"
+            yield f"data: {json.dumps({'done': True})}\n\n"
+
+        return StreamingResponse(
+            format_sse_stream(
+                workspace_chat_stream(
+                    workspace_name=workspace_id,
+                    session_name=options.session_id,
+                    query=options.query,
+                    reasoning_level=options.reasoning_level,
+                    response_model=response_model,
+                    session_allowlist=session_allowlist,
+                )
+            ),
+            media_type="text/event-stream",
+        )
+
+    response = await workspace_chat(
+        workspace_name=workspace_id,
+        session_name=options.session_id,
+        query=options.query,
+        reasoning_level=options.reasoning_level,
+        response_model=response_model,
+        session_allowlist=session_allowlist,
+    )
+    return schemas.DialecticResponse(content=response if response else None)

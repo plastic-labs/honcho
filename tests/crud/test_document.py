@@ -1006,6 +1006,46 @@ class TestDocumentCRUD:
         assert documents[0].content in ["Observation 1", "Observation 2"]
         assert documents[1].content in ["Observation 1", "Observation 2"]
 
+    @pytest.mark.asyncio
+    async def test_create_observations_embeds_with_truncate_on_oversize(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """API conclusion creates must opt into truncation on oversize content."""
+        test_workspace, test_peer = sample_data
+        test_peer2, test_session, _ = await self._setup_test_data(
+            db_session, test_workspace, test_peer
+        )
+
+        with patch(
+            "src.crud.document.embedding_client.simple_batch_embed",
+            new=AsyncMock(return_value=[[0.1] * 1536, [0.2] * 1536]),
+        ) as mock_embed:
+            created = await crud.create_observations(
+                db_session,
+                observations=[
+                    schemas.ConclusionCreate(
+                        content="short conclusion",
+                        observer_id=test_peer.name,
+                        observed_id=test_peer2.name,
+                        session_id=test_session.name,
+                    ),
+                    schemas.ConclusionCreate(
+                        content="another conclusion",
+                        observer_id=test_peer.name,
+                        observed_id=test_peer2.name,
+                        session_id=test_session.name,
+                    ),
+                ],
+                workspace_name=test_workspace.name,
+            )
+
+        assert len(created) == 2
+        mock_embed.assert_awaited_once_with(
+            ["short conclusion", "another conclusion"], on_oversize="truncate"
+        )
+
 
 class TestSessionPurityInvariant:
     """Regression tests for the explicit-document session-purity invariant.

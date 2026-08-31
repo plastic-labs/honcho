@@ -34,7 +34,7 @@ Honcho has a hierarchical data model centered around the entities below.
 
 Workspaces are the top-level containers in Honcho. They provide complete isolation between different applications or environments, essentially serving as a namespace to keep different workloads separate. You might use separate workspaces for development, staging, and production environments, or to isolate different product lines. They also enable multi-tenant SaaS applications where each customer gets their own isolated workspace with complete data separation.
 
-Authentication is scoped to the workspace level, and configuration settings can be applied workspace-wide to control behavior across all peers and sessions within that workspace.
+Authentication is issued at the workspace level, and configuration settings can be applied workspace-wide to control behavior across all peers and sessions within that workspace.
 
 ---
 
@@ -50,11 +50,13 @@ You can use peers for any entity that persists over time--individual users in ch
 
 ### <Icon icon="message" /> Sessions
 
-Sessions represent interaction threads or contexts between peers. A session can involve multiple peers and provides temporal boundaries for when a set of interactions starts and ends. This lets you scope context and memory to specific interactions while still maintaining longer-term peer representations that span sessions.
+Sessions represent interaction threads or contexts between peers. A session can involve multiple peers and provides temporal boundaries for when a set of interactions starts and ends. This lets you confine context and memory to specific interactions while still maintaining longer-term peer representations that span sessions.
 
-Use sessions to scope things like support tickets, meeting transcripts, learning sessions, or conversations. You can also use single-peer sessions as a way to import external data--create a session with just one peer and structure emails, documents, or files as messages to enrich that peer's representation.
+Use sessions for things like support tickets, meeting transcripts, learning sessions, or conversations. You can also use single-peer sessions as a way to import external data--create a session with just one peer and structure emails, documents, or files as messages to enrich that peer's representation.
 
 Session-level configuration gives you fine-grained control over perspective-taking behavior. You can configure whether a peer should form representations of other peers in the session, and whether other peers should form representations of them.
+
+Sessions are also the unit of visibility: when one peer's history spans contexts that shouldn't inform each other, you can group sessions into named [scopes](/v3/documentation/features/advanced/scopes) that bound recall to just those sessions.
 
 ---
 
@@ -84,7 +86,7 @@ Honcho runs as two cooperating processes: an **API server** that handles request
 
 **Write path (synchronous).** A message is stored and a reasoning task is enqueued in the same request; the API returns immediately. Nothing about the reasoning that follows blocks the caller.
 
-**Deriver + Summarizer (async, per-message).** The worker picks up queued tasks in small batches. The Deriver reads new messages and extracts conclusions about the peer--explicit statements and direct deductions. In parallel, the Summarizer periodically rolls up recent messages into short- and long-form session summaries. Both run per-message (well, per-batch) rather than on a schedule.
+**Deriver + Summarizer (async, per-message).** The worker picks up queued tasks. The Deriver reads new messages and extracts conclusions about the peer--explicit statements and direct deductions. In parallel, the Summarizer periodically rolls up recent messages into short- and long-form session summaries. Both run per-message rather than on a schedule.
 
 **Dreamer (periodic).** On a schedule (or triggered on demand), the Dreamer revisits existing conclusions to consolidate and deepen them: removing redundant or stale ones, drawing inductive conclusions across patterns that span multiple messages, and updating peer cards--compact biographical summaries of a peer. This is where memory gets richer over time, not just larger.
 

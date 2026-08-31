@@ -6,7 +6,7 @@ from sdks.python.src.honcho.client import Honcho
 from sdks.python.src.honcho.conclusions import (
     Conclusion,
     ConclusionCreateParams,
-    ConclusionScope,
+    ConclusionsView,
 )
 
 
@@ -34,7 +34,7 @@ async def test_observation_create_single(
 
         # Get observation scope for observer -> target
         obs_scope = observer.conclusions_of(target)
-        assert isinstance(obs_scope, ConclusionScope)
+        assert isinstance(obs_scope, ConclusionsView)
 
         # Create a single observation
         created = await obs_scope.aio.create(
@@ -68,7 +68,7 @@ async def test_observation_create_single(
 
         # Get observation scope for observer -> target
         obs_scope = observer.conclusions_of(target)
-        assert isinstance(obs_scope, ConclusionScope)
+        assert isinstance(obs_scope, ConclusionsView)
 
         # Create a single observation
         created = obs_scope.create(
@@ -422,7 +422,7 @@ async def test_self_observation_create(
 
         # Get self-observation scope
         obs_scope = peer.conclusions
-        assert isinstance(obs_scope, ConclusionScope)
+        assert isinstance(obs_scope, ConclusionsView)
         assert obs_scope.observer == peer.id
         assert obs_scope.observed == peer.id
 
@@ -443,7 +443,7 @@ async def test_self_observation_create(
 
         # Get self-observation scope
         obs_scope = peer.conclusions
-        assert isinstance(obs_scope, ConclusionScope)
+        assert isinstance(obs_scope, ConclusionsView)
         assert obs_scope.observer == peer.id
         assert obs_scope.observed == peer.id
 
@@ -796,7 +796,7 @@ async def test_list_rejects_reserved_scope_filter_keys(
         target = await honcho_client.aio.peer(id="test-obs-reserved-list-target")
         obs_scope = observer.conclusions_of(target)
         for key in reserved:
-            with pytest.raises(ValueError, match="managed by this conclusion scope"):
+            with pytest.raises(ValueError, match="managed by this conclusions view"):
                 await obs_scope.aio.list(filters={key: "someone-else"})
         # A non-reserved filter (level) is allowed through.
         await obs_scope.aio.list(filters={"level": "explicit"})
@@ -805,7 +805,7 @@ async def test_list_rejects_reserved_scope_filter_keys(
         target = honcho_client.peer(id="test-obs-reserved-list-target")
         obs_scope = observer.conclusions_of(target)
         for key in reserved:
-            with pytest.raises(ValueError, match="managed by this conclusion scope"):
+            with pytest.raises(ValueError, match="managed by this conclusions view"):
                 obs_scope.list(filters={key: "someone-else"})
         obs_scope.list(filters={"level": "explicit"})
 
@@ -827,7 +827,7 @@ async def test_query_rejects_reserved_scope_filter_keys(
         target = await honcho_client.aio.peer(id="test-obs-reserved-query-target")
         obs_scope = observer.conclusions_of(target)
         for key in reserved:
-            with pytest.raises(ValueError, match="managed by this conclusion scope"):
+            with pytest.raises(ValueError, match="managed by this conclusions view"):
                 await obs_scope.aio.query("q", filters={key: "someone-else"})
         # session_id is a normal filter for query (no dedicated param) — allowed.
         await obs_scope.aio.query("q", filters={"session_id": "some-session"})
@@ -836,6 +836,6 @@ async def test_query_rejects_reserved_scope_filter_keys(
         target = honcho_client.peer(id="test-obs-reserved-query-target")
         obs_scope = observer.conclusions_of(target)
         for key in reserved:
-            with pytest.raises(ValueError, match="managed by this conclusion scope"):
+            with pytest.raises(ValueError, match="managed by this conclusions view"):
                 obs_scope.query("q", filters={key: "someone-else"})
         obs_scope.query("q", filters={"session_id": "some-session"})

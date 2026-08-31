@@ -520,7 +520,9 @@ class TestRepresentationManagerSave:
             )
 
         assert len(saved.created_documents) == 1
-        mock_embed.assert_awaited_once_with(["useful observation"])
+        mock_embed.assert_awaited_once_with(
+            ["useful observation"], on_oversize="truncate"
+        )
         saved_observations = _saved_observations(mock_save)
         assert len(saved_observations) == 1
         assert saved_observations[0].content == "useful observation"
@@ -576,7 +578,9 @@ class TestRepresentationManagerSave:
             )
 
         assert len(saved.created_documents) == 1
-        mock_embed.assert_awaited_once_with(["inferred conclusion"])
+        mock_embed.assert_awaited_once_with(
+            ["inferred conclusion"], on_oversize="truncate"
+        )
         saved_observations = _saved_observations(mock_save)
         assert len(saved_observations) == 1
         assert isinstance(saved_observations[0], DeductiveObservation)
@@ -629,6 +633,61 @@ class TestRepresentationManagerSave:
         assert len(saved.created_documents) == 0
         mock_embed.assert_not_awaited()
         mock_save.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_save_representation_embeds_with_truncate_on_oversize(self):
+        """One oversize observation must not drop the rest of the batch."""
+        manager = RepresentationManager(
+            "workspace",
+            observer="observer",
+            observed="observed",
+        )
+        representation = Representation(
+            explicit=[
+                ExplicitObservation(
+                    content="short fact",
+                    created_at=datetime.now(timezone.utc),
+                    message_ids=[1],
+                    session_name="session",
+                )
+            ],
+            deductive=[
+                DeductiveObservation(
+                    conclusion="inferred fact",
+                    premises=["premise"],
+                    source_ids=["doc-a"],
+                    created_at=datetime.now(timezone.utc),
+                    message_ids=[1],
+                    session_name="session",
+                )
+            ],
+        )
+
+        with (
+            patch("src.crud.representation.tracked_db", _fake_tracked_db),
+            patch(
+                "src.crud.representation.embedding_client.simple_batch_embed",
+                new=AsyncMock(return_value=[[0.1], [0.2]]),
+            ) as mock_embed,
+            patch.object(
+                manager,
+                "_save_representation_internal",
+                new=AsyncMock(
+                    return_value=CreateDocumentsResult(created_documents=[MagicMock()])
+                ),
+            ),
+        ):
+            await manager.save_representation(
+                representation,
+                message_ids=[1],
+                session_name="session",
+                message_created_at=datetime.now(timezone.utc),
+                message_level_configuration=_resolved_config(),
+            )
+
+        mock_embed.assert_awaited_once_with(
+            ["inferred fact", "short fact"], on_oversize="truncate"
+        )
 
 
 class TestVectorQueryTopKFloor:
@@ -698,3 +757,48 @@ class TestVectorQueryTopKFloor:
             top_k = mock_query.await_args.kwargs["top_k"]
             assert top_k >= 1, f"max_observations={max_observations} gave top_k={top_k}"
             assert top_k <= max_observations
+
+    @pytest.mark.asyncio
+    async def test_search_messages_external_returns_empty_without_querying_on_zero_limit(
+        self,
+    ):
+        """Message vector search is the remaining path that still hit Turbopuffer."""
+        from src.crud import message as message_crud
+
+        with patch(
+            "src.crud.message.get_external_vector_store",
+            return_value=AsyncMock(),
+        ) as mock_get_store:
+            for limit in (0, -1):
+                assert (
+                    await message_crud._search_messages_external(  # pyright: ignore[reportPrivateUsage]
+                        "workspace",
+                        [0.1, 0.2, 0.3],
+                        limit,
+                    )
+                    == []
+                )
+
+        mock_get_store.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_query_external_vector_message_ids_skips_store_on_zero_limit(
+        self,
+    ):
+        from src.utils import search as search_utils
+
+        with patch(
+            "src.utils.search.get_external_vector_store",
+            return_value=AsyncMock(),
+        ) as mock_get_store:
+            for limit in (0, -1):
+                assert (
+                    await search_utils.query_external_vector_message_ids(
+                        "workspace",
+                        [0.1, 0.2, 0.3],
+                        limit,
+                    )
+                    == []
+                )
+
+        mock_get_store.assert_not_called()
