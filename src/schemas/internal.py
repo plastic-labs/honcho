@@ -4,13 +4,13 @@ These are not part of the public API contract and may change without notice.
 """
 
 from enum import Enum
-from typing import Annotated, Any, Literal, Self
+from typing import Annotated, Literal, Self
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 from src.schemas.api import MessageCreate
 from src.schemas.configuration import SessionPeerConfig
-from src.utils.sanitization import strip_nul
+from src.utils.sanitization import NulStripped
 from src.utils.types import DocumentLevel
 
 
@@ -60,7 +60,7 @@ class DocumentMetadata(BaseModel):
 
 
 class DocumentCreate(DocumentBase):
-    content: Annotated[str, Field(min_length=1, max_length=100000)]
+    content: Annotated[str, Field(min_length=1, max_length=100000), NulStripped]
     session_name: str | None = Field(
         default=None,
         description="The session from which the document was derived (NULL for global observations)",
@@ -82,23 +82,11 @@ class DocumentCreate(DocumentBase):
         description="Document IDs of source/premise documents -- for deductive and inductive documents",
     )
 
-    @field_validator("content", mode="before")
-    @classmethod
-    def sanitize_content(cls, v: Any) -> Any:
-        """Strip NUL bytes, which Postgres rejects in text columns.
-
-        Callers are expected to have normalized already so that the embedded
-        text matches the stored text; this is the last line of defence. It runs
-        before the length constraint so all-NUL content fails `min_length`
-        instead of being stored as an empty string.
-        """
-        return strip_nul(v) if isinstance(v, str) else v
-
 
 class ObservationInput(BaseModel):
     """Validated observation input from LLM tool calls."""
 
-    content: Annotated[str, Field(min_length=1)]
+    content: Annotated[str, Field(min_length=1), NulStripped]
     level: DocumentLevel = "explicit"
     source_ids: list[str] | None = None
     premises: list[str] | None = None
@@ -108,17 +96,6 @@ class ObservationInput(BaseModel):
         | None
     ) = None
     confidence: Literal["high", "medium", "low"] | None = None
-
-    @field_validator("content", mode="before")
-    @classmethod
-    def sanitize_content(cls, v: Any) -> Any:
-        """Strip NUL bytes, which Postgres rejects in text columns.
-
-        Runs before the length constraint so all-NUL content fails
-        `min_length` and is reported back to the model as a validation
-        failure, rather than validating into an empty string.
-        """
-        return strip_nul(v) if isinstance(v, str) else v
 
     @model_validator(mode="after")
     def validate_level_fields(self) -> Self:
