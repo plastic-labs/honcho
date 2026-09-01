@@ -206,6 +206,9 @@ honcho.set_metadata(dict)
 
 # Get list of all workspace IDs
 workspaces = honcho.workspaces()
+
+# Delete a workspace and everything in it (requires no active sessions)
+honcho.delete_workspace(workspace_id)
 ```
 
 ```typescript TypeScript
@@ -238,6 +241,9 @@ await honcho.setMetadata(metadata);
 
 // Get list of all workspace IDs
 const workspaces = await honcho.workspaces();
+
+// Delete a workspace and everything in it (requires no active sessions)
+await honcho.deleteWorkspace(workspaceId);
 ```
 </CodeGroup>
 
