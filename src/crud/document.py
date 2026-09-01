@@ -1296,6 +1296,7 @@ async def _apply_document_row_updates(
     """Lock target rows by id, apply ops, return fallbacks for vanished targets."""
     if not ops:
         return []
+    # Deadlock fix: lock in id order (IN-clause order is ignored).
     ids = sorted({op.document_id for op in ops})
     result = await db.execute(
         select(models.Document)
@@ -1307,11 +1308,18 @@ async def _apply_document_row_updates(
         )
         .order_by(models.Document.id)
         .with_for_update()
+        # Reload identity-map rows so the Python max() sees concurrent increments.
         .execution_options(populate_existing=True)
     )
     locked = {doc.id: doc for doc in result.scalars()}
-    now = datetime.datetime.now(datetime.timezone.utc)
+    now = datetime.datetime.now(datetime.UTC)
     fallbacks: list[schemas.DocumentCreate] = []
+    stale_at_lock = {
+        op.document_id
+        for op in ops
+        if (locked_row := locked.get(op.document_id)) is None
+        or locked_row.deleted_at is not None
+    }
     for op in ops:
         row = locked.get(op.document_id)
         if op.kind == "replace":
@@ -1319,9 +1327,12 @@ async def _apply_document_row_updates(
                 row.deleted_at = now
             continue
         # reinforce
-        if row is None or row.deleted_at is not None:
+        if op.document_id in stale_at_lock:
             if op.fallback_document is not None:
                 fallbacks.append(op.fallback_document)
+            continue
+        if row is None or row.deleted_at is not None:
+            # An earlier op in this batch replaced this row.
             continue
         row.times_derived = max(row.times_derived + 1, op.incoming_times_derived)
     await db.flush()
@@ -1417,7 +1428,7 @@ async def is_rejected_duplicate(
             existing_doc.content,
         )
         doc.times_derived = max(doc.times_derived, existing_doc.times_derived + 1)
-        existing_doc.deleted_at = datetime.datetime.now(datetime.timezone.utc)
+        existing_doc.deleted_at = datetime.datetime.now(datetime.UTC)
         await db.flush()
         return result
     existing_doc.times_derived = func.greatest(
@@ -1455,7 +1466,7 @@ async def cleanup_soft_deleted_documents(
     Returns:
         Count of documents cleaned up (only those where vector deletion succeeded).
     """
-    cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(
+    cutoff = datetime.datetime.now(datetime.UTC) - datetime.timedelta(
         minutes=older_than_minutes
     )
 

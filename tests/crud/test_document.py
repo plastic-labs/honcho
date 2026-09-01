@@ -198,7 +198,7 @@ class TestDocumentCRUD:
         deleted_doc = docs["User likes pizza"]
         kept_doc = docs["User dislikes vegetables"]
 
-        deleted_doc.deleted_at = datetime.datetime.now(datetime.timezone.utc)
+        deleted_doc.deleted_at = datetime.datetime.now(datetime.UTC)
         await db_session.commit()
 
         results = await crud.query_documents(
@@ -293,7 +293,7 @@ class TestDocumentCRUD:
             db_session, test_workspace, test_peer
         )
 
-        base = datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc)
+        base = datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC)
         # Three conclusions, all reinforced once -- the real-world steady state
         # before the fix -- inserted oldest-first.
         for i in range(3):
@@ -1770,7 +1770,7 @@ class TestCreateDocumentsErrorHandling:
         real_apply = document_module._apply_document_row_updates  # pyright: ignore[reportPrivateUsage]
 
         async def delete_then_apply(*args: Any, **kwargs: Any) -> Any:
-            existing.deleted_at = datetime.datetime.now(datetime.timezone.utc)
+            existing.deleted_at = datetime.datetime.now(datetime.UTC)
             await db_session.flush()
             return await real_apply(*args, **kwargs)
 
@@ -1805,6 +1805,76 @@ class TestCreateDocumentsErrorHandling:
         assert len(live) == 1
         assert live[0].id != existing.id
         assert live[0].content == "shared fact"
+
+    @pytest.mark.asyncio
+    async def test_same_batch_replace_then_reinforce_does_not_resurrect(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """A reinforce after a same-batch replace must not insert the inferior copy."""
+        from src.crud import document as document_module
+
+        test_workspace, test_peer = sample_data
+        test_peer2, test_session = await self._setup(
+            db_session, test_workspace, test_peer
+        )
+        workspace_name = test_workspace.name
+        observer = test_peer.name
+        observed = test_peer2.name
+        session_name = test_session.name
+
+        await crud.create_documents(
+            db_session,
+            [self._doc("shared fact", session_name)],
+            workspace_name=workspace_name,
+            observer=observer,
+            observed=observed,
+        )
+        existing = (
+            await db_session.execute(
+                select(models.Document).where(
+                    models.Document.workspace_name == workspace_name,
+                    models.Document.observer == observer,
+                    models.Document.observed == observed,
+                    models.Document.deleted_at.is_(None),
+                )
+            )
+        ).scalar_one()
+
+        fallback = self._doc("shared fact", session_name)
+        ops = [
+            document_module._DocumentRowOp("replace", existing.id),  # pyright: ignore[reportPrivateUsage]
+            document_module._DocumentRowOp(  # pyright: ignore[reportPrivateUsage]
+                "reinforce",
+                existing.id,
+                fallback_document=fallback,
+            ),
+        ]
+        fallbacks = await document_module._apply_document_row_updates(  # pyright: ignore[reportPrivateUsage]
+            db_session,
+            ops,
+            workspace_name=workspace_name,
+            observer=observer,
+            observed=observed,
+        )
+        assert fallbacks == []
+        await db_session.commit()
+        live = (
+            (
+                await db_session.execute(
+                    select(models.Document).where(
+                        models.Document.workspace_name == workspace_name,
+                        models.Document.observer == observer,
+                        models.Document.observed == observed,
+                        models.Document.deleted_at.is_(None),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert live == []
 
 
 class TestExternalCandidateHoist:

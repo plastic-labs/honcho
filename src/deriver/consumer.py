@@ -44,7 +44,9 @@ logging.getLogger("sqlalchemy.engine.Engine").disabled = True
 async def process_item(queue_item: models.QueueItem) -> None:
     """Process a single item from the queue."""
     task_type = queue_item.task_type
-    queue_payload = queue_item.payload
+    # Drop the work-unit retry counter before payload validation.
+    queue_payload = dict(queue_item.payload or {})
+    queue_payload.pop("_retry_attempts", None)
     workspace_name = queue_item.workspace_name
 
     # Handle reconciler first - it's the only task type that doesn't require workspace_name

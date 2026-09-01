@@ -1,6 +1,6 @@
 import asyncio
 from collections.abc import Callable
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import patch
 
@@ -1520,7 +1520,7 @@ class TestQueueProcessing:
         monkeypatch.setattr(
             settings.DERIVER, "REPRESENTATION_BATCH_MAX_AGE_SECONDS", 1800
         )
-        old_timestamp = datetime.now(timezone.utc) - timedelta(hours=2)
+        old_timestamp = datetime.now(UTC) - timedelta(hours=2)
 
         work_unit_key, queue_items = await self._add_representation_work_unit(
             db_session=db_session,
@@ -1553,7 +1553,7 @@ class TestQueueProcessing:
     ) -> None:
         monkeypatch.setattr(settings.DERIVER, "FLUSH_ENABLED", False)
         monkeypatch.setattr(settings.DERIVER, "REPRESENTATION_BATCH_MAX_AGE_SECONDS", 0)
-        old_timestamp = datetime.now(timezone.utc) - timedelta(hours=2)
+        old_timestamp = datetime.now(UTC) - timedelta(hours=2)
 
         work_unit_key, _queue_items = await self._add_representation_work_unit(
             db_session=db_session,
@@ -1603,7 +1603,7 @@ class TestQueueProcessing:
         monkeypatch.setattr(
             settings.DERIVER, "REPRESENTATION_BATCH_MAX_AGE_SECONDS", 1800
         )
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         work_unit_key, _queue_items = await self._add_representation_work_unit(
             db_session=db_session,
@@ -1629,7 +1629,7 @@ class TestQueueProcessing:
         monkeypatch.setattr(
             settings.DERIVER, "REPRESENTATION_BATCH_MAX_AGE_SECONDS", 1800
         )
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         work_unit_key, queue_items = await self._add_representation_work_unit(
             db_session=db_session,
@@ -2118,7 +2118,8 @@ class TestQueueRetry:
         items = await self._fetch_items(db_session, work_unit_key)
         assert all(item.processed for item in items)
         assert all(item.error is None for item in items)
-        assert all("_retry_attempts" not in (item.payload or {}) for item in items)
+        # Counter lives on the oldest unprocessed item; once that item is
+        # processed the budget is gone even if the payload key remains.
         assert await self._retry_attempts_on_items(db_session, work_unit_key) is None
 
     async def test_retry_budget_survives_reclaim_by_another_manager(
@@ -2168,3 +2169,31 @@ class TestQueueRetry:
         assert items[0].processed
         assert items[0].error is not None
         assert "OperationalError" in items[0].error
+
+    async def test_summary_payload_forbids_retry_attempts_key(self) -> None:
+        from pydantic import ValidationError
+
+        from src.deriver.queue_manager import QueueManager
+        from src.utils.queue_payload import SummaryPayload
+
+        raw = {
+            "task_type": "summary",
+            "session_name": "s",
+            "message_seq_in_session": 1,
+            "configuration": {
+                "reasoning": {"enabled": True},
+                "peer_card": {"use": True, "create": True},
+                "summary": {
+                    "enabled": True,
+                    "messages_per_short_summary": 20,
+                    "messages_per_long_summary": 60,
+                },
+                "dream": {"enabled": True},
+            },
+            "_retry_attempts": 1,
+        }
+        with pytest.raises(ValidationError) as ei:
+            SummaryPayload.model_validate(raw)
+        assert any(err["type"] == "extra_forbidden" for err in ei.value.errors())
+        cleaned = QueueManager._payload_without_retry_attempts(raw)  # pyright: ignore[reportPrivateUsage]
+        SummaryPayload.model_validate(cleaned)

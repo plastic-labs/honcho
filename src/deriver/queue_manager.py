@@ -6,7 +6,7 @@ import time
 from asyncio import Task
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from logging import getLogger
 from typing import Any, NamedTuple, cast
 
@@ -309,7 +309,7 @@ class QueueManager:
     async def cleanup_stale_work_units(self) -> None:
         """Clean up stale work units"""
         async with tracked_db("cleanup_stale_work_units") as db:
-            cutoff = datetime.now(timezone.utc) - timedelta(
+            cutoff = datetime.now(UTC) - timedelta(
                 minutes=settings.DERIVER.STALE_SESSION_TIMEOUT_MINUTES
             )
 
@@ -608,8 +608,11 @@ class QueueManager:
         attempts per work unit: items stay unprocessed with no error recorded.
         The attempt count lives on the oldest unprocessed queue item so a
         different deriver instance continues the same budget after reclaim.
-        Reprocessing is safe because a retried batch re-derives the same
-        observations and exact dedup collapses them into reinforcement.
+        Reprocessing is at-least-once, not idempotent: the batch is re-derived
+        by a fresh LLM call, so identical text collapses via exact dedup and
+        near-identical text via semantic dedup. Retries can therefore inflate
+        times_derived and double-count LLM telemetry -- acceptable because the
+        alternative is dropping the batch.
 
         Terminal errors mark only the first queue item as errored so we don't
         potentially throw away a batch. This allows us to incrementally attempt
@@ -622,16 +625,24 @@ class QueueManager:
             context: Context string describing what was being processed (e.g., "processing representation batch")
         """
         if is_retryable_error(error):
-            attempts = await self._get_work_unit_retry_attempts(work_unit_key) + 1
-            if attempts < MAX_RETRYABLE_ATTEMPTS:
-                await self._set_work_unit_retry_attempts(work_unit_key, attempts)
-                logger.warning(
-                    "Transient error %s for work unit %s (attempt %d/%d); leaving items unprocessed for retry",
-                    context,
+            try:
+                attempts = await self._get_work_unit_retry_attempts(work_unit_key) + 1
+                if attempts < MAX_RETRYABLE_ATTEMPTS:
+                    await self._set_work_unit_retry_attempts(work_unit_key, attempts)
+                    logger.warning(
+                        "Transient error %s for work unit %s (attempt %d/%d); leaving items unprocessed for retry",
+                        context,
+                        work_unit_key,
+                        attempts,
+                        MAX_RETRYABLE_ATTEMPTS,
+                        exc_info=error,
+                    )
+                    return True
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "Retry-counter I/O failed for work unit %s; releasing %s without recording an attempt",
                     work_unit_key,
-                    attempts,
-                    MAX_RETRYABLE_ATTEMPTS,
-                    exc_info=error,
+                    context,
                 )
                 return True
 
@@ -720,9 +731,6 @@ class QueueManager:
                                 await self.mark_queue_items_as_processed(
                                     items_to_process, work_unit_key
                                 )
-                                await self._clear_work_unit_retry_attempts(
-                                    work_unit_key
-                                )
                                 queue_item_count += len(items_to_process)
                             except Exception as e:
                                 if await self._handle_processing_error(
@@ -752,9 +760,6 @@ class QueueManager:
                                 await process_item(queue_item)
                                 await self.mark_queue_items_as_processed(
                                     [queue_item], work_unit_key
-                                )
-                                await self._clear_work_unit_retry_attempts(
-                                    work_unit_key
                                 )
                                 queue_item_count += 1
                             except Exception as e:
@@ -1211,23 +1216,12 @@ class QueueManager:
         async with tracked_db("process_queue_item_batch") as db:
             work_unit = parse_work_unit_key(work_unit_key)
             item_ids = [item.id for item in items]
-            result = await db.execute(
-                select(models.QueueItem)
+            await db.execute(
+                update(models.QueueItem)
                 .where(models.QueueItem.id.in_(item_ids))
                 .where(models.QueueItem.work_unit_key == work_unit_key)
-                .with_for_update()
+                .values(processed=True)
             )
-            for queue_item in result.scalars():
-                await db.execute(
-                    update(models.QueueItem)
-                    .where(models.QueueItem.id == queue_item.id)
-                    .values(
-                        processed=True,
-                        payload=self._payload_without_retry_attempts(
-                            queue_item.payload
-                        ),
-                    )
-                )
             await db.execute(
                 update(models.ActiveQueueSession)
                 .where(models.ActiveQueueSession.work_unit_key == work_unit_key)
@@ -1253,24 +1247,11 @@ class QueueManager:
         if not item:
             return
         async with tracked_db("mark_queue_item_as_errored") as db:
-            result = await db.execute(
-                select(models.QueueItem)
-                .where(models.QueueItem.id == item.id)
-                .where(models.QueueItem.work_unit_key == work_unit_key)
-                .with_for_update()
-            )
-            queue_item = result.scalar_one_or_none()
-            if queue_item is None:
-                await db.commit()
-                return
             await db.execute(
                 update(models.QueueItem)
-                .where(models.QueueItem.id == queue_item.id)
-                .values(
-                    processed=True,
-                    error=error[:65535],  # Truncate to TEXT limit
-                    payload=self._payload_without_retry_attempts(queue_item.payload),
-                )
+                .where(models.QueueItem.id == item.id)
+                .where(models.QueueItem.work_unit_key == work_unit_key)
+                .values(processed=True, error=error[:65535])  # Truncate to TEXT limit
             )
             await db.execute(
                 update(models.ActiveQueueSession)
