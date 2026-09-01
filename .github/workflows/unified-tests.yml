@@ -148,11 +148,16 @@ jobs:
       - name: Verify Docker is available
         run: docker info
 
+      # Self-hosted Fly runner only has system 3.12; fetch .python-version via uv.
+      - name: Install Python
+        run: uv python install
+
       - name: Verify uv and Python
         run: |
           uv --version
-          python3.13 --version
-          which python3.13
+          PYTHON_BIN="$(uv python find)"
+          "$PYTHON_BIN" --version
+          echo "Using $PYTHON_BIN"
 
       - name: Install the project
         run: uv sync --all-extras
