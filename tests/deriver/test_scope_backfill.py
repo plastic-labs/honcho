@@ -1119,14 +1119,40 @@ async def test_backfill_embeds_and_writes_in_bounded_chunks(
     await db_session.commit()
 
     batch_sizes: list[int] = []
-    original = embedding_client.simple_batch_embed
+    seen_specs: list[scope_backfill._CopySpec] = []  # pyright: ignore[reportPrivateUsage]
+    peak_live_embeddings = 0
+    original_embed = embedding_client.simple_batch_embed
+    original_copy_chunk = scope_backfill._copy_chunk  # pyright: ignore[reportPrivateUsage]
 
     async def recording_embed(texts: list[str], **kwargs: Any) -> list[list[float]]:
         batch_sizes.append(len(texts))
-        return await original(texts, **kwargs)
+        return await original_embed(texts, **kwargs)
+
+    async def counting_copy_chunk(
+        ws_name: str,
+        peer_name: str,
+        sess_name: str,
+        plans: list[scope_backfill._CopySpec],  # pyright: ignore[reportPrivateUsage]
+        store_in_postgres: bool,
+    ) -> bool:
+        nonlocal peak_live_embeddings
+        seen_specs.extend(plans)
+        result = await original_copy_chunk(
+            ws_name, peer_name, sess_name, plans, store_in_postgres
+        )
+        # Sampled after this chunk syncs but before _run_backfill drops its
+        # vectors, so every *earlier* chunk must already be cleared and the
+        # live count can never exceed one chunk. That drop is the whole
+        # memory bound; without it this peaks at 3 instead of 2.
+        peak_live_embeddings = max(
+            peak_live_embeddings,
+            sum(1 for spec in seen_specs if spec.embedding is not None),
+        )
+        return result
 
     monkeypatch.setattr(scope_backfill, "BACKFILL_CHUNK_SIZE", 2)
     monkeypatch.setattr(embedding_client, "simple_batch_embed", recording_embed)
+    monkeypatch.setattr(scope_backfill, "_copy_chunk", counting_copy_chunk)
 
     await process_scope_backfill(
         ScopeBackfillPayload(scope_peer=scope_peer.name, session_name=session.name),
@@ -1134,6 +1160,7 @@ async def test_backfill_embeds_and_writes_in_bounded_chunks(
     )
 
     assert batch_sizes == [2, 1]
+    assert peak_live_embeddings == 2
     copies = await _get_docs(
         db_session, workspace_name, observer=scope_peer.name, observed=sender.name
     )
