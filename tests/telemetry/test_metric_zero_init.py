@@ -131,6 +131,17 @@ def test_deriver_token_combos_are_valid_and_complete():
     ) not in ingestion
 
 
+# ai: API-only; a deriver-exported 0 would read as "no work" on a series it never measures. message_embeddings_pending is absent because both processes report it
+_API_DERIVER_METRIC_GAUGES = (
+    "deriver_outstanding_work_seconds",
+    "deriver_queue_work_units_eligible",
+    "deriver_queue_work_units_claimed",
+    "deriver_queue_items_pending",
+    "deriver_queue_oldest_pending_age_seconds",
+    "dreams_due",
+)
+
+
 # ---------------------------------------------------------------------------
 # API-process zero-init
 # ---------------------------------------------------------------------------
@@ -161,6 +172,8 @@ def test_api_init_materializes_dialectic_and_embed():
             )
     assert sample("embed_now_tasks_shed_total") is not None
     assert sample("embed_now_tasks_in_flight") == 0.0  # gauge, explicit .set(0)
+    for gauge in _API_DERIVER_METRIC_GAUGES:
+        assert sample(gauge) == 0.0, f"{gauge} was not zero-initialized"
 
 
 @pytest.mark.usefixtures("metrics_enabled")
@@ -310,6 +323,9 @@ def test_deriver_init_does_not_touch_api_counters():
     # the API-process embed_now counters are equally off-limits
     assert sample("embed_now_tasks_shed_total") is None
     assert sample("embed_now_tasks_in_flight") is None
+    # so are the deriver-work gauges: the deriver never measures its own backlog
+    for gauge in _API_DERIVER_METRIC_GAUGES:
+        assert sample(gauge) is None, f"{gauge} must be API-only"
 
 
 # ---------------------------------------------------------------------------
