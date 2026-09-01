@@ -68,15 +68,18 @@ claude mcp add honcho \
 
 ## CLI
 
-Inspect and debug a running Honcho deployment from your terminal. The honcho CLI wraps the Python SDK with agent-friendly defaults — JSON output, structured errors, and commands for every primitive (workspaces, peers, sessions, messages, conclusions).
+Inspect and debug a running Honcho deployment from your terminal, or run a personal local stack. The honcho CLI wraps the Python SDK with agent-friendly defaults — JSON output, structured errors, and commands for every primitive (workspaces, peers, sessions, messages, conclusions).
 
 **Get started:**
 
 ```bash
 uv tool install honcho-cli
-honcho init      # configure apiKey + environmentUrl
-honcho doctor    # verify connectivity
+honcho init                  # Honcho API key / browser login (talk *to* a server)
+honcho start --setup basic   # local stack: LLM provider key + Docker
+honcho doctor                # verify connectivity
 ```
+
+`honcho start --setup` pulls the published GHCR image — no clone required. It does not rewrite `environmentUrl` in the shared config file; prefix commands with `HONCHO_BASE_URL=http://127.0.0.1:8000` to talk to local.
 
 The CLI also ships an agent skill. Install it with `npx skills add plastic-labs/honcho` and pick `honcho-cli` from the list.
 
@@ -147,7 +150,7 @@ Invoke with `/honcho-integration` in your coding agent.
 
 #### honcho-cli
 
-**For inspection & debugging.** Teaches your coding agent the right commands and flags for the [honcho CLI](#cli) — peer memory, session context, queue status, dialectic quality.
+**For inspection & debugging, and for running a local stack.** Teaches your coding agent the right commands and flags for the [honcho CLI](#cli) — peer memory, session context, queue status, dialectic quality, `honcho start` / `status` / `stop`.
 
 Invoke implicitly when you ask your agent to inspect a Honcho deployment.
 
@@ -170,7 +173,7 @@ I want to start building with Honcho - an open source memory library for buildin
 - Core repo: https://github.com/plastic-labs/honcho
 - Python SDK: https://github.com/plastic-labs/honcho-python
 - TypeScript SDK: https://github.com/plastic-labs/honcho-node
-- CLI (inspect & debug a deployment): https://github.com/plastic-labs/honcho/tree/main/honcho-cli
+- CLI (inspect, debug, or `honcho start` a local stack): https://github.com/plastic-labs/honcho/tree/main/honcho-cli
 - Discord bot starter: https://github.com/plastic-labs/discord-python-starter
 - Telegram bot example: https://github.com/plastic-labs/telegram-python-starter
 

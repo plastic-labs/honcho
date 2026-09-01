@@ -6,10 +6,11 @@ These are not part of the public API contract and may change without notice.
 from enum import Enum
 from typing import Annotated, Literal, Self
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 from src.schemas.api import MessageCreate
 from src.schemas.configuration import SessionPeerConfig
+from src.utils.sanitization import NulStripped
 from src.utils.types import DocumentLevel
 
 
@@ -59,7 +60,7 @@ class DocumentMetadata(BaseModel):
 
 
 class DocumentCreate(DocumentBase):
-    content: Annotated[str, Field(min_length=1, max_length=100000)]
+    content: Annotated[str, Field(min_length=1, max_length=100000), NulStripped]
     session_name: str | None = Field(
         default=None,
         description="The session from which the document was derived (NULL for global observations)",
@@ -85,7 +86,7 @@ class DocumentCreate(DocumentBase):
 class ObservationInput(BaseModel):
     """Validated observation input from LLM tool calls."""
 
-    content: Annotated[str, Field(min_length=1)]
+    content: Annotated[str, Field(min_length=1), NulStripped]
     level: DocumentLevel = "explicit"
     source_ids: list[str] | None = None
     premises: list[str] | None = None
@@ -95,11 +96,6 @@ class ObservationInput(BaseModel):
         | None
     ) = None
     confidence: Literal["high", "medium", "low"] | None = None
-
-    @field_validator("content", mode="after")
-    @classmethod
-    def sanitize_content(cls, v: str) -> str:
-        return v.replace("\x00", "")
 
     @model_validator(mode="after")
     def validate_level_fields(self) -> Self:

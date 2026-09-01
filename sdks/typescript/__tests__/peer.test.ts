@@ -671,7 +671,7 @@ describe('Peer', () => {
   // ===========================================================================
 
   describe('Conclusion scope access', () => {
-    test('conclusions property returns ConclusionScope for self', async () => {
+    test('conclusions property returns ConclusionsView for self', async () => {
       const peer = await client.peer('self-conclusions-peer')
 
       const scope = peer.conclusions
@@ -681,7 +681,7 @@ describe('Peer', () => {
       expect(scope.workspaceId).toBe(client.workspaceId)
     })
 
-    test('conclusionsOf returns ConclusionScope for target', async () => {
+    test('conclusionsOf returns ConclusionsView for target', async () => {
       const observer = await client.peer('obs-conclusions-peer')
       const target = await client.peer('target-conclusions-peer')
 

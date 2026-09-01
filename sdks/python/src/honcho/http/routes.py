@@ -16,6 +16,10 @@ def workspace(workspace_id: str) -> str:
     return f"/{API_VERSION}/workspaces/{workspace_id}"
 
 
+def workspace_chat(workspace_id: str) -> str:
+    return f"/{API_VERSION}/workspaces/{workspace_id}/chat"
+
+
 def workspace_search(workspace_id: str) -> str:
     return f"/{API_VERSION}/workspaces/{workspace_id}/search"
 
@@ -100,6 +104,31 @@ def session_peers(workspace_id: str, session_id: str) -> str:
 
 def session_peer_config(workspace_id: str, session_id: str, peer_id: str) -> str:
     return f"/{API_VERSION}/workspaces/{workspace_id}/sessions/{session_id}/peers/{peer_id}/config"
+
+
+# Scope routes
+def scopes(workspace_id: str) -> str:
+    return f"/{API_VERSION}/workspaces/{workspace_id}/scopes"
+
+
+def scopes_list(workspace_id: str) -> str:
+    return f"/{API_VERSION}/workspaces/{workspace_id}/scopes/list"
+
+
+def scope_sessions(workspace_id: str, scope_id: str) -> str:
+    return f"/{API_VERSION}/workspaces/{workspace_id}/scopes/{scope_id}/sessions"
+
+
+def scope_sessions_list(workspace_id: str, scope_id: str) -> str:
+    return f"/{API_VERSION}/workspaces/{workspace_id}/scopes/{scope_id}/sessions/list"
+
+
+def scope_session(workspace_id: str, scope_id: str, session_id: str) -> str:
+    return f"/{API_VERSION}/workspaces/{workspace_id}/scopes/{scope_id}/sessions/{session_id}"
+
+
+def scope_status(workspace_id: str, scope_id: str) -> str:
+    return f"/{API_VERSION}/workspaces/{workspace_id}/scopes/{scope_id}/status"
 
 
 # Message routes

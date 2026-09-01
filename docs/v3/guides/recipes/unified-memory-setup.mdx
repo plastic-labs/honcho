@@ -109,8 +109,9 @@ and `aiPeer` there. See the [Hermes guide](/v3/guides/integrations/hermes) for t
 
 A scheduled job feeds external data (emails, meeting notes, CRM records) into Honcho.
 Attribute the messages to the peer the data is *about* — not to an agent — and group
-them into a session. **How you scope that session is the main decision here**, because
-it controls when Honcho reasons over the data (more on that below).
+them into a session. Match the session to how you want that import's local context
+to accumulate: a per-run session like `email-import-{date}`, or one ongoing
+per-source session like `email-import-gmail`.
 
 ```python
 from datetime import datetime, timezone
@@ -130,18 +131,6 @@ messages = [
 for i in range(0, len(messages), 100):
     session.add_messages(messages[i:i + 100])
 ```
-
-Honcho batches reasoning until a peer accumulates ~1,000 tokens *within a single session*,
-with a default age-based flush for quiet tails
-([token batching](/v3/documentation/core-concepts/reasoning#token-batching)). Scope the
-session to the volume you ingest:
-
-- **High-volume runs** (a day of emails, a CRM export) clear the threshold easily — a
-  per-run session like `email-import-{date}` is fine.
-- **Low-volume or trickle imports** (a few short records at a time) should append to
-  one **ongoing per-source session** (e.g. `email-import-gmail`), so content
-  accumulates across runs instead of fragmenting into thin sessions that each flush
-  later with little context.
 
 The [Gmail](/v3/guides/gmail) and [Granola](/v3/guides/granola) guides are related
 import examples.

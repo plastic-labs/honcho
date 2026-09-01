@@ -30,12 +30,12 @@ from typing import Any
 
 from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import array
+from sqlalchemy.orm import load_only
 from sqlalchemy.sql.functions import func
 
 from src import crud, models
 from src.config import settings
 from src.crud.scope import ScopeBackfillState
-from src.crud.session import is_peer_in_session
 from src.dependencies import tracked_db
 from src.embedding_client import embedding_client
 from src.schemas import DreamType
@@ -48,6 +48,10 @@ logger = logging.getLogger(__name__)
 # internal_metadata key linking a backfilled copy to the global document it
 # was copied from. The presence of this key is the idempotency marker.
 COPIED_FROM_KEY = "copied_from"
+
+# Specs embedded, written, and synced per pass. Bounds the live embeddings
+# (~40KB each as Python floats) so a large session cannot OOM the deriver.
+BACKFILL_CHUNK_SIZE = 500
 
 
 def _store_embeddings_in_postgres() -> bool:
@@ -173,7 +177,23 @@ async def _run_backfill(
     plans: list[_CopySpec] = []
     async with tracked_db("scope_backfill.plan") as db:
         source_result = await db.execute(
-            select(models.Document).where(
+            select(models.Document)
+            .options(
+                load_only(
+                    models.Document.id,
+                    models.Document.workspace_name,
+                    models.Document.observer,
+                    models.Document.observed,
+                    models.Document.content,
+                    models.Document.level,
+                    models.Document.times_derived,
+                    models.Document.internal_metadata,
+                    models.Document.session_name,
+                    models.Document.source_ids,
+                    models.Document.deleted_at,
+                )
+            )
+            .where(
                 models.Document.workspace_name == workspace_name,
                 models.Document.session_name == session_name,
                 models.Document.level == "explicit",
@@ -196,7 +216,19 @@ async def _run_backfill(
         # by (observed, copied_from). Includes soft-deleted rows: those are
         # restore candidates, not blockers.
         copies_result = await db.execute(
-            select(models.Document).where(
+            select(models.Document)
+            .options(
+                load_only(
+                    models.Document.id,
+                    models.Document.workspace_name,
+                    models.Document.observer,
+                    models.Document.observed,
+                    models.Document.session_name,
+                    models.Document.internal_metadata,
+                    models.Document.deleted_at,
+                )
+            )
+            .where(
                 models.Document.workspace_name == workspace_name,
                 models.Document.observer == scope_peer,
                 models.Document.session_name == session_name,
@@ -216,12 +248,13 @@ async def _run_backfill(
             key = (source.observed, source.id)
             if key in live_copies:
                 continue
+            # Vectors hydrate per chunk; plans only carry ids + content.
             plans.append(
                 _CopySpec(
                     observed=source.observed,
                     source_id=source.id,
                     content=source.content,
-                    embedding=_embedding_as_list(source.embedding),
+                    embedding=None,
                     internal_metadata=dict(source.internal_metadata),
                     times_derived=source.times_derived,
                     source_ids=list(source.source_ids)
@@ -235,7 +268,54 @@ async def _run_backfill(
     if not plans:
         return 0, set()
 
-    # Phase 2 (no DB): fill missing embeddings. Source rows have NULL
+    # Phases 2-4 run per chunk so only one chunk's embeddings are alive at a
+    # time; each chunk's vectors are dropped once synced.
+    store_in_postgres = _store_embeddings_in_postgres()
+    touched_observed: set[str] = set()
+    copied = 0
+    for start in range(0, len(plans), BACKFILL_CHUNK_SIZE):
+        chunk = plans[start : start + BACKFILL_CHUNK_SIZE]
+        if not await _copy_chunk(
+            workspace_name, scope_peer, session_name, chunk, store_in_postgres
+        ):
+            return None
+        copied += len(chunk)
+        touched_observed.update(spec.observed for spec in chunk)
+        for spec in chunk:
+            spec.embedding = None
+
+    return copied, touched_observed
+
+
+async def _hydrate_chunk_embeddings(
+    workspace_name: str, plans: list[_CopySpec]
+) -> None:
+    """Load this chunk's source embeddings from postgres (if any)."""
+    source_ids = [spec.source_id for spec in plans]
+    async with tracked_db("scope_backfill.hydrate_embeddings") as db:
+        result = await db.execute(
+            select(models.Document.id, models.Document.embedding).where(
+                models.Document.workspace_name == workspace_name,
+                models.Document.id.in_(source_ids),
+            )
+        )
+        by_id = {row.id: _embedding_as_list(row.embedding) for row in result.all()}
+    for spec in plans:
+        spec.embedding = by_id.get(spec.source_id)
+
+
+async def _copy_chunk(
+    workspace_name: str,
+    scope_peer: str,
+    session_name: str,
+    plans: list[_CopySpec],
+    store_in_postgres: bool,
+) -> bool:
+    """Embed, write, and sync one chunk. False if the session left the scope."""
+    # Phase 2a (DB): pull this chunk's embeddings only.
+    await _hydrate_chunk_embeddings(workspace_name, plans)
+
+    # Phase 2b (no DB): fill missing embeddings. Source rows have NULL
     # embeddings on external-store deployments (and soft-deleted copies may
     # have lost their vectors) — re-embed via the embedding API only; no LLM.
     missing = [spec for spec in plans if spec.embedding is None]
@@ -254,17 +334,22 @@ async def _run_backfill(
             spec.embedding = embedding
 
     # Phase 3 (DB): write the copies.
-    store_in_postgres = _store_embeddings_in_postgres()
     touched_observed = {spec.observed for spec in plans}
     new_rows: list[models.Document] = []
     async with tracked_db("scope_backfill.write") as db:
-        # scope_backfill and scope_removal carry different work-unit keys, so
-        # nothing orders them: a removal enqueued right after the add (or one
-        # that landed while phase 2 was embedding) can sweep the scope before
-        # these copies exist. Re-checking membership here, in the transaction
-        # that inserts, keeps a removed session from being copied back in.
-        if not await is_peer_in_session(db, workspace_name, session_name, scope_peer):
-            return None
+        # Row-lock active membership for this txn so a concurrent leave
+        # (``left_at``) cannot commit between the check and the inserts.
+        membership = await db.scalar(
+            select(models.SessionPeer.peer_name)
+            .where(models.SessionPeer.workspace_name == workspace_name)
+            .where(models.SessionPeer.session_name == session_name)
+            .where(models.SessionPeer.peer_name == scope_peer)
+            .where(models.SessionPeer.left_at.is_(None))
+            .with_for_update()
+            .limit(1)
+        )
+        if membership is None:
+            return False
 
         for observed in sorted(touched_observed):
             await crud.get_or_create_collection(
@@ -319,8 +404,7 @@ async def _run_backfill(
     # Phase 4: sync to the external vector store (or mark synced in pgvector
     # mode). Failures leave rows in sync_state='pending' for the reconciler.
     await _sync_copies_to_vector_store(workspace_name, scope_peer, plans, copied_ids)
-
-    return len(plans), touched_observed
+    return True
 
 
 async def _sync_copies_to_vector_store(

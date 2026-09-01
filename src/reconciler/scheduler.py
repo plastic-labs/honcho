@@ -21,6 +21,7 @@ from src import models
 from src.config import settings
 from src.dependencies import tracked_db
 from src.models import QueueItem
+from src.reconciler.sync_vectors import record_pending_embeddings_backlog
 
 logger = logging.getLogger(__name__)
 
@@ -145,14 +146,25 @@ class ReconcilerScheduler:
 
     async def _scheduler_loop(self) -> None:
         """
-        Main scheduler loop that enqueues tasks based on their intervals.
+        Main scheduler loop that enqueues tasks based on their intervals, and
+        refreshes the service-wide pending-embeddings backlog gauge each pass.
 
         Each task has its own interval and the loop checks all tasks on each
-        iteration, enqueueing any that are due.
+        iteration, enqueueing any that are due. The loop sleeps until the next
+        task is due, so the gauge's refresh cadence tracks the SHORTEST task
+        interval.
         """
         try:
             while not self._shutdown_event.is_set():
                 now = datetime.now(timezone.utc)
+
+                # region ai
+                # Refresh on EVERY replica, not just whichever wins the sync_vectors
+                # work unit: the count is DB-global, so a replica that never ran a
+                # cycle would otherwise export a stale (or zero-initialized) value
+                # forever. Full rationale in record_pending_embeddings_backlog.
+                # endregion
+                await record_pending_embeddings_backlog()
 
                 # Check each task and enqueue if due
                 for task_name, task in RECONCILER_TASKS.items():
