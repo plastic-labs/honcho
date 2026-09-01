@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "@honcho-ai/harness-core",
+      "name": "@honcho-ai/harness-plugin-core",
       "devDependencies": {
         "@types/bun": "latest",
         "@types/node": "^24.0.1",

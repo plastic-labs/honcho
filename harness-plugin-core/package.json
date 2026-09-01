@@ -1,7 +1,7 @@
 {
-  "name": "@honcho-ai/harness-core",
+  "name": "@honcho-ai/harness-plugin-core",
   "version": "0.1.0",
-  "description": "Shared runtime for Honcho agent harnesses",
+  "description": "Shared runtime for Honcho harness plugins",
   "author": "Plastic Labs <hello@plasticlabs.ai>",
   "license": "MIT",
   "type": "module",
@@ -17,7 +17,7 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/plastic-labs/honcho.git",
-    "directory": "harness-core"
+    "directory": "harness-plugin-core"
   },
   "scripts": {
     "test": "bun test",

@@ -1,16 +1,16 @@
-# @honcho-ai/harness-core
+# @honcho-ai/harness-plugin-core
 
-Shared runtime for Honcho harnesses.
+Shared runtime for Honcho harness plugins.
 
 ```ts
-import { loadConfig, resolveConfig } from '@honcho-ai/harness-core'
+import { loadConfig, resolveConfig } from '@honcho-ai/harness-plugin-core'
 
 const cfg = loadConfig({ host: 'harness' })
 // a harness can pass its plugin config as an overlay of the same six keys:
 const cfg = resolveConfig(file, { host: 'harness', overlay: { workspace: 'harness', auth: { apiKey } } })
 ```
 
-Locally: `"@honcho-ai/harness-core": "file:../harness-core"` (bun imports the TypeScript source).
+Locally: `"@honcho-ai/harness-plugin-core": "file:../harness-plugin-core"` (bun imports the TypeScript source).
 
 ## File shape
 
@@ -50,7 +50,7 @@ Pass `telemetryHeaders()` as the SDK's `defaultHeaders`. Arbitrary headers are a
 
 ```ts
 import { Honcho } from '@honcho-ai/sdk'
-import { loadConfig, telemetryHeaders } from '@honcho-ai/harness-core'
+import { loadConfig, telemetryHeaders } from '@honcho-ai/harness-plugin-core'
 
 const cfg = loadConfig({ host: 'harness' })
 const honcho = new Honcho({
