@@ -131,7 +131,6 @@ def test_deriver_token_combos_are_valid_and_complete():
     ) not in ingestion
 
 
-# ai: API-only; a deriver-exported 0 would read as "no work" on a series it never measures. message_embeddings_pending is absent because both processes report it
 _API_DERIVER_METRIC_GAUGES = (
     "deriver_outstanding_work_seconds",
     "deriver_queue_work_units_eligible",

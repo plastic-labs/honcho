@@ -562,7 +562,7 @@ class PrometheusMetrics:
             # ai: embed_now fast path runs as an API-process background task
             self._touch(embed_now_tasks_shed_counter)
             self.set_embed_now_tasks_in_flight(0)
-            # ai: the deriver-work gauges are API-only; the deriver never sets them
+
             self.set_deriver_metrics()
             self.set_deriver_outstanding_work(seconds=0)
             self.set_dreams_due(count=0)
