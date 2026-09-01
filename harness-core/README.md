@@ -10,12 +10,13 @@ const cfg = loadConfig({ host: 'harness' })
 const cfg = resolveConfig(file, { host: 'harness', overlay: { workspace: 'harness', auth: { apiKey } } })
 ```
 
-Locally: `"@honcho-ai/harness-core": "file:../honcho/harness-core"` (bun imports the TypeScript source).
+Locally: `"@honcho-ai/harness-core": "file:../harness-core"` (bun imports the TypeScript source).
 
 ## File shape
 
 ```json
 {
+  "schemaVersion": 1,
   "peerName": "user",
   "workspace": "honcho",
   "baseUrl": "https://api.honcho.dev",
@@ -23,10 +24,12 @@ Locally: `"@honcho-ai/harness-core": "file:../honcho/harness-core"` (bun imports
   "auth": { "apiKey": "${HONCHO_API_KEY}" },
   "enabled": true,
   "hosts": {
-    "test": { "workspace": "test" },
+    "test": { "workspace": "test" }
   }
 }
 ```
+
+Missing `schemaVersion` is 0. On read, v0 keys (`environmentUrl`, `workspaceId`, top-level `apiKey`) are remapped in memory; the file is not rewritten.
 
 Resolution, highest wins: `HONCHO_*` env → overlay → `hosts.<host>` → root → built-in.
 
@@ -40,7 +43,7 @@ Pass `telemetryHeaders()` as the SDK's `defaultHeaders`. Arbitrary headers are a
 
 | Header | Meaning | Example |
 |---|---|---|
-| `X-Honcho-Host` | Agent host name, or `name/version` | `opencode/1.3.13` |
+| `X-Honcho-Host` | Agent host name, or `name/version` | `harness/1.3.13` |
 | `X-Honcho-Plugin` | Honcho plugin version | `0.1.3` |
 | `X-Honcho-Runtime` | This package's version (always sent) | `0.1.0` |
 | `X-Honcho-Agent-Model` | The agent's completion model, not a Honcho model | `claude-sonnet-4-5` |
@@ -49,28 +52,17 @@ Pass `telemetryHeaders()` as the SDK's `defaultHeaders`. Arbitrary headers are a
 import { Honcho } from '@honcho-ai/sdk'
 import { loadConfig, telemetryHeaders } from '@honcho-ai/harness-core'
 
-const cfg = loadConfig({ host: 'opencode' })
+const cfg = loadConfig({ host: 'harness' })
 const honcho = new Honcho({
   apiKey: cfg.apiKey,
   baseURL: cfg.baseUrl,
   workspaceId: cfg.workspace,
   timeout: cfg.timeoutMs,
   defaultHeaders: telemetryHeaders({
-    host: 'opencode',
+    host: 'harness',
     hostVersion: '1.3.13',
     pluginVersion: '0.1.3',
     model: 'claude-sonnet-4-5', // omit when the host does not know it
   }),
 })
 ```
-
-What each host can actually supply today:
-
-| Host | Harness version | Plugin version | Model |
-|---|---|---|---|
-| openclaw | `api.runtime.version` | `api.version` | not at client construct |
-| claude-honcho | not in hook stdin | `getPluginVersion()` | not in hook stdin |
-| cursor-honcho | `hookInput.cursor_version` | plugin.json | `hookInput.model` (per hook; client is constructed per request) |
-| opencode-honcho | `client.global.health().version` | package.json | `input.model.modelID` on chat hooks |
-| codex-honcho | not in hook payload | package.json | not in hooks (config.toml default only) |
-| hermes | `hermes_cli.__version__` | bundled, same as harness | not passed into the memory provider |

@@ -2,7 +2,7 @@ import { version } from './index.ts'
 
 /** Optional identity a host plugin knows at Honcho-client construction time. */
 export interface TelemetryIdentity {
-  /** Host app name, e.g. `openclaw`, `claude_code`, `cursor`, `opencode`. */
+  /** Host app name, e.g. `cursor`, `opencode`. */
   host?: string
   /** Host app version, e.g. `2026.8.1`. */
   hostVersion?: string
