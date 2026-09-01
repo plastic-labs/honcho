@@ -50,7 +50,7 @@ Pass `telemetryHeaders()` as the SDK's `defaultHeaders`. Arbitrary headers are a
 
 ```ts
 import { Honcho } from '@honcho-ai/sdk'
-import { loadConfig, telemetryHeaders } from '@honcho-ai/harness-plugin-core'
+import { loadConfig, setTelemetryHeaders, telemetryHeaders } from '@honcho-ai/harness-plugin-core'
 
 const cfg = loadConfig({ host: 'harness' })
 const honcho = new Honcho({
@@ -62,7 +62,9 @@ const honcho = new Honcho({
     host: 'harness',
     hostVersion: '1.3.13',
     pluginVersion: '0.1.3',
-    model: 'claude-sonnet-4-5', // omit when the host does not know it
+    model: 'claude-sonnet-4-5',
   }),
 })
+
+setTelemetryHeaders(honcho.http.defaultHeaders, { model: 'claude-opus-4' })
 ```

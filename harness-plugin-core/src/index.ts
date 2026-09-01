@@ -19,6 +19,7 @@ export type {
 
 export {
   telemetryHeaders,
+  setTelemetryHeaders,
   HEADER_AGENT_MODEL,
   HEADER_HOST,
   HEADER_PLUGIN,

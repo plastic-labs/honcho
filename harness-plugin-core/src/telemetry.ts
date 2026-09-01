@@ -53,3 +53,12 @@ export function telemetryHeaders(
   }
   return headers
 }
+
+/** Merge identity onto a live header map (e.g. `honcho.http.defaultHeaders`). */
+export function setTelemetryHeaders(
+  headers: Record<string, string>,
+  id: TelemetryIdentity = {},
+  extra?: Record<string, string>
+): Record<string, string> {
+  return Object.assign(headers, telemetryHeaders(id, extra))
+}

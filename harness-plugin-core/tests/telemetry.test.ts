@@ -4,6 +4,7 @@ import {
   HEADER_HOST,
   HEADER_PLUGIN,
   HEADER_RUNTIME,
+  setTelemetryHeaders,
   telemetryHeaders,
   version,
 } from '../src/index.ts'
@@ -39,5 +40,17 @@ describe('telemetryHeaders', () => {
     expect(headers[HEADER_PLUGIN]).toBe('override')
     expect(headers['X-Custom']).toBe('yes')
     expect(headers).not.toHaveProperty('X-Empty')
+  })
+})
+
+describe('setTelemetryHeaders', () => {
+  test('mutates an existing header map in place', () => {
+    const headers = telemetryHeaders({ host: 'cursor', pluginVersion: '0.1.2' })
+    const returned = setTelemetryHeaders(headers, { model: 'claude-opus-4' })
+    expect(returned).toBe(headers)
+    expect(headers[HEADER_HOST]).toBe('cursor')
+    expect(headers[HEADER_PLUGIN]).toBe('0.1.2')
+    expect(headers[HEADER_RUNTIME]).toBe(version)
+    expect(headers[HEADER_AGENT_MODEL]).toBe('claude-opus-4')
   })
 })
