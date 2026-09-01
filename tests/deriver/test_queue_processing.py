@@ -6,18 +6,77 @@ from unittest.mock import patch
 
 import pytest
 from nanoid import generate as generate_nanoid
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
 from src.config import settings
-from src.deriver.queue_manager import QueueManager, WorkerOwnership
+from src.deriver.queue_manager import (
+    QueueManager,
+    WorkerOwnership,
+    WorkUnitOwnershipError,
+)
 from src.utils.work_unit import construct_work_unit_key
 
 
 @pytest.mark.asyncio
 class TestQueueProcessing:
     """Test suite for queue processing functionality"""
+
+    async def _add_dream_work_unit(
+        self,
+        *,
+        db_session: AsyncSession,
+        sample_session_with_peers: tuple[models.Session, list[models.Peer]],
+    ) -> tuple[str, models.QueueItem]:
+        session, peers = sample_session_with_peers
+        peer = peers[0]
+        payload = {
+            "task_type": "dream",
+            "dream_type": "omni",
+            "observer": peer.name,
+            "observed": peer.name,
+        }
+        work_unit_key = construct_work_unit_key(session.workspace_name, payload)
+        queue_item = models.QueueItem(
+            task_type="dream",
+            work_unit_key=work_unit_key,
+            payload=payload,
+            processed=False,
+            workspace_name=session.workspace_name,
+        )
+        db_session.add(queue_item)
+        await db_session.commit()
+        await db_session.refresh(queue_item)
+        return work_unit_key, queue_item
+
+    async def _add_summary_work_unit(
+        self,
+        *,
+        db_session: AsyncSession,
+        sample_session_with_peers: tuple[models.Session, list[models.Peer]],
+    ) -> tuple[str, models.QueueItem]:
+        session, peers = sample_session_with_peers
+        peer = peers[0]
+        payload = {
+            "task_type": "summary",
+            "session_name": session.name,
+            "observer": peer.name,
+            "observed": peer.name,
+        }
+        work_unit_key = construct_work_unit_key(session.workspace_name, payload)
+        queue_item = models.QueueItem(
+            session_id=session.id,
+            task_type="summary",
+            work_unit_key=work_unit_key,
+            payload=payload,
+            processed=False,
+            workspace_name=session.workspace_name,
+        )
+        db_session.add(queue_item)
+        await db_session.commit()
+        await db_session.refresh(queue_item)
+        return work_unit_key, queue_item
 
     async def _add_representation_work_unit(
         self,
@@ -316,6 +375,513 @@ class TestQueueProcessing:
 
         # This test ensures the cleanup logic doesn't break, though we don't have stale entries yet
         assert isinstance(work_units, dict)
+
+    async def test_heartbeat_keeps_blocked_dream_claim_alive(
+        self,
+        db_session: AsyncSession,
+        sample_session_with_peers: tuple[models.Session, list[models.Peer]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A long-running dream must keep its exact work-unit claim alive."""
+        work_unit_key, _queue_item = await self._add_dream_work_unit(
+            db_session=db_session,
+            sample_session_with_peers=sample_session_with_peers,
+        )
+
+        queue_manager = QueueManager()
+        claimed = await queue_manager.claim_work_units(db_session, [work_unit_key])
+        aqs_id = claimed[work_unit_key]
+        worker_id = "blocked-dream-worker"
+        queue_manager.track_worker_work_unit(worker_id, work_unit_key, aqs_id)
+        await db_session.commit()
+
+        initial_last_updated = (
+            await db_session.execute(
+                select(models.ActiveQueueSession.last_updated).where(
+                    models.ActiveQueueSession.id == aqs_id
+                )
+            )
+        ).scalar_one()
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def blocked_process_item(_item: models.QueueItem) -> None:
+            started.set()
+            await release.wait()
+
+        monkeypatch.setattr(settings.DERIVER, "STALE_SESSION_TIMEOUT_MINUTES", 0.003)
+        with patch(
+            "src.deriver.queue_manager.process_item",
+            side_effect=blocked_process_item,
+        ):
+            processing = asyncio.create_task(
+                queue_manager.process_work_unit(work_unit_key, worker_id)
+            )
+            try:
+                await asyncio.wait_for(started.wait(), timeout=1)
+                await asyncio.sleep(0.25)
+                await queue_manager.cleanup_stale_work_units()
+
+                db_session.expire_all()
+                refreshed_last_updated = (
+                    await db_session.execute(
+                        select(models.ActiveQueueSession.last_updated).where(
+                            models.ActiveQueueSession.id == aqs_id
+                        )
+                    )
+                ).scalar_one_or_none()
+                assert refreshed_last_updated is not None
+                assert refreshed_last_updated > initial_last_updated
+
+                second_manager = QueueManager()
+                second_claims = await second_manager.get_and_claim_work_units()
+                assert work_unit_key not in second_claims
+            finally:
+                release.set()
+                await asyncio.wait_for(processing, timeout=1)
+
+    async def test_lost_claim_cancels_work_without_touching_replacement(
+        self,
+        db_session: AsyncSession,
+        sample_session_with_peers: tuple[models.Session, list[models.Peer]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A worker must fail closed when its exact claim is replaced."""
+        work_unit_key, queue_item = await self._add_summary_work_unit(
+            db_session=db_session,
+            sample_session_with_peers=sample_session_with_peers,
+        )
+        queue_item_id = queue_item.id
+        queue_manager = QueueManager()
+        claimed = await queue_manager.claim_work_units(db_session, [work_unit_key])
+        aqs_id = claimed[work_unit_key]
+        worker_id = "lost-claim-worker"
+        queue_manager.track_worker_work_unit(worker_id, work_unit_key, aqs_id)
+        await db_session.commit()
+
+        started = asyncio.Event()
+        cancelled = asyncio.Event()
+
+        async def blocked_process_item(_item: models.QueueItem) -> None:
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.set()
+
+        monkeypatch.setattr(settings.DERIVER, "STALE_SESSION_TIMEOUT_MINUTES", 0.003)
+        with (
+            patch(
+                "src.deriver.queue_manager.process_item",
+                side_effect=blocked_process_item,
+            ),
+            patch("src.deriver.queue_manager.publish_webhook_event") as webhook,
+        ):
+            processing = asyncio.create_task(
+                queue_manager.process_work_unit(work_unit_key, worker_id)
+            )
+            await asyncio.wait_for(started.wait(), timeout=1)
+
+            await db_session.execute(
+                delete(models.ActiveQueueSession).where(
+                    models.ActiveQueueSession.id == aqs_id
+                )
+            )
+            replacement = models.ActiveQueueSession(work_unit_key=work_unit_key)
+            db_session.add(replacement)
+            await db_session.commit()
+            await db_session.refresh(replacement)
+            replacement_id = replacement.id
+            replacement_last_updated = replacement.last_updated
+
+            with pytest.raises(WorkUnitOwnershipError, match="Lost ownership"):
+                await asyncio.wait_for(processing, timeout=1)
+
+            assert cancelled.is_set()
+            webhook.assert_not_called()
+
+        db_session.expire_all()
+        pending_item = (
+            await db_session.execute(
+                select(models.QueueItem).where(models.QueueItem.id == queue_item_id)
+            )
+        ).scalar_one()
+        current_claim = (
+            await db_session.execute(
+                select(models.ActiveQueueSession).where(
+                    models.ActiveQueueSession.work_unit_key == work_unit_key
+                )
+            )
+        ).scalar_one()
+        assert pending_item.processed is False
+        assert pending_item.error is None
+        assert current_claim.id == replacement_id
+        assert current_claim.last_updated == replacement_last_updated
+
+    async def test_heartbeat_db_failures_cancel_work_before_claim_stales(
+        self,
+        db_session: AsyncSession,
+        sample_session_with_peers: tuple[models.Session, list[models.Peer]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Exhausted heartbeat retries abort work while the claim is still fresh."""
+        work_unit_key, queue_item = await self._add_dream_work_unit(
+            db_session=db_session,
+            sample_session_with_peers=sample_session_with_peers,
+        )
+        queue_item_id = queue_item.id
+        queue_manager = QueueManager()
+        claimed = await queue_manager.claim_work_units(db_session, [work_unit_key])
+        aqs_id = claimed[work_unit_key]
+        worker_id = "heartbeat-db-failure-worker"
+        queue_manager.track_worker_work_unit(worker_id, work_unit_key, aqs_id)
+        await db_session.commit()
+
+        started = asyncio.Event()
+        cancelled = asyncio.Event()
+
+        async def blocked_process_item(_item: models.QueueItem) -> None:
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.set()
+
+        stale_timeout_minutes = 0.01
+        monkeypatch.setattr(
+            settings.DERIVER,
+            "STALE_SESSION_TIMEOUT_MINUTES",
+            stale_timeout_minutes,
+        )
+        with (
+            patch(
+                "src.deriver.queue_manager.process_item",
+                side_effect=blocked_process_item,
+            ),
+            patch.object(
+                queue_manager,
+                "_touch_work_unit_claim",
+                side_effect=RuntimeError("database unavailable"),
+            ) as touch_claim,
+        ):
+            loop = asyncio.get_running_loop()
+            started_at = loop.time()
+            processing = asyncio.create_task(
+                queue_manager.process_work_unit(work_unit_key, worker_id)
+            )
+            await asyncio.wait_for(started.wait(), timeout=1)
+            with pytest.raises(WorkUnitOwnershipError, match="Heartbeat failed"):
+                await asyncio.wait_for(processing, timeout=1)
+            elapsed = loop.time() - started_at
+
+        assert touch_claim.await_count == 2
+        assert elapsed < stale_timeout_minutes * 60
+        assert cancelled.is_set()
+        db_session.expire_all()
+        pending_item = (
+            await db_session.execute(
+                select(models.QueueItem).where(models.QueueItem.id == queue_item_id)
+            )
+        ).scalar_one()
+        assert pending_item.processed is False
+        assert pending_item.error is None
+
+    async def test_partial_progress_then_heartbeat_loss_does_not_publish_queue_empty(
+        self,
+        db_session: AsyncSession,
+        sample_session_with_peers: tuple[models.Session, list[models.Peer]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A heartbeat abort with pending work is not a clean queue drain."""
+        work_unit_key, first_item = await self._add_summary_work_unit(
+            db_session=db_session,
+            sample_session_with_peers=sample_session_with_peers,
+        )
+        second_item = models.QueueItem(
+            session_id=first_item.session_id,
+            task_type=first_item.task_type,
+            work_unit_key=work_unit_key,
+            payload=first_item.payload,
+            processed=False,
+            workspace_name=first_item.workspace_name,
+        )
+        db_session.add(second_item)
+        await db_session.commit()
+        await db_session.refresh(second_item)
+        first_item_id = first_item.id
+        second_item_id = second_item.id
+
+        queue_manager = QueueManager()
+        claimed = await queue_manager.claim_work_units(db_session, [work_unit_key])
+        aqs_id = claimed[work_unit_key]
+        worker_id = "partial-progress-worker"
+        queue_manager.track_worker_work_unit(worker_id, work_unit_key, aqs_id)
+        await db_session.commit()
+
+        second_started = asyncio.Event()
+        cancelled = asyncio.Event()
+        process_count = 0
+
+        async def process_until_second_item(_item: models.QueueItem) -> None:
+            nonlocal process_count
+            process_count += 1
+            if process_count == 1:
+                return
+            second_started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.set()
+
+        monkeypatch.setattr(settings.DERIVER, "STALE_SESSION_TIMEOUT_MINUTES", 0.003)
+        with (
+            patch(
+                "src.deriver.queue_manager.process_item",
+                side_effect=process_until_second_item,
+            ),
+            patch.object(queue_manager, "_touch_work_unit_claim", return_value=False),
+            patch("src.deriver.queue_manager.publish_webhook_event") as webhook,
+        ):
+            processing = asyncio.create_task(
+                queue_manager.process_work_unit(work_unit_key, worker_id)
+            )
+            await asyncio.wait_for(second_started.wait(), timeout=1)
+            with pytest.raises(WorkUnitOwnershipError, match="Lost ownership"):
+                await asyncio.wait_for(processing, timeout=1)
+
+        assert cancelled.is_set()
+        webhook.assert_not_called()
+        db_session.expire_all()
+        queue_items = (
+            (
+                await db_session.execute(
+                    select(models.QueueItem).where(
+                        models.QueueItem.id.in_([first_item_id, second_item_id])
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        queue_items_by_id = {item.id: item for item in queue_items}
+        assert queue_items_by_id[first_item_id].processed is True
+        assert queue_items_by_id[second_item_id].processed is False
+        assert queue_items_by_id[second_item_id].error is None
+
+    async def test_blocked_heartbeat_attempt_cancels_work_before_claim_stales(
+        self,
+        db_session: AsyncSession,
+        sample_session_with_peers: tuple[models.Session, list[models.Peer]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A hung heartbeat DB call must not outlive the stale-claim window."""
+        work_unit_key, queue_item = await self._add_dream_work_unit(
+            db_session=db_session,
+            sample_session_with_peers=sample_session_with_peers,
+        )
+        queue_item_id = queue_item.id
+        queue_manager = QueueManager()
+        claimed = await queue_manager.claim_work_units(db_session, [work_unit_key])
+        aqs_id = claimed[work_unit_key]
+        worker_id = "blocked-heartbeat-worker"
+        queue_manager.track_worker_work_unit(worker_id, work_unit_key, aqs_id)
+        await db_session.commit()
+
+        processing_started = asyncio.Event()
+        processing_cancelled = asyncio.Event()
+        heartbeat_started = asyncio.Event()
+
+        async def blocked_process_item(_item: models.QueueItem) -> None:
+            processing_started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                processing_cancelled.set()
+
+        async def blocked_touch_claim(_key: str, _aqs_id: str) -> bool:
+            heartbeat_started.set()
+            await asyncio.Event().wait()
+            return True
+
+        stale_timeout_minutes = 0.02
+        stale_timeout_seconds = stale_timeout_minutes * 60
+        monkeypatch.setattr(
+            settings.DERIVER,
+            "STALE_SESSION_TIMEOUT_MINUTES",
+            stale_timeout_minutes,
+        )
+        with (
+            patch(
+                "src.deriver.queue_manager.process_item",
+                side_effect=blocked_process_item,
+            ),
+            patch.object(
+                queue_manager,
+                "_touch_work_unit_claim",
+                side_effect=blocked_touch_claim,
+            ),
+        ):
+            loop = asyncio.get_running_loop()
+            started_at = loop.time()
+            processing = asyncio.create_task(
+                queue_manager.process_work_unit(work_unit_key, worker_id)
+            )
+            await asyncio.wait_for(processing_started.wait(), timeout=1)
+            await asyncio.wait_for(heartbeat_started.wait(), timeout=1)
+            with pytest.raises(WorkUnitOwnershipError, match="Heartbeat failed"):
+                await asyncio.wait_for(
+                    processing,
+                    timeout=stale_timeout_seconds * 1.25,
+                )
+            elapsed = loop.time() - started_at
+
+        assert elapsed < stale_timeout_seconds
+        assert processing_cancelled.is_set()
+        db_session.expire_all()
+        pending_item = (
+            await db_session.execute(
+                select(models.QueueItem).where(models.QueueItem.id == queue_item_id)
+            )
+        ).scalar_one()
+        assert pending_item.processed is False
+        assert pending_item.error is None
+
+    async def test_representation_heartbeat_loss_cancels_batch_without_mutation(
+        self,
+        db_session: AsyncSession,
+        sample_session_with_peers: tuple[models.Session, list[models.Peer]],
+        create_queue_payload: Callable[..., Any],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Representation batches use the same fail-closed heartbeat supervision."""
+        work_unit_key, queue_items = await self._add_representation_work_unit(
+            db_session=db_session,
+            sample_session_with_peers=sample_session_with_peers,
+            create_queue_payload=create_queue_payload,
+            token_counts=[10],
+        )
+        queue_item_id = queue_items[0].id
+        queue_manager = QueueManager()
+        claimed = await queue_manager.claim_work_units(db_session, [work_unit_key])
+        aqs_id = claimed[work_unit_key]
+        worker_id = "representation-heartbeat-worker"
+        queue_manager.track_worker_work_unit(worker_id, work_unit_key, aqs_id)
+        await db_session.commit()
+
+        batch_started = asyncio.Event()
+        batch_cancelled = asyncio.Event()
+
+        async def blocked_representation_batch(*_args: Any, **_kwargs: Any) -> None:
+            batch_started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                batch_cancelled.set()
+
+        monkeypatch.setattr(settings.DERIVER, "STALE_SESSION_TIMEOUT_MINUTES", 0.003)
+        with patch(
+            "src.deriver.queue_manager.process_representation_batch",
+            side_effect=blocked_representation_batch,
+        ):
+            processing = asyncio.create_task(
+                queue_manager.process_work_unit(work_unit_key, worker_id)
+            )
+            await asyncio.wait_for(batch_started.wait(), timeout=1)
+
+            await db_session.execute(
+                delete(models.ActiveQueueSession).where(
+                    models.ActiveQueueSession.id == aqs_id
+                )
+            )
+            replacement = models.ActiveQueueSession(work_unit_key=work_unit_key)
+            db_session.add(replacement)
+            await db_session.commit()
+            await db_session.refresh(replacement)
+            replacement_id = replacement.id
+            replacement_last_updated = replacement.last_updated
+
+            with pytest.raises(WorkUnitOwnershipError, match="Lost ownership"):
+                await asyncio.wait_for(processing, timeout=1)
+
+        assert batch_cancelled.is_set()
+        db_session.expire_all()
+        pending_item = (
+            await db_session.execute(
+                select(models.QueueItem).where(models.QueueItem.id == queue_item_id)
+            )
+        ).scalar_one()
+        current_claim = (
+            await db_session.execute(
+                select(models.ActiveQueueSession).where(
+                    models.ActiveQueueSession.work_unit_key == work_unit_key
+                )
+            )
+        ).scalar_one()
+        assert pending_item.processed is False
+        assert pending_item.error is None
+        assert current_claim.id == replacement_id
+        assert current_claim.last_updated == replacement_last_updated
+
+    @pytest.mark.parametrize("outcome", ["completed", "errored"])
+    async def test_stale_worker_cannot_mutate_item_or_replacement_claim(
+        self,
+        outcome: str,
+        db_session: AsyncSession,
+        sample_session_with_peers: tuple[models.Session, list[models.Peer]],
+    ) -> None:
+        """Completion and error paths must both verify exact claim ownership."""
+        work_unit_key, queue_item = await self._add_dream_work_unit(
+            db_session=db_session,
+            sample_session_with_peers=sample_session_with_peers,
+        )
+        queue_item_id = queue_item.id
+        queue_manager = QueueManager()
+        claimed = await queue_manager.claim_work_units(db_session, [work_unit_key])
+        stale_aqs_id = claimed[work_unit_key]
+        await db_session.commit()
+
+        await db_session.execute(
+            delete(models.ActiveQueueSession).where(
+                models.ActiveQueueSession.id == stale_aqs_id
+            )
+        )
+        replacement = models.ActiveQueueSession(work_unit_key=work_unit_key)
+        db_session.add(replacement)
+        await db_session.commit()
+        await db_session.refresh(replacement)
+        replacement_id = replacement.id
+        replacement_last_updated = replacement.last_updated
+
+        with pytest.raises(WorkUnitOwnershipError, match="Lost ownership"):
+            if outcome == "completed":
+                await queue_manager.mark_queue_items_as_processed(
+                    [queue_item], work_unit_key, stale_aqs_id
+                )
+            else:
+                await queue_manager.mark_queue_item_as_errored(
+                    queue_item,
+                    work_unit_key,
+                    stale_aqs_id,
+                    "processing failed",
+                )
+
+        db_session.expire_all()
+        pending_item = (
+            await db_session.execute(
+                select(models.QueueItem).where(models.QueueItem.id == queue_item_id)
+            )
+        ).scalar_one()
+        current_claim = (
+            await db_session.execute(
+                select(models.ActiveQueueSession).where(
+                    models.ActiveQueueSession.work_unit_key == work_unit_key
+                )
+            )
+        ).scalar_one()
+        assert pending_item.processed is False
+        assert pending_item.error is None
+        assert current_claim.id == replacement_id
+        assert current_claim.last_updated == replacement_last_updated
 
     async def test_work_unit_key_format(
         self, sample_session_with_peers: tuple[models.Session, list[models.Peer]]
