@@ -20,6 +20,7 @@ export interface RootConfig {
 export type HostBlock = RootConfig
 
 export interface FileConfig extends RootConfig {
+  schemaVersion?: number
   hosts?: Record<string, HostBlock>
 }
 
@@ -37,9 +38,51 @@ export interface ResolvedConfig {
 
 export const DEFAULT_BASE_URL = 'https://api.honcho.dev'
 export const DEFAULT_TIMEOUT_MS = 30_000
+export const CONFIG_SCHEMA_VERSION = 1
 
 function isObj(v: unknown): v is Record<string, unknown> {
   return v !== null && typeof v === 'object' && !Array.isArray(v)
+}
+
+/** Pre-schema files (no schemaVersion) → v1 keys. Host blocks included. */
+function migrate(file: unknown): Record<string, unknown> {
+  if (!isObj(file)) return {}
+  const v = file.schemaVersion
+  if (typeof v === 'number' && v >= CONFIG_SCHEMA_VERSION) return { ...file }
+  const out: Record<string, unknown> = { ...file }
+  const blocks: Record<string, unknown>[] = [out]
+  if (isObj(out.hosts)) {
+    out.hosts = Object.fromEntries(
+      Object.entries(out.hosts).map(([k, block]) => {
+        if (!isObj(block)) return [k, block]
+        const next = { ...block }
+        blocks.push(next)
+        return [k, next]
+      })
+    )
+  }
+  for (const b of blocks) {
+    if (typeof b.baseUrl !== 'string') {
+      if (typeof b.environmentUrl === 'string') b.baseUrl = b.environmentUrl
+      else if (isObj(b.endpoint) && typeof b.endpoint.baseUrl === 'string') {
+        b.baseUrl = b.endpoint.baseUrl
+      }
+    }
+    if (typeof b.workspace !== 'string' && typeof b.workspaceId === 'string') {
+      b.workspace = b.workspaceId
+    }
+    const auth: Record<string, unknown> = isObj(b.auth) ? { ...b.auth } : {}
+    if (typeof auth.apiKey !== 'string' && typeof b.apiKey === 'string') auth.apiKey = b.apiKey
+    if (!isObj(auth.oauth) && isObj(b.oauth)) auth.oauth = b.oauth
+    if (Object.keys(auth).length) b.auth = auth
+    delete b.environmentUrl
+    delete b.endpoint
+    delete b.workspaceId
+    delete b.apiKey
+    delete b.oauth
+  }
+  out.schemaVersion = 1
+  return out
 }
 
 function merge<T>(base: T, over: unknown): T {
@@ -96,27 +139,11 @@ function walkStrings<T>(value: T, fn: (s: string) => string): T {
 /** Pull only the six root fields. Extra host keys (injection, observation, …) are ignored. */
 function pickRoot(block: unknown): RootConfig {
   if (!isObj(block)) return {}
-  const auth: AuthConfig = isObj(block.auth)
-    ? { ...(block.auth as AuthConfig) }
-    : typeof block.apiKey === 'string'
-      ? { apiKey: block.apiKey }
-      : {}
-  const workspace =
-    typeof block.workspace === 'string'
-      ? block.workspace
-      : typeof block.workspaceId === 'string'
-        ? block.workspaceId
-        : undefined
-  const baseUrl =
-    typeof block.baseUrl === 'string'
-      ? block.baseUrl
-      : isObj(block.endpoint) && typeof block.endpoint.baseUrl === 'string'
-        ? String(block.endpoint.baseUrl)
-        : undefined
+  const auth: AuthConfig = isObj(block.auth) ? { ...(block.auth as AuthConfig) } : {}
   const out: RootConfig = {}
   if (typeof block.peerName === 'string') out.peerName = block.peerName
-  if (workspace !== undefined) out.workspace = workspace
-  if (baseUrl !== undefined) out.baseUrl = baseUrl
+  if (typeof block.workspace === 'string') out.workspace = block.workspace
+  if (typeof block.baseUrl === 'string') out.baseUrl = block.baseUrl
   if (typeof block.timeoutMs === 'number') out.timeoutMs = block.timeoutMs
   if (Object.keys(auth).length) out.auth = auth
   if (typeof block.enabled === 'boolean') out.enabled = block.enabled
@@ -138,7 +165,10 @@ export function resolveConfig(
   const warnings: string[] = []
   const env = opts.env ?? process.env
   const host = opts.host
-  const raw = isObj(file) ? file : {}
+  const raw = migrate(file)
+  if (typeof raw.schemaVersion === 'number' && raw.schemaVersion > CONFIG_SCHEMA_VERSION) {
+    warnings.push(`config schemaVersion ${raw.schemaVersion} is newer than ${CONFIG_SCHEMA_VERSION}`)
+  }
   const hosts = isObj(raw.hosts) ? raw.hosts : undefined
 
   let acc: RootConfig = {

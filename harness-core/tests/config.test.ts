@@ -23,41 +23,49 @@ describe('resolveConfig', () => {
   test('host block beats root; env beats host', () => {
     const file = {
       workspace: 'root-ws',
-      hosts: { claude_code: { workspace: 'claude-ws' } },
+      hosts: { a: { workspace: 'host-ws' } },
     }
-    expect(resolveConfig(file, { host: 'claude_code', env: emptyEnv }).workspace).toBe('claude-ws')
+    expect(resolveConfig(file, { host: 'a', env: emptyEnv }).workspace).toBe('host-ws')
     expect(
-      resolveConfig(file, { host: 'claude_code', env: { HONCHO_WORKSPACE: 'env-ws' } }).workspace
+      resolveConfig(file, { host: 'a', env: { HONCHO_WORKSPACE: 'env-ws' } }).workspace
     ).toBe('env-ws')
   })
 
   test('root apiKey / workspaceId aliases still resolve', () => {
     const cfg = resolveConfig(
       { apiKey: 'hch_x', workspaceId: 'from-id' },
-      { host: 'openclaw', env: emptyEnv }
+      { host: 'a', env: emptyEnv }
     )
     expect(cfg.apiKey).toBe('hch_x')
     expect(cfg.workspace).toBe('from-id')
+  })
+
+  test('v1 leftover environmentUrl is ignored', () => {
+    const cfg = resolveConfig(
+      { schemaVersion: 1, baseUrl: 'https://keep.example', environmentUrl: 'https://old.example' },
+      { host: 'a', env: emptyEnv }
+    )
+    expect(cfg.baseUrl).toBe('https://keep.example')
   })
 
   test('overlay sits below env', () => {
     expect(
       resolveConfig(
         {},
-        { host: 'openclaw', overlay: { workspace: 'from-openclaw' }, env: { HONCHO_WORKSPACE: 'from-env' } }
+        { host: 'a', overlay: { workspace: 'from-overlay' }, env: { HONCHO_WORKSPACE: 'from-env' } }
       ).workspace
     ).toBe('from-env')
     expect(
-      resolveConfig({}, { host: 'openclaw', overlay: { workspace: 'from-openclaw' }, env: emptyEnv }).workspace
-    ).toBe('from-openclaw')
+      resolveConfig({}, { host: 'a', overlay: { workspace: 'from-overlay' }, env: emptyEnv }).workspace
+    ).toBe('from-overlay')
   })
 
   test('empty file uses built-ins; host name is not rewritten', () => {
-    const cfg = resolveConfig({}, { host: 'claude-code', env: emptyEnv })
+    const cfg = resolveConfig({}, { host: 'my-host', env: emptyEnv })
     expect(cfg.baseUrl).toBe('https://api.honcho.dev')
     expect(cfg.timeoutMs).toBe(30_000)
     expect(cfg.enabled).toBe(true)
-    expect(cfg.host).toBe('claude-code')
-    expect(cfg.workspace).toBe('claude-code')
+    expect(cfg.host).toBe('my-host')
+    expect(cfg.workspace).toBe('my-host')
   })
 })

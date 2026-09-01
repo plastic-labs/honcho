@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spec.honcho.dev/config/v1.json",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "peerName": { "type": "string" },
+    "workspace": { "type": "string" },
+    "baseUrl": { "type": "string" },
+    "timeoutMs": { "type": "number" },
+    "enabled": { "type": "boolean" },
+    "auth": {
+      "type": "object",
+      "properties": {
+        "apiKey": { "type": "string" },
+        "oauth": { "type": "object" }
+      }
+    },
+    "hosts": { "type": "object" }
+  }
+}
