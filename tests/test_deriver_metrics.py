@@ -162,20 +162,21 @@ class TestDeriverMetricsRoute:
 
         assert excinfo.value.status_code == 503
 
-    async def test_errors_when_the_measurement_is_stale(self):
+    async def test_serves_an_old_snapshot_with_its_age(self):
+        """The caller decides what is too old, from measurement_age_seconds."""
         poller = DeriverMetricsPoller()
         poller._snapshot = DeriverMetricsSnapshot(  # pyright: ignore[reportPrivateUsage]
-            signal_seconds=0.0,
-            measured_at=time.time() - (deriver_metrics.max_snapshot_age_seconds() + 60),
+            signal_seconds=7.0,
+            measured_at=time.time() - 3600,
         )
         deriver_metrics.set_deriver_metrics_poller(poller)
         try:
-            with pytest.raises(HTTPException) as excinfo:
-                await deriver_metrics.get_deriver_metrics_response()
+            body = await deriver_metrics.get_deriver_metrics_response()
         finally:
             deriver_metrics.set_deriver_metrics_poller(None)
 
-        assert excinfo.value.status_code == 503
+        assert body["outstanding_work_seconds"] == 7.0
+        assert body["measurement_age_seconds"] >= 3600
 
     async def test_errors_when_no_poller_is_registered(self):
         deriver_metrics.set_deriver_metrics_poller(None)
