@@ -77,15 +77,14 @@
     },
     {
       "step_type": "wait",
-      "target": "queue_empty",
-      "flush": true
+      "target": "queue_empty"
     },
     {
       "step_type": "query",
       "target": "get_context",
       "session_id": "session_summary",
       "summary": true,
-      "max_tokens": 400,
+      "max_tokens": 2500,
       "observer_peer_id": "eve",
       "assertions": [
         {

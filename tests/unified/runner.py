@@ -5,7 +5,8 @@ import os
 import sys
 import threading
 import time
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -87,17 +88,80 @@ async def send_discord_message(webhook_url: str, message: str) -> None:
         logger.exception("Failed to send Discord notification")
 
 
+@dataclass
+class RunArtifact:
+    """One uploaded file: its S3 key, and a presigned URL when one could be made."""
+
+    key: str
+    url: str | None = None
+
+
+@dataclass
+class RunArtifacts:
+    """Artifacts published for a run. Any field is None when its upload failed."""
+
+    results: RunArtifact | None = None
+    traces: RunArtifact | None = None
+
+
+# 3 days. Long enough to survive a weekend before someone reads the report.
+PRESIGN_EXPIRY_SECONDS = 259200
+
+
+def presign(s3_client: Any, bucket: str, key: str) -> RunArtifact:
+    """Wrap an uploaded key with a presigned URL, or just the key if signing fails."""
+    try:
+        url: str = s3_client.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": bucket, "Key": key},
+            ExpiresIn=PRESIGN_EXPIRY_SECONDS,
+        )
+        return RunArtifact(key=key, url=url)
+    except Exception as e:
+        logger.warning(f"Could not generate S3 presigned URL for {key}: {e}")
+        return RunArtifact(key=key)
+
+
+def artifact_lines(artifacts: RunArtifacts) -> list[str]:
+    """Render each uploaded artifact as one markdown line: link when presigned, key otherwise.
+
+    Both artifacts are surfaced. The reasoning traces carry the full prompts and
+    model outputs for the run, which is what a failure usually needs to diagnose.
+    """
+    labels = [
+        ("Complete results", artifacts.results),
+        ("Reasoning traces", artifacts.traces),
+    ]
+    lines: list[str] = []
+    for label, artifact in labels:
+        if artifact is None:
+            continue
+        if artifact.url:
+            lines.append(f"[{label}]({artifact.url}) — `{artifact.key}`")
+        else:
+            lines.append(f"{label}: `{artifact.key}`")
+    return lines
+
+
+def write_job_summary(lines: list[str]) -> None:
+    """Append a markdown block to the GitHub Actions job summary; a no-op locally."""
+    summary_path = os.getenv("GITHUB_STEP_SUMMARY")
+    if not summary_path:
+        return
+    try:
+        with open(summary_path, "a", encoding="utf-8") as handle:
+            handle.write("\n".join(lines) + "\n")
+    except OSError as e:
+        logger.warning(f"Could not write job summary: {e}")
+
+
 async def save_results_to_s3(
     results: dict[str, tuple[str, float]],
     failed_count: int,
     total_count: int,
     execution_time: float,
-) -> tuple[str | None, str | None]:
-    """Save comprehensive test results to S3.
-
-    Returns:
-        Tuple of (presigned_url, s3_key). Either or both may be None if upload/URL generation fails.
-    """
+) -> RunArtifacts:
+    """Save comprehensive test results and reasoning traces to S3."""
     try:
         import boto3
 
@@ -112,13 +176,13 @@ async def save_results_to_s3(
             credentials = session.get_credentials()  # pyright: ignore
             if not credentials:
                 logger.warning("No AWS credentials available, skipping S3 upload")
-                return None, None
+                return RunArtifacts()
         except Exception as e:
             logger.warning(f"Could not verify AWS credentials: {e}, skipping S3 upload")
-            return None, None
+            return RunArtifacts()
 
         # Create comprehensive results object
-        timestamp = datetime.now(timezone.utc).isoformat()
+        timestamp = datetime.now(UTC).isoformat()
         github_run_id = os.getenv("GITHUB_RUN_ID", "local")
         github_run_attempt = os.getenv("GITHUB_RUN_ATTEMPT", "1")
         github_sha = os.getenv("GITHUB_SHA", "unknown")
@@ -150,7 +214,7 @@ async def save_results_to_s3(
 
         # One "folder" per run: <prefix>/<date>/<run>/ holding results.json plus
         # the reasoning-trace file(s), so a run's summary and full LLM I/O live together.
-        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        date_str = datetime.now(UTC).strftime("%Y-%m-%d")
         sha_short = github_sha[:7] if github_sha != "unknown" else "unknown"
         ref_slug = github_ref.replace("/", "-")  # branch names may contain "/"
         run_slug = f"{ref_slug}-{sha_short}-{github_run_id}-{github_run_attempt}"
@@ -169,6 +233,7 @@ async def save_results_to_s3(
         # Upload the reasoning traces (full LLM/deriver I/O) captured this run. The
         # API and deriver both append to REASONING_TRACES_FILE (file-locked). Use
         # upload_file so large trace files stream via multipart instead of buffering.
+        traces: RunArtifact | None = None
         traces_path_str = os.getenv("REASONING_TRACES_FILE")
         if traces_path_str:
             traces_path = Path(traces_path_str)
@@ -182,6 +247,7 @@ async def save_results_to_s3(
                         ExtraArgs={"ContentType": "application/x-ndjson"},
                     )
                     logger.info(f"Saved reasoning traces to S3 key {traces_key}")
+                    traces = presign(s3_client, s3_bucket, traces_key)
                 except Exception as e:
                     logger.error(
                         f"Failed to upload reasoning traces: {e}", exc_info=True
@@ -191,20 +257,13 @@ async def save_results_to_s3(
                     f"REASONING_TRACES_FILE={traces_path} is missing or empty; no traces uploaded"
                 )
 
-        try:
-            url: str = s3_client.generate_presigned_url(  # pyright: ignore
-                "get_object",
-                Params={"Bucket": s3_bucket, "Key": results_key},
-                ExpiresIn=259200,  # 3 days
-            )
-            return url, results_key  # pyright: ignore
-        except Exception as e:
-            logger.warning(f"Could not generate S3 presigned URL: {e}")
-            return None, results_key
+        return RunArtifacts(
+            results=presign(s3_client, s3_bucket, results_key), traces=traces
+        )
 
     except Exception as e:
         logger.error(f"Failed to save results to S3: {e}", exc_info=True)
-        return None, None
+        return RunArtifacts()
 
 
 class UnifiedTestExecutor:
@@ -357,7 +416,9 @@ class UnifiedTestExecutor:
             if step.duration:
                 await asyncio.sleep(step.duration)
             if step.target == "queue_empty":
-                # Flush mode is enabled by default in the harness (DERIVER_FLUSH_ENABLED=true)
+                # Flush is process-wide, not per-step: the harness starts the
+                # deriver with DERIVER_FLUSH_ENABLED=true so batches never wait
+                # on the token threshold. See tests/bench/harness.py.
                 await self.wait_for_queue(step.timeout)
 
         elif isinstance(step, ScheduleDreamAction):
@@ -771,30 +832,41 @@ class UnifiedTestRunner:
 
             # 5. Save results and send notifications
             # Always attempt S3 upload - save_results_to_s3 will check for credentials
-            url: str | None
-            s3_key: str | None
-            url, s3_key = await save_results_to_s3(
+            artifacts = await save_results_to_s3(
                 results, failed_count, total_count, total_suite_time
             )
 
-            # 6. Send Discord notification
+            # 6. Report the run: GitHub job summary, then Discord.
+            passed_count = total_count - failed_count
+            status_emoji = "✅" if failed_count == 0 else "⚠️"
+            headline = (
+                f"Results: {passed_count}/{total_count} passed, "
+                f"{failed_count}/{total_count} failed"
+            )
+
+            write_job_summary(
+                [
+                    f"## {status_emoji} Unified Test Results",
+                    "",
+                    headline,
+                    "",
+                    f"Execution time: {total_suite_time:.2f}s",
+                    "",
+                    *artifact_lines(artifacts),
+                ]
+            )
+
             discord_webhook_url = os.getenv("TEST_DISCORD_WEBHOOK_URL")
             if discord_webhook_url:
-                passed_count = total_count - failed_count
-                status_emoji = "✅" if failed_count == 0 else "⚠️"
-
                 message_lines = [
                     f"{status_emoji} **Unified Test Results**",
-                    f"Results: {passed_count}/{total_count} passed, {failed_count}/{total_count} failed",
+                    headline,
                     f"Execution time: {total_suite_time:.2f}s",
+                    *artifact_lines(artifacts),
                 ]
-                if s3_key:
-                    message_lines.append(f"File: `{s3_key}`")
-                if url:
-                    message_lines.append(f"[View Complete Results]({url})")
-                message = "\n".join(message_lines)
-
-                await send_discord_message(discord_webhook_url, message)
+                await send_discord_message(
+                    discord_webhook_url, "\n".join(message_lines)
+                )
 
             return failed_count
 
