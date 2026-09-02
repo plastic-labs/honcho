@@ -39,7 +39,7 @@ MAX_SYNC_ATTEMPTS = 20  # After this many failures, mark as failed
 SYNC_BACKOFF = datetime.timedelta(minutes=10)
 
 
-def _backoff_eligible(
+def backoff_eligible(
     last_sync_at: InstrumentedAttribute[datetime.datetime | None],
 ) -> ColumnElement[bool]:
     """Rows are eligible for sync if never attempted or past the backoff window."""
@@ -92,7 +92,7 @@ async def _get_documents_needing_sync(
             and_(
                 models.Document.deleted_at.is_(None),
                 models.Document.sync_state == "pending",  # Only pending items
-                _backoff_eligible(models.Document.last_sync_at),
+                backoff_eligible(models.Document.last_sync_at),
             )
         )
         .order_by(models.Document.last_sync_at.asc().nullsfirst())
@@ -132,7 +132,7 @@ async def _get_message_embeddings_needing_sync(
         .where(
             and_(
                 models.MessageEmbedding.sync_state == "pending",
-                _backoff_eligible(models.MessageEmbedding.last_sync_at),
+                backoff_eligible(models.MessageEmbedding.last_sync_at),
             )
         )
         .group_by(models.MessageEmbedding.message_id)
@@ -153,7 +153,7 @@ async def _get_message_embeddings_needing_sync(
             and_(
                 models.MessageEmbedding.message_id.in_(message_ids),
                 models.MessageEmbedding.sync_state == "pending",
-                _backoff_eligible(models.MessageEmbedding.last_sync_at),
+                backoff_eligible(models.MessageEmbedding.last_sync_at),
             )
         )
         .order_by(models.MessageEmbedding.message_id, models.MessageEmbedding.id)

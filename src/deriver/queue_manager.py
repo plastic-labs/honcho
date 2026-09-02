@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 from nanoid import generate as generate_nanoid
 from sentry_sdk.integrations.asyncio import AsyncioIntegration
 from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
-from sqlalchemy import Text, and_, delete, literal, or_, select, update
+from sqlalchemy import Text, and_, delete, literal, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,6 +24,11 @@ from sqlalchemy.sql import func
 from src import models
 from src.cache.client import close_cache, init_cache
 from src.config import settings
+from src.crud.deriver import (
+    REPRESENTATION_WORK_UNIT_PREFIX,
+    representation_batch_threshold_clause,
+    unclaimed_work_unit_clause,
+)
 from src.dependencies import tracked_db
 from src.deriver.consumer import (
     process_item,
@@ -353,7 +358,7 @@ class QueueManager:
         )
 
         async with tracked_db("get_available_work_units") as db:
-            representation_prefix = "representation:"
+            representation_prefix = REPRESENTATION_WORK_UNIT_PREFIX
             token_stats_subq = (
                 select(
                     models.QueueItem.work_unit_key,
@@ -390,14 +395,7 @@ class QueueManager:
                     token_stats_subq,
                     work_units_subq.c.work_unit_key == token_stats_subq.c.work_unit_key,
                 )
-                .where(
-                    ~select(models.ActiveQueueSession.id)
-                    .where(
-                        models.ActiveQueueSession.work_unit_key
-                        == work_units_subq.c.work_unit_key
-                    )
-                    .exists()
-                )
+                .where(unclaimed_work_unit_clause(work_units_subq.c.work_unit_key))
                 .order_by(
                     work_units_subq.c.oldest_created_at.asc(),
                     work_units_subq.c.work_unit_key.asc(),
@@ -406,26 +404,13 @@ class QueueManager:
             )
 
             # Apply batch threshold filter (skip if FLUSH_ENABLED is True)
-            if not settings.DERIVER.FLUSH_ENABLED and work_unit_target_tokens > 0:
-                max_age_seconds = settings.DERIVER.REPRESENTATION_BATCH_MAX_AGE_SECONDS
-                threshold_clause = (
-                    func.coalesce(token_stats_subq.c.total_tokens, 0)
-                    >= work_unit_target_tokens
-                )
-                if max_age_seconds > 0:
-                    threshold_clause = or_(
-                        threshold_clause,
-                        token_stats_subq.c.oldest_created_at
-                        <= func.now() - timedelta(seconds=max_age_seconds),
-                    )
-                query = query.where(
-                    or_(
-                        ~work_units_subq.c.work_unit_key.startswith(
-                            representation_prefix
-                        ),
-                        threshold_clause,
-                    )
-                )
+            threshold_clause = representation_batch_threshold_clause(
+                work_unit_key=work_units_subq.c.work_unit_key,
+                total_tokens=token_stats_subq.c.total_tokens,
+                oldest_created_at=token_stats_subq.c.oldest_created_at,
+            )
+            if threshold_clause is not None:
+                query = query.where(threshold_clause)
 
             result = await db.execute(query)
             available_rows = result.all()
