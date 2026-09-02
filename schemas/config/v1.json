@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spec.honcho.dev/config/v1.json",
+  "type": "object",
+  "additionalProperties": true,
+  "$defs": {
+    "oauth": {
+      "type": "object",
+      "properties": {
+        "accessToken": { "type": "string" },
+        "refreshToken": { "type": "string" },
+        "expiresAt": { "type": "string" }
+      }
+    },
+    "auth": {
+      "type": "object",
+      "properties": {
+        "apiKey": { "type": "string" },
+        "oauth": { "$ref": "#/$defs/oauth" }
+      }
+    },
+    "hostBlock": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "peerName": { "type": "string" },
+        "workspace": { "type": "string" },
+        "baseUrl": { "type": "string" },
+        "timeoutMs": { "type": "number" },
+        "enabled": { "type": "boolean" },
+        "auth": { "$ref": "#/$defs/auth" }
+      }
+    }
+  },
+  "allOf": [{ "$ref": "#/$defs/hostBlock" }],
+  "properties": {
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "hosts": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/hostBlock" }
+    }
+  }
+}
