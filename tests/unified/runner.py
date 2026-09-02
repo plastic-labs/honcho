@@ -89,6 +89,27 @@ async def send_discord_message(webhook_url: str, message: str) -> None:
 
 
 @dataclass
+class StepFailure:
+    """Why a test stopped: the step that raised, and what it said."""
+
+    step_index: int
+    step_type: str
+    message: str
+
+    def describe(self) -> str:
+        return f"step {self.step_index} ({self.step_type}): {self.message}"
+
+
+@dataclass
+class TestOutcome:
+    """One test's result. `failure` carries the reason whenever status isn't PASS."""
+
+    status: str
+    duration: float
+    failure: StepFailure | None = None
+
+
+@dataclass
 class RunArtifact:
     """One uploaded file: its S3 key, and a presigned URL when one could be made."""
 
@@ -143,6 +164,23 @@ def artifact_lines(artifacts: RunArtifacts) -> list[str]:
     return lines
 
 
+def failure_lines(
+    results: dict[str, "TestOutcome"], limit: int | None = None
+) -> list[str]:
+    """One markdown bullet per failing test, naming the step and the reason."""
+    failed = [(name, o) for name, o in results.items() if o.status != "PASS"]
+    if not failed:
+        return []
+    shown = failed if limit is None else failed[:limit]
+    lines = ["", "**Failures**"]
+    for name, outcome in shown:
+        reason = outcome.failure.describe() if outcome.failure else outcome.status
+        lines.append(f"- `{name}` — {reason}")
+    if len(shown) < len(failed):
+        lines.append(f"- …and {len(failed) - len(shown)} more")
+    return lines
+
+
 def write_job_summary(lines: list[str]) -> None:
     """Append a markdown block to the GitHub Actions job summary; a no-op locally."""
     summary_path = os.getenv("GITHUB_STEP_SUMMARY")
@@ -156,7 +194,7 @@ def write_job_summary(lines: list[str]) -> None:
 
 
 async def save_results_to_s3(
-    results: dict[str, tuple[str, float]],
+    results: dict[str, TestOutcome],
     failed_count: int,
     total_count: int,
     execution_time: float,
@@ -205,10 +243,21 @@ async def save_results_to_s3(
             "tests": [
                 {
                     "name": name,
-                    "status": status,
-                    "duration": duration,
+                    "status": outcome.status,
+                    "duration": outcome.duration,
+                    # The reason a test failed lives only in the job log otherwise,
+                    # where secret masking can render it unreadable.
+                    "failure": (
+                        {
+                            "step_index": outcome.failure.step_index,
+                            "step_type": outcome.failure.step_type,
+                            "message": outcome.failure.message,
+                        }
+                        if outcome.failure
+                        else None
+                    ),
                 }
-                for name, (status, duration) in results.items()
+                for name, outcome in results.items()
             ],
         }
 
@@ -307,7 +356,10 @@ class UnifiedTestExecutor:
             )
         return response
 
-    async def execute(self, test_def: TestDefinition, test_name: str) -> bool:
+    async def execute(
+        self, test_def: TestDefinition, test_name: str
+    ) -> StepFailure | None:
+        """Run every step. Returns None on success, or the failure that stopped it."""
         logger.info(f"Starting test: {test_name}")
 
         # 1. Apply workspace config if present
@@ -323,10 +375,12 @@ class UnifiedTestExecutor:
                 await self.execute_step(step)
             except Exception as e:
                 logger.error(f"Step {i + 1} failed: {e}", exc_info=False)
-                return False
+                return StepFailure(
+                    step_index=i + 1, step_type=step.step_type, message=str(e)
+                )
 
         logger.info(f"Test {test_name} PASSED")
-        return True
+        return None
 
     async def execute_step(self, step: Any):
         if isinstance(step, SetWorkspaceConfigAction):
@@ -753,7 +807,7 @@ class UnifiedTestRunner:
                     raise ValueError("tests_dir must be set if test_file is not")
                 test_files = sorted(list(self.tests_dir.glob("*.json")))
 
-            results: dict[str, tuple[str, float]] = {}
+            results: dict[str, TestOutcome] = {}
 
             logger.info(f"Found {len(test_files)} test(s)")
 
@@ -782,23 +836,28 @@ class UnifiedTestRunner:
                         workspace_id=f"test_{test_name}_{int(time.time())}",
                     )
 
-                    success = await executor.execute(test_def, test_name)
+                    failure = await executor.execute(test_def, test_name)
                     test_duration = time.time() - test_start_time
-                    results[test_file.name] = (
-                        "PASS" if success else "FAIL",
-                        test_duration,
+                    results[test_file.name] = TestOutcome(
+                        status="PASS" if failure is None else "FAIL",
+                        duration=test_duration,
+                        failure=failure,
                     )
 
                 except ValidationError as e:
                     logger.error(f"Schema validation failed for {test_file}: {e}")
                     test_duration = time.time() - test_start_time
-                    results[test_file.name] = ("INVALID SCHEMA", test_duration)
+                    results[test_file.name] = TestOutcome(
+                        status="INVALID SCHEMA", duration=test_duration
+                    )
                 except Exception as e:
                     logger.error(
                         f"Test {test_file.name} failed with error: {e}", exc_info=True
                     )
                     test_duration = time.time() - test_start_time
-                    results[test_file.name] = (f"ERROR: {str(e)}", test_duration)
+                    results[test_file.name] = TestOutcome(
+                        status=f"ERROR: {str(e)}", duration=test_duration
+                    )
 
             total_suite_time = time.time() - suite_start_time
 
@@ -813,16 +872,18 @@ class UnifiedTestRunner:
             # Calculate max name length for alignment
             max_name_length = max(len(name) for name in results) if results else 0
 
-            for name, (status, duration) in results.items():
-                duration_str = f"({duration:.2f}s)"
-                if status == "PASS":
+            for name, outcome in results.items():
+                duration_str = f"({outcome.duration:.2f}s)"
+                if outcome.status == "PASS":
                     print(
-                        f"{name:<{max_name_length}} {GREEN}{status:<15}{RESET} {duration_str}"
+                        f"{name:<{max_name_length}} {GREEN}{outcome.status:<15}{RESET} {duration_str}"
                     )
                 else:
                     print(
-                        f"{name:<{max_name_length}} {RED}{status:<15}{RESET} {duration_str}"
+                        f"{name:<{max_name_length}} {RED}{outcome.status:<15}{RESET} {duration_str}"
                     )
+                    if outcome.failure:
+                        print(f"{'':<{max_name_length}} {outcome.failure.describe()}")
                     failed_count += 1
 
             print("=" * 60)
@@ -851,6 +912,7 @@ class UnifiedTestRunner:
                     headline,
                     "",
                     f"Execution time: {total_suite_time:.2f}s",
+                    *failure_lines(results),
                     "",
                     *artifact_lines(artifacts),
                 ]
@@ -862,6 +924,7 @@ class UnifiedTestRunner:
                     f"{status_emoji} **Unified Test Results**",
                     headline,
                     f"Execution time: {total_suite_time:.2f}s",
+                    *failure_lines(results, limit=10),
                     *artifact_lines(artifacts),
                 ]
                 await send_discord_message(
