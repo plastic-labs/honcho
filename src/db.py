@@ -20,7 +20,7 @@ from src.telemetry.prometheus.metrics import (
 
 logger = logging.getLogger(__name__)
 
-connect_args = {
+connect_args: dict[str, Any] = {
     "prepare_threshold": None,
     # Bound a single connection attempt so it fails fast instead of hanging when
     # the server/pooler is unreachable or stalled (psycopg, seconds).
@@ -87,6 +87,54 @@ ReadSessionLocal = async_sessionmaker(
     bind=read_engine,
     class_=AsyncSession,
 )
+
+
+def _set_hnsw_iterative_scan_on_connect(
+    dbapi_connection: Any, _connection_record: Any
+) -> None:
+    """Apply pgvector HNSW iterative scan GUC per-connection.
+
+    Registered when ``DB.HNSW_ITERATIVE_SCAN`` is set. Fires once per new
+    pool connection so filtered HNSW queries scan additional candidates
+    instead of silently under-returning when out-of-scope rows consume the
+    initial scan budget. Note: pgvector may still stop before reaching top_k
+    if ``hnsw.max_scan_tuples`` or ``hnsw.scan_mem_multiplier`` thresholds are
+    exceeded. Uses ``set_config`` with a bind parameter (same pattern as
+    ``_set_application_name_on_checkout``) rather than an f-string ``SET``
+    to avoid special-casing utility-statement parameter binding.
+
+    Runs in autocommit so it never leaves the connection 'idle in
+    transaction': this hook fires BEFORE the dialect applies execution-option
+    isolation levels, and psycopg refuses to switch a connection into
+    AUTOCOMMIT (which the read engine does) while a transaction opened by
+    this statement is still in progress. ``set_config(..., is_local=false)``
+    is session-scoped, so it persists past the autocommit boundary.
+    """
+    value = settings.DB.HNSW_ITERATIVE_SCAN
+    if not value:
+        return
+    try:
+        previous_autocommit = dbapi_connection.autocommit
+        if not previous_autocommit:
+            dbapi_connection.autocommit = True
+        try:
+            cursor = dbapi_connection.cursor()
+            try:
+                cursor.execute(
+                    "SELECT set_config('hnsw.iterative_scan', %s, false)",
+                    (value,),
+                )
+            finally:
+                cursor.close()
+        finally:
+            if not previous_autocommit:
+                dbapi_connection.autocommit = False
+    except Exception:
+        logger.debug("setting hnsw.iterative_scan on connect failed", exc_info=True)
+
+
+if settings.DB.HNSW_ITERATIVE_SCAN:
+    event.listen(engine.sync_engine, "connect", _set_hnsw_iterative_scan_on_connect)
 
 
 def _set_application_name_on_checkout(
@@ -316,6 +364,25 @@ meta.schema = table_schema
 Base = declarative_base(metadata=meta)
 
 
+def _validate_pgvector_version(version_str: str) -> None:
+    """Check that the installed pgvector version supports HNSW iterative scan.
+
+    Raises ``RuntimeError`` if pgvector < 0.8.0.  Extracted from
+    ``init_db`` so it can be unit-tested without importing alembic.
+    """
+    version_parts = version_str.split(".")
+    major = int(version_parts[0]) if len(version_parts) > 0 else 0
+    minor = int(version_parts[1]) if len(version_parts) > 1 else 0
+    if (major, minor) < (0, 8):
+        raise RuntimeError(
+            "pgvector version "
+            + version_str
+            + " is installed but HNSW_ITERATIVE_SCAN"
+            + " requires pgvector >= 0.8.0."
+            + " Upgrade pgvector or set HNSW_ITERATIVE_SCAN=off."
+        )
+
+
 async def init_db():
     """Initialize the database using Alembic migrations"""
     from alembic import command
@@ -327,6 +394,21 @@ async def init_db():
         # Install pgvector extension if it doesn't exist
         await connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         await connection.commit()
+
+    # Validate pgvector version when HNSW iterative scan is enabled
+    # (requires pgvector >= 0.8.0). Fail startup with a clear error
+    # rather than relying on silent query-time failures.
+    # Skip the check for "off" — listener is still registered so the
+    # application can override a server-level setting, but no version
+    # requirement applies.
+    if settings.DB.HNSW_ITERATIVE_SCAN in ("strict_order", "relaxed_order"):
+        async with engine.connect() as connection:
+            result = await connection.execute(
+                text("SELECT extversion FROM pg_extension WHERE extname = 'vector'")
+            )
+            row = result.fetchone()
+            if row is not None:
+                _validate_pgvector_version(row[0])
 
     # Run Alembic migrations
     alembic_cfg = Config("alembic.ini")
