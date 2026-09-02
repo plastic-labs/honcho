@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 from nanoid import generate as generate_nanoid
 from sentry_sdk.integrations.asyncio import AsyncioIntegration
 from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
-from sqlalchemy import and_, delete, or_, select, update
+from sqlalchemy import Text, and_, delete, literal, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -43,6 +43,7 @@ from src.reconciler import (
 from src.schemas import ResolvedConfiguration
 from src.telemetry import prometheus_metrics
 from src.telemetry.sentry import initialize_sentry
+from src.utils.queue_payload import RETRY_ATTEMPTS_PAYLOAD_KEY
 from src.utils.retryable_errors import is_retryable_error
 from src.utils.work_unit import parse_work_unit_key
 from src.webhooks.events import (
@@ -59,7 +60,6 @@ load_dotenv(override=True)
 # shares one budget.
 MAX_RETRYABLE_ATTEMPTS = 3
 RETRY_BACKOFF_SECONDS = 1.0
-_RETRY_ATTEMPTS_PAYLOAD_KEY = "_retry_attempts"
 
 
 class WorkerOwnership(NamedTuple):
@@ -1152,7 +1152,7 @@ class QueueManager:
             item = await self._oldest_unprocessed_item(db, work_unit_key)
             if item is None:
                 return 0
-            raw = (item.payload or {}).get(_RETRY_ATTEMPTS_PAYLOAD_KEY, 0)
+            raw = (item.payload or {}).get(RETRY_ATTEMPTS_PAYLOAD_KEY, 0)
             try:
                 return max(0, int(raw))
             except (TypeError, ValueError):
@@ -1170,7 +1170,7 @@ class QueueManager:
                 await db.commit()
                 return
             new_payload = dict(item.payload or {})
-            new_payload[_RETRY_ATTEMPTS_PAYLOAD_KEY] = attempts
+            new_payload[RETRY_ATTEMPTS_PAYLOAD_KEY] = attempts
             await db.execute(
                 update(models.QueueItem)
                 .where(models.QueueItem.id == item.id)
@@ -1178,34 +1178,32 @@ class QueueManager:
             )
             await db.commit()
 
-    @staticmethod
-    def _payload_without_retry_attempts(
-        payload: dict[str, Any] | None,
-    ) -> dict[str, Any]:
-        cleaned = dict(payload or {})
-        cleaned.pop(_RETRY_ATTEMPTS_PAYLOAD_KEY, None)
-        return cleaned
-
     async def _clear_work_unit_retry_attempts(self, work_unit_key: str) -> None:
-        """Drop the shared attempt count from remaining unprocessed items."""
+        """Drop the shared attempt count from remaining unprocessed items.
+
+        One statement on purpose: a multi-row ``SELECT ... FOR UPDATE`` here
+        would take locks on ``queue`` in scan order, which is a deadlock partner
+        for any other multi-row writer on the same table. The JSONB ``-``
+        operator does the strip server-side, so no rows are locked ahead of the
+        write and there is no lock order to get wrong.
+        """
         async with tracked_db("clear_work_unit_retry_attempts") as db:
-            result = await db.execute(
-                select(models.QueueItem)
+            await db.execute(
+                update(models.QueueItem)
                 .where(
                     models.QueueItem.work_unit_key == work_unit_key,
                     models.QueueItem.processed.is_(False),
+                    models.QueueItem.payload.has_key(RETRY_ATTEMPTS_PAYLOAD_KEY),
                 )
-                .with_for_update()
+                .values(
+                    # literal(..., Text) is required: an untyped bind leaves
+                    # Postgres unable to pick between jsonb - text and its
+                    # integer/array siblings.
+                    payload=models.QueueItem.payload.op("-")(
+                        literal(RETRY_ATTEMPTS_PAYLOAD_KEY, Text)
+                    )
+                )
             )
-            for item in result.scalars():
-                payload = item.payload or {}
-                if _RETRY_ATTEMPTS_PAYLOAD_KEY not in payload:
-                    continue
-                await db.execute(
-                    update(models.QueueItem)
-                    .where(models.QueueItem.id == item.id)
-                    .values(payload=self._payload_without_retry_attempts(payload))
-                )
             await db.commit()
 
     async def mark_queue_items_as_processed(

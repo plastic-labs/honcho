@@ -2,17 +2,20 @@ import asyncio
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from nanoid import generate as generate_nanoid
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
 from src.config import settings
+from src.deriver.consumer import process_item
 from src.deriver.queue_manager import QueueManager, WorkerOwnership
+from src.utils.queue_payload import RETRY_ATTEMPTS_PAYLOAD_KEY, SummaryPayload
 from src.utils.work_unit import construct_work_unit_key
 
 
@@ -2170,16 +2173,23 @@ class TestQueueRetry:
         assert items[0].error is not None
         assert "OperationalError" in items[0].error
 
-    async def test_summary_payload_forbids_retry_attempts_key(self) -> None:
-        from pydantic import ValidationError
+    async def test_process_item_strips_retry_counter_before_validation(self) -> None:
+        """A reclaimed non-representation item must survive its own retry counter.
 
-        from src.deriver.queue_manager import QueueManager
-        from src.utils.queue_payload import SummaryPayload
-
-        raw = {
+        The counter is written onto an *unprocessed* item so the budget outlives
+        a work-unit reclaim -- which means the next claim re-reads it. Every
+        payload model sets ``extra="forbid"``, so without the strip in
+        ``process_item`` the reclaim raises extra_forbidden -> ValueError ->
+        not retryable -> the item is burned terminally on the very attempt that
+        was supposed to retry it. Representation tasks never hit this: their
+        batch path reads the payload with ``.get()`` instead of validating,
+        which is why the rest of this class cannot catch it.
+        """
+        raw: dict[str, Any] = {
             "task_type": "summary",
             "session_name": "s",
             "message_seq_in_session": 1,
+            "message_public_id": "msg-public-id",
             "configuration": {
                 "reasoning": {"enabled": True},
                 "peer_card": {"use": True, "create": True},
@@ -2190,10 +2200,32 @@ class TestQueueRetry:
                 },
                 "dream": {"enabled": True},
             },
-            "_retry_attempts": 1,
+            RETRY_ATTEMPTS_PAYLOAD_KEY: 1,
         }
-        with pytest.raises(ValidationError) as ei:
+
+        # Pin the premise: the payload model must keep rejecting the key, so
+        # this fails loudly if someone "fixes" the burn with extra="allow"
+        # instead of stripping.
+        with pytest.raises(ValidationError) as exc_info:
             SummaryPayload.model_validate(raw)
-        assert any(err["type"] == "extra_forbidden" for err in ei.value.errors())
-        cleaned = QueueManager._payload_without_retry_attempts(raw)  # pyright: ignore[reportPrivateUsage]
-        SummaryPayload.model_validate(cleaned)
+        assert any(err["type"] == "extra_forbidden" for err in exc_info.value.errors())
+
+        queue_item = models.QueueItem(
+            task_type="summary",
+            work_unit_key="summary:test-workspace:test-session",
+            payload=raw,
+            processed=False,
+            workspace_name="test-workspace",
+            message_id=1,
+        )
+
+        with patch(
+            "src.deriver.consumer.summarizer.summarize_if_needed",
+            new_callable=AsyncMock,
+        ) as mock_summarize:
+            await process_item(queue_item)
+
+        mock_summarize.assert_awaited_once()
+        # The strip must happen on a copy: the counter has to stay on the row so
+        # the budget still advances if this attempt fails again.
+        assert raw[RETRY_ATTEMPTS_PAYLOAD_KEY] == 1
