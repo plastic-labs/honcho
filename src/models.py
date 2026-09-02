@@ -327,7 +327,13 @@ class Message(Base):
             "id",
             postgresql_include=["created_at"],
         ),
-        Index("ix_messages_tenant_peer", "tenant_id", "peer_name"),
+        Index(
+            "ix_messages_peer_lookup",
+            "tenant_id",
+            "workspace_name",
+            "peer_name",
+            "created_at",
+        ),
         UniqueConstraint(
             "tenant_id",
             "workspace_name",
@@ -387,6 +393,12 @@ class MessageEmbedding(Base):
             ["messages.tenant_id", "messages.public_id"],
             ondelete="CASCADE",
         ),
+        # Composite FK to workspaces, for parity with the other tenant-scoped
+        # tables (workspace_name is only unique within a tenant).
+        ForeignKeyConstraint(
+            ["workspace_name", "tenant_id"],
+            ["workspaces.name", "workspaces.tenant_id"],
+        ),
         ForeignKeyConstraint(
             ["session_name", "workspace_name", "tenant_id"],
             ["sessions.name", "sessions.workspace_name", "sessions.tenant_id"],
@@ -395,7 +407,10 @@ class MessageEmbedding(Base):
             ["peer_name", "workspace_name", "tenant_id"],
             ["peers.name", "peers.workspace_name", "peers.tenant_id"],
         ),
-        Index("ix_message_embeddings_tenant_message", "tenant_id", "message_id"),
+        # message_id-leading: every lookup on message_id is cross-tenant (the
+        # reconciler / embed_now filter by message_id with no tenant_id in scope),
+        # so a tenant_id prefix would force a scan of all partitions.
+        Index("ix_message_embeddings_message_tenant", "message_id", "tenant_id"),
         # HNSW is a single-column vector index (can't lead with tenant_id); it
         # becomes per-partition automatically under HASH(tenant_id).
         Index(
@@ -641,7 +656,7 @@ class QueueItem(Base):
     )
 
     def __repr__(self) -> str:
-        return f"QueueItem(id={self.id}, session_id={self.session_id}, work_unit_key={self.work_unit_key}, task_type={self.task_type}, payload={self.payload}, processed={self.processed}, workspace_name={self.workspace_name}, message_id={self.message_id})"
+        return f"QueueItem(id={self.id}, tenant_id={self.tenant_id}, session_id={self.session_id}, work_unit_key={self.work_unit_key}, task_type={self.task_type}, payload={self.payload}, processed={self.processed}, workspace_name={self.workspace_name}, message_id={self.message_id})"
 
 
 @final
