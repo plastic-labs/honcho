@@ -111,19 +111,16 @@ class Tenant(Base):
     """One row per tenant; the FK target for every tenant-scoped table's ``tenant_id``."""
 
     # region ai
-    # honcho's data plane and the control plane that owns the canonical tenant
-    # registry live in separate databases, so a cross-database FK to the real
-    # source of truth is impossible; this table is honcho's local mirror, kept in
-    # sync from the control plane (backfilled for existing tenants; written on
-    # provision, or upserted on first authenticated request, for new ones). It is
-    # also the one-row-per-tenant home for facts with nowhere else to live:
-    #   - legacy_app_name: the tenant's original per-instance name. After the
-    #     groudon shared-pool allocation, app_name is "shared" for every pooled
-    #     tenant, so this column preserves the per-tenant value that keeps a
-    #     tenant's external vector-store namespace stable across the move (avoids a
-    #     full, expensive re-embed). Named "legacy_" so it never competes with the
-    #     pool's app_name.
-    #   - tier: whether the tenant runs on a dedicated or a shared backend.
+    # This table can be a local mirror rather than the source of truth: when an
+    # external layer owns the tenant registry, rows are populated out-of-band
+    # (backfilled for existing tenants; written on provision, or upserted on first
+    # authenticated request) rather than via an in-database FK. It is also the
+    # one-row-per-tenant home for facts with nowhere else to live:
+    #   - legacy_app_name: the tenant's original app name, preserved so its
+    #     external vector-store namespace stays stable if the active app name
+    #     changes (avoids a full re-embed). Named "legacy_" so it never competes
+    #     with the current app_name.
+    #   - tier: which backend deployment class serves this tenant.
     # endregion
     __tablename__: str = "tenants"
     tenant_id: Mapped[str] = mapped_column(TEXT, primary_key=True)

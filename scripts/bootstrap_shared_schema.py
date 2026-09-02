@@ -7,9 +7,8 @@
 # (non-partitioned): ``alembic upgrade head`` would collide (DuplicateTable)
 # and, worse, it would run on existing single-tenant instances via
 # ``init_db()`` and error there too. Instead this is a standalone bootstrap
-# that the migration/consolidation track runs explicitly against the fresh
-# shared database that per-tenant data is consolidated into. How that database
-# is provisioned and version-stamped is owned by the migration track.
+# run explicitly against a freshly provisioned shared database. How that
+# database is provisioned and version-stamped is out of scope for this script.
 #
 # The DDL is generated from the declarative models (``src.models.Base.metadata``):
 # the models are the single source of truth, the compiler renders ``PARTITION
@@ -48,9 +47,10 @@ from sqlalchemy.schema import CreateIndex, CreateTable  # noqa: E402
 from src.models import Base  # noqa: E402  # pyright: ignore
 
 # region ai
-# HASH(tenant_id) partition count. Sized so each partition stays around a couple
-# GB — well under a node's memory, with headroom for growth. Contention is not the
-# driver (write volume is low); this is a maintenance/pruning choice.
+# HASH(tenant_id) partition count. This is a maintenance/pruning choice — keeping
+# each partition small enough to vacuum and prune independently — not a contention
+# one, since the hash key already spreads writes across partitions regardless of
+# count.
 # endregion
 PARTITION_COUNT = 128
 
