@@ -5,6 +5,7 @@ import {
   createUnscopedClient,
   parseConfig,
   type Env,
+  type HonchoConfig,
 } from "./config.js";
 import { createServer } from "./server.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -40,6 +41,7 @@ type Session = {
   transport: WebStandardStreamableHTTPServerTransport;
   server: McpServer;
   lastSeen: number;
+  apiKey: string;
 };
 
 const sessions = new Map<string, Session>();
@@ -106,6 +108,15 @@ function configForRequest(request: Request) {
   return parseConfig(request, envBindings());
 }
 
+function configOrUnauthorized(request: Request): HonchoConfig | Response {
+  try {
+    return configForRequest(request);
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "Invalid request";
+    return unauthorized(request, message);
+  }
+}
+
 function unauthorized(request: Request, message: string): Response {
   const resourceMetadata = `${new URL(request.url).origin}${PROTECTED_RESOURCE_PATH}`;
   return jsonResponse(
@@ -123,6 +134,14 @@ async function handleMcp(request: Request): Promise<Response> {
   if (sessionId) {
     const existing = sessions.get(sessionId);
     if (existing) {
+      const config = configOrUnauthorized(request);
+      if (config instanceof Response) return config;
+      if (config.apiKey !== existing.apiKey) {
+        return unauthorized(
+          request,
+          "Authorization does not match this session.",
+        );
+      }
       existing.lastSeen = Date.now();
       return withCors(await existing.transport.handleRequest(request));
     }
@@ -171,13 +190,8 @@ async function handleMcp(request: Request): Promise<Response> {
     );
   }
 
-  let config;
-  try {
-    config = configForRequest(request);
-  } catch (e) {
-    const message = e instanceof Error ? e.message : "Invalid request";
-    return unauthorized(request, message);
-  }
+  const config = configOrUnauthorized(request);
+  if (config instanceof Response) return config;
 
   const server = createServer({
     config,
@@ -203,7 +217,12 @@ async function handleMcp(request: Request): Promise<Response> {
   const transport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: () => crypto.randomUUID(),
     onsessioninitialized: (id) => {
-      sessions.set(id, { transport, server, lastSeen: Date.now() });
+      sessions.set(id, {
+        transport,
+        server,
+        lastSeen: Date.now(),
+        apiKey: config.apiKey,
+      });
     },
   });
   transport.onclose = () => {

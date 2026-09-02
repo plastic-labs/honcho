@@ -93,8 +93,9 @@ bunx mcp-remote http://127.0.0.1:3000 \
   --header "Authorization:Bearer <key>"
 ```
 
-Auth is the `Authorization: Bearer` header (same as the Worker). Optional
-`X-Honcho-Workspace-ID` fills `workspace_id` when the tool argument is omitted.
+Auth is the `Authorization: Bearer` header (same as the Worker). Established
+sessions still require that same bearer. Optional `X-Honcho-Workspace-ID`
+fills `workspace_id` when the tool argument is omitted.
 
 `HOST` defaults to `0.0.0.0`, `PORT` to `3000`. `GET /health` is unauthenticated.
 MCP is served at `/` and `/mcp`. Idle sessions expire after
