@@ -126,11 +126,11 @@ stdio host. `--cwd` loads `mcp/bunfig.toml` (Markdown loader) from this package.
 ```bash
 cd mcp && bun install
 
-claude mcp add honcho -- \
+claude mcp add honcho \
   -e HONCHO_API_KEY=hch-your-key-here \
   -e HONCHO_API_URL=http://127.0.0.1:28000 \
   -e HONCHO_WORKSPACE_ID=my-workspace \
-  bun --cwd "$(pwd)" src/stdio.ts
+  -- bun --cwd "$(pwd)" src/stdio.ts
 ```
 
 `HONCHO_API_URL` defaults to `https://api.honcho.dev`. `HONCHO_WORKSPACE_ID` is
