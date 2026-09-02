@@ -112,6 +112,9 @@ class DeriverMetricsPoller:
             stats = await crud.get_deriver_metrics(db)
             if self._dream_poll_due():
                 self._dreams_due = await count_due_dreams(db)
+                self._next_dream_poll = (
+                    time.monotonic() + settings.DREAM.DUE_POLL_INTERVAL_SECONDS
+                )
 
         signal = outstanding_work_seconds(stats, dreams_due=self._dreams_due)
         measured_at = time.time()
@@ -130,6 +133,7 @@ class DeriverMetricsPoller:
             pending_items=stats.pending_items,
             oldest_pending_age_seconds=stats.oldest_pending_age_seconds,
             embeddings_pending=stats.embeddings_pending,
+            embeddings_pending_due=stats.embeddings_pending_due,
         )
         metrics.set_dreams_due(count=self._dreams_due)
         metrics.set_deriver_outstanding_work(seconds=signal)
@@ -137,8 +141,6 @@ class DeriverMetricsPoller:
 
     def _dream_poll_due(self) -> bool:
         """The dream query is far more expensive, so it runs on its own spacing."""
-        now = time.monotonic()
-        if self._next_dream_poll is not None and now < self._next_dream_poll:
-            return False
-        self._next_dream_poll = now + settings.DREAM.DUE_POLL_INTERVAL_SECONDS
-        return True
+        return (
+            self._next_dream_poll is None or time.monotonic() >= self._next_dream_poll
+        )

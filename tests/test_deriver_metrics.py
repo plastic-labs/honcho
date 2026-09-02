@@ -102,6 +102,26 @@ class TestPoller:
         assert dream_count.await_count == 1
         assert poller.snapshot.dreams_due == 1
 
+    async def test_a_failed_dream_query_is_retried_on_the_next_pass(self):
+        """Advancing the deadline first would republish the old count for a whole interval."""
+        stats = schemas.DeriverMetrics()
+        poller = DeriverMetricsPoller()
+        dream_count = AsyncMock(side_effect=[RuntimeError("db down"), 4])
+
+        with (
+            patch(
+                "src.backlog.crud.get_deriver_metrics",
+                AsyncMock(return_value=stats),
+            ),
+            patch("src.backlog.count_due_dreams", dream_count),
+        ):
+            with pytest.raises(RuntimeError):
+                await poller.refresh()
+            await poller.refresh()
+
+        assert dream_count.await_count == 2
+        assert poller.snapshot.dreams_due == 4
+
     async def test_a_failed_pass_leaves_the_previous_snapshot_alone(self):
         """A half-finished pass must never be published as a measurement."""
         stats = schemas.DeriverMetrics(eligible_work_units=1)

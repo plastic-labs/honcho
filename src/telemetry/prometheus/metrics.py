@@ -199,6 +199,14 @@ message_embeddings_pending_gauge = NamespacedGauge(
     ["namespace"],
 )
 
+message_embeddings_pending_due_gauge = NamespacedGauge(
+    "message_embeddings_pending_due",
+    "Pending MessageEmbedding rows past their retry backoff, so a sync attempt "
+    + "is due. Service-wide DB count, reported independently by every API "
+    + "replica — aggregate with max() or avg(), never sum()",
+    ["namespace"],
+)
+
 deriver_outstanding_work_seconds_gauge = NamespacedGauge(
     "deriver_outstanding_work_seconds",
     "Seconds of outstanding deriver work, 0 when a deriver has nothing to do. "
@@ -615,6 +623,7 @@ class PrometheusMetrics:
         pending_items: int = 0,
         oldest_pending_age_seconds: float = 0.0,
         embeddings_pending: int = 0,
+        embeddings_pending_due: int = 0,
     ) -> None:
         try:
             deriver_queue_work_units_eligible_gauge.labels().set(eligible_work_units)
@@ -624,6 +633,7 @@ class PrometheusMetrics:
                 oldest_pending_age_seconds
             )
             message_embeddings_pending_gauge.labels().set(embeddings_pending)
+            message_embeddings_pending_due_gauge.labels().set(embeddings_pending_due)
         except Exception as e:
             self._handle_metric_error("set_deriver_metrics", e)
 
