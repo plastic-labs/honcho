@@ -1,16 +1,18 @@
-"""Integration test for the shared-tenant schema bootstrap.
+"""Integration test for the shared-tenant schema bootstrap."""
 
-Runs ``scripts/bootstrap_shared_schema`` against a throwaway database and asserts
-the partitioned schema it produces: every tenant-scoped table is
-HASH(tenant_id)-partitioned with its full set of partitions, the primary key
-leads with ``tenant_id``, and the tenant-scoped composite keys enforce (two
-tenants can share a workspace name, a duplicate name within a tenant is rejected,
-and an unknown ``tenant_id`` is rejected by the FK to ``tenants``).
-
-Heavier than a metadata-only shape check on purpose: it exercises the exact DDL
-the migration track will run, against real Postgres + pgvector, and it does not
-go through the app's ``create_all`` fixture (which does not create partitions).
-"""
+# region ai
+# Runs ``scripts/bootstrap_shared_schema`` against a throwaway database and
+# asserts the partitioned schema it produces: every tenant-scoped table is
+# HASH(tenant_id)-partitioned with its full set of partitions, the primary key
+# leads with ``tenant_id``, and the tenant-scoped composite keys enforce (two
+# tenants can share a workspace name, a duplicate name within a tenant is
+# rejected, and an unknown ``tenant_id`` is rejected by the FK to ``tenants``).
+#
+# Heavier than a metadata-only shape check on purpose: it exercises the exact
+# DDL the migration track will run, against real Postgres + pgvector, and it
+# does not go through the app's ``create_all`` fixture (which does not create
+# partitions).
+# endregion
 
 import pytest
 from sqlalchemy import Engine, create_engine, make_url, text
@@ -33,7 +35,7 @@ def bootstrapped_engine(worker_id: str):
     admin_url = make_url(settings.DB.CONNECTION_URI).set(database="postgres")
 
     def _drop_create(create: bool) -> None:
-        # Pass the URL object (not str) so the password is not masked to '***'.
+        # ai: Pass the URL object (not str) so the password is not masked to '***'.
         admin = create_engine(admin_url, isolation_level="AUTOCOMMIT")
         with admin.connect() as conn:
             conn.execute(text(f'DROP DATABASE IF EXISTS "{db_name}" WITH (FORCE)'))
@@ -43,7 +45,7 @@ def bootstrapped_engine(worker_id: str):
 
     _drop_create(create=True)
     engine = create_engine(make_url(settings.DB.CONNECTION_URI).set(database=db_name))
-    # AUTOCOMMIT: the partition DDL accumulates too many locks for one transaction.
+    # ai: AUTOCOMMIT: the partition DDL accumulates too many locks for one transaction.
     with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
         conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         bootstrap_shared_schema(conn)
@@ -55,9 +57,12 @@ def bootstrapped_engine(worker_id: str):
 
 
 def test_every_tenant_table_is_partitioned(bootstrapped_engine: Engine) -> None:
-    """Each tenant-scoped table is a HASH partitioned table carrying all its
-    partitions — guards the drift trap where a partitioned parent with zero
-    partitions rejects every insert."""
+    """Every tenant-scoped table is HASH-partitioned, carrying all its partitions."""
+
+    # region ai
+    # Guards the drift trap where a partitioned parent with zero partitions
+    # rejects every insert.
+    # endregion
     expected = partitioned_tables()
     assert len(expected) == 9
     with bootstrapped_engine.connect() as conn:
@@ -106,8 +111,10 @@ def test_tenant_scoped_uniqueness_and_fk(bootstrapped_engine: Engine) -> None:
         session.add_all([Tenant(tenant_id="tenant_a"), Tenant(tenant_id="tenant_b")])
         session.commit()
 
+        # region ai
         # Two different tenants may each own a workspace named "default": this is
         # the whole point of UNIQUE(tenant_id, name) replacing UNIQUE(name).
+        # endregion
         session.add_all(
             [
                 Workspace(tenant_id="tenant_a", name="default"),

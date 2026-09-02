@@ -41,7 +41,7 @@ logger = getLogger(__name__)
 session_peers_table = Table(
     "session_peers",
     Base.metadata,
-    # tenant_id leads the all-natural-key PK and is the HASH partition key.
+    # ai: tenant_id leads the all-natural-key PK and is the HASH partition key.
     Column(
         "tenant_id",
         TEXT,
@@ -108,27 +108,26 @@ session_peers_table = Table(
 
 @final
 class Tenant(Base):
-    """The tenant primitive: one row per tenant, the FK target for every
-    tenant-scoped table's ``tenant_id``.
+    """One row per tenant; the FK target for every tenant-scoped table's ``tenant_id``."""
 
-    honcho's data plane and the control plane that owns the canonical tenant
-    registry live in separate databases, so a cross-database foreign key to the
-    real source of truth is impossible; this table is honcho's local mirror,
-    kept in sync from the control plane (backfilled for existing tenants;
-    written on provision or upserted on first authenticated request for new
-    ones). It is also the one-row-per-tenant home for facts that have nowhere
-    else to live:
-
-    - ``app_name``: the tenant's original per-instance name. Keeping it lets a
-      tenant's external vector-store namespace stay stable when the tenant is
-      moved onto a shared backend, which avoids a full and very expensive
-      re-embed of its vectors.
-    - ``tier``: whether the tenant runs on a dedicated or a shared backend.
-    """
-
+    # region ai
+    # honcho's data plane and the control plane that owns the canonical tenant
+    # registry live in separate databases, so a cross-database FK to the real
+    # source of truth is impossible; this table is honcho's local mirror, kept in
+    # sync from the control plane (backfilled for existing tenants; written on
+    # provision, or upserted on first authenticated request, for new ones). It is
+    # also the one-row-per-tenant home for facts with nowhere else to live:
+    #   - legacy_app_name: the tenant's original per-instance name. After the
+    #     groudon shared-pool allocation, app_name is "shared" for every pooled
+    #     tenant, so this column preserves the per-tenant value that keeps a
+    #     tenant's external vector-store namespace stable across the move (avoids a
+    #     full, expensive re-embed). Named "legacy_" so it never competes with the
+    #     pool's app_name.
+    #   - tier: whether the tenant runs on a dedicated or a shared backend.
+    # endregion
     __tablename__: str = "tenants"
     tenant_id: Mapped[str] = mapped_column(TEXT, primary_key=True)
-    app_name: Mapped[str | None] = mapped_column(TEXT, nullable=True, index=True)
+    legacy_app_name: Mapped[str | None] = mapped_column(TEXT, nullable=True, index=True)
     tier: Mapped[str] = mapped_column(TEXT, nullable=False, server_default="dedicated")
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -138,8 +137,10 @@ class Tenant(Base):
 @final
 class Workspace(Base):
     __tablename__: str = "workspaces"
+    # region ai
     # tenant_id is the HASH partition key and leads the composite PK, so it is
     # declared first. It FKs to the local tenants mirror (see Tenant).
+    # endregion
     tenant_id: Mapped[str] = mapped_column(
         TEXT, ForeignKey("tenants.tenant_id"), nullable=False
     )
@@ -167,9 +168,11 @@ class Workspace(Base):
     webhook_endpoints = relationship("WebhookEndpoint", back_populates="workspace")
 
     __table_args__ = (
+        # region ai
         # Partitioned by HASH(tenant_id): Postgres requires the partition key in
         # the PK and in every UNIQUE. `name` is unique WITHIN a tenant, not
         # globally — many tenants share the SDK-default "default" workspace.
+        # endregion
         PrimaryKeyConstraint("tenant_id", "id"),
         UniqueConstraint("tenant_id", "name"),
         CheckConstraint("length(id) = 21", name="id_length"),
@@ -196,8 +199,10 @@ class Peer(Base):
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
     )
+    # region ai
     # workspace_name's FK to workspaces is now the composite (below), since
     # workspaces.name is only unique within a tenant.
+    # endregion
     workspace_name: Mapped[str] = mapped_column(TEXT, nullable=False)
     configuration: Mapped[dict[str, Any]] = mapped_column(
         JSONB, default=dict, server_default=text("'{}'::jsonb")
@@ -305,7 +310,7 @@ class Message(Base):
 
     __table_args__ = (
         PrimaryKeyConstraint("tenant_id", "id"),
-        # (tenant_id, public_id) is the unique that message_embeddings' FK targets.
+        # ai: (tenant_id, public_id) is the unique that message_embeddings' FK targets.
         UniqueConstraint("tenant_id", "public_id"),
         CheckConstraint("length(public_id) = 21", name="public_id_length"),
         CheckConstraint("public_id ~ '^[A-Za-z0-9_-]+$'", name="public_id_format"),
@@ -340,9 +345,11 @@ class Message(Base):
             "session_name",
             "seq_in_session",
         ),
+        # region ai
         # GIN can't lead with a scalar column without btree_gin; the table is
         # HASH(tenant_id)-partitioned, so this index is per-partition — queries
         # prune to one partition, then tenant_id filters the FTS candidates.
+        # endregion
         Index(
             "ix_messages_content_gin",
             text("to_tsvector('english', content)"),
@@ -386,15 +393,19 @@ class MessageEmbedding(Base):
 
     __table_args__ = (
         PrimaryKeyConstraint("tenant_id", "id"),
+        # region ai
         # message_id → messages.public_id is now composite: messages' unique is
         # (tenant_id, public_id) under partitioning.
+        # endregion
         ForeignKeyConstraint(
             ["tenant_id", "message_id"],
             ["messages.tenant_id", "messages.public_id"],
             ondelete="CASCADE",
         ),
+        # region ai
         # Composite FK to workspaces, for parity with the other tenant-scoped
         # tables (workspace_name is only unique within a tenant).
+        # endregion
         ForeignKeyConstraint(
             ["workspace_name", "tenant_id"],
             ["workspaces.name", "workspaces.tenant_id"],
@@ -407,12 +418,16 @@ class MessageEmbedding(Base):
             ["peer_name", "workspace_name", "tenant_id"],
             ["peers.name", "peers.workspace_name", "peers.tenant_id"],
         ),
+        # region ai
         # message_id-leading: every lookup on message_id is cross-tenant (the
         # reconciler / embed_now filter by message_id with no tenant_id in scope),
         # so a tenant_id prefix would force a scan of all partitions.
+        # endregion
         Index("ix_message_embeddings_message_tenant", "message_id", "tenant_id"),
+        # region ai
         # HNSW is a single-column vector index (can't lead with tenant_id); it
         # becomes per-partition automatically under HASH(tenant_id).
+        # endregion
         Index(
             "ix_message_embeddings_embedding_hnsw",
             "embedding",
@@ -420,9 +435,11 @@ class MessageEmbedding(Base):
             postgresql_with={"m": 16, "ef_construction": 64},
             postgresql_ops={"embedding": "vector_cosine_ops"},
         ),
+        # region ai
         # NOT tenant_id-leading on purpose: the reconciler scans this cross-tenant
         # (sync_state='pending' over all tenants), so a tenant_id prefix wouldn't
         # help. (Also drops the redundant single-column sync_state index.)
+        # endregion
         Index(
             "ix_message_embeddings_sync_state_last_sync_at",
             "sync_state",
@@ -565,7 +582,8 @@ class Document(Base):
             ["session_name", "workspace_name", "tenant_id"],
             ["sessions.name", "sessions.workspace_name", "sessions.tenant_id"],
         ),
-        # Tenant-scoped collection lookups (replaces the single observer/observed indexes)
+        # Tenant-scoped collection lookups
+        # ai: replaces the single observer/observed indexes
         Index(
             "ix_documents_tenant_collection",
             "tenant_id",
@@ -573,7 +591,7 @@ class Document(Base):
             "observed",
             "workspace_name",
         ),
-        # HNSW is a single-column vector index (per-partition under HASH(tenant_id))
+        # ai: HNSW is a single-column vector index (per-partition under HASH(tenant_id))
         Index(
             "ix_documents_embedding_hnsw",
             "embedding",
@@ -589,8 +607,10 @@ class Document(Base):
             "source_ids",
             postgresql_using="gin",
         ),
+        # region ai
         # Reconciler scans this cross-tenant (sync_state='pending'), so NOT
         # tenant_id-leading. Also drops the redundant single-column sync_state index.
+        # endregion
         Index(
             "ix_documents_sync_state_last_sync_at",
             "sync_state",
@@ -606,11 +626,13 @@ class QueueItem(Base):
     id: Mapped[int] = mapped_column(
         BigInteger, Identity(), primary_key=True, autoincrement=True
     )
+    # region ai
     # Service table: NOT partitioned and drained-not-copied at migration, so it
     # keeps a sole-id PK. tenant_id is a plain attribution / fair-scheduling column
     # (no FK, no RLS); the FKs to the now-partitioned sessions / messages /
     # workspaces are dropped — the app manages queue lifecycle and already
     # tolerates missing referents.
+    # endregion
     tenant_id: Mapped[str | None] = mapped_column(TEXT, nullable=True, index=True)
     session_id: Mapped[str | None] = mapped_column(TEXT, nullable=True, index=True)
     work_unit_key: Mapped[str] = mapped_column(TEXT, nullable=False)
@@ -665,7 +687,7 @@ class ActiveQueueSession(Base):
 
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
 
-    # Service table (unpartitioned): tenant_id is plain attribution, no FK / RLS.
+    # ai: Service table (unpartitioned): tenant_id is plain attribution, no FK / RLS.
     tenant_id: Mapped[str | None] = mapped_column(TEXT, nullable=True)
 
     work_unit_key: Mapped[str] = mapped_column(TEXT, unique=True)
