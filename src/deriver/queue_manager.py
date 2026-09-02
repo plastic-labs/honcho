@@ -6,7 +6,7 @@ import time
 from asyncio import Task
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from logging import getLogger
 from typing import Any, NamedTuple, cast
 
@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 from nanoid import generate as generate_nanoid
 from sentry_sdk.integrations.asyncio import AsyncioIntegration
 from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
-from sqlalchemy import and_, delete, select, update
+from sqlalchemy import Text, and_, delete, literal, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -48,6 +48,8 @@ from src.reconciler import (
 from src.schemas import ResolvedConfiguration
 from src.telemetry import prometheus_metrics
 from src.telemetry.sentry import initialize_sentry
+from src.utils.queue_payload import RETRY_ATTEMPTS_PAYLOAD_KEY
+from src.utils.retryable_errors import is_retryable_error
 from src.utils.work_unit import parse_work_unit_key
 from src.webhooks.events import (
     QueueEmptyEvent,
@@ -57,6 +59,12 @@ from src.webhooks.events import (
 logger = getLogger(__name__)
 
 load_dotenv(override=True)
+
+# Total processing attempts per work unit for transient errors. Count is
+# stored on the oldest unprocessed queue item so every deriver instance
+# shares one budget.
+MAX_RETRYABLE_ATTEMPTS = 3
+RETRY_BACKOFF_SECONDS = 1.0
 
 
 class WorkerOwnership(NamedTuple):
@@ -306,7 +314,7 @@ class QueueManager:
     async def cleanup_stale_work_units(self) -> None:
         """Clean up stale work units"""
         async with tracked_db("cleanup_stale_work_units") as db:
-            cutoff = datetime.now(timezone.utc) - timedelta(
+            cutoff = datetime.now(UTC) - timedelta(
                 minutes=settings.DERIVER.STALE_SESSION_TIMEOUT_MINUTES
             )
 
@@ -576,11 +584,24 @@ class QueueManager:
         items: list[QueueItem],
         work_unit_key: str,
         context: str,
-    ) -> None:
+    ) -> bool:
         """
-        Handle processing errors by marking queue items as errored, logging, and forwarding to Sentry.
-        We only mark the first queue item as errored so we don't potentially throw away a batch. This allows us
-        to incrementally attempt to process the batch while still maintaining progress in a work unit.
+        Handle a processing error. Returns True when the caller should stop
+        processing and release the work unit for a later re-claim.
+
+        Transient errors (is_retryable_error) get up to MAX_RETRYABLE_ATTEMPTS
+        attempts per work unit: items stay unprocessed with no error recorded.
+        The attempt count lives on the oldest unprocessed queue item so a
+        different deriver instance continues the same budget after reclaim.
+        Reprocessing is at-least-once, not idempotent: the batch is re-derived
+        by a fresh LLM call, so identical text collapses via exact dedup and
+        near-identical text via semantic dedup. Retries can therefore inflate
+        times_derived and double-count LLM telemetry -- acceptable because the
+        alternative is dropping the batch.
+
+        Terminal errors mark only the first queue item as errored so we don't
+        potentially throw away a batch. This allows us to incrementally attempt
+        to process the batch while still maintaining progress in a work unit.
 
         Args:
             error: The exception that occurred
@@ -588,12 +609,37 @@ class QueueManager:
             work_unit_key: The work unit key for the queue items
             context: Context string describing what was being processed (e.g., "processing representation batch")
         """
+        if is_retryable_error(error):
+            try:
+                attempts = await self._get_work_unit_retry_attempts(work_unit_key) + 1
+                if attempts < MAX_RETRYABLE_ATTEMPTS:
+                    await self._set_work_unit_retry_attempts(work_unit_key, attempts)
+                    logger.warning(
+                        "Transient error %s for work unit %s (attempt %d/%d); leaving items unprocessed for retry",
+                        context,
+                        work_unit_key,
+                        attempts,
+                        MAX_RETRYABLE_ATTEMPTS,
+                        exc_info=error,
+                    )
+                    return True
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "Retry-counter I/O failed for work unit %s; releasing %s without recording an attempt",
+                    work_unit_key,
+                    context,
+                )
+                return True
+
         error_msg = f"{error.__class__.__name__}: {str(error)}"
         try:
             if items:
+                # Clear retry metadata only after the terminal mark commits so a
+                # failed mark leaves the shared budget intact for the next claim.
                 await self.mark_queue_item_as_errored(
                     items[0], work_unit_key, error_msg
                 )
+            await self._clear_work_unit_retry_attempts(work_unit_key)
         except Exception as mark_error:
             logger.error(
                 f"Failed to mark queue items as errored for work unit {work_unit_key}: {mark_error}",
@@ -606,6 +652,7 @@ class QueueManager:
         )
         if settings.SENTRY.ENABLED:
             sentry_sdk.capture_exception(error)
+        return False
 
     async def process_work_unit(self, work_unit_key: str, worker_id: str) -> None:
         """Process all queue items for a specific work unit by routing to the correct handler."""
@@ -671,12 +718,18 @@ class QueueManager:
                                 )
                                 queue_item_count += len(items_to_process)
                             except Exception as e:
-                                await self._handle_processing_error(
+                                if await self._handle_processing_error(
                                     e,
                                     items_to_process,
                                     work_unit_key,
                                     f"processing {work_unit.task_type} batch",
-                                )
+                                ):
+                                    # Release the work unit (via the finally
+                                    # below) and let a later poll re-claim it.
+                                    await asyncio.sleep(
+                                        self._jitter(RETRY_BACKOFF_SECONDS)
+                                    )
+                                    break
 
                         else:
                             queue_item = await self.get_next_queue_item(
@@ -695,12 +748,16 @@ class QueueManager:
                                 )
                                 queue_item_count += 1
                             except Exception as e:
-                                await self._handle_processing_error(
+                                if await self._handle_processing_error(
                                     e,
                                     [queue_item],
                                     work_unit_key,
                                     "processing queue item",
-                                )
+                                ):
+                                    await asyncio.sleep(
+                                        self._jitter(RETRY_BACKOFF_SECONDS)
+                                    )
+                                    break
 
                     except Exception as e:
                         logger.error(
@@ -1052,6 +1109,87 @@ class QueueManager:
             was_flush_enabled=was_flush_enabled,
             batch_max_tokens=batch_max_tokens,
         )
+
+    async def _oldest_unprocessed_item(
+        self,
+        db: AsyncSession,
+        work_unit_key: str,
+        *,
+        for_update: bool = False,
+    ) -> models.QueueItem | None:
+        stmt = (
+            select(models.QueueItem)
+            .where(
+                models.QueueItem.work_unit_key == work_unit_key,
+                models.QueueItem.processed.is_(False),
+            )
+            .order_by(models.QueueItem.id)
+            .limit(1)
+        )
+        if for_update:
+            stmt = stmt.with_for_update()
+        result = await db.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def _get_work_unit_retry_attempts(self, work_unit_key: str) -> int:
+        """Read the shared transient-failure attempt count for a work unit."""
+        async with tracked_db("get_work_unit_retry_attempts") as db:
+            item = await self._oldest_unprocessed_item(db, work_unit_key)
+            if item is None:
+                return 0
+            raw = (item.payload or {}).get(RETRY_ATTEMPTS_PAYLOAD_KEY, 0)
+            try:
+                return max(0, int(raw))
+            except (TypeError, ValueError):
+                return 0
+
+    async def _set_work_unit_retry_attempts(
+        self, work_unit_key: str, attempts: int
+    ) -> None:
+        """Persist the shared attempt count on the oldest unprocessed item."""
+        async with tracked_db("set_work_unit_retry_attempts") as db:
+            item = await self._oldest_unprocessed_item(
+                db, work_unit_key, for_update=True
+            )
+            if item is None:
+                await db.commit()
+                return
+            new_payload = dict(item.payload or {})
+            new_payload[RETRY_ATTEMPTS_PAYLOAD_KEY] = attempts
+            await db.execute(
+                update(models.QueueItem)
+                .where(models.QueueItem.id == item.id)
+                .values(payload=new_payload)
+            )
+            await db.commit()
+
+    async def _clear_work_unit_retry_attempts(self, work_unit_key: str) -> None:
+        """Drop the shared attempt count from remaining unprocessed items.
+
+        One statement on purpose: a multi-row ``SELECT ... FOR UPDATE`` here
+        would take locks on ``queue`` in scan order, which is a deadlock partner
+        for any other multi-row writer on the same table. The JSONB ``-``
+        operator does the strip server-side, so no rows are locked ahead of the
+        write and there is no lock order to get wrong.
+        """
+        async with tracked_db("clear_work_unit_retry_attempts") as db:
+            await db.execute(
+                update(models.QueueItem)
+                .where(
+                    models.QueueItem.work_unit_key == work_unit_key,
+                    models.QueueItem.processed.is_(False),
+                    models.QueueItem.payload.has_key(RETRY_ATTEMPTS_PAYLOAD_KEY),
+                )
+                .values(
+                    # literal(..., Text) is required: an untyped bind leaves
+                    # Postgres unable to pick between jsonb - text and its
+                    # integer/array siblings.
+                    payload=models.QueueItem.payload.op("-")(
+                        literal(RETRY_ATTEMPTS_PAYLOAD_KEY, Text)
+                    )
+                )
+            )
+            await db.commit()
 
     async def mark_queue_items_as_processed(
         self, items: list[QueueItem], work_unit_key: str
