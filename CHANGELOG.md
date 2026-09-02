@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [3.1.1] - 2026-09-02
+
+### Changed
+
+- Server `requires-python` is `>=3.13`, matching the production image. Self-hosters on 3.10–3.12 need to upgrade; SDK and CLI floors are unchanged (#1090)
+
+### Fixed
+
+- Concurrent `create_documents` writers to the same collection deadlocked on `times_derived` reinforcement UPDATEs issued in batch order; the error was swallowed per-document, the batch was lost, and the queue item was marked processed. Writers now lock target rows with `SELECT ... ORDER BY id FOR UPDATE` before applying, abort the batch on `SQLAlchemyError` instead of continuing through a dead session, and retry transient errors (deadlock, serialization failure, lock/statement timeout, lost connection) up to `MAX_RETRYABLE_ATTEMPTS` instead of burning the item (#1033)
+- Scope backfill no longer embeds, writes, and syncs every planned copy at once. A 14k-document session is ~580MB of vectors; several concurrent backfills OOM-killed the deriver at its 1000Mi limit and crash-looped because the work units never completed. Phases 2–4 now run per chunk of 500 specs, reload source embeddings per chunk, and drop them once synced. Membership is locked across chunk writes so a concurrent leave cannot commit between the check and the inserts (#1104)
+- Model-generated observations with NUL bytes (`\u0000`) no longer fail the exact-content dedup pre-fetch with a Postgres `DataError` that dropped the whole observer batch. Ingress already stripped NUL from user content; the deriver now strips it so stored text matches embedded text. All-NUL content is dropped rather than stored empty (#1095)
+- `search_messages` no longer forwards `top_k=0` to Turbopuffer (which requires 1..10000). Zero/negative limits short-circuit to empty results; tool limits are floored at 1. The documents path was already guarded (#970); this closes the message path (#1084)
+- OpenAI-compatible tool-call turns with `content=null` keep null through history replay instead of being coerced to `""`. Providers that bind reasoning state to the exact assistant message shape were breaking on the empty string. Tool-less null still becomes `""` (#1064)
+- The production image now ships `pyproject.toml` in the runtime stage, so the service reports its real version instead of `unknown` in OpenAPI and telemetry (#1074)
+
 ## [3.1.0] - 2026-08-25
 
 ### Added

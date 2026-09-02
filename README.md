@@ -8,7 +8,7 @@
 
 ---
 
-![Static Badge](https://img.shields.io/badge/Server-3.1.0-blue)
+![Static Badge](https://img.shields.io/badge/Server-3.1.1-blue)
 [![PyPI version](https://img.shields.io/pypi/v/honcho-ai.svg)](https://pypi.org/project/honcho-ai/)
 [![NPM version](https://img.shields.io/npm/v/@honcho-ai/sdk.svg)](https://npmjs.org/package/@honcho-ai/sdk)
 [![CLI](https://img.shields.io/pypi/v/honcho-cli.svg?label=honcho-cli)](https://pypi.org/project/honcho-cli/)
