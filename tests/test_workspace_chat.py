@@ -9,7 +9,7 @@ import asyncio
 import json
 from collections.abc import Callable
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 
@@ -82,7 +82,7 @@ async def workspace_test_data(
     await db_session.flush()
 
     # Create messages
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     messages: list[models.Message] = []
     for i in range(6):
         peer_name = [peer1.name, peer2.name, peer3.name][i % 3]
@@ -593,7 +593,7 @@ class TestSearchMemoryWorkspace:
             content="I really like programming in Python",
             seq_in_session=1,
             token_count=10,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         db_session.add(msg)
         await db_session.flush()
@@ -919,7 +919,7 @@ class TestGetObservationContextWorkspace:
             content="LEAKED_FROM_OTHER_SESSION",
             seq_in_session=messages[0].seq_in_session,
             token_count=10,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         db_session.add(leaked_message)
         await db_session.commit()
@@ -1253,3 +1253,63 @@ class TestWorkspaceChatPrompt:
         }
         assert agent.messages[0]["content"] == workspace_agent_system_prompt(offered)
         assert agent._prefetch_heading() == "Workspace overview (prefetched)"  # pyright: ignore[reportPrivateUsage]
+
+    def test_forbids_clarifying_questions(self) -> None:
+        """The endpoint is non-interactive, so the prompt must say so.
+
+        Without this the model answers a recall query with a plan and a menu of
+        lookups for a caller that cannot reply. The pair agent talks to a peer
+        and is deliberately left alone.
+        """
+        from src.dialectic.prompts import (
+            agent_system_prompt,
+            workspace_agent_system_prompt,
+        )
+
+        prompt = workspace_agent_system_prompt()
+        assert "NO CLARIFYING QUESTIONS" in prompt
+        assert "NO CLARIFYING QUESTIONS" not in agent_system_prompt(
+            "alice", "alice", None, None
+        )
+
+
+class TestWorkspaceToolChoice:
+    """The workspace agent must search before it answers.
+
+    Its prefetch is an orientation overview, not the corpus, so a turn with no
+    tool call ends the loop with whatever the overview happened to contain.
+    """
+
+    @pytest.mark.parametrize("level", ["minimal", "low", "medium", "high", "max"])
+    def test_first_turn_requires_a_tool_call(self, level: str) -> None:
+        from src.config import settings
+        from src.dialectic.workspace import WorkspaceDialecticAgent
+
+        agent = WorkspaceDialecticAgent(workspace_name="w", reasoning_level=level)  # pyright: ignore[reportArgumentType]
+        level_settings = settings.DIALECTIC.LEVELS[level]  # pyright: ignore[reportArgumentType]
+        assert agent._tool_choice(level_settings) == "required"  # pyright: ignore[reportPrivateUsage]
+
+    def test_pair_agent_keeps_the_configured_choice(self) -> None:
+        from src.config import settings
+        from src.dialectic.core import DialecticAgent
+
+        agent = DialecticAgent(
+            workspace_name="w", session_name=None, observer="a", observed="a"
+        )
+        level_settings = settings.DIALECTIC.LEVELS["low"]
+        assert (
+            agent._tool_choice(level_settings)  # pyright: ignore[reportPrivateUsage]
+            == level_settings.TOOL_CHOICE
+        )
+
+    def test_a_configured_non_auto_choice_is_passed_through(self) -> None:
+        from src.config import DialecticLevelSettings, settings
+        from src.dialectic.workspace import WorkspaceDialecticAgent
+
+        agent = WorkspaceDialecticAgent(workspace_name="w")
+        pinned = DialecticLevelSettings(
+            MODEL_CONFIG=settings.DIALECTIC.LEVELS["low"].MODEL_CONFIG,
+            MAX_TOOL_ITERATIONS=5,
+            TOOL_CHOICE="none",
+        )
+        assert agent._tool_choice(pinned) == "none"  # pyright: ignore[reportPrivateUsage]
