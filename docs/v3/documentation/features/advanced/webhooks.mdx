@@ -13,6 +13,14 @@ for a session has drained.
 Webhooks are registered per workspace. Every event for that workspace is
 delivered to every endpoint registered on it.
 
+<Note>
+**On Honcho Cloud, register endpoints from the dashboard.** The webhook API
+below is available on self-hosted instances; on `api.honcho.dev` it returns
+`405 Method Not Allowed`. Use the
+[Webhooks page](https://app.honcho.dev/webhooks) instead. Everything else on
+this page — payload shapes, delivery semantics — applies to both.
+</Note>
+
 ## Registering an Endpoint
 
 <CodeGroup>
