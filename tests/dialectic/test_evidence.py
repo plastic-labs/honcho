@@ -24,6 +24,7 @@ from src.llm import (
     StreamingResponseWithMetadata,
 )
 from src.utils.evidence import EvidenceAccumulator
+from src.utils.representation import Representation
 
 
 def llm_call_kwargs(mock_llm_call: AsyncMock) -> Mapping[str, Any]:
@@ -196,6 +197,31 @@ class TestPrefetchEvidence:
         built = evidence.build()
         assert {c.content for c in built.conclusions} >= {"User drinks coffee"}
         assert all(c.id for c in built.conclusions)
+
+    async def test_records_nothing_when_the_prefetch_block_is_dropped(
+        self, dialectic_test_data: Any, monkeypatch: pytest.MonkeyPatch
+    ):
+        """A prefetch that fails after the search reaches the agent with nothing.
+
+        `_prefetch_relevant_observations` swallows any failure and returns
+        None, so `_prepare_query` builds a prompt with no prefetch block. The
+        rows the search returned were never shown to the agent, and evidence
+        has to say so.
+        """
+
+        def explode(*_args: object, **_kwargs: object) -> str:
+            raise RuntimeError("formatting blew up")
+
+        monkeypatch.setattr(Representation, "format_as_markdown", explode)
+        evidence = EvidenceAccumulator()
+        agent = make_agent(dialectic_test_data, evidence)
+
+        await run_answer(agent)
+
+        assert evidence.conclusions == {}
+        # The agent still answered, just without the prefetched context.
+        assert agent.messages[-1]["content"].startswith("Query:")
+        assert "Relevant Observations" not in agent.messages[-1]["content"]
 
 
 @pytest.mark.asyncio

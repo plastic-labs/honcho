@@ -276,9 +276,6 @@ class DialecticAgent:
                 documents_out=prefetched,
             )
 
-            if self.evidence is not None and prefetched:
-                self.evidence.add_documents(prefetched)
-
             if explicit_repr.is_empty() and derived_repr.is_empty():
                 return None
 
@@ -297,6 +294,12 @@ class DialecticAgent:
             if not derived_repr.is_empty():
                 # Include IDs for derived so agent can use get_reasoning_chain
                 parts.append(derived_repr.format_as_markdown(include_ids=True))
+
+            # Recorded last: everything above can still fail into the handler
+            # below, which drops the whole block from the prompt. Evidence should
+            # name what the agent saw, not what was fetched for it.
+            if self.evidence is not None and prefetched:
+                self.evidence.add_documents(prefetched)
 
             return "\n".join(parts)
 
