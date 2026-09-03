@@ -217,7 +217,8 @@ export function resolveConfig(
 }
 
 /**
- * `HONCHO_CONFIG_PATH` → `$HOME/.honcho/config.json` (`USERPROFILE` on Windows).
+ * `HONCHO_CONFIG_PATH` if set, returned verbatim. Otherwise `.honcho/config.json`
+ * under `HOME`, then `USERPROFILE` (Windows), then `os.homedir()`.
  *
  * `env.HOME` is consulted before `os.homedir()` because Bun's `homedir()` ignores
  * in-process changes to `process.env.HOME`, so tests that redirect HOME would
