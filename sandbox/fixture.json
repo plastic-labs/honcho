@@ -3,8 +3,37 @@
   "session": "sandbox-session",
 
   "_comment": "Peer topology is stated explicitly because it is the thing that silently breaks (DEV-2462 asserts on it). alice is observed and does not observe; the assistant observes and is not observed - the standard harness shape.",
+
+  "_conclusions_comment": "The explicit/deductive/inductive keys are optional seeded memory, written straight into the (observer, observed) collection rather than derived. They exist because derived conclusions are only assertable in real mode: the mock provider's conclusion text is synthetic and its level is always explicit. Seeded text is identical in both modes, so a harness test can assert on content and level for free. Premise indices point into the same peer's explicit list, and they are what make the conclusion's reasoning chain resolve - excadrill's equivalent fixtures use synthetic source ids that never resolve to a real document. A premise-less derived conclusion is allowed by the format but is not something the Dreamer would ever write, so the committed fixture does not use one.",
   "peers": [
-    { "id": "alice", "observe_me": true, "observe_others": false },
+    {
+      "id": "alice",
+      "observe_me": true,
+      "observe_others": false,
+
+      "explicit": [
+        "alice is a structural engineer based in Rotterdam",
+        "alice is designing a pedestrian bridge over the Nieuwe Maas spanning 240 metres on a single cable-stayed pylon",
+        "alice specified weathering steel for the bridge because its maintenance budget is close to zero",
+        "alice has a cat called Marzipan, named after the colour of the bridge's pylon"
+      ],
+      "deductive": [
+        {
+          "content": "alice named her cat after a feature of the bridge she is designing",
+          "premises": [1, 3]
+        },
+        {
+          "content": "alice selects materials on lifetime maintenance cost rather than capital cost",
+          "premises": [2]
+        }
+      ],
+      "inductive": [
+        {
+          "content": "alice lets the Nieuwe Maas bridge project shape decisions well outside her working hours",
+          "premises": [1, 3]
+        }
+      ]
+    },
     { "id": "assistant", "observe_me": false, "observe_others": true }
   ],
 

@@ -175,6 +175,26 @@ MSG
 )"
 }
 
+seed_py() {
+  SANDBOX_BASE_URL="http://127.0.0.1:${SANDBOX_API_PORT:-18000}" \
+    uv run --no-project --with-editable "$REPO/sdks/python" \
+      python "$HERE/seed.py" "$1"
+}
+
+# Conclusion levels and premise links are not reachable from the public API, so this
+# part of the fixture is written by a script running inside the api container, which
+# already is Honcho's venv with the api's settings and embedding client. The script
+# arrives on stdin and the fixture in the environment, so nothing has to be mounted
+# and nothing is left behind in the container.
+#
+# It decides for itself whether the fixture declares any conclusions, rather than
+# being gated by a grep here that a comment mentioning a level name would fool.
+inject_conclusions() {
+  compose exec -T \
+    -e SANDBOX_FIXTURE_JSON="$(cat "$HERE/fixture.json")" \
+    api /app/.venv/bin/python - < "$HERE/inject_conclusions.py"
+}
+
 # --------------------------------------------------------------------------
 # Commands
 # --------------------------------------------------------------------------
@@ -240,9 +260,9 @@ cmd_seed() {
   compose up -d --wait --no-recreate >/dev/null
 
   say "seeding ($PROVIDER)"
-  SANDBOX_BASE_URL="http://127.0.0.1:${SANDBOX_API_PORT:-18000}" \
-    uv run --no-project --with-editable "$REPO/sdks/python" \
-      python "$HERE/seed.py"
+  seed_py seed
+  inject_conclusions
+  seed_py verify
 
   say "snapshotting to $TEMPLATE"
   stamp_fingerprint
@@ -322,7 +342,8 @@ fingerprint() {
   alembic="$(compose exec -T database psql -tAX -U postgres -d "$DB" \
     -c "SELECT version_num FROM alembic_version" 2>/dev/null | tr -d '[:space:]')"
   local files
-  files="$(cat "$HERE/fixture.json" "$HERE/seed.py" | shasum -a 256 | cut -c1-16)"
+  files="$(cat "$HERE/fixture.json" "$HERE/seed.py" "$HERE/inject_conclusions.py" \
+    | shasum -a 256 | cut -c1-16)"
   echo "alembic=$alembic fixture=$files provider=$PROVIDER"
 }
 
