@@ -8,19 +8,6 @@ Adds ``tenant_id`` as a first-class primitive to the data model: a new
 ``tenants`` table and a ``tenant_id`` column (plus tenant-scoped composite
 PKs / uniques / FKs / indexes) on every tenant-scoped table, matching the
 declarative models MINUS physical partitioning.
-
-Scope: this is the OSS / self-host (prosumer) migration. It transforms an
-existing single-tenant, non-partitioned schema in place and backfills every
-row to a single default tenant. It intentionally does NOT create HASH
-partitions — ``postgresql_partition_by`` in the models is a create-time hint
-that only the (internal, prod-only) shared-schema bootstrap honours;
-partitioning is transparent at query time, so the declarative models run
-correctly against these plain tables.
-
-Prod is NOT migrated by this script: the shared partitioned schema is built by
-the bootstrap and prod is ``alembic stamp``-ed past this revision. The guard at
-the top of ``upgrade()`` also makes this a no-op wherever the tenant schema
-already exists (prod, or a re-run), so it is idempotent.
 """
 
 from collections.abc import Sequence
