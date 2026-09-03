@@ -1,0 +1,206 @@
+---
+title: "Evidence"
+description: "See what a chat answer was built from"
+icon: "list-check"
+---
+
+By default the [chat endpoint](/v3/documentation/features/chat) returns an answer and nothing else, which makes it hard to check. Pass `include_evidence` and the response also carries the conclusions and messages the dialectic read while answering, plus the tools it called.
+
+## Basic Usage
+
+<CodeGroup>
+```python Python
+from honcho import Honcho
+
+honcho = Honcho()
+peer = honcho.peer("user-123")
+
+result = peer.chat(
+    "What coffee does this user prefer?",
+    include_evidence=True,
+)
+
+print(result.content)
+# "The user prefers dark roast, usually from local roasters."
+
+for conclusion in result.evidence.conclusions:
+    print(f"[{conclusion.level}] {conclusion.id}: {conclusion.content}")
+# [explicit] hK3mZq...: User prefers dark roast coffee
+# [inductive] pR8xLw...: User buys from local roasters
+
+for call in result.evidence.tool_calls:
+    print(call.tool_name, call.tool_input)
+# search_memory {'query': 'coffee preference', 'top_k': 20}
+```
+
+```typescript TypeScript
+import { Honcho } from '@honcho-ai/sdk';
+
+const honcho = new Honcho({});
+const peer = await honcho.peer("user-123");
+
+const { content, evidence } = await peer.chat(
+  "What coffee does this user prefer?",
+  { includeEvidence: true }
+);
+
+console.log(content);
+
+for (const conclusion of evidence?.conclusions ?? []) {
+  console.log(`[${conclusion.level}] ${conclusion.id}: ${conclusion.content}`);
+}
+```
+</CodeGroup>
+
+Without `include_evidence`, `chat` returns the answer on its own exactly as before, and the server collects nothing — asking for evidence is the only thing that turns collection on.
+
+## What evidence is, and is not
+
+Evidence is **collated from what the agent read**, not reported by the model. As the dialectic runs its tool loop, every conclusion and message a read path returns is recorded, and the finished list is returned alongside the answer.
+
+That has a consequence worth being clear about: **evidence over-reports**. A conclusion appears because the agent saw it, which is not proof the answer relied on it. A query that prefetches twenty-five conclusions and answers from three will list all twenty-five.
+
+The alternative — asking the model which sources it used — reads better but fails quietly. Weaker models and lower reasoning levels produce incomplete citations, invented IDs, or none at all, and you cannot tell a sparse citation list from a sparse answer. Collation is deterministic, costs no model tokens, and behaves identically at every reasoning level. Treat evidence as *what was available to the answer*, and audit within it.
+
+Two further limits:
+
+- `tool_calls` records **successful** invocations. A tool call that errored is retried or worked around by the agent and does not appear, so this is not a complete execution trace.
+- Tool **results** are omitted. They are large, and what they returned is already in `conclusions` and `messages`.
+
+## Response shape
+
+<CodeGroup>
+```json Response
+{
+  "content": "The user prefers dark roast, usually from local roasters.",
+  "evidence": {
+    "conclusions": [
+      {
+        "id": "hK3mZqPvN2wRtY8bXcLdA",
+        "level": "explicit",
+        "content": "User prefers dark roast coffee",
+        "created_at": "2026-03-20T10:15:00Z",
+        "session_id": "session-xyz",
+        "source_ids": []
+      },
+      {
+        "id": "pR8xLwGtH4vKmN6cZqBfE",
+        "level": "inductive",
+        "content": "User buys from local roasters",
+        "created_at": "2026-03-22T14:30:00Z",
+        "session_id": null,
+        "source_ids": ["hK3mZqPvN2wRtY8bXcLdA"]
+      }
+    ],
+    "messages": [
+      {
+        "id": "m1N2o3P4q5R6s7T8u9V0w",
+        "session_id": "session-xyz",
+        "peer_id": "user-123",
+        "content_preview": "I just picked up some amazing dark roast from the place down the road...",
+        "created_at": "2026-03-20T10:12:00Z"
+      }
+    ],
+    "tool_calls": [
+      {"tool_name": "search_memory", "tool_input": {"query": "coffee preference", "top_k": 20}}
+    ],
+    "reasoning_trace_id": null
+  }
+}
+```
+</CodeGroup>
+
+**Conclusions** carry the ID, level, and text of each conclusion read. `source_ids` names the conclusions a derived one was reasoned from, so you can walk a chain back toward the explicit statements at its base; explicit conclusions have none, since they derive from messages rather than from other conclusions. `session_id` is null for a conclusion that was reasoned across sessions and so belongs to none. Timestamps are when a conclusion was derived, taken from its source messages where that is recorded.
+
+**Messages** carry an ID and the first 200 characters of the content, not the whole message. Fetch the message itself if you need the rest.
+
+`reasoning_trace_id` is a placeholder for stored reasoning traces and is currently always null.
+
+## Empty is not absent
+
+The two are different and worth distinguishing:
+
+- `evidence` is **absent or null** — you did not ask for it.
+- `evidence` is **present with empty lists** — you asked, and the agent read nothing. This is the honest answer for a peer with no history yet.
+
+So checking that evidence exists tells you nothing about whether anything was found; check the lists.
+
+## Streaming
+
+Evidence can only be known once the answer is complete, so a streaming response sends it on the stream's final event. The SDKs surface it on the stream object after it has been fully consumed:
+
+<CodeGroup>
+```python Python
+stream = peer.chat_stream(
+    "What coffee does this user prefer?",
+    include_evidence=True,
+)
+
+for chunk in stream:
+    print(chunk, end="", flush=True)
+
+# Available only after the stream has drained
+for conclusion in stream.evidence.conclusions:
+    print(conclusion.id, conclusion.content)
+```
+
+```typescript TypeScript
+const stream = await peer.chatStream(
+  "What coffee does this user prefer?",
+  { includeEvidence: true }
+);
+
+for await (const chunk of stream) {
+  process.stdout.write(chunk);
+}
+
+// Available only after the stream has drained
+for (const conclusion of stream.evidence?.conclusions ?? []) {
+  console.log(conclusion.id, conclusion.content);
+}
+```
+</CodeGroup>
+
+Reading `evidence` mid-stream returns null.
+
+## Workspace chat
+
+Workspace-level chat takes the same option:
+
+<CodeGroup>
+```python Python
+result = honcho.chat(
+    "What do people here have in common?",
+    include_evidence=True,
+)
+print(result.evidence.messages)
+```
+
+```typescript TypeScript
+const { content, evidence } = await honcho.chat(
+  "What do people here have in common?",
+  { includeEvidence: true }
+);
+```
+</CodeGroup>
+
+Because workspace chat opens with a statistical overview of the workspace rather than a conclusion prefetch, its evidence is usually weighted toward messages and whatever its tools went on to find.
+
+## Scoped queries
+
+Evidence never widens what a query could see. It reports only rows a permitted read actually returned, so a query confined by [`scope`](/v3/documentation/features/advanced/scopes) or a session allowlist yields evidence confined the same way — a scope with no member sessions recalls nothing and cites nothing.
+
+## Combining with structured outputs
+
+`include_evidence` and [`response_format`](/v3/documentation/features/advanced/structured-outputs) are independent. With both, the answer is parsed to your schema and the evidence sits beside it:
+
+```python
+result = peer.chat(
+    "What are this user's top 3 food preferences?",
+    response_format=FoodPreferences,
+    include_evidence=True,
+)
+
+result.content      # a FoodPreferences instance
+result.evidence     # what the answer was built from
+```

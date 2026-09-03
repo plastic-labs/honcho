@@ -25,6 +25,7 @@ from src.telemetry.events import (
     emit,
 )
 from src.utils import summarizer
+from src.utils.evidence import EvidenceAccumulator
 from src.utils.formatting import (
     format_datetime_utc,
     format_new_turn_with_timestamp,
@@ -1206,6 +1207,7 @@ async def search_memory(
     levels: list[str] | None = None,
     embedding: list[float] | None = None,
     session_allowlist: list[str] | None = None,
+    documents_out: list[models.Document] | None = None,
 ) -> Representation:
     """
     Search for observations in memory using semantic similarity.
@@ -1222,6 +1224,9 @@ async def search_memory(
         levels: Optional list of observation levels to filter by
                 (e.g., ["explicit"], ["deductive", "inductive", "contradiction"])
         embedding: Optional pre-computed embedding to avoid redundant API calls
+        documents_out: Optional list the matched documents are appended to, for
+                callers that need the rows and not just the representation
+                built from them
 
     Returns:
         Representation object containing relevant observations
@@ -1253,6 +1258,9 @@ async def search_memory(
         filters=filters or None,
         embedding=embedding,
     )
+
+    if documents_out is not None:
+        documents_out.extend(documents)
 
     return Representation.from_documents(documents)
 
@@ -1464,6 +1472,10 @@ class ToolContext:
     run_id: str | None = None
     agent_type: str | None = None  # "dialectic", "deriver", "dreamer"
     parent_category: str | None = None  # Parent category for CloudEvents
+    # Set only when the caller asked for evidence. Read handlers append the rows
+    # they loaded; `dataclasses.replace` copies of this context share the same
+    # accumulator, so delegating handlers reach it without extra wiring.
+    evidence: EvidenceAccumulator | None = None
 
 
 def _normalize_observation_id(obs_id: str) -> str:
@@ -1897,6 +1909,36 @@ async def _handle_get_recent_history(
     return _maybe_truncated_result(output)
 
 
+def _record_conclusion_evidence(
+    ctx: ToolContext, documents: Sequence[models.Document]
+) -> None:
+    """Record conclusions a read returned, when evidence was asked for."""
+    if ctx.evidence is not None:
+        ctx.evidence.add_documents(documents)
+
+
+def _record_message_evidence(
+    ctx: ToolContext, messages: Sequence[models.Message]
+) -> None:
+    """Record messages a read returned, when evidence was asked for."""
+    if ctx.evidence is not None:
+        ctx.evidence.add_messages(messages)
+
+
+def _record_snippet_evidence(
+    ctx: ToolContext,
+    snippets: Sequence[tuple[list[models.Message], list[models.Message]]],
+) -> None:
+    """Record every message a snippet search surfaced.
+
+    Both halves of a snippet count as read: the surrounding context reaches the
+    prompt the same way the matches do.
+    """
+    for matches, context in snippets:
+        _record_message_evidence(ctx, matches)
+        _record_message_evidence(ctx, context)
+
+
 async def _handle_search_memory(
     ctx: ToolContext, tool_input: dict[str, Any]
 ) -> "str | ToolResult":
@@ -1953,6 +1995,7 @@ async def _handle_search_memory(
             if ctx.session_allowlist is not None
             else None,
         )
+    _record_conclusion_evidence(ctx, documents)
     mem = Representation.from_documents(documents)
     total_count = mem.len()
     if total_count == 0:
@@ -1976,6 +2019,7 @@ async def _handle_search_memory(
                 observer=ctx.observer,
                 session_allowlist=ctx.session_allowlist,
             )
+            _record_snippet_evidence(ctx, snippets)
             if snippets:
                 message_output = _format_message_snippets(
                     snippets, f"for query '{query}'"
@@ -2018,6 +2062,7 @@ async def _handle_get_observation_context(
             observer=ctx.observer or None,
             session_allowlist=ctx.session_allowlist,
         )
+        _record_message_evidence(ctx, messages)
         if not messages:
             return f"No messages found for IDs {tool_input['message_ids']}"
         messages_text = "\n".join(
@@ -2061,6 +2106,7 @@ async def _handle_search_messages(
         observer=ctx.observer or None,
         session_allowlist=ctx.session_allowlist,
     )
+    _record_snippet_evidence(ctx, snippets)
     search_meta: dict[str, Any] = {
         "top_k": limit,
         "used_embedding": True,
@@ -2096,6 +2142,7 @@ async def _handle_grep_messages(
         observer=ctx.observer or None,
         session_allowlist=ctx.session_allowlist,
     )
+    _record_snippet_evidence(ctx, snippets)
     if not snippets:
         return f"No messages found containing '{text}'"
 
@@ -2161,6 +2208,7 @@ async def _handle_get_messages_by_date_range(
             observer=ctx.observer or None,
             session_allowlist=ctx.session_allowlist,
         )
+        _record_message_evidence(ctx, messages)
         msg_count = len(messages)
         messages_text = (
             "\n".join(
@@ -2236,6 +2284,7 @@ async def _handle_search_messages_temporal(
         embedding=query_embedding,
         observer=ctx.observer or None,
     )
+    _record_snippet_evidence(ctx, snippets)
     date_filter: list[str] = []
     if after_date_str:
         date_filter.append(f"after {after_date_str}")
@@ -2523,6 +2572,7 @@ async def _handle_get_reasoning_chain(
             return f"ERROR: Observation '{observation_id}' not found"
 
         doc: Document = docs[0]
+        _record_conclusion_evidence(ctx, [doc])
 
         output_parts: list[str] = []
 
@@ -2536,6 +2586,7 @@ async def _handle_get_reasoning_chain(
                 premises = await crud.get_documents_by_ids(
                     db, ctx.workspace_name, doc.source_ids
                 )
+                _record_conclusion_evidence(ctx, premises)
                 if premises:
                     premise_lines: list[Any] = []
                     for p in premises:
@@ -2553,6 +2604,7 @@ async def _handle_get_reasoning_chain(
                 sources = await crud.get_documents_by_ids(
                     db, ctx.workspace_name, doc.source_ids
                 )
+                _record_conclusion_evidence(ctx, sources)
                 if sources:
                     source_lines: list[Any] = []
                     for s in sources:
@@ -2581,6 +2633,7 @@ async def _handle_get_reasoning_chain(
                 observer=ctx.observer,
                 observed=ctx.observed,
             )
+            _record_conclusion_evidence(ctx, children)
             if children:
                 child_lines: list[Any] = []
                 for c in children:
@@ -2634,6 +2687,7 @@ async def create_tool_executor(
     parent_category: str | None = None,
     session_allowlist: list[str] | None = None,
     handler_resolver: Callable[[str], Any] | None = None,
+    evidence: EvidenceAccumulator | None = None,
 ) -> Callable[[str, dict[str, Any]], Any]:
     """
     Create a unified tool executor function for all agent operations.
@@ -2661,6 +2715,9 @@ async def create_tool_executor(
         handler_resolver: Optional callback that replaces the default
             handler-table lookup for resolving tool names to handlers.
             Returning None takes the "Unknown tool" path.
+        evidence: Optional accumulator that read handlers record the
+            conclusions and messages they load into. None means evidence was
+            not requested and nothing is collected.
 
     Returns:
         An async callable that executes tools with the captured context
@@ -2683,6 +2740,7 @@ async def create_tool_executor(
         run_id=run_id,
         agent_type=agent_type,
         parent_category=parent_category,
+        evidence=evidence,
     )
 
     async def execute_tool(tool_name: str, tool_input: dict[str, Any]) -> str:
@@ -3077,6 +3135,7 @@ async def create_workspace_tool_executor(
     run_id: str | None = None,
     agent_type: str | None = None,
     parent_category: str | None = None,
+    evidence: EvidenceAccumulator | None = None,
 ) -> Callable[[str, dict[str, Any]], Any]:
     """Tool executor for workspace-level operations (no bound peer pair).
 
@@ -3099,4 +3158,5 @@ async def create_workspace_tool_executor(
         agent_type=agent_type,
         parent_category=parent_category,
         handler_resolver=_workspace_handler_resolver,
+        evidence=evidence,
     )
