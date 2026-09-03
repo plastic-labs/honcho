@@ -3,13 +3,8 @@
 # Honcho sandbox — an ephemeral, seeded stack that resets to a known state in
 # seconds, so harness testing stops depending on machine state.
 #
-#   sandbox.sh up [--provider mock|real] [--build]
-#   sandbox.sh seed [--provider ...]
-#   sandbox.sh reset [--provider ...]
-#   sandbox.sh status [--provider ...]
-#   sandbox.sh down [--provider ...]
-#
-# See README.md.
+# `sandbox.sh --help` for commands and options; README.md for the fixture format
+# and the provider modes.
 
 set -euo pipefail
 
@@ -25,20 +20,75 @@ BUILD=0
 die() { echo "error: $*" >&2; exit 1; }
 say() { echo "==> $*"; }
 
+usage() {
+  cat <<'USAGE'
+Honcho sandbox — an ephemeral, seeded stack that resets to a known state in
+seconds, so harness testing stops depending on machine state.
+
+usage: sandbox.sh <command> [--provider mock|real] [--build]
+
+Commands:
+  up        Start the stack and seed it. Restores this provider's existing
+            snapshot if there is one, otherwise seeds from scratch.
+  seed      Clear the database, seed it again, and snapshot the result.
+            Run this after editing fixture.json.
+  reset     Restore the snapshot. Under a second, no derivation, no LLM calls.
+  status    What is running, on which image, and which snapshots exist.
+  down      Stop the stack and delete its volumes.
+
+Options:
+  --provider mock|real  Which model provider to run against (default: mock).
+                        mock is deterministic, free, and makes no network
+                        calls. real needs sandbox/real.env and spends money.
+  --build               Build the image from the working tree instead of
+                        pulling the digest pinned in image.env. Use it when
+                        testing a change to Honcho itself.
+  -h, --help            Show this help.
+
+Environment:
+  HONCHO_SANDBOX_PROVIDER  Default provider, overridden by --provider.
+  SANDBOX_API_PORT         Host port for the api      (default 18000).
+  SANDBOX_DB_PORT          Host port for Postgres     (default 15432).
+  SANDBOX_REDIS_PORT       Host port for Redis        (default 16379).
+  SANDBOX_DRAIN_TIMEOUT    Seconds to wait for the deriver queue to drain
+                           while seeding (default 300).
+
+Examples:
+  sandbox.sh up                    # mock stack, seeded and ready
+  sandbox.sh up --provider real    # needs sandbox/real.env with a key
+  sandbox.sh up --build            # run the working tree, not the pinned image
+  sandbox.sh reset                 # back to the seeded state
+  sandbox.sh seed                  # rebuild the snapshot after editing the fixture
+
+seed and reset act through the containers that are already running, so they
+refuse a --provider that disagrees with the running stack. Switch it with
+`up --provider ...` instead.
+
+See sandbox/README.md for the fixture format and what each provider mode can
+and cannot test.
+USAGE
+}
+
 # --------------------------------------------------------------------------
 # Argument parsing
 # --------------------------------------------------------------------------
 
 COMMAND="${1:-}"
-[ -n "$COMMAND" ] || die "usage: sandbox.sh {up|seed|reset|status|down} [--provider mock|real] [--build]"
+case "$COMMAND" in
+  -h|--help|help) usage; exit 0 ;;
+  # No command at all is a mistake rather than a request for help, so the help
+  # goes to stderr and the exit code says so.
+  "") usage >&2; exit 1 ;;
+esac
 shift
 
 while [ $# -gt 0 ]; do
   case "$1" in
+    -h|--help) usage; exit 0 ;;
     --provider) PROVIDER="${2:-}"; shift 2 ;;
     --provider=*) PROVIDER="${1#*=}"; shift ;;
     --build) BUILD=1; shift ;;
-    *) die "unknown argument: $1" ;;
+    *) die "unknown argument: $1 (try: sandbox.sh --help)" ;;
   esac
 done
 
@@ -391,5 +441,5 @@ case "$COMMAND" in
   reset) cmd_reset ;;
   status) cmd_status ;;
   down) cmd_down ;;
-  *) die "unknown command '$COMMAND' (expected up, seed, reset, status, or down)" ;;
+  *) die "unknown command '$COMMAND' (try: sandbox.sh --help)" ;;
 esac
