@@ -60,8 +60,9 @@ from .message import Message
 from .mixins import AsyncMetadataConfigMixin
 from .pagination import AsyncPage
 from .session_context import SessionContext, SessionSummaries, Summary
-from .types import AsyncDialecticStreamResponse
+from .types import AsyncDialecticStreamResponse, ChatResponse
 from .utils import (
+    SSEStreamParser,
     datetime_to_iso,
     normalize_peers_to_dict,
     parse_sse_astream,
@@ -79,7 +80,12 @@ if TYPE_CHECKING:
     from .conclusions import ConclusionsView
 
 from .conclusions import ConclusionCreateParams
-from .peer import Peer, TResponseFormat, serialize_response_format
+from .peer import (
+    Peer,
+    TResponseFormat,
+    parse_chat_response,
+    serialize_response_format,
+)
 from .scope import Scope
 from .session import Session
 
@@ -509,7 +515,8 @@ class HonchoAio(AsyncMetadataConfigMixin):
         | None = None,
         response_format: type[BaseModel] | dict[str, Any] | None = None,
         scope: str | list[str] | None = None,
-    ) -> BaseModel | str | None:
+        include_evidence: bool = False,
+    ) -> ChatResponse[Any] | BaseModel | str | None:
         """Query the entire workspace asynchronously (see Honcho.chat)."""
         await self._honcho._ensure_workspace_async()
         resolved_session_id = resolve_id(session)
@@ -523,17 +530,14 @@ class HonchoAio(AsyncMetadataConfigMixin):
         response_format_schema = serialize_response_format(response_format)
         if response_format_schema is not None:
             body["response_format"] = response_format_schema
+        if include_evidence:
+            body["include_evidence"] = True
 
         data = await self._honcho._async_http_client.post(
             routes.workspace_chat(self._honcho.workspace_id),
             body=body,
         )
-        content = data.get("content")
-        if not content:
-            return None
-        if isinstance(response_format, type):
-            return response_format.model_validate_json(content)
-        return content
+        return parse_chat_response(data, response_format, include_evidence)
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     async def chat_stream(
@@ -545,8 +549,13 @@ class HonchoAio(AsyncMetadataConfigMixin):
         | None = None,
         response_format: type[BaseModel] | dict[str, Any] | None = None,
         scope: str | list[str] | None = None,
+        include_evidence: bool = False,
     ) -> AsyncDialecticStreamResponse:
-        """Streaming variant of :meth:`chat` (async)."""
+        """Streaming variant of :meth:`chat` (async).
+
+        With include_evidence, the returned stream's `evidence` is populated
+        once it has been fully consumed.
+        """
         await self._honcho._ensure_workspace_async()
         resolved_session_id = resolve_id(session)
         body: dict[str, Any] = {"query": query, "stream": True}
@@ -559,6 +568,12 @@ class HonchoAio(AsyncMetadataConfigMixin):
         response_format_schema = serialize_response_format(response_format)
         if response_format_schema is not None:
             body["response_format"] = response_format_schema
+        if include_evidence:
+            body["include_evidence"] = True
+
+        # The parser holds the evidence that arrives on the final event, so it
+        # has to outlive the generator that drains the stream.
+        parser = SSEStreamParser()
 
         async def stream_response() -> AsyncGenerator[str, None]:
             async for chunk in parse_sse_astream(
@@ -566,11 +581,12 @@ class HonchoAio(AsyncMetadataConfigMixin):
                     "POST",
                     routes.workspace_chat(self._honcho.workspace_id),
                     body=body,
-                )
+                ),
+                parser=parser,
             ):
                 yield chunk
 
-        return AsyncDialecticStreamResponse(stream_response())
+        return AsyncDialecticStreamResponse(stream_response(), lambda: parser.evidence)
 
     @validate_call
     async def search(
@@ -777,6 +793,7 @@ class PeerAio(AsyncMetadataConfigMixin):
         reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
         | None = None,
         response_format: type[TResponseFormat],
+        include_evidence: Literal[False] = False,
         timeout: float | None = None,
     ) -> TResponseFormat | None: ...
 
@@ -791,7 +808,40 @@ class PeerAio(AsyncMetadataConfigMixin):
         sessions: Sequence[str | SessionBase] | None = None,
         reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
         | None = None,
+        response_format: type[TResponseFormat],
+        include_evidence: Literal[True],
+        timeout: float | None = None,
+    ) -> ChatResponse[TResponseFormat]: ...
+
+    @overload
+    async def chat(
+        self,
+        query: str,
+        *,
+        target: str | PeerBase | None = None,
+        session: str | SessionBase | None = None,
+        scope: str | ScopeBase | Sequence[str | ScopeBase] | None = None,
+        sessions: Sequence[str | SessionBase] | None = None,
+        reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
+        | None = None,
         response_format: dict[str, Any] | None = None,
+        include_evidence: Literal[True],
+        timeout: float | None = None,
+    ) -> ChatResponse[str]: ...
+
+    @overload
+    async def chat(
+        self,
+        query: str,
+        *,
+        target: str | PeerBase | None = None,
+        session: str | SessionBase | None = None,
+        scope: str | ScopeBase | Sequence[str | ScopeBase] | None = None,
+        sessions: Sequence[str | SessionBase] | None = None,
+        reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
+        | None = None,
+        response_format: dict[str, Any] | None = None,
+        include_evidence: Literal[False] = False,
         timeout: float | None = None,
     ) -> str | None: ...
 
@@ -807,17 +857,19 @@ class PeerAio(AsyncMetadataConfigMixin):
         reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
         | None = None,
         response_format: type[BaseModel] | dict[str, Any] | None = None,
+        include_evidence: bool = False,
         timeout: float | None = Field(
             None, gt=0, description="Timeout in seconds for this chat request"
         ),
-    ) -> BaseModel | str | None:
+    ) -> ChatResponse[Any] | BaseModel | str | None:
         """Query the peer's representation asynchronously.
 
         See Peer.chat for parameter details. When response_format is a Pydantic
         model class, the answer is parsed into an instance of it; when it is a
-        JSON Schema dict, the answer is a JSON string. When timeout is omitted,
-        the Honcho client's configured timeout is used; retries can extend total
-        elapsed time.
+        JSON Schema dict, the answer is a JSON string. With include_evidence,
+        the answer comes back in a ChatResponse alongside what the dialectic
+        read to produce it. When timeout is omitted, the Honcho client's
+        configured timeout is used; retries can extend total elapsed time.
         """
         await self._peer._honcho._ensure_workspace_async()
         target_id = resolve_id(target)
@@ -838,18 +890,15 @@ class PeerAio(AsyncMetadataConfigMixin):
         response_format_schema = serialize_response_format(response_format)
         if response_format_schema is not None:
             body["response_format"] = response_format_schema
+        if include_evidence:
+            body["include_evidence"] = True
 
         data = await self._peer._honcho._async_http_client.post(
             routes.peer_chat(self._peer.workspace_id, self._peer.id),
             body=body,
             timeout=timeout,
         )
-        content = data.get("content")
-        if not content:
-            return None
-        if isinstance(response_format, type):
-            return response_format.model_validate_json(content)
-        return content
+        return parse_chat_response(data, response_format, include_evidence)
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     async def chat_stream(
@@ -863,12 +912,14 @@ class PeerAio(AsyncMetadataConfigMixin):
         reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
         | None = None,
         response_format: type[BaseModel] | dict[str, Any] | None = None,
+        include_evidence: bool = False,
     ) -> AsyncDialecticStreamResponse:
         """Query the peer's representation with streaming asynchronously.
 
         See Peer.chat_stream for parameter details. With response_format set,
         chunks stay raw text that accumulates to a JSON string; parse it after
-        the stream completes.
+        the stream completes. With include_evidence, the returned stream's
+        `evidence` is populated once it has been fully consumed.
         """
         await self._peer._honcho._ensure_workspace_async()
         target_id = resolve_id(target)
@@ -889,6 +940,12 @@ class PeerAio(AsyncMetadataConfigMixin):
         response_format_schema = serialize_response_format(response_format)
         if response_format_schema is not None:
             body["response_format"] = response_format_schema
+        if include_evidence:
+            body["include_evidence"] = True
+
+        # The parser holds the evidence that arrives on the final event, so it
+        # has to outlive the generator that drains the stream.
+        parser = SSEStreamParser()
 
         async def stream_response() -> AsyncGenerator[str, None]:
             async for content in parse_sse_astream(
@@ -896,11 +953,12 @@ class PeerAio(AsyncMetadataConfigMixin):
                     "POST",
                     routes.peer_chat(self._peer.workspace_id, self._peer.id),
                     body=body,
-                )
+                ),
+                parser=parser,
             ):
                 yield content
 
-        return AsyncDialecticStreamResponse(stream_response())
+        return AsyncDialecticStreamResponse(stream_response(), lambda: parser.evidence)
 
     async def sessions(
         self,
