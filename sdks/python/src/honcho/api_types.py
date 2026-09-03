@@ -543,12 +543,56 @@ class DialecticParams(BaseModel):
     stream: bool = False
     reasoning_level: ReasoningLevel = "low"
     response_format: dict[str, Any] | None = None
+    include_evidence: bool = False
+
+
+class EvidenceObservation(BaseModel):
+    """A conclusion the dialectic read while answering."""
+
+    id: str
+    level: ConclusionLevel
+    content: str
+    created_at: datetime.datetime
+    session_id: str | None = None
+    source_ids: list[str] = Field(default_factory=list)
+
+
+class EvidenceMessageRef(BaseModel):
+    """A message the dialectic read while answering."""
+
+    id: str
+    session_id: str
+    peer_id: str
+    content_preview: str
+    created_at: datetime.datetime
+
+
+class EvidenceToolCall(BaseModel):
+    """A tool the dialectic invoked while answering."""
+
+    tool_name: str
+    tool_input: dict[str, Any] = Field(default_factory=dict)
+
+
+class Evidence(BaseModel):
+    """What the dialectic read and did while answering.
+
+    Collated from what the agent accessed rather than reported by the model, so
+    it over-reports: a listed conclusion was read, which is not proof the
+    answer leaned on it. `tool_calls` omits results and failed calls.
+    """
+
+    conclusions: list[EvidenceObservation] = Field(default_factory=list)
+    messages: list[EvidenceMessageRef] = Field(default_factory=list)
+    tool_calls: list[EvidenceToolCall] = Field(default_factory=list)
+    reasoning_trace_id: str | None = None
 
 
 class DialecticResponse(BaseModel):
     """Dialectic chat API response."""
 
     content: str | None
+    evidence: Evidence | None = None
 
 
 class DialecticStreamDelta(BaseModel):
@@ -562,6 +606,7 @@ class DialecticStreamChunk(BaseModel):
 
     delta: DialecticStreamDelta
     done: bool = False
+    evidence: Evidence | None = None
 
 
 # ==============================================================================
