@@ -57,6 +57,10 @@ class QdrantVectorStore(VectorStore):
                 conditions.append(
                     models.FieldCondition(key=k, match=models.MatchAny(any=v["in"]))  # pyright: ignore[reportUnknownArgumentType]
                 )
+            elif isinstance(v, list):
+                conditions.append(
+                    models.FieldCondition(key=k, match=models.MatchAny(any=v))  # pyright: ignore[reportUnknownArgumentType]
+                )
             else:
                 conditions.append(
                     models.FieldCondition(key=k, match=models.MatchValue(value=v))  # pyright: ignore[reportArgumentType]
@@ -71,7 +75,7 @@ class QdrantVectorStore(VectorStore):
             models.PointStruct(
                 id=_point_id(v.id),
                 vector=v.embedding,
-                payload={"_id": v.id, **v.metadata},
+                payload={**v.metadata, "_id": v.id},
             )
             for v in vectors
         ]
@@ -93,16 +97,24 @@ class QdrantVectorStore(VectorStore):
         top_k: int = 10,
         filters: dict[str, Any] | None = None,
         max_distance: float | None = None,
+        include_attributes: bool | list[str] = True,
     ) -> list[VectorQueryResult]:
         if not await self._client.collection_exists(namespace):
             return []
+
+        if include_attributes is False:
+            with_payload: bool | list[str] = ["_id"]
+        elif isinstance(include_attributes, list):
+            with_payload = ["_id", *include_attributes]
+        else:
+            with_payload = True
 
         response = await self._client.query_points(
             collection_name=namespace,
             query=embedding,
             limit=top_k,
             query_filter=self._build_filter(filters) if filters else None,
-            with_payload=True,
+            with_payload=with_payload,
         )
 
         results: list[VectorQueryResult] = []
@@ -136,3 +148,20 @@ class QdrantVectorStore(VectorStore):
 
     async def close(self) -> None:
         await self._client.close()
+
+    async def probe_namespace_dim(self, namespace: str) -> int | None:
+        if not await self._client.collection_exists(namespace):
+            return None
+
+        vectors = (await self._client.get_collection(namespace)).config.params.vectors
+        if vectors is None:
+            raise VectorStoreError(
+                f"Qdrant collection {namespace!r} has no vector configuration"
+            )
+        if isinstance(vectors, dict):
+            if not vectors:
+                raise VectorStoreError(
+                    f"Qdrant collection {namespace!r} has empty named-vector configuration"
+                )
+            vectors = next(iter(vectors.values()))
+        return int(vectors.size)

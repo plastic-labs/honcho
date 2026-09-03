@@ -215,7 +215,15 @@ def _create_store_by_type(store_type: str) -> VectorStore:
 
         return LanceDBVectorStore()
     elif store_type == "qdrant":
-        from src.vector_store.qdrant import QdrantVectorStore
+        try:
+            from src.vector_store.qdrant import QdrantVectorStore
+        except ImportError as exc:
+            raise RuntimeError(
+                "VECTOR_STORE.TYPE is set to 'qdrant', but the 'qdrant-client' "
+                + "package could not be imported. Install Honcho's 'qdrant' extra "
+                + "(for example, `uv sync --extra qdrant`)"
+                + f"Original import error: {exc}"
+            ) from exc
 
         return QdrantVectorStore()
     else:

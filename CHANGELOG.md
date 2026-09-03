@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Qdrant vector store backend (`VECTOR_STORE_TYPE=qdrant`) as an optional `qdrant` extra (#683)
+
 ## [3.1.0] - 2026-08-25
 
 ### Added
@@ -380,7 +386,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Prometheus token tracking for deriver and dialectic operations
 - n8n integration
 - Cloud Events for auditable telemetry
-- External Vector Store support for turbopuffer, lancedb, and qdrant with reconciliation flow
+- External Vector Store support for turbopuffer and lancedb with reconciliation flow
 
 ### Changed
 
