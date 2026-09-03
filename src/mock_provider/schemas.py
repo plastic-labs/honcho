@@ -18,9 +18,9 @@ Two deliberate choices:
 
 from __future__ import annotations
 
-from typing import Any, ClassVar, Literal
+from typing import Annotated, Any, ClassVar, Literal
 
-from pydantic import BaseModel, ConfigDict, StrictInt
+from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
 
 class MockRequest(BaseModel):
@@ -36,13 +36,20 @@ class ChatMessage(MockRequest):
     content: Any = None
 
 
+class StreamOptions(MockRequest):
+    # Typed rather than left as a dict because the usage chunk is conditional on
+    # it: `{"include_usage": "yes"}` must fail like the real API does rather than
+    # read as truthy and emit a chunk the caller never asked for.
+    include_usage: bool = False
+
+
 class ChatCompletionRequest(MockRequest):
     model: str | None = None
     messages: list[ChatMessage] = []
     response_format: dict[str, Any] | None = None
     tools: list[dict[str, Any]] | None = None
     stream: bool = False
-    stream_options: dict[str, Any] | None = None
+    stream_options: StreamOptions | None = None
 
 
 class EmbeddingsRequest(MockRequest):
@@ -52,7 +59,9 @@ class EmbeddingsRequest(MockRequest):
     input: str | list[str] | list[int] | list[list[int]] | None = None
     model: str | None = None
     # StrictInt because bool is an int subclass: a JSON `true` here would
-    # otherwise silently become a one-dimensional vector.
-    dimensions: StrictInt | None = None
+    # otherwise silently become a one-dimensional vector. gt=0 because the real
+    # API rejects a non-positive width, and substituting the default instead
+    # would answer a bad request with a plausible-looking vector.
+    dimensions: Annotated[StrictInt, Field(gt=0)] | None = None
     # The SDK omits this only when it wants base64, so absent means base64.
     encoding_format: Literal["float", "base64"] = "base64"

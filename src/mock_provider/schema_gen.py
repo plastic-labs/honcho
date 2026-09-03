@@ -97,6 +97,13 @@ def _merge_all_of(schema: dict[str, Any], root: dict[str, Any]) -> dict[str, Any
             if key == "properties":
                 properties = as_dict(value)
                 if properties is not None:
+                    # First branch to define a property wins. Strictly, `allOf`
+                    # requires every branch's constraints to apply, so a schema
+                    # splitting `minimum` and `maximum` for one property across
+                    # two branches generates a value satisfying only one of
+                    # them. Not merged recursively because Pydantic's `allOf` is
+                    # always a $ref plus sibling annotations — it never repeats
+                    # a property key, let alone with conflicting constraints.
                     existing = as_dict(merged.get("properties")) or {}
                     merged["properties"] = {**properties, **existing}
                     continue
@@ -152,6 +159,12 @@ def _generate(
     if depth >= MAX_DEPTH and "default" in resolved:
         return resolved["default"]
 
+    # `oneOf` is treated as `anyOf`: a branch is picked without checking that
+    # the result matches only that one. A `oneOf` whose branches overlap can
+    # therefore yield a value matching several, which `oneOf` forbids. Enforcing
+    # the cardinality needs a full JSON Schema validator to test the candidate
+    # against every branch, and Pydantic emits `anyOf` for unions — never
+    # `oneOf` — so nothing Honcho sends reaches the distinction.
     for key in ("anyOf", "oneOf"):
         branches = as_list(resolved.get(key))
         if branches:
@@ -229,6 +242,17 @@ def _generate_object(
 def _generate_array(
     schema: dict[str, Any], root: dict[str, Any], path: str, depth: int
 ) -> list[Any]:
+    # A fixed-length tuple is `prefixItems` with no `items`, which is what
+    # Pydantic emits for `tuple[str, int]`. Reading only `items` would return []
+    # for it and fail the minItems/maxItems the same schema carries.
+    prefix: list[Any] = []
+    prefix_items = as_list(schema.get("prefixItems"))
+    if prefix_items is not None:
+        for index, entry in enumerate(prefix_items):
+            child = as_dict(entry)
+            if child is not None:
+                prefix.append(_generate(child, root, f"{path}[{index}]", depth + 1))
+
     items = as_dict(schema.get("items"))
     min_items = as_int(schema.get("minItems"))
     max_items = as_int(schema.get("maxItems"))
@@ -240,10 +264,15 @@ def _generate_array(
         count = min(count, max_items)
     if depth >= MAX_DEPTH:
         count = min_items or 0
-    if items is None or count <= 0:
-        return []
+    if items is None:
+        return prefix
 
-    return [_generate(items, root, f"{path}[{i}]", depth + 1) for i in range(count)]
+    # `items` describes the positions after the prefix, so only the shortfall is
+    # filled homogeneously.
+    return prefix + [
+        _generate(items, root, f"{path}[{len(prefix) + i}]", depth + 1)
+        for i in range(max(0, count - len(prefix)))
+    ]
 
 
 def _generate_string(schema: dict[str, Any], path: str) -> str:
@@ -260,6 +289,11 @@ def _generate_string(schema: dict[str, Any], path: str) -> str:
     if fmt == "email":
         return "placeholder@mock.invalid"
 
+    # `pattern` is not honoured: this phrase fails any regex narrower than it,
+    # so a pattern-constrained string generates a value its own schema rejects.
+    # Satisfying an arbitrary regex needs a generator library, and no Honcho
+    # response model carries a `pattern` — the only ones in the codebase are on
+    # API request models, which are never sent as a response_format.
     value = _phrase(path)
     min_length = as_int(schema.get("minLength"))
     max_length = as_int(schema.get("maxLength"))

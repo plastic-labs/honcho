@@ -100,9 +100,9 @@ def test_deriver_response_model_round_trips() -> None:
     content = json.dumps(generate(schema))
 
     representation = PromptRepresentation.model_validate_json(content)
-    assert (
-        representation.explicit
-    ), "an empty explicit list is exactly the silent failure this mock avoids"
+    assert representation.explicit, (
+        "an empty explicit list is exactly the silent failure this mock avoids"
+    )
 
 
 def test_json_schema_response_is_never_prose(client: TestClient) -> None:
@@ -279,6 +279,40 @@ def test_all_of_is_flattened() -> None:
     assert isinstance(result["b"], int)
 
 
+def test_fixed_tuple_schema_round_trips() -> None:
+    """Pydantic emits a fixed tuple as `prefixItems` with no `items`.
+
+    Reading only `items` yields [], which fails the minItems the same schema
+    carries — the silent-empty failure this module exists to avoid.
+    """
+
+    class Tupled(BaseModel):
+        pair: tuple[str, int]
+
+    schema = Tupled.model_json_schema()
+    assert "prefixItems" in schema["properties"]["pair"]
+
+    result = generate(schema)
+    assert isinstance(result["pair"], list)
+    Tupled.model_validate(result)
+
+
+def test_prefix_items_are_followed_by_homogeneous_items() -> None:
+    """A variadic tuple constrains leading positions and the rest by `items`."""
+    schema: dict[str, Any] = {
+        "type": "array",
+        "prefixItems": [{"type": "string"}, {"type": "integer"}],
+        "items": {"type": "boolean"},
+        "minItems": 4,
+    }
+    result = generate(schema)
+
+    assert len(result) == 4
+    assert isinstance(result[0], str)
+    assert isinstance(result[1], int)
+    assert all(isinstance(value, bool) for value in result[2:])
+
+
 def test_generation_is_stable_across_calls() -> None:
     assert generate(PROBE_SCHEMA) == generate(PROBE_SCHEMA)
 
@@ -428,6 +462,20 @@ def test_boolean_dimensions_is_rejected_not_silently_coerced(
     assert response.status_code == 400
 
 
+@pytest.mark.parametrize("dimensions", [0, -1])
+def test_non_positive_dimensions_is_rejected_not_defaulted(
+    client: TestClient, dimensions: int
+) -> None:
+    """Substituting 1536 would answer a bad request with a plausible vector."""
+    response = client.post(
+        "/v1/embeddings",
+        json={"input": "hello", "dimensions": dimensions, "encoding_format": "float"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["type"] == "invalid_request_error"
+
+
 def test_unknown_fields_are_accepted(client: TestClient) -> None:
     """Validation must fire on wrong types, never on unrecognised parameters.
 
@@ -479,18 +527,19 @@ def test_every_documented_input_shape_is_accepted(
 # --- streaming --------------------------------------------------------------
 
 
-def test_stream_emits_content_then_a_final_usage_chunk(client: TestClient) -> None:
-    """The backend ends the stream on the usage chunk, so it must come last."""
-    with client.stream(
-        "POST",
-        "/v1/chat/completions",
-        json={
-            "model": "mock-model",
-            "messages": [{"role": "user", "content": "stream please"}],
-            "stream": True,
-            "stream_options": {"include_usage": True},
-        },
-    ) as response:
+def _stream_chunks(
+    client: TestClient, stream_options: dict[str, Any] | None = None
+) -> list[dict[str, Any]]:
+    """The SSE payloads of a streaming completion, `[DONE]` asserted and dropped."""
+    body: dict[str, Any] = {
+        "model": "mock-model",
+        "messages": [{"role": "user", "content": "stream please"}],
+        "stream": True,
+    }
+    if stream_options is not None:
+        body["stream_options"] = stream_options
+
+    with client.stream("POST", "/v1/chat/completions", json=body) as response:
         assert response.status_code == 200
         lines = [
             line[len("data: ") :]
@@ -499,7 +548,12 @@ def test_stream_emits_content_then_a_final_usage_chunk(client: TestClient) -> No
         ]
 
     assert lines[-1] == "[DONE]"
-    chunks = [json.loads(line) for line in lines[:-1]]
+    return [json.loads(line) for line in lines[:-1]]
+
+
+def test_stream_emits_content_then_a_final_usage_chunk(client: TestClient) -> None:
+    """The backend ends the stream on the usage chunk, so it must come last."""
+    chunks = _stream_chunks(client, {"include_usage": True})
 
     content = "".join(
         chunk["choices"][0]["delta"].get("content", "")
@@ -516,3 +570,43 @@ def test_stream_emits_content_then_a_final_usage_chunk(client: TestClient) -> No
     usage_chunk = chunks[-1]
     assert usage_chunk["usage"]["completion_tokens"] > 0
     assert usage_chunk["choices"] == []
+
+
+@pytest.mark.parametrize(
+    "stream_options",
+    [None, {}, {"include_usage": False}],
+    ids=["absent", "empty", "false"],
+)
+def test_stream_without_include_usage_emits_no_usage_chunk(
+    client: TestClient, stream_options: dict[str, Any] | None
+) -> None:
+    """The real API sends the usage chunk only when asked, so neither does this.
+
+    A caller that did not opt in must not have to skip a trailing chunk with an
+    empty `choices` array.
+    """
+    chunks = _stream_chunks(client, stream_options)
+
+    assert all("usage" not in chunk for chunk in chunks)
+    assert chunks[-1]["choices"][0]["finish_reason"] == "stop"
+
+    content = "".join(
+        chunk["choices"][0]["delta"].get("content", "") for chunk in chunks
+    )
+    assert "[mock]" in content
+
+
+def test_non_boolean_include_usage_is_rejected(client: TestClient) -> None:
+    """The usage chunk is conditional on this, so a wrong type must 400."""
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "mock-model",
+            "messages": [{"role": "user", "content": "x"}],
+            "stream": True,
+            "stream_options": {"include_usage": "definitely"},
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["type"] == "invalid_request_error"

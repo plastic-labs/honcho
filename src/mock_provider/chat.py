@@ -127,8 +127,10 @@ def _created() -> int:
 
 
 async def _stream(
-    completion_id: str, model: str, content: str, usage: dict[str, int]
+    completion_id: str, model: str, content: str, usage: dict[str, int] | None
 ) -> AsyncIterator[bytes]:
+    """Stream ``content``, ending on a usage chunk when ``usage`` is given."""
+
     def chunk(payload: dict[str, Any]) -> bytes:
         return f"data: {json.dumps(payload)}\n\n".encode()
 
@@ -164,9 +166,13 @@ async def _stream(
             "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
         }
     )
-    # The backend requests stream_options.include_usage and ends the stream on
-    # the usage chunk, so it must come last and must carry choices: [].
-    yield chunk({**base, "choices": [], "usage": usage})
+    # The usage chunk is conditional: the real API emits it only when
+    # stream_options.include_usage is set, and ends the stream on it — so it
+    # must come last and must carry choices: []. Honcho's own backend always
+    # asks for it (_build_params in the OpenAI backend), but a caller that does
+    # not must not receive a chunk it never requested.
+    if usage is not None:
+        yield chunk({**base, "choices": [], "usage": usage})
     yield b"data: [DONE]\n\n"
 
 
@@ -178,8 +184,11 @@ async def chat_completions(body: ChatCompletionRequest) -> Any:
     completion_id = _completion_id(body)
 
     if body.stream:
+        include_usage = (
+            body.stream_options is not None and body.stream_options.include_usage
+        )
         return StreamingResponse(
-            _stream(completion_id, model, content, usage),
+            _stream(completion_id, model, content, usage if include_usage else None),
             media_type="text/event-stream",
         )
 

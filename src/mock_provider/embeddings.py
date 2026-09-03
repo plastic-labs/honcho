@@ -69,11 +69,9 @@ def _normalize_input(
 @router.post("/embeddings")
 async def embeddings(body: EmbeddingsRequest) -> Any:
     texts = _normalize_input(body.input)
-    dimensions = (
-        body.dimensions
-        if body.dimensions and body.dimensions > 0
-        else DEFAULT_DIMENSIONS
-    )
+    # A non-positive width is rejected by the request model, so absent is the
+    # only case left to fill in.
+    dimensions = body.dimensions if body.dimensions is not None else DEFAULT_DIMENSIONS
 
     data: list[dict[str, Any]] = []
     for index, text in enumerate(texts):
