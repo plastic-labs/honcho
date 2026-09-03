@@ -93,14 +93,21 @@ connection pools, and both reconnect by themselves — the api on its next reque
 next poll a quarter-second later. Each logs one `OperationalError` as its in-flight connection dies;
 that is expected, and it is the price of not paying ~9 seconds of container restart on every reset.
 
-The cost of a snapshot is that it can go stale. Two guards:
+The cost of a snapshot is that it can go stale. Three guards:
 
 - **Per-mode template names**, so a mock-seeded template can never be restored into a real-mode run.
 - **A fingerprint recorded inside each template** — the Alembic revision it was seeded at, a hash of
   `fixture.json` + `seed.py`, and the provider mode. `reset` compares and refuses with a "reseed"
   message rather than silently restoring a state that predates a migration.
+- **A provider check against the running stack.** Neither `seed` nor `reset` recreates containers, so
+  `--provider` on either cannot change what the stack actually talks to — only what gets recorded.
+  `up` writes the provider it created the stack with to `sandbox/.state.env`, and `seed`/`reset`
+  refuse a mismatch and tell you to run `up --provider ...` first. Without it,
+  `seed --provider mock` against a running real stack would spend money on non-deterministic
+  conclusions and label them `mock`, and every later `reset` would restore those as the
+  deterministic baseline.
 
-If you hit that refusal: `sandbox/sandbox.sh seed`.
+If you hit the staleness refusal: `sandbox/sandbox.sh seed`.
 
 ## What's in the fixture
 

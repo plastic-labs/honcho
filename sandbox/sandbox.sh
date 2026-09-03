@@ -74,6 +74,22 @@ elif [ -f "$STATE" ]; then
 fi
 export HONCHO_SANDBOX_IMAGE
 
+# The provider the running stack was actually created with, read on its own because
+# the source above is skipped under --build. Empty means nothing has been started
+# through `up` since the last `down`.
+RUNNING_PROVIDER=""
+if [ -f "$STATE" ]; then
+  RUNNING_PROVIDER="$(sed -n 's/^SANDBOX_RUNNING_PROVIDER=//p' "$STATE")"
+fi
+
+write_state() {
+  cat > "$STATE" <<EOF
+HONCHO_SANDBOX_IMAGE=$HONCHO_SANDBOX_IMAGE
+SANDBOX_RUNNING_PROVIDER=$PROVIDER
+EOF
+  RUNNING_PROVIDER="$PROVIDER"
+}
+
 compose() {
   docker compose \
     -f "$HERE/compose.yml" \
@@ -134,6 +150,31 @@ MSG
   fi
 }
 
+# Containers carry the provider wiring they were created with, and neither seed nor
+# reset recreates them: seed uses `start` plus `--no-recreate` to avoid paying a
+# container rebuild, and reset touches no container at all. So a --provider that
+# disagrees with the running stack does not change what the stack talks to. It only
+# changes what gets recorded — seed would derive through the running provider and
+# then stamp the requested one into the template, defeating the fingerprint guard,
+# which compares the flag rather than reality.
+#
+# The real-stack-seeding-a-mock-template case is the damaging one: it spends money,
+# produces non-deterministic conclusions, and labels them `mock`, so every later
+# reset restores that as the deterministic baseline. Refuse rather than mislead.
+require_running_provider() {
+  [ -n "$RUNNING_PROVIDER" ] || return 0
+  [ "$RUNNING_PROVIDER" != "$PROVIDER" ] || return 0
+  die "$(cat <<MSG
+the stack is running the $RUNNING_PROVIDER provider, but this is a $PROVIDER-mode command.
+
+seed and reset do not recreate containers, so this would act through the
+$RUNNING_PROVIDER provider while recording $PROVIDER. Switch the stack first:
+
+    sandbox/sandbox.sh up --provider $PROVIDER
+MSG
+)"
+}
+
 # --------------------------------------------------------------------------
 # Commands
 # --------------------------------------------------------------------------
@@ -162,7 +203,9 @@ cmd_up() {
   # mock to real leaves mock-provider running and otherwise unreferenced, where it
   # would sit idle and make `status` misleading about what the stack is using.
   compose up -d --wait --remove-orphans
-  echo "HONCHO_SANDBOX_IMAGE=$HONCHO_SANDBOX_IMAGE" > "$STATE"
+  # Recorded before the seed/reset below, so their provider guard sees the stack
+  # that was just created rather than the one it replaced.
+  write_state
 
   if db_exists "$TEMPLATE"; then
     say "template $TEMPLATE already present — resetting to it"
@@ -177,6 +220,7 @@ cmd_up() {
 
 cmd_seed() {
   preflight
+  require_running_provider
   # Seeding an already-seeded database appends to it — the fixture would land a
   # second time and the "expected 6 messages, found 12" check in seed.py would
   # (correctly) fail. Start from an empty, freshly migrated database every time so
@@ -215,6 +259,7 @@ cmd_seed() {
 
 cmd_reset() {
   preflight
+  require_running_provider
   db_exists "$TEMPLATE" || die \
     "no template for $PROVIDER mode. Run: sandbox/sandbox.sh seed --provider $PROVIDER"
 
@@ -242,7 +287,11 @@ cmd_reset() {
 cmd_status() {
   compose ps
   echo
-  echo "provider:  $PROVIDER"
+  if [ -n "$RUNNING_PROVIDER" ] && [ "$RUNNING_PROVIDER" != "$PROVIDER" ]; then
+    echo "provider:  $RUNNING_PROVIDER (running) — this command asked for $PROVIDER"
+  else
+    echo "provider:  $PROVIDER"
+  fi
   echo "image:     $HONCHO_SANDBOX_IMAGE"
   echo "api:       http://127.0.0.1:${SANDBOX_API_PORT:-18000}"
   for mode in mock real; do
