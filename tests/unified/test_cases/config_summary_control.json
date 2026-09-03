@@ -84,7 +84,7 @@
       "target": "get_context",
       "session_id": "session_summary",
       "summary": true,
-      "max_tokens": 2500,
+      "max_tokens": 4000,
       "observer_peer_id": "eve",
       "assertions": [
         {
