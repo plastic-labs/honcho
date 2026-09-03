@@ -77,11 +77,27 @@ class TestExecutionError(Exception):
     pass
 
 
+# Discord rejects a webhook payload whose content exceeds this with a 400.
+DISCORD_MAX_CONTENT = 2000
+
+
+def truncate(text: str, limit: int) -> str:
+    """Clip `text` to `limit` characters, marking that it was clipped."""
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1].rstrip() + "…"
+
+
 async def send_discord_message(webhook_url: str, message: str) -> None:
-    """Send a message to Discord via webhook."""
+    """Send a message to Discord via webhook.
+
+    Clamped to Discord's content limit here rather than at the call site, so an
+    over-long report loses its tail instead of the whole notification.
+    """
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.post(webhook_url, json={"content": message})
+            content = truncate(message, DISCORD_MAX_CONTENT)
+            response = await client.post(webhook_url, json={"content": content})
             response.raise_for_status()
             logger.info("Discord notification sent successfully")
     except Exception:
@@ -165,9 +181,15 @@ def artifact_lines(artifacts: RunArtifacts) -> list[str]:
 
 
 def failure_lines(
-    results: dict[str, "TestOutcome"], limit: int | None = None
+    results: dict[str, "TestOutcome"],
+    limit: int | None = None,
+    max_reason_chars: int | None = None,
 ) -> list[str]:
-    """One markdown bullet per failing test, naming the step and the reason."""
+    """One markdown bullet per failing test, naming the step and the reason.
+
+    An LLM-judge verdict runs to several hundred characters, so callers with a
+    size budget pass `max_reason_chars`; the job summary and S3 keep them whole.
+    """
     failed = [(name, o) for name, o in results.items() if o.status != "PASS"]
     if not failed:
         return []
@@ -175,6 +197,8 @@ def failure_lines(
     lines = ["", "**Failures**"]
     for name, outcome in shown:
         reason = outcome.failure.describe() if outcome.failure else outcome.status
+        if max_reason_chars is not None:
+            reason = truncate(reason, max_reason_chars)
         lines.append(f"- `{name}` — {reason}")
     if len(shown) < len(failed):
         lines.append(f"- …and {len(failed) - len(shown)} more")
@@ -924,7 +948,7 @@ class UnifiedTestRunner:
                     f"{status_emoji} **Unified Test Results**",
                     headline,
                     f"Execution time: {total_suite_time:.2f}s",
-                    *failure_lines(results, limit=10),
+                    *failure_lines(results, limit=10, max_reason_chars=160),
                     *artifact_lines(artifacts),
                 ]
                 await send_discord_message(
