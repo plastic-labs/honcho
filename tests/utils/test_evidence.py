@@ -150,6 +150,17 @@ class TestConclusionCollection:
 
         assert {c.level for c in accumulator.build().conclusions} == set(LEVELS)
 
+    @pytest.mark.parametrize("level", LEVELS)
+    def test_reports_the_text_of_every_level(self, level: str):
+        """Derived levels name their text `conclusion`, the others `content`."""
+        accumulator = EvidenceAccumulator()
+        accumulator.add_documents(
+            [make_document("doc-1", level=level, content="User drinks coffee")]
+        )
+
+        (conclusion,) = accumulator.build().conclusions
+        assert conclusion.content == "User drinks coffee"
+
     def test_orders_conclusions_by_derivation_time(self):
         accumulator = EvidenceAccumulator()
         accumulator.add_documents(

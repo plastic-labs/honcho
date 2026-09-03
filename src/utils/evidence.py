@@ -24,17 +24,56 @@ from src.schemas.api import (
     EvidenceObservation,
     EvidenceToolCall,
 )
-from src.utils.representation import Representation
+from src.utils.representation import (
+    ContradictionObservation,
+    DeductiveObservation,
+    ExplicitObservation,
+    InductiveObservation,
+    Representation,
+)
+from src.utils.types import DocumentLevel
+
+# The four shapes `Representation` sorts observations into. They agree on
+# identity and timing but disagree on where the text lives and whether there
+# are source conclusions, which is what the two helpers below reconcile.
+_Observation = (
+    ExplicitObservation
+    | DeductiveObservation
+    | InductiveObservation
+    | ContradictionObservation
+)
 
 
-def _as_utc(timestamp: datetime) -> datetime:
-    """Restore the UTC marker a representation timestamp dropped.
+def _observation_text(observation: _Observation) -> str:
+    """Read an observation's text, whatever its level calls it.
+
+    A derived observation reached its text by reasoning, so it is a
+    `conclusion`; an explicit or contradiction observation just has `content`.
+    """
+    if isinstance(observation, DeductiveObservation | InductiveObservation):
+        return observation.conclusion
+    return observation.content
+
+
+def _observation_source_ids(observation: _Observation) -> list[str]:
+    """Read the conclusions an observation was derived from.
+
+    Explicit observations derive from messages rather than from other
+    conclusions, so they have no source ids to report.
+    """
+    if isinstance(observation, ExplicitObservation):
+        return []
+    return observation.source_ids
+
+
+def _restore_utc_marker(timestamp: datetime) -> datetime:
+    """Put back the tzinfo a representation timestamp dropped.
 
     `Representation` renders observations into prompts, so it strips tzinfo to
     keep those timestamps short. The underlying columns are stored UTC, so
-    naming UTC again recovers the instant rather than shifting it -- and an API
-    response should not hand a caller a bare local-looking timestamp to guess
-    about.
+    naming UTC again recovers what was dropped rather than shifting the
+    instant. This repairs that one lossy step; it is not an offset conversion,
+    and an already-aware timestamp is left as it is.
     """
     return timestamp if timestamp.tzinfo is not None else timestamp.replace(tzinfo=UTC)
 
@@ -137,48 +176,23 @@ def _flatten_conclusions(
     caller.
     """
     representation = Representation.from_documents(list(documents))
+    by_level: tuple[tuple[DocumentLevel, Sequence[_Observation]], ...] = (
+        ("explicit", representation.explicit),
+        ("deductive", representation.deductive),
+        ("inductive", representation.inductive),
+        ("contradiction", representation.contradiction),
+    )
     observations = [
         EvidenceObservation(
             id=observation.id,
-            level="explicit",
-            content=observation.content,
-            created_at=_as_utc(observation.created_at),
+            level=level,
+            content=_observation_text(observation),
+            created_at=_restore_utc_marker(observation.created_at),
             session_id=observation.session_name,
+            source_ids=_observation_source_ids(observation),
         )
-        for observation in representation.explicit
-    ]
-    observations += [
-        EvidenceObservation(
-            id=observation.id,
-            level="deductive",
-            content=observation.conclusion,
-            created_at=_as_utc(observation.created_at),
-            session_id=observation.session_name,
-            source_ids=observation.source_ids,
-        )
-        for observation in representation.deductive
-    ]
-    observations += [
-        EvidenceObservation(
-            id=observation.id,
-            level="inductive",
-            content=observation.conclusion,
-            created_at=_as_utc(observation.created_at),
-            session_id=observation.session_name,
-            source_ids=observation.source_ids,
-        )
-        for observation in representation.inductive
-    ]
-    observations += [
-        EvidenceObservation(
-            id=observation.id,
-            level="contradiction",
-            content=observation.content,
-            created_at=_as_utc(observation.created_at),
-            session_id=observation.session_name,
-            source_ids=observation.source_ids,
-        )
-        for observation in representation.contradiction
+        for level, observations_at_level in by_level
+        for observation in observations_at_level
     ]
     observations.sort(key=lambda observation: (observation.created_at, observation.id))
     return observations
