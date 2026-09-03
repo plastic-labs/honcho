@@ -8,7 +8,7 @@ import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import httpx
 from anthropic import AsyncAnthropic
@@ -81,22 +81,35 @@ class TestExecutionError(Exception):
 DISCORD_MAX_CONTENT = 2000
 
 
-def truncate(text: str, limit: int) -> str:
-    """Clip `text` to `limit` characters, marking that it was clipped."""
-    if len(text) <= limit:
-        return text
-    return text[: limit - 1].rstrip() + "…"
+def clamp_lines(lines: list[str], limit: int) -> str:
+    """Join `lines` within `limit`, dropping the longest ones first if needed.
+
+    Whole lines rather than characters: a presigned URL cut in half is useless
+    and renders as broken markdown. Longest-first rather than last-first because
+    the only lines that can blow the budget are presigned URLs — dropping one of
+    those keeps every short, always-valid link, the Actions run link above all,
+    instead of losing them to a long URL that merely came first.
+    """
+    kept = list(range(len(lines)))
+
+    def size() -> int:
+        return sum(len(lines[i]) for i in kept) + max(0, len(kept) - 1)
+
+    while kept and size() > limit:
+        kept.remove(max(kept, key=lambda i: len(lines[i])))
+    return "\n".join(lines[i] for i in sorted(kept))
 
 
-async def send_discord_message(webhook_url: str, message: str) -> None:
-    """Send a message to Discord via webhook.
+async def send_discord_message(webhook_url: str, lines: list[str]) -> None:
+    """Send a report to Discord via webhook.
 
-    Clamped to Discord's content limit here rather than at the call site, so an
-    over-long report loses its tail instead of the whole notification.
+    Clamped to Discord's content limit here rather than at the call site: a
+    presigned URL carries an OIDC session token and can run past a thousand
+    characters on its own, and a 400 loses the whole notification.
     """
     try:
         async with httpx.AsyncClient() as client:
-            content = truncate(message, DISCORD_MAX_CONTENT)
+            content = clamp_lines(lines, DISCORD_MAX_CONTENT)
             response = await client.post(webhook_url, json={"content": content})
             response.raise_for_status()
             logger.info("Discord notification sent successfully")
@@ -119,6 +132,9 @@ class StepFailure:
 @dataclass
 class TestOutcome:
     """One test's result. `failure` carries the reason whenever status isn't PASS."""
+
+    # Not a pytest case despite the name; keeps collection from warning on it.
+    __test__: ClassVar[bool] = False
 
     status: str
     duration: float
@@ -159,49 +175,47 @@ def presign(s3_client: Any, bucket: str, key: str) -> RunArtifact:
         return RunArtifact(key=key)
 
 
-def artifact_lines(artifacts: RunArtifacts) -> list[str]:
-    """Render each uploaded artifact as one markdown line: link when presigned, key otherwise.
+def artifact_line(label: str, artifact: RunArtifact | None) -> list[str]:
+    """One markdown line for an artifact: a link when presigned, the key otherwise."""
+    if artifact is None:
+        return []
+    if artifact.url:
+        return [f"[{label}]({artifact.url}) — `{artifact.key}`"]
+    return [f"{label}: `{artifact.key}`"]
 
-    Both artifacts are surfaced. The reasoning traces carry the full prompts and
+
+def artifact_lines(artifacts: RunArtifacts) -> list[str]:
+    """Both uploaded artifacts. The reasoning traces carry the full prompts and
     model outputs for the run, which is what a failure usually needs to diagnose.
     """
-    labels = [
-        ("Complete results", artifacts.results),
-        ("Reasoning traces", artifacts.traces),
-    ]
-    lines: list[str] = []
-    for label, artifact in labels:
-        if artifact is None:
-            continue
-        if artifact.url:
-            lines.append(f"[{label}]({artifact.url}) — `{artifact.key}`")
-        else:
-            lines.append(f"{label}: `{artifact.key}`")
-    return lines
+    return artifact_line("View Complete Results", artifacts.results) + artifact_line(
+        "Reasoning traces", artifacts.traces
+    )
 
 
-def failure_lines(
-    results: dict[str, "TestOutcome"],
-    limit: int | None = None,
-    max_reason_chars: int | None = None,
-) -> list[str]:
-    """One markdown bullet per failing test, naming the step and the reason.
+def gha_run_lines() -> list[str]:
+    """Link to this run's Actions page, which hosts the job summary.
 
-    An LLM-judge verdict runs to several hundred characters, so callers with a
-    size budget pass `max_reason_chars`; the job summary and S3 keep them whole.
+    That summary carries the per-test failure reasons in full, so the Discord
+    message can stay short and point at it instead of restating them.
     """
+    run_id = os.getenv("GITHUB_RUN_ID")
+    repository = os.getenv("GITHUB_REPOSITORY")
+    if not run_id or not repository:
+        return []
+    server = os.getenv("GITHUB_SERVER_URL", "https://github.com")
+    return [f"[View GHA]({server}/{repository}/actions/runs/{run_id})"]
+
+
+def failure_lines(results: dict[str, "TestOutcome"]) -> list[str]:
+    """One markdown bullet per failing test, naming the step and the reason."""
     failed = [(name, o) for name, o in results.items() if o.status != "PASS"]
     if not failed:
         return []
-    shown = failed if limit is None else failed[:limit]
     lines = ["", "**Failures**"]
-    for name, outcome in shown:
+    for name, outcome in failed:
         reason = outcome.failure.describe() if outcome.failure else outcome.status
-        if max_reason_chars is not None:
-            reason = truncate(reason, max_reason_chars)
         lines.append(f"- `{name}` — {reason}")
-    if len(shown) < len(failed):
-        lines.append(f"- …and {len(failed) - len(shown)} more")
     return lines
 
 
@@ -948,12 +962,15 @@ class UnifiedTestRunner:
                     f"{status_emoji} **Unified Test Results**",
                     headline,
                     f"Execution time: {total_suite_time:.2f}s",
-                    *failure_lines(results, limit=10, max_reason_chars=160),
-                    *artifact_lines(artifacts),
+                    *artifact_line("View Complete Results", artifacts.results),
+                    *gha_run_lines(),
+                    *(
+                        [f"Reasoning traces: `{artifacts.traces.key}`"]
+                        if artifacts.traces
+                        else []
+                    ),
                 ]
-                await send_discord_message(
-                    discord_webhook_url, "\n".join(message_lines)
-                )
+                await send_discord_message(discord_webhook_url, message_lines)
 
             return failed_count
 
