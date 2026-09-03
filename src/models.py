@@ -111,20 +111,17 @@ class Tenant(Base):
     """One row per tenant; the FK target for every tenant-scoped table's ``tenant_id``."""
 
     # region ai
-    # This table can be a local mirror rather than the source of truth: when an
-    # external layer owns the tenant registry, rows are populated out-of-band
-    # (backfilled for existing tenants; written on provision, or upserted on first
-    # authenticated request) rather than via an in-database FK. It is also the
-    # one-row-per-tenant home for facts with nowhere else to live:
-    #   - legacy_app_name: the tenant's original app name, preserved so its
-    #     external vector-store namespace stays stable if the active app name
-    #     changes (avoids a full re-embed). Named "legacy_" so it never competes
-    #     with the current app_name.
+    # Home for per-tenant facts with nowhere else to live:
+    #   - vector_correlation_id: the tenant's external vector-store namespace key,
+    #     preserved so the namespace stays stable if the tenant's app name changes
+    #     (existing vectors resolve without a full, paid re-embed).
     #   - tier: which backend deployment class serves this tenant.
     # endregion
     __tablename__: str = "tenants"
     tenant_id: Mapped[str] = mapped_column(TEXT, primary_key=True)
-    legacy_app_name: Mapped[str | None] = mapped_column(TEXT, nullable=True, index=True)
+    vector_correlation_id: Mapped[str | None] = mapped_column(
+        TEXT, nullable=True, index=True
+    )
     tier: Mapped[str] = mapped_column(TEXT, nullable=False, server_default="dedicated")
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -624,11 +621,10 @@ class QueueItem(Base):
         BigInteger, Identity(), primary_key=True, autoincrement=True
     )
     # region ai
-    # Service table: NOT partitioned and drained-not-copied at migration, so it
-    # keeps a sole-id PK. tenant_id is a plain attribution / fair-scheduling column
-    # (no FK, no RLS); the FKs to the now-partitioned sessions / messages /
-    # workspaces are dropped — the app manages queue lifecycle and already
-    # tolerates missing referents.
+    # Service table (unpartitioned), so it keeps a sole-id PK. tenant_id is a plain
+    # attribution / fair-scheduling column — no FK, no RLS — and the queue carries no
+    # FKs to sessions / messages / workspaces: the app manages queue lifecycle and
+    # already tolerates missing referents.
     # endregion
     tenant_id: Mapped[str | None] = mapped_column(TEXT, nullable=True, index=True)
     session_id: Mapped[str | None] = mapped_column(TEXT, nullable=True, index=True)
