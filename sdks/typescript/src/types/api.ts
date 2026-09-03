@@ -75,10 +75,52 @@ export interface PeerChatParams {
   target?: string
   reasoning_level?: 'minimal' | 'low' | 'medium' | 'high' | 'max'
   response_format?: Record<string, unknown>
+  include_evidence?: boolean
+}
+
+/** A conclusion the dialectic read while answering. */
+export interface EvidenceObservation {
+  id: string
+  level: 'explicit' | 'deductive' | 'inductive' | 'contradiction'
+  content: string
+  created_at: string
+  session_id: string | null
+  /** Conclusions this one was derived from; empty for explicit conclusions. */
+  source_ids: string[]
+}
+
+/** A message the dialectic read while answering. */
+export interface EvidenceMessageRef {
+  id: string
+  session_id: string
+  peer_id: string
+  content_preview: string
+  created_at: string
+}
+
+/** A tool the dialectic invoked while answering. */
+export interface EvidenceToolCall {
+  tool_name: string
+  tool_input: Record<string, unknown>
+}
+
+/**
+ * What the dialectic read and did while answering.
+ *
+ * Collated from what the agent accessed rather than reported by the model, so
+ * it over-reports: a listed conclusion was read, which is not proof the answer
+ * leaned on it. `toolCalls` omits results and failed calls.
+ */
+export interface Evidence {
+  conclusions: EvidenceObservation[]
+  messages: EvidenceMessageRef[]
+  tool_calls: EvidenceToolCall[]
+  reasoning_trace_id: string | null
 }
 
 export interface PeerChatResponse {
   content: string | null
+  evidence?: Evidence | null
 }
 
 export interface WorkspaceChatParams {
@@ -88,10 +130,23 @@ export interface WorkspaceChatParams {
   reasoning_level?: 'minimal' | 'low' | 'medium' | 'high' | 'max'
   response_format?: Record<string, unknown>
   scope?: string | string[]
+  include_evidence?: boolean
 }
 
 export interface WorkspaceChatResponse {
   content: string | null
+  evidence?: Evidence | null
+}
+
+/**
+ * An answer together with what it was built from.
+ *
+ * Returned by `chat` when `includeEvidence` is set; without it, `chat` returns
+ * the answer on its own.
+ */
+export interface ChatResponse<TContent = string> {
+  content: TContent | null
+  evidence: Evidence | null
 }
 
 export interface PeerRepresentationParams {
