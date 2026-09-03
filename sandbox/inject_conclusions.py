@@ -327,9 +327,20 @@ async def inject_pair(
                     payload.append(
                         schemas.DocumentCreate(
                             content=item["content"],
-                            # Derived conclusions belong to the dream, not to one session,
-                            # which is how the Dreamer writes them.
-                            session_name=None,
+                            # The session, not None: the dreamer stamps its output with
+                            # one session (dream_scheduler picks whichever holds the most
+                            # recent explicit conclusion) and threads it through
+                            # create_tool_executor, so a session-less derived row is not
+                            # what real mode would produce.
+                            #
+                            # This does not make them visible to a session-scoped read.
+                            # ALLOWLIST_SAFE_LEVELS in src/utils/representation.py serves
+                            # only explicit under a session allowlist, whatever the stamp
+                            # says, because the dreamer reads across all sessions and
+                            # scoping its output would leak. So representation(session=...)
+                            # is explicit-only by construction; drop the session argument
+                            # to see these.
+                            session_name=session,
                             level=level,
                             times_derived=1,
                             metadata=schemas.DocumentMetadata(**metadata),
