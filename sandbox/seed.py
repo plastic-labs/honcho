@@ -146,7 +146,21 @@ def main() -> int:
     base_url = os.environ.get("SANDBOX_BASE_URL", "http://127.0.0.1:18000")
     workspace_id = fixture["workspace"]
 
-    honcho = Honcho(base_url=base_url, workspace_id=workspace_id, api_key="sandbox")
+    honcho = Honcho(
+        base_url=base_url,
+        workspace_id=workspace_id,
+        api_key="sandbox",
+        # No retries. Creating messages is not idempotent, and the SDK retries on
+        # 429/500/502/503/504 as well as timeouts, so a write that commits and then
+        # errors on the way back gets replayed -- seeding the fixture twice. That
+        # was observed as "expected 6 messages, found 12" on a cold api, right
+        # after cmd_seed restarts it.
+        #
+        # The sandbox is local and `up` always seeds from a cleared database, so a
+        # transient failure here should stop and be re-run, not be papered over
+        # into a silently doubled fixture.
+        max_retries=0,
+    )
     peers = {spec["id"]: honcho.peer(spec["id"]) for spec in fixture["peers"]}
     session = honcho.session(fixture["session"])
 
