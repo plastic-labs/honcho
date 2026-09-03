@@ -1,10 +1,15 @@
 """How `get_context` decides whether to serve a session summary.
 
-The summary budget is 40% of what remains *after* the peer representation and
-card are subtracted, not 40% of the requested `tokens`. With an observer that
-has accumulated observations, a perfectly valid summary can be dropped and the
-caller just sees `summary: null` — which is what made DEV-2580's
-`config_summary_control` fixtures unsatisfiable.
+Two paths, and which one runs depends on `peer_target`:
+
+- Without it, `summarizer.get_session_context` gives the summary 40% of the
+  requested `tokens`.
+- With it, `sessions._select_summary_for_context` gives it 40% of what remains
+  *after* the peer representation and card are subtracted, so an observer with
+  many observations can starve a perfectly valid summary.
+
+Either way the caller just sees `summary: null`, indistinguishable from a
+session that has none, which is why both paths now log when they drop one.
 """
 
 from __future__ import annotations
@@ -27,8 +32,9 @@ from src.utils.summarizer import (
     _save_summary,  # pyright: ignore[reportPrivateUsage]
 )
 
-# Measured from CI run 33779689337: the 12-message config_summary fixtures
-# produce 12 explicit observations costing ~1176 tokens.
+# Measured from CI run 33779689337: 12 messages from one peer produce 12
+# explicit observations costing ~1176 tokens. Only the `peer_target` path pays
+# this, and the unified `config_summary` fixtures do not take that path.
 _FIXTURE_REPRESENTATION_TOKENS = 1176
 _SHORT_SUMMARY_CAP = 1000  # SUMMARY.MAX_TOKENS_SHORT default
 
@@ -56,11 +62,7 @@ def _stored_summary(token_count: int) -> Summary:
 
 
 def test_representation_can_exhaust_the_budget_entirely() -> None:
-    """`max_tokens: 400` against these fixtures leaves a negative budget.
-
-    No summary of any size could be served, so the original failure was never
-    about the summary being too large.
-    """
+    """A large representation can leave a negative budget on the observer path."""
     adjusted = 400 - _FIXTURE_REPRESENTATION_TOKENS
     assert adjusted < 0
     chosen, _, _ = _select_summary_for_context(
@@ -70,7 +72,7 @@ def test_representation_can_exhaust_the_budget_entirely() -> None:
 
 
 def test_a_conforming_summary_can_still_be_dropped() -> None:
-    """2500 leaves a 529-token budget — under `SUMMARY.MAX_TOKENS_SHORT`."""
+    """With that representation, 2500 leaves 529 — under `SUMMARY.MAX_TOKENS_SHORT`."""
     adjusted = 2500 - _FIXTURE_REPRESENTATION_TOKENS
     chosen, _, _ = _select_summary_for_context(
         _summary_schema(_SHORT_SUMMARY_CAP), None, adjusted, True
@@ -79,7 +81,7 @@ def test_a_conforming_summary_can_still_be_dropped() -> None:
 
 
 def test_fixture_limit_fits_any_conforming_summary() -> None:
-    """4000 is what the unified fixtures now request; it must leave room."""
+    """4000 leaves room even when a representation is subtracted."""
     adjusted = 4000 - _FIXTURE_REPRESENTATION_TOKENS
     assert int(adjusted * 0.4) >= _SHORT_SUMMARY_CAP
     chosen, _, _ = _select_summary_for_context(
@@ -137,3 +139,29 @@ async def test_a_stored_summary_is_served(
     data = client.get(url).json()
     assert data["summary"] is not None
     assert data["summary"]["token_count"] == 99
+
+
+async def test_fixture_path_ignores_representation_budget(
+    client: TestClient,
+    sample_data: tuple[Workspace, Peer],
+    db_session: AsyncSession,
+) -> None:
+    """Without `peer_target`, the summary gets 40% of `tokens` outright.
+
+    The unified `config_summary` fixtures set `observer_peer_id`, but the runner
+    does not forward it to `get_context`, so this is the path they exercise.
+    """
+    workspace, peer = sample_data
+    session_id = str(generate_nanoid())
+    client.post(
+        f"/v3/workspaces/{workspace.name}/sessions",
+        json={"id": session_id, "peers": {peer.name: {}}},
+    )
+    await _save_summary(db_session, _stored_summary(99), workspace.name, session_id)
+    await db_session.commit()
+
+    url = f"/v3/workspaces/{workspace.name}/sessions/{session_id}/context"
+    data = client.get(f"{url}?summary=true&tokens=2500").json()
+
+    assert data["summary"] is not None
+    assert data.get("peer_representation") is None
