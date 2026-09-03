@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any, ClassVar, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt
 
 
 class MockRequest(BaseModel):
@@ -38,9 +38,10 @@ class ChatMessage(MockRequest):
 
 class StreamOptions(MockRequest):
     # Typed rather than left as a dict because the usage chunk is conditional on
-    # it: `{"include_usage": "yes"}` must fail like the real API does rather than
-    # read as truthy and emit a chunk the caller never asked for.
-    include_usage: bool = False
+    # it. StrictBool for the same reason `dimensions` is StrictInt: plain `bool`
+    # coerces "yes"/"on"/"true"/"1", so a string would quietly decide the shape
+    # of the stream instead of failing the way the real API does.
+    include_usage: StrictBool = False
 
 
 class ChatCompletionRequest(MockRequest):
@@ -48,7 +49,10 @@ class ChatCompletionRequest(MockRequest):
     messages: list[ChatMessage] = []
     response_format: dict[str, Any] | None = None
     tools: list[dict[str, Any]] | None = None
-    stream: bool = False
+    # StrictBool because this one field decides between two response *shapes* —
+    # a JSON body or an SSE stream — so coercing a string here is the difference
+    # between a working client and one that hangs waiting for events.
+    stream: StrictBool = False
     stream_options: StreamOptions | None = None
 
 

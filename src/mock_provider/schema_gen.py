@@ -31,6 +31,14 @@ from src.mock_provider.coerce import as_dict, as_int, as_list, as_str
 # inside conclusions, so a $ref cycle is normal input, not a malformed schema.
 MAX_DEPTH = 6
 
+# Absolute cap. Past MAX_DEPTH a cycle is expected to terminate on a `default`
+# or a nullable/optional branch; a required, non-nullable self-reference has
+# neither and would recurse until Python raises RecursionError. Degrading to an
+# empty container may violate the schema, but a mock must not turn its own
+# defect into a 500. Set well clear of MAX_DEPTH so no schema that terminates
+# on its own ever reaches it.
+HARD_MAX_DEPTH = MAX_DEPTH * 4
+
 _WORDS = (
     "synthetic",
     "placeholder",
@@ -171,9 +179,14 @@ def _generate(
             return _generate(_pick_branch(branches, root, depth), root, path, depth)
 
     kind = _infer_type(resolved)
+    # Only the two recursive kinds need the absolute cap; scalars terminate.
     if kind == "object":
+        if depth >= HARD_MAX_DEPTH:
+            return {}
         return _generate_object(resolved, root, path, depth)
     if kind == "array":
+        if depth >= HARD_MAX_DEPTH:
+            return []
         return _generate_array(resolved, root, path, depth)
     if kind == "integer":
         return _bounded_int(resolved, path)
@@ -264,14 +277,15 @@ def _generate_array(
         count = min(count, max_items)
     if depth >= MAX_DEPTH:
         count = min_items or 0
-    if items is None:
-        return prefix
-
     # `items` describes the positions after the prefix, so only the shortfall is
-    # filled homogeneously.
+    # filled. With `items` absent those positions are unconstrained rather than
+    # disallowed: an empty schema stands in, and the target drops to whatever
+    # minItems demands, so a bare `{"type": "array"}` still generates nothing.
+    trailing = items if items is not None else {}
+    target = count if items is not None else min(count, min_items or 0)
     return prefix + [
-        _generate(items, root, f"{path}[{len(prefix) + i}]", depth + 1)
-        for i in range(max(0, count - len(prefix)))
+        _generate(trailing, root, f"{path}[{len(prefix) + i}]", depth + 1)
+        for i in range(max(0, target - len(prefix)))
     ]
 
 
@@ -320,9 +334,37 @@ def _bounded_int(schema: dict[str, Any], path: str) -> int:
 
     if low is not None and high is not None:
         span = high - low
-        return low + (_seed(path) % (span + 1) if span > 0 else 0)
-    if low is not None:
-        return low + (_seed(path) % 8)
-    if high is not None:
-        return high - (_seed(path) % 8)
-    return _seed(path) % 100
+        value = low + (_seed(path) % (span + 1) if span > 0 else 0)
+    elif low is not None:
+        value = low + (_seed(path) % 8)
+    elif high is not None:
+        value = high - (_seed(path) % 8)
+    else:
+        value = _seed(path) % 100
+
+    return _snap_to_multiple(value, as_int(schema.get("multipleOf")), low, high)
+
+
+def _snap_to_multiple(
+    value: int, multiple: int | None, low: int | None, high: int | None
+) -> int:
+    """Move ``value`` onto a multiple of ``multiple``, staying within bounds.
+
+    A fractional ``multipleOf`` is ignored: ``as_int`` rejects it, and honouring
+    it would mean returning a non-integer from an ``integer`` schema.
+    """
+    if multiple is None or multiple <= 0:
+        return value
+
+    # Floor division, so a negative value snaps down to the next multiple below.
+    snapped = (value // multiple) * multiple
+    if low is not None and snapped < low:
+        snapped = -(-low // multiple) * multiple  # smallest multiple >= low
+    if high is not None and snapped > high:
+        snapped = (high // multiple) * multiple  # largest multiple <= high
+
+    # No multiple exists in the window, so the schema is unsatisfiable. An
+    # in-range value breaks the constraint the caller is less likely to check.
+    if (low is not None and snapped < low) or (high is not None and snapped > high):
+        return value
+    return snapped

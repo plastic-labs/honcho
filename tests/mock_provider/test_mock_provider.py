@@ -20,9 +20,10 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import BaseModel, Field
 
+from src.mock_provider.coerce import as_dict
 from src.mock_provider.embeddings import content_to_embedding
 from src.mock_provider.main import app
-from src.mock_provider.schema_gen import generate
+from src.mock_provider.schema_gen import HARD_MAX_DEPTH, MAX_DEPTH, generate
 from src.utils.representation import PromptRepresentation
 
 # A $ref/$defs schema, which is what Pydantic emits for any nested model and the
@@ -313,6 +314,113 @@ def test_prefix_items_are_followed_by_homogeneous_items() -> None:
     assert all(isinstance(value, bool) for value in result[2:])
 
 
+def test_min_items_is_met_when_items_is_omitted() -> None:
+    """Absent `items` leaves trailing positions unconstrained, not disallowed."""
+    schema: dict[str, Any] = {
+        "type": "array",
+        "prefixItems": [{"type": "string"}],
+        "minItems": 3,
+    }
+    result = generate(schema)
+
+    assert len(result) == 3
+    assert isinstance(result[0], str)
+
+
+@pytest.mark.parametrize(
+    ("constraints", "multiple"),
+    [
+        ({"minimum": 0, "maximum": 100, "multipleOf": 10}, 10),
+        ({"minimum": 7, "maximum": 9, "multipleOf": 4}, 4),
+        ({"minimum": -100, "maximum": 0, "multipleOf": 25}, 25),
+        ({"minimum": 5, "multipleOf": 3}, 3),
+        ({"maximum": -5, "multipleOf": 3}, 3),
+        ({"multipleOf": 6}, 6),
+    ],
+)
+def test_multiple_of_is_honoured_within_bounds(
+    constraints: dict[str, Any], multiple: int
+) -> None:
+    """Path-seeded values land off the multiple unless snapped back onto it."""
+    low = constraints.get("minimum")
+    high = constraints.get("maximum")
+
+    # Several paths, because a single one can satisfy the constraint by luck.
+    for index in range(12):
+        schema: dict[str, Any] = {
+            "type": "object",
+            "properties": {f"f{index}": {"type": "integer", **constraints}},
+            "required": [f"f{index}"],
+        }
+        value = generate(schema)[f"f{index}"]
+
+        assert value % multiple == 0, f"{value} is not a multiple of {multiple}"
+        if low is not None:
+            assert value >= low
+        if high is not None:
+            assert value <= high
+
+
+def test_unsatisfiable_multiple_of_stays_within_bounds() -> None:
+    """No multiple of 10 lies in [3, 7], so the bounds win over the multiple."""
+    schema: dict[str, Any] = {
+        "type": "integer",
+        "minimum": 3,
+        "maximum": 7,
+        "multipleOf": 10,
+    }
+    result = generate(schema)
+    assert 3 <= result <= 7
+
+
+def test_required_recursive_ref_terminates_instead_of_overflowing() -> None:
+    """A required, non-nullable cycle has no `default` or null branch to stop on.
+
+    MAX_DEPTH alone does not save it — `_generate_object` keeps descending into
+    required properties — so the absolute cap has to.
+    """
+    schema: dict[str, Any] = {
+        "$defs": {
+            "Node": {
+                "type": "object",
+                "properties": {"child": {"$ref": "#/$defs/Node"}},
+                "required": ["child"],
+            }
+        },
+        "$ref": "#/$defs/Node",
+    }
+    node = as_dict(generate(schema))
+
+    depth = 0
+    # The cap returns {}, so an empty dict is the terminator.
+    while node:
+        node = as_dict(node["child"])
+        depth += 1
+        assert depth <= HARD_MAX_DEPTH, "absolute depth cap did not hold"
+    assert depth > MAX_DEPTH, "should descend past the soft cap before stopping"
+
+
+def test_required_recursive_array_terminates_instead_of_overflowing() -> None:
+    """minItems >= 1 keeps `_generate_array` from emptying out at the soft cap."""
+    schema: dict[str, Any] = {
+        "$defs": {
+            "Node": {
+                "type": "object",
+                "properties": {
+                    "kids": {
+                        "type": "array",
+                        "items": {"$ref": "#/$defs/Node"},
+                        "minItems": 1,
+                    }
+                },
+                "required": ["kids"],
+            }
+        },
+        "$ref": "#/$defs/Node",
+    }
+    generate(schema)  # must not raise RecursionError
+
+
 def test_generation_is_stable_across_calls() -> None:
     assert generate(PROBE_SCHEMA) == generate(PROBE_SCHEMA)
 
@@ -596,15 +704,37 @@ def test_stream_without_include_usage_emits_no_usage_chunk(
     assert "[mock]" in content
 
 
-def test_non_boolean_include_usage_is_rejected(client: TestClient) -> None:
-    """The usage chunk is conditional on this, so a wrong type must 400."""
+@pytest.mark.parametrize("value", ["definitely", "yes", "on", "true", "1", 1])
+def test_non_boolean_include_usage_is_rejected(client: TestClient, value: Any) -> None:
+    """The usage chunk is conditional on this, so a wrong type must 400.
+
+    The truthy strings matter more than the nonsense one: plain `bool` coerces
+    "yes"/"on"/"true"/"1", so without StrictBool a string would silently decide
+    whether the stream carries usage.
+    """
     response = client.post(
         "/v1/chat/completions",
         json={
             "model": "mock-model",
             "messages": [{"role": "user", "content": "x"}],
             "stream": True,
-            "stream_options": {"include_usage": "definitely"},
+            "stream_options": {"include_usage": value},
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["type"] == "invalid_request_error"
+
+
+@pytest.mark.parametrize("value", ["yes", "true", "1", 1])
+def test_non_boolean_stream_is_rejected(client: TestClient, value: Any) -> None:
+    """`stream` picks between a JSON body and an SSE stream, so it must be exact."""
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "mock-model",
+            "messages": [{"role": "user", "content": "x"}],
+            "stream": value,
         },
     )
 
