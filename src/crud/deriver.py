@@ -1,14 +1,164 @@
 from collections.abc import Sequence
+from datetime import UTC, datetime, timedelta
 from logging import getLogger
 from typing import Any
 
-from sqlalchemy import Select, case, func, or_, select
+from sqlalchemy import ColumnElement, Select, case, func, or_, select
 from sqlalchemy.engine import Row
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models, schemas
+from src.config import settings
 
 logger = getLogger(__name__)
+
+REPRESENTATION_WORK_UNIT_PREFIX = "representation:"
+
+
+def representation_batch_threshold_clause(
+    *,
+    work_unit_key: ColumnElement[str],
+    total_tokens: ColumnElement[Any],
+    oldest_created_at: ColumnElement[Any],
+) -> ColumnElement[bool] | None:
+    """The batch gate a representation work unit passes before it is claimable, or None when no gate applies."""
+    if settings.DERIVER.FLUSH_ENABLED:
+        return None
+
+    target_tokens = settings.DERIVER.REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS
+    if target_tokens <= 0:
+        return None
+
+    threshold: ColumnElement[bool] = func.coalesce(total_tokens, 0) >= target_tokens
+
+    max_age_seconds = settings.DERIVER.REPRESENTATION_BATCH_MAX_AGE_SECONDS
+    if max_age_seconds > 0:
+        threshold = or_(
+            threshold,
+            oldest_created_at <= func.now() - timedelta(seconds=max_age_seconds),
+        )
+
+    return or_(
+        ~work_unit_key.startswith(REPRESENTATION_WORK_UNIT_PREFIX),
+        threshold,
+    )
+
+
+def unclaimed_work_unit_clause(
+    work_unit_key: ColumnElement[str],
+) -> ColumnElement[bool]:
+    """No claim row exists for this work unit, stale ones included."""
+    return (
+        ~select(models.ActiveQueueSession.id)
+        .where(models.ActiveQueueSession.work_unit_key == work_unit_key)
+        .exists()
+    )
+
+
+def stale_claim_cutoff() -> datetime:
+    return datetime.now(UTC) - timedelta(
+        minutes=settings.DERIVER.STALE_SESSION_TIMEOUT_MINUTES
+    )
+
+
+def not_live_claimed_work_unit_clause(
+    work_unit_key: ColumnElement[str],
+) -> ColumnElement[bool]:
+    """No claim refreshed inside the stale timeout exists, so a stale claim leaves its work unit claimable."""
+    return (
+        ~select(models.ActiveQueueSession.id)
+        .where(
+            models.ActiveQueueSession.work_unit_key == work_unit_key,
+            models.ActiveQueueSession.last_updated >= stale_claim_cutoff(),
+        )
+        .exists()
+    )
+
+
+async def get_deriver_metrics(db: AsyncSession) -> schemas.DeriverMetrics:
+    """Count the outstanding deriver work in the whole database, read-only."""
+    from src.reconciler.sync_vectors import backoff_eligible  # noqa: PLC0415
+
+    token_stats = (
+        select(
+            models.QueueItem.work_unit_key,
+            func.sum(models.Message.token_count).label("total_tokens"),
+            func.min(models.QueueItem.created_at).label("oldest_created_at"),
+        )
+        .join(models.Message, models.QueueItem.message_id == models.Message.id)
+        .where(~models.QueueItem.processed)
+        .where(
+            models.QueueItem.work_unit_key.startswith(REPRESENTATION_WORK_UNIT_PREFIX)
+        )
+        .group_by(models.QueueItem.work_unit_key)
+        .subquery()
+    )
+
+    work_units = (
+        select(models.QueueItem.work_unit_key)
+        .where(~models.QueueItem.processed)
+        .group_by(models.QueueItem.work_unit_key)
+        .subquery()
+    )
+
+    eligible = (
+        select(func.count())
+        .select_from(work_units)
+        .outerjoin(
+            token_stats,
+            work_units.c.work_unit_key == token_stats.c.work_unit_key,
+        )
+        .where(not_live_claimed_work_unit_clause(work_units.c.work_unit_key))
+    )
+
+    threshold_clause = representation_batch_threshold_clause(
+        work_unit_key=work_units.c.work_unit_key,
+        total_tokens=token_stats.c.total_tokens,
+        oldest_created_at=token_stats.c.oldest_created_at,
+    )
+    if threshold_clause is not None:
+        eligible = eligible.where(threshold_clause)
+
+    claimed = (
+        select(func.count())
+        .select_from(models.ActiveQueueSession)
+        .where(models.ActiveQueueSession.last_updated >= stale_claim_cutoff())
+    )
+
+    pending = select(
+        func.count(models.QueueItem.id),
+        func.coalesce(
+            func.extract("epoch", func.now() - func.min(models.QueueItem.created_at)),
+            0,
+        ),
+    ).where(~models.QueueItem.processed)
+
+    embeddings = select(
+        func.count(),
+        func.coalesce(
+            func.sum(
+                case(
+                    (backoff_eligible(models.MessageEmbedding.last_sync_at), 1),
+                    else_=0,
+                )
+            ),
+            0,
+        ),
+    ).where(models.MessageEmbedding.sync_state == "pending")
+
+    eligible_count = (await db.execute(eligible)).scalar_one()
+    claimed_count = (await db.execute(claimed)).scalar_one()
+    pending_count, oldest_age = (await db.execute(pending)).one()
+    embeddings_pending, embeddings_due = (await db.execute(embeddings)).one()
+
+    return schemas.DeriverMetrics(
+        eligible_work_units=int(eligible_count),
+        claimed_work_units=int(claimed_count),
+        pending_items=int(pending_count),
+        oldest_pending_age_seconds=float(oldest_age),
+        embeddings_pending=int(embeddings_pending),
+        embeddings_pending_due=int(embeddings_due),
+    )
 
 
 async def get_queue_status(

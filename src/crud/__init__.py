@@ -3,7 +3,11 @@ from .collection import (
     get_or_create_collection,
     update_collection_internal_metadata,
 )
-from .deriver import get_deriver_status, get_queue_status
+from .deriver import (
+    get_deriver_metrics,
+    get_deriver_status,
+    get_queue_status,
+)
 from .document import (
     CreateDocumentsResult,
     create_documents,
@@ -58,6 +62,7 @@ from .scope import (
     invalidate_scope_peer_cache,
     remove_session_from_scope,
     resolve_scope_peers,
+    resolve_scope_session_union,
     update_scope_backfill_status,
 )
 from .session import (
@@ -81,21 +86,30 @@ from .webhook import (
     list_webhook_endpoints,
 )
 from .workspace import (
+    ActivePeer,
     WorkspaceDeletionResult,
+    WorkspaceStats,
     check_no_active_sessions,
     delete_workspace,
+    get_active_peers,
     get_all_workspaces,
     get_or_create_workspace,
     get_workspace,
+    get_workspace_stats,
     update_workspace,
 )
 
 __all__ = [
+    "get_workspace_stats",
+    "get_active_peers",
+    "WorkspaceStats",
+    "ActivePeer",
     # Collection
     "get_collection",
     "get_or_create_collection",
     "update_collection_internal_metadata",
     # Deriver
+    "get_deriver_metrics",
     "get_deriver_status",
     "get_queue_status",
     # Document
@@ -150,6 +164,7 @@ __all__ = [
     "invalidate_scope_peer_cache",
     "remove_session_from_scope",
     "resolve_scope_peers",
+    "resolve_scope_session_union",
     "update_scope_backfill_status",
     # Session
     "SessionDeletionResult",

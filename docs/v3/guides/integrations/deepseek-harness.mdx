@@ -1,0 +1,198 @@
+---
+title: "DeepSeek Harness"
+icon: 'terminal'
+description: "Add AI-native memory to DeepSeek Harness"
+sidebarTitle: 'DeepSeek Harness'
+---
+
+`dsh` forgets everything when a session ends. This plugin gives it memory that doesn't: what you're building, how you like to work, and what you decided last week and why — carried across context resets, restarts, and fresh chats.
+
+It is a native [Cordis](https://github.com/cordiverse/cordis) plugin, not a hook bridge, so it hooks the harness's own extension points directly.
+
+## Quick Start
+
+### Step 1: Get Your Honcho API Key
+
+1. Go to **[app.honcho.dev](https://app.honcho.dev)**
+2. Sign up or log in
+3. Copy your API key (starts with `hch-`)
+
+### Step 2: Install the Plugin
+
+<Note>
+This plugin requires a running [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness). Plugins install into a named profile, so pick the one you actually run — `web`, `headless`, `acp`, or your own.
+</Note>
+
+```bash
+dsh plugin --profile <name> add @honcho-ai/dsh-honcho
+```
+
+`dsh plugin` forwards to your package manager and appends the plugin to that profile's bundle list. Because the package declares `dsh.bundle`, it activates as a configuration layer rather than sitting inert as a plain dependency.
+
+### Step 3: Configure
+
+Put your key and name in `~/.honcho/config.json`:
+
+```jsonc
+{
+  "peerName": "your-name",
+  "auth": { "apiKey": "${HONCHO_API_KEY}" },
+  "hosts": {
+    "dsh": { "workspace": "dsh" }
+  }
+}
+```
+
+`HONCHO_API_KEY` in the environment works on its own — the config file is only needed to change defaults.
+
+### Step 4: Verify
+
+Start `dsh` and run `/honcho`. You'll see your peer, workspace, session, and sync status, plus a link to the session in the Honcho dashboard.
+
+<Warning>
+In the `dsh` web client, `/honcho` output renders in the collapsed command panel rather than inline in the transcript. Expand the panel to read it.
+</Warning>
+
+## What You Get
+
+- **Memory at session start** — your profile, a summary of this project's session so far, and the conclusions relevant to what you just asked, shaped to a character budget in a single API call
+- **Automatic capture** — user and assistant turns stream to Honcho in the background, debounced, and flushed at turn boundaries, before compaction, and on shutdown
+- **Secret redaction** — messages are scrubbed before they leave your machine
+- **Agent tools** — first-class search, reasoning, and conclusion-writing inside `dsh`
+- **Shared configuration** — the same `~/.honcho/config.json` every other Honcho integration reads
+
+## Configuration
+
+Configuration lives in `~/.honcho/config.json`, shared with the other Honcho hosts. The root holds identity and connection; behavior lives under `hosts.dsh`.
+
+```jsonc
+{
+  "peerName": "your-name",
+  "workspace": "honcho",
+  "baseUrl": "https://api.honcho.dev", // bare host or …/v3 both fine
+  "timeoutMs": 30000,
+  "auth": { "apiKey": "${HONCHO_API_KEY}" },
+  "enabled": true, // global kill switch
+
+  "hosts": {
+    "dsh": {
+      "workspace": "dsh",
+      "aiPeer": "dsh", // defaults to the host name
+      "observationMode": "unified", // unified | directional
+      "sessionStrategy": "per-directory",
+      "sessionPeerPrefix": true, // session names are <peer>-<dir>
+      "sessions": { "/path/to/repo": "pinned-session-name" },
+
+      "injection": {
+        "sessionStart": ["directives", "summary", "peerCard"],
+        "perTurn": ["userContext", "dialectic"],
+        "tools": true,
+        "searchTopK": 10,
+        "searchMaxDistance": 0.6,
+        "maxConclusions": 15, // how many conclusions Honcho RETURNS
+        "maxRenderedConclusions": 4, // how many survive into the prompt
+        "contextTokens": 1500,
+        "cadence": { "dialectic": 5, "ttlSeconds": 300 },
+        "dialectic": {
+          "reasoning": "low", // minimal | low | medium | high | max
+          "maxChars": 600
+        }
+      },
+
+      "capture": {
+        "saveMessages": true,
+        "saveToolUse": false, // one-line summaries of tool activity
+        "writeFrequency": "async", // async | sync
+        "noisePatterns": [] // additive to the built-in secret patterns
+      },
+
+      "messageUpload": {
+        "maxUserTokens": 6000,
+        "maxAssistantTokens": 6000
+      }
+    }
+  }
+}
+```
+
+<Note>
+Unsupported or renamed keys are reported at startup rather than silently ignored, so a stale config tells you what it is no longer doing.
+</Note>
+
+### Injection Components
+
+The two menus differ in **cadence**, not in what they can carry.
+
+`injection.sessionStart` is injected once when a session opens: `directives`, `summary`, `peerCard`, `representation`.
+
+`injection.perTurn` refreshes as you work:
+
+| Component | Behavior |
+| --- | --- |
+| `userContext` | A fresh, prompt-scoped bundle of **representation + peer card**, retrieved using your current message as the search query — so recall is associative rather than merely recent |
+| `dialectic` | A reasoned answer about you, run every `cadence.dialectic` turns. Nothing waits on it after the first turn, so a late answer reaches the next one |
+
+To get the representation without the peer card (or vice versa), name it in `sessionStart` and set `perTurn: []` — at the cost of per-turn refresh.
+
+### Session Strategies
+
+| Strategy | Session name | Notes |
+| --- | --- | --- |
+| `per-directory` (default) | `<peer>-<dir>` | Stable across restarts and branches |
+| `per-repo` | `<peer>-<repo-root>` | Same memory from any subdirectory |
+| `git-branch` | `<peer>-<dir>-<branch>` | Falls back to `per-directory` outside a repo or on a detached HEAD |
+| `per-session` | `<peer>-chat-<id>` | A clean slate every restart |
+| `global` | `<peer>` | One memory for everything |
+
+<Warning>
+Prefer the wider scopes. The background Deriver needs a single session to accumulate enough material before it can reason well. `git-branch` splits a project's memory per branch, and `per-session` discards it on every restart.
+</Warning>
+
+### Sharing Memory With Other Integrations
+
+Each integration defaults to its own Honcho `workspace` — `dsh` here, `claude_code` for claude-honcho — and a workspace is the isolation boundary, so **by default they do not see each other's memory.** Point them at the same `workspace` to merge them:
+
+```jsonc
+"hosts": {
+  "dsh":         { "workspace": "shared" },
+  "claude_code": { "workspace": "shared" }
+}
+```
+
+Keep `peerName` identical across them too, since conclusions are stored per peer.
+
+## Commands
+
+| Command | Description |
+| --- | --- |
+| `/honcho` | Status: peer, workspace, session, strategy, pending uploads, last sync, last fetch |
+| `/honcho config` | Resolved settings, the file they came from, and any ignored injection components |
+| `/honcho flush` | Sync now |
+
+## Agent Tools
+
+| Tool | Description |
+| --- | --- |
+| `honcho_search` | Look something up — searches raw messages **and** derived conclusions |
+| `honcho_chat` | Ask a question of judgment. Reasons over everything Honcho knows; slower |
+| `honcho_remember` | Save a durable fact, preference, or decision |
+
+Set `injection.tools` to `false` to inject memory without exposing tools.
+
+## Requirements
+
+- Node `^22.19.0 || >=24.0.0`
+- A running `dsh`
+- A Honcho API key, or a self-hosted Honcho at `baseUrl`
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="GitHub Repository" icon="github" href="https://github.com/plastic-labs/dsh-honcho">
+    Source code, issues, and README.
+  </Card>
+
+  <Card title="Honcho Architecture" icon="sitemap" href="../../documentation/core-concepts/architecture">
+    Learn about peers, sessions, and dialectic reasoning.
+  </Card>
+</CardGroup>

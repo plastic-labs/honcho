@@ -76,16 +76,15 @@
     },
     {
       "step_type": "wait",
-      "target": "queue_empty",
-      "flush": true
+      "target": "queue_empty"
     },
     {
       "step_type": "query",
       "target": "get_context",
       "session_id": "session_summary",
       "summary": true,
-      "max_tokens": 400,
-      "observer_peer_id": "eve",
+      "max_tokens": 4000,
+      "description": "Unscoped read, so the summary gets 40% of max_tokens. Naming an observer would route through the peer_target path, where the representation and peer card are subtracted from the budget first.",
       "assertions": [
         {
           "assertion_type": "llm_judge",

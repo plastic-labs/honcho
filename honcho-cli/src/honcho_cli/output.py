@@ -15,6 +15,8 @@ from rich.console import Console
 from rich.table import Table
 from rich.text import Text
 
+from honcho_cli.branding import ICON_FAIL, ICON_OK, ICON_RUN
+
 console = Console(stderr=True)
 stdout_console = Console()
 
@@ -104,6 +106,24 @@ def print_error(code: str, message: str, details: dict | None = None) -> None:
 def status(msg: str) -> None:
     """Print a status message to stderr."""
     console.print(f"[dim]{msg}[/dim]")
+
+
+def step(msg: str) -> None:
+    """Print a progress step. No-op in JSON mode."""
+    if not use_json():
+        console.print(f"  {ICON_RUN}  {msg}")
+
+
+def ok(msg: str) -> None:
+    """Print a success line. No-op in JSON mode."""
+    if not use_json():
+        console.print(f"  {ICON_OK}  {msg}")
+
+
+def fail(msg: str) -> None:
+    """Print a failure line. No-op in JSON mode."""
+    if not use_json():
+        console.print(f"  {ICON_FAIL}  {msg}")
 
 
 # Stable peer-color palette for transcript rendering. Brand blue first so the

@@ -22,14 +22,39 @@ uv tool install honcho-cli
 ## Quick Start
 
 ```bash
-honcho init        # confirm/set apiKey + Honcho URL in ~/.honcho/config.json
-honcho doctor      # verify your config + connectivity
-honcho             # show banner + command list
+honcho init                 # confirm/set apiKey + Honcho URL in ~/.honcho/config.json
+honcho start --setup basic  # local stack: LLM provider key + Docker
+honcho doctor               # verify config + connectivity
+honcho                      # show banner + command list
 ```
 
-`honcho init` reads `apiKey` and `environmentUrl` from the top-level of `~/.honcho/config.json` (the same file other Honcho tools — plugins, host integrations — share). If both are present, it confirms them with you; if either is missing (or you decline), it prompts for the missing value(s) and writes them back. Host-specific entries under `hosts` are left untouched.
+`honcho init` writes `apiKey` and `environmentUrl` to the top-level of `~/.honcho/config.json` (the same file other Honcho tools — plugins, host integrations — share) so the CLI can call a Honcho server. If both are present, it confirms them with you; if either is missing (or you decline), it prompts and writes them back. Host-specific entries under `hosts` are left untouched. It does **not** set the LLM provider key the local deriver needs — that is `honcho start --setup` (or `LLM_*_API_KEY` in the environment).
 
 Per-command scoping (workspace / peer / session) is handled via `-w` / `-p` / `-s` flags or `HONCHO_*` env vars — not persisted as CLI defaults.
+
+### Local stack
+
+`honcho start --setup basic` runs a personal Honcho server on your machine (API, deriver, Postgres, Redis) via Docker. The wizard writes the LLM provider key into the profile `.env` — `honcho init` cannot do this; its `apiKey` is for calling a Honcho server, not for deriver/dialectic inference. You can also pass `LLM_OPENAI_API_KEY`, `LLM_ANTHROPIC_API_KEY`, or `LLM_GEMINI_API_KEY` in the environment and skip `--setup`. Stack files live under `~/.honcho/profiles/local/` and are not committed to a project.
+
+On first start, the CLI pulls `ghcr.io/plastic-labs/honcho:latest` and **pins that digest** in `profile.json`, then copies the image's `config.toml.example` to `config.toml` in the same directory. `honcho start` never overwrites `config.toml` after that — including when you re-pin the image. Delete the file yourself if you want a fresh copy from a new image.
+
+Pass `--setup basic` or `--setup advanced` for an interactive wizard that writes curated LLM/feature overrides into the profile `.env` (env wins over `config.toml`). TTY only; re-runnable. `basic` asks provider + chat model; `advanced` also covers embeddings, deriver/dialectic models, dreams, and snappy deriver flush. Everything else stays in `config.toml`.
+
+`honcho start` does **not** change `environmentUrl` in `~/.honcho/config.json` (that file is shared with plugins). To talk to the local stack for one command:
+
+```bash
+HONCHO_BASE_URL=http://127.0.0.1:8000 honcho workspace list
+```
+
+To make local the default, run `honcho init --base-url http://127.0.0.1:8000`.
+
+```bash
+honcho start --setup basic
+honcho start --setup advanced
+honcho status
+honcho stop            # keep data
+honcho stop --wipe     # also delete volumes
+```
 
 ## Commands
 
@@ -37,7 +62,10 @@ Per-command scoping (workspace / peer / session) is handled via `-w` / `-p` / `-
 
 | Command | Description |
 |---------|-------------|
-| `honcho init` | Confirm/set `apiKey` + `environmentUrl` in `~/.honcho/config.json` |
+| `honcho init` | Confirm/set `apiKey` + `environmentUrl` in `~/.honcho/config.json`. |
+| `honcho start` | Start a local Honcho stack (API, deriver, Postgres, Redis). Requires Docker and a cloud LLM key. `--setup basic` / `--setup advanced` runs an interactive config wizard (TTY only). Does not change `environmentUrl`. |
+| `honcho stop` | Stop the local stack. `--wipe` also deletes volumes. |
+| `honcho status` | Show every local stack (or `--profile` for one). |
 | `honcho doctor` | Health check: config, connectivity, workspace, peer, queue |
 
 ### Workspaces
@@ -157,6 +185,9 @@ Precedence (highest first): **flag → env var → config file → default**.
 | `HONCHO_PEER_ID` | `-p` / `--peer` | Peer scope |
 | `HONCHO_SESSION_ID` | `-s` / `--session` | Session scope |
 | `HONCHO_JSON` | `--json` | Force JSON output (`1` / `true`) |
+| `HONCHO_NO_UPDATE_CHECK` | — | Disable the once-a-day upgrade notice (`1` / `true`) |
+| `HONCHO_PROFILE` | `--profile` (start/stop/status) | Local stack profile (default: `local`) |
+| `LLM_OPENAI_API_KEY` | — | Provider key for `honcho start` (also `LLM_ANTHROPIC_API_KEY`, `LLM_GEMINI_API_KEY`) |
 
 ```bash
 # Per-command flags

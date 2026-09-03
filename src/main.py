@@ -16,13 +16,20 @@ from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
 
 from src._version import HONCHO_VERSION
+from src.backlog import DeriverMetricsPoller
 from src.cache.client import close_cache, init_cache
 from src.config import settings
-from src.db import engine, register_db_query_instrumentation, request_context
+from src.db import (
+    engine,
+    register_db_connection_instrumentation,
+    register_db_query_instrumentation,
+    request_context,
+)
 from src.embedding_client import embedding_client
 from src.exceptions import HonchoException
 from src.routers import (
     conclusions,
+    deriver_metrics,
     keys,
     messages,
     peers,
@@ -111,6 +118,13 @@ async def lifespan(_: FastAPI):
     # Expose DB connection-pool stats for this API instance (no-op if metrics off)
     register_db_pool_collector("api")
     register_db_query_instrumentation("api")
+    register_db_connection_instrumentation("api")
+
+    # region ai
+    # Zero-init bounded-label counters so a missing series signals a broken scrape,
+    # not "no events" — see initialize_bounded_metrics. No-op if metrics off.
+    # endregion
+    prometheus_metrics.initialize_bounded_metrics(instance_type="api")
 
     # Validate embedding schema before serving any traffic. Fails closed: if
     # the configured EMBEDDING_VECTOR_DIMENSIONS does not match the physical
@@ -131,12 +145,21 @@ async def lifespan(_: FastAPI):
             "Error initializing cache in api process; proceeding without cache: %s", e
         )
 
+    deriver_metrics_poller = DeriverMetricsPoller()
+    deriver_metrics.set_deriver_metrics_poller(deriver_metrics_poller)
+    try:
+        await deriver_metrics_poller.start()
+    except Exception as e:
+        logger.error("Failed to start backlog metrics poller: %s", e)
+
     try:
         yield
     finally:
         # Import here to avoid circular import at module load time
         from src.vector_store import close_external_vector_store
 
+        await deriver_metrics_poller.shutdown()
+        deriver_metrics.set_deriver_metrics_poller(None)
         await close_external_vector_store()
         await close_cache()
         await engine.dispose()
@@ -185,6 +208,7 @@ app.include_router(messages.router, prefix="/v3")
 app.include_router(conclusions.router, prefix="/v3")
 app.include_router(keys.router, prefix="/v3")
 app.include_router(webhooks.router, prefix="/v3")
+app.include_router(deriver_metrics.router)
 
 # Prometheus metrics endpoint
 app.add_route("/metrics", metrics_endpoint, methods=["GET"])

@@ -206,6 +206,9 @@ honcho.set_metadata(dict)
 
 # Get list of all workspace IDs
 workspaces = honcho.workspaces()
+
+# Delete a workspace and everything in it (requires no active sessions)
+honcho.delete_workspace(workspace_id)
 ```
 
 ```typescript TypeScript
@@ -238,6 +241,9 @@ await honcho.setMetadata(metadata);
 
 // Get list of all workspace IDs
 const workspaces = await honcho.workspaces();
+
+// Delete a workspace and everything in it (requires no active sessions)
+await honcho.deleteWorkspace(workspaceId);
 ```
 </CodeGroup>
 
@@ -269,6 +275,9 @@ response = alice.chat("What did I have for breakfast?")
 response = alice.chat("What do I know about Bob?", target="bob")
 response = alice.chat("What happened in session-1?", session="session-1")
 response = alice.chat("Summarize what matters most to me.", reasoning_level="high")
+
+# Override the timeout for one non-streaming dialectic request
+response = alice.chat("Give me a quick summary.", timeout=5.0)
 
 # Add content to a session with a peer
 session = honcho.session("session-1")
@@ -371,6 +380,13 @@ const selfConclusions = await alice.conclusions.list();  // Self-conclusions
 const bobConclusions = await alice.conclusionsOf("bob").list();  // Conclusions of bob
 ```
 </CodeGroup>
+
+For Python, `peer.chat(timeout=...)` and `await peer.aio.chat(timeout=...)`
+accept a timeout in seconds for each HTTP attempt made by one non-streaming
+request. Omit it or pass `None` to use the client-wide timeout configured on
+`Honcho`. Retries still follow the client's `max_retries` setting and can extend
+total elapsed time; use `max_retries=0` when a host shutdown budget permits only
+one attempt.
 
 ### Peer Context
 

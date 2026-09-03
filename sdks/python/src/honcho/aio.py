@@ -499,6 +499,79 @@ class HonchoAio(AsyncMetadataConfigMixin):
         """Delete a workspace asynchronously."""
         await self._honcho._async_http_client.delete(routes.workspace(workspace_id))
 
+    @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
+    async def chat(
+        self,
+        query: str = Field(..., min_length=1, description="The natural language query"),
+        *,
+        session: str | SessionBase | None = None,
+        reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
+        | None = None,
+        response_format: type[BaseModel] | dict[str, Any] | None = None,
+        scope: str | list[str] | None = None,
+    ) -> BaseModel | str | None:
+        """Query the entire workspace asynchronously (see Honcho.chat)."""
+        await self._honcho._ensure_workspace_async()
+        resolved_session_id = resolve_id(session)
+        body: dict[str, Any] = {"query": query, "stream": False}
+        if resolved_session_id:
+            body["session_id"] = resolved_session_id
+        if reasoning_level:
+            body["reasoning_level"] = reasoning_level
+        if scope is not None:
+            body["scope"] = scope
+        response_format_schema = serialize_response_format(response_format)
+        if response_format_schema is not None:
+            body["response_format"] = response_format_schema
+
+        data = await self._honcho._async_http_client.post(
+            routes.workspace_chat(self._honcho.workspace_id),
+            body=body,
+        )
+        content = data.get("content")
+        if not content:
+            return None
+        if isinstance(response_format, type):
+            return response_format.model_validate_json(content)
+        return content
+
+    @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
+    async def chat_stream(
+        self,
+        query: str = Field(..., min_length=1, description="The natural language query"),
+        *,
+        session: str | SessionBase | None = None,
+        reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
+        | None = None,
+        response_format: type[BaseModel] | dict[str, Any] | None = None,
+        scope: str | list[str] | None = None,
+    ) -> AsyncDialecticStreamResponse:
+        """Streaming variant of :meth:`chat` (async)."""
+        await self._honcho._ensure_workspace_async()
+        resolved_session_id = resolve_id(session)
+        body: dict[str, Any] = {"query": query, "stream": True}
+        if resolved_session_id:
+            body["session_id"] = resolved_session_id
+        if reasoning_level:
+            body["reasoning_level"] = reasoning_level
+        if scope is not None:
+            body["scope"] = scope
+        response_format_schema = serialize_response_format(response_format)
+        if response_format_schema is not None:
+            body["response_format"] = response_format_schema
+
+        async def stream_response() -> AsyncGenerator[str, None]:
+            async for chunk in parse_sse_astream(
+                self._honcho._async_http_client.stream(
+                    "POST",
+                    routes.workspace_chat(self._honcho.workspace_id),
+                    body=body,
+                )
+            ):
+                yield chunk
+
+        return AsyncDialecticStreamResponse(stream_response())
+
     @validate_call
     async def search(
         self,
@@ -704,6 +777,7 @@ class PeerAio(AsyncMetadataConfigMixin):
         reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
         | None = None,
         response_format: type[TResponseFormat],
+        timeout: float | None = None,
     ) -> TResponseFormat | None: ...
 
     @overload
@@ -718,6 +792,7 @@ class PeerAio(AsyncMetadataConfigMixin):
         reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
         | None = None,
         response_format: dict[str, Any] | None = None,
+        timeout: float | None = None,
     ) -> str | None: ...
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
@@ -732,12 +807,17 @@ class PeerAio(AsyncMetadataConfigMixin):
         reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
         | None = None,
         response_format: type[BaseModel] | dict[str, Any] | None = None,
+        timeout: float | None = Field(
+            None, gt=0, description="Timeout in seconds for this chat request"
+        ),
     ) -> BaseModel | str | None:
         """Query the peer's representation asynchronously.
 
         See Peer.chat for parameter details. When response_format is a Pydantic
         model class, the answer is parsed into an instance of it; when it is a
-        JSON Schema dict, the answer is a JSON string.
+        JSON Schema dict, the answer is a JSON string. When timeout is omitted,
+        the Honcho client's configured timeout is used; retries can extend total
+        elapsed time.
         """
         await self._peer._honcho._ensure_workspace_async()
         target_id = resolve_id(target)
@@ -762,6 +842,7 @@ class PeerAio(AsyncMetadataConfigMixin):
         data = await self._peer._honcho._async_http_client.post(
             routes.peer_chat(self._peer.workspace_id, self._peer.id),
             body=body,
+            timeout=timeout,
         )
         content = data.get("content")
         if not content:
