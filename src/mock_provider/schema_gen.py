@@ -350,8 +350,11 @@ def _snap_to_multiple(
 ) -> int:
     """Move ``value`` onto a multiple of ``multiple``, staying within bounds.
 
-    A fractional ``multipleOf`` is ignored: ``as_int`` rejects it, and honouring
-    it would mean returning a non-integer from an ``integer`` schema.
+    Integer ``multipleOf`` only. The spec allows a fractional one, and an
+    integer can satisfy it (3 is a multiple of 1.5), but honouring it needs
+    exact-decimal arithmetic to avoid float drift deciding validity. ``as_int``
+    rejects it, so the constraint is dropped rather than approximated — no
+    Honcho response model emits ``multipleOf`` at all.
     """
     if multiple is None or multiple <= 0:
         return value
