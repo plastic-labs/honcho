@@ -62,6 +62,8 @@ That has a consequence worth being clear about: **evidence over-reports**. A con
 
 The alternative — asking the model which sources it used — reads better but fails quietly. Weaker models and lower reasoning levels produce incomplete citations, invented IDs, or none at all, and you cannot tell a sparse citation list from a sparse answer. Collation is deterministic, costs no model tokens, and behaves identically at every reasoning level. Treat evidence as *what was available to the answer*, and audit within it.
 
+Evidence is built for auditing and analytics — working out why an answer looks the way it does, or measuring what recall actually reaches the agent. It is not a read API, and it is not meant to sit in a hot path.
+
 Two further limits:
 
 - `tool_calls` records **successful** invocations. A tool call that errored is retried or worked around by the agent and does not appear, so this is not a complete execution trace.
@@ -97,7 +99,6 @@ Two further limits:
         "id": "m1N2o3P4q5R6s7T8u9V0w",
         "session_id": "session-xyz",
         "peer_id": "user-123",
-        "content_preview": "I just picked up some amazing dark roast from the place down the road...",
         "created_at": "2026-03-20T10:12:00Z"
       }
     ],
@@ -112,7 +113,9 @@ Two further limits:
 
 **Conclusions** carry the ID, level, and text of each conclusion read. `source_ids` names the conclusions a derived one was reasoned from, so you can walk a chain back toward the explicit statements at its base; explicit conclusions have none, since they derive from messages rather than from other conclusions. `session_id` is null for a conclusion that was reasoned across sessions and so belongs to none. Timestamps are when a conclusion was derived, taken from its source messages where that is recorded.
 
-**Messages** carry an ID and the first 200 characters of the content, not the whole message. Fetch the message itself if you need the rest.
+**Messages** carry identity and provenance only — no content. Fetch a message by its `id` when you need the text.
+
+That asymmetry with conclusions is deliberate. A conclusion's text is written by the deriver, is short, and *is* the thing you are auditing, so it comes along. A message's content is whatever a caller sent, up to the 25,000-character ingest limit, and one answer can touch a few hundred messages — carrying it would let a single response drag megabytes behind it, and would turn evidence into a way to read messages in bulk. Evidence is for auditing and analytics, not a substitute for the message endpoints.
 
 `reasoning_trace_id` is a placeholder for stored reasoning traces and is currently always null.
 

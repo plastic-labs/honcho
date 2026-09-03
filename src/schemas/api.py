@@ -838,10 +838,6 @@ class WorkspaceChatOptions(BaseModel):
     )
 
 
-# How much of a message's content an evidence reference carries.
-EVIDENCE_MESSAGE_PREVIEW_CHARS = 200
-
-
 class EvidenceObservation(BaseModel):
     """A conclusion the dialectic agent read while answering."""
 
@@ -869,14 +865,18 @@ class EvidenceObservation(BaseModel):
 
 
 class EvidenceMessageRef(BaseModel):
-    """A message the dialectic agent read while answering."""
+    """A message the dialectic agent read while answering.
+
+    Identity and provenance only -- no content. Message content is
+    caller-supplied and unbounded, so carrying it would let one answer drag
+    megabytes behind it, and would invite callers to read messages out of
+    evidence in bulk rather than asking for the ones they want. Fetch the
+    message by `id` when the text is needed.
+    """
 
     id: str = Field(description="Message ID")
     session_id: str = Field(description="Session the message belongs to")
     peer_id: str = Field(description="Peer who sent the message")
-    content_preview: str = Field(
-        description="The beginning of the message content, truncated"
-    )
     created_at: datetime.datetime = Field(description="When the message was sent")
 
 
@@ -895,6 +895,12 @@ class Evidence(BaseModel):
     Collated from the agent's own reads rather than reported by the model, so
     it is deterministic but over-reports: it lists what the agent accessed,
     which is not necessarily what the answer relied on.
+
+    Meant for auditing and analytics -- inspecting why an answer looks the way
+    it does, or measuring what recall actually reaches the agent. It is not a
+    read API: conclusions carry their text because that text is the thing being
+    audited and the deriver keeps it short, while messages carry identity alone
+    (see `EvidenceMessageRef`).
     """
 
     conclusions: list[EvidenceObservation] = Field(
@@ -903,7 +909,10 @@ class Evidence(BaseModel):
     )
     messages: list[EvidenceMessageRef] = Field(
         default_factory=list,
-        description="Messages the agent read via its search and grep tools",
+        description=(
+            "Messages the agent read via its search and grep tools, by ID and"
+            " provenance only. Fetch a message to read its content."
+        ),
     )
     tool_calls: list[EvidenceToolCall] = Field(
         default_factory=list,

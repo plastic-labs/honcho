@@ -9,6 +9,15 @@ conclusion it does not end up leaning on.
 Because nothing is re-queried, evidence inherits the scoping of the reads that
 produced it: whatever the workspace, observer/observed pair and session
 allowlist permitted the agent to see is exactly what can appear here.
+
+What it is for shapes what it carries. Evidence is an audit and analytics
+surface -- for asking why an answer looks the way it does, or measuring what
+recall reaches the agent -- not a bulk read API. So conclusions carry their
+text, which is short, model-written, and the thing being audited, while
+messages carry identity alone: message content is caller-supplied and
+unbounded, and including it would both inflate every response and invite
+callers to read messages out of evidence instead of asking for the ones they
+want.
 """
 
 from collections.abc import Iterable, Sequence
@@ -18,7 +27,6 @@ from typing import Any, cast
 
 from src import models
 from src.schemas.api import (
-    EVIDENCE_MESSAGE_PREVIEW_CHARS,
     Evidence,
     EvidenceMessageRef,
     EvidenceObservation,
@@ -148,9 +156,6 @@ class EvidenceAccumulator:
                         id=message.public_id,
                         session_id=message.session_name,
                         peer_id=message.peer_name,
-                        content_preview=message.content[
-                            :EVIDENCE_MESSAGE_PREVIEW_CHARS
-                        ],
                         created_at=message.created_at,
                     )
                     for message in self.messages.values()

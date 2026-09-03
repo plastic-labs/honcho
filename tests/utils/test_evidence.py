@@ -11,7 +11,6 @@ from typing import Any
 import pytest
 
 from src import models
-from src.schemas.api import EVIDENCE_MESSAGE_PREVIEW_CHARS
 from src.utils.evidence import EvidenceAccumulator
 
 NOW = datetime(2026, 1, 1, tzinfo=UTC)
@@ -211,23 +210,20 @@ class TestMessageCollection:
         assert [m.id for m in accumulator.build().messages] == ["msg-1"]
 
     @pytest.mark.parametrize(
-        ("content", "expected_length"),
-        [
-            ("short", len("short")),
-            ("x" * EVIDENCE_MESSAGE_PREVIEW_CHARS, EVIDENCE_MESSAGE_PREVIEW_CHARS),
-            ("x" * 5000, EVIDENCE_MESSAGE_PREVIEW_CHARS),
-        ],
-        ids=["short", "exactly-at-the-cap", "long"],
+        "content", ["short", "x" * 5000], ids=["short", "pasted-document"]
     )
-    def test_caps_the_preview_without_truncating_short_messages(
-        self, content: str, expected_length: int
-    ):
+    def test_carries_no_message_content_at_any_length(self, content: str):
+        """Evidence names messages; it does not reproduce them.
+
+        Message content is caller-supplied and unbounded, so a single answer
+        could otherwise drag megabytes behind it. Callers fetch by ID.
+        """
         accumulator = EvidenceAccumulator()
         accumulator.add_messages([make_message("msg-1", content=content)])
 
-        preview = accumulator.build().messages[0].content_preview
-        assert preview == content[:expected_length]
-        assert len(preview) == expected_length
+        (message,) = accumulator.build().messages
+        assert not hasattr(message, "content_preview")
+        assert content not in accumulator.build().model_dump_json()
 
     def test_orders_messages_chronologically(self):
         accumulator = EvidenceAccumulator()
