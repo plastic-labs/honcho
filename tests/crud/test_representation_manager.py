@@ -1,5 +1,5 @@
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -196,7 +196,7 @@ class TestRepresentationManagerSoftDelete:
             db_session, test_workspace, test_peer
         )
 
-        base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        base = datetime(2026, 1, 1, tzinfo=UTC)
         # Three conclusions, all reinforced once, inserted oldest-first.
         for i in range(3):
             db_session.add(
@@ -484,13 +484,13 @@ class TestRepresentationManagerSave:
             explicit=[
                 ExplicitObservation(
                     content="   ",
-                    created_at=datetime.now(timezone.utc),
+                    created_at=datetime.now(UTC),
                     message_ids=[1],
                     session_name="session",
                 ),
                 ExplicitObservation(
                     content=" useful observation ",
-                    created_at=datetime.now(timezone.utc),
+                    created_at=datetime.now(UTC),
                     message_ids=[1],
                     session_name="session",
                 ),
@@ -515,7 +515,7 @@ class TestRepresentationManagerSave:
                 representation,
                 message_ids=[1],
                 session_name="session",
-                message_created_at=datetime.now(timezone.utc),
+                message_created_at=datetime.now(UTC),
                 message_level_configuration=_resolved_config(),
             )
 
@@ -540,7 +540,7 @@ class TestRepresentationManagerSave:
                     conclusion="   ",
                     premises=["premise a"],
                     source_ids=["doc-a"],
-                    created_at=datetime.now(timezone.utc),
+                    created_at=datetime.now(UTC),
                     message_ids=[1],
                     session_name="session",
                 ),
@@ -548,7 +548,7 @@ class TestRepresentationManagerSave:
                     conclusion=" inferred conclusion ",
                     premises=["premise b"],
                     source_ids=["doc-b"],
-                    created_at=datetime.now(timezone.utc),
+                    created_at=datetime.now(UTC),
                     message_ids=[1],
                     session_name="session",
                 ),
@@ -573,7 +573,7 @@ class TestRepresentationManagerSave:
                 representation,
                 message_ids=[1],
                 session_name="session",
-                message_created_at=datetime.now(timezone.utc),
+                message_created_at=datetime.now(UTC),
                 message_level_configuration=_resolved_config(),
             )
 
@@ -597,13 +597,13 @@ class TestRepresentationManagerSave:
             explicit=[
                 ExplicitObservation(
                     content="",
-                    created_at=datetime.now(timezone.utc),
+                    created_at=datetime.now(UTC),
                     message_ids=[1],
                     session_name="session",
                 ),
                 ExplicitObservation(
                     content="\n\t ",
-                    created_at=datetime.now(timezone.utc),
+                    created_at=datetime.now(UTC),
                     message_ids=[1],
                     session_name="session",
                 ),
@@ -626,7 +626,124 @@ class TestRepresentationManagerSave:
                 representation,
                 message_ids=[1],
                 session_name="session",
-                message_created_at=datetime.now(timezone.utc),
+                message_created_at=datetime.now(UTC),
+                message_level_configuration=_resolved_config(),
+            )
+
+        assert len(saved.created_documents) == 0
+        mock_embed.assert_not_awaited()
+        mock_save.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_save_representation_strips_nul_bytes(self):
+        """Models emit \\u0000 escapes when transcribing shell output or Windows
+        paths, and Postgres rejects NUL in text columns. The stripped text must
+        be what gets embedded as well as what gets stored."""
+        manager = RepresentationManager(
+            "workspace",
+            observer="observer",
+            observed="observed",
+        )
+        representation = Representation(
+            explicit=[
+                ExplicitObservation(
+                    content="ran 'cat /proc/1/environ | tr '\x00' '\\n''",
+                    created_at=datetime.now(UTC),
+                    message_ids=[1],
+                    session_name="session",
+                ),
+            ],
+            deductive=[
+                DeductiveObservation(
+                    conclusion="the key is at c:\\\x00users\\amal",
+                    premises=["saw c:\\\x00users in the prompt"],
+                    created_at=datetime.now(UTC),
+                    message_ids=[1],
+                    session_name="session",
+                ),
+            ],
+        )
+
+        with (
+            patch("src.crud.representation.tracked_db", _fake_tracked_db),
+            patch(
+                "src.crud.representation.embedding_client.simple_batch_embed",
+                new=AsyncMock(return_value=[[0.1], [0.2]]),
+            ) as mock_embed,
+            patch.object(
+                manager,
+                "_save_representation_internal",
+                new=AsyncMock(
+                    return_value=CreateDocumentsResult(created_documents=[MagicMock()])
+                ),
+            ) as mock_save,
+        ):
+            await manager.save_representation(
+                representation,
+                message_ids=[1],
+                session_name="session",
+                message_created_at=datetime.now(UTC),
+                message_level_configuration=_resolved_config(),
+            )
+
+        # Deductive observations are embedded ahead of explicit ones.
+        mock_embed.assert_awaited_once_with(
+            [
+                "the key is at c:\\users\\amal",
+                "ran 'cat /proc/1/environ | tr '' '\\n''",
+            ],
+            on_oversize="truncate",
+        )
+
+        saved_observations = _saved_observations(mock_save)
+        deductive = next(
+            obs for obs in saved_observations if isinstance(obs, DeductiveObservation)
+        )
+        explicit = next(
+            obs for obs in saved_observations if isinstance(obs, ExplicitObservation)
+        )
+        assert explicit.content == "ran 'cat /proc/1/environ | tr '' '\\n''"
+        assert deductive.conclusion == "the key is at c:\\users\\amal"
+        # premises land in internal_metadata, and jsonb rejects NUL too
+        assert deductive.premises == ["saw c:\\users in the prompt"]
+
+    @pytest.mark.asyncio
+    async def test_save_representation_skips_observations_that_are_only_nul(self):
+        """str.strip() does not remove NUL, so the emptiness check has to run
+        after normalization or an empty document gets written."""
+        manager = RepresentationManager(
+            "workspace",
+            observer="observer",
+            observed="observed",
+        )
+        representation = Representation(
+            explicit=[
+                ExplicitObservation(
+                    content="\x00\x00",
+                    created_at=datetime.now(UTC),
+                    message_ids=[1],
+                    session_name="session",
+                ),
+            ]
+        )
+
+        with (
+            patch("src.crud.representation.tracked_db", _fake_tracked_db),
+            patch(
+                "src.crud.representation.embedding_client.simple_batch_embed",
+                new=AsyncMock(),
+            ) as mock_embed,
+            patch.object(
+                manager,
+                "_save_representation_internal",
+                new=AsyncMock(),
+            ) as mock_save,
+        ):
+            saved = await manager.save_representation(
+                representation,
+                message_ids=[1],
+                session_name="session",
+                message_created_at=datetime.now(UTC),
                 message_level_configuration=_resolved_config(),
             )
 
@@ -646,7 +763,7 @@ class TestRepresentationManagerSave:
             explicit=[
                 ExplicitObservation(
                     content="short fact",
-                    created_at=datetime.now(timezone.utc),
+                    created_at=datetime.now(UTC),
                     message_ids=[1],
                     session_name="session",
                 )
@@ -656,7 +773,7 @@ class TestRepresentationManagerSave:
                     conclusion="inferred fact",
                     premises=["premise"],
                     source_ids=["doc-a"],
-                    created_at=datetime.now(timezone.utc),
+                    created_at=datetime.now(UTC),
                     message_ids=[1],
                     session_name="session",
                 )
@@ -681,7 +798,7 @@ class TestRepresentationManagerSave:
                 representation,
                 message_ids=[1],
                 session_name="session",
-                message_created_at=datetime.now(timezone.utc),
+                message_created_at=datetime.now(UTC),
                 message_level_configuration=_resolved_config(),
             )
 

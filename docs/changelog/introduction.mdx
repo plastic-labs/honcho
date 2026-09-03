@@ -27,7 +27,22 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 ### Honcho API and SDK Changelogs
 <Tabs>
     <Tab title="Honcho API">
-        <Update label="v3.1.0 (Current)">
+        <Update label="v3.1.1 (Current)">
+        ### Changed
+
+        - Server `requires-python` is `>=3.13`, matching the production image. Self-hosters on 3.10–3.12 need to upgrade; SDK and CLI floors are unchanged (#1090)
+
+        ### Fixed
+
+        - Concurrent `create_documents` writers to the same collection deadlocked on `times_derived` reinforcement UPDATEs issued in batch order; the error was swallowed per-document, the batch was lost, and the queue item was marked processed. Writers now lock target rows with `SELECT ... ORDER BY id FOR UPDATE` before applying, abort the batch on `SQLAlchemyError` instead of continuing through a dead session, and retry transient errors (deadlock, serialization failure, lock/statement timeout, lost connection) up to `MAX_RETRYABLE_ATTEMPTS` instead of burning the item (#1033)
+        - Scope backfill no longer embeds, writes, and syncs every planned copy at once. A 14k-document session is ~580MB of vectors; several concurrent backfills OOM-killed the deriver at its 1000Mi limit and crash-looped because the work units never completed. Phases 2–4 now run per chunk of 500 specs, reload source embeddings per chunk, and drop them once synced. Membership is locked across chunk writes so a concurrent leave cannot commit between the check and the inserts (#1104)
+        - Model-generated observations with NUL bytes (`\u0000`) no longer fail the exact-content dedup pre-fetch with a Postgres `DataError` that dropped the whole observer batch. Ingress already stripped NUL from user content; the deriver now strips it so stored text matches embedded text. All-NUL content is dropped rather than stored empty (#1095)
+        - `search_messages` no longer forwards `top_k=0` to Turbopuffer (which requires 1..10000). Zero/negative limits short-circuit to empty results; tool limits are floored at 1. The documents path was already guarded (#970); this closes the message path (#1084)
+        - OpenAI-compatible tool-call turns with `content=null` keep null through history replay instead of being coerced to `""`. Providers that bind reasoning state to the exact assistant message shape were breaking on the empty string. Tool-less null still becomes `""` (#1064)
+        - The production image now ships `pyproject.toml` in the runtime stage, so the service reports its real version instead of `unknown` in OpenAPI and telemetry (#1074)
+        </Update>
+
+        <Update label="v3.1.0">
         ### Added
 
         - Scopes: a named grouping of sessions that acts as a visibility boundary on recall, implemented as a facade over an observer peer (`scope.{name}` with `{"kind": "scope"}`). Developers manage them exclusively through `/v3/workspaces/{workspace_id}/scopes` (create-or-get, list, get, add/list/remove session membership) and an optional `scopes` field on session create — never through the observer/observed mechanics. Scope peers cannot author messages, cannot be a chat or representation `target`, are excluded from `peers.list` by default (`PeerGet.kind` = `"scope"` / `"all"` switches the view), and are rejected on the generic session-peer routes. Workspace-level key required; peer- and session-scoped keys get 401. Legacy peers occupying a reserved `scope.` name without the kind flag are refused with 409, never adopted (#884)
@@ -785,7 +800,7 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 
     <Tab title="Python SDK">
         [Python SDK](https://pypi.org/project/honcho-ai/)
-        <Update label="v2.4.0 (Current)">
+        <Update label="v2.4.0">
             ### Added
 
             - Scopes: `Honcho.scope()` / `HonchoAio.scope()` get-or-create a named visibility boundary, `Honcho.scopes()` lists them, and a `Scope` object adds/removes sessions, lists membership, and reads backfill `status()`. `Honcho.session(..., scopes=[...])` joins a new session to scopes at creation. Requires a Honcho server with the matching API support (Honcho v3.1.0+).
@@ -964,7 +979,7 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 
     <Tab title="TypeScript SDK">
         [TypeScript SDK](https://www.npmjs.com/package/@honcho-ai/sdk)
-        <Update label="v2.4.0 (Current)">
+        <Update label="v2.4.0">
             ### Added
 
             - Scopes: `honcho.scope()` get-or-creates a named visibility boundary, `honcho.scopes()` lists them, and a `Scope` object adds/removes sessions, lists membership, and reads backfill `status()`. `honcho.session({ scopes: [...] })` joins a new session to scopes at creation. Requires a Honcho server with the matching API support (Honcho v3.1.0+).
@@ -1170,7 +1185,7 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
     </Tab>
     <Tab title="Honcho CLI">
         [Honcho CLI](https://pypi.org/project/honcho-cli/)
-        <Update label="v0.1.4 (Current)">
+        <Update label="v0.1.4">
         ### Added
 
         - A TTY notice when a newer `honcho-cli` is on PyPI (`uv tool upgrade honcho-cli`). Skipped in JSON mode; disable with `HONCHO_NO_UPDATE_CHECK`

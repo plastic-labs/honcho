@@ -8,7 +8,7 @@
 
 ---
 
-![Static Badge](https://img.shields.io/badge/Server-3.1.0-blue)
+![Static Badge](https://img.shields.io/badge/Server-3.1.1-blue)
 [![PyPI version](https://img.shields.io/pypi/v/honcho-ai.svg)](https://pypi.org/project/honcho-ai/)
 [![NPM version](https://img.shields.io/npm/v/@honcho-ai/sdk.svg)](https://npmjs.org/package/@honcho-ai/sdk)
 [![CLI](https://img.shields.io/pypi/v/honcho-cli.svg?label=honcho-cli)](https://pypi.org/project/honcho-cli/)
@@ -173,6 +173,23 @@ See the full [SDK Reference](https://honcho.dev/docs/v3/documentation/reference/
 
 ## Integrations
 
+Honcho ships a first-party memory plugin for every major coding agent. They all read the same
+`~/.honcho/config.json`, so one key configures all of them — and pointing two at the same `workspace`
+gives them one shared memory.
+
+| Agent            | Install                                                 | Source                                                             |
+| ---------------- | ------------------------------------------------------- | ------------------------------------------------------------------ |
+| Claude Code      | `/plugin marketplace add plastic-labs/claude-honcho`    | [claude-honcho](https://github.com/plastic-labs/claude-honcho)     |
+| Codex            | `npm install -g @honcho-ai/codex-honcho`                | [codex-honcho](https://github.com/plastic-labs/codex-honcho)       |
+| Cursor           | `curl -fsSL .../cursor-honcho/main/install.sh \| bash`  | [cursor-honcho](https://github.com/plastic-labs/cursor-honcho)     |
+| DeepSeek Harness | `dsh plugin --profile <name> add @honcho-ai/dsh-honcho` | [dsh-honcho](https://github.com/plastic-labs/dsh-honcho)           |
+| OpenCode         | `opencode plugin "@honcho-ai/opencode-honcho" --global` | [opencode-honcho](https://github.com/plastic-labs/opencode-honcho) |
+| OpenClaw         | `openclaw plugins install @honcho-ai/openclaw-honcho`   | [openclaw-honcho](https://github.com/plastic-labs/openclaw-honcho) |
+| Hermes           | `hermes memory setup`                                   | built in upstream                                                  |
+| Any MCP client   | `claude mcp add honcho --transport http ...`            | [MCP guide](https://honcho.dev/docs/v3/guides/integrations/mcp)    |
+
+Get a key at [app.honcho.dev](https://app.honcho.dev), then `honcho init` (or `uv tool install honcho-cli && honcho init`) writes it to `~/.honcho/config.json` once for every integration.
+
 ### Claude Code
 
 Two ways, depending on how deep you want to go:
@@ -194,7 +211,33 @@ claude mcp add honcho \
   --header "X-Honcho-User-Name: YourName"
 ```
 
-Details: [Claude Code guide](https://honcho.dev/docs/v3/guides/integrations/claude-code) · [MCP guide](https://honcho.dev/docs/v3/guides/integrations/mcp).
+Details: [Claude Code guide](https://honcho.dev/docs/v3/guides/integrations/claude-code) · [MCP guide](https://honcho.dev/docs/v3/guides/integrations/mcp) · [repo](https://github.com/plastic-labs/claude-honcho).
+
+### Codex
+
+```bash
+npm install -g @honcho-ai/codex-honcho
+codex-honcho install      # registers hooks + MCP + skill in ~/.codex
+```
+
+Restart Codex to load the hooks. Details: [Codex guide](https://honcho.dev/docs/v3/guides/integrations/codex) · [repo](https://github.com/plastic-labs/codex-honcho).
+
+### Cursor
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/plastic-labs/cursor-honcho/main/install.sh | bash
+```
+
+Windows (PowerShell): `irm https://raw.githubusercontent.com/plastic-labs/cursor-honcho/main/install.ps1 | iex`. The installer wires global hooks and MCP config. Details: [cursor-honcho](https://github.com/plastic-labs/cursor-honcho).
+
+### DeepSeek Harness
+
+```bash
+dsh plugin --profile <name> add @honcho-ai/dsh-honcho
+```
+
+A native Cordis plugin. It injects memory into the system prompt and captures new information from the session event feed. The model gets three tools — honcho_search, honcho_chat, and honcho_remember — and you can run /honcho to check status.
+Details: [DeepSeek Harness guide](https://honcho.dev/docs/v3/guides/integrations/deepseek-harness) · [repo](https://github.com/plastic-labs/dsh-honcho).
 
 ### OpenCode
 
@@ -202,7 +245,7 @@ Details: [Claude Code guide](https://honcho.dev/docs/v3/guides/integrations/clau
 opencode plugin "@honcho-ai/opencode-honcho" --global
 ```
 
-Details: [OpenCode guide](https://honcho.dev/docs/v3/guides/integrations/opencode).
+Details: [OpenCode guide](https://honcho.dev/docs/v3/guides/integrations/opencode) · [repo](https://github.com/plastic-labs/opencode-honcho).
 
 ### OpenClaw
 
@@ -212,7 +255,7 @@ openclaw honcho setup
 openclaw gateway --force
 ```
 
-`openclaw honcho setup` prompts for your API key, writes the config, and optionally migrates legacy `MEMORY.md` / `USER.md` / `IDENTITY.md` files into Honcho (non-destructive — originals are never deleted). Details: [OpenClaw guide](https://honcho.dev/docs/v3/guides/integrations/openclaw).
+`openclaw honcho setup` prompts for your API key, writes the config, and optionally migrates legacy `MEMORY.md` / `USER.md` / `IDENTITY.md` files into Honcho (non-destructive — originals are never deleted). Details: [OpenClaw guide](https://honcho.dev/docs/v3/guides/integrations/openclaw) · [repo](https://github.com/plastic-labs/openclaw-honcho).
 
 ### Hermes
 

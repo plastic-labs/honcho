@@ -28,7 +28,7 @@
   "navigation": {
     "versions": [
       {
-        "version": "v3.1.0",
+        "version": "v3.1.1",
         "api": {
           "openapi": ["v3/openapi.json"]
         },
@@ -75,7 +75,8 @@
                       "v3/documentation/features/advanced/using-filters",
                       "v3/documentation/features/advanced/structured-outputs",
                       "v3/documentation/features/advanced/streaming-response",
-                      "v3/documentation/features/advanced/file-uploads"
+                      "v3/documentation/features/advanced/file-uploads",
+                      "v3/documentation/features/advanced/deleting-data"
                     ]
                   }
                 ]
@@ -103,6 +104,7 @@
                   "v3/guides/integrations/claude-code",
                   "v3/guides/integrations/opencode",
                   "v3/guides/integrations/codex",
+                  "v3/guides/integrations/deepseek-harness",
                   "v3/guides/integrations/vercel-ai-sdk",
                   "v3/guides/integrations/crewai",
                   "v3/guides/integrations/langgraph",
@@ -610,8 +612,8 @@
     }
   },
   "integrations": {
-    "posthog": {
-      "apiKey": "phc_1yrzzcgywqXGcerkkI4g7C0YfyPMcAKNOOvGcjTCiUk"
+    "gtm": {
+      "tagId": "GTM-NSPT9PJF"
     }
   }
 }
