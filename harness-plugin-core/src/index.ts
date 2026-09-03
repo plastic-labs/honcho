@@ -7,7 +7,7 @@ export {
   resolveConfig,
   DEFAULT_BASE_URL,
   DEFAULT_TIMEOUT_MS,
-} from './config.ts'
+} from './config'
 
 export type {
   AuthConfig,
@@ -15,15 +15,16 @@ export type {
   HostBlock,
   ResolvedConfig,
   RootConfig,
-} from './config.ts'
+} from './config'
 
 export {
+  hostHeaderValue,
+  pluginHeaderValue,
   telemetryHeaders,
   setTelemetryHeaders,
   HEADER_AGENT_MODEL,
   HEADER_HOST,
   HEADER_PLUGIN,
-  HEADER_RUNTIME,
-} from './telemetry.ts'
+} from './telemetry'
 
-export type { TelemetryIdentity } from './telemetry.ts'
+export type { TelemetryIdentity } from './telemetry'
