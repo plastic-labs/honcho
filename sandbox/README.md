@@ -17,10 +17,6 @@ The API lands on <http://127.0.0.1:18000>. Postgres is on 15432 and Redis on 163
 deliberately off the defaults, so the sandbox coexists with a normal local stack instead of
 fighting it for ports and volumes.
 
-> **Right now you need `--build`.** The mock provider comes from PR #1094, which is not merged, so
-> no published image contains it. `sandbox.sh` checks and tells you. Once #1094 lands and an image
-> is published, bump the digest in `image.env` and plain `up` works.
-
 ## Provider modes
 
 The deriver calls a model provider, which is what made a sandbox neither free nor deterministic.

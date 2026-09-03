@@ -1,6 +1,6 @@
 # Provider overlay: deterministic, free, no network egress. The sandbox default.
 #
-# Adds src/mock_provider (PR #1094) as its own service. It runs from the standard
+# Adds src/mock_provider as its own service. It runs from the standard
 # Honcho image under a different entrypoint, the way api and deriver already differ,
 # so there is no second image to build or keep in digest-sync.
 

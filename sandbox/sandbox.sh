@@ -116,20 +116,19 @@ preflight() {
   return 0
 }
 
-# The pinned digest predates PR #1094, so it carries no src/mock_provider. Say so
-# precisely instead of letting the service crash-loop on a missing module.
+# Mock mode runs src/mock_provider out of the same image. A digest that predates the
+# module resolves and pulls fine, then crash-loops one service on a missing module —
+# so check for it up front and name the two ways out.
 check_mock_provider_present() {
   [ "$PROVIDER" = mock ] || return 0
   if ! docker run --rm --entrypoint test "$HONCHO_SANDBOX_IMAGE" -d /app/src/mock_provider; then
     die "$(cat <<MSG
 the image $HONCHO_SANDBOX_IMAGE does not contain src/mock_provider.
 
-PR #1094 adds it and is not merged yet, so no published image has it. Build from
-the working tree instead:
+It predates the mock provider. Either bump the digest in sandbox/image.env to an
+image that has it, or build from the working tree:
 
     sandbox/sandbox.sh up --build
-
-Once #1094 is merged and published, bump the digest in sandbox/image.env.
 MSG
 )"
   fi
