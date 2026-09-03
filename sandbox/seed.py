@@ -152,9 +152,9 @@ def main() -> int:
         api_key="sandbox",
         # No retries. Creating messages is not idempotent, and the SDK retries on
         # 429/500/502/503/504 as well as timeouts, so a write that commits and then
-        # errors on the way back gets replayed -- seeding the fixture twice. That
-        # was observed as "expected 6 messages, found 12" on a cold api, right
-        # after cmd_seed restarts it.
+        # errors on the way back is replayed and the fixture is seeded twice -- the
+        # message-count assertion below then reports finding double what it posted.
+        # The window is the cold api that cmd_seed has just restarted.
         #
         # The sandbox is local and `up` always seeds from a cleared database, so a
         # transient failure here should stop and be re-run, not be papered over
@@ -165,7 +165,7 @@ def main() -> int:
     session = honcho.session(fixture["session"])
 
     if phase == "verify":
-        verify(honcho, session, peers, fixture)
+        verify(session, peers, fixture)
         log("verify complete")
         return 0
 
@@ -220,7 +220,6 @@ def main() -> int:
 
 
 def verify(
-    honcho: Honcho,
     session: Any,
     peers: dict[str, Any],
     fixture: dict[str, Any],
@@ -301,7 +300,9 @@ def verify_seeded(
         for level, expected in by_level.items():
             if not expected:
                 continue
-            actual = {c.content for c in stored if c.level == level}
+            actual = {
+                conclusion.content for conclusion in stored if conclusion.level == level
+            }
             missing = [content for content in expected if content not in actual]
             if missing:
                 raise SeedError(

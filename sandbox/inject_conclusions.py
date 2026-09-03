@@ -34,9 +34,11 @@ import inspect
 import json
 import os
 import sys
+from dataclasses import dataclass
 from typing import Any
 
 LEVELS = ("explicit", "deductive", "inductive")
+DERIVED_LEVELS = ("deductive", "inductive")
 
 # Levels whose premise text renders under a different metadata key. The working representation
 # prints DocumentMetadata.premises for deductive and .sources for inductive, and each is read
@@ -46,6 +48,50 @@ PREMISE_FIELD = {"deductive": "premises", "inductive": "sources"}
 
 class InjectError(RuntimeError):
     """Seeding conclusions did not reach a usable state."""
+
+
+@dataclass(frozen=True)
+class SeededConclusion:
+    """One conclusion from the fixture, with its premises resolved to explicit indices."""
+
+    content: str
+    premises: tuple[int, ...] = ()
+
+
+@dataclass(frozen=True)
+class PairPlan:
+    """One (observer, observed) collection's worth of seeding, keyed by level."""
+
+    observer: str
+    observed: str
+    by_level: dict[str, list[SeededConclusion]]
+
+    def derived(self) -> dict[str, list[SeededConclusion]]:
+        """The levels that carry premises, skipping any the fixture left empty."""
+        return {
+            level: self.by_level[level]
+            for level in DERIVED_LEVELS
+            if self.by_level[level]
+        }
+
+    def __str__(self) -> str:
+        return f"{self.observer} -> {self.observed}"
+
+
+@dataclass(frozen=True)
+class Internals:
+    """The Honcho internals this script writes through.
+
+    Resolved once inside run() rather than imported at module scope, because importing
+    src.* binds the engine and embedding client from the environment and that must happen
+    with the api's settings in place.
+    """
+
+    crud: Any
+    schemas: Any
+    models: Any
+    embedding_client: Any
+    tracked_db: Any
 
 
 def log(message: str) -> None:
@@ -79,7 +125,7 @@ def check_signatures(crud: Any, schemas: Any) -> None:
     }
     for name, params in expected.items():
         signature = inspect.signature(getattr(crud, name))
-        missing = [p for p in params if p not in signature.parameters]
+        missing = [param for param in params if param not in signature.parameters]
         if missing:
             raise InjectError(
                 f"crud.{name} is missing expected parameters {missing} in this image. "
@@ -97,7 +143,7 @@ def check_signatures(crud: Any, schemas: Any) -> None:
             ("message_ids", "message_created_at", "premises", "sources"),
         ),
     ):
-        missing = [f for f in fields if f not in model.model_fields]
+        missing = [name for name in fields if name not in model.model_fields]
         if missing:
             raise InjectError(
                 f"{model.__name__} is missing expected fields {missing} in this image. "
@@ -107,14 +153,14 @@ def check_signatures(crud: Any, schemas: Any) -> None:
 
 def normalize(
     items: list[Any], level: str, peer_id: str, explicit_count: int
-) -> list[dict[str, Any]]:
+) -> list[SeededConclusion]:
     """Accept either a bare string or {content, premises}, and validate premise indices.
 
     An out-of-range index is rejected here rather than written as a dangling source id. Nothing
     downstream validates source_ids -- a bad one resolves to "referenced N premise IDs but none
     found in database" at read time, which is precisely the quiet wrongness to avoid.
     """
-    normalized: list[dict[str, Any]] = []
+    normalized: list[SeededConclusion] = []
     for position, item in enumerate(items):
         if isinstance(item, str):
             content, premises = item, []
@@ -128,7 +174,8 @@ def normalize(
                 )
         else:
             raise InjectError(
-                f"{peer_id}.{level}[{position}] must be a string or an object, got {type(item).__name__}"
+                f"{peer_id}.{level}[{position}] must be a string or an object, "
+                f"got {type(item).__name__}"
             )
 
         if not content or not content.strip():
@@ -145,7 +192,7 @@ def normalize(
                     f"{peer_id}.explicit (which has {explicit_count} entries)"
                 )
 
-        normalized.append({"content": content, "premises": premises})
+        normalized.append(SeededConclusion(content=content, premises=tuple(premises)))
     return normalized
 
 
@@ -179,7 +226,7 @@ def resolve_observers(spec: dict[str, Any], peers: list[dict[str, Any]]) -> list
 
 
 async def latest_message_timestamp(
-    db: Any, models: Any, workspace: str, session: str
+    internals: Internals, db: Any, workspace: str, session: str
 ) -> str | None:
     """The conversation's own clock, for the representation to render.
 
@@ -189,10 +236,11 @@ async def latest_message_timestamp(
     """
     from sqlalchemy import func, select
 
+    messages = internals.models.Message
     result = await db.execute(
-        select(func.max(models.Message.created_at)).where(
-            models.Message.workspace_name == workspace,
-            models.Message.session_name == session,
+        select(func.max(messages.created_at)).where(
+            messages.workspace_name == workspace,
+            messages.session_name == session,
         )
     )
     newest = result.scalar_one_or_none()
@@ -214,169 +262,187 @@ def assert_clean(result: Any, requested: int, label: str) -> None:
         "semantically rejected": result.semantic_dup_rejected_count,
         "semantically replaced": result.semantic_dup_replaced_count,
     }
-    dropped = {name: count for name, count in counters.items() if count}
+    dropped = {reason: count for reason, count in counters.items() if count}
     if created != requested or dropped:
+        detail = ", ".join(f"{reason}: {count}" for reason, count in dropped.items())
         raise InjectError(
             f"{label}: asked for {requested} conclusions, stored {created}"
-            + (
-                f" ({', '.join(f'{n}: {c}' for n, c in dropped.items())})"
-                if dropped
-                else ""
-            )
+            + (f" ({detail})" if dropped else "")
             + ". Conclusion contents must be unique; near-identical text is collapsed by "
             "Honcho's dedup before it reaches the database."
         )
 
 
-async def inject_pair(
-    modules: dict[str, Any],
+async def seed_explicit(
+    internals: Internals, workspace: str, session: str, plan: PairPlan
+) -> list[str]:
+    """Pass 1. Returns the stored ids, in fixture order, for premises to point at.
+
+    The public write path is the only one that hands back rows, so it is how the premise ids
+    are obtained -- and it does no dedup, so nothing is silently collapsed.
+    """
+    crud = internals.crud
+    explicit = plan.by_level["explicit"]
+
+    async with internals.tracked_db("sandbox.seed_explicit") as db:
+        await crud.get_or_create_collection(
+            db, workspace, observer=plan.observer, observed=plan.observed
+        )
+        if not explicit:
+            return []
+
+        documents = await crud.create_observations(
+            db,
+            [
+                internals.schemas.ConclusionCreate(
+                    content=conclusion.content,
+                    observer_id=plan.observer,
+                    observed_id=plan.observed,
+                    # Explicit rows must carry a session: create_documents refuses
+                    # session-less explicit rows on a session-purity invariant, and an
+                    # explicit conclusion genuinely does come from a conversation.
+                    session_id=session,
+                )
+                for conclusion in explicit
+            ],
+            workspace,
+        )
+        if len(documents) != len(explicit):
+            raise InjectError(
+                f"{plan}: asked for {len(explicit)} explicit conclusions, "
+                f"stored {len(documents)}"
+            )
+        return [document.id for document in documents]
+
+
+def build_derived_document(
+    internals: Internals,
+    session: str,
+    level: str,
+    conclusion: SeededConclusion,
+    explicit: list[SeededConclusion],
+    premise_ids: list[str],
+    embedding: list[float],
+    message_created_at: str,
+) -> Any:
+    """One DocumentCreate for a derived conclusion, with its premise links and display text."""
+    source_ids = [premise_ids[index] for index in conclusion.premises]
+    metadata: dict[str, Any] = {
+        # Not derived from messages, but the representation reads this to render the
+        # conclusion's timestamp.
+        "message_ids": [],
+        "message_created_at": message_created_at,
+        "source_ids": source_ids,
+        PREMISE_FIELD[level]: [
+            explicit[index].content for index in conclusion.premises
+        ],
+    }
+    if level == "inductive":
+        metadata["pattern_type"] = "tendency"
+        metadata["confidence"] = "high" if len(source_ids) > 1 else "low"
+
+    return internals.schemas.DocumentCreate(
+        content=conclusion.content,
+        # The session, not None: the dreamer stamps its output with one session
+        # (dream_scheduler picks whichever holds the most recent explicit conclusion) and
+        # threads it through create_tool_executor, so a session-less derived row is not
+        # what real mode would produce.
+        #
+        # This does not make them visible to a session-scoped read. ALLOWLIST_SAFE_LEVELS
+        # in src/utils/representation.py serves only explicit under a session allowlist,
+        # whatever the stamp says, because the dreamer reads across all sessions and
+        # scoping its output would leak. So representation(session=...) is explicit-only
+        # by construction; drop the session argument to see these.
+        session_name=session,
+        level=level,
+        times_derived=1,
+        metadata=internals.schemas.DocumentMetadata(**metadata),
+        embedding=embedding,
+        source_ids=source_ids,
+    )
+
+
+async def seed_derived(
+    internals: Internals,
     workspace: str,
     session: str,
-    observer: str,
-    observed: str,
-    conclusions: dict[str, list[dict[str, Any]]],
+    plan: PairPlan,
+    premise_ids: list[str],
 ) -> dict[str, int]:
-    """Seed one (observer, observed) collection. Returns per-level counts actually stored."""
-    crud = modules["crud"]
-    schemas = modules["schemas"]
-    models = modules["models"]
-    embedding_client = modules["embedding_client"]
-    tracked_db = modules["tracked_db"]
-
+    """Pass 2. Both derived levels cite pass-1 ids, so neither needs the other's ids back."""
+    crud = internals.crud
+    explicit = plan.by_level["explicit"]
     stored: dict[str, int] = {}
 
-    # Pass 1. The public write path is the only one that hands back rows, so it is how the
-    # premise ids are obtained -- and it does no dedup, so nothing is silently collapsed.
-    explicit = conclusions["explicit"]
-    premise_ids: list[str] = []
-    async with tracked_db("sandbox.seed_explicit") as db:
-        await crud.get_or_create_collection(
-            db, workspace, observer=observer, observed=observed
+    async with internals.tracked_db("sandbox.seed_derived") as db:
+        message_created_at = await latest_message_timestamp(
+            internals, db, workspace, session
         )
-        if explicit:
-            documents = await crud.create_observations(
+        if message_created_at is None:
+            raise InjectError(
+                f"session {session!r} has no messages, so derived conclusions have no "
+                "conversation timestamp to carry. Seed messages before conclusions."
+            )
+
+        for level, conclusions in plan.derived().items():
+            contents = [conclusion.content for conclusion in conclusions]
+            embeddings = await internals.embedding_client.simple_batch_embed(
+                contents, on_oversize="truncate"
+            )
+            if len(embeddings) != len(contents):
+                raise InjectError(
+                    f"{plan}: embedded {len(embeddings)} of {len(contents)} "
+                    f"{level} conclusions"
+                )
+
+            documents = [
+                build_derived_document(
+                    internals,
+                    session,
+                    level,
+                    conclusion,
+                    explicit,
+                    premise_ids,
+                    embedding,
+                    message_created_at,
+                )
+                for conclusion, embedding in zip(conclusions, embeddings, strict=True)
+            ]
+            result = await crud.create_documents(
                 db,
-                [
-                    schemas.ConclusionCreate(
-                        content=item["content"],
-                        observer_id=observer,
-                        observed_id=observed,
-                        # Explicit rows must carry a session: create_documents refuses
-                        # session-less explicit rows on a session-purity invariant, and an
-                        # explicit conclusion genuinely does come from a conversation.
-                        session_id=session,
-                    )
-                    for item in explicit
-                ],
+                documents,
                 workspace,
+                observer=plan.observer,
+                observed=plan.observed,
+                # Semantic dedup would replace or reject a seeded row against whatever the
+                # deriver already wrote, making the fixture's counts depend on the provider.
+                deduplicate=False,
             )
-            if len(documents) != len(explicit):
-                raise InjectError(
-                    f"{observer} -> {observed}: asked for {len(explicit)} explicit "
-                    f"conclusions, stored {len(documents)}"
-                )
-            premise_ids = [document.id for document in documents]
-            stored["explicit"] = len(documents)
+            assert_clean(result, len(conclusions), f"{plan} {level}")
+            stored[level] = len(result.created_documents)
 
-    # Pass 2. Both derived levels cite pass-1 ids, so neither needs the other's ids back.
-    derived = {
-        level: conclusions[level]
-        for level in ("deductive", "inductive")
-        if conclusions[level]
-    }
-    if derived:
-        async with tracked_db("sandbox.seed_derived") as db:
-            message_created_at = await latest_message_timestamp(
-                db, models, workspace, session
-            )
-            if message_created_at is None:
-                raise InjectError(
-                    f"session {session!r} has no messages, so derived conclusions have no "
-                    "conversation timestamp to carry. Seed messages before conclusions."
-                )
+    return stored
 
-            for level, items in derived.items():
-                contents = [item["content"] for item in items]
-                embeddings = await embedding_client.simple_batch_embed(
-                    contents, on_oversize="truncate"
-                )
-                if len(embeddings) != len(contents):
-                    raise InjectError(
-                        f"{observer} -> {observed}: embedded {len(embeddings)} of "
-                        f"{len(contents)} {level} conclusions"
-                    )
 
-                payload: list[Any] = []
-                for item, embedding in zip(items, embeddings, strict=True):
-                    source_ids = [premise_ids[index] for index in item["premises"]]
-                    metadata: dict[str, Any] = {
-                        # Not derived from messages, but the representation reads this to
-                        # render the conclusion's timestamp.
-                        "message_ids": [],
-                        "message_created_at": message_created_at,
-                        "source_ids": source_ids,
-                        PREMISE_FIELD[level]: [
-                            explicit[index]["content"] for index in item["premises"]
-                        ],
-                    }
-                    if level == "inductive":
-                        metadata["pattern_type"] = "tendency"
-                        metadata["confidence"] = (
-                            "high" if len(source_ids) > 1 else "low"
-                        )
-                    payload.append(
-                        schemas.DocumentCreate(
-                            content=item["content"],
-                            # The session, not None: the dreamer stamps its output with
-                            # one session (dream_scheduler picks whichever holds the most
-                            # recent explicit conclusion) and threads it through
-                            # create_tool_executor, so a session-less derived row is not
-                            # what real mode would produce.
-                            #
-                            # This does not make them visible to a session-scoped read.
-                            # ALLOWLIST_SAFE_LEVELS in src/utils/representation.py serves
-                            # only explicit under a session allowlist, whatever the stamp
-                            # says, because the dreamer reads across all sessions and
-                            # scoping its output would leak. So representation(session=...)
-                            # is explicit-only by construction; drop the session argument
-                            # to see these.
-                            session_name=session,
-                            level=level,
-                            times_derived=1,
-                            metadata=schemas.DocumentMetadata(**metadata),
-                            embedding=embedding,
-                            source_ids=source_ids,
-                        )
-                    )
+async def inject_pair(
+    internals: Internals, workspace: str, session: str, plan: PairPlan
+) -> dict[str, int]:
+    """Seed one (observer, observed) collection. Returns per-level counts actually stored."""
+    premise_ids = await seed_explicit(internals, workspace, session, plan)
+    stored = {"explicit": len(premise_ids)} if premise_ids else {}
 
-                result = await crud.create_documents(
-                    db,
-                    payload,
-                    workspace,
-                    observer=observer,
-                    observed=observed,
-                    # Semantic dedup would replace or reject a seeded row against whatever the
-                    # deriver already wrote, making the fixture's counts depend on the provider.
-                    deduplicate=False,
-                )
-                assert_clean(result, len(items), f"{observer} -> {observed} {level}")
-                stored[level] = len(result.created_documents)
-
+    if plan.derived():
+        stored |= await seed_derived(internals, workspace, session, plan, premise_ids)
         # Outside the write session on purpose: create_documents commits as it goes, and the
         # check should read the committed rows back on its own connection rather than through
         # the identity map of the session that wrote them.
-        await verify_links(modules, workspace, observer, observed, premise_ids, derived)
+        await verify_links(internals, workspace, plan, premise_ids)
 
     return stored
 
 
 async def verify_links(
-    modules: dict[str, Any],
-    workspace: str,
-    observer: str,
-    observed: str,
-    premise_ids: list[str],
-    derived: dict[str, list[dict[str, Any]]],
+    internals: Internals, workspace: str, plan: PairPlan, premise_ids: list[str]
 ) -> None:
     """Confirm the premise links actually traverse, through Honcho's own read helpers.
 
@@ -391,31 +457,33 @@ async def verify_links(
     different (observer, observed) collection. Upward: the source_ids those children actually
     carry must all resolve to live rows.
     """
-    crud = modules["crud"]
-    tracked_db = modules["tracked_db"]
-
+    crud = internals.crud
     cited = sorted(
         {
             premise_ids[index]
-            for items in derived.values()
-            for item in items
-            for index in item["premises"]
+            for conclusions in plan.derived().values()
+            for conclusion in conclusions
+            for index in conclusion.premises
         }
     )
     if not cited:
         return
 
-    async with tracked_db("sandbox.verify_links") as db:
+    async with internals.tracked_db("sandbox.verify_links") as db:
         declared: set[str] = set()
         for premise_id in cited:
             children = await crud.get_child_observations(
-                db, workspace, premise_id, observer=observer, observed=observed
+                db,
+                workspace,
+                premise_id,
+                observer=plan.observer,
+                observed=plan.observed,
             )
             if not children:
                 raise InjectError(
-                    f"{observer} -> {observed}: premise {premise_id} has no reachable "
-                    "children, so the reasoning tree does not traverse downward. Premise and "
-                    "conclusion must share one (observer, observed) pair."
+                    f"{plan}: premise {premise_id} has no reachable children, so the "
+                    "reasoning tree does not traverse downward. Premise and conclusion "
+                    "must share one (observer, observed) pair."
                 )
             for child in children:
                 declared.update(child.source_ids or [])
@@ -424,12 +492,33 @@ async def verify_links(
         missing = declared - {document.id for document in resolved}
         if missing:
             raise InjectError(
-                f"{observer} -> {observed}: {len(missing)} stored premise id(s) resolve to "
-                "nothing, so the reasoning chain would read as empty. First: "
-                f"{sorted(missing)[0]}"
+                f"{plan}: {len(missing)} stored premise id(s) resolve to nothing, so the "
+                f"reasoning chain would read as empty. First: {sorted(missing)[0]}"
             )
 
-    log(f"{observer} -> {observed}: {len(cited)} premise link(s) traverse both ways")
+    log(f"{plan}: {len(cited)} premise link(s) traverse both ways")
+
+
+def plan_pairs(fixture: dict[str, Any]) -> list[PairPlan]:
+    """Turn the fixture's per-peer conclusion keys into one plan per collection."""
+    peers = fixture["peers"]
+    planned: list[PairPlan] = []
+    for spec in peers:
+        if not any(spec.get(level) for level in LEVELS):
+            continue
+        explicit_count = len(spec.get("explicit", []))
+        by_level = {
+            level: normalize(spec.get(level, []), level, spec["id"], explicit_count)
+            for level in LEVELS
+        }
+        if any(by_level[level] for level in DERIVED_LEVELS) and not explicit_count:
+            raise InjectError(
+                f"peer {spec['id']!r} has derived conclusions but no explicit ones for their "
+                "premises to point at."
+            )
+        for observer in resolve_observers(spec, peers):
+            planned.append(PairPlan(observer, spec["id"], by_level))
+    return planned
 
 
 async def run(fixture: dict[str, Any]) -> int:
@@ -441,51 +530,29 @@ async def run(fixture: dict[str, Any]) -> int:
 
     check_signatures(crud, schemas)
 
-    workspace = fixture["workspace"]
-    session = fixture["session"]
-    peers = fixture["peers"]
-
-    planned: list[tuple[str, str, dict[str, list[dict[str, Any]]]]] = []
-    for spec in peers:
-        if not any(spec.get(level) for level in LEVELS):
-            continue
-        explicit_count = len(spec.get("explicit", []))
-        conclusions = {
-            level: normalize(spec.get(level, []), level, spec["id"], explicit_count)
-            for level in LEVELS
-        }
-        if (
-            any(conclusions[level] for level in ("deductive", "inductive"))
-            and not explicit_count
-        ):
-            raise InjectError(
-                f"peer {spec['id']!r} has derived conclusions but no explicit ones for their "
-                "premises to point at."
-            )
-        for observer in resolve_observers(spec, peers):
-            planned.append((observer, spec["id"], conclusions))
-
+    planned = plan_pairs(fixture)
     if not planned:
         log("fixture declares no conclusions - nothing to seed")
         return 0
+
+    internals = Internals(
+        crud=crud,
+        schemas=schemas,
+        models=models,
+        embedding_client=embedding_client,
+        tracked_db=tracked_db,
+    )
 
     # cashews decorates the collection lookups, and an unconfigured backend raises rather than
     # degrading, so the cache has to be up before the first crud call.
     await init_cache()
     try:
-        modules = {
-            "crud": crud,
-            "schemas": schemas,
-            "models": models,
-            "embedding_client": embedding_client,
-            "tracked_db": tracked_db,
-        }
-        for observer, observed, conclusions in planned:
+        for plan in planned:
             stored = await inject_pair(
-                modules, workspace, session, observer, observed, conclusions
+                internals, fixture["workspace"], fixture["session"], plan
             )
             summary = " ".join(f"{level}={stored.get(level, 0)}" for level in LEVELS)
-            log(f"{observer} -> {observed}: {summary}")
+            log(f"{plan}: {summary}")
     finally:
         await close_cache()
         # Without this the process can hang on exit holding pool connections, which inside
