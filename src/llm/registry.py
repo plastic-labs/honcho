@@ -8,6 +8,7 @@ history adapter selection) lives here now.
 
 from __future__ import annotations
 
+import uuid
 from functools import lru_cache
 from typing import TYPE_CHECKING, assert_never
 
@@ -52,6 +53,18 @@ _DEFAULT_HEADERS_BY_BASE_URL: dict[str, dict[str, str]] = {
     },
 }
 
+# OpenCode Zen / Go (https://opencode.ai/docs/go/) asks clients to send a stable
+# ``x-opencode-session`` header so it can optimize prompt caching, and rejects
+# requests that do not identify their session. Honcho has no chat-session
+# concept at the client layer, so a process-lifetime ID is the closest stable
+# scope; cached so every OpenAI-compatible client in the process shares one ID.
+_OPENCODE_ZEN_BASE_URL_PREFIX = "https://opencode.ai/zen"
+
+
+@lru_cache(maxsize=1)
+def _opencode_session_id() -> str:
+    return str(uuid.uuid4())
+
 
 def _default_headers_for(base_url: str | None) -> dict[str, str]:
     """Default headers for ``base_url`` (prefix match); these merge under any
@@ -60,6 +73,8 @@ def _default_headers_for(base_url: str | None) -> dict[str, str]:
         for prefix, headers in _DEFAULT_HEADERS_BY_BASE_URL.items():
             if base_url.startswith(prefix):
                 return headers
+        if base_url.startswith(_OPENCODE_ZEN_BASE_URL_PREFIX):
+            return {"x-opencode-session": _opencode_session_id()}
     return {}
 
 
