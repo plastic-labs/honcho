@@ -26,7 +26,6 @@ const EVIDENCE: Evidence = {
       id: 'msg-sentinel',
       session_id: 'session-1',
       peer_id: 'alice',
-      content_preview: 'I drink a lot of coffee',
       created_at: '2026-01-01T00:00:00Z',
     },
   ],

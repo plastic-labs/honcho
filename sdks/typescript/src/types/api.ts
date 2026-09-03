@@ -89,12 +89,17 @@ export interface EvidenceObservation {
   source_ids: string[]
 }
 
-/** A message the dialectic read while answering. */
+/**
+ * A message the dialectic read while answering.
+ *
+ * Identity and provenance only — no content. Fetch the message by `id` when
+ * you need its text; evidence is for auditing what was read, not for reading
+ * messages in bulk.
+ */
 export interface EvidenceMessageRef {
   id: string
   session_id: string
   peer_id: string
-  content_preview: string
   created_at: string
 }
 
