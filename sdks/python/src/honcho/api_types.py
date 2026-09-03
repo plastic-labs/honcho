@@ -558,12 +558,16 @@ class EvidenceObservation(BaseModel):
 
 
 class EvidenceMessageRef(BaseModel):
-    """A message the dialectic read while answering."""
+    """A message the dialectic read while answering.
+
+    Identity and provenance only -- no content. Fetch the message by `id` when
+    you need its text; evidence is for auditing what was read, not for reading
+    messages in bulk.
+    """
 
     id: str
     session_id: str
     peer_id: str
-    content_preview: str
     created_at: datetime.datetime
 
 
