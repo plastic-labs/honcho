@@ -335,6 +335,9 @@ either route works — but a bare `#123` mention is only a reference and does no
 
 If a PR goes quiet, nudge us in [Discord](https://discord.gg/honcho).
 
+Please respond within 7 days - we may close any PRs that have seen no activity within a 7 day
+window. If you need more time, let us know in the PR comments.
+
 ## Reporting bugs and requesting features
 
 Use the [issue templates](https://github.com/plastic-labs/honcho/issues/new/choose). There is
