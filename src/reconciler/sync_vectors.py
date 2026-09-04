@@ -20,7 +20,7 @@ from sqlalchemy.sql.functions import func
 
 from src import models
 from src.config import settings
-from src.dependencies import tracked_db
+from src.dependencies import service_db
 from src.embedding_client import embedding_client
 from src.exceptions import VectorStoreError
 from src.telemetry import prometheus_metrics
@@ -617,7 +617,7 @@ async def _reconcile_documents_batch(
 
     Returns True if work was done, False otherwise.
     """
-    async with tracked_db("reconciliation_docs") as db:
+    async with service_db("reconciliation_docs") as db:
         docs = await _get_documents_needing_sync(db)
         if not docs:
             return False
@@ -641,7 +641,7 @@ async def _reconcile_message_embeddings_batch(
 
     Returns True if work was done, False otherwise.
     """
-    async with tracked_db("reconciliation_embs") as db:
+    async with service_db("reconciliation_embs") as db:
         embs = await _get_message_embeddings_needing_sync(db)
         if not embs:
             return False
@@ -669,7 +669,7 @@ async def _cleanup_documents_batch(
     """
     from src.crud.document import cleanup_soft_deleted_documents
 
-    async with tracked_db("reconciliation_cleanup") as db:
+    async with service_db("reconciliation_cleanup") as db:
         cleaned = await cleanup_soft_deleted_documents(
             db,
             external_vector_store,
@@ -691,7 +691,7 @@ async def _cleanup_pgvector_batch(
 
     Returns True if work was done, False otherwise.
     """
-    async with tracked_db("reconciliation_pgvector_cleanup") as db:
+    async with service_db("reconciliation_pgvector_cleanup") as db:
         cleaned = await _cleanup_soft_deleted_documents_pgvector(
             db, batch_size=RECONCILIATION_BATCH_SIZE
         )
@@ -726,7 +726,7 @@ async def record_pending_embeddings_backlog() -> None:
     if not settings.METRICS.ENABLED:
         return
     try:
-        async with tracked_db("reconciler_pending_count", read_only=True) as db:
+        async with service_db("reconciler_pending_count", read_only=True) as db:
             count = await db.scalar(
                 select(func.count())
                 .select_from(models.MessageEmbedding)

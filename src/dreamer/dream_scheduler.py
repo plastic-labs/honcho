@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
 from src.config import settings
-from src.dependencies import tracked_db
+from src.dependencies import service_db
 from src.schemas import DreamType
 from src.utils.work_unit import construct_work_unit_key, parse_work_unit_key
 
@@ -190,7 +190,7 @@ class DreamScheduler:
         from src.deriver.enqueue import enqueue_dream
         from src.utils.config_helpers import get_configuration
 
-        async with tracked_db("dream_session_lookup") as db:
+        async with service_db("dream_session_lookup") as db:
             stmt = (
                 select(models.Document.session_name)
                 .where(
