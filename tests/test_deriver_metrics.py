@@ -320,3 +320,56 @@ class TestDeriverMetricsRoute:
             await deriver_metrics.get_deriver_metrics_response()
 
         assert excinfo.value.status_code == 503
+
+
+@pytest.mark.asyncio
+class TestLifespanScheduler:
+    async def _run_lifespan(self) -> AsyncMock:
+        from src import main as main_module
+
+        scheduler = AsyncMock()
+
+        with (
+            patch.object(main_module, "initialize_telemetry_async", AsyncMock()),
+            patch.object(main_module, "register_db_pool_collector"),
+            patch.object(main_module, "register_db_query_instrumentation"),
+            patch.object(main_module, "register_db_connection_instrumentation"),
+            patch.object(main_module, "validate_embedding_schema", AsyncMock()),
+            patch.object(main_module, "init_cache", AsyncMock()),
+            patch.object(main_module, "close_cache", AsyncMock()),
+            patch.object(main_module, "shutdown_telemetry", AsyncMock()),
+            patch.object(main_module, "engine", AsyncMock()),
+            patch.object(
+                main_module, "DeriverMetricsPoller", return_value=AsyncMock()
+            ),
+            patch.object(main_module, "ReconcilerScheduler", return_value=scheduler),
+            patch.object(main_module, "set_reconciler_scheduler"),
+            patch(
+                "src.vector_store.close_external_vector_store",
+                AsyncMock(),
+            ),
+        ):
+            async with main_module.lifespan(main_module.app):
+                pass
+
+        return scheduler
+
+    async def test_api_scheduler_runs_the_reconciler(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setattr(settings.DERIVER, "SCHEDULER", "api")
+
+        scheduler = await self._run_lifespan()
+
+        assert scheduler.start.await_count == 1
+        assert scheduler.shutdown.await_count == 1
+
+    async def test_deriver_scheduler_leaves_the_reconciler_off(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setattr(settings.DERIVER, "SCHEDULER", "deriver")
+
+        scheduler = await self._run_lifespan()
+
+        assert scheduler.start.await_count == 0
+        assert scheduler.shutdown.await_count == 0
