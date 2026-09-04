@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from pydantic import ConfigDict, Field, PrivateAttr, validate_call
@@ -43,6 +43,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 __all__ = ["Session", "SessionPeerConfig"]
+
+_SDK_UTC = timezone.utc  # noqa: UP017 -- SDK supports Python 3.8
+
+
+def _as_utc(value: datetime) -> datetime:
+    """Return a timezone-aware UTC datetime, treating naive values as UTC."""
+    if value.tzinfo is None or value.utcoffset() is None:
+        return value.replace(tzinfo=_SDK_UTC)
+    return value.astimezone(_SDK_UTC)
 
 
 class Session(SessionBase, MetadataConfigMixin):
@@ -134,9 +143,15 @@ class Session(SessionBase, MetadataConfigMixin):
         if not messages:
             return
 
-        newest_message_at = max(message.created_at for message in messages)
-        if self._last_message_at is None or newest_message_at > self._last_message_at:
-            self._last_message_at = newest_message_at
+        newest_message_at = max(_as_utc(message.created_at) for message in messages)
+        current_activity = (
+            _as_utc(self._last_message_at)
+            if self._last_message_at is not None
+            else None
+        )
+        if current_activity is None or newest_message_at > current_activity:
+            current_activity = newest_message_at
+        self._last_message_at = current_activity
 
     def get_metadata(self) -> dict[str, object]:
         """
