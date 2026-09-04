@@ -80,16 +80,20 @@ async def tracked_db(
     mutates — see ReadSessionLocal.
 
     tenant_id binds this session to a tenant: it is set into tenant_context for
-    the duration so the connection-checkout hook applies the `app.tenant` GUC
-    (see src/db.py) and the RLS policies resolve. When MULTI_TENANT is enabled it
-    is REQUIRED — a missing tenant_id raises here, before any query executes, so a
-    tenant-scoped session can never run unbound (fail-closed). Legitimately
-    cross-tenant work must use service_db(), not a null tenant here.
+    the duration so the connection-checkout hook applies the `app.tenant` GUC (see
+    src/db.py) and the RLS policies resolve. A tenant may instead be inherited from
+    an ambient tenant_context already set by an outer scope (the request/auth
+    boundary, or the deriver binding a claimed work unit's tenant), so nested
+    sessions need not re-pass it. When MULTI_TENANT is enabled a tenant is REQUIRED
+    from one of those two sources — if neither is present we raise here, before any
+    query executes, so a tenant-scoped session can never run unbound (fail-closed).
+    Legitimately cross-tenant work must use service_db(), not a null tenant here.
     """
-    if settings.MULTI_TENANT and tenant_id is None:
+    if settings.MULTI_TENANT and tenant_id is None and tenant_context.get() is None:
         raise ValueError(
-            "tracked_db requires tenant_id when MULTI_TENANT is enabled; "
-            + "cross-tenant paths must use service_db()"
+            "tracked_db requires a tenant when MULTI_TENANT is enabled "
+            + "(pass tenant_id or set tenant_context); cross-tenant paths must use "
+            + "service_db()"
         )
 
     # Get request ID if available, or create operation-specific one
