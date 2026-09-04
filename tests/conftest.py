@@ -1,15 +1,19 @@
+import asyncio
 import logging
 import os
 import re
 import time
 import uuid
 from collections.abc import AsyncGenerator, Callable
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import jwt
 import pytest
 import pytest_asyncio
+from alembic import command
+from alembic.config import Config
 from cashews.picklers import PicklerType
 from fastapi import Request
 from fastapi.responses import JSONResponse
@@ -74,6 +78,11 @@ DB_URI = (
     or "postgresql+psycopg://postgres:postgres@localhost:5432/postgres"
 )
 CONNECTION_URI = make_url(DB_URI)
+
+# Repo paths for building the test schema via the real migrations (see db_engine).
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_ALEMBIC_INI = _REPO_ROOT / "alembic.ini"
+_MIGRATIONS_DIR = _REPO_ROOT / "migrations"
 
 _RUNTIME_MOCK_TEST_BLOCKLIST_PREFIXES = (
     # Benchmarks and migration tests have their own execution/runtime constraints.
@@ -322,6 +331,10 @@ async def _clear_all_tables(engine: AsyncEngine) -> None:
 
     table_names: list[str] = []
     for table in reversed(Base.metadata.sorted_tables):
+        # Preserve the tenants table: the migration seeds the DEFAULT_TENANT_ID row
+        # that every tenant-scoped row FKs to, and it must survive between tests.
+        if table.name == "tenants":
+            continue
         if table.schema:
             table_names.append(f'"{table.schema}"."{table.name}"')
         else:
@@ -350,11 +363,22 @@ async def db_engine(worker_id: str):
     for table in Base.metadata.tables.values():
         table.schema = "public"
 
-    # Drop all tables first to ensure clean state
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-        # Then create all tables with current models
-        await conn.run_sync(Base.metadata.create_all)
+    # Build the schema via the real migrations, NOT create_all: the A1 models
+    # declare HASH(tenant_id) partitioning, so create_all emits partitioned parents
+    # with zero partitions and every insert fails. `alembic upgrade head` builds the
+    # non-partitioned prosumer schema a self-hoster actually runs, and seeds the
+    # DEFAULT_TENANT_ID tenant every tenant-scoped row FKs to. Render the URL with
+    # its password (str(URL) masks it as '***', which then fails auth at migrate).
+    db_url_str = test_db_url.render_as_string(hide_password=False)
+    previous_uri = settings.DB.CONNECTION_URI
+    settings.DB.CONNECTION_URI = db_url_str  # env.py reads the migration URL from here
+    try:
+        alembic_cfg = Config(str(_ALEMBIC_INI))
+        alembic_cfg.set_main_option("script_location", str(_MIGRATIONS_DIR))
+        alembic_cfg.set_main_option("sqlalchemy.url", db_url_str)
+        await asyncio.to_thread(command.upgrade, alembic_cfg, "head")
+    finally:
+        settings.DB.CONNECTION_URI = previous_uri
 
     try:
         yield engine
@@ -955,14 +979,14 @@ def mock_tracked_db(request: pytest.FixtureRequest):
     # 20-statically-nested-block limit as this list grows.
     tracked_db_targets = [
         "src.dependencies.tracked_db",
-        "src.deriver.queue_manager.tracked_db",
+        "src.deriver.queue_manager.service_db",
         "src.deriver.consumer.tracked_db",
-        "src.deriver.enqueue.tracked_db",
+        "src.deriver.enqueue.service_db",
         "src.routers.peers.tracked_db",
         "src.routers.workspaces.tracked_db",
         "src.crud.representation.tracked_db",
         "src.dreamer.orchestrator.tracked_db",
-        "src.dreamer.dream_scheduler.tracked_db",
+        "src.dreamer.dream_scheduler.service_db",
         "src.dialectic.chat.tracked_db",
         "src.utils.summarizer.tracked_db",
         "src.webhooks.events.tracked_db",
@@ -971,8 +995,8 @@ def mock_tracked_db(request: pytest.FixtureRequest):
         "src.utils.search.tracked_db",
         "src.crud.document.tracked_db",
         "src.crud.message.tracked_db",
-        "src.reconciler.sync_vectors.tracked_db",
-        "src.reconciler.embed_now.tracked_db",
+        "src.reconciler.sync_vectors.service_db",
+        "src.reconciler.embed_now.service_db",
         "src.dialectic.core.tracked_db",
         "src.dreamer.specialists.tracked_db",
         "src.dreamer.surprisal.tracked_db",

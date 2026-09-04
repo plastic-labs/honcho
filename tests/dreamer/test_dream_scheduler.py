@@ -460,7 +460,7 @@ class TestEnqueueCancelsDreamsCorrectly:
         assert len(dream_scheduler.pending_dreams) == 3
 
         # Mock the database operations in enqueue
-        with patch("src.deriver.enqueue.tracked_db"):
+        with patch("src.deriver.enqueue.service_db"):
             # The enqueue function should cancel dreams via cancel_dreams_for_observed
             # We just test that the scheduler method was called correctly
             cancelled = await dream_scheduler.cancel_dreams_for_observed(

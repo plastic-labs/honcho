@@ -19,7 +19,7 @@ async def test_cleanup_queue_items_executes_delete_and_commit(
         called_operation_names.append(operation_name)
         yield fake_db
 
-    monkeypatch.setattr(queue_cleanup, "tracked_db", fake_tracked_db)
+    monkeypatch.setattr(queue_cleanup, "service_db", fake_tracked_db)
 
     await queue_cleanup.cleanup_queue_items()
 

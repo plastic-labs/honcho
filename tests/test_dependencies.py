@@ -264,7 +264,9 @@ async def test_write_session_holds_idle_in_transaction_after_select() -> None:
 
 
 @pytest.mark.asyncio
-async def test_read_only_session_works_with_tracing_checkout_hook() -> None:
+async def test_read_only_session_works_with_tracing_checkout_hook(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # Regression: the DB.TRACING checkout hook runs set_config() at pool
     # checkout, BEFORE the dialect applies the read engine's AUTOCOMMIT
     # isolation level. If that statement is allowed to autobegin a transaction,
@@ -276,13 +278,14 @@ async def test_read_only_session_works_with_tracing_checkout_hook() -> None:
     from sqlalchemy import event, text
 
     from src.db import (
-        _set_application_name_on_checkout,  # pyright: ignore[reportPrivateUsage]
+        _set_session_gucs_on_checkout,  # pyright: ignore[reportPrivateUsage]
         engine,
         read_engine,
     )
 
+    monkeypatch.setattr(settings.DB, "TRACING", True)
     context_token = request_context.set("tracing-regression")
-    event.listen(engine.sync_engine, "checkout", _set_application_name_on_checkout)
+    event.listen(engine.sync_engine, "checkout", _set_session_gucs_on_checkout)
     try:
         async with real_tracked_db("read_op", read_only=True) as db:
             pid = (await db.execute(text("SELECT pg_backend_pid()"))).scalar()
@@ -306,5 +309,5 @@ async def test_read_only_session_works_with_tracing_checkout_hook() -> None:
                 ).scalar()
             assert state == "idle"
     finally:
-        event.remove(engine.sync_engine, "checkout", _set_application_name_on_checkout)
+        event.remove(engine.sync_engine, "checkout", _set_session_gucs_on_checkout)
         request_context.reset(context_token)

@@ -2,7 +2,7 @@
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from logging import getLogger
 from typing import Any
 
@@ -75,6 +75,9 @@ async def _fetch_workspace(
     if obj is None:
         return None
     return {
+        # tenant_id leads the composite PK; without it the reconstructed object
+        # has an incomplete identity and merge/update can't locate its row.
+        "tenant_id": obj.tenant_id,
         "id": obj.id,
         "name": obj.name,
         "h_metadata": obj.h_metadata,
@@ -132,6 +135,7 @@ async def get_or_create_workspace(
         # Capture cache data eagerly so the closure holds a plain dict, not the ORM object
         _cache_key = workspace_cache_key(workspace.name)
         _cache_data = {
+            "tenant_id": honcho_workspace.tenant_id,
             "id": honcho_workspace.id,
             "name": honcho_workspace.name,
             "h_metadata": honcho_workspace.h_metadata,
@@ -675,7 +679,7 @@ async def get_active_peers(
         return []
     limit = min(limit, 50)
 
-    window_start = datetime.now(timezone.utc) - timedelta(days=ACTIVE_PEER_WINDOW_DAYS)
+    window_start = datetime.now(UTC) - timedelta(days=ACTIVE_PEER_WINDOW_DAYS)
 
     msg_filters = [
         models.Message.workspace_name == workspace_name,

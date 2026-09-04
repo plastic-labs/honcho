@@ -109,6 +109,9 @@ async def _fetch_session(
     if obj is None:
         return None
     return {
+        # tenant_id leads the composite PK; without it the reconstructed object
+        # has an incomplete identity and merge/update can't locate its row.
+        "tenant_id": obj.tenant_id,
         "id": obj.id,
         "name": obj.name,
         "workspace_name": obj.workspace_name,
@@ -383,6 +386,7 @@ async def get_or_create_session(
         await safe_cache_set(
             cache_key,
             {
+                "tenant_id": honcho_session.tenant_id,
                 "id": honcho_session.id,
                 "name": honcho_session.name,
                 "workspace_name": honcho_session.workspace_name,
@@ -1255,7 +1259,9 @@ async def _get_or_add_peers_to_session(
     # wins -- otherwise PUT /peers could never change the configuration of a peer
     # already in the session.
     stmt = stmt.on_conflict_do_update(
-        index_elements=["session_name", "peer_name", "workspace_name"],
+        # tenant_id leads the composite PK (A1), so it must be in the conflict
+        # target — otherwise there is no matching unique constraint.
+        index_elements=["tenant_id", "session_name", "peer_name", "workspace_name"],
         set_={
             "joined_at": case(
                 (models.SessionPeer.left_at.is_not(None), func.now()),
