@@ -12,7 +12,7 @@ from src import models
 from src.config import settings
 from src.schemas import DreamType
 from src.utils.config_helpers import get_configuration
-from src.utils.work_unit import construct_work_unit_key
+from src.utils.work_unit import construct_work_unit_key, parse_work_unit_key
 
 logger = getLogger(__name__)
 
@@ -33,7 +33,7 @@ async def count_due_dreams(db: AsyncSession) -> int:
 
 
 async def list_due_dreams(db: AsyncSession) -> list[DueDream]:
-    """List collections past the threshold, the idle timeout, the min-hours gate, any earlier attempt, and the session's dream setting."""
+    """List collections past the threshold, the idle timeout, the min-hours gate, any earlier attempt, pending representation work, and the session's dream setting."""
     dream_types = [
         DreamType(dream_type)
         for dream_type in settings.DREAM.ENABLED_TYPES
@@ -154,11 +154,35 @@ async def list_due_dreams(db: AsyncSession) -> list[DueDream]:
         cast(str, row[0]): cast(datetime, row[1]) for row in attempt_rows
     }
 
+    pending_representation_keys = (
+        (
+            await db.execute(
+                select(models.QueueItem.work_unit_key)
+                .where(
+                    models.QueueItem.task_type == "representation",
+                    models.QueueItem.processed == False,  # noqa: E712
+                )
+                .distinct()
+            )
+        )
+        .scalars()
+        .all()
+    )
+    active_observed = {
+        (parsed.workspace_name, parsed.observed)
+        for parsed in (
+            parse_work_unit_key(key) for key in pending_representation_keys
+        )
+    }
+
     unattempted = [
         due_dream
         for work_unit_key, (due_dream, newest_created_at) in candidates.items()
-        if work_unit_key not in newest_attempts
-        or newest_attempts[work_unit_key] < newest_created_at
+        if (
+            work_unit_key not in newest_attempts
+            or newest_attempts[work_unit_key] < newest_created_at
+        )
+        and (due_dream.workspace_name, due_dream.observed) not in active_observed
     ]
     if not unattempted:
         return []
