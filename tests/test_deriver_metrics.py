@@ -7,13 +7,28 @@ import pytest
 from fastapi import HTTPException
 
 from src import schemas
+from src.config import settings
 from src.backlog import (
     DeriverMetricsPoller,
     DeriverMetricsSnapshot,
     active_work_seconds,
     outstanding_work_seconds,
 )
+from src.dreamer.dream_due import DueDream
 from src.routers import deriver_metrics
+
+
+def _due_dreams(count: int) -> list[DueDream]:
+    return [
+        DueDream(
+            workspace_name=f"workspace-{i}",
+            observer=f"peer-{i}",
+            observed=f"peer-{i}",
+            dream_type=schemas.DreamType.OMNI,
+            session_name=f"session-{i}",
+        )
+        for i in range(count)
+    ]
 
 
 class TestScaleSignal:
@@ -73,7 +88,7 @@ class TestPoller:
                 "src.backlog.crud.get_deriver_metrics",
                 AsyncMock(return_value=stats),
             ),
-            patch("src.backlog.count_due_dreams", AsyncMock(return_value=3)),
+            patch("src.backlog.list_due_dreams", AsyncMock(return_value=_due_dreams(3))),
         ):
             await poller.refresh()
 
@@ -87,14 +102,14 @@ class TestPoller:
         """The dream query is the expensive one, so it must not run every pass."""
         stats = schemas.DeriverMetrics()
         poller = DeriverMetricsPoller()
-        dream_count = AsyncMock(return_value=1)
+        dream_count = AsyncMock(return_value=_due_dreams(1))
 
         with (
             patch(
                 "src.backlog.crud.get_deriver_metrics",
                 AsyncMock(return_value=stats),
             ),
-            patch("src.backlog.count_due_dreams", dream_count),
+            patch("src.backlog.list_due_dreams", dream_count),
         ):
             await poller.refresh()
             await poller.refresh()
@@ -106,14 +121,14 @@ class TestPoller:
         """Advancing the deadline first would republish the old count for a whole interval."""
         stats = schemas.DeriverMetrics()
         poller = DeriverMetricsPoller()
-        dream_count = AsyncMock(side_effect=[RuntimeError("db down"), 4])
+        dream_count = AsyncMock(side_effect=[RuntimeError("db down"), _due_dreams(4)])
 
         with (
             patch(
                 "src.backlog.crud.get_deriver_metrics",
                 AsyncMock(return_value=stats),
             ),
-            patch("src.backlog.count_due_dreams", dream_count),
+            patch("src.backlog.list_due_dreams", dream_count),
         ):
             with pytest.raises(RuntimeError):
                 await poller.refresh()
@@ -132,7 +147,7 @@ class TestPoller:
                 "src.backlog.crud.get_deriver_metrics",
                 AsyncMock(return_value=stats),
             ),
-            patch("src.backlog.count_due_dreams", AsyncMock(return_value=0)),
+            patch("src.backlog.list_due_dreams", AsyncMock(return_value=[])),
         ):
             await poller.refresh()
 
@@ -148,6 +163,98 @@ class TestPoller:
             await poller.refresh()
 
         assert poller.snapshot is first
+
+    async def test_api_scheduler_enqueues_due_dreams(self, monkeypatch):
+        monkeypatch.setattr(settings.DERIVER, "SCHEDULER", "api")
+        stats = schemas.DeriverMetrics()
+        poller = DeriverMetricsPoller()
+        due = _due_dreams(2)
+        enqueue = AsyncMock()
+
+        with (
+            patch(
+                "src.backlog.crud.get_deriver_metrics",
+                AsyncMock(return_value=stats),
+            ),
+            patch("src.backlog.list_due_dreams", AsyncMock(return_value=due)),
+            patch("src.backlog.enqueue_dream", enqueue),
+        ):
+            await poller.refresh()
+
+        assert enqueue.await_count == 2
+        first_call = enqueue.await_args_list[0]
+        assert first_call.args == (due[0].workspace_name,)
+        assert first_call.kwargs["observer"] == due[0].observer
+        assert first_call.kwargs["observed"] == due[0].observed
+        assert first_call.kwargs["dream_type"] == due[0].dream_type
+        assert first_call.kwargs["session_name"] == due[0].session_name
+
+    async def test_api_scheduler_does_not_reenqueue_from_the_cached_list(
+        self, monkeypatch
+    ):
+        monkeypatch.setattr(settings.DERIVER, "SCHEDULER", "api")
+        stats = schemas.DeriverMetrics()
+        poller = DeriverMetricsPoller()
+        enqueue = AsyncMock()
+
+        with (
+            patch(
+                "src.backlog.crud.get_deriver_metrics",
+                AsyncMock(return_value=stats),
+            ),
+            patch(
+                "src.backlog.list_due_dreams",
+                AsyncMock(return_value=_due_dreams(1)),
+            ),
+            patch("src.backlog.enqueue_dream", enqueue),
+        ):
+            await poller.refresh()
+            await poller.refresh()
+
+        assert enqueue.await_count == 1
+
+    async def test_deriver_scheduler_enqueues_nothing(self, monkeypatch):
+        monkeypatch.setattr(settings.DERIVER, "SCHEDULER", "deriver")
+        stats = schemas.DeriverMetrics()
+        poller = DeriverMetricsPoller()
+        enqueue = AsyncMock()
+
+        with (
+            patch(
+                "src.backlog.crud.get_deriver_metrics",
+                AsyncMock(return_value=stats),
+            ),
+            patch(
+                "src.backlog.list_due_dreams",
+                AsyncMock(return_value=_due_dreams(1)),
+            ),
+            patch("src.backlog.enqueue_dream", enqueue),
+        ):
+            await poller.refresh()
+
+        assert enqueue.await_count == 0
+        assert poller.snapshot.dreams_due == 1
+
+    async def test_one_failed_enqueue_does_not_stop_the_rest(self, monkeypatch):
+        monkeypatch.setattr(settings.DERIVER, "SCHEDULER", "api")
+        stats = schemas.DeriverMetrics()
+        poller = DeriverMetricsPoller()
+        enqueue = AsyncMock(side_effect=[RuntimeError("db down"), None])
+
+        with (
+            patch(
+                "src.backlog.crud.get_deriver_metrics",
+                AsyncMock(return_value=stats),
+            ),
+            patch(
+                "src.backlog.list_due_dreams",
+                AsyncMock(return_value=_due_dreams(2)),
+            ),
+            patch("src.backlog.enqueue_dream", enqueue),
+        ):
+            await poller.refresh()
+
+        assert enqueue.await_count == 2
 
 
 @pytest.mark.asyncio

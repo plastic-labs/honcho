@@ -1,4 +1,4 @@
-"""Read-only polling of the deriver's outstanding work. Schedules nothing."""
+"""Polling of the deriver's outstanding work. Schedules only when it owns scheduling."""
 
 import asyncio
 import contextlib
@@ -11,7 +11,8 @@ import sentry_sdk
 from src import crud, schemas
 from src.config import settings
 from src.dependencies import tracked_db
-from src.dreamer.dream_due import count_due_dreams
+from src.deriver.enqueue import enqueue_dream
+from src.dreamer.dream_due import DueDream, list_due_dreams
 from src.telemetry import prometheus_metrics
 
 logger = getLogger(__name__)
@@ -62,7 +63,8 @@ class DeriverMetricsPoller:
         self._shutdown_event: asyncio.Event = asyncio.Event()
         self._snapshot: DeriverMetricsSnapshot = DeriverMetricsSnapshot()
         self._next_dream_poll: float | None = None
-        self._dreams_due: int = 0
+        self._due_dreams: list[DueDream] = []
+        self._next_stale_cleanup: float | None = None
 
     @property
     def snapshot(self) -> DeriverMetricsSnapshot:
@@ -103,25 +105,37 @@ class DeriverMetricsPoller:
                 logger.error("DeriverMetricsPoller refresh failed: %s", e)
                 if settings.SENTRY.ENABLED:
                     sentry_sdk.capture_exception(e)
+            if settings.DERIVER.SCHEDULER == "api":
+                try:
+                    await self._maybe_cleanup_stale_work_units()
+                except Exception as e:
+                    logger.error("Stale work unit cleanup failed: %s", e)
+                    if settings.SENTRY.ENABLED:
+                        sentry_sdk.capture_exception(e)
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(self._shutdown_event.wait(), timeout=interval)
 
     async def refresh(self) -> None:
-        """One read-only pass. The snapshot only advances on a complete pass."""
+        """One pass. The snapshot only advances on a complete pass."""
+        dreams_refreshed = False
         async with tracked_db("deriver_metrics", read_only=True) as db:
             stats = await crud.get_deriver_metrics(db)
             if self._dream_poll_due():
-                self._dreams_due = await count_due_dreams(db)
+                self._due_dreams = await list_due_dreams(db)
                 self._next_dream_poll = (
                     time.monotonic() + settings.DREAM.DUE_POLL_INTERVAL_SECONDS
                 )
+                dreams_refreshed = True
 
-        signal = outstanding_work_seconds(stats, dreams_due=self._dreams_due)
+        if dreams_refreshed and settings.DERIVER.SCHEDULER == "api":
+            await self._enqueue_due_dreams()
+
+        signal = outstanding_work_seconds(stats, dreams_due=len(self._due_dreams))
         measured_at = time.time()
 
         self._snapshot = DeriverMetricsSnapshot(
             signal_seconds=signal,
-            dreams_due=self._dreams_due,
+            dreams_due=len(self._due_dreams),
             stats=stats,
             measured_at=measured_at,
         )
@@ -135,7 +149,7 @@ class DeriverMetricsPoller:
             embeddings_pending=stats.embeddings_pending,
             embeddings_pending_due=stats.embeddings_pending_due,
         )
-        metrics.set_dreams_due(count=self._dreams_due)
+        metrics.set_dreams_due(count=len(self._due_dreams))
         metrics.set_deriver_outstanding_work(seconds=signal)
         metrics.set_deriver_metrics_last_success(timestamp=measured_at)
 
@@ -144,3 +158,37 @@ class DeriverMetricsPoller:
         return (
             self._next_dream_poll is None or time.monotonic() >= self._next_dream_poll
         )
+
+    async def _enqueue_due_dreams(self) -> None:
+        for due_dream in self._due_dreams:
+            try:
+                await enqueue_dream(
+                    due_dream.workspace_name,
+                    observer=due_dream.observer,
+                    observed=due_dream.observed,
+                    dream_type=due_dream.dream_type,
+                    session_name=due_dream.session_name,
+                    trigger_reason="document_threshold",
+                    delay_reason="api_poll",
+                )
+            except Exception as e:
+                logger.error(
+                    "Failed to enqueue dream for %s/%s/%s: %s",
+                    due_dream.workspace_name,
+                    due_dream.observer,
+                    due_dream.observed,
+                    e,
+                )
+                if settings.SENTRY.ENABLED:
+                    sentry_sdk.capture_exception(e)
+
+    async def _maybe_cleanup_stale_work_units(self) -> None:
+        interval = settings.DERIVER.STALE_WORK_UNIT_CLEANUP_INTERVAL_SECONDS
+        if (
+            self._next_stale_cleanup is not None
+            and time.monotonic() < self._next_stale_cleanup
+        ):
+            return
+        self._next_stale_cleanup = time.monotonic() + interval
+        async with tracked_db("cleanup_stale_work_units") as db:
+            await crud.cleanup_stale_work_units(db)

@@ -25,6 +25,7 @@ from src.db import (
     request_context,
 )
 from src.exceptions import HonchoException
+from src.reconciler import ReconcilerScheduler, set_reconciler_scheduler
 from src.routers import (
     conclusions,
     deriver_metrics,
@@ -144,12 +145,23 @@ async def lifespan(_: FastAPI):
     except Exception as e:
         logger.error("Failed to start backlog metrics poller: %s", e)
 
+    reconciler_scheduler = None
+    if settings.DERIVER.SCHEDULER == "api":
+        reconciler_scheduler = ReconcilerScheduler()
+        set_reconciler_scheduler(reconciler_scheduler)
+        try:
+            await reconciler_scheduler.start()
+        except Exception as e:
+            logger.error("Failed to start reconciler scheduler: %s", e)
+
     try:
         yield
     finally:
         # Import here to avoid circular import at module load time
         from src.vector_store import close_external_vector_store
 
+        if reconciler_scheduler is not None:
+            await reconciler_scheduler.shutdown()
         await deriver_metrics_poller.shutdown()
         deriver_metrics.set_deriver_metrics_poller(None)
         await close_external_vector_store()
