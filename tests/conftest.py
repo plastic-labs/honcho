@@ -100,6 +100,10 @@ _RUNTIME_MOCK_TEST_BLOCKLIST_PREFIXES = (
     # Pure JWT scope tests — operate on src.security directly, no DB needed.
     "tests/test_security.py",
     "tests/test_generate_jwt_script.py",
+    # Own-runtime RLS test: stands up its own database, applies the cloud RLS
+    # policies, and drives raw SQL under SET ROLE. It needs neither the shared
+    # db_engine nor the app-runtime mocks.
+    "tests/integration/test_rls_isolation.py",
 )
 
 _LIVE_LLM_MARKER = "live_llm"
