@@ -328,7 +328,9 @@ class TestQueueProcessing:
         queue_manager = QueueManager()
 
         with (
-            patch.object(queue_manager.reconciler_scheduler, "start", AsyncMock()) as start,
+            patch.object(
+                queue_manager.reconciler_scheduler, "start", AsyncMock()
+            ) as start,
             patch.object(queue_manager, "_sleep_startup_jitter", AsyncMock()),
             patch.object(queue_manager, "polling_loop", AsyncMock()),
             patch.object(queue_manager, "cleanup", AsyncMock()),
@@ -344,7 +346,9 @@ class TestQueueProcessing:
         queue_manager = QueueManager()
 
         with (
-            patch.object(queue_manager.reconciler_scheduler, "start", AsyncMock()) as start,
+            patch.object(
+                queue_manager.reconciler_scheduler, "start", AsyncMock()
+            ) as start,
             patch.object(queue_manager, "_sleep_startup_jitter", AsyncMock()),
             patch.object(queue_manager, "polling_loop", AsyncMock()),
             patch.object(queue_manager, "cleanup", AsyncMock()),
@@ -359,6 +363,10 @@ class TestQueueProcessing:
         monkeypatch.setattr(settings.DERIVER, "SCHEDULER", "api")
         queue_manager = QueueManager()
 
+        def _claim_nothing_and_stop() -> dict[str, str]:
+            queue_manager.shutdown_event.set()
+            return {}
+
         with (
             patch.object(
                 queue_manager, "_maybe_cleanup_stale_work_units", AsyncMock()
@@ -366,7 +374,7 @@ class TestQueueProcessing:
             patch.object(
                 queue_manager,
                 "get_and_claim_work_units",
-                AsyncMock(side_effect=lambda: queue_manager.shutdown_event.set() or {}),
+                AsyncMock(side_effect=_claim_nothing_and_stop),
             ),
         ):
             await queue_manager.polling_loop()

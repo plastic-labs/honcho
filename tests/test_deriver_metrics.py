@@ -7,13 +7,13 @@ import pytest
 from fastapi import HTTPException
 
 from src import schemas
-from src.config import settings
 from src.backlog import (
     DeriverMetricsPoller,
     DeriverMetricsSnapshot,
     active_work_seconds,
     outstanding_work_seconds,
 )
+from src.config import settings
 from src.dreamer.dream_due import DueDream
 from src.routers import deriver_metrics
 
@@ -88,7 +88,9 @@ class TestPoller:
                 "src.backlog.crud.get_deriver_metrics",
                 AsyncMock(return_value=stats),
             ),
-            patch("src.backlog.list_due_dreams", AsyncMock(return_value=_due_dreams(3))),
+            patch(
+                "src.backlog.list_due_dreams", AsyncMock(return_value=_due_dreams(3))
+            ),
         ):
             await poller.refresh()
 
@@ -164,7 +166,9 @@ class TestPoller:
 
         assert poller.snapshot is first
 
-    async def test_api_scheduler_enqueues_due_dreams(self, monkeypatch):
+    async def test_api_scheduler_enqueues_due_dreams(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
         monkeypatch.setattr(settings.DERIVER, "SCHEDULER", "api")
         stats = schemas.DeriverMetrics()
         poller = DeriverMetricsPoller()
@@ -190,7 +194,7 @@ class TestPoller:
         assert first_call.kwargs["session_name"] == due[0].session_name
 
     async def test_api_scheduler_does_not_reenqueue_from_the_cached_list(
-        self, monkeypatch
+        self, monkeypatch: pytest.MonkeyPatch
     ):
         monkeypatch.setattr(settings.DERIVER, "SCHEDULER", "api")
         stats = schemas.DeriverMetrics()
@@ -213,7 +217,9 @@ class TestPoller:
 
         assert enqueue.await_count == 1
 
-    async def test_deriver_scheduler_enqueues_nothing(self, monkeypatch):
+    async def test_deriver_scheduler_enqueues_nothing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
         monkeypatch.setattr(settings.DERIVER, "SCHEDULER", "deriver")
         stats = schemas.DeriverMetrics()
         poller = DeriverMetricsPoller()
@@ -235,7 +241,9 @@ class TestPoller:
         assert enqueue.await_count == 0
         assert poller.snapshot.dreams_due == 1
 
-    async def test_one_failed_enqueue_does_not_stop_the_rest(self, monkeypatch):
+    async def test_one_failed_enqueue_does_not_stop_the_rest(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
         monkeypatch.setattr(settings.DERIVER, "SCHEDULER", "api")
         stats = schemas.DeriverMetrics()
         poller = DeriverMetricsPoller()
