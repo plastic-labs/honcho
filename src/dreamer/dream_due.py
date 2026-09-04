@@ -170,9 +170,7 @@ async def list_due_dreams(db: AsyncSession) -> list[DueDream]:
     )
     active_observed = {
         (parsed.workspace_name, parsed.observed)
-        for parsed in (
-            parse_work_unit_key(key) for key in pending_representation_keys
-        )
+        for parsed in (parse_work_unit_key(key) for key in pending_representation_keys)
     }
 
     unattempted = [
