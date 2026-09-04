@@ -120,7 +120,11 @@ def _base_observation_properties() -> dict[str, Any]:
             "description": (
                 "Document IDs of source or premise observations. Required and "
                 + "must be non-empty for deductive, inductive, and contradiction "
-                + "observations."
+                + "observations. Copy the exact ID shown in [id:xxx] format from "
+                + "observation results (e.g. for '[id:abc123XYZ]' pass "
+                + "'abc123XYZ'). Message search results carry no ID and cannot "
+                + "be cited here; IDs that do not match an existing observation "
+                + "are discarded."
             ),
         },
         "premises": {
@@ -237,7 +241,7 @@ def _deductive_observation_item_schema() -> dict[str, Any]:
                 "type": "array",
                 "items": {"type": "string"},
                 "minItems": 1,
-                "description": "Required non-empty list of source observation IDs supporting the deduction",
+                "description": "Required non-empty list of source observation IDs supporting the deduction. Copy the exact ID shown in [id:xxx] format from observation results; message search results carry no ID and cannot be cited",
             },
             "premises": {
                 "type": "array",
@@ -263,7 +267,7 @@ def _inductive_observation_item_schema() -> dict[str, Any]:
                 "type": "array",
                 "items": {"type": "string"},
                 "minItems": 2,
-                "description": "Required list of at least two source observation IDs supporting the pattern",
+                "description": "Required list of at least two source observation IDs supporting the pattern. Copy the exact ID shown in [id:xxx] format from observation results; message search results carry no ID and cannot be cited",
             },
             "sources": {
                 "type": "array",
@@ -964,6 +968,88 @@ CARD_REFRESH_SPECIALIST_TOOLS: list[dict[str, Any]] = [
 ]
 
 
+# Levels whose source_ids must resolve to real documents before persistence.
+_SOURCE_GROUNDED_LEVELS: tuple[str, ...] = ("deductive", "inductive", "contradiction")
+
+
+async def _filter_ungrounded_source_ids(
+    observations: list[schemas.ObservationInput],
+    *,
+    workspace_name: str,
+    observer: str,
+    observed: str,
+) -> tuple[list[schemas.ObservationInput], list[ObservationFailure]]:
+    """Drop cited source_ids that resolve to no existing document.
+
+    Derived observations must cite the documents they are built on, but models
+    sometimes fabricate ids (or paste message text) to satisfy the tool
+    schema, and nothing downstream re-checks them: a dangling id becomes
+    permanent false provenance, breaks ``get_child_observations`` traversal,
+    and silently skews ``_latest_source_timestamp``. Resolve every cited id
+    against real documents before persistence: fabricated ids are stripped,
+    and an observation left with fewer real sources than
+    ``validate_level_fields`` requires for its level (1, or 2 for
+    contradiction) is rejected as an ``ObservationFailure`` rather than
+    stored.
+
+    Returns (grounded observations, failures for ungrounded observations).
+    """
+    cited_ids: set[str] = set()
+    for obs in observations:
+        if obs.level in _SOURCE_GROUNDED_LEVELS and obs.source_ids:
+            cited_ids.update(obs.source_ids)
+    if not cited_ids:
+        return observations, []
+
+    async with tracked_db("create_observations.ground_sources", read_only=True) as db:
+        docs = await crud.fetch_documents_by_ids(
+            db,
+            workspace_name=workspace_name,
+            observer=observer,
+            observed=observed,
+            document_ids=list(cited_ids),
+        )
+        # Collect ids inside the session scope — the ORM objects expire when
+        # it closes, and a refresh outside it has no session to run on.
+        resolved_ids = {doc.id for doc in docs}
+
+    grounded: list[schemas.ObservationInput] = []
+    failed: list[ObservationFailure] = []
+    for obs in observations:
+        if obs.level not in _SOURCE_GROUNDED_LEVELS or not obs.source_ids:
+            grounded.append(obs)
+            continue
+        real_ids = [sid for sid in obs.source_ids if sid in resolved_ids]
+        dropped = len(obs.source_ids) - len(real_ids)
+        # Mirror the per-level minimums enforced by validate_level_fields.
+        min_sources = 2 if obs.level == "contradiction" else 1
+        if len(real_ids) < min_sources:
+            failed.append(
+                ObservationFailure(
+                    content_preview=obs.content[:50],
+                    error=(
+                        f"{dropped} of {len(obs.source_ids)} source_ids do not "
+                        f"resolve to existing observations; '{obs.level}' requires "
+                        f"at least {min_sources} real source(s) "
+                        f"(cite only ids shown as [id:xxx] in observation results)"
+                    ),
+                )
+            )
+            continue
+        if dropped:
+            logger.warning(
+                "Dropped %d unresolvable source_ids from %s observation in %s/%s/%s",
+                dropped,
+                obs.level,
+                workspace_name,
+                observer,
+                observed,
+            )
+            obs = obs.model_copy(update={"source_ids": real_ids})
+        grounded.append(obs)
+    return grounded, failed
+
+
 async def create_observations(
     observations: list[schemas.ObservationInput],
     observer: str,
@@ -1010,6 +1096,21 @@ async def create_observations(
         logger.info("No non-empty observations to create")
         return ObservationsCreatedResult(created_count=0, created_levels=[], failed=[])
 
+    # Ground cited source_ids against real documents before persistence —
+    # fabricated ids are stripped and observations left without the required
+    # real sources are rejected (see _filter_ungrounded_source_ids).
+    normalized_observations, failed = await _filter_ungrounded_source_ids(
+        normalized_observations,
+        workspace_name=workspace_name,
+        observer=observer,
+        observed=observed,
+    )
+    if not normalized_observations:
+        logger.info("No observations with resolvable source_ids to create")
+        return ObservationsCreatedResult(
+            created_count=0, created_levels=[], failed=failed
+        )
+
     # Ensure collection exists (short DB scope)
     async with tracked_db("create_observations.collection") as db:
         await crud.get_or_create_collection(
@@ -1043,7 +1144,6 @@ async def create_observations(
 
     # Build document objects with pre-computed embeddings
     documents: list[schemas.DocumentCreate] = []
-    failed: list[ObservationFailure] = []
     for i, obs in enumerate(normalized_observations):
         embedding: list[float]
         if embeddings_by_index is not None:
@@ -2486,7 +2586,9 @@ def _format_message_snippets(
         )
 
     output = (
-        f"Found {total_matches} matching messages in {len(snippets)} conversation snippets {desc}:\n\n"
+        f"Found {total_matches} matching messages in {len(snippets)} conversation snippets {desc}.\n"
+        + "These are raw messages with no observation ID - do not cite them in "
+        + "source_ids; use their text in premises/sources instead:\n\n"
         + "\n\n".join(snippet_texts)
     )
     # `[0]` extracts the truncated text — telemetry signal is discarded here
