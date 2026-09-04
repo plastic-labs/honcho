@@ -24,6 +24,7 @@ from sqlalchemy.sql import func
 from src import models
 from src.cache.client import close_cache, init_cache
 from src.config import settings
+from src.db import tenant_context
 from src.dependencies import service_db
 from src.deriver.consumer import (
     process_item,
@@ -675,6 +676,17 @@ class QueueManager:
         work_unit = parse_work_unit_key(work_unit_key)
         async with self.semaphore:
             queue_item_count = 0
+            # Bind the work unit's tenant for the duration: every per-tenant DB
+            # session opened while processing it (the representation batch,
+            # process_item, and their nested crud/summarizer/dreamer sessions)
+            # inherits it via tracked_db. Cross-tenant claim/queue reads use
+            # service_db and ignore it. None when the key is not tenant-namespaced
+            # (MULTI_TENANT off, or the tenant-less reconciler task).
+            tenant_token = (
+                tenant_context.set(work_unit.tenant_id)
+                if work_unit.tenant_id is not None
+                else None
+            )
             try:
                 while not self.shutdown_event.is_set():
                     # Get worker ownership info for verification
@@ -791,6 +803,8 @@ class QueueManager:
                         break
 
             finally:
+                if tenant_token is not None:
+                    tenant_context.reset(tenant_token)
                 # Remove work unit from active_queue_sessions when done
                 ownership: WorkerOwnership | None = self.worker_ownership.get(worker_id)
                 if ownership and ownership.work_unit_key == work_unit_key:

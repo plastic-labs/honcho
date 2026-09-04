@@ -4,6 +4,25 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from src.config import settings
+from src.db import tenant_context
+
+# The task types that lead a base (non-tenant-namespaced) work_unit_key. Used to
+# tell whether a key carries a leading tenant_id prefix: the prefix is present
+# (added under MULTI_TENANT) iff the first segment is not one of these.
+_TASK_TYPES = frozenset(
+    {
+        "representation",
+        "summary",
+        "dream",
+        "webhook",
+        "deletion",
+        "reconciler",
+        "scope_backfill",
+        "scope_removal",
+    }
+)
+
 
 class ParsedWorkUnit(BaseModel):
     """Parsed work unit components."""
@@ -14,9 +33,27 @@ class ParsedWorkUnit(BaseModel):
     observer: str | None
     observed: str | None
     dream_type: str | None = None
+    # Set when the key was tenant-namespaced (MULTI_TENANT); None otherwise.
+    tenant_id: str | None = None
 
 
 def construct_work_unit_key(
+    workspace_name: str, payload: dict[str, Any] | ParsedWorkUnit
+) -> str:
+    """Generate a work unit key, tenant-namespaced when MULTI_TENANT is on.
+
+    When MULTI_TENANT is set and a tenant is in scope, the current tenant_id is
+    prepended so work units — and the batches drained from them — never span
+    tenants (workspace_name alone is not globally unique). Off, or with no tenant
+    in scope (e.g. the tenant-less reconciler task), the key is unchanged.
+    """
+    base_key = _construct_base_work_unit_key(workspace_name, payload)
+    if settings.MULTI_TENANT and (tenant := tenant_context.get()):
+        return f"{tenant}:{base_key}"
+    return base_key
+
+
+def _construct_base_work_unit_key(
     workspace_name: str, payload: dict[str, Any] | ParsedWorkUnit
 ) -> str:
     """
@@ -87,6 +124,21 @@ def construct_work_unit_key(
 
 
 def parse_work_unit_key(work_unit_key: str) -> ParsedWorkUnit:
+    """Parse a work unit key, transparently handling a tenant_id prefix.
+
+    A key produced under MULTI_TENANT is `{tenant_id}:{base_key}`; otherwise it is
+    just `{base_key}`. The two are told apart by the leading segment: a known task
+    type means no prefix; anything else is a tenant_id to strip off and record.
+    """
+    head, _, rest = work_unit_key.partition(":")
+    if head and head not in _TASK_TYPES and rest:
+        parsed = _parse_base_work_unit_key(rest)
+        parsed.tenant_id = head
+        return parsed
+    return _parse_base_work_unit_key(work_unit_key)
+
+
+def _parse_base_work_unit_key(work_unit_key: str) -> ParsedWorkUnit:
     """
     Parse a work unit key to extract its components.
 
