@@ -62,7 +62,7 @@ The **Performance** page provides comprehensive monitoring with usage metrics, h
 ## 3. Manage API Keys
 The [API Keys](https://app.honcho.dev/api-keys) page allows you to create and manage authentication tokens for different environments. You can create admin-level keys with full instance access or scope keys to a specific `Workspace`, `Peer`, or `Session`.
 
-Keys for a cloud instance can only be created here, not through the API — `POST /v3/keys` is disabled on `api.honcho.dev` and returns `405`. The same applies to the webhook management endpoints, which live on the [Webhooks](https://app.honcho.dev/webhooks) page.
+Keys can also be created programmatically. `POST /v3/keys` with an admin key returns a real cloud key on that key's instance, attributed to its owner and revocable from the [API Keys](https://app.honcho.dev/api-keys) page.
 
 Scoped keys are authorized by their narrowest claim and never widen to the whole workspace:
 

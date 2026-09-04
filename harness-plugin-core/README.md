@@ -43,10 +43,11 @@ Pass `telemetryHeaders()` as the SDK's `defaultHeaders`. Arbitrary headers are a
 
 | Header | Meaning | Example |
 |---|---|---|
-| `X-Honcho-Host` | Agent host name, or `name/version` | `harness/1.3.13` |
-| `X-Honcho-Plugin` | Honcho plugin version | `0.1.3` |
-| `X-Honcho-Runtime` | This package's version (always sent) | `0.1.0` |
+| `X-Honcho-Host` | Host harness, `name/version (platform)` | `harness/2.1.3 (darwin)` |
+| `X-Honcho-Plugin` | Honcho integration, `name/version` | `harness-honcho/0.2.11` |
 | `X-Honcho-Agent-Model` | The agent's completion model, not a Honcho model | `claude-sonnet-4-5` |
+
+Omit `hostVersion` when the harness does not expose it; `platform` defaults to `process.platform`.
 
 ```ts
 import { Honcho } from '@honcho-ai/sdk'
@@ -61,6 +62,7 @@ const honcho = new Honcho({
   defaultHeaders: telemetryHeaders({
     host: 'harness',
     hostVersion: '1.3.13',
+    plugin: 'harness-honcho',
     pluginVersion: '0.1.3',
     model: 'claude-sonnet-4-5',
   }),

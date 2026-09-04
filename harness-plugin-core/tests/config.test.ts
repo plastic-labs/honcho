@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test'
-import { normalizeBaseUrl, resolveConfig } from '../src/index.ts'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+import { configPath, normalizeBaseUrl, resolveConfig } from '../src/index'
 
 const emptyEnv = {}
 
@@ -67,5 +69,13 @@ describe('resolveConfig', () => {
     expect(cfg.enabled).toBe(true)
     expect(cfg.host).toBe('my-host')
     expect(cfg.workspace).toBe('my-host')
+  })
+})
+
+describe('configPath', () => {
+  test('HONCHO_CONFIG_PATH, then $HOME, then os.homedir()', () => {
+    expect(configPath({ HONCHO_CONFIG_PATH: '/x/cfg.json', HOME: '/h' })).toBe('/x/cfg.json')
+    expect(configPath({ HOME: '/scratch' })).toBe('/scratch/.honcho/config.json')
+    expect(configPath({})).toBe(join(homedir(), '.honcho', 'config.json'))
   })
 })
