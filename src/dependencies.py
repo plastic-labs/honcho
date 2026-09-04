@@ -5,7 +5,14 @@ from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
-from src.db import ReadSessionLocal, SessionLocal, request_context, tenant_context
+from src.db import (
+    ReadSessionLocal,
+    ServiceReadSessionLocal,
+    ServiceSessionLocal,
+    SessionLocal,
+    request_context,
+    tenant_context,
+)
 
 
 async def get_db():
@@ -112,6 +119,48 @@ async def tracked_db(
             request_context.reset(token)
         if tenant_token:  # Only reset if we set it
             tenant_context.reset(tenant_token)
+
+
+@asynccontextmanager
+async def service_db(operation_name: str | None = None, *, read_only: bool = False):
+    """RLS-bypassing session for the legitimately cross-tenant service paths.
+
+    For work that spans all tenants by design — the deriver's queue claim, the
+    reconciler's vector scans, the dreamer's scheduling, enqueue — which read and
+    write across tenants. Bound to the service engine, which in the cloud deploy
+    connects as a role that BYPASSES row-level security. This is deliberate: a
+    session that merely omits `app.tenant` would hit the fail-closed policy and see
+    ZERO rows, silently processing nothing. No tenant is bound here.
+
+    ⚠️ Claim here, work per-tenant: a work unit claimed cross-tenant must be
+    *processed* through tracked_db(tenant_id=...) — the unit carries its tenant —
+    so its writes are RLS-checked (WITH CHECK). Do not do per-tenant writes on
+    this session.
+
+    Pass read_only=True for SELECT-only cross-tenant windows (AUTOCOMMIT; see
+    tracked_db). When DB.SERVICE_CONNECTION_URI is unset this is the ordinary
+    engine (single-role — correct when MULTI_TENANT is off).
+    """
+    context = request_context.get()
+    token = None
+
+    if not context and operation_name:
+        context = f"task:{operation_name}:{str(uuid.uuid4())[:8]}"
+        token = request_context.set(context)
+
+    db = (ServiceReadSessionLocal if read_only else ServiceSessionLocal)()
+    try:
+        yield db
+    except Exception:
+        await db.rollback()
+        raise
+    finally:
+        # Always send ROLLBACK unconditionally — see get_db() comment. (Under
+        # read_only/AUTOCOMMIT it is a wire-level no-op.)
+        await db.rollback()
+        await db.close()
+        if token:  # Only reset if we set it
+            request_context.reset(token)
 
 
 db: AsyncSession = Depends(get_db)

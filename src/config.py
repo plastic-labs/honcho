@@ -723,6 +723,13 @@ class DBSettings(HonchoSettings):
     CONNECTION_URI: str = (
         "postgresql+psycopg://postgres:postgres@localhost:5432/postgres"
     )
+    # The BYPASSRLS service role's connection URI, used by service_db() for the
+    # cross-tenant service paths (deriver claim, reconciler, dreamer, enqueue).
+    # Unset → service_db() uses CONNECTION_URI (single-role), which is correct when
+    # MULTI_TENANT is off. When MULTI_TENANT is on the role split is required, so
+    # row-level security is enforced on the app role while service work can bypass
+    # it (a session that merely lacks a tenant would otherwise see zero rows).
+    SERVICE_CONNECTION_URI: str | None = None
     SCHEMA: str = "public"
     POOL_CLASS: str = "default"
     POOL_PRE_PING: bool = True

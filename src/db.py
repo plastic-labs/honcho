@@ -158,6 +158,53 @@ if settings.DB.TRACING or settings.MULTI_TENANT:
     event.listen(engine.sync_engine, "checkout", _set_session_gucs_on_checkout)
 
 
+# Service engine: for the cross-tenant service paths (see service_db in
+# src/dependencies). In the cloud deploy it connects as a role that BYPASSES
+# row-level security, so the deriver/reconciler/dreamer can read across all
+# tenants; when DB.SERVICE_CONNECTION_URI is unset it IS the ordinary engine
+# (single-role — correct when MULTI_TENANT is off / self-host). Same connect and
+# pool settings as the main engine.
+if settings.DB.SERVICE_CONNECTION_URI:
+    service_engine = create_async_engine(
+        settings.DB.SERVICE_CONNECTION_URI,
+        connect_args=connect_args,
+        echo=settings.DB.SQL_DEBUG,
+        **engine_kwargs,
+    )
+    # Mirror the main engine's checkout hook so service connections still get
+    # application_name for observability. app.tenant is also set (to '' — there is
+    # no single tenant), but it is inert here: the service role bypasses RLS, so
+    # current_setting('app.tenant') is never consulted.
+    if settings.DB.TRACING or settings.MULTI_TENANT:
+        event.listen(
+            service_engine.sync_engine, "checkout", _set_session_gucs_on_checkout
+        )
+else:
+    service_engine = engine
+
+# AUTOCOMMIT variant for SELECT-only cross-tenant work (same rationale as
+# read_engine: no BEGIN, so the backend never sits idle-in-transaction).
+service_read_engine = service_engine.execution_options(isolation_level="AUTOCOMMIT")
+
+# Cross-tenant, RLS-bypassing sessions. MUST NOT be used for per-tenant work: a
+# claimed work unit is processed via tracked_db(tenant_id=...) so its writes are
+# RLS-checked (WITH CHECK). See service_db in src/dependencies.
+ServiceSessionLocal = async_sessionmaker(
+    autocommit=False,
+    autoflush=False,
+    expire_on_commit=False,
+    bind=service_engine,
+    class_=AsyncSession,
+)
+ServiceReadSessionLocal = async_sessionmaker(
+    autocommit=False,
+    autoflush=False,
+    expire_on_commit=False,
+    bind=service_read_engine,
+    class_=AsyncSession,
+)
+
+
 def get_pool_stats() -> dict[str, int]:
     """Return live connection-pool stats for this process.
 
