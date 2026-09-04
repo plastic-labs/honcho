@@ -43,6 +43,9 @@ lancedb = [
     "lancedb>=0.25.3; sys_platform != \"darwin\" or platform_machine != \"x86_64\"",
     "pyarrow>=19.0.0",
 ]
+qdrant = [
+    "qdrant-client>=1.18.0",
+]
 [dependency-groups]
 dev = [
     "pytest>=8.2.2",
