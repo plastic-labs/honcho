@@ -36,6 +36,8 @@ Every workspace-scoped tool takes a `workspace_id` argument. If you set `X-Honch
 
 **Sessions:** `create_session`, `list_sessions`, `delete_session`, `clone_session`, `add_peers_to_session`, `remove_peers_from_session`, `get_session_peers`, `inspect_session`, `add_messages_to_session`, `get_session_messages`, `get_session_message`, `get_session_context`
 
+**Scopes:** `list_scopes`, `get_scope_sessions`
+
 **Conclusions:** `list_conclusions`, `query_conclusions`, `create_conclusions`, `delete_conclusion`
 
 **System:** `schedule_dream`, `get_queue_status`
@@ -52,7 +54,8 @@ src/
   types.ts              # ToolContext, result helpers
   tools/
     workspace.ts        # inspect, list, search, metadata
-    peers.ts            # CRUD, chat, card, context, representation
+    peers.ts            # CRUD, chat (session / scope / sessions recall bounds), card, context, representation
+    scopes.ts           # list scopes, list a scope's sessions
     sessions.ts         # CRUD, peers, messages, inspect, context, clone
     conclusions.ts      # list, query, create, delete
     system.ts           # dream, queue status
