@@ -736,6 +736,15 @@ class WorkspaceMessageSearchOptions(MessageSearchOptions):
 # ---------------------------------------------------------------------------
 
 
+_INCLUDE_EVIDENCE_DESCRIPTION = (
+    "When true, the response includes an `evidence` object listing the"
+    " conclusions and messages the agent read while answering, plus the tool"
+    " calls it made. Evidence is collated from what the agent accessed; the"
+    " model is never asked to cite anything, so evidence may over-report"
+    " (accessed is not the same as used)."
+)
+
+
 class DialecticOptions(BaseModel):
     session_id: str | None = Field(
         None, description="ID of the session to scope the representation to"
@@ -787,6 +796,9 @@ class DialecticOptions(BaseModel):
             " maxLength, ...) are hints to the model, not enforced server-side."
         ),
     )
+    include_evidence: bool = Field(
+        default=False, description=_INCLUDE_EVIDENCE_DESCRIPTION
+    )
 
 
 class WorkspaceChatOptions(BaseModel):
@@ -821,10 +833,108 @@ class WorkspaceChatOptions(BaseModel):
             "with `session_id`. Requires a workspace- or admin-level key."
         ),
     )
+    include_evidence: bool = Field(
+        default=False, description=_INCLUDE_EVIDENCE_DESCRIPTION
+    )
+
+
+class EvidenceObservation(BaseModel):
+    """A conclusion the dialectic agent read while answering."""
+
+    id: str = Field(description="Conclusion (document) ID")
+    level: DocumentLevel = Field(
+        description="Conclusion level: explicit, deductive, inductive, or contradiction"
+    )
+    content: str = Field(
+        description="The conclusion text (the derived conclusion, for non-explicit levels)"
+    )
+    created_at: datetime.datetime = Field(
+        description="When the conclusion was derived, from its source messages when known"
+    )
+    session_id: str | None = Field(
+        default=None, description="Session the conclusion is scoped to, if any"
+    )
+    source_ids: list[str] = Field(
+        default_factory=list,
+        description=(
+            "IDs of the conclusions this one was derived from. Empty for explicit"
+            " conclusions, which derive from messages rather than from other"
+            " conclusions."
+        ),
+    )
+
+
+class EvidenceMessageRef(BaseModel):
+    """A message the dialectic agent read while answering.
+
+    Identity and provenance only -- no content. Message content is
+    caller-supplied and unbounded, so carrying it would let one answer drag
+    megabytes behind it, and would invite callers to read messages out of
+    evidence in bulk rather than asking for the ones they want. Fetch the
+    message by `id` when the text is needed.
+    """
+
+    id: str = Field(description="Message ID")
+    session_id: str = Field(description="Session the message belongs to")
+    peer_id: str = Field(description="Peer who sent the message")
+    created_at: datetime.datetime = Field(description="When the message was sent")
+
+
+class EvidenceToolCall(BaseModel):
+    """A tool the dialectic agent invoked while answering."""
+
+    tool_name: str = Field(description="Name of the tool")
+    tool_input: dict[str, Any] = Field(
+        default_factory=dict, description="Arguments the agent passed to the tool"
+    )
+
+
+class Evidence(BaseModel):
+    """What the dialectic agent read and did while answering.
+
+    Collated from the agent's own reads rather than reported by the model, so
+    it is deterministic but over-reports: it lists what the agent accessed,
+    which is not necessarily what the answer relied on.
+
+    Meant for auditing and analytics -- inspecting why an answer looks the way
+    it does, or measuring what recall actually reaches the agent. It is not a
+    read API: conclusions carry their text because that text is the thing being
+    audited and the deriver keeps it short, while messages carry identity alone
+    (see `EvidenceMessageRef`).
+    """
+
+    conclusions: list[EvidenceObservation] = Field(
+        default_factory=list,
+        description="Conclusions the agent read, whether prefetched or found via its tools",
+    )
+    messages: list[EvidenceMessageRef] = Field(
+        default_factory=list,
+        description=(
+            "Messages the agent read via its search and grep tools, by ID and"
+            " provenance only. Fetch a message to read its content."
+        ),
+    )
+    tool_calls: list[EvidenceToolCall] = Field(
+        default_factory=list,
+        description=(
+            "Tools the agent invoked, in order, with their arguments. Results are"
+            " omitted (they are reflected in `conclusions` and `messages`), and so"
+            " are calls that failed, so this is a record of successful invocations"
+            " rather than a complete reasoning trace."
+        ),
+    )
+    reasoning_trace_id: str | None = Field(
+        default=None,
+        description="ID of the stored reasoning trace for this call, when trace storage is enabled",
+    )
 
 
 class DialecticResponse(BaseModel):
     content: str | None
+    evidence: Evidence | None = Field(
+        default=None,
+        description="What the answer was built from. Present only when `include_evidence` is true.",
+    )
 
 
 class DialecticStreamDelta(BaseModel):
@@ -842,6 +952,13 @@ class DialecticStreamChunk(BaseModel):
 
     delta: DialecticStreamDelta
     done: bool = False
+    evidence: Evidence | None = Field(
+        default=None,
+        description=(
+            "What the answer was built from. Set only on the final chunk"
+            " (`done` is true) and only when `include_evidence` is true."
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------

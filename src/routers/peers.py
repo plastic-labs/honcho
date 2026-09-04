@@ -1,8 +1,6 @@
 """FastAPI routes for peer resources and peer-scoped operations."""
 
-import json
 import logging
-from collections.abc import AsyncIterator
 from contextlib import suppress
 from time import perf_counter
 
@@ -28,6 +26,7 @@ from src.exceptions import (
 from src.security import JWTParams, require_auth
 from src.telemetry import prometheus_metrics
 from src.telemetry.events import EmbeddingCallPurpose, GetContextEvent, emit
+from src.utils.evidence import EvidenceAccumulator
 from src.utils.filter import MAX_SESSION_ALLOWLIST_ENTRIES, extract_session_allowlist
 from src.utils.schema_conversion import json_response_schema_to_pydantic
 from src.utils.scopes import (
@@ -37,6 +36,7 @@ from src.utils.scopes import (
     validate_scope_read_option,
 )
 from src.utils.search import search
+from src.utils.sse import format_dialectic_sse_stream
 from src.utils.types import embedding_call_purpose
 
 logger = logging.getLogger(__name__)
@@ -358,17 +358,9 @@ async def chat(
         await peer_db.commit()
     await peers_result.post_commit()
 
+    evidence = EvidenceAccumulator() if options.include_evidence else None
+
     if options.stream:
-        # Stream the response using Server-Sent Events
-
-        async def format_sse_stream(
-            chunks: AsyncIterator[str],
-        ) -> AsyncIterator[str]:
-            """Format chunks as SSE events."""
-            async for chunk in chunks:
-                yield f"data: {json.dumps({'delta': {'content': chunk}, 'done': False})}\n\n"
-            yield f"data: {json.dumps({'done': True})}\n\n"
-
         # Prometheus metrics
         if settings.METRICS.ENABLED:
             prometheus_metrics.record_dialectic_call(
@@ -377,7 +369,7 @@ async def chat(
             )
 
         return StreamingResponse(
-            format_sse_stream(
+            format_dialectic_sse_stream(
                 agentic_chat_stream(
                     workspace_name=workspace_id,
                     session_name=options.session_id,
@@ -387,7 +379,9 @@ async def chat(
                     reasoning_level=options.reasoning_level,
                     session_allowlist=session_allowlist,
                     response_model=response_model,
-                )
+                    evidence=evidence,
+                ),
+                evidence,
             ),
             media_type="text/event-stream",
         )
@@ -404,6 +398,7 @@ async def chat(
         reasoning_level=options.reasoning_level,
         session_allowlist=session_allowlist,
         response_model=response_model,
+        evidence=evidence,
     )
 
     # Prometheus metrics
@@ -413,7 +408,10 @@ async def chat(
             reasoning_level=options.reasoning_level,
         )
 
-    return schemas.DialecticResponse(content=response if response else None)
+    return schemas.DialecticResponse(
+        content=response if response else None,
+        evidence=evidence.build() if evidence is not None else None,
+    )
 
 
 @router.post(

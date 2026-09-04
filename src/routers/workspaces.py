@@ -1,8 +1,6 @@
 """FastAPI routes for workspace resources and workspace-scoped operations."""
 
-import json
 import logging
-from collections.abc import AsyncIterator
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Response
 from fastapi.responses import StreamingResponse
@@ -20,10 +18,12 @@ from src.dialectic.chat import workspace_chat, workspace_chat_stream
 from src.exceptions import AuthenticationException, ValidationException
 from src.security import JWTParams, require_auth
 from src.telemetry import prometheus_metrics
+from src.utils.evidence import EvidenceAccumulator
 from src.utils.filter import MAX_SESSION_ALLOWLIST_ENTRIES
 from src.utils.schema_conversion import json_response_schema_to_pydantic
 from src.utils.scopes import validate_scope_read_option
 from src.utils.search import search
+from src.utils.sse import format_dialectic_sse_stream
 
 logger = logging.getLogger(__name__)
 
@@ -343,16 +343,11 @@ async def chat(
             reasoning_level=options.reasoning_level,
         )
 
+    evidence = EvidenceAccumulator() if options.include_evidence else None
+
     if options.stream:
-
-        async def format_sse_stream(chunks: AsyncIterator[str]) -> AsyncIterator[str]:
-            """Format chunks as SSE events."""
-            async for chunk in chunks:
-                yield f"data: {json.dumps({'delta': {'content': chunk}, 'done': False})}\n\n"
-            yield f"data: {json.dumps({'done': True})}\n\n"
-
         return StreamingResponse(
-            format_sse_stream(
+            format_dialectic_sse_stream(
                 workspace_chat_stream(
                     workspace_name=workspace_id,
                     session_name=options.session_id,
@@ -360,7 +355,9 @@ async def chat(
                     reasoning_level=options.reasoning_level,
                     response_model=response_model,
                     session_allowlist=session_allowlist,
-                )
+                    evidence=evidence,
+                ),
+                evidence,
             ),
             media_type="text/event-stream",
         )
@@ -372,5 +369,9 @@ async def chat(
         reasoning_level=options.reasoning_level,
         response_model=response_model,
         session_allowlist=session_allowlist,
+        evidence=evidence,
     )
-    return schemas.DialecticResponse(content=response if response else None)
+    return schemas.DialecticResponse(
+        content=response if response else None,
+        evidence=evidence.build() if evidence is not None else None,
+    )

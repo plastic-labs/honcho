@@ -158,6 +158,29 @@ const status = await peer.chat(
 
 The agent runs its full reasoning loop either way — only the final answer is formatted to your schema. See [Structured Outputs](/v3/documentation/features/advanced/structured-outputs) for the supported schema subset, streaming behavior, and best practices.
 
+## Evidence
+
+Pass `include_evidence` to get back the conclusions and messages the agent read while answering, alongside the tools it called:
+
+<CodeGroup>
+```python Python
+result = peer.chat("What coffee does this user prefer?", include_evidence=True)
+
+print(result.content)
+for conclusion in result.evidence.conclusions:
+    print(conclusion.id, conclusion.content)
+```
+
+```typescript TypeScript
+const { content, evidence } = await peer.chat(
+  "What coffee does this user prefer?",
+  { includeEvidence: true }
+);
+```
+</CodeGroup>
+
+Evidence is collated from what the agent read rather than reported by the model, so it lists everything that was available to the answer rather than only what the answer used. See [Evidence](/v3/documentation/features/advanced/evidence) for the full shape, streaming behavior, and what the trade-off costs you.
+
 ## Integration Patterns
 
 ### Dynamic Prompt Enhancement

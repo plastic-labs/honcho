@@ -31,6 +31,7 @@ from src.utils.agent_tools import (
     create_workspace_tool_executor,
     format_workspace_stats,
 )
+from src.utils.evidence import EvidenceAccumulator
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,7 @@ class WorkspaceDialecticAgent(DialecticAgent):
         reasoning_level: ReasoningLevel = "low",
         session_id: str | None = None,
         session_allowlist: list[str] | None = None,
+        evidence: EvidenceAccumulator | None = None,
     ) -> None:
         super().__init__(
             workspace_name=workspace_name,
@@ -61,6 +63,7 @@ class WorkspaceDialecticAgent(DialecticAgent):
             reasoning_level=reasoning_level,
             session_id=session_id,
             session_allowlist=session_allowlist,
+            evidence=evidence,
         )
         # Replace the pair-oriented system prompt with the workspace one.
         self.messages[0] = {
@@ -194,6 +197,7 @@ class WorkspaceDialecticAgent(DialecticAgent):
             run_id=self._run_id,
             agent_type="workspace_dialectic",
             parent_category="dialectic",
+            evidence=self.evidence,
         )
 
     # Workspace chat shares the base "dialectic_chat" Langfuse trace name;

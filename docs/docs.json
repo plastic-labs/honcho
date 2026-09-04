@@ -74,6 +74,7 @@
                       "v3/documentation/features/advanced/search",
                       "v3/documentation/features/advanced/using-filters",
                       "v3/documentation/features/advanced/structured-outputs",
+                      "v3/documentation/features/advanced/evidence",
                       "v3/documentation/features/advanced/streaming-response",
                       "v3/documentation/features/advanced/file-uploads",
                       "v3/documentation/features/advanced/deleting-data"
