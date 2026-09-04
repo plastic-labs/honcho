@@ -37,18 +37,23 @@ _VECTOR_DIM: int = settings.EMBEDDING.VECTOR_DIMENSIONS
 logger = getLogger(__name__)
 
 
-# The single tenant every single-tenant / self-host deployment operates as. New
-# tenant-scoped rows default to the current tenant (tenant_context, when one is
-# bound) or this constant when no tenant is in scope (self-host / flag off).
+# The single tenant every single-tenant / self-host deployment operates as.
+# region ai
+# New tenant-scoped rows default to the current tenant (tenant_context, when one
+# is bound) or this constant when no tenant is in scope (self-host / flag off).
+# endregion
 DEFAULT_TENANT_ID = "default"
 
 
 def _default_tenant_id() -> str:
     """Model-side default for tenant_id columns: the request's tenant, or the
-    single self-host tenant when none is in scope. Populates every ORM create
-    without threading tenant_id through call sites. Intentionally NOT a DB-level
-    default: that would need a migration and could silently stamp a tenant on a
-    flag-on row that forgot to set one (tracked_db fail-closes that case instead)."""
+    single self-host tenant when none is in scope."""
+    # region ai
+    # Populates every ORM create without threading tenant_id through call sites.
+    # Intentionally NOT a DB-level default: that would need a migration and could
+    # silently stamp a tenant on a flag-on row that forgot to set one (tracked_db
+    # fail-closes that case instead).
+    # endregion
     return tenant_context.get() or DEFAULT_TENANT_ID
 
 

@@ -725,18 +725,23 @@ class DBSettings(HonchoSettings):
     )
     # The BYPASSRLS service role's connection URI, used by service_db() for the
     # cross-tenant service paths (deriver claim, reconciler, dreamer, enqueue).
+    # region ai
     # Unset → service_db() uses CONNECTION_URI (single-role), which is correct when
     # MULTI_TENANT is off. When MULTI_TENANT is on the role split is required, so
     # row-level security is enforced on the app role while service work can bypass
     # it (a session that merely lacks a tenant would otherwise see zero rows).
+    # endregion
     SERVICE_CONNECTION_URI: str | None = None
     SCHEMA: str = "public"
     POOL_CLASS: str = "default"
     # The pooling mode the deployment's connection path actually runs — hand-set
-    # (not probed) so it is auditable. Only consulted when MULTI_TENANT is on: the
-    # session-scoped read-path binding LEAKS across tenants under a transaction/
-    # statement-mode pooler (backends are multiplexed below the session), so the
-    # startup tenant-isolation validator refuses to boot in that combination.
+    # (not probed) so it is auditable.
+    # region ai
+    # Only consulted when MULTI_TENANT is on: the session-scoped read-path binding
+    # LEAKS across tenants under a transaction/statement-mode pooler (backends are
+    # multiplexed below the session), so the startup tenant-isolation validator
+    # refuses to boot in that combination.
+    # endregion
     POOLER_MODE: Literal["none", "session", "transaction", "statement"] = "session"
     POOL_PRE_PING: bool = True
     POOL_SIZE: Annotated[int, Field(default=10, gt=0, le=1000)] = 10
@@ -1549,18 +1554,22 @@ class AppSettings(HonchoSettings):
 
     NAMESPACE: str = "honcho"  # Top-level namespace for all settings, can be overridden by nested-model settings
 
-    # Multi-tenant isolation toggle (default off = single-tenant). When on,
-    # tenant-scoped DB sessions carry a request-scoped `app.tenant` GUC so
-    # Postgres row-level-security policies resolve, and `tracked_db` requires a
-    # tenant_id (failing closed if it is absent). When off, no tenant is bound
-    # and Honcho runs as a plain single-tenant app on RLS-free Postgres. The RLS
+    # Multi-tenant isolation toggle (default off = single-tenant).
+    # region ai
+    # When on, tenant-scoped DB sessions carry a request-scoped `app.tenant` GUC
+    # so Postgres row-level-security policies resolve, and `tracked_db` requires a
+    # tenant_id (failing closed if it is absent). When off, no tenant is bound and
+    # Honcho runs as a plain single-tenant app on RLS-free Postgres. The RLS
     # policies are provisioned on the database out of band, not by this app.
+    # endregion
     MULTI_TENANT: bool = False
 
     # Escape hatch for the migration window ONLY: skip the startup assertion that
-    # RLS is enabled+forced on the data tables when MULTI_TENANT is on. Lets the
-    # app boot after the flag flips but before the cloud RLS policies land. Off in
-    # steady state — leaving it on defeats the isolation guarantee.
+    # RLS is enabled+forced on the data tables when MULTI_TENANT is on.
+    # region ai
+    # Lets the app boot after the flag flips but before the cloud RLS policies land.
+    # Off in steady state — leaving it on defeats the isolation guarantee.
+    # endregion
     MULTI_TENANT_SKIP_RLS_ASSERT: bool = False
 
     # Nested settings models

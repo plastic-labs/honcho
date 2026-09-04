@@ -51,11 +51,13 @@ async def enqueue(payload: list[dict[str, Any]]) -> None:
                 f"Cancelled {len(cancelled_dreams)} pending dreams due to new activity"
             )
 
+    # region ai
     # Per-tenant work: the payload is a single session's messages (one workspace +
     # session, below), so the session/workspace/peer resolution in handle_session
     # must be RLS-scoped to the caller's tenant, not run on the cross-tenant service
     # session. tracked_db inherits the ambient tenant; the queue table has no RLS,
     # so the insert is fine on it too.
+    # endregion
     async with tracked_db("message_enqueue") as db_session:
         try:
             # Determine if batch or single processing

@@ -676,12 +676,14 @@ class QueueManager:
         work_unit = parse_work_unit_key(work_unit_key)
         async with self.semaphore:
             queue_item_count = 0
+            # region ai
             # Bind the work unit's tenant for the duration: every per-tenant DB
             # session opened while processing it (the representation batch,
             # process_item, and their nested crud/summarizer/dreamer sessions)
             # inherits it via tracked_db. Cross-tenant claim/queue reads use
             # service_db and ignore it. None when the key is not tenant-namespaced
             # (MULTI_TENANT off, or the tenant-less reconciler task).
+            # endregion
             tenant_token = (
                 tenant_context.set(work_unit.tenant_id)
                 if work_unit.tenant_id is not None
@@ -873,8 +875,10 @@ class QueueManager:
             result = await db.execute(query)
             queue_item = result.scalar_one_or_none()
 
+            # region ai
             # Important: commit to avoid service_db's rollback expiring the instance
             # We rely on expire_on_commit=False to keep attributes accessible post-close
+            # endregion
             await db.commit()
             return queue_item
 
@@ -907,12 +911,14 @@ class QueueManager:
         messages_context: list[models.Message] = []
         items_to_process: list[QueueItem] = []
 
+        # region ai
         # This batch runs on the RLS-bypassing service session, so RLS does not
         # scope the message reads. The work_unit_key is tenant-namespaced under
         # MULTI_TENANT; carry that tenant into the message-context queries so a
         # session/workspace name shared across tenants can't pull another tenant's
         # messages into the batch. None (flag off, or a legacy un-prefixed key)
         # adds no filter, so self-host is unchanged.
+        # endregion
         tenant_clause = (
             models.Message.tenant_id == parsed_key.tenant_id
             if parsed_key.tenant_id is not None

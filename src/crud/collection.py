@@ -67,8 +67,10 @@ async def _fetch_collection(
     if obj is None:
         return None
     return {
+        # region ai
         # tenant_id leads the composite PK; without it the reconstructed object
         # has an incomplete identity and merge/update can't locate its row.
+        # endregion
         "tenant_id": obj.tenant_id,
         "id": obj.id,
         "observer": obj.observer,

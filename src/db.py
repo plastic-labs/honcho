@@ -33,11 +33,13 @@ request_context: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "request_context", default=None
 )
 
-# Context variable holding the current request's tenant. Read at connection
-# checkout to bind the session-scoped `app.tenant` GUC when MULTI_TENANT is on.
-# Set explicitly via tracked_db(tenant_id=...), or by the deriver from a claimed
-# work unit's key; a per-request binding at the API boundary is not yet wired.
-# None outside any tenant scope.
+# Context variable holding the current request's tenant.
+# region ai
+# Read at connection checkout to bind the session-scoped `app.tenant` GUC when
+# MULTI_TENANT is on. Set explicitly via tracked_db(tenant_id=...), or by the
+# deriver from a claimed work unit's key; a per-request binding at the API
+# boundary is not yet wired. None outside any tenant scope.
+# endregion
 tenant_context: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "tenant_context", default=None
 )
@@ -102,30 +104,30 @@ ReadSessionLocal = async_sessionmaker(
 def _set_session_gucs_on_checkout(
     dbapi_connection: Any, _connection_record: Any, _connection_proxy: Any
 ) -> None:
-    """Set session-scoped GUCs on each checked-out connection.
-
-    Registered when ``DB.TRACING`` or ``MULTI_TENANT`` is on; fires on every pool
-    checkout (so a reused pooled connection is re-tagged for the new caller). Two
-    independent GUCs, each gated on its own setting, applied in one autocommit pass:
-
-    - ``application_name`` (when ``DB.TRACING``): the per-task ``request_context``,
-      for observability. Best-effort — a failure only mislabels a backend.
-    - ``app.tenant`` (when ``MULTI_TENANT``): the request's tenant, so row-level
-      security policies resolve. This is the ONLY place it can be bound on the
-      AUTOCOMMIT read path, which has no transaction for a ``SET LOCAL`` to attach
-      to, so it is set session-scoped (``is_local=false``) and persists across the
-      whole checkout. Set on EVERY checkout — to the current tenant, or to '' when
-      none is in scope — so a reused connection never carries a prior tenant's
-      value; an empty/unset tenant makes the policy match zero rows (fails CLOSED,
-      never cross-tenant). Session-scoped safety assumes the connection is not
-      multiplexed across transactions below the session (no transaction-mode
-      pooler); the startup checks enforce that.
-
-    Runs in autocommit so it never leaves the connection 'idle in transaction' at
-    checkout: this hook fires BEFORE the dialect applies execution-option isolation
-    levels, and psycopg refuses to switch a connection into AUTOCOMMIT (which the
-    read engine does) while a transaction opened here is still in progress.
-    """
+    """Set session-scoped GUCs on each checked-out connection."""
+    # region ai
+    # Registered when ``DB.TRACING`` or ``MULTI_TENANT`` is on; fires on every pool
+    # checkout (so a reused pooled connection is re-tagged for the new caller). Two
+    # independent GUCs, each gated on its own setting, applied in one autocommit pass:
+    #
+    # - ``application_name`` (when ``DB.TRACING``): the per-task ``request_context``,
+    #   for observability. Best-effort — a failure only mislabels a backend.
+    # - ``app.tenant`` (when ``MULTI_TENANT``): the request's tenant, so row-level
+    #   security policies resolve. This is the ONLY place it can be bound on the
+    #   AUTOCOMMIT read path, which has no transaction for a ``SET LOCAL`` to attach
+    #   to, so it is set session-scoped (``is_local=false``) and persists across the
+    #   whole checkout. Set on EVERY checkout — to the current tenant, or to '' when
+    #   none is in scope — so a reused connection never carries a prior tenant's
+    #   value; an empty/unset tenant makes the policy match zero rows (fails CLOSED,
+    #   never cross-tenant). Session-scoped safety assumes the connection is not
+    #   multiplexed across transactions below the session (no transaction-mode
+    #   pooler); the startup checks enforce that.
+    #
+    # Runs in autocommit so it never leaves the connection 'idle in transaction' at
+    # checkout: this hook fires BEFORE the dialect applies execution-option isolation
+    # levels, and psycopg refuses to switch a connection into AUTOCOMMIT (which the
+    # read engine does) while a transaction opened here is still in progress.
+    # endregion
     set_tracing = settings.DB.TRACING
     set_tenant = settings.MULTI_TENANT
     if not set_tracing and not set_tenant:
@@ -138,18 +140,22 @@ def _set_session_gucs_on_checkout(
         cursor = dbapi_connection.cursor()
         try:
             if set_tenant:
+                # region ai
                 # Bind the tenant FIRST and treat failure as fatal. A pooled
                 # connection is reused across tenants, so one handed out still
                 # carrying a prior checkout's app.tenant is a cross-tenant leak
                 # (fail-open) — on failure we invalidate it below rather than serve
                 # it with an unknown tenant.
+                # endregion
                 tenant = tenant_context.get() or ""
                 cursor.execute(
                     "SELECT set_config('app.tenant', %s, false)", (tenant,)
                 )
             if set_tracing:
+                # region ai
                 # Observability only — best-effort, never blocks checkout. A
                 # mislabeled application_name is harmless.
+                # endregion
                 try:
                     context = request_context.get() or "unknown"
                     cursor.execute(
@@ -162,10 +168,12 @@ def _set_session_gucs_on_checkout(
         finally:
             cursor.close()
     except Exception as e:
+        # region ai
         # Reached only when the tenant bind (or its cursor) failed. When
         # MULTI_TENANT is off there is no tenant to bind, so this stays best-effort;
         # when it is on, invalidate the connection so the pool discards it instead
         # of reusing it with an unknown/stale tenant.
+        # endregion
         if set_tenant:
             logger.warning(
                 "binding app.tenant on checkout failed; invalidating connection",
@@ -183,11 +191,14 @@ if settings.DB.TRACING or settings.MULTI_TENANT:
 
 
 # Service engine: for the cross-tenant service paths (see service_db in
-# src/dependencies). In the cloud deploy it connects as a role that BYPASSES
-# row-level security, so the deriver/reconciler/dreamer can read across all
-# tenants; when DB.SERVICE_CONNECTION_URI is unset it IS the ordinary engine
-# (single-role — correct when MULTI_TENANT is off / self-host). Same connect and
-# pool settings as the main engine.
+# src/dependencies).
+# region ai
+# In the cloud deploy it connects as a role that BYPASSES row-level security, so
+# the deriver/reconciler/dreamer can read across all tenants; when
+# DB.SERVICE_CONNECTION_URI is unset it IS the ordinary engine (single-role —
+# correct when MULTI_TENANT is off / self-host). Same connect and pool settings
+# as the main engine.
+# endregion
 if settings.DB.SERVICE_CONNECTION_URI:
     service_engine = create_async_engine(
         settings.DB.SERVICE_CONNECTION_URI,
@@ -195,10 +206,12 @@ if settings.DB.SERVICE_CONNECTION_URI:
         echo=settings.DB.SQL_DEBUG,
         **engine_kwargs,
     )
+    # region ai
     # Mirror the main engine's checkout hook so service connections still get
     # application_name for observability. app.tenant is also set (to '' — there is
     # no single tenant), but it is inert here: the service role bypasses RLS, so
     # current_setting('app.tenant') is never consulted.
+    # endregion
     if settings.DB.TRACING or settings.MULTI_TENANT:
         event.listen(
             service_engine.sync_engine, "checkout", _set_session_gucs_on_checkout
@@ -206,13 +219,18 @@ if settings.DB.SERVICE_CONNECTION_URI:
 else:
     service_engine = engine
 
+# region ai
 # AUTOCOMMIT variant for SELECT-only cross-tenant work (same rationale as
 # read_engine: no BEGIN, so the backend never sits idle-in-transaction).
+# endregion
 service_read_engine = service_engine.execution_options(isolation_level="AUTOCOMMIT")
 
-# Cross-tenant, RLS-bypassing sessions. MUST NOT be used for per-tenant work: a
-# claimed work unit is processed via tracked_db(tenant_id=...) so its writes are
-# RLS-checked (WITH CHECK). See service_db in src/dependencies.
+# Cross-tenant, RLS-bypassing sessions.
+# region ai
+# MUST NOT be used for per-tenant work: a claimed work unit is processed via
+# tracked_db(tenant_id=...) so its writes are RLS-checked (WITH CHECK). See
+# service_db in src/dependencies.
+# endregion
 ServiceSessionLocal = async_sessionmaker(
     autocommit=False,
     autoflush=False,

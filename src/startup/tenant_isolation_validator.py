@@ -40,8 +40,11 @@ from src.startup.embedding_validator import StartupValidationError
 logger = logging.getLogger(__name__)
 
 # The tenant-scoped data tables that MUST carry RLS (enabled + forced) when
-# MULTI_TENANT is on. The service tables (queue, active_queue_sessions) are
-# deliberately excluded — they hold no tenant data behind RLS.
+# MULTI_TENANT is on.
+# region ai
+# The service tables (queue, active_queue_sessions) are deliberately excluded —
+# they hold no tenant data behind RLS.
+# endregion
 _RLS_REQUIRED_TABLES: tuple[str, ...] = (
     "workspaces",
     "peers",
@@ -54,8 +57,10 @@ _RLS_REQUIRED_TABLES: tuple[str, ...] = (
     "webhook_endpoints",
 )
 
+# region ai
 # Pooler modes that multiplex backends below the SQLAlchemy session, which the
 # session-scoped read-path binding cannot survive.
+# endregion
 _UNSAFE_POOLER_MODES: frozenset[str] = frozenset({"transaction", "statement"})
 
 _RETRY_ATTEMPTS = 3
@@ -92,13 +97,14 @@ async def validate_tenant_isolation(
 
 
 def _assert_service_role_configured(s: AppSettings) -> None:
-    """Require a distinct service connection once RLS is enforced.
-
-    The cross-tenant service paths (deriver claim, reconciler, dreamer, enqueue)
-    read tenant data across tenants and must run on a role that BYPASSES RLS. With
-    DB_SERVICE_CONNECTION_URI unset, service_db falls back to the RLS-enforced app
-    role, so those reads match zero rows and the deriver silently processes nothing.
-    """
+    """Require a distinct service connection once RLS is enforced."""
+    # region ai
+    # The cross-tenant service paths (deriver claim, reconciler, dreamer, enqueue)
+    # read tenant data across tenants and must run on a role that BYPASSES RLS.
+    # With DB_SERVICE_CONNECTION_URI unset, service_db falls back to the
+    # RLS-enforced app role, so those reads match zero rows and the deriver
+    # silently processes nothing.
+    # endregion
     if not s.DB.SERVICE_CONNECTION_URI:
         raise StartupValidationError(
             "MULTI_TENANT is on with RLS enforced but DB_SERVICE_CONNECTION_URI is"
@@ -122,8 +128,8 @@ def _assert_pooler_mode_safe(pooler_mode: str) -> None:
 async def _introspect_rls_with_retry(
     engine: AsyncEngine, schema: str
 ) -> dict[str, tuple[bool, bool]]:
-    """Return {table -> (relrowsecurity, relforcerowsecurity)} for the data
-    tables. Fails closed on the last attempt — uncertainty is not a green light."""
+    """Return {table -> (relrowsecurity, relforcerowsecurity)} for the data tables."""
+    # ai: fails closed on the last attempt — uncertainty is not a green light.
     try:
         async for attempt in AsyncRetrying(
             stop=stop_after_attempt(_RETRY_ATTEMPTS),
@@ -139,19 +145,19 @@ async def _introspect_rls_with_retry(
         raise StartupValidationError(
             f"could not validate tenant-isolation RLS: {underlying}"
         ) from underlying
-    # Unreachable: AsyncRetrying either returns from inside the loop or raises.
+    # ai: unreachable — AsyncRetrying either returns from inside the loop or raises.
     raise StartupValidationError("tenant-isolation RLS introspection did not run")
 
 
 async def _introspect_rls_once(
     engine: AsyncEngine, schema: str
 ) -> dict[str, tuple[bool, bool]]:
-    """Schema-qualified pg_class read of the RLS flags for the data tables.
-
-    On the shared (partitioned) schema these are the partitioned parents; ENABLE
-    /FORCE ROW LEVEL SECURITY on a parent cascades to its partitions, and the
-    parent's pg_class row carries the flags — so reading the parent is correct.
-    """
+    """Schema-qualified pg_class read of the RLS flags for the data tables."""
+    # region ai
+    # On the shared (partitioned) schema these are the partitioned parents;
+    # ENABLE/FORCE ROW LEVEL SECURITY on a parent cascades to its partitions, and
+    # the parent's pg_class row carries the flags — so reading the parent is correct.
+    # endregion
     query = text(
         """
         SELECT c.relname AS table_name,

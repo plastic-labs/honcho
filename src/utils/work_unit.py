@@ -7,9 +7,11 @@ from pydantic import BaseModel
 from src.config import settings
 from src.db import tenant_context
 
-# The task types that lead a base (non-tenant-namespaced) work_unit_key. Used to
-# tell whether a key carries a leading tenant_id prefix: the prefix is present
-# (added under MULTI_TENANT) iff the first segment is not one of these.
+# The task types that lead a base (non-tenant-namespaced) work_unit_key.
+# region ai
+# Used to tell whether a key carries a leading tenant_id prefix: the prefix is
+# present (added under MULTI_TENANT) iff the first segment is not one of these.
+# endregion
 _TASK_TYPES = frozenset(
     {
         "representation",
@@ -43,17 +45,18 @@ def construct_work_unit_key(
     *,
     tenant_id: str | None = None,
 ) -> str:
-    """Generate a work unit key, tenant-namespaced when MULTI_TENANT is on.
-
-    When MULTI_TENANT is set and a tenant is in scope, the current tenant_id is
-    prepended so work units — and the batches drained from them — never span
-    tenants (workspace_name alone is not globally unique). Off, or with no tenant
-    in scope (e.g. the tenant-less reconciler task), the key is unchanged.
-
-    Pass tenant_id explicitly for callers that hold the tenant but run without it
-    in ambient scope — e.g. the dreamer, which schedules per-collection work on the
-    cross-tenant service session; otherwise the tenant is read from tenant_context.
-    """
+    """Generate a work unit key, tenant-namespaced when MULTI_TENANT is on."""
+    # region ai
+    # When MULTI_TENANT is set and a tenant is in scope, the current tenant_id is
+    # prepended so work units — and the batches drained from them — never span
+    # tenants (workspace_name alone is not globally unique). Off, or with no tenant
+    # in scope (e.g. the tenant-less reconciler task), the key is unchanged.
+    #
+    # Pass tenant_id explicitly for callers that hold the tenant but run without it
+    # in ambient scope — e.g. the dreamer, which schedules per-collection work on
+    # the cross-tenant service session; otherwise the tenant is read from
+    # tenant_context.
+    # endregion
     base_key = _construct_base_work_unit_key(workspace_name, payload)
     if settings.MULTI_TENANT and (tenant := tenant_id or tenant_context.get()):
         return f"{tenant}:{base_key}"
@@ -131,12 +134,13 @@ def _construct_base_work_unit_key(
 
 
 def parse_work_unit_key(work_unit_key: str) -> ParsedWorkUnit:
-    """Parse a work unit key, transparently handling a tenant_id prefix.
-
-    A key produced under MULTI_TENANT is `{tenant_id}:{base_key}`; otherwise it is
-    just `{base_key}`. The two are told apart by the leading segment: a known task
-    type means no prefix; anything else is a tenant_id to strip off and record.
-    """
+    """Parse a work unit key, transparently handling a tenant_id prefix."""
+    # region ai
+    # A key produced under MULTI_TENANT is `{tenant_id}:{base_key}`; otherwise it
+    # is just `{base_key}`. The two are told apart by the leading segment: a known
+    # task type means no prefix; anything else is a tenant_id to strip off and
+    # record.
+    # endregion
     head, _, rest = work_unit_key.partition(":")
     if head and head not in _TASK_TYPES and rest:
         parsed = _parse_base_work_unit_key(rest)

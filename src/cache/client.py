@@ -147,23 +147,24 @@ def cache_prefix_namespace() -> str:
 
 
 def _tenant_scope_middleware() -> Any:
-    """Prefix every cache key with the current tenant when MULTI_TENANT is on.
+    """Prefix every cache key with the current tenant when MULTI_TENANT is on."""
 
-    honcho's cache keys are workspace_name-scoped, and workspace_name is not unique
-    across tenants (every tenant has a "default" workspace), so without this a
-    cross-tenant cache hit would return another tenant's row and bypass row-level
-    security — the cache is read before the DB. Prefixing every key with the
-    request's tenant keeps entries (and the per-key locks) isolated across
-    get/set/delete. No-op when MULTI_TENANT is off, so self-host keys are
-    byte-for-byte unchanged. Modeled on cashews' own add_prefix helper.
-    """
+    # region ai
+    # honcho's cache keys are workspace_name-scoped, and workspace_name is not unique
+    # across tenants (every tenant has a "default" workspace), so without this a
+    # cross-tenant cache hit would return another tenant's row and bypass row-level
+    # security — the cache is read before the DB. Prefixing every key with the
+    # request's tenant keeps entries (and the per-key locks) isolated across
+    # get/set/delete. No-op when MULTI_TENANT is off, so self-host keys are
+    # byte-for-byte unchanged. Modeled on cashews' own add_prefix helper.
+    # endregion
 
     async def _middleware(
         call: Any, cmd: Command, _backend: Any, *args: Any, **kwargs: Any
     ) -> Any:
         if not settings.MULTI_TENANT:
             return await call(*args, **kwargs)
-        # Deferred import: keep cache.client free of a load-time dependency on db.
+        # ai: deferred import keeps cache.client free of a load-time dependency on db.
         from src.db import tenant_context
 
         prefix = f"t:{tenant_context.get() or 'default'}:"
@@ -184,7 +185,7 @@ def _tenant_scope_middleware() -> Any:
     return _middleware
 
 
-# Registered once at import; applies to every backend cache.setup() installs.
+# ai: registered once at import; applies to every backend cache.setup() installs.
 cache.add_middleware(_tenant_scope_middleware())
 
 
