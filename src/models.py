@@ -28,13 +28,28 @@ from sqlalchemy.sql import func
 from src.config import settings
 from src.utils.types import DocumentLevel, TaskType, VectorSyncState
 
-from .db import Base
+from .db import Base, tenant_context
 
 load_dotenv(override=True)
 
 _VECTOR_DIM: int = settings.EMBEDDING.VECTOR_DIMENSIONS
 
 logger = getLogger(__name__)
+
+
+# The single tenant every single-tenant / self-host deployment operates as. New
+# tenant-scoped rows default to the request's tenant (tenant_context, set under
+# MULTI_TENANT) or this constant when no tenant is in scope (self-host / flag off).
+DEFAULT_TENANT_ID = "default"
+
+
+def _default_tenant_id() -> str:
+    """Model-side default for tenant_id columns: the request's tenant, or the
+    single self-host tenant when none is in scope. Populates every ORM create
+    without threading tenant_id through call sites. Intentionally NOT a DB-level
+    default: that would need a migration and could silently stamp a tenant on a
+    flag-on row that forgot to set one (tracked_db fail-closes that case instead)."""
+    return tenant_context.get() or DEFAULT_TENANT_ID
 
 
 # Association table for many-to-many relationship between sessions and peers
@@ -48,6 +63,7 @@ session_peers_table = Table(
         ForeignKey("tenants.tenant_id"),
         primary_key=True,
         nullable=False,
+        default=_default_tenant_id,
     ),
     Column(
         "workspace_name",
@@ -136,7 +152,10 @@ class Workspace(Base):
     # declared first. It FKs to the local tenants mirror (see Tenant).
     # endregion
     tenant_id: Mapped[str] = mapped_column(
-        TEXT, ForeignKey("tenants.tenant_id"), nullable=False
+        TEXT,
+        ForeignKey("tenants.tenant_id"),
+        nullable=False,
+        default=_default_tenant_id,
     )
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid)
     name: Mapped[str] = mapped_column(TEXT)
@@ -180,7 +199,10 @@ class Workspace(Base):
 class Peer(Base):
     __tablename__: str = "peers"
     tenant_id: Mapped[str] = mapped_column(
-        TEXT, ForeignKey("tenants.tenant_id"), nullable=False
+        TEXT,
+        ForeignKey("tenants.tenant_id"),
+        nullable=False,
+        default=_default_tenant_id,
     )
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid)
     name: Mapped[str] = mapped_column(TEXT, nullable=False)
@@ -229,7 +251,10 @@ class Peer(Base):
 class Session(Base):
     __tablename__: str = "sessions"
     tenant_id: Mapped[str] = mapped_column(
-        TEXT, ForeignKey("tenants.tenant_id"), nullable=False
+        TEXT,
+        ForeignKey("tenants.tenant_id"),
+        nullable=False,
+        default=_default_tenant_id,
     )
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid)
     name: Mapped[str] = mapped_column(TEXT)
@@ -276,7 +301,10 @@ class Session(Base):
 class Message(Base):
     __tablename__: str = "messages"
     tenant_id: Mapped[str] = mapped_column(
-        TEXT, ForeignKey("tenants.tenant_id"), nullable=False
+        TEXT,
+        ForeignKey("tenants.tenant_id"),
+        nullable=False,
+        default=_default_tenant_id,
     )
     id: Mapped[int] = mapped_column(BigInteger, Identity(), autoincrement=True)
     public_id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid)
@@ -362,7 +390,10 @@ class MessageEmbedding(Base):
     __tablename__: str = "message_embeddings"
 
     tenant_id: Mapped[str] = mapped_column(
-        TEXT, ForeignKey("tenants.tenant_id"), nullable=False
+        TEXT,
+        ForeignKey("tenants.tenant_id"),
+        nullable=False,
+        default=_default_tenant_id,
     )
     id: Mapped[int] = mapped_column(BigInteger, Identity(), autoincrement=True)
     content: Mapped[str] = mapped_column(TEXT)
@@ -448,7 +479,10 @@ class Collection(Base):
     __tablename__: str = "collections"
 
     tenant_id: Mapped[str] = mapped_column(
-        TEXT, ForeignKey("tenants.tenant_id"), nullable=False
+        TEXT,
+        ForeignKey("tenants.tenant_id"),
+        nullable=False,
+        default=_default_tenant_id,
     )
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid)
     observer: Mapped[str] = mapped_column(TEXT)
@@ -499,7 +533,10 @@ class Collection(Base):
 class Document(Base):
     __tablename__: str = "documents"
     tenant_id: Mapped[str] = mapped_column(
-        TEXT, ForeignKey("tenants.tenant_id"), nullable=False
+        TEXT,
+        ForeignKey("tenants.tenant_id"),
+        nullable=False,
+        default=_default_tenant_id,
     )
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid)
     internal_metadata: Mapped[dict[str, Any]] = mapped_column(
@@ -694,7 +731,10 @@ class ActiveQueueSession(Base):
 class WebhookEndpoint(Base):
     __tablename__: str = "webhook_endpoints"
     tenant_id: Mapped[str] = mapped_column(
-        TEXT, ForeignKey("tenants.tenant_id"), nullable=False
+        TEXT,
+        ForeignKey("tenants.tenant_id"),
+        nullable=False,
+        default=_default_tenant_id,
     )
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid)
     workspace_name: Mapped[str] = mapped_column(TEXT, nullable=False)
