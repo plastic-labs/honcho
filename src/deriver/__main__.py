@@ -11,7 +11,7 @@ from src.db import (
     register_db_connection_instrumentation,
     register_db_query_instrumentation,
 )
-from src.startup import validate_embedding_schema
+from src.startup import validate_embedding_schema, validate_tenant_isolation
 from src.telemetry import (
     initialize_telemetry_async,
     prometheus_metrics,
@@ -83,6 +83,7 @@ async def run_deriver():
         # gate the API runs in its lifespan. Inside the try block so the
         # telemetry buffer is still flushed if validation raises.
         await validate_embedding_schema(engine)
+        await validate_tenant_isolation(engine)
         await main()
     finally:
         # Shutdown telemetry (flush CloudEvents buffer)

@@ -732,6 +732,12 @@ class DBSettings(HonchoSettings):
     SERVICE_CONNECTION_URI: str | None = None
     SCHEMA: str = "public"
     POOL_CLASS: str = "default"
+    # The pooling mode the deployment's connection path actually runs — hand-set
+    # (not probed) so it is auditable. Only consulted when MULTI_TENANT is on: the
+    # session-scoped read-path binding LEAKS across tenants under a transaction/
+    # statement-mode pooler (backends are multiplexed below the session), so the
+    # startup tenant-isolation validator refuses to boot in that combination.
+    POOLER_MODE: Literal["none", "session", "transaction", "statement"] = "session"
     POOL_PRE_PING: bool = True
     POOL_SIZE: Annotated[int, Field(default=10, gt=0, le=1000)] = 10
     MAX_OVERFLOW: Annotated[int, Field(default=20, ge=0, le=1000)] = 20
@@ -1550,6 +1556,12 @@ class AppSettings(HonchoSettings):
     # and Honcho runs as a plain single-tenant app on RLS-free Postgres. The RLS
     # policies are provisioned on the database out of band, not by this app.
     MULTI_TENANT: bool = False
+
+    # Escape hatch for the migration window ONLY: skip the startup assertion that
+    # RLS is enabled+forced on the data tables when MULTI_TENANT is on. Lets the
+    # app boot after the flag flips but before the cloud RLS policies land. Off in
+    # steady state — leaving it on defeats the isolation guarantee.
+    MULTI_TENANT_SKIP_RLS_ASSERT: bool = False
 
     # Nested settings models
     DB: DBSettings = Field(default_factory=DBSettings)
