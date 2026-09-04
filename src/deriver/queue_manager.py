@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 from nanoid import generate as generate_nanoid
 from sentry_sdk.integrations.asyncio import AsyncioIntegration
 from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
-from sqlalchemy import Text, and_, delete, literal, or_, select, update
+from sqlalchemy import Text, and_, delete, literal, or_, select, true, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,7 +24,8 @@ from sqlalchemy.sql import func
 from src import models
 from src.cache.client import close_cache, init_cache
 from src.config import settings
-from src.dependencies import tracked_db
+from src.db import tenant_context
+from src.dependencies import service_db
 from src.deriver.consumer import (
     process_item,
     process_representation_batch,
@@ -93,7 +94,7 @@ def _detach_queue_batch_objects(
     messages_context: list[models.Message],
     items_to_process: list[QueueItem],
 ) -> None:
-    """Detach loaded batch objects so they remain usable after tracked_db exits."""
+    """Detach loaded batch objects so they remain usable after service_db exits."""
     seen: set[int] = set()
     for obj in [*messages_context, *items_to_process]:
         obj_id = id(obj)
@@ -254,8 +255,8 @@ class QueueManager:
         if total_work_units > 0:
             logger.debug(f"Cleaning up {total_work_units} owned work units...")
             try:
-                # Use the tracked_db dependency for transaction safety
-                async with tracked_db("queue_cleanup") as db:
+                # Use the service_db dependency for transaction safety
+                async with service_db("queue_cleanup") as db:
                     aqs_ids = [
                         ownership.aqs_id for ownership in self.worker_ownership.values()
                     ]
@@ -308,7 +309,7 @@ class QueueManager:
 
     async def cleanup_stale_work_units(self) -> None:
         """Clean up stale work units"""
-        async with tracked_db("cleanup_stale_work_units") as db:
+        async with service_db("cleanup_stale_work_units") as db:
             cutoff = datetime.now(UTC) - timedelta(
                 minutes=settings.DERIVER.STALE_SESSION_TIMEOUT_MINUTES
             )
@@ -352,7 +353,7 @@ class QueueManager:
             settings.DERIVER.REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS
         )
 
-        async with tracked_db("get_available_work_units") as db:
+        async with service_db("get_available_work_units") as db:
             representation_prefix = "representation:"
             token_stats_subq = (
                 select(
@@ -583,7 +584,7 @@ class QueueManager:
                     logger.exception("Error in polling loop")
                     if settings.SENTRY.ENABLED:
                         sentry_sdk.capture_exception(e)
-                    # Note: rollback is handled by tracked_db dependency.
+                    # Note: rollback is handled by service_db dependency.
                     # Back off so a down/saturated DB isn't hammered every cycle.
                     await asyncio.sleep(self._advance_poll_interval())
         finally:
@@ -675,6 +676,19 @@ class QueueManager:
         work_unit = parse_work_unit_key(work_unit_key)
         async with self.semaphore:
             queue_item_count = 0
+            # region ai
+            # Bind the work unit's tenant for the duration: every per-tenant DB
+            # session opened while processing it (the representation batch,
+            # process_item, and their nested crud/summarizer/dreamer sessions)
+            # inherits it via tracked_db. Cross-tenant claim/queue reads use
+            # service_db and ignore it. None when the key is not tenant-namespaced
+            # (MULTI_TENANT off, or the tenant-less reconciler task).
+            # endregion
+            tenant_token = (
+                tenant_context.set(work_unit.tenant_id)
+                if work_unit.tenant_id is not None
+                else None
+            )
             try:
                 while not self.shutdown_event.is_set():
                     # Get worker ownership info for verification
@@ -791,6 +805,8 @@ class QueueManager:
                         break
 
             finally:
+                if tenant_token is not None:
+                    tenant_context.reset(tenant_token)
                 # Remove work unit from active_queue_sessions when done
                 ownership: WorkerOwnership | None = self.worker_ownership.get(worker_id)
                 if ownership and ownership.work_unit_key == work_unit_key:
@@ -836,7 +852,7 @@ class QueueManager:
             raise ValueError(
                 "representation tasks are not supported for get_next_queue_item"
             )
-        async with tracked_db("get_next_queue_item") as db:
+        async with service_db("get_next_queue_item") as db:
             # ActiveQueueSession conditions for worker ownership verification
             aqs_conditions = [
                 models.ActiveQueueSession.work_unit_key == work_unit_key,
@@ -859,8 +875,10 @@ class QueueManager:
             result = await db.execute(query)
             queue_item = result.scalar_one_or_none()
 
-            # Important: commit to avoid tracked_db's rollback expiring the instance
+            # region ai
+            # Important: commit to avoid service_db's rollback expiring the instance
             # We rely on expire_on_commit=False to keep attributes accessible post-close
+            # endregion
             await db.commit()
             return queue_item
 
@@ -893,7 +911,21 @@ class QueueManager:
         messages_context: list[models.Message] = []
         items_to_process: list[QueueItem] = []
 
-        async with tracked_db("get_queue_item_batch") as db:
+        # region ai
+        # This batch runs on the RLS-bypassing service session, so RLS does not
+        # scope the message reads. The work_unit_key is tenant-namespaced under
+        # MULTI_TENANT; carry that tenant into the message-context queries so a
+        # session/workspace name shared across tenants can't pull another tenant's
+        # messages into the batch. None (flag off, or a legacy un-prefixed key)
+        # adds no filter, so self-host is unchanged.
+        # endregion
+        tenant_clause = (
+            models.Message.tenant_id == parsed_key.tenant_id
+            if parsed_key.tenant_id is not None
+            else true()
+        )
+
+        async with service_db("get_queue_item_batch") as db:
             # For batch tasks, get messages based on token limit.
             # Step 1: Verify worker still owns the work_unit_key.
             ownership_check = await db.execute(
@@ -927,6 +959,7 @@ class QueueManager:
                 .where(models.Message.session_name == parsed_key.session_name)
                 .where(models.Message.workspace_name == parsed_key.workspace_name)
                 .where(models.QueueItem.work_unit_key == work_unit_key)
+                .where(tenant_clause)
                 .scalar_subquery()
             )
 
@@ -936,6 +969,7 @@ class QueueManager:
                 .where(models.Message.session_name == parsed_key.session_name)
                 .where(models.Message.workspace_name == parsed_key.workspace_name)
                 .where(models.Message.id < min_unprocessed_message_id_subq)
+                .where(tenant_clause)
                 .scalar_subquery()
             )
 
@@ -975,6 +1009,7 @@ class QueueManager:
                 .where(models.Message.session_name == parsed_key.session_name)
                 .where(models.Message.workspace_name == parsed_key.workspace_name)
                 .where(models.Message.id >= effective_start_id)
+                .where(tenant_clause)
                 .subquery()
             )
 
@@ -1148,7 +1183,7 @@ class QueueManager:
 
     async def _get_work_unit_retry_attempts(self, work_unit_key: str) -> int:
         """Read the shared transient-failure attempt count for a work unit."""
-        async with tracked_db("get_work_unit_retry_attempts") as db:
+        async with service_db("get_work_unit_retry_attempts") as db:
             item = await self._oldest_unprocessed_item(db, work_unit_key)
             if item is None:
                 return 0
@@ -1162,7 +1197,7 @@ class QueueManager:
         self, work_unit_key: str, attempts: int
     ) -> None:
         """Persist the shared attempt count on the oldest unprocessed item."""
-        async with tracked_db("set_work_unit_retry_attempts") as db:
+        async with service_db("set_work_unit_retry_attempts") as db:
             item = await self._oldest_unprocessed_item(
                 db, work_unit_key, for_update=True
             )
@@ -1187,7 +1222,7 @@ class QueueManager:
         operator does the strip server-side, so no rows are locked ahead of the
         write and there is no lock order to get wrong.
         """
-        async with tracked_db("clear_work_unit_retry_attempts") as db:
+        async with service_db("clear_work_unit_retry_attempts") as db:
             await db.execute(
                 update(models.QueueItem)
                 .where(
@@ -1211,7 +1246,7 @@ class QueueManager:
     ) -> None:
         if not items:
             return
-        async with tracked_db("process_queue_item_batch") as db:
+        async with service_db("process_queue_item_batch") as db:
             work_unit = parse_work_unit_key(work_unit_key)
             item_ids = [item.id for item in items]
             await db.execute(
@@ -1244,7 +1279,7 @@ class QueueManager:
         """Mark queue item as processed with an error"""
         if not item:
             return
-        async with tracked_db("mark_queue_item_as_errored") as db:
+        async with service_db("mark_queue_item_as_errored") as db:
             await db.execute(
                 update(models.QueueItem)
                 .where(models.QueueItem.id == item.id)
@@ -1266,7 +1301,7 @@ class QueueManager:
         """
         Clean up a specific work unit session by both work_unit_key and AQS ID.
         """
-        async with tracked_db("cleanup_work_unit") as db:
+        async with service_db("cleanup_work_unit") as db:
             result = cast(
                 CursorResult[Any],
                 await db.execute(

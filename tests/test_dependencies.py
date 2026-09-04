@@ -5,7 +5,7 @@ import pytest
 
 import src.dependencies as dependencies_module
 from src.config import settings
-from src.db import request_context
+from src.db import request_context, tenant_context
 from src.dependencies import get_db as real_get_db
 from src.dependencies import tracked_db as real_tracked_db
 
@@ -264,7 +264,9 @@ async def test_write_session_holds_idle_in_transaction_after_select() -> None:
 
 
 @pytest.mark.asyncio
-async def test_read_only_session_works_with_tracing_checkout_hook() -> None:
+async def test_read_only_session_works_with_tracing_checkout_hook(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # Regression: the DB.TRACING checkout hook runs set_config() at pool
     # checkout, BEFORE the dialect applies the read engine's AUTOCOMMIT
     # isolation level. If that statement is allowed to autobegin a transaction,
@@ -276,13 +278,14 @@ async def test_read_only_session_works_with_tracing_checkout_hook() -> None:
     from sqlalchemy import event, text
 
     from src.db import (
-        _set_application_name_on_checkout,  # pyright: ignore[reportPrivateUsage]
+        _set_session_gucs_on_checkout,  # pyright: ignore[reportPrivateUsage]
         engine,
         read_engine,
     )
 
+    monkeypatch.setattr(settings.DB, "TRACING", True)
     context_token = request_context.set("tracing-regression")
-    event.listen(engine.sync_engine, "checkout", _set_application_name_on_checkout)
+    event.listen(engine.sync_engine, "checkout", _set_session_gucs_on_checkout)
     try:
         async with real_tracked_db("read_op", read_only=True) as db:
             pid = (await db.execute(text("SELECT pg_backend_pid()"))).scalar()
@@ -306,5 +309,92 @@ async def test_read_only_session_works_with_tracing_checkout_hook() -> None:
                 ).scalar()
             assert state == "idle"
     finally:
-        event.remove(engine.sync_engine, "checkout", _set_application_name_on_checkout)
+        event.remove(engine.sync_engine, "checkout", _set_session_gucs_on_checkout)
         request_context.reset(context_token)
+
+
+@pytest.mark.asyncio
+async def test_tracked_db_fails_closed_when_multi_tenant_on_and_no_tenant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Fail-closed: with MULTI_TENANT on and neither an explicit tenant_id nor an
+    # ambient tenant_context, tracked_db must raise BEFORE it constructs a session,
+    # so a tenant-scoped session can never run unbound (which under RLS would read
+    # cross-tenant). SessionLocal is wired to fail the test if it is ever reached.
+    monkeypatch.setattr(settings, "MULTI_TENANT", True)
+    monkeypatch.setattr(
+        dependencies_module,
+        "SessionLocal",
+        lambda: pytest.fail("tracked_db built a session despite a missing tenant"),
+    )
+
+    clear_tenant = tenant_context.set(None)
+    try:
+        with pytest.raises(ValueError, match="requires a tenant"):
+            async with real_tracked_db("op"):
+                pass
+    finally:
+        tenant_context.reset(clear_tenant)
+
+
+@pytest.mark.asyncio
+async def test_tracked_db_no_tenant_is_noop_when_multi_tenant_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Flag off (self-host default): a tenant-less tracked_db is a clean no-op — no
+    # guard, an ordinary session, byte-for-byte the pre-MULTI_TENANT behavior.
+    fake_db = FakeSession()
+    monkeypatch.setattr(settings, "MULTI_TENANT", False)
+    monkeypatch.setattr(dependencies_module, "SessionLocal", lambda: fake_db)
+
+    clear_tenant = tenant_context.set(None)
+    try:
+        async with real_tracked_db("op") as db:
+            assert db is fake_db
+    finally:
+        tenant_context.reset(clear_tenant)
+
+    assert fake_db.rollback_calls == 1  # unconditional rollback in finally
+    assert fake_db.close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_tracked_db_binds_explicit_tenant_when_multi_tenant_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Flag on, explicit tenant_id: no raise, and the tenant is bound into
+    # tenant_context for the block (so the checkout hook binds app.tenant) and
+    # reset to its prior value on exit.
+    fake_db = FakeSession()
+    monkeypatch.setattr(settings, "MULTI_TENANT", True)
+    monkeypatch.setattr(dependencies_module, "SessionLocal", lambda: fake_db)
+
+    clear_tenant = tenant_context.set(None)
+    try:
+        async with real_tracked_db("op", tenant_id="tenant-a") as db:
+            assert db is fake_db
+            assert tenant_context.get() == "tenant-a"
+        assert tenant_context.get() is None  # reset on exit
+    finally:
+        tenant_context.reset(clear_tenant)
+
+
+@pytest.mark.asyncio
+async def test_tracked_db_inherits_ambient_tenant_when_multi_tenant_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Flag on, no explicit tenant_id but an ambient tenant_context set by an outer
+    # scope (the auth boundary, or the deriver binding a claimed unit's tenant):
+    # the nested session inherits it and does not raise. This is the ambient path
+    # that lets nested sessions skip re-passing the tenant.
+    fake_db = FakeSession()
+    monkeypatch.setattr(settings, "MULTI_TENANT", True)
+    monkeypatch.setattr(dependencies_module, "SessionLocal", lambda: fake_db)
+
+    ambient = tenant_context.set("tenant-ambient")
+    try:
+        async with real_tracked_db("op") as db:
+            assert db is fake_db
+            assert tenant_context.get() == "tenant-ambient"  # inherited, unchanged
+    finally:
+        tenant_context.reset(ambient)

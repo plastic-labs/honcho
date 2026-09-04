@@ -12,7 +12,7 @@ from sqlalchemy import CursorResult, delete
 
 from src import models
 from src.config import settings
-from src.dependencies import tracked_db
+from src.dependencies import service_db
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +27,7 @@ async def cleanup_queue_items() -> int:
     Returns:
         The number of queue items deleted.
     """
-    async with tracked_db("cleanup_queue_items") as db:
+    async with service_db("cleanup_queue_items") as db:
         now = datetime.now(timezone.utc)
         error_cutoff = now - timedelta(
             seconds=settings.DERIVER.QUEUE_ERROR_RETENTION_SECONDS

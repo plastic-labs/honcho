@@ -60,6 +60,7 @@ class DreamScheduler:
         *,
         observer: str,
         observed: str,
+        tenant_id: str | None = None,
         trigger_reason: str | None = None,
         delay_reason: str | None = None,
         documents_since_last_dream_at_schedule: int | None = None,
@@ -85,6 +86,7 @@ class DreamScheduler:
                 dream_type,
                 observer=observer,
                 observed=observed,
+                tenant_id=tenant_id,
                 trigger_reason=trigger_reason,
                 delay_reason=delay_reason,
                 documents_since_last_dream_at_schedule=documents_since_last_dream_at_schedule,
@@ -146,6 +148,7 @@ class DreamScheduler:
         *,
         observer: str,
         observed: str,
+        tenant_id: str | None = None,
         trigger_reason: str | None = None,
         delay_reason: str | None = None,
         documents_since_last_dream_at_schedule: int | None = None,
@@ -159,6 +162,7 @@ class DreamScheduler:
                 dream_type,
                 observer=observer,
                 observed=observed,
+                tenant_id=tenant_id,
                 trigger_reason=trigger_reason,
                 delay_reason=delay_reason,
                 documents_since_last_dream_at_schedule=documents_since_last_dream_at_schedule,
@@ -180,6 +184,7 @@ class DreamScheduler:
         *,
         observer: str,
         observed: str,
+        tenant_id: str | None = None,
         trigger_reason: str | None = None,
         delay_reason: str | None = None,
         documents_since_last_dream_at_schedule: int | None = None,
@@ -190,7 +195,14 @@ class DreamScheduler:
         from src.deriver.enqueue import enqueue_dream
         from src.utils.config_helpers import get_configuration
 
-        async with tracked_db("dream_session_lookup") as db:
+        # region ai
+        # Runs from a detached timer with no ambient tenant, so bind the
+        # collection's tenant explicitly and go through tracked_db (RLS-scoped)
+        # rather than service_db: the reads below match Document/session/workspace
+        # by name only, and those names are not unique across tenants — a bypass
+        # session would read another tenant's rows. Per-tenant work, not cross-tenant.
+        # endregion
+        async with tracked_db("dream_session_lookup", tenant_id=tenant_id) as db:
             stmt = (
                 select(models.Document.session_name)
                 .where(
@@ -344,6 +356,11 @@ async def check_and_schedule_dream(
                     "observed": collection.observed,
                     "dream_type": dream_type,
                 },
+                # region ai
+                # Runs cross-tenant on the service session with no ambient tenant;
+                # pass the collection's tenant so the dedup key is tenant-scoped.
+                # endregion
+                tenant_id=collection.tenant_id,
             )
             for dream_type in enabled_dream_types
         ]
@@ -377,6 +394,7 @@ async def check_and_schedule_dream(
                         "observed": collection.observed,
                         "dream_type": dream_type,
                     },
+                    tenant_id=collection.tenant_id,
                 )
                 await dream_scheduler.schedule_dream(
                     dream_work_unit_key,
@@ -385,6 +403,7 @@ async def check_and_schedule_dream(
                     dream_type=DreamType(dream_type),
                     observer=collection.observer,
                     observed=collection.observed,
+                    tenant_id=collection.tenant_id,
                     trigger_reason=trigger_reason,
                     delay_reason=delay_reason,
                     documents_since_last_dream_at_schedule=documents_since_last_dream,

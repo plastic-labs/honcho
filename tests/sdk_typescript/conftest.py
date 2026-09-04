@@ -58,7 +58,7 @@ def find_free_port() -> int:
 @pytest.fixture(scope="module")
 def ts_db_session(
     db_engine: AsyncEngine,
-) -> Generator[async_sessionmaker[AsyncSession], None, None]:
+) -> Generator[async_sessionmaker[AsyncSession]]:
     """Create a session factory for the TypeScript test module."""
     Session = async_sessionmaker(bind=db_engine, expire_on_commit=False)
     yield Session
@@ -71,7 +71,7 @@ _ts_session_factory: async_sessionmaker[AsyncSession] | None = None
 @pytest.fixture(scope="module")
 def ts_test_server(
     ts_db_session: async_sessionmaker[AsyncSession],
-) -> Generator[str, None, None]:
+) -> Generator[str]:
     """
     Start a real HTTP server for TypeScript SDK tests.
 
@@ -136,16 +136,19 @@ def mock_tracked_db(ts_db_session: async_sessionmaker[AsyncSession]):
 
     # Create a tracked_db that uses fresh sessions (not shared)
     @asynccontextmanager
-    async def ts_tracked_db(_: str | None = None, *, read_only: bool = False):
-        # read_only accepted (and ignored): tests use one per-test database.
-        del read_only
+    async def ts_tracked_db(
+        _: str | None = None, *, read_only: bool = False, tenant_id: str | None = None
+    ):
+        # read_only and tenant_id accepted (and ignored): tests use one per-test db.
+        del read_only, tenant_id
         async with ts_db_session() as session:
             yield session
 
     with (
         patch("src.dependencies.tracked_db", ts_tracked_db),
-        patch("src.deriver.queue_manager.tracked_db", ts_tracked_db),
+        patch("src.deriver.queue_manager.service_db", ts_tracked_db),
         patch("src.deriver.consumer.tracked_db", ts_tracked_db),
+        patch("src.deriver.enqueue.service_db", ts_tracked_db),
         patch("src.deriver.enqueue.tracked_db", ts_tracked_db),
         patch("src.routers.peers.tracked_db", ts_tracked_db),
         patch("src.crud.representation.tracked_db", ts_tracked_db),
