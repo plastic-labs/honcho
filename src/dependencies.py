@@ -4,7 +4,8 @@ from contextlib import asynccontextmanager
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.db import ReadSessionLocal, SessionLocal, request_context
+from src.config import settings
+from src.db import ReadSessionLocal, SessionLocal, request_context, tenant_context
 
 
 async def get_db():
@@ -54,7 +55,12 @@ async def get_read_db():
 
 
 @asynccontextmanager
-async def tracked_db(operation_name: str | None = None, *, read_only: bool = False):
+async def tracked_db(
+    operation_name: str | None = None,
+    *,
+    read_only: bool = False,
+    tenant_id: str | None = None,
+):
     """Context manager for tracked database sessions.
 
     Sets a task-scoped request_context so the lazy session picks it up for
@@ -65,7 +71,20 @@ async def tracked_db(operation_name: str | None = None, *, read_only: bool = Fal
     open transaction (no idle-in-transaction parking; the pooler can reclaim
     the backend between statements). Never use read_only=True on a path that
     mutates — see ReadSessionLocal.
+
+    tenant_id binds this session to a tenant: it is set into tenant_context for
+    the duration so the connection-checkout hook applies the `app.tenant` GUC
+    (see src/db.py) and the RLS policies resolve. When MULTI_TENANT is enabled it
+    is REQUIRED — a missing tenant_id raises here, before any query executes, so a
+    tenant-scoped session can never run unbound (fail-closed). Legitimately
+    cross-tenant work must use service_db(), not a null tenant here.
     """
+    if settings.MULTI_TENANT and tenant_id is None:
+        raise ValueError(
+            "tracked_db requires tenant_id when MULTI_TENANT is enabled; "
+            + "cross-tenant paths must use service_db()"
+        )
+
     # Get request ID if available, or create operation-specific one
     context = request_context.get()
     token = None
@@ -73,6 +92,10 @@ async def tracked_db(operation_name: str | None = None, *, read_only: bool = Fal
     if not context and operation_name:
         context = f"task:{operation_name}:{str(uuid.uuid4())[:8]}"
         token = request_context.set(context)
+
+    tenant_token = None
+    if tenant_id is not None:
+        tenant_token = tenant_context.set(tenant_id)
 
     db = (ReadSessionLocal if read_only else SessionLocal)()
     try:
@@ -87,6 +110,8 @@ async def tracked_db(operation_name: str | None = None, *, read_only: bool = Fal
         await db.close()
         if token:  # Only reset if we set it
             request_context.reset(token)
+        if tenant_token:  # Only reset if we set it
+            tenant_context.reset(tenant_token)
 
 
 db: AsyncSession = Depends(get_db)
