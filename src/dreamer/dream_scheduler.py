@@ -270,7 +270,7 @@ async def check_and_schedule_dream(
     Returns:
         True if a dream timer was scheduled, False otherwise
     """
-    if not settings.DREAM.ENABLED:
+    if not settings.DREAM.ENABLED or settings.DERIVER.SCHEDULER == "api":
         return False
 
     dream_metadata = collection.internal_metadata.get("dream", {})

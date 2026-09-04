@@ -164,6 +164,40 @@ class TestCountDueDreams:
 
         assert await count_due_dreams(db_session) == 1
 
+    async def test_pending_representation_work_blocks_a_due_dream(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        collection = await _make_collection(db_session, sample_data)
+        await _insert_docs(db_session, collection, "explicit", 60, age_minutes=90)
+
+        session_name = await _make_session(db_session, collection.workspace_name)
+        representation_key = construct_work_unit_key(
+            collection.workspace_name,
+            {
+                "task_type": "representation",
+                "session_name": session_name,
+                "observed": collection.observed,
+            },
+        )
+        item = models.QueueItem(
+            work_unit_key=representation_key,
+            payload={"task_type": "representation"},
+            task_type="representation",
+            workspace_name=collection.workspace_name,
+            processed=False,
+        )
+        db_session.add(item)
+        await db_session.commit()
+
+        assert await count_due_dreams(db_session) == 0
+
+        item.processed = True
+        await db_session.commit()
+
+        assert await count_due_dreams(db_session) == 1
+
     async def test_documents_since_last_dream_uses_stored_count(
         self,
         db_session: AsyncSession,
