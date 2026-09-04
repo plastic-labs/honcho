@@ -1536,6 +1536,14 @@ class AppSettings(HonchoSettings):
 
     NAMESPACE: str = "honcho"  # Top-level namespace for all settings, can be overridden by nested-model settings
 
+    # Multi-tenant isolation toggle (default off = single-tenant). When on,
+    # tenant-scoped DB sessions carry a request-scoped `app.tenant` GUC so
+    # Postgres row-level-security policies resolve, and `tracked_db` requires a
+    # tenant_id (failing closed if it is absent). When off, no tenant is bound
+    # and Honcho runs as a plain single-tenant app on RLS-free Postgres. The RLS
+    # policies are provisioned on the database out of band, not by this app.
+    MULTI_TENANT: bool = False
+
     # Nested settings models
     DB: DBSettings = Field(default_factory=DBSettings)
     AUTH: AuthSettings = Field(default_factory=AuthSettings)
