@@ -221,7 +221,7 @@ def _create_store_by_type(store_type: str) -> VectorStore:
             raise RuntimeError(
                 "VECTOR_STORE.TYPE is set to 'qdrant', but the 'qdrant-client' "
                 + "package could not be imported. Install Honcho's 'qdrant' extra "
-                + "(for example, `uv sync --extra qdrant`)"
+                + "(for example, `uv sync --extra qdrant`). "
                 + f"Original import error: {exc}"
             ) from exc
 

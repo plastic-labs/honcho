@@ -9,6 +9,7 @@ import pytest
 from qdrant_client import models
 
 from src.exceptions import VectorStoreError
+from src.vector_store import VectorRecord
 from src.vector_store.qdrant import (
     QdrantVectorStore,
     _point_id,  # pyright: ignore[reportPrivateUsage]
@@ -25,6 +26,8 @@ def _mock_client(store: QdrantVectorStore) -> MagicMock:
     client = MagicMock()
     client.collection_exists = AsyncMock(return_value=True)
     client.query_points = AsyncMock(return_value=SimpleNamespace(points=[]))
+    client.upsert = AsyncMock()
+    client.delete = AsyncMock()
     client.get_collection = AsyncMock()
     store._client = client  # pyright: ignore[reportPrivateUsage]
     return client
@@ -56,6 +59,34 @@ async def test_query_returns_empty_when_collection_missing(
 
     assert results == []
     client.query_points.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_query_short_circuits_on_nonpositive_top_k(
+    store: QdrantVectorStore,
+) -> None:
+    client = _mock_client(store)
+    client.query_points = AsyncMock()
+
+    for top_k in (0, -1):
+        assert (
+            await store.query("honcho.msg.test", [0.1, 0.2, 0.3, 0.4], top_k=top_k)
+            == []
+        )
+
+    client.collection_exists.assert_not_awaited()
+    client.query_points.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_query_raises_vector_store_error_on_failure(
+    store: QdrantVectorStore,
+) -> None:
+    client = _mock_client(store)
+    client.query_points = AsyncMock(side_effect=RuntimeError("boom"))
+
+    with pytest.raises(VectorStoreError):
+        await store.query("honcho.msg.test", [0.1, 0.2, 0.3, 0.4])
 
 
 @pytest.mark.asyncio
@@ -176,3 +207,26 @@ async def test_probe_raises_when_vector_config_missing(
 
     with pytest.raises(VectorStoreError):
         await store.probe_namespace_dim("corrupt")
+
+
+@pytest.mark.asyncio
+async def test_upsert_many_raises_vector_store_error_on_failure(
+    store: QdrantVectorStore,
+) -> None:
+    client = _mock_client(store)
+    client.upsert = AsyncMock(side_effect=RuntimeError("boom"))
+    record = VectorRecord(id="doc_1", embedding=[0.1, 0.2, 0.3, 0.4])
+
+    with pytest.raises(VectorStoreError):
+        await store.upsert_many("honcho.doc.test", [record])
+
+
+@pytest.mark.asyncio
+async def test_delete_many_raises_vector_store_error_on_failure(
+    store: QdrantVectorStore,
+) -> None:
+    client = _mock_client(store)
+    client.delete = AsyncMock(side_effect=RuntimeError("boom"))
+
+    with pytest.raises(VectorStoreError):
+        await store.delete_many("honcho.doc.test", ["doc_1"])

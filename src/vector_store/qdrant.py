@@ -99,6 +99,9 @@ class QdrantVectorStore(VectorStore):
         max_distance: float | None = None,
         include_attributes: bool | list[str] = True,
     ) -> list[VectorQueryResult]:
+        if top_k <= 0:
+            return []
+
         if not await self._client.collection_exists(namespace):
             return []
 
@@ -109,13 +112,19 @@ class QdrantVectorStore(VectorStore):
         else:
             with_payload = True
 
-        response = await self._client.query_points(
-            collection_name=namespace,
-            query=embedding,
-            limit=top_k,
-            query_filter=self._build_filter(filters) if filters else None,
-            with_payload=with_payload,
-        )
+        try:
+            response = await self._client.query_points(
+                collection_name=namespace,
+                query=embedding,
+                limit=top_k,
+                query_filter=self._build_filter(filters) if filters else None,
+                with_payload=with_payload,
+            )
+        except Exception as e:
+            logger.exception(f"Failed to query namespace {namespace}")
+            raise VectorStoreError(
+                f"Qdrant query failed for namespace {namespace}"
+            ) from e
 
         results: list[VectorQueryResult] = []
         for hit in response.points:
@@ -137,10 +146,18 @@ class QdrantVectorStore(VectorStore):
             return
         if not await self._client.collection_exists(namespace):
             return
-        await self._client.delete(
-            collection_name=namespace,
-            points_selector=[_point_id(i) for i in ids],
-        )
+        try:
+            await self._client.delete(
+                collection_name=namespace,
+                points_selector=[_point_id(i) for i in ids],
+            )
+        except Exception as e:
+            logger.exception(
+                f"Failed to delete {len(ids)} vectors from namespace {namespace}"
+            )
+            raise VectorStoreError(
+                f"Qdrant delete failed for namespace {namespace}"
+            ) from e
 
     async def delete_namespace(self, namespace: str) -> None:
         if await self._client.collection_exists(namespace):
