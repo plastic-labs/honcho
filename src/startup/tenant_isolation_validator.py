@@ -88,6 +88,24 @@ async def validate_tenant_isolation(
 
     rls = await _introspect_rls_with_retry(engine, s.DB.SCHEMA)
     _assert_rls_enforced(rls, schema=s.DB.SCHEMA)
+    _assert_service_role_configured(s)
+
+
+def _assert_service_role_configured(s: AppSettings) -> None:
+    """Require a distinct service connection once RLS is enforced.
+
+    The cross-tenant service paths (deriver claim, reconciler, dreamer, enqueue)
+    read tenant data across tenants and must run on a role that BYPASSES RLS. With
+    DB_SERVICE_CONNECTION_URI unset, service_db falls back to the RLS-enforced app
+    role, so those reads match zero rows and the deriver silently processes nothing.
+    """
+    if not s.DB.SERVICE_CONNECTION_URI:
+        raise StartupValidationError(
+            "MULTI_TENANT is on with RLS enforced but DB_SERVICE_CONNECTION_URI is"
+            + " unset: the cross-tenant service paths would run on the RLS-enforced"
+            + " app role and read zero rows. Configure a service connection whose"
+            + " role bypasses RLS."
+        )
 
 
 def _assert_pooler_mode_safe(pooler_mode: str) -> None:

@@ -38,7 +38,10 @@ class ParsedWorkUnit(BaseModel):
 
 
 def construct_work_unit_key(
-    workspace_name: str, payload: dict[str, Any] | ParsedWorkUnit
+    workspace_name: str,
+    payload: dict[str, Any] | ParsedWorkUnit,
+    *,
+    tenant_id: str | None = None,
 ) -> str:
     """Generate a work unit key, tenant-namespaced when MULTI_TENANT is on.
 
@@ -46,9 +49,13 @@ def construct_work_unit_key(
     prepended so work units — and the batches drained from them — never span
     tenants (workspace_name alone is not globally unique). Off, or with no tenant
     in scope (e.g. the tenant-less reconciler task), the key is unchanged.
+
+    Pass tenant_id explicitly for callers that hold the tenant but run without it
+    in ambient scope — e.g. the dreamer, which schedules per-collection work on the
+    cross-tenant service session; otherwise the tenant is read from tenant_context.
     """
     base_key = _construct_base_work_unit_key(workspace_name, payload)
-    if settings.MULTI_TENANT and (tenant := tenant_context.get()):
+    if settings.MULTI_TENANT and (tenant := tenant_id or tenant_context.get()):
         return f"{tenant}:{base_key}"
     return base_key
 

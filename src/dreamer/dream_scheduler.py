@@ -344,6 +344,9 @@ async def check_and_schedule_dream(
                     "observed": collection.observed,
                     "dream_type": dream_type,
                 },
+                # Runs cross-tenant on the service session with no ambient tenant;
+                # pass the collection's tenant so the dedup key is tenant-scoped.
+                tenant_id=collection.tenant_id,
             )
             for dream_type in enabled_dream_types
         ]
@@ -377,6 +380,7 @@ async def check_and_schedule_dream(
                         "observed": collection.observed,
                         "dream_type": dream_type,
                     },
+                    tenant_id=collection.tenant_id,
                 )
                 await dream_scheduler.schedule_dream(
                     dream_work_unit_key,

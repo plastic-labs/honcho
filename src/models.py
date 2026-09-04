@@ -38,8 +38,8 @@ logger = getLogger(__name__)
 
 
 # The single tenant every single-tenant / self-host deployment operates as. New
-# tenant-scoped rows default to the request's tenant (tenant_context, set under
-# MULTI_TENANT) or this constant when no tenant is in scope (self-host / flag off).
+# tenant-scoped rows default to the current tenant (tenant_context, when one is
+# bound) or this constant when no tenant is in scope (self-host / flag off).
 DEFAULT_TENANT_ID = "default"
 
 

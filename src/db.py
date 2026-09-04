@@ -3,6 +3,7 @@ import logging
 from typing import Any
 
 from sqlalchemy import MetaData, event, text
+from sqlalchemy.exc import DisconnectionError
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -34,7 +35,8 @@ request_context: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 
 # Context variable holding the current request's tenant. Read at connection
 # checkout to bind the session-scoped `app.tenant` GUC when MULTI_TENANT is on.
-# Set at the request/auth boundary or explicitly via tracked_db(tenant_id=...);
+# Set explicitly via tracked_db(tenant_id=...), or by the deriver from a claimed
+# work unit's key; a per-request binding at the API boundary is not yet wired.
 # None outside any tenant scope.
 tenant_context: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "tenant_context", default=None
@@ -128,30 +130,52 @@ def _set_session_gucs_on_checkout(
     set_tenant = settings.MULTI_TENANT
     if not set_tracing and not set_tenant:
         return
+
+    previous_autocommit = dbapi_connection.autocommit
+    if not previous_autocommit:
+        dbapi_connection.autocommit = True
     try:
-        previous_autocommit = dbapi_connection.autocommit
-        if not previous_autocommit:
-            dbapi_connection.autocommit = True
+        cursor = dbapi_connection.cursor()
         try:
-            cursor = dbapi_connection.cursor()
-            try:
-                if set_tracing:
+            if set_tenant:
+                # Bind the tenant FIRST and treat failure as fatal. A pooled
+                # connection is reused across tenants, so one handed out still
+                # carrying a prior checkout's app.tenant is a cross-tenant leak
+                # (fail-open) — on failure we invalidate it below rather than serve
+                # it with an unknown tenant.
+                tenant = tenant_context.get() or ""
+                cursor.execute(
+                    "SELECT set_config('app.tenant', %s, false)", (tenant,)
+                )
+            if set_tracing:
+                # Observability only — best-effort, never blocks checkout. A
+                # mislabeled application_name is harmless.
+                try:
                     context = request_context.get() or "unknown"
                     cursor.execute(
                         "SELECT set_config('application_name', %s, false)", (context,)
                     )
-                if set_tenant:
-                    tenant = tenant_context.get() or ""
-                    cursor.execute(
-                        "SELECT set_config('app.tenant', %s, false)", (tenant,)
+                except Exception:
+                    logger.debug(
+                        "setting application_name on checkout failed", exc_info=True
                     )
-            finally:
-                cursor.close()
         finally:
-            if not previous_autocommit:
-                dbapi_connection.autocommit = False
-    except Exception:
+            cursor.close()
+    except Exception as e:
+        # Reached only when the tenant bind (or its cursor) failed. When
+        # MULTI_TENANT is off there is no tenant to bind, so this stays best-effort;
+        # when it is on, invalidate the connection so the pool discards it instead
+        # of reusing it with an unknown/stale tenant.
+        if set_tenant:
+            logger.warning(
+                "binding app.tenant on checkout failed; invalidating connection",
+                exc_info=True,
+            )
+            raise DisconnectionError("failed to bind app.tenant on checkout") from e
         logger.debug("setting session GUCs on checkout failed", exc_info=True)
+    finally:
+        if not previous_autocommit:
+            dbapi_connection.autocommit = False
 
 
 if settings.DB.TRACING or settings.MULTI_TENANT:

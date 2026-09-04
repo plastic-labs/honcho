@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 from nanoid import generate as generate_nanoid
 from sentry_sdk.integrations.asyncio import AsyncioIntegration
 from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
-from sqlalchemy import Text, and_, delete, literal, or_, select, update
+from sqlalchemy import Text, and_, delete, literal, or_, select, true, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -907,6 +907,18 @@ class QueueManager:
         messages_context: list[models.Message] = []
         items_to_process: list[QueueItem] = []
 
+        # This batch runs on the RLS-bypassing service session, so RLS does not
+        # scope the message reads. The work_unit_key is tenant-namespaced under
+        # MULTI_TENANT; carry that tenant into the message-context queries so a
+        # session/workspace name shared across tenants can't pull another tenant's
+        # messages into the batch. None (flag off, or a legacy un-prefixed key)
+        # adds no filter, so self-host is unchanged.
+        tenant_clause = (
+            models.Message.tenant_id == parsed_key.tenant_id
+            if parsed_key.tenant_id is not None
+            else true()
+        )
+
         async with service_db("get_queue_item_batch") as db:
             # For batch tasks, get messages based on token limit.
             # Step 1: Verify worker still owns the work_unit_key.
@@ -941,6 +953,7 @@ class QueueManager:
                 .where(models.Message.session_name == parsed_key.session_name)
                 .where(models.Message.workspace_name == parsed_key.workspace_name)
                 .where(models.QueueItem.work_unit_key == work_unit_key)
+                .where(tenant_clause)
                 .scalar_subquery()
             )
 
@@ -950,6 +963,7 @@ class QueueManager:
                 .where(models.Message.session_name == parsed_key.session_name)
                 .where(models.Message.workspace_name == parsed_key.workspace_name)
                 .where(models.Message.id < min_unprocessed_message_id_subq)
+                .where(tenant_clause)
                 .scalar_subquery()
             )
 
@@ -989,6 +1003,7 @@ class QueueManager:
                 .where(models.Message.session_name == parsed_key.session_name)
                 .where(models.Message.workspace_name == parsed_key.workspace_name)
                 .where(models.Message.id >= effective_start_id)
+                .where(tenant_clause)
                 .subquery()
             )
 

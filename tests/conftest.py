@@ -370,7 +370,7 @@ async def db_engine(worker_id: str):
     # Build the schema via the real migrations, NOT create_all: the models
     # declare HASH(tenant_id) partitioning, so create_all emits partitioned parents
     # with zero partitions and every insert fails. `alembic upgrade head` builds the
-    # non-partitioned prosumer schema a self-hoster actually runs, and seeds the
+    # non-partitioned schema a self-hoster actually runs, and seeds the
     # DEFAULT_TENANT_ID tenant every tenant-scoped row FKs to. Render the URL with
     # its password (str(URL) masks it as '***', which then fails auth at migrate).
     db_url_str = test_db_url.render_as_string(hide_password=False)
@@ -986,6 +986,7 @@ def mock_tracked_db(request: pytest.FixtureRequest):
         "src.deriver.queue_manager.service_db",
         "src.deriver.consumer.tracked_db",
         "src.deriver.enqueue.service_db",
+        "src.deriver.enqueue.tracked_db",
         "src.routers.peers.tracked_db",
         "src.routers.workspaces.tracked_db",
         "src.crud.representation.tracked_db",
