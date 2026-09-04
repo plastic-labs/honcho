@@ -1259,7 +1259,7 @@ async def _get_or_add_peers_to_session(
     # wins -- otherwise PUT /peers could never change the configuration of a peer
     # already in the session.
     stmt = stmt.on_conflict_do_update(
-        # tenant_id leads the composite PK (A1), so it must be in the conflict
+        # tenant_id leads the composite PK, so it must be in the conflict
         # target — otherwise there is no matching unique constraint.
         index_elements=["tenant_id", "session_name", "peer_name", "workspace_name"],
         set_={

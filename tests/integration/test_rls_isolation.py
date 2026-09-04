@@ -1,4 +1,4 @@
-"""Flag-on RLS tenant-isolation proof (DEV-2477 / A2).
+"""Flag-on RLS tenant-isolation proof.
 
 The row-level-security policies that enforce tenant isolation are applied to the
 shared cloud database out of band, not by this repo, so a plain database has none.
@@ -40,7 +40,7 @@ _MIGRATIONS_DIR = _REPO_ROOT / "migrations"
 
 _RLS_TEST_DB_URL: URL = CONNECTION_URI.set(database="rls_isolation_tests")
 
-# The nine tenant-scoped data tables that carry RLS in the cloud deploy (A2 §2).
+# The nine tenant-scoped data tables that carry RLS in the cloud deploy.
 # The tenants registry and the queue/active_queue_sessions service tables are
 # excluded by design — service paths read them across tenants.
 _RLS_TABLES: tuple[str, ...] = (
@@ -66,7 +66,7 @@ def _new_id() -> str:
 
 
 def _apply_rls_and_role(engine: Engine) -> None:
-    """Apply the §2 policies to the nine data tables, then create the probe role.
+    """Apply the tenant-isolation policies to the nine data tables, then create the probe role.
 
     Runs after the schema exists so ``GRANT ... ON ALL TABLES`` covers every table.
     """

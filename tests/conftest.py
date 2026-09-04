@@ -367,7 +367,7 @@ async def db_engine(worker_id: str):
     for table in Base.metadata.tables.values():
         table.schema = "public"
 
-    # Build the schema via the real migrations, NOT create_all: the A1 models
+    # Build the schema via the real migrations, NOT create_all: the models
     # declare HASH(tenant_id) partitioning, so create_all emits partitioned parents
     # with zero partitions and every insert fails. `alembic upgrade head` builds the
     # non-partitioned prosumer schema a self-hoster actually runs, and seeds the
