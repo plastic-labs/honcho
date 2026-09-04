@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import functools
 import logging
@@ -201,6 +202,13 @@ def _emit_agent_iteration(
 
 logger = logging.getLogger(__name__)
 
+# A single assistant turn can request many tools at once — production has seen
+# 18 in one iteration. Running every one concurrently would put that many
+# simultaneous embedding + pgvector queries on a single instance, so the fan-out
+# is capped: the measured common case is 3.3 calls per iteration, which stays
+# fully parallel, while the tail is bounded instead of stampeding.
+MAX_CONCURRENT_TOOL_CALLS = 4
+
 # Bounds for max_tool_iterations to prevent runaway loops.
 MIN_TOOL_ITERATIONS = 1
 MAX_TOOL_ITERATIONS = 100
@@ -345,6 +353,7 @@ async def execute_tool_loop(
     tool_choice: str | dict[str, Any] | None,
     tool_executor: Callable[[str, dict[str, Any]], Any],
     max_tool_iterations: int,
+    mutating_tools: frozenset[str] | None = None,
     response_model: type[BaseModel] | None,
     json_mode: bool,
     temperature: float | None,
@@ -391,6 +400,9 @@ async def execute_tool_loop(
     if telemetry is not None and telemetry.hash_memo is None:
         telemetry = dataclasses.replace(telemetry, hash_memo={})
 
+    # One semaphore for the whole loop: iterations run one after another, so a
+    # single cap bounds the fan-out without being rebound per iteration.
+    tool_call_semaphore = asyncio.Semaphore(MAX_CONCURRENT_TOOL_CALLS)
     iteration = 0
     all_tool_calls: list[dict[str, Any]] = []
     total_input_tokens = 0
@@ -582,53 +594,96 @@ async def execute_tool_loop(
             # Telemetry context — 1-indexed iteration.
             set_current_iteration(iteration + 1)
 
-            tool_results: list[dict[str, Any]] = []
-            for seq, tool_call in enumerate(response.tool_calls_made):
+            # Tools requested in one assistant turn are independent of each
+            # other, so run them concurrently and pay the slowest instead of the
+            # sum. A dialectic turn routinely asks for `search_memory` and
+            # `search_messages` together; serially that was 1.2s + 1.9s of pure
+            # read. Handlers open their own short-lived sessions via
+            # `tracked_db()` and only the mutating ones (`create_observations`,
+            # `update_peer_card`, `delete_observations`) take `ctx.db_lock`, so
+            # concurrent reads are safe.
+            async def run_tool_call(
+                seq: int, tool_call: dict[str, Any]
+            ) -> tuple[dict[str, Any], dict[str, Any] | None]:
                 tool_name = tool_call["name"]
                 tool_input = tool_call["input"]
                 tool_id = tool_call.get("id", "")
 
                 logger.debug(f"Executing tool: {tool_name}")
 
-                # the executor closure reads these from
-                # ContextVars to populate AgentToolCallCompletedEvent. Set BEFORE
-                # the executor call so two calls to the same tool in one iteration
-                # get distinct seq values. Reset last-tool metadata so we never
-                # observe stale state from a prior call.
+                # The executor closure reads these from ContextVars to populate
+                # AgentToolCallCompletedEvent. They are set INSIDE the task:
+                # asyncio copies the context per task, so two calls to the same
+                # tool in one iteration keep their own seq and their own
+                # last-tool metadata rather than racing on one shared context.
                 set_current_tool_call_seq(seq, tool_id or None)
                 set_last_tool_metadata({})
 
                 try:
-                    tool_result = await tool_executor(tool_name, tool_input)
+                    async with tool_call_semaphore:
+                        tool_result = await tool_executor(tool_name, tool_input)
                     # Stash ToolResult.metadata on all_tool_calls so
                     # specialist rollups can read created/deleted observation
                     # counts without round-tripping through the event store.
-                    tool_result_metadata = get_last_tool_metadata()
-                    tool_results.append(
+                    return (
                         {
                             "tool_id": tool_id,
                             "tool_name": tool_name,
                             "result": tool_result,
-                        }
-                    )
-                    all_tool_calls.append(
+                        },
                         {
                             "tool_name": tool_name,
                             "tool_input": tool_input,
                             "tool_result": tool_result,
-                            "tool_result_metadata": tool_result_metadata,
-                        }
+                            "tool_result_metadata": get_last_tool_metadata(),
+                        },
                     )
                 except Exception as e:
                     logger.error(f"Tool execution failed for {tool_name}: {e}")
-                    tool_results.append(
+                    return (
                         {
                             "tool_id": tool_id,
                             "tool_name": tool_name,
                             "result": f"Error: {str(e)}",
                             "is_error": True,
-                        }
+                        },
+                        None,
                     )
+
+            # Reads may overlap freely; state-changing calls may not, because
+            # `ctx.db_lock` decides that they take turns but not which turn each
+            # one gets. Anything named in `mutating_tools` therefore runs in the
+            # order the model asked for, while the rest run concurrently
+            # alongside it. `mutating_tools=None` means "assume every tool
+            # mutates", so a caller that has not opted in keeps the fully
+            # sequential behaviour it had before.
+            calls = list(enumerate(response.tool_calls_made))
+
+            def _must_stay_ordered(tool_call: dict[str, Any]) -> bool:
+                return mutating_tools is None or tool_call["name"] in mutating_tools
+
+            # create_task even for the ordered ones: each still needs its own
+            # context copy for the telemetry ContextVars, and awaiting them one
+            # at a time is what preserves the order.
+            concurrent = {
+                seq: asyncio.create_task(run_tool_call(seq, tool_call))
+                for seq, tool_call in calls
+                if not _must_stay_ordered(tool_call)
+            }
+
+            outcomes: dict[int, tuple[dict[str, Any], dict[str, Any] | None]] = {}
+            for seq, tool_call in calls:
+                if _must_stay_ordered(tool_call):
+                    outcomes[seq] = await run_tool_call(seq, tool_call)
+            for seq, task in concurrent.items():
+                outcomes[seq] = await task
+
+            tool_results: list[dict[str, Any]] = []
+            for seq, _ in calls:
+                result_entry, call_entry = outcomes[seq]
+                tool_results.append(result_entry)
+                if call_entry is not None:
+                    all_tool_calls.append(call_entry)
 
             append_tool_results(current_provider, tool_results, conversation_messages)
         finally:

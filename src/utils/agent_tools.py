@@ -2619,6 +2619,23 @@ _TOOL_HANDLERS: dict[str, Callable[[ToolContext, dict[str, Any]], Any]] = {
     "get_reasoning_chain": _handle_get_reasoning_chain,
 }
 
+# Tools that change state, and so must not be reordered relative to one another
+# within a single assistant turn. Each of these routes to a handler that takes
+# `ctx.db_lock` (`_handle_create_observations_impl`, `_handle_update_peer_card`,
+# `_handle_delete_observations`); the lock stops them interleaving, but it does
+# not decide who gets it first, so the tool loop keeps them in the order the
+# model asked for. `extract_preferences` and `finish_consolidation` are not
+# here: both only return text telling the model what to call next.
+MUTATING_TOOL_NAMES: frozenset[str] = frozenset(
+    {
+        "create_observations",
+        "create_observations_deductive",
+        "create_observations_inductive",
+        "update_peer_card",
+        "delete_observations",
+    }
+)
+
 
 async def create_tool_executor(
     workspace_name: str,
