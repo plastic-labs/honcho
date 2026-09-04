@@ -267,6 +267,60 @@
         }
       }
     },
+    "/v3/workspaces/{workspace_id}/chat": {
+      "post": {
+        "tags": ["workspaces"],
+        "summary": "Workspace Chat",
+        "description": "Query the entire workspace using natural language. Runs the Dialectic agent over every peer in the workspace rather than a single (observer, observed) pair: there is no anchor peer and no `target`.\n\nPass `session_id` to narrow message tools to one session, or `scope` to restrict recall to the union of the named scopes' member sessions (always an allowlist, even for a single name; a scope with no member sessions recalls nothing). `session_id` and `scope` are mutually exclusive.\n\nSet `stream: true` to receive the answer as a `text/event-stream` of `{\"delta\": {\"content\": ...}, \"done\": false}` chunks terminated by `{\"done\": true}`. Requires a workspace- or admin-level key.",
+        "operationId": "chat_v3_workspaces__workspace_id__chat_post",
+        "security": [{ "HTTPBearer": [] }],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "title": "Workspace Id" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/WorkspaceChatOptions" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "content": {
+                      "anyOf": [{ "type": "string" }, { "type": "null" }],
+                      "title": "Content"
+                    }
+                  },
+                  "required": ["content"],
+                  "title": "DialecticResponse",
+                  "type": "object"
+                }
+              },
+              "text/event-stream": {}
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v3/workspaces/{workspace_id}/queue/status": {
       "get": {
         "tags": ["workspaces"],
@@ -4377,6 +4431,56 @@
         "type": "object",
         "required": ["id", "created_at"],
         "title": "Workspace"
+      },
+      "WorkspaceChatOptions": {
+        "properties": {
+          "session_id": {
+            "anyOf": [{ "type": "string" }, { "type": "null" }],
+            "title": "Session Id",
+            "description": "Optional session to scope message tools to"
+          },
+          "query": {
+            "type": "string",
+            "maxLength": 10000,
+            "minLength": 1,
+            "title": "Query",
+            "description": "Workspace chat prompt"
+          },
+          "stream": { "type": "boolean", "title": "Stream", "default": false },
+          "reasoning_level": {
+            "type": "string",
+            "enum": ["minimal", "low", "medium", "high", "max"],
+            "title": "Reasoning Level",
+            "description": "Level of reasoning to apply: minimal, low, medium, high, or max",
+            "default": "low"
+          },
+          "response_format": {
+            "anyOf": [
+              { "additionalProperties": true, "type": "object" },
+              { "type": "null" }
+            ],
+            "title": "Response Format",
+            "description": "Optional JSON Schema (root type 'object') the response must conform to. When provided, `content` is a JSON string matching this schema."
+          },
+          "scope": {
+            "anyOf": [
+              { "type": "string" },
+              {
+                "items": { "type": "string" },
+                "type": "array",
+                "maxItems": 100,
+                "minItems": 1
+              },
+              { "type": "null" }
+            ],
+            "title": "Scope",
+            "description": "Optional (unprefixed) scope name(s) restricting recall to the union of the scopes' member sessions (explicit allowlist, fail-closed: an empty union recalls nothing). Mutually exclusive with `session_id`. Requires a workspace- or admin-level key."
+          }
+        },
+        "type": "object",
+        "required": ["query"],
+        "title": "WorkspaceChatOptions",
+        "description": "Options for workspace-level chat (no anchor peer; see DialecticOptions)."
       },
       "WorkspaceConfiguration": {
         "properties": {

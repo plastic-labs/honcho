@@ -244,7 +244,7 @@ empty result means none have — not that the scope is empty.
 | `peer.representation()` | one scope or a list | Confines conclusion recall |
 | [`session.context()`](/v3/documentation/features/get-context) | one scope only | Perspective source for `peer_target`'s representation and card. Requires `peer_target`; mutually exclusive with `peer_perspective` |
 | `honcho.search()` | one scope only | Restricts message search to the scope's member sessions |
-| `honcho.chat()` | one scope or a list | Always the allowlist arm — even a single name. There is no observer to swap |
+| [`honcho.chat()`](/v3/documentation/features/chat#workspace-chat) | one scope or a list | Always the allowlist arm — even a single name. There is no observer to swap, and no `target` |
 
 <CodeGroup>
 ```python Python
@@ -295,7 +295,8 @@ curl -X POST "$HONCHO_URL/v3/workspaces/my-app/peers/user-123/chat" \
 requires `peer_target`). Like the session allowlist, it **fails closed**: a
 contradiction is rejected with a `422` rather than silently widened, a scope
 with no member sessions recalls nothing, and an empty list (`scope=[]`) is
-rejected rather than treated as "no boundary". Per-surface caps and error
+rejected rather than treated as "no boundary". On workspace chat the same
+exclusion holds: pass `scope` or `session_id`, never both. Per-surface caps and error
 shapes are in the [API reference](/v3/api-reference/endpoint/scopes/get-or-create-scope).
 
 ## Provenance, Not Topic
