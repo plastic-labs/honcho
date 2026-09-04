@@ -199,8 +199,8 @@ class Session(Base):
         Index(
             "ix_sessions_workspace_last_message_at",
             "workspace_name",
-            "last_message_at",
-            "id",
+            text("last_message_at DESC NULLS LAST"),
+            text("id DESC"),
             postgresql_where=text("is_active"),
         ),
         CheckConstraint("length(name) <= 512", name="name_length"),

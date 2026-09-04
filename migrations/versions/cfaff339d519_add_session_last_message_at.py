@@ -48,7 +48,11 @@ def upgrade() -> None:
     op.create_index(
         INDEX_NAME,
         "sessions",
-        ["workspace_name", "last_message_at", "id"],
+        [
+            "workspace_name",
+            sa.text("last_message_at DESC NULLS LAST"),
+            sa.text("id DESC"),
+        ],
         unique=False,
         schema=schema,
         postgresql_where=sa.text("is_active"),

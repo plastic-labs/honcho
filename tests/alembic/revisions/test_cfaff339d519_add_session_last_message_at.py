@@ -102,6 +102,24 @@ def verify_add_session_last_message_at(verifier: MigrationVerifier) -> None:
     verifier.assert_column_type("sessions", "last_message_at", sa.TIMESTAMP)
     verifier.assert_indexes_exist([("sessions", INDEX_NAME)])
 
+    index_definition = verifier.conn.execute(
+        text(
+            """
+            SELECT indexdef
+            FROM pg_indexes
+            WHERE schemaname = :schema
+              AND tablename = 'sessions'
+              AND indexname = :index_name
+            """
+        ),
+        {"schema": verifier.schema, "index_name": INDEX_NAME},
+    ).scalar_one()
+    normalized_index_definition = " ".join(index_definition.replace('"', "").split())
+    assert "(workspace_name, last_message_at DESC NULLS LAST, id DESC)" in (
+        normalized_index_definition
+    )
+    assert "WHERE is_active" in normalized_index_definition
+
     rows = verifier.conn.execute(
         text(
             f"""

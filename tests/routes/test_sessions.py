@@ -4,6 +4,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 from nanoid import generate as generate_nanoid
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
@@ -327,6 +328,48 @@ def test_session_last_message_at_does_not_move_backwards_for_backdated_message(
     ) == datetime.datetime(2026, 1, 3, 12, 0, tzinfo=datetime.UTC)
 
 
+def test_message_batch_normalizes_naive_activity_timestamps(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Mixed explicit and server-default timestamps remain comparable."""
+    test_workspace, test_peer = sample_data
+    session_id = f"last-activity-mixed-timezone-{generate_nanoid()}"
+
+    response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/messages",
+        json={
+            "messages": [
+                {
+                    "content": "naive activity timestamp",
+                    "peer_id": test_peer.name,
+                    "created_at": "2024-01-01T10:00:00",
+                },
+                {
+                    "content": "server timestamp",
+                    "peer_id": test_peer.name,
+                },
+            ]
+        },
+    )
+
+    assert response.status_code == 201
+    message_timestamps = [
+        datetime.datetime.fromisoformat(item["created_at"].replace("Z", "+00:00"))
+        for item in response.json()
+    ]
+    assert all(timestamp.utcoffset() is not None for timestamp in message_timestamps)
+
+    session_response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions",
+        json={"id": session_id},
+    )
+    assert session_response.status_code == 200
+    session_activity = datetime.datetime.fromisoformat(
+        session_response.json()["last_message_at"].replace("Z", "+00:00")
+    )
+    assert session_activity == max(message_timestamps)
+
+
 def test_get_sessions_with_empty_filter(
     client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
@@ -460,6 +503,31 @@ async def test_get_sessions_sort_by_last_message_at_reverses_activity_and_keeps_
         empty_session,
     ]
     assert response.json()["items"][-1]["last_message_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_session_activity_index_supports_reverse_ordering(
+    db_session: AsyncSession,
+):
+    """The model index matches the primary DESC NULLS LAST query shape."""
+    result = await db_session.execute(
+        text(
+            """
+            SELECT indexdef
+            FROM pg_indexes
+            WHERE schemaname = current_schema()
+              AND tablename = 'sessions'
+              AND indexname = 'ix_sessions_workspace_last_message_at'
+            """
+        )
+    )
+    index_definition = result.scalar_one()
+    normalized_index_definition = " ".join(index_definition.replace('"', "").split())
+
+    assert "(workspace_name, last_message_at DESC NULLS LAST, id DESC)" in (
+        normalized_index_definition
+    )
+    assert "WHERE is_active" in normalized_index_definition
 
 
 @pytest.mark.asyncio

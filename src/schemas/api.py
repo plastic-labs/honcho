@@ -339,6 +339,16 @@ class MessageCreate(MessageBase):
     def sanitize_content(cls, v: str) -> str:
         return strip_nul(v)
 
+    @field_validator("created_at", mode="after")
+    @classmethod
+    def normalize_created_at_timezone(
+        cls, value: datetime.datetime | None
+    ) -> datetime.datetime | None:
+        """Treat timezone-naive message timestamps as UTC."""
+        if value is not None and value.tzinfo is None:
+            return value.replace(tzinfo=datetime.UTC)
+        return value
+
     @property
     def encoded_message(self) -> list[int]:
         return self._encoded_message
