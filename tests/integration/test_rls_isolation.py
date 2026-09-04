@@ -243,3 +243,28 @@ def test_rls_enforces_tenant_isolation(rls_engine: Engine) -> None:
         conn.execute(text("RESET ROLE"))
     finally:
         raw.close()
+
+
+def test_rls_predicate_preserves_index_use(rls_engine: Engine) -> None:
+    # The RLS USING qual (tenant_id = current_setting('app.tenant', true)) must not
+    # defeat the tenant-leading indexes: for a tenant-scoped lookup the planner
+    # should still reach an index — the qual stays sargable — rather than fall back
+    # to a sequential scan + post-filter. Seq scans are penalized here so the plan
+    # reflects the qual's effect, not table size.
+    raw = rls_engine.connect()
+    conn = raw.execution_options(isolation_level="AUTOCOMMIT")
+    try:
+        conn.execute(text(f"SET ROLE {_RLS_ROLE}"))
+        _bind_tenant(conn, "tenant-1")
+        conn.execute(text("SET enable_seqscan = off"))
+        plan = "\n".join(
+            str(row[0])
+            for row in conn.execute(
+                text("EXPLAIN SELECT id FROM peers WHERE workspace_name = 'ws-1'")
+            )
+        )
+    finally:
+        raw.close()
+
+    assert "Index Scan" in plan or "Index Only Scan" in plan, plan
+    assert "Seq Scan" not in plan, plan
