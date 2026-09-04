@@ -99,6 +99,29 @@ for chunk in response_stream.iter_text():
 ```
 </CodeGroup>
 
+## Streaming Workspace Chat
+
+[Workspace chat](/v3/documentation/features/chat#workspace-chat) streams the same way through `chat_stream` / `chatStream` on the client. There is no peer to anchor the question; the agent reads across every peer in the workspace.
+
+<CodeGroup>
+```python Python
+for chunk in honcho.chat_stream("What themes come up across all users this week?"):
+    print(chunk, end="", flush=True)
+```
+
+```typescript TypeScript
+(async () => {
+    const stream = await honcho.chatStream("What themes come up across all users this week?");
+
+    for await (const chunk of stream) {
+      process.stdout.write(chunk);
+    }
+})();
+```
+</CodeGroup>
+
+Over REST, both endpoints return `text/event-stream` when `stream` is `true`. Each event is `{"delta": {"content": "..."}, "done": false}`, followed by a final `{"done": true}`.
+
 ## Working with Streaming Data
 
 When working with streaming responses, consider these patterns:
