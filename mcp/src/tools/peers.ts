@@ -93,6 +93,19 @@ export function register(server: McpServer, ctx: ToolContext) {
           .string()
           .optional()
           .describe("Optional: scope the query to a specific session."),
+        scope: z
+          .union([z.string(), z.array(z.string()).max(100)])
+          .optional()
+          .describe(
+            "Optional: confine recall to a scope. A single scope name answers from that scope's own reasoned view (all conclusion levels). A list of scope names is an allowlist: explicit conclusions from the union of their sessions only.",
+          ),
+        sessions: z
+          .array(z.string())
+          .max(1000)
+          .optional()
+          .describe(
+            "Optional: allowlist of session IDs to confine recall to (explicit conclusions only). Use for an ad hoc boundary without provisioning a scope.",
+          ),
         reasoning_level: z
           .enum(["minimal", "low", "medium", "high", "max"])
           .optional()
@@ -105,6 +118,8 @@ export function register(server: McpServer, ctx: ToolContext) {
       query,
       target_peer_id,
       session_id,
+      scope,
+      sessions,
       reasoning_level,
     }) => {
       try {
@@ -112,6 +127,8 @@ export function register(server: McpServer, ctx: ToolContext) {
         const result = await peer.chat(query, {
           target: target_peer_id,
           session: session_id,
+          scope,
+          sessions,
           reasoningLevel: reasoning_level,
         });
         return textResult(result ?? "None");

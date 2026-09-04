@@ -10,7 +10,7 @@ const cfg = loadConfig({ host: 'harness' })
 const cfg = resolveConfig(file, { host: 'harness', overlay: { workspace: 'harness', auth: { apiKey } } })
 ```
 
-Locally: `"@honcho-ai/harness-plugin-core": "file:../harness-plugin-core"` (bun imports the TypeScript source).
+Install: `bun add @honcho-ai/harness-plugin-core`. Locally: `"@honcho-ai/harness-plugin-core": "file:../harness-plugin-core"` (bun imports the TypeScript source).
 
 ## File shape
 
