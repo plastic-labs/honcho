@@ -151,8 +151,8 @@ jobs:
       - name: Verify uv and Python
         run: |
           uv --version
-          python3.12 --version
-          which python3.12
+          python3.13 --version
+          which python3.13
 
       - name: Install the project
         run: uv sync --all-extras

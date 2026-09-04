@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 ### Added
 
 - `Session.last_message_at` exposes the newest message timestamp, and sync/async `Honcho.sessions()` accept `sort_by="created_at" | "last_message_at"` while preserving `reverse` across pagination. Requires a Honcho server with the matching API support.
+- Optional per-call `timeout` on synchronous and asynchronous `Peer.chat()`. It overrides the timeout for each HTTP attempt; when omitted or set to `None`, the client-wide timeout configured on `Honcho` remains in effect.
 
 ## [2.4.0] - 2026-08-25
 

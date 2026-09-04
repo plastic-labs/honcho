@@ -199,6 +199,69 @@ message_embeddings_pending_gauge = NamespacedGauge(
     ["namespace"],
 )
 
+message_embeddings_pending_due_gauge = NamespacedGauge(
+    "message_embeddings_pending_due",
+    "Pending MessageEmbedding rows past their retry backoff, so a sync attempt "
+    + "is due. Service-wide DB count, reported independently by every API "
+    + "replica — aggregate with max() or avg(), never sum()",
+    ["namespace"],
+)
+
+deriver_outstanding_work_seconds_gauge = NamespacedGauge(
+    "deriver_outstanding_work_seconds",
+    "Seconds of outstanding deriver work, 0 when a deriver has nothing to do. "
+    + "Service-wide DB value, reported independently by every API replica — "
+    + "aggregate with max(), never sum()",
+    ["namespace"],
+)
+
+deriver_queue_work_units_eligible_gauge = NamespacedGauge(
+    "deriver_queue_work_units_eligible",
+    "Work units a deriver could claim right now, ignoring stale claims. "
+    + "Service-wide DB count, reported independently by every API replica — "
+    + "aggregate with max() or avg(), never sum()",
+    ["namespace"],
+)
+
+deriver_queue_work_units_claimed_gauge = NamespacedGauge(
+    "deriver_queue_work_units_claimed",
+    "Work units held by a claim refreshed inside the stale timeout, so work is "
+    + "in flight. Service-wide DB count, reported independently by every API "
+    + "replica — aggregate with max() or avg(), never sum()",
+    ["namespace"],
+)
+
+deriver_queue_items_pending_gauge = NamespacedGauge(
+    "deriver_queue_items_pending",
+    "Unprocessed queue rows, whether or not they are claimable yet. "
+    + "Service-wide DB count, reported independently by every API replica — "
+    + "aggregate with max() or avg(), never sum()",
+    ["namespace"],
+)
+
+deriver_queue_oldest_pending_age_seconds_gauge = NamespacedGauge(
+    "deriver_queue_oldest_pending_age_seconds",
+    "Age of the oldest unprocessed queue row, 0 when the queue is empty. "
+    + "Service-wide DB value, reported independently by every API replica — "
+    + "aggregate with max() or avg(), never sum()",
+    ["namespace"],
+)
+
+dreams_due_gauge = NamespacedGauge(
+    "dreams_due",
+    "Collections whose next dream is due and would actually run. "
+    + "Service-wide DB count, reported independently by every API replica — "
+    + "aggregate with max() or avg(), never sum()",
+    ["namespace"],
+)
+
+deriver_metrics_last_success_timestamp_gauge = NamespacedGauge(
+    "deriver_metrics_last_success_timestamp_seconds",
+    "Unix time of the last successful deriver-metrics refresh in this replica. "
+    + "Alert on time() minus this value; a frozen value means the poller stopped",
+    ["namespace"],
+)
+
 # DB connection-pool health. The in-flight gauge counts statements actually
 # executing on the wire, so checked_out minus in_flight reveals connections held
 # but parked (the "idle in transaction during an external call" antipattern).
@@ -508,6 +571,10 @@ class PrometheusMetrics:
             self._touch(embed_now_tasks_shed_counter)
             self.set_embed_now_tasks_in_flight(0)
 
+            self.set_deriver_metrics()
+            self.set_deriver_outstanding_work(seconds=0)
+            self.set_dreams_due(count=0)
+
         elif instance_type == "deriver":
             # deriver tokens: only the valid (token_type, component) tuples per
             # task_type (see _DERIVER_TOKEN_COMBOS_BY_TASK).
@@ -547,6 +614,46 @@ class PrometheusMetrics:
             message_embeddings_pending_gauge.labels().set(count)
         except Exception as e:
             self._handle_metric_error("set_message_embeddings_pending", e)
+
+    def set_deriver_metrics(
+        self,
+        *,
+        eligible_work_units: int = 0,
+        claimed_work_units: int = 0,
+        pending_items: int = 0,
+        oldest_pending_age_seconds: float = 0.0,
+        embeddings_pending: int = 0,
+        embeddings_pending_due: int = 0,
+    ) -> None:
+        try:
+            deriver_queue_work_units_eligible_gauge.labels().set(eligible_work_units)
+            deriver_queue_work_units_claimed_gauge.labels().set(claimed_work_units)
+            deriver_queue_items_pending_gauge.labels().set(pending_items)
+            deriver_queue_oldest_pending_age_seconds_gauge.labels().set(
+                oldest_pending_age_seconds
+            )
+            message_embeddings_pending_gauge.labels().set(embeddings_pending)
+            message_embeddings_pending_due_gauge.labels().set(embeddings_pending_due)
+        except Exception as e:
+            self._handle_metric_error("set_deriver_metrics", e)
+
+    def set_deriver_outstanding_work(self, *, seconds: float) -> None:
+        try:
+            deriver_outstanding_work_seconds_gauge.labels().set(seconds)
+        except Exception as e:
+            self._handle_metric_error("set_deriver_outstanding_work", e)
+
+    def set_dreams_due(self, *, count: int) -> None:
+        try:
+            dreams_due_gauge.labels().set(count)
+        except Exception as e:
+            self._handle_metric_error("set_dreams_due", e)
+
+    def set_deriver_metrics_last_success(self, *, timestamp: float) -> None:
+        try:
+            deriver_metrics_last_success_timestamp_gauge.labels().set(timestamp)
+        except Exception as e:
+            self._handle_metric_error("set_deriver_metrics_last_success", e)
 
 
 prometheus_metrics = PrometheusMetrics()

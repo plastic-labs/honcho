@@ -219,6 +219,45 @@ uv run python -m src.deriver     # background worker
 Everything Python goes through `uv run`. Redis is optional for local development; without it
 caching is simply disabled.
 
+### Running without a model provider
+
+`src/mock_provider/` is a deterministic, OpenAI-compatible endpoint, so you can run the full
+stack with no provider account, no API key, and no spend. It answers `/v1/chat/completions`
+and `/v1/embeddings` with obviously-synthetic content derived from the request, and the same
+request always produces the same response. Run it from the standard image or the repo:
+
+```bash
+uv run fastapi run --host 0.0.0.0 --port 8106 src/mock_provider/main.py
+```
+
+Then point Honcho at it. All three variables are required:
+
+```bash
+export LLM_OPENAI_API_KEY=any-non-empty-string   # only truthiness is checked
+export LLM_OPENAI_BASE_URL=http://localhost:8106/v1
+export EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL=http://localhost:8106/v1
+```
+
+The key's *value* is never checked — the mock reads no Authorization header, and Honcho only
+tests it for truthiness before building the client (`src/llm/registry.py`). Set the base URL
+without it and the client is never constructed, so the base URL is silently ignored. Keep the
+value obviously fake, so a module that ever escapes the override 401s rather than spends.
+
+Embeddings resolve through a separate client that reads the base URL only from the per-module
+override, so without the third variable your embedding calls go to `api.openai.com` for real.
+Do not set any per-module credential override (`..._OVERRIDES__API_KEY` / `API_KEY_ENV`) —
+that makes the module ignore the global base URL.
+
+Two things to know:
+
+- **A repo `.env` beats your exported environment.** `src/config.py` calls
+  `load_dotenv(override=True)` at import, so a stale `.env` silently wins over the variables
+  above. Set `PYTHON_DOTENV_DISABLED=1` (and `HONCHO_CONFIG_TOML_DISABLED=1` for a local
+  `config.toml`) when you need the environment to be the only input.
+- **Mock embeddings are hash-derived and carry no semantic similarity.** Two paraphrases are as
+  far apart as two unrelated strings. Recall against this provider must use lexical/full-text
+  search; anything asserting on vector ranking needs a real embedding provider.
+
 ## Making the change
 
 ### Branches and commits
@@ -334,6 +373,9 @@ either route works — but a bare `#123` mention is only a reference and does no
 4. Once approved, we merge to `main`.
 
 If a PR goes quiet, nudge us in [Discord](https://discord.gg/honcho).
+
+Please respond within 7 days - we may close any PRs that have seen no activity within a 7 day
+window. If you need more time, let us know in the PR comments.
 
 ## Reporting bugs and requesting features
 

@@ -279,7 +279,7 @@ def test_session_response_tracks_latest_message_timestamp_after_cached_create(
     assert refreshed.status_code == 200
     assert datetime.datetime.fromisoformat(
         refreshed.json()["last_message_at"].replace("Z", "+00:00")
-    ) == datetime.datetime(2026, 1, 3, 12, 0, tzinfo=datetime.timezone.utc)
+    ) == datetime.datetime(2026, 1, 3, 12, 0, tzinfo=datetime.UTC)
 
 
 def test_session_last_message_at_does_not_move_backwards_for_backdated_message(
@@ -324,7 +324,7 @@ def test_session_last_message_at_does_not_move_backwards_for_backdated_message(
     assert refreshed.status_code == 200
     assert datetime.datetime.fromisoformat(
         refreshed.json()["last_message_at"].replace("Z", "+00:00")
-    ) == datetime.datetime(2026, 1, 3, 12, 0, tzinfo=datetime.timezone.utc)
+    ) == datetime.datetime(2026, 1, 3, 12, 0, tzinfo=datetime.UTC)
 
 
 def test_get_sessions_with_empty_filter(
@@ -411,19 +411,19 @@ async def test_get_sessions_sort_by_last_message_at_reverses_activity_and_keeps_
             models.Session(
                 name=most_recent_session,
                 workspace_name=test_workspace.name,
-                created_at=datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc),
+                created_at=datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
                 h_metadata={"activity_group": activity_group},
             ),
             models.Session(
                 name=older_session,
                 workspace_name=test_workspace.name,
-                created_at=datetime.datetime(2026, 1, 2, tzinfo=datetime.timezone.utc),
+                created_at=datetime.datetime(2026, 1, 2, tzinfo=datetime.UTC),
                 h_metadata={"activity_group": activity_group},
             ),
             models.Session(
                 name=empty_session,
                 workspace_name=test_workspace.name,
-                created_at=datetime.datetime(2026, 1, 3, tzinfo=datetime.timezone.utc),
+                created_at=datetime.datetime(2026, 1, 3, tzinfo=datetime.UTC),
                 h_metadata={"activity_group": activity_group},
             ),
         ]
@@ -471,9 +471,7 @@ async def test_get_sessions_reverse_uses_id_tiebreaker(
     """Sessions with identical created_at fall back to ordering by id (nanoid PK)."""
     test_workspace, _ = sample_data
     reverse_group = f"tiebreaker-sessions-{generate_nanoid()}"
-    shared_created_at = datetime.datetime(
-        2026, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc
-    )
+    shared_created_at = datetime.datetime(2026, 1, 1, 12, 0, 0, tzinfo=datetime.UTC)
 
     low_id = "A" * 21
     high_id = "z" * 21

@@ -32,8 +32,8 @@ def _session_write_honcho() -> (
     tuple[SimpleNamespace, datetime.datetime, datetime.datetime]
 ):
     """Build sync and async HTTP stubs for local session write tests."""
-    newest_time = datetime.datetime(2026, 1, 10, 12, 0, tzinfo=datetime.timezone.utc)
-    older_time = datetime.datetime(2026, 1, 5, 12, 0, tzinfo=datetime.timezone.utc)
+    newest_time = datetime.datetime(2026, 1, 10, 12, 0, tzinfo=datetime.UTC)
+    older_time = datetime.datetime(2026, 1, 5, 12, 0, tzinfo=datetime.UTC)
     older_response = [_message_response("backdated activity", older_time)]
     newest_response = [_message_response("newest activity", newest_time)]
     sync_http = SimpleNamespace(
@@ -192,7 +192,7 @@ async def test_session_refresh_populates_last_message_at(
     honcho_client, client_type = client_fixture
     session_id = f"test-session-last-message-at-{client_type}"
     peer_id = f"test-peer-last-message-at-{client_type}"
-    message_time = datetime.datetime(2026, 1, 3, 12, 0, tzinfo=datetime.timezone.utc)
+    message_time = datetime.datetime(2026, 1, 3, 12, 0, tzinfo=datetime.UTC)
 
     if client_type == "async":
         peer = await honcho_client.aio.peer(id=peer_id)
@@ -223,8 +223,8 @@ async def test_client_sessions_sort_by_last_message_at(
     recent_id = f"sdk-last-activity-recent-{client_type}"
     older_id = f"sdk-last-activity-older-{client_type}"
     empty_id = f"sdk-last-activity-empty-{client_type}"
-    recent_time = datetime.datetime(2026, 1, 10, tzinfo=datetime.timezone.utc)
-    older_time = datetime.datetime(2026, 1, 5, tzinfo=datetime.timezone.utc)
+    recent_time = datetime.datetime(2026, 1, 10, tzinfo=datetime.UTC)
+    older_time = datetime.datetime(2026, 1, 5, tzinfo=datetime.UTC)
 
     if client_type == "async":
         peer = await honcho_client.aio.peer(id=peer_id)

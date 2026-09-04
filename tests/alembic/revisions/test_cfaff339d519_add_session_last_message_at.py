@@ -15,7 +15,7 @@ WORKSPACE_NAME = generate_nanoid()
 PEER_NAME = generate_nanoid()
 ACTIVE_SESSION_NAME = generate_nanoid()
 EMPTY_SESSION_NAME = generate_nanoid()
-LATEST_MESSAGE_AT = datetime.datetime(2026, 1, 3, 12, 0, tzinfo=datetime.timezone.utc)
+LATEST_MESSAGE_AT = datetime.datetime(2026, 1, 3, 12, 0, tzinfo=datetime.UTC)
 INDEX_NAME = "ix_sessions_workspace_last_message_at"
 
 
@@ -67,7 +67,7 @@ def prepare_add_session_last_message_at(verifier: MigrationVerifier) -> None:
 
     for seq, created_at in enumerate(
         (
-            datetime.datetime(2026, 1, 1, 12, 0, tzinfo=datetime.timezone.utc),
+            datetime.datetime(2026, 1, 1, 12, 0, tzinfo=datetime.UTC),
             LATEST_MESSAGE_AT,
         ),
         start=1,

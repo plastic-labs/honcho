@@ -10,6 +10,10 @@
     {
       "source": "/v3/guides/integrations/claudecode",
       "destination": "/v3/guides/integrations/claude-code"
+    },
+    {
+      "source": "/v3/documentation/features/advanced/representation-scopes",
+      "destination": "/v3/documentation/features/advanced/directional-representations"
     }
   ],
   "colors": {
@@ -24,7 +28,7 @@
   "navigation": {
     "versions": [
       {
-        "version": "v3.1.0",
+        "version": "v3.1.1",
         "api": {
           "openapi": ["v3/openapi.json"]
         },
@@ -62,7 +66,8 @@
                       "v3/documentation/features/advanced/reasoning-configuration",
                       "v3/documentation/features/advanced/summarizer",
                       "v3/documentation/features/advanced/peer-card",
-                      "v3/documentation/features/advanced/representation-scopes",
+                      "v3/documentation/features/advanced/directional-representations",
+                      "v3/documentation/features/advanced/scopes",
                       "v3/documentation/features/advanced/dreaming",
                       "v3/documentation/features/advanced/queue-status",
                       "v3/documentation/features/advanced/webhooks",
@@ -70,7 +75,8 @@
                       "v3/documentation/features/advanced/using-filters",
                       "v3/documentation/features/advanced/structured-outputs",
                       "v3/documentation/features/advanced/streaming-response",
-                      "v3/documentation/features/advanced/file-uploads"
+                      "v3/documentation/features/advanced/file-uploads",
+                      "v3/documentation/features/advanced/deleting-data"
                     ]
                   }
                 ]
@@ -98,6 +104,7 @@
                   "v3/guides/integrations/claude-code",
                   "v3/guides/integrations/opencode",
                   "v3/guides/integrations/codex",
+                  "v3/guides/integrations/deepseek-harness",
                   "v3/guides/integrations/vercel-ai-sdk",
                   "v3/guides/integrations/crewai",
                   "v3/guides/integrations/langgraph",
@@ -206,6 +213,18 @@
                   "v3/api-reference/endpoint/sessions/get-session-context",
                   "v3/api-reference/endpoint/sessions/get-session-summaries",
                   "v3/api-reference/endpoint/sessions/search-session"
+                ]
+              },
+              {
+                "group": "scopes",
+                "pages": [
+                  "v3/api-reference/endpoint/scopes/get-or-create-scope",
+                  "v3/api-reference/endpoint/scopes/get-scopes",
+                  "v3/api-reference/endpoint/scopes/get-scope",
+                  "v3/api-reference/endpoint/scopes/add-sessions-to-scope",
+                  "v3/api-reference/endpoint/scopes/get-scope-sessions",
+                  "v3/api-reference/endpoint/scopes/remove-session-from-scope",
+                  "v3/api-reference/endpoint/scopes/get-scope-status"
                 ]
               },
               {
@@ -593,8 +612,8 @@
     }
   },
   "integrations": {
-    "posthog": {
-      "apiKey": "phc_1yrzzcgywqXGcerkkI4g7C0YfyPMcAKNOOvGcjTCiUk"
+    "gtm": {
+      "tagId": "GTM-NSPT9PJF"
     }
   }
 }
