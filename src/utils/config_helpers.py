@@ -49,9 +49,8 @@ def normalize_configuration_dict(raw: dict[str, Any]) -> dict[str, Any]:
     """
     normalized: dict[str, Any] = dict(raw)
 
-    reasoning_raw = normalized.get("reasoning")
     reasoning_present = "reasoning" in normalized
-    reasoning: dict[str, Any] = dict(as_dict(reasoning_raw) or {})
+    reasoning: dict[str, Any] = dict(as_dict(normalized.get("reasoning")) or {})
     reasoning_enabled_explicit = reasoning.get("enabled") is not None
 
     if not reasoning_enabled_explicit:
