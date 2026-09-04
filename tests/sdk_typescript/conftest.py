@@ -136,9 +136,11 @@ def mock_tracked_db(ts_db_session: async_sessionmaker[AsyncSession]):
 
     # Create a tracked_db that uses fresh sessions (not shared)
     @asynccontextmanager
-    async def ts_tracked_db(_: str | None = None, *, read_only: bool = False):
-        # read_only accepted (and ignored): tests use one per-test database.
-        del read_only
+    async def ts_tracked_db(
+        _: str | None = None, *, read_only: bool = False, tenant_id: str | None = None
+    ):
+        # read_only and tenant_id accepted (and ignored): tests use one per-test db.
+        del read_only, tenant_id
         async with ts_db_session() as session:
             yield session
 
@@ -147,9 +149,10 @@ def mock_tracked_db(ts_db_session: async_sessionmaker[AsyncSession]):
         patch("src.deriver.queue_manager.service_db", ts_tracked_db),
         patch("src.deriver.consumer.tracked_db", ts_tracked_db),
         patch("src.deriver.enqueue.service_db", ts_tracked_db),
+        patch("src.deriver.enqueue.tracked_db", ts_tracked_db),
         patch("src.routers.peers.tracked_db", ts_tracked_db),
         patch("src.crud.representation.tracked_db", ts_tracked_db),
-        patch("src.dreamer.dream_scheduler.service_db", ts_tracked_db),
+        patch("src.dreamer.dream_scheduler.tracked_db", ts_tracked_db),
         patch("src.dreamer.orchestrator.tracked_db", ts_tracked_db),
         patch("src.dialectic.chat.tracked_db", ts_tracked_db),
         patch("src.utils.summarizer.tracked_db", ts_tracked_db),

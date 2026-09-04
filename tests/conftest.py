@@ -971,10 +971,12 @@ def mock_tracked_db(request: pytest.FixtureRequest):
     session_factory = async_sessionmaker(bind=db_engine, expire_on_commit=False)
 
     @asynccontextmanager
-    async def mock_tracked_db_context(_: str | None = None, *, read_only: bool = False):
-        # read_only is accepted (and ignored): in tests both engines resolve to
-        # the same per-test database session.
-        del read_only
+    async def mock_tracked_db_context(
+        _: str | None = None, *, read_only: bool = False, tenant_id: str | None = None
+    ):
+        # read_only and tenant_id are accepted (and ignored): in tests both engines
+        # resolve to the same per-test database session, and RLS isn't applied.
+        del read_only, tenant_id
         async with session_factory() as session:
             yield session
 
@@ -991,7 +993,7 @@ def mock_tracked_db(request: pytest.FixtureRequest):
         "src.routers.workspaces.tracked_db",
         "src.crud.representation.tracked_db",
         "src.dreamer.orchestrator.tracked_db",
-        "src.dreamer.dream_scheduler.service_db",
+        "src.dreamer.dream_scheduler.tracked_db",
         "src.dialectic.chat.tracked_db",
         "src.utils.summarizer.tracked_db",
         "src.webhooks.events.tracked_db",
