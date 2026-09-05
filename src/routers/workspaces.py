@@ -8,7 +8,9 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Respon
 from fastapi.responses import StreamingResponse
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import apaginate
+from psycopg.errors import ForeignKeyViolation
 from pydantic import BaseModel
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
@@ -17,7 +19,11 @@ from src.crud.message import get_peer_session_names
 from src.dependencies import db, read_db, tracked_db
 from src.deriver.enqueue import enqueue_deletion, enqueue_dream
 from src.dialectic.chat import workspace_chat, workspace_chat_stream
-from src.exceptions import AuthenticationException, ValidationException
+from src.exceptions import (
+    AuthenticationException,
+    ResourceNotFoundException,
+    ValidationException,
+)
 from src.security import JWTParams, require_auth
 from src.telemetry import prometheus_metrics
 from src.utils.filter import MAX_SESSION_ALLOWLIST_ENTRIES
@@ -129,17 +135,27 @@ async def delete_workspace(
     Returns 409 Conflict if the workspace contains active sessions.
     Delete all sessions first, then delete the workspace.
 
+    Returns 404 if the workspace row is gone, even when Redis still holds an entry
+    for it from before the deriver ran the deletion.
+
     This action cannot be undone.
     """
-    # Verify workspace exists
-    await crud.get_workspace(db, workspace_name=workspace_id)
+    if not await crud.workspace_exists(db, workspace_name=workspace_id):
+        await crud.evict_workspace_cache(workspace_id)
+        raise ResourceNotFoundException(f"Workspace {workspace_id} not found")
 
-    # Check for active sessions before accepting
     await crud.check_no_active_sessions(db, workspace_name=workspace_id)
 
-    # Enqueue for background deletion
-    await enqueue_deletion(workspace_id, "workspace", workspace_id, db_session=db)
-    await db.commit()
+    try:
+        await enqueue_deletion(workspace_id, "workspace", workspace_id, db_session=db)
+        await db.commit()
+    except IntegrityError as e:
+        # The deriver deleted the workspace between the existence check and the insert.
+        if not isinstance(e.orig, ForeignKeyViolation):
+            raise
+        await db.rollback()
+        await crud.evict_workspace_cache(workspace_id)
+        raise ResourceNotFoundException(f"Workspace {workspace_id} not found") from None
 
     return {"message": "Workspace deletion accepted"}
 
