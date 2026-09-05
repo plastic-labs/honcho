@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
 from datetime import datetime, timedelta, timezone
 from typing import Any, ClassVar, cast
 
 from google.genai import types as genai_types
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from src.exceptions import LLMError, ValidationException
 from src.llm.backend import CompletionResult, StreamChunk, ToolCallResult
@@ -19,7 +20,12 @@ from src.llm.request_builder import (
     coerce_passthrough_mapping,
     request_timeout_from_extra_params,
 )
-from src.llm.structured_output import repair_response_model_json, schema_instruction
+from src.llm.structured_output import (
+    StructuredOutputError,
+    repair_response_model_json,
+    schema_instruction,
+    validate_structured_output,
+)
 
 GEMINI_BLOCKED_FINISH_REASONS = {
     "SAFETY",
@@ -398,12 +404,33 @@ class GeminiBackend:
         # fallback, failing the iteration.
         if response_format is not None and not tool_calls:
             parsed_response = getattr(response, "parsed", None)
-            if isinstance(parsed_response, response_format):
-                content = parsed_response
-            elif isinstance(parsed_response, dict):
-                content = response_format.model_validate(parsed_response)
-            elif isinstance(parsed_response, str):
-                content = response_format.model_validate_json(parsed_response)
+            if isinstance(parsed_response, response_format | dict | str):
+                try:
+                    raw_text = "".join(text_parts)
+                    validation_content = (
+                        raw_text
+                        if isinstance(parsed_response, response_format) and raw_text
+                        else cast(object, parsed_response)
+                    )
+                    content = validate_structured_output(
+                        validation_content, response_format
+                    )
+                except (json.JSONDecodeError, StructuredOutputError, ValidationError):
+                    raw_content = (
+                        parsed_response
+                        if isinstance(parsed_response, str)
+                        else "".join(text_parts)
+                        or json.dumps(
+                            parsed_response.model_dump(mode="json", exclude_unset=True)
+                            if isinstance(parsed_response, BaseModel)
+                            else parsed_response
+                        )
+                    )
+                    content = repair_response_model_json(
+                        raw_content,
+                        response_format,
+                        model_name,
+                    )
             else:
                 if finish_reason in GEMINI_BLOCKED_FINISH_REASONS:
                     raise LLMError(

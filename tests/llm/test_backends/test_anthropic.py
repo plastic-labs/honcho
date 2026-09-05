@@ -7,6 +7,8 @@ from anthropic.types import TextBlock, ThinkingBlock, ToolUseBlock
 from pydantic import BaseModel
 
 from src.llm.backends.anthropic import AnthropicBackend
+from src.llm.structured_output import StructuredOutputError
+from src.utils.representation import PromptRepresentation
 
 
 @pytest.mark.asyncio
@@ -355,6 +357,25 @@ async def test_anthropic_backend_repairs_malformed_structured_output(
     assert repair_calls == [
         ('{"answer": not-json', StructuredResponse, "claude-3-5-sonnet-latest")
     ]
+
+
+@pytest.mark.asyncio
+async def test_anthropic_backend_rejects_wrong_structured_output_keys() -> None:
+    client = _make_client([TextBlock(type="text", text='{"wrong": 1}')])
+
+    backend = AnthropicBackend(client)
+    with pytest.raises(StructuredOutputError) as exc_info:
+        await backend.complete(
+            model="claude-sonnet-4-5",
+            messages=[{"role": "user", "content": "Hello"}],
+            max_tokens=100,
+            response_format=PromptRepresentation,
+        )
+
+    message = str(exc_info.value)
+    assert "model=claude-sonnet-4-5" in message
+    assert "payload_sha256=" in message
+    assert "wrong" not in message
 
 
 @pytest.mark.asyncio
