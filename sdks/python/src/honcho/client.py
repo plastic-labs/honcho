@@ -475,6 +475,7 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
                 session_data.configuration.model_dump()
             ),
             created_at=session_data.created_at,
+            last_message_at=session_data.last_message_at,
             is_active=session_data.is_active,
         )
 
@@ -485,6 +486,7 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
         page: int = 1,
         size: int = 50,
         reverse: bool = False,
+        sort_by: Literal["created_at", "last_message_at"] = "created_at",
     ) -> SyncPage[SessionResponse, Session]:
         """
         Get all sessions in the current workspace.
@@ -494,6 +496,7 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
             page: Page number (1-indexed). Default: 1.
             size: Number of items per page. Default: 50.
             reverse: If True, reverses the default ordering. Default: False.
+            sort_by: Session timestamp used for ordering.
 
         Returns:
             A SyncPage of Session objects representing all sessions in the workspace.
@@ -502,6 +505,8 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
         query: dict[str, Any] = {"page": page, "size": size}
         if reverse:
             query["reverse"] = "true"
+        if sort_by != "created_at":
+            query["sort_by"] = sort_by
         data = self._http.post(
             routes.sessions_list(self.workspace_id),
             body={"filters": filters} if filters else None,
@@ -516,6 +521,7 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
                 metadata=session.metadata,
                 configuration=session.configuration,
                 created_at=session.created_at,
+                last_message_at=session.last_message_at,
                 is_active=session.is_active,
             )
 
@@ -524,6 +530,8 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
             next_query: dict[str, Any] = {"page": next_page, "size": size}
             if reverse:
                 next_query["reverse"] = "true"
+            if sort_by != "created_at":
+                next_query["sort_by"] = sort_by
             next_data = self._http.post(
                 routes.sessions_list(self.workspace_id),
                 body={"filters": filters} if filters else None,

@@ -48,6 +48,7 @@ async def test_session_upload_file(
     assert text_content in messages[0].content
     assert messages[0].peer_id == user.id
     assert messages[0].session_id == session.id
+    assert session.last_message_at == max(message.created_at for message in messages)
 
 
 @pytest.mark.asyncio

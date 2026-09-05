@@ -4,11 +4,22 @@ from logging import getLogger
 from typing import Any
 
 from nanoid import generate as generate_nanoid
-from sqlalchemy import ColumnElement, Select, and_, func, or_, select, text
+from sqlalchemy import (
+    ColumnElement,
+    Select,
+    and_,
+    case,
+    func,
+    or_,
+    select,
+    text,
+    update,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute
 
 from src import models, schemas
+from src.cache.client import safe_cache_delete
 from src.config import settings
 from src.dependencies import tracked_db
 from src.embedding_client import embedding_client
@@ -19,7 +30,7 @@ from src.utils.types import embedding_call_purpose
 from src.vector_store import get_external_vector_store
 
 from .peer import reject_scope_peers
-from .session import get_or_create_session
+from .session import get_or_create_session, session_cache_key
 
 logger = getLogger(__name__)
 
@@ -494,7 +505,30 @@ async def create_messages(
             if pending_rows:
                 db.add_all(pending_rows)
 
+    await db.flush()
+    latest_message_at = max(message.created_at for message in message_objects)
+    await db.execute(
+        update(models.Session)
+        .where(models.Session.workspace_name == workspace_name)
+        .where(models.Session.name == session_name)
+        .values(
+            last_message_at=case(
+                (
+                    models.Session.last_message_at.is_(None),
+                    latest_message_at,
+                ),
+                (
+                    models.Session.last_message_at < latest_message_at,
+                    latest_message_at,
+                ),
+                else_=models.Session.last_message_at,
+            )
+        )
+        .execution_options(synchronize_session=False)
+    )
+
     await db.commit()
+    await safe_cache_delete(session_cache_key(workspace_name, session_name))
 
     return message_objects
 

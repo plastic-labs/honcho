@@ -1,10 +1,143 @@
+import datetime
+from types import SimpleNamespace
+from typing import cast
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 
-from sdks.python.src.honcho.api_types import QueueStatusResponse
+from sdks.python.src.honcho.api_types import MessageCreateParams, QueueStatusResponse
 from sdks.python.src.honcho.client import Honcho
 from sdks.python.src.honcho.message import Message
 from sdks.python.src.honcho.peer import Peer
 from sdks.python.src.honcho.session import Session, SessionPeerConfig
+
+_SDK_UTC = datetime.timezone.utc  # noqa: UP017 -- SDK supports Python 3.8
+
+
+def _message_response(
+    message_id: str, created_at: datetime.datetime
+) -> dict[str, object]:
+    """Build a complete message response fixture for SDK boundary tests."""
+    return {
+        "id": message_id,
+        "content": message_id,
+        "peer_id": "peer-1",
+        "session_id": "session-1",
+        "workspace_id": "workspace-1",
+        "metadata": {},
+        "created_at": created_at,
+        "token_count": 1,
+    }
+
+
+def _session_write_honcho() -> (
+    tuple[SimpleNamespace, datetime.datetime, datetime.datetime]
+):
+    """Build sync and async HTTP stubs for local session write tests."""
+    newest_time = datetime.datetime(2026, 1, 10, 12, 0, tzinfo=_SDK_UTC)
+    older_time = datetime.datetime(2026, 1, 5, 13, 0, tzinfo=_SDK_UTC)
+    older_response = [
+        _message_response(
+            "naive backdated activity", datetime.datetime(2026, 1, 5, 12, 0)
+        ),
+        _message_response(
+            "offset backdated activity",
+            datetime.datetime(
+                2026,
+                1,
+                5,
+                15,
+                0,
+                tzinfo=datetime.timezone(datetime.timedelta(hours=2)),
+            ),
+        ),
+    ]
+    newest_response = [_message_response("newest activity", newest_time)]
+    sync_http = SimpleNamespace(
+        post=MagicMock(side_effect=[older_response, older_response]),
+        upload=MagicMock(side_effect=[newest_response, older_response]),
+    )
+    async_http = SimpleNamespace(
+        post=AsyncMock(side_effect=[older_response, older_response]),
+        upload=AsyncMock(side_effect=[newest_response, older_response]),
+    )
+    honcho = SimpleNamespace(
+        workspace_id="workspace-1",
+        _http=sync_http,
+        _async_http_client=async_http,
+        _ensure_workspace=MagicMock(return_value=None),
+        _ensure_workspace_async=AsyncMock(return_value=None),
+    )
+    return honcho, older_time, newest_time
+
+
+def test_session_sync_writes_update_last_message_at_monotonically() -> None:
+    """Sync writes normalize mixed message and cached activity timestamps."""
+    honcho, older_time, newest_time = _session_write_honcho()
+    session = Session(
+        "session-1", honcho, last_message_at=older_time.replace(tzinfo=None)
+    )
+
+    session.add_messages(
+        [
+            MessageCreateParams(content="naive activity", peer_id="peer-1"),
+            MessageCreateParams(content="aware activity", peer_id="peer-1"),
+        ]
+    )
+    initial_activity = session.last_message_at
+    assert initial_activity == older_time
+    assert initial_activity is not None
+    assert initial_activity.tzinfo is _SDK_UTC
+
+    session.upload_file(("activity.txt", b"activity", "text/plain"), peer="peer-1")
+    assert session.last_message_at == newest_time
+
+    session.add_messages(
+        [
+            MessageCreateParams(content="naive activity", peer_id="peer-1"),
+            MessageCreateParams(content="aware activity", peer_id="peer-1"),
+        ]
+    )
+    assert session.last_message_at == newest_time
+
+    session.upload_file(("activity.txt", b"activity", "text/plain"), peer="peer-1")
+    assert session.last_message_at == newest_time
+
+
+@pytest.mark.asyncio
+async def test_session_async_writes_update_last_message_at_monotonically() -> None:
+    """Async writes normalize mixed message activity timestamps."""
+    honcho, older_time, newest_time = _session_write_honcho()
+    session = Session("session-1", honcho)
+
+    await session.aio.add_messages(
+        [
+            MessageCreateParams(content="naive activity", peer_id="peer-1"),
+            MessageCreateParams(content="aware activity", peer_id="peer-1"),
+        ]
+    )
+    initial_activity = session.last_message_at
+    assert initial_activity == older_time
+    assert initial_activity is not None
+    assert initial_activity.tzinfo is _SDK_UTC
+
+    await session.aio.upload_file(
+        ("activity.txt", b"activity", "text/plain"), peer="peer-1"
+    )
+    assert session.last_message_at == newest_time
+
+    await session.aio.add_messages(
+        [
+            MessageCreateParams(content="naive activity", peer_id="peer-1"),
+            MessageCreateParams(content="aware activity", peer_id="peer-1"),
+        ]
+    )
+    assert session.last_message_at == newest_time
+
+    await session.aio.upload_file(
+        ("activity.txt", b"activity", "text/plain"), peer="peer-1"
+    )
+    assert session.last_message_at == newest_time
 
 
 @pytest.mark.asyncio
@@ -90,6 +223,108 @@ async def test_session_fetch_methods_refresh_cached_status_fields(
         assert configuration is not None
         assert session.created_at is not None
         assert session.is_active is True
+
+
+@pytest.mark.asyncio
+async def test_session_refresh_populates_last_message_at(
+    client_fixture: tuple[Honcho, str],
+):
+    """Session.refresh exposes the newest message timestamp cached by the SDK."""
+    honcho_client, client_type = client_fixture
+    session_id = f"test-session-last-message-at-{client_type}"
+    peer_id = f"test-peer-last-message-at-{client_type}"
+    message_time = datetime.datetime(2026, 1, 3, 12, 0, tzinfo=_SDK_UTC)
+
+    if client_type == "async":
+        peer = await honcho_client.aio.peer(id=peer_id)
+        created = await honcho_client.aio.session(id=session_id, peers=[peer])
+        await created.aio.add_messages(
+            peer.message("session activity", created_at=message_time)
+        )
+        session = Session(session_id, honcho_client)
+        await session.aio.refresh()
+    else:
+        peer = honcho_client.peer(id=peer_id)
+        created = honcho_client.session(id=session_id, peers=[peer])
+        created.add_messages(peer.message("session activity", created_at=message_time))
+        session = Session(session_id, honcho_client)
+        session.refresh()
+
+    assert session.last_message_at == message_time
+
+
+@pytest.mark.asyncio
+async def test_client_sessions_sort_by_last_message_at(
+    client_fixture: tuple[Honcho, str],
+):
+    """Workspace session listing exposes and preserves activity ordering."""
+    honcho_client, client_type = client_fixture
+    group = f"sdk-last-activity-sort-{client_type}"
+    peer_id = f"sdk-last-activity-peer-{client_type}"
+    recent_id = f"sdk-last-activity-recent-{client_type}"
+    older_id = f"sdk-last-activity-older-{client_type}"
+    empty_id = f"sdk-last-activity-empty-{client_type}"
+    recent_time = datetime.datetime(2026, 1, 10, tzinfo=_SDK_UTC)
+    older_time = datetime.datetime(2026, 1, 5, tzinfo=_SDK_UTC)
+
+    if client_type == "async":
+        peer = await honcho_client.aio.peer(id=peer_id)
+        older = await honcho_client.aio.session(
+            id=older_id, metadata={"activity_group": group}, peers=[peer]
+        )
+        recent = await honcho_client.aio.session(
+            id=recent_id, metadata={"activity_group": group}, peers=[peer]
+        )
+        await honcho_client.aio.session(
+            id=empty_id, metadata={"activity_group": group}, peers=[peer]
+        )
+        await recent.aio.add_messages(
+            peer.message("recent activity", created_at=recent_time)
+        )
+        await older.aio.add_messages(
+            peer.message("older activity", created_at=older_time)
+        )
+        page = await honcho_client.aio.sessions(
+            {"metadata": {"activity_group": group}},
+            sort_by="last_message_at",
+            reverse=True,
+            size=1,
+        )
+        sessions = cast(list[Session], page.items)
+        while page.has_next_page():
+            next_page = await page.get_next_page()
+            assert next_page is not None
+            sessions.extend(cast(list[Session], next_page.items))
+            page = next_page
+    else:
+        peer = honcho_client.peer(id=peer_id)
+        older = honcho_client.session(
+            id=older_id, metadata={"activity_group": group}, peers=[peer]
+        )
+        recent = honcho_client.session(
+            id=recent_id, metadata={"activity_group": group}, peers=[peer]
+        )
+        honcho_client.session(
+            id=empty_id, metadata={"activity_group": group}, peers=[peer]
+        )
+        recent.add_messages(peer.message("recent activity", created_at=recent_time))
+        older.add_messages(peer.message("older activity", created_at=older_time))
+        page = honcho_client.sessions(
+            {"metadata": {"activity_group": group}},
+            sort_by="last_message_at",
+            reverse=True,
+            size=1,
+        )
+        sessions = cast(list[Session], page.items)
+        while page.has_next_page():
+            next_page = page.get_next_page()
+            assert next_page is not None
+            sessions.extend(cast(list[Session], next_page.items))
+            page = next_page
+
+    assert [session.id for session in sessions] == [recent_id, older_id, empty_id]
+    assert sessions[0].last_message_at == recent_time
+    assert sessions[-1].last_message_at is None
 
 
 @pytest.mark.asyncio
@@ -629,6 +864,9 @@ async def test_session_clone(client_fixture: tuple[Honcho, str]):
         cloned_messages_page = await cloned.aio.messages()
         cloned_messages = cloned_messages_page.items
         assert len(cloned_messages) == 2
+        assert cloned.last_message_at == max(
+            message.created_at for message in cloned_messages
+        )
 
         # Verify original session still has messages
         original_messages_page = await session.aio.messages()
@@ -657,6 +895,9 @@ async def test_session_clone(client_fixture: tuple[Honcho, str]):
         cloned_messages_page = cloned.messages()
         cloned_messages = list(cloned_messages_page)
         assert len(cloned_messages) == 2
+        assert cloned.last_message_at == max(
+            message.created_at for message in cloned_messages
+        )
 
         # Verify original session still has messages
         original_messages_page = session.messages()

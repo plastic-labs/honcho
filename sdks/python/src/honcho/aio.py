@@ -321,6 +321,7 @@ class HonchoAio(AsyncMetadataConfigMixin):
                 session_data.configuration.model_dump()
             ),
             created_at=session_data.created_at,
+            last_message_at=session_data.last_message_at,
             is_active=session_data.is_active,
         )
 
@@ -331,6 +332,7 @@ class HonchoAio(AsyncMetadataConfigMixin):
         page: int = 1,
         size: int = 50,
         reverse: bool = False,
+        sort_by: Literal["created_at", "last_message_at"] = "created_at",
     ) -> AsyncPage[SessionResponse, Session]:
         """
         Get all sessions in the current workspace asynchronously.
@@ -340,11 +342,14 @@ class HonchoAio(AsyncMetadataConfigMixin):
             page: Page number (1-indexed). Default: 1.
             size: Number of items per page. Default: 50.
             reverse: If True, reverses the default ordering. Default: False.
+            sort_by: Session timestamp used for ordering.
         """
         await self._honcho._ensure_workspace_async()
         query: dict[str, Any] = {"page": page, "size": size}
         if reverse:
             query["reverse"] = "true"
+        if sort_by != "created_at":
+            query["sort_by"] = sort_by
         data = await self._honcho._async_http_client.post(
             routes.sessions_list(self._honcho.workspace_id),
             body={"filters": filters} if filters else None,
@@ -359,6 +364,7 @@ class HonchoAio(AsyncMetadataConfigMixin):
                 metadata=session.metadata,
                 configuration=session.configuration,
                 created_at=session.created_at,
+                last_message_at=session.last_message_at,
                 is_active=session.is_active,
             )
 
@@ -367,6 +373,8 @@ class HonchoAio(AsyncMetadataConfigMixin):
             next_query: dict[str, Any] = {"page": next_page, "size": size}
             if reverse:
                 next_query["reverse"] = "true"
+            if sort_by != "created_at":
+                next_query["sort_by"] = sort_by
             next_data = await self._honcho._async_http_client.post(
                 routes.sessions_list(self._honcho.workspace_id),
                 body={"filters": filters} if filters else None,
@@ -930,6 +938,7 @@ class PeerAio(AsyncMetadataConfigMixin):
                     session.configuration.model_dump()
                 ),
                 created_at=session.created_at,
+                last_message_at=session.last_message_at,
                 is_active=session.is_active,
             )
 
@@ -1172,6 +1181,7 @@ class SessionAio(AsyncMetadataConfigMixin):
             session.configuration.model_dump()
         )
         self._session._created_at = session.created_at
+        self._session._last_message_at = session.last_message_at
         self._session._is_active = session.is_active
 
     async def get_metadata(self) -> dict[str, object]:
@@ -1327,10 +1337,12 @@ class SessionAio(AsyncMetadataConfigMixin):
             routes.messages(self._session.workspace_id, self._session.id),
             body={"messages": messages_data},
         )
-        return [
+        created_messages = [
             Message.from_api_response(MessageResponse.model_validate(msg))
             for msg in data
         ]
+        self._session._update_last_message_at_from_messages(created_messages)
+        return created_messages
 
     async def messages(
         self,
@@ -1392,6 +1404,7 @@ class SessionAio(AsyncMetadataConfigMixin):
             metadata=cloned.metadata,
             configuration=cloned.configuration,
             created_at=cloned.created_at,
+            last_message_at=cloned.last_message_at,
             is_active=cloned.is_active,
         )
 
@@ -1629,10 +1642,12 @@ class SessionAio(AsyncMetadataConfigMixin):
             data=data_dict,
         )
 
-        return [
+        created_messages = [
             Message.from_api_response(MessageResponse.model_validate(msg))
             for msg in response
         ]
+        self._session._update_last_message_at_from_messages(created_messages)
+        return created_messages
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     async def representation(
@@ -1985,6 +2000,7 @@ class ScopeAio:
                 metadata=response.metadata,
                 configuration=response.configuration,
                 created_at=response.created_at,
+                last_message_at=response.last_message_at,
                 is_active=response.is_active,
             )
 

@@ -56,6 +56,7 @@ async def test_peer_sessions(client_fixture: tuple[Honcho, str]):
 
         await session1.aio.add_peers(peer)
         await session2.aio.add_peers(peer)
+        await session1.aio.add_messages(peer.message("peer session activity"))
 
         sessions_page = await peer.aio.sessions()
         sessions = sessions_page.items
@@ -63,6 +64,9 @@ async def test_peer_sessions(client_fixture: tuple[Honcho, str]):
         session_ids = {s.id for s in sessions}
         assert "s1" in session_ids
         assert "s2" in session_ids
+        sessions_by_id = {session.id: session for session in sessions}
+        assert sessions_by_id["s1"].last_message_at is not None
+        assert sessions_by_id["s2"].last_message_at is None
     else:
         peer = honcho_client.peer(id="test-peer-sessions")
         session1 = honcho_client.session(id="s1")
@@ -70,6 +74,7 @@ async def test_peer_sessions(client_fixture: tuple[Honcho, str]):
 
         session1.add_peers(peer)
         session2.add_peers(peer)
+        session1.add_messages(peer.message("peer session activity"))
 
         sessions_page = peer.sessions()
         sessions = list(sessions_page)
@@ -77,6 +82,9 @@ async def test_peer_sessions(client_fixture: tuple[Honcho, str]):
         session_ids = {s.id for s in sessions}
         assert "s1" in session_ids
         assert "s2" in session_ids
+        sessions_by_id = {session.id: session for session in sessions}
+        assert sessions_by_id["s1"].last_message_at is not None
+        assert sessions_by_id["s2"].last_message_at is None
 
 
 @pytest.mark.asyncio

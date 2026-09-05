@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 ### Added
 
 - Qdrant vector store backend (`VECTOR_STORE_TYPE=qdrant`) as an optional `qdrant` extra (#683)
+- Session responses now expose nullable `last_message_at`, backfilled and maintained from the newest message timestamp. `POST /v3/workspaces/{workspace_id}/sessions/list` accepts `sort_by=created_at|last_message_at` alongside the existing `reverse` parameter, with stable ID tie-breaking and sessions without messages placed last in either direction (#965).
 
 ## [3.1.1] - 2026-09-02
 

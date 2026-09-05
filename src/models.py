@@ -178,6 +178,9 @@ class Session(Base):
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
     )
+    last_message_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     workspace_name: Mapped[str] = mapped_column(
         ForeignKey("workspaces.name"), nullable=False, index=True
     )
@@ -193,6 +196,13 @@ class Session(Base):
 
     __table_args__ = (
         UniqueConstraint("name", "workspace_name"),
+        Index(
+            "ix_sessions_workspace_last_message_at",
+            "workspace_name",
+            text("last_message_at DESC NULLS LAST"),
+            text("id DESC"),
+            postgresql_where=text("is_active"),
+        ),
         CheckConstraint("length(name) <= 512", name="name_length"),
         CheckConstraint("length(id) = 21", name="id_length"),
         CheckConstraint("id ~ '^[A-Za-z0-9_-]+$'", name="id_format"),
