@@ -66,6 +66,7 @@ class SpecialistResult:
     duration_ms: float
     success: bool
     content: str
+    created_observation_count: int = 0
 
 
 # Tool names to exclude when peer card creation is disabled
@@ -456,6 +457,7 @@ If you update it, send the full deduplicated list and remove stale entries.
                 duration_ms=duration_ms,
                 success=True,
                 content=response.content,
+                created_observation_count=created_observation_count,
             )
         except BaseException as e:
             # BaseException (not Exception) — asyncio.CancelledError doesn't

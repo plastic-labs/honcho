@@ -24,6 +24,7 @@ from src.dreamer.dream_scheduler import (
     set_dream_scheduler,
 )
 from src.dreamer.orchestrator import DreamResult, process_dream
+from src.dreamer.specialists import SpecialistResult
 from src.schemas import (
     DreamType,
     ResolvedConfiguration,
@@ -54,19 +55,28 @@ async def seeded_collection(
     return collection
 
 
-def _make_dream_result() -> DreamResult:
-    """Build a minimal non-null DreamResult for happy-path tests."""
+def _make_dream_result(
+    deduction_success: bool = True,
+    induction_success: bool = True,
+    created_count: int = 0,
+    deduction_error_class: str | None = None,
+    induction_error_class: str | None = None,
+) -> DreamResult:
+    """Build a minimal non-null DreamResult for happy-path and outcome tests."""
     return DreamResult(
         run_id="test_run_01",
         specialists_run=["deduction", "induction"],
-        deduction_success=True,
-        induction_success=True,
+        deduction_success=deduction_success,
+        induction_success=induction_success,
         surprisal_enabled=False,
         surprisal_conclusion_count=0,
         total_iterations=3,
         total_duration_ms=1234.5,
         input_tokens=100,
         output_tokens=50,
+        created_observation_count=created_count,
+        deduction_error_class=deduction_error_class,
+        induction_error_class=induction_error_class,
     )
 
 
@@ -104,19 +114,19 @@ class TestLastDreamAtCompletionWrite:
             await process_dream(payload, seeded_collection.workspace_name)
 
         dream_meta = await _get_dream_metadata(db_session, seeded_collection)
-        assert (
-            "last_dream_at" in dream_meta
-        ), "process_dream must write last_dream_at when run_dream returns a result"
+        assert "last_dream_at" in dream_meta, (
+            "process_dream must write last_dream_at when run_dream returns a result"
+        )
         # Must be a tz-aware UTC ISO timestamp. A naive datetime.now().isoformat()
         # would pass a loose "T in string" check but corrupt the 8h guard math
         # against tz-aware now() comparisons downstream.
         parsed = datetime.fromisoformat(dream_meta["last_dream_at"])
-        assert (
-            parsed.tzinfo is not None
-        ), f"last_dream_at must be timezone-aware, got {dream_meta['last_dream_at']!r}"
-        assert parsed.utcoffset() == timedelta(
-            0
-        ), f"last_dream_at must be UTC, got offset {parsed.utcoffset()}"
+        assert parsed.tzinfo is not None, (
+            f"last_dream_at must be timezone-aware, got {dream_meta['last_dream_at']!r}"
+        )
+        assert parsed.utcoffset() == timedelta(0), (
+            f"last_dream_at must be UTC, got offset {parsed.utcoffset()}"
+        )
 
     @pytest.mark.asyncio
     async def test_failure_path_leaves_last_dream_at_null(
@@ -582,9 +592,9 @@ class TestGuardPairCoherence:
             "pre-Loop-4 the baseline was consumed at enqueue time and a "
             "silent failure would lock out retries on the same corpus."
         )
-        assert (
-            "last_dream_at" not in dream_meta
-        ), "Failed dream must not advance last_dream_at either."
+        assert "last_dream_at" not in dream_meta, (
+            "Failed dream must not advance last_dream_at either."
+        )
 
         with patch.object(
             _scheduler, "schedule_dream", new_callable=AsyncMock
@@ -597,3 +607,229 @@ class TestGuardPairCoherence:
             "last_dream_at, no pending queue item."
         )
         assert mock_schedule.called, "schedule_dream must be invoked on the retry path."
+
+
+class TestDreamOutcomeMetadata:
+    """Regression & behavior tests for honcho#1003: metadata recording on dream outcome."""
+
+    @pytest.mark.parametrize(
+        ("deduction_succ", "induction_succ", "created_count", "expected_outcome"),
+        [
+            (True, True, 5, "success"),
+            (True, False, 3, "partial"),
+            (False, True, 1, "partial"),
+            (False, False, 0, "failed"),
+            (True, True, 0, "success"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_dream_outcome_classification_and_guard_advancement(
+        self,
+        db_session: AsyncSession,
+        seeded_collection: models.Collection,
+        deduction_succ: bool,
+        induction_succ: bool,
+        created_count: int,
+        expected_outcome: str,
+    ):
+        """Verify outcome classification, created count recording, and guard field advancement."""
+        payload = DreamPayload(
+            dream_type=DreamType.OMNI,
+            observer=seeded_collection.observer,
+            observed=seeded_collection.observed,
+        )
+        fake_result = _make_dream_result(
+            deduction_success=deduction_succ,
+            induction_success=induction_succ,
+            created_count=created_count,
+        )
+
+        with patch(
+            "src.dreamer.orchestrator.run_dream",
+            new=AsyncMock(return_value=fake_result),
+        ):
+            await process_dream(payload, seeded_collection.workspace_name)
+
+        dream_meta = await _get_dream_metadata(db_session, seeded_collection)
+        assert dream_meta.get("last_dream_outcome") == expected_outcome
+        assert dream_meta.get("last_dream_created_observations") == created_count
+        assert "last_dream_at" in dream_meta
+        assert "last_dream_document_count" in dream_meta
+
+        if expected_outcome in ("success", "partial"):
+            assert dream_meta.get("consecutive_failed_dreams") == 0
+            assert "last_successful_dream_at" in dream_meta
+            assert "last_successful_dream_document_count" in dream_meta
+        else:
+            assert dream_meta.get("consecutive_failed_dreams") == 1
+            assert "last_successful_dream_at" not in dream_meta
+
+    @pytest.mark.asyncio
+    async def test_streak_failure_logging_and_recovery(
+        self,
+        db_session: AsyncSession,
+        seeded_collection: models.Collection,
+        caplog: pytest.LogCaptureFixture,
+    ):
+        """Assert consecutive failure counter increments, warning/error logs fire correctly, and recovery resets counter."""
+        payload = DreamPayload(
+            dream_type=DreamType.OMNI,
+            observer=seeded_collection.observer,
+            observed=seeded_collection.observed,
+        )
+        failed_result = _make_dream_result(
+            deduction_success=False, induction_success=False, created_count=0
+        )
+
+        with patch(
+            "src.dreamer.orchestrator.run_dream",
+            new=AsyncMock(return_value=failed_result),
+        ):
+            for _ in range(4):
+                await process_dream(payload, seeded_collection.workspace_name)
+
+        dream_meta = await _get_dream_metadata(db_session, seeded_collection)
+        assert dream_meta.get("consecutive_failed_dreams") == 4
+        assert dream_meta.get("last_dream_outcome") == "failed"
+
+        # Logs check: 4 WARNINGs, exactly 1 ERROR (at threshold = 3)
+        warnings = [
+            r
+            for r in caplog.records
+            if r.levelname == "WARNING" and "Dream cycle failed" in r.message
+        ]
+        errors = [
+            r
+            for r in caplog.records
+            if r.levelname == "ERROR" and "Dream failure threshold reached" in r.message
+        ]
+        assert len(warnings) == 4
+        assert len(errors) == 1
+
+        # Recovery with a successful dream
+        success_result = _make_dream_result(
+            deduction_success=True, induction_success=True, created_count=2
+        )
+        with patch(
+            "src.dreamer.orchestrator.run_dream",
+            new=AsyncMock(return_value=success_result),
+        ):
+            await process_dream(payload, seeded_collection.workspace_name)
+
+        dream_meta_after = await _get_dream_metadata(db_session, seeded_collection)
+        assert dream_meta_after.get("consecutive_failed_dreams") == 0
+        assert dream_meta_after.get("last_dream_outcome") == "success"
+        assert "last_successful_dream_at" in dream_meta_after
+
+    @pytest.mark.asyncio
+    async def test_error_class_formatting_and_deduplication(
+        self,
+        db_session: AsyncSession,
+        seeded_collection: models.Collection,
+    ):
+        """Verify error classes are recorded correctly when specialists raise exceptions in run_dream."""
+        from src.dreamer.orchestrator import run_dream, SPECIALISTS
+
+        mock_deduction = AsyncMock()
+        mock_induction = AsyncMock()
+
+        succ_specialist_result = SpecialistResult(
+            run_id="test_spec_01",
+            specialist_type="induction",
+            iterations=1,
+            tool_calls_count=1,
+            input_tokens=10,
+            output_tokens=10,
+            duration_ms=100.0,
+            success=True,
+            content="Induction ok",
+            created_observation_count=0,
+        )
+
+        # Deduction raises ValueError, Induction succeeds
+        mock_deduction.run.side_effect = ValueError("Deduction error")
+        mock_induction.run.return_value = succ_specialist_result
+
+        with patch.dict(
+            SPECIALISTS, {"deduction": mock_deduction, "induction": mock_induction}
+        ):
+            res1 = await run_dream(
+                workspace_name=seeded_collection.workspace_name,
+                observer=seeded_collection.observer,
+                observed=seeded_collection.observed,
+            )
+            assert res1 is not None
+            assert res1.deduction_error_class == "ValueError"
+            assert res1.induction_error_class is None
+
+        # Both raise ValueError (deduplication check)
+        mock_deduction.run.side_effect = ValueError("Error 1")
+        mock_induction.run.side_effect = ValueError("Error 2")
+        with patch.dict(
+            SPECIALISTS, {"deduction": mock_deduction, "induction": mock_induction}
+        ):
+            res2 = await run_dream(
+                workspace_name=seeded_collection.workspace_name,
+                observer=seeded_collection.observer,
+                observed=seeded_collection.observed,
+            )
+            assert res2 is not None
+            assert res2.deduction_error_class == "ValueError"
+            assert res2.induction_error_class == "ValueError"
+
+        # Deduction raises KeyError, Induction raises TypeError
+        mock_deduction.run.side_effect = KeyError("Key error")
+        mock_induction.run.side_effect = TypeError("Type error")
+        with patch.dict(
+            SPECIALISTS, {"deduction": mock_deduction, "induction": mock_induction}
+        ):
+            res3 = await run_dream(
+                workspace_name=seeded_collection.workspace_name,
+                observer=seeded_collection.observer,
+                observed=seeded_collection.observed,
+            )
+            assert res3 is not None
+            assert res3.deduction_error_class == "KeyError"
+            assert res3.induction_error_class == "TypeError"
+
+    @pytest.mark.asyncio
+    async def test_backward_compatibility_existing_metadata(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """Legacy collection metadata without outcome keys updates cleanly on first failure."""
+        workspace, peer = sample_data
+        collection = models.Collection(
+            observer=peer.name,
+            observed=peer.name,
+            workspace_name=workspace.name,
+            internal_metadata={
+                "dream": {
+                    "last_dream_at": "2026-01-01T00:00:00",
+                    "last_dream_document_count": 10,
+                }
+            },
+        )
+        db_session.add(collection)
+        await db_session.commit()
+        await db_session.refresh(collection)
+
+        payload = DreamPayload(
+            dream_type=DreamType.OMNI,
+            observer=peer.name,
+            observed=peer.name,
+        )
+        failed_result = _make_dream_result(
+            deduction_success=False, induction_success=False, created_count=0
+        )
+
+        with patch(
+            "src.dreamer.orchestrator.run_dream",
+            new=AsyncMock(return_value=failed_result),
+        ):
+            await process_dream(payload, workspace.name)
+
+        dream_meta = await _get_dream_metadata(db_session, collection)
+        assert dream_meta.get("consecutive_failed_dreams") == 1
+        assert dream_meta.get("last_dream_outcome") == "failed"

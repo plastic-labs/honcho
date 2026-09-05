@@ -44,6 +44,8 @@ from src.utils.queue_payload import DreamPayload
 
 logger = logging.getLogger(__name__)
 
+DREAM_FAILURE_ALERT_THRESHOLD = 3
+
 
 @dataclass
 class DreamResult:
@@ -66,6 +68,11 @@ class DreamResult:
     total_duration_ms: float
     input_tokens: int
     output_tokens: int
+
+    # Error details & created counts (honcho#1003)
+    created_observation_count: int = 0
+    deduction_error_class: str | None = None
+    induction_error_class: str | None = None
 
 
 async def run_dream(
@@ -191,6 +198,10 @@ async def run_dream(
     total_iterations = 0
     total_input_tokens = 0
     total_output_tokens = 0
+    # Track specialist error classes (honcho#1003)
+    deduction_error_class: str | None = None
+    induction_error_class: str | None = None
+
     try:
         # Run deduction specialist (manages its own DB sessions)
         logger.info(f"[{run_id}] Running deduction specialist")
@@ -217,6 +228,7 @@ async def run_dream(
             # propagate so the worker can shut down. SpecialistExecutionError
             # is no longer raised by `src/`, but the catch is broad enough to
             # cover provider/DB/tool/validation errors.
+            deduction_error_class = type(e).__name__
             logger.error(f"[{run_id}] Deduction specialist failed: {e}", exc_info=True)
             accumulate_metric(task_name, "deduction_error", str(e), "blob")
 
@@ -241,6 +253,7 @@ async def run_dream(
             )
             induction_success = induction_result.success
         except Exception as e:
+            induction_error_class = type(e).__name__
             logger.error(f"[{run_id}] Induction specialist failed: {e}", exc_info=True)
             accumulate_metric(task_name, "induction_error", str(e), "blob")
 
@@ -297,6 +310,10 @@ async def run_dream(
         except Exception:  # pragma: no cover - telemetry must not raise
             logger.debug("Failed to emit DreamRunEvent", exc_info=True)
 
+        total_created_observations = (
+            deduction_result.created_observation_count if deduction_result else 0
+        ) + (induction_result.created_observation_count if induction_result else 0)
+
     return DreamResult(
         run_id=run_id,
         specialists_run=["deduction", "induction"],
@@ -308,6 +325,9 @@ async def run_dream(
         total_duration_ms=duration_ms,
         input_tokens=total_input_tokens,
         output_tokens=total_output_tokens,
+        created_observation_count=total_created_observations,
+        deduction_error_class=deduction_error_class,
+        induction_error_class=induction_error_class,
     )
 
 
@@ -522,7 +542,8 @@ DREAM: {payload.dream_type} documents for {workspace_name}/{payload.observer}/{p
                         + f"duration={result.total_duration_ms:.0f}ms"
                     )
 
-                    # Both guard fields advance together only on successful consolidation.
+                    # Both guard fields advance together on every dream run (fail-forward),
+                    # while detailed outcome/error metrics are stored in dream metadata (honcho#1003).
                     now_iso = datetime.now(timezone.utc).isoformat()
                     async with tracked_db("dream.guard_pair_write") as db:
                         collection = await crud.get_collection(
@@ -542,6 +563,66 @@ DREAM: {payload.dream_type} documents for {workspace_name}/{payload.observer}/{p
                         dream_meta = dict(collection.internal_metadata.get("dream", {}))
                         dream_meta["last_dream_at"] = now_iso
                         dream_meta["last_dream_document_count"] = current_explicit_count
+
+                        # Determine outcome: "success", "partial", or "failed"
+                        succ_count = sum(
+                            1
+                            for s in (
+                                result.deduction_success,
+                                result.induction_success,
+                            )
+                            if s
+                        )
+                        if succ_count == 2:
+                            outcome = "success"
+                        elif succ_count == 1:
+                            outcome = "partial"
+                        else:
+                            outcome = "failed"
+
+                        dream_meta["last_dream_outcome"] = outcome
+                        dream_meta["last_dream_run_id"] = result.run_id
+                        dream_meta["last_dream_created_observations"] = (
+                            result.created_observation_count
+                        )
+
+                        # Form distinct error classes string (joined with comma, <= 2 entries)
+                        err_classes = list(
+                            dict.fromkeys(
+                                cls
+                                for cls in (
+                                    result.deduction_error_class,
+                                    result.induction_error_class,
+                                )
+                                if cls
+                            )
+                        )
+                        dream_meta["last_dream_error_class"] = (
+                            ",".join(err_classes) if err_classes else None
+                        )
+
+                        if outcome in ("success", "partial"):
+                            dream_meta["consecutive_failed_dreams"] = 0
+                            dream_meta["last_successful_dream_at"] = now_iso
+                            dream_meta["last_successful_dream_document_count"] = (
+                                current_explicit_count
+                            )
+                        else:
+                            consecutive = (
+                                dream_meta.get("consecutive_failed_dreams", 0) + 1
+                            )
+                            dream_meta["consecutive_failed_dreams"] = consecutive
+
+                            logger.warning(
+                                f"Dream cycle failed for {workspace_name}/{payload.observer}/{payload.observed}: "
+                                f"run_id={result.run_id}, consecutive={consecutive}, errors={dream_meta['last_dream_error_class']}"
+                            )
+                            if consecutive == DREAM_FAILURE_ALERT_THRESHOLD:
+                                logger.error(
+                                    f"Dream failure threshold reached ({consecutive} consecutive failures) "
+                                    f"for {workspace_name}/{payload.observer}/{payload.observed}"
+                                )
+
                         await crud.update_collection_internal_metadata(
                             db,
                             workspace_name,
