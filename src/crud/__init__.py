@@ -91,12 +91,14 @@ from .workspace import (
     WorkspaceStats,
     check_no_active_sessions,
     delete_workspace,
+    evict_workspace_cache,
     get_active_peers,
     get_all_workspaces,
     get_or_create_workspace,
     get_workspace,
     get_workspace_stats,
     update_workspace,
+    workspace_exists,
 )
 
 __all__ = [
@@ -188,6 +190,8 @@ __all__ = [
     "WorkspaceDeletionResult",
     "check_no_active_sessions",
     "delete_workspace",
+    "evict_workspace_cache",
+    "workspace_exists",
     "get_or_create_workspace",
     "get_workspace",
     "get_all_workspaces",

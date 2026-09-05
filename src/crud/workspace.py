@@ -282,6 +282,22 @@ async def update_workspace(
     return honcho_workspace
 
 
+async def workspace_exists(db: AsyncSession, workspace_name: str) -> bool:
+    """Check Postgres directly for a workspace row.
+
+    Bypasses the Redis-cached fetch. Destructive routes must not act on a cached
+    entry for a workspace the deriver has already deleted (DEV-2646).
+    """
+    return bool(
+        await db.scalar(select(exists().where(models.Workspace.name == workspace_name)))
+    )
+
+
+async def evict_workspace_cache(workspace_name: str) -> None:
+    """Drop the cached workspace entry so later lookups go back to Postgres."""
+    await safe_cache_delete(workspace_cache_key(workspace_name))
+
+
 async def check_no_active_sessions(db: AsyncSession, workspace_name: str) -> None:
     """
     Verify that a workspace has no active sessions.
