@@ -20,6 +20,7 @@ from cloudevents.conversion import to_json  # pyright: ignore[reportUnknownVaria
 from cloudevents.http import CloudEvent
 
 from src._version import HONCHO_VERSION
+from src.telemetry.client_context import client_context_body
 
 if TYPE_CHECKING:
     from src.telemetry.events.base import BaseEvent
@@ -303,6 +304,9 @@ class TelemetryEmitter:
         # unchanged. Only the serialized body that hits the wire carries the extras.
         body: dict[str, Any] = event.model_dump(mode="json")
         body["honcho_version"] = HONCHO_VERSION
+        # Client identity from the request headers (set by the API middleware);
+        # members are null outside a request, e.g. in the deriver worker.
+        body["client"] = client_context_body()
 
         # Buffer-full check happens here because deque(maxlen=) silently evicts.
         # Detect by length-before-append; if at capacity, the append will displace

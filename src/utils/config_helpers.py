@@ -1,7 +1,7 @@
 """Configuration resolution utilities for hierarchical settings."""
 
 import logging
-from typing import Any, cast
+from typing import Any
 
 from src import models
 from src.config import settings
@@ -9,6 +9,7 @@ from src.schemas import (
     MessageConfiguration,
     ResolvedConfiguration,
 )
+from src.utils.json_coerce import as_dict
 
 logger = logging.getLogger(__name__)
 
@@ -22,8 +23,10 @@ def deep_update(base: dict[str, Any], update: dict[str, Any]) -> None:
         if value is None:
             continue
 
-        if isinstance(value, dict) and key in base and isinstance(base[key], dict):
-            deep_update(cast(dict[str, Any], base[key]), cast(dict[str, Any], value))
+        nested = as_dict(value)
+        existing = as_dict(base.get(key))
+        if nested is not None and existing is not None:
+            deep_update(existing, nested)
         else:
             base[key] = value
 
@@ -46,22 +49,12 @@ def normalize_configuration_dict(raw: dict[str, Any]) -> dict[str, Any]:
     """
     normalized: dict[str, Any] = dict(raw)
 
-    reasoning_raw = normalized.get("reasoning")
     reasoning_present = "reasoning" in normalized
-    reasoning: dict[str, Any]
-    if isinstance(reasoning_raw, dict):
-        reasoning = dict(cast(dict[str, Any], reasoning_raw))
-    else:
-        reasoning = {}
+    reasoning: dict[str, Any] = dict(as_dict(normalized.get("reasoning")) or {})
     reasoning_enabled_explicit = reasoning.get("enabled") is not None
 
     if not reasoning_enabled_explicit:
-        deriver_raw = normalized.get("deriver")
-        deriver: dict[str, Any]
-        if isinstance(deriver_raw, dict):
-            deriver = dict(cast(dict[str, Any], deriver_raw))
-        else:
-            deriver = {}
+        deriver: dict[str, Any] = dict(as_dict(normalized.get("deriver")) or {})
         if deriver.get("enabled") is not None:
             reasoning["enabled"] = bool(deriver["enabled"])
 

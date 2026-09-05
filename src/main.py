@@ -44,6 +44,13 @@ from src.telemetry import (
     register_db_pool_collector,
     shutdown_telemetry,
 )
+from src.telemetry.client_context import (
+    HEADER_AGENT_MODEL,
+    HEADER_HOST,
+    HEADER_PLUGIN,
+    reset_client_context,
+    set_client_context,
+)
 from src.telemetry.logging import get_route_template
 from src.telemetry.sentry import initialize_sentry
 
@@ -248,6 +255,13 @@ async def track_request(
     # Store in request state and context var
     request.state.request_id = request_id
     token = request_context.set(f"api:{request_id}")
+    # Optional client identity headers; the telemetry emitter injects these
+    # into every event body emitted during this request.
+    client_tokens = set_client_context(
+        host=request.headers.get(HEADER_HOST),
+        plugin=request.headers.get(HEADER_PLUGIN),
+        agent_model=request.headers.get(HEADER_AGENT_MODEL),
+    )
 
     try:
         start_time = time.perf_counter()
@@ -265,4 +279,5 @@ async def track_request(
 
         return response
     finally:
+        reset_client_context(client_tokens)
         request_context.reset(token)

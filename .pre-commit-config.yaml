@@ -29,10 +29,10 @@ repos:
       # Linter - only on Python directories
       - id: ruff
         args: [--fix]
-        files: ^(src/|tests/|scripts/|migrations/|sdks/python/).*\.py$
+        files: ^(src/|tests/|scripts/|migrations/|sdks/python/|sandbox/).*\.py$
       # Formatter - only on Python directories
       - id: ruff-format
-        files: ^(src/|tests/|scripts/|migrations/|sdks/python/).*\.py$
+        files: ^(src/|tests/|scripts/|migrations/|sdks/python/|sandbox/).*\.py$
 
   # Security checks - only on main src code (not tests/scripts)
   - repo: https://github.com/PyCQA/bandit

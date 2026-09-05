@@ -25,7 +25,7 @@ from __future__ import annotations
 import hashlib
 from typing import Any
 
-from src.mock_provider.coerce import as_dict, as_int, as_list, as_str
+from src.utils.json_coerce import as_dict, as_int, as_list, as_str
 
 # Depth cap for self-referential schemas. Reasoning-tree models nest premises
 # inside conclusions, so a $ref cycle is normal input, not a malformed schema.
