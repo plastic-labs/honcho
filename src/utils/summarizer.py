@@ -98,12 +98,23 @@ class SummaryType(Enum):
     LONG = "honcho_chat_summary_long"
 
 
+def _custom_instructions_section(custom_instructions: str | None) -> str:
+    if not custom_instructions or not custom_instructions.strip():
+        return ""
+    return c(f"""
+CUSTOM INSTRUCTIONS:
+{custom_instructions.strip()}
+""")
+
+
 def short_summary_prompt(
     formatted_messages: str,
     output_words: int,
     previous_summary_text: str,
+    custom_instructions: str | None = None,
 ) -> str:
     """Generate the short summary prompt."""
+    custom_instructions_section = _custom_instructions_section(custom_instructions)
     return c(f"""
 You are a system that summarizes parts of a conversation to create a concise and accurate summary. Focus on capturing:
 
@@ -117,6 +128,8 @@ If there is a previous summary, ALWAYS make your new summary inclusive of both i
 Provide a concise, factual summary that captures the essence of the conversation. Your summary should be detailed enough to serve as context for future messages, but brief enough to be helpful. Prefer a thorough chronological narrative over a list of bullet points.
 
 Return only the summary without any explanation or meta-commentary.
+
+{custom_instructions_section}
 
 <previous_summary>
 {previous_summary_text}
@@ -134,8 +147,10 @@ def long_summary_prompt(
     formatted_messages: str,
     output_words: int,
     previous_summary_text: str,
+    custom_instructions: str | None = None,
 ) -> str:
     """Generate the long summary prompt."""
+    custom_instructions_section = _custom_instructions_section(custom_instructions)
     return c(f"""
 You are a system that creates thorough, comprehensive summaries of conversations. Focus on capturing:
 
@@ -151,6 +166,8 @@ If there is a previous summary, ALWAYS make your new summary inclusive of both i
 Provide a thorough and detailed summary that captures the essence of the conversation. Your summary should serve as a comprehensive record of the important information in this conversation. Prefer an exhaustive chronological narrative over a list of bullet points.
 
 Return only the summary without any explanation or meta-commentary.
+
+{custom_instructions_section}
 
 <previous_summary>
 {previous_summary_text}
@@ -202,6 +219,7 @@ async def create_short_summary(
     input_tokens: int,
     previous_summary: str | None = None,
     *,
+    custom_instructions: str | None = None,
     workspace_name: str | None = None,
 ) -> HonchoLLMCallResponse[str]:
     # input_tokens indicates how many tokens the message list + previous summary take up
@@ -217,7 +235,10 @@ async def create_short_summary(
         previous_summary_text = "There is no previous summary -- the messages are the beginning of the conversation."
 
     prompt = short_summary_prompt(
-        formatted_messages, output_words, previous_summary_text
+        formatted_messages,
+        output_words,
+        previous_summary_text,
+        custom_instructions,
     )
 
     # Mint a root span id.
@@ -243,6 +264,7 @@ async def create_long_summary(
     formatted_messages: str,
     previous_summary: str | None = None,
     *,
+    custom_instructions: str | None = None,
     workspace_name: str | None = None,
 ) -> HonchoLLMCallResponse[str]:
     # the word/token ratio is roughly 4:3 so we multiply by 0.75.
@@ -255,7 +277,10 @@ async def create_long_summary(
         previous_summary_text = "There is no previous summary -- the messages are the beginning of the conversation."
 
     prompt = long_summary_prompt(
-        formatted_messages, output_words, previous_summary_text
+        formatted_messages,
+        output_words,
+        previous_summary_text,
+        custom_instructions,
     )
 
     # Mint a root span id.
@@ -466,6 +491,7 @@ async def _create_and_save_summary(
         last_message_id=last_message_id,
         last_message_content_preview=last_message_content_preview,
         message_count=message_count,
+        custom_instructions=configuration.reasoning.custom_instructions,
         workspace_name=workspace_name,
     )
 
@@ -562,6 +588,7 @@ async def _create_summary(
     last_message_content_preview: str,
     message_count: int,
     *,
+    custom_instructions: str | None = None,
     workspace_name: str | None = None,
 ) -> tuple[Summary, bool, int, int]:
     """
@@ -594,12 +621,14 @@ async def _create_summary(
                 formatted_messages,
                 input_tokens,
                 previous_summary_text,
+                custom_instructions=custom_instructions,
                 workspace_name=workspace_name,
             )
         else:
             response = await create_long_summary(
                 formatted_messages,
                 previous_summary_text,
+                custom_instructions=custom_instructions,
                 workspace_name=workspace_name,
             )
 
