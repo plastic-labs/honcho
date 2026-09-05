@@ -31,8 +31,21 @@ EmbeddingEncodingFormat = Literal["float", "base64"]
 EmbeddingEncodingFormatMode = Literal["auto", "float", "base64"]
 
 # OpenAI-compatible models that reject the `dimensions=` request parameter.
+# This includes OpenAI's own text-embedding-ada-002 plus several
+# OpenAI-compatible providers that don't support the dimensions parameter
+# (NVIDIA NIM endpoints in particular).
 _EMBEDDING_KNOWN_REJECTING_MODELS: frozenset[str] = frozenset(
-    {"text-embedding-ada-002"}
+    {
+        # OpenAI
+        "text-embedding-ada-002",
+        # NVIDIA NIM — none of the OpenAI-compatible embedding endpoints on
+        # integrate.api.nvidia.com accept a `dimensions` parameter.
+        "baai/bge-m3",
+        "nvidia/nv-embed-v1",
+        "nvidia/nv-embedqa-e5-v5",
+        "nvidia/nv-embedqa-mistral-7b-v2",
+        "snowflake/arctic-embed-l",
+    }
 )
 
 # Hosts known to serve base64 embeddings, which are ~3.6x smaller on the wire.
