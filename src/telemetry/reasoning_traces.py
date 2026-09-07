@@ -81,8 +81,7 @@ def _locked(f: IO[str]) -> Generator[bool, None, None]:
         return
 
     logger.warning(
-        "Could not lock reasoning traces file after %d attempts; dropping trace "
-        "rather than appending without a lock.",
+        "Could not lock reasoning traces file after %d attempts; dropping trace rather than appending without a lock.",
         _LOCK_RETRIES,
     )
     yield False
