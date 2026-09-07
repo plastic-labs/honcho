@@ -481,7 +481,11 @@ def _normalize_content(content: str) -> str:
 
     The SQL normalization in ``create_documents`` must mirror this exactly.
     """
-    normalized = re.sub(r"^\[[^\]]{0,40}\]\s*", "", content.strip())
+    normalized = re.sub(
+        r"^\[\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2})?\]\s*",
+        "",
+        content.strip(),
+    )
     normalized = re.sub(r"\s+", " ", normalized)
     return normalized.lower()
 
@@ -620,8 +624,9 @@ async def create_documents(
         #         (lower(regexp_replace(content, '^\s+|\s+$', '', 'g')))
         #     )
         #     WHERE deleted_at IS NULL;
-        # Mirrors _normalize_content exactly: strip → bracket-prefix strip →
-        # collapse whitespace → lowercase (◆0816 timestamp-prefix class).
+        # Mirrors _normalize_content exactly: strip → date-only bracket-prefix
+        # strip (◆0816 timestamp-prefix class, CodeRabbit ◆0907) → collapse
+        # whitespace → lowercase. Non-timestamp brackets ([urgent]) survive.
         normalized_content_sql = func.lower(
             func.regexp_replace(
                 func.regexp_replace(
@@ -629,7 +634,7 @@ async def create_documents(
                         models.Document.content,
                         r"^\s+|\s+$", "", "g",
                     ),
-                    r"^\[[^\]]{0,40}\]\s*", "", "g",
+                    r"^\[\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2})?\]\s*", "", "g",
                 ),
                 r"\s+", " ", "g",
             )

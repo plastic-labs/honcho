@@ -1003,6 +1003,28 @@ class DeriverSettings(HonchoSettings):
             )
         return self
 
+    @model_validator(mode="after")
+    def validate_dedup_semantic_settings(self):
+        """Enforce sane bounds and ordering for two-tier semantic dedup knobs."""
+        tight = self.DEDUP_SEMANTIC_DISTANCE_TIGHT
+        loose = self.DEDUP_SEMANTIC_DISTANCE_LOOSE
+        top_k = self.DEDUP_SEMANTIC_TOP_K
+        if not (0.0 <= tight <= 1.0 and 0.0 <= loose <= 1.0):
+            raise ValueError(
+                f"DEDUP_SEMANTIC_DISTANCE_TIGHT ({tight}) and "
+                f"DEDUP_SEMANTIC_DISTANCE_LOOSE ({loose}) must be in [0, 1]"
+            )
+        if top_k <= 0:
+            raise ValueError(
+                f"DEDUP_SEMANTIC_TOP_K ({top_k}) must be > 0"
+            )
+        if tight > loose:
+            raise ValueError(
+                f"DEDUP_SEMANTIC_DISTANCE_TIGHT ({tight}) must be <= "
+                f"DEDUP_SEMANTIC_DISTANCE_LOOSE ({loose})"
+            )
+        return self
+
 
 class PeerCardSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="PEER_CARD_", extra="ignore")  # pyright: ignore
