@@ -1482,6 +1482,17 @@ async def _semantic_dup_decision(
     best_tight: tuple[float, models.Document] | None = None
     best_loose: tuple[float, models.Document] | None = None
 
+    # Compute the new document's token set once (reused across candidates).
+    tokens_new = set(embedding_client.encoding.encode(doc.content))
+
+    # Evaluate ALL candidates before mutating any row (◆0907 CodeRabbit
+    # finding): vector rank does not order candidates by token-set
+    # informativeness, so the tight band must first pick its single
+    # most-informative candidate and decide replace-vs-reject against that
+    # winner. Loose candidates only ever reject (never soft-delete).
+    best_tight = None  # (gap, existing_doc) — most-informative tight candidate
+    best_loose = None  # (gap, existing_doc) — most-informative loose candidate
+
     for existing_doc in similar_docs:
         distance = getattr(existing_doc, "_vector_distance", None)
         if distance is None:
