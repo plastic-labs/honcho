@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 - Qdrant vector store backend (`VECTOR_STORE_TYPE=qdrant`) as an optional `qdrant` extra (#683)
 
+### Fixed
+
+- `update_peer_card` truncated an over-cap list down to `MAX_PEER_CARD_FACTS` and still reported the update as successful, so the model was never told that the marker it had just derived had been dropped, and which entries survived came down to arrival order rather than durability — a card sitting at the cap could never take a new entry again. An over-cap list is now refused as a whole, the stored card is left untouched, and the tool result states how many entries to free and how (merge entries that describe the same thing into one, or drop the least durable ones), so the model can consolidate inside the tool loop it is already in. The dreamer's peer-card prompt section and the `update_peer_card` tool description carry the matching rule (#1144)
+
 ## [3.1.1] - 2026-09-02
 
 ### Changed

@@ -127,7 +127,16 @@ For each legacy entry:
 
 When in doubt about a specific legacy entry, prefer migrating it (so valid info isn't lost) over dropping it. Splitting one dense legacy entry into multiple correctly-prefixed entries is fine and encouraged (e.g. a semicolon-separated `Tech Stack:` dump can become several `ATTRIBUTE:` lines, one per durable tool/platform).
 
-Call `update_peer_card` with the complete deduplicated list when there is a durable identity update to record, or when the existing card needs migration. Entries that do not start with one of the four allowed prefixes will be rejected. Keep concise (max 40 entries)."""
+Call `update_peer_card` with the complete deduplicated list when there is a durable identity update to record, or when the existing card needs migration. Entries that do not start with one of the four allowed prefixes will be rejected. Keep concise (max 40 entries).
+
+### When the card is at the cap
+
+A list longer than the cap is refused as a whole — nothing is written and the existing card stays as it was. So when the card is already full and you have a new durable marker, make room in the same call instead of appending:
+
+- Merge entries that describe the same thing into one entry. Several entries stating one mapping, tool, or rule each can often become one entry that carries the same information, as long as it stays a single concise marker within the per-entry length cap.
+- Otherwise drop the least durable entries — the ones most likely to change or already implied by another entry.
+
+If the tool reports that your list was over the cap, consolidate further and call it again with the complete list. Do not respond by dropping the new marker and re-sending the old card unchanged."""
 
 
 class BaseSpecialist(ABC):

@@ -536,6 +536,9 @@ TOOLS: dict[str, dict[str, Any]] = {
                     "type": "array",
                     "description": (
                         "Complete deduplicated peer card list (max 40 entries). "
+                        "A longer list is refused as a whole and nothing is written, so "
+                        "consolidate before sending: merge entries that describe the same "
+                        "thing into one, or drop the least durable ones. "
                         "Each entry must start with one of the allowed prefixes "
                         "(`IDENTITY: `, `ATTRIBUTE: `, `RELATIONSHIP: `, `INSTRUCTION: `) "
                         "followed by one concise identity marker. Entries without an allowed prefix are rejected."
@@ -1807,14 +1810,33 @@ async def _handle_update_peer_card(
             return _format_rejection_feedback(f"all {rejected_count}")
         return "Peer card content was empty after normalization, no update performed."
 
+    # An over-cap list is refused as a whole instead of truncated. Truncating
+    # reported success while dropping the tail, so the model never learned that
+    # the marker it had just derived was gone, and which entries survived came
+    # down to arrival order rather than durability. Refusing hands that decision
+    # back to the model, which still has tool iterations left to consolidate.
     if len(normalized_peer_card) > MAX_PEER_CARD_FACTS:
+        surplus = len(normalized_peer_card) - MAX_PEER_CARD_FACTS
         logger.warning(
-            "Peer card update exceeded max facts (%s), truncating from %s to %s",
+            "Peer card update exceeded max facts (%s): %s entries sent for %s/%s/%s, keeping existing card",
             MAX_PEER_CARD_FACTS,
             len(normalized_peer_card),
-            MAX_PEER_CARD_FACTS,
+            ctx.workspace_name,
+            ctx.observer,
+            ctx.observed,
         )
-        normalized_peer_card = normalized_peer_card[:MAX_PEER_CARD_FACTS]
+        feedback = (
+            f"Peer card not updated: {len(normalized_peer_card)} entries were sent "
+            f"but the cap is {MAX_PEER_CARD_FACTS}. The existing card is unchanged. "
+            f"Free up at least {surplus} "
+            f"{'entry' if surplus == 1 else 'entries'} — merge entries that describe "
+            "the same thing into one, or drop the least durable ones — then call "
+            "`update_peer_card` again with the complete list."
+        )
+        if rejected_count:
+            total = len(normalized_peer_card) + rejected_count
+            feedback = f"{feedback} {_format_rejection_feedback(f'{rejected_count} of {total}')}"
+        return feedback
 
     async with ctx.db_lock, tracked_db("tool.update_peer_card") as db:
         await crud.set_peer_card(

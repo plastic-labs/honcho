@@ -1305,7 +1305,7 @@ class TestUpdatePeerCard:
         assert peer_card is not None
         assert "IDENTITY: Name: John" in peer_card
 
-    async def test_deduplicates_and_caps_peer_card(
+    async def test_deduplicates_and_normalizes_peer_card(
         self,
         db_session: AsyncSession,
         tool_test_data: Any,
@@ -1315,17 +1315,15 @@ class TestUpdatePeerCard:
         workspace, peer1, peer2, _, _, _ = tool_test_data
         ctx = make_tool_context()
 
-        oversized = [
+        messy = [
             "IDENTITY: Name: John",
             "  IDENTITY: Name: John  ",
             "",
             "   ",
         ]
-        oversized.extend(
-            [f"IDENTITY: Aliases: alias-{i}" for i in range(MAX_PEER_CARD_FACTS + 5)]
-        )
+        messy.extend([f"IDENTITY: Aliases: alias-{i}" for i in range(5)])
 
-        await _handle_update_peer_card(ctx, {"content": oversized})
+        await _handle_update_peer_card(ctx, {"content": messy})
 
         # Refresh the observer so the identity map picks up the committed update
         await db_session.refresh(peer1)
@@ -1336,9 +1334,67 @@ class TestUpdatePeerCard:
             observed=peer2.name,
         )
         assert peer_card is not None
-        assert len(peer_card) == MAX_PEER_CARD_FACTS
+        assert len(peer_card) == 6
         assert all(line.strip() for line in peer_card)
         assert peer_card.count("IDENTITY: Name: John") == 1
+
+    async def test_over_cap_update_is_refused_and_keeps_existing_card(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        """A full card plus one new marker is refused, not truncated.
+
+        Reproduces the observed failure: the dreamer sent MAX_PEER_CARD_FACTS + 1
+        entries against a card already at the cap, the surplus entry was cut
+        silently, and the tool still reported the update as successful — so the
+        model had no way to learn that the marker it just derived was dropped.
+        """
+        workspace, peer1, peer2, _, _, _ = tool_test_data
+        ctx = make_tool_context()
+
+        full_card = [
+            f"IDENTITY: Aliases: alias-{i}" for i in range(MAX_PEER_CARD_FACTS)
+        ]
+        await _handle_update_peer_card(ctx, {"content": full_card})
+
+        result = await _handle_update_peer_card(
+            ctx, {"content": [*full_card, "ATTRIBUTE: Timezone: Europe/Berlin"]}
+        )
+
+        assert "not updated" in result
+        assert str(MAX_PEER_CARD_FACTS + 1) in result
+        # Singular, so the model is told to free exactly one entry.
+        assert "1 entry " in result
+
+        await db_session.refresh(peer1)
+        peer_card = await crud.get_peer_card(
+            db_session,
+            workspace_name=workspace.name,
+            observer=peer1.name,
+            observed=peer2.name,
+        )
+        assert peer_card == full_card
+
+    async def test_over_cap_feedback_also_reports_rejected_entries(
+        self,
+        tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        """An over-cap list carrying invalid entries surfaces both problems."""
+        ctx = make_tool_context()
+
+        over_cap = [
+            f"IDENTITY: Aliases: alias-{i}" for i in range(MAX_PEER_CARD_FACTS + 1)
+        ]
+
+        result = await _handle_update_peer_card(
+            ctx, {"content": [*over_cap, "no prefix at all"]}
+        )
+
+        assert "not updated" in result
+        assert "structural validation" in result
 
     async def test_none_content_preserves_existing_card(
         self,
