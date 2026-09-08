@@ -9,6 +9,10 @@
       "url": "https://honcho.dev/",
       "email": "hello@plasticlabs.ai"
     },
+    "license": {
+      "name": "GNU Affero General Public License v3.0",
+      "url": "https://github.com/plastic-labs/honcho/blob/main/LICENSE"
+    },
     "version": "3.1.1"
   },
   "servers": [
@@ -275,7 +279,7 @@
           "workspaces"
         ],
         "summary": "Search Workspace",
-        "description": "Search messages in a Workspace using optional filters. Use `limit` to control the number of\nresults returned.",
+        "description": "Search messages in a Workspace using optional filters. Use `limit` to control the number of\nresults returned.\n\nPass `scope` to restrict the search to a scope's member sessions. A scope\nwith no member sessions returns no results (fail-closed).",
         "operationId": "search_workspace_v3_workspaces__workspace_id__search_post",
         "security": [
           {
@@ -298,7 +302,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/MessageSearchOptions",
+                "$ref": "#/components/schemas/WorkspaceMessageSearchOptions",
                 "description": "Message search parameters"
               }
             }
@@ -486,13 +490,89 @@
         }
       }
     },
+    "/v3/workspaces/{workspace_id}/chat": {
+      "post": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Chat",
+        "description": "Query the entire workspace using natural language.\n\nPass `scope` to restrict recall to the union of those scopes' member\nsessions. A scope with no member sessions recalls nothing (fail-closed).",
+        "operationId": "chat_v3_workspaces__workspace_id__chat_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkspaceChatOptions"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "content": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "title": "Content"
+                    }
+                  },
+                  "required": [
+                    "content"
+                  ],
+                  "title": "DialecticResponse",
+                  "type": "object"
+                }
+              },
+              "text/event-stream": {}
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v3/workspaces/{workspace_id}/peers/list": {
       "post": {
         "tags": [
           "peers"
         ],
         "summary": "Get Peers",
-        "description": "Get all Peers for a Workspace, paginated with optional filters.",
+        "description": "Get all Peers for a Workspace, paginated with optional filters.\n\nScope peers are excluded by default; set `kind` to \"scope\" for scope peers\nonly, or \"all\" for everything.",
         "operationId": "get_peers_v3_workspaces__workspace_id__peers_list_post",
         "security": [
           {
@@ -656,7 +736,7 @@
           "peers"
         ],
         "summary": "Update Peer",
-        "description": "Update a Peer's metadata and/or configuration.",
+        "description": "Update a Peer's metadata and/or configuration.\n\nReturns 422 if the peer is a scope \u2014 use the scopes routes to manage scopes.",
         "operationId": "update_peer_v3_workspaces__workspace_id__peers__peer_id__put",
         "security": [
           {
@@ -1753,7 +1833,7 @@
           "sessions"
         ],
         "summary": "Add Peers To Session",
-        "description": "Add Peers to a Session. If a Peer does not yet exist, it will be created automatically.",
+        "description": "Add Peers to a Session. If a Peer does not yet exist, it will be created automatically.\n\nScope peers cannot be added here; scope membership is managed via the scopes routes.",
         "operationId": "add_peers_to_session_v3_workspaces__workspace_id__sessions__session_id__peers_post",
         "security": [
           {
@@ -1823,7 +1903,7 @@
           "sessions"
         ],
         "summary": "Set Session Peers",
-        "description": "Set the Peers in a Session. If a Peer does not yet exist, it will be created automatically.\n\nThis will fully replace the current set of Peers in the Session.",
+        "description": "Set the Peers in a Session. If a Peer does not yet exist, it will be created automatically.\n\nThis will fully replace the current set of Peers in the Session.\n\nScope peers cannot be set here; scope membership is managed via the scopes routes.",
         "operationId": "set_session_peers_v3_workspaces__workspace_id__sessions__session_id__peers_put",
         "security": [
           {
@@ -1893,7 +1973,7 @@
           "sessions"
         ],
         "summary": "Remove Peers From Session",
-        "description": "Remove Peers by ID from a Session.",
+        "description": "Remove Peers by ID from a Session.\n\nScope peers cannot be removed here; scope membership is managed via the scopes routes.",
         "operationId": "remove_peers_from_session_v3_workspaces__workspace_id__sessions__session_id__peers_delete",
         "security": [
           {
@@ -2293,16 +2373,55 @@
             "description": "A peer to get context for. If given, response will attempt to include representation and card from the perspective of that peer. Must be provided with `peer_target`."
           },
           {
+            "name": "scope",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "An (unprefixed) scope name to use as the perspective source: the representation and peer card of `peer_target` are read from the scope's observations instead of the global (or `peer_perspective`) view. Must be provided with `peer_target`; mutually exclusive with `peer_perspective`. Requires a workspace- or admin-level key.",
+              "title": "Scope"
+            },
+            "description": "An (unprefixed) scope name to use as the perspective source: the representation and peer card of `peer_target` are read from the scope's observations instead of the global (or `peer_perspective`) view. Must be provided with `peer_target`; mutually exclusive with `peer_perspective`. Requires a workspace- or admin-level key."
+          },
+          {
+            "name": "sessions",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional allowlist of session IDs confining the representation of `peer_target` to those sessions. This session must be one of them. Recall is restricted to conclusions stated directly in the allowed sessions \u2014 conclusions synthesized across sessions are excluded, since their provenance cannot be proven to sit inside the allowlist \u2014 and the peer card is omitted for the same reason. Mutually exclusive with `scope` and `limit_to_session`. A peer-scoped key must be an active member of every session named. The 1,000-session cap shared with the recall endpoints applies but is not reachable here: these are repeated query parameters, so a long list exceeds the request-line limit of the server or any proxy in front of it (a 414/431, not a 422) at a few hundred entries. Use a named `scope` for large or reusable session sets.",
+              "title": "Sessions"
+            },
+            "description": "Optional allowlist of session IDs confining the representation of `peer_target` to those sessions. This session must be one of them. Recall is restricted to conclusions stated directly in the allowed sessions \u2014 conclusions synthesized across sessions are excluded, since their provenance cannot be proven to sit inside the allowlist \u2014 and the peer card is omitted for the same reason. Mutually exclusive with `scope` and `limit_to_session`. A peer-scoped key must be an active member of every session named. The 1,000-session cap shared with the recall endpoints applies but is not reachable here: these are repeated query parameters, so a long list exceeds the request-line limit of the server or any proxy in front of it (a 414/431, not a 422) at a few hundred entries. Use a named `scope` for large or reusable session sets."
+          },
+          {
             "name": "limit_to_session",
             "in": "query",
             "required": false,
             "schema": {
-              "description": "Only used if `search_query` is provided. Whether to limit the representation to the session (as opposed to everything known about the target peer)",
-              "title": "Limit To Session",
               "type": "boolean",
-              "default": false
+              "description": "Whether to limit the representation to the session (as opposed to everything known about the target peer). Narrows recall the same way `sessions` does, so the same restrictions apply: explicit-only conclusions, and the peer card is omitted because it carries no per-session provenance.",
+              "default": false,
+              "title": "Limit To Session"
             },
-            "description": "Only used if `search_query` is provided. Whether to limit the representation to the session (as opposed to everything known about the target peer)"
+            "description": "Whether to limit the representation to the session (as opposed to everything known about the target peer). Narrows recall the same way `sessions` does, so the same restrictions apply: explicit-only conclusions, and the peer card is omitted because it carries no per-session provenance."
           },
           {
             "name": "search_top_k",
@@ -2329,8 +2448,6 @@
             "in": "query",
             "required": false,
             "schema": {
-              "description": "Only used if `search_query` is provided. The maximum distance to search for semantically relevant conclusions",
-              "title": "Search Max Distance",
               "anyOf": [
                 {
                   "type": "number",
@@ -2340,7 +2457,9 @@
                 {
                   "type": "null"
                 }
-              ]
+              ],
+              "description": "Only used if `search_query` is provided. The maximum distance to search for semantically relevant conclusions",
+              "title": "Search Max Distance"
             },
             "description": "Only used if `search_query` is provided. The maximum distance to search for semantically relevant conclusions"
           },
@@ -2349,10 +2468,10 @@
             "in": "query",
             "required": false,
             "schema": {
-              "description": "Only used if `search_query` is provided. Whether to include the most frequent conclusions in the representation",
-              "title": "Include Most Frequent",
               "type": "boolean",
-              "default": false
+              "description": "Only used if `search_query` is provided. Whether to include the most frequent conclusions in the representation",
+              "default": false,
+              "title": "Include Most Frequent"
             },
             "description": "Only used if `search_query` is provided. Whether to include the most frequent conclusions in the representation"
           },
@@ -2577,7 +2696,7 @@
             }
           },
           "201": {
-            "description": "Successful Response",
+            "description": "Scope created",
             "content": {
               "application/json": {
                 "schema": {
@@ -2587,11 +2706,11 @@
             }
           },
           "409": {
-            "description": "Conflict",
+            "description": "A peer already occupies the scope's reserved name",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -2643,6 +2762,33 @@
               "title": "Reverse"
             },
             "description": "Whether to reverse the order of results"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Page number",
+              "default": 1,
+              "title": "Page"
+            },
+            "description": "Page number"
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "Page size",
+              "default": 50,
+              "title": "Size"
+            },
+            "description": "Page size"
           }
         ],
         "responses": {
@@ -2889,6 +3035,33 @@
               "title": "Reverse"
             },
             "description": "Whether to reverse the order of results"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Page number",
+              "default": 1,
+              "title": "Page"
+            },
+            "description": "Page number"
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "Page size",
+              "default": 50,
+              "title": "Size"
+            },
+            "description": "Page size"
           }
         ],
         "responses": {
@@ -2960,11 +3133,11 @@
             }
           },
           "404": {
-            "description": "Not Found",
+            "description": "Scope does not exist",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -4410,6 +4583,21 @@
         ],
         "title": "DreamType",
         "description": "Types of dreams that can be triggered."
+      },
+      "ErrorResponse": {
+        "properties": {
+          "detail": {
+            "type": "string",
+            "title": "Detail",
+            "description": "What went wrong"
+          }
+        },
+        "type": "object",
+        "required": [
+          "detail"
+        ],
+        "title": "ErrorResponse",
+        "description": "The body returned for every raised HonchoException.\n\n`HTTPValidationError` is FastAPI's own 422 shape, whose `detail` is an array\nof per-field errors. Honcho's handler returns a single message string\ninstead (see `honcho_exception_handler` in `src/main.py`), so error codes\nraised from application code document this schema rather than that one."
       },
       "HTTPValidationError": {
         "properties": {
@@ -6100,6 +6288,86 @@
         ],
         "title": "Workspace"
       },
+      "WorkspaceChatOptions": {
+        "properties": {
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id",
+            "description": "Optional session to scope message tools to"
+          },
+          "query": {
+            "type": "string",
+            "maxLength": 10000,
+            "minLength": 1,
+            "title": "Query",
+            "description": "Workspace chat prompt"
+          },
+          "stream": {
+            "type": "boolean",
+            "title": "Stream",
+            "default": false
+          },
+          "reasoning_level": {
+            "type": "string",
+            "enum": [
+              "minimal",
+              "low",
+              "medium",
+              "high",
+              "max"
+            ],
+            "title": "Reasoning Level",
+            "description": "Level of reasoning to apply: minimal, low, medium, high, or max",
+            "default": "low"
+          },
+          "response_format": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Response Format",
+            "description": "Optional JSON Schema (root type 'object') the response must conform to. When provided, `content` is a JSON string matching this schema."
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array",
+                "maxItems": 100,
+                "minItems": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scope",
+            "description": "Optional (unprefixed) scope name(s) restricting recall to the union of the scopes' member sessions (explicit allowlist, fail-closed: an empty union recalls nothing). Mutually exclusive with `session_id`. Requires a workspace- or admin-level key."
+          }
+        },
+        "type": "object",
+        "required": [
+          "query"
+        ],
+        "title": "WorkspaceChatOptions",
+        "description": "Options for workspace-level chat (no anchor peer; see DialecticOptions)."
+      },
       "WorkspaceConfiguration": {
         "properties": {
           "reasoning": {
@@ -6194,6 +6462,54 @@
         },
         "type": "object",
         "title": "WorkspaceGet"
+      },
+      "WorkspaceMessageSearchOptions": {
+        "properties": {
+          "query": {
+            "type": "string",
+            "title": "Query",
+            "description": "Search query"
+          },
+          "filters": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filters",
+            "description": "Filters to scope the search"
+          },
+          "limit": {
+            "type": "integer",
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Limit",
+            "description": "Number of results to return",
+            "default": 10
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scope",
+            "description": "Optional (unprefixed) scope name restricting search to the scope's member sessions. A scope with no member sessions returns no results. Mutually exclusive with a 'session_id' key in `filters`."
+          }
+        },
+        "type": "object",
+        "required": [
+          "query"
+        ],
+        "title": "WorkspaceMessageSearchOptions",
+        "description": "Workspace-level message search options, extended with `scope`."
       },
       "WorkspaceUpdate": {
         "properties": {
