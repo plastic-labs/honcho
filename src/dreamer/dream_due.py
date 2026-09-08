@@ -17,6 +17,21 @@ from src.utils.work_unit import construct_work_unit_key, parse_work_unit_key
 logger = getLogger(__name__)
 
 
+def _observed_key(
+    tenant_id: str | None, workspace_name: str | None, observed: str | None
+) -> tuple[str | None, ...]:
+    # region ai
+    # Keys the "is representation work still pending for this collection?" check.
+    # Under MULTI_TENANT the same (workspace, observed) names recur across tenants, so
+    # the tenant must be part of the key — otherwise one tenant's pending work would
+    # suppress another tenant's due dream. Flag off (unnamespaced keys) the tenant is
+    # dropped, so a parsed key (tenant_id None) and the collection's tenant still align.
+    # endregion
+    if settings.MULTI_TENANT:
+        return (tenant_id, workspace_name, observed)
+    return (workspace_name, observed)
+
+
 class DueDream(NamedTuple):
     """One collection whose next dream is due, with everything needed to enqueue it."""
 
@@ -25,6 +40,13 @@ class DueDream(NamedTuple):
     observed: str
     dream_type: DreamType
     session_name: str
+    # region ai
+    # The collection's tenant. Under MULTI_TENANT this scheduler runs cross-tenant on
+    # the service session, so the tenant is carried explicitly (like the deriver's
+    # work-unit key) to namespace the enqueued dream and to key the pending-work check
+    # per tenant. "default" under flag-off (the model default).
+    # endregion
+    tenant_id: str
 
 
 async def count_due_dreams(db: AsyncSession) -> int:
@@ -74,6 +96,7 @@ async def list_due_dreams(db: AsyncSession) -> list[DueDream]:
                 func.coalesce(explicit_counts.c.explicit_count, 0),
                 explicit_counts.c.newest_created_at,
                 explicit_counts.c.newest_session_name,
+                models.Collection.tenant_id,
             ).outerjoin(
                 explicit_counts,
                 (models.Collection.workspace_name == explicit_counts.c.workspace_name)
@@ -95,6 +118,7 @@ async def list_due_dreams(db: AsyncSession) -> list[DueDream]:
         explicit_count = cast(int, row[4])
         newest_created_at = cast("datetime | None", row[5])
         newest_session_name = cast("str | None", row[6])
+        tenant_id = cast(str, row[7])
 
         dream_metadata: dict[str, Any] = (internal_metadata or {}).get("dream", {})
         since_last_dream = explicit_count - int(
@@ -122,6 +146,7 @@ async def list_due_dreams(db: AsyncSession) -> list[DueDream]:
                     "observed": observed,
                     "dream_type": dream_type.value,
                 },
+                tenant_id=tenant_id,
             )
             candidates[work_unit_key] = (
                 DueDream(
@@ -130,6 +155,7 @@ async def list_due_dreams(db: AsyncSession) -> list[DueDream]:
                     observed=observed,
                     dream_type=dream_type,
                     session_name=newest_session_name,
+                    tenant_id=tenant_id,
                 ),
                 newest_created_at,
             )
@@ -169,7 +195,7 @@ async def list_due_dreams(db: AsyncSession) -> list[DueDream]:
         .all()
     )
     active_observed = {
-        (parsed.workspace_name, parsed.observed)
+        _observed_key(parsed.tenant_id, parsed.workspace_name, parsed.observed)
         for parsed in (parse_work_unit_key(key) for key in pending_representation_keys)
     }
 
@@ -180,7 +206,10 @@ async def list_due_dreams(db: AsyncSession) -> list[DueDream]:
             work_unit_key not in newest_attempts
             or newest_attempts[work_unit_key] < newest_created_at
         )
-        and (due_dream.workspace_name, due_dream.observed) not in active_observed
+        and _observed_key(
+            due_dream.tenant_id, due_dream.workspace_name, due_dream.observed
+        )
+        not in active_observed
     ]
     if not unattempted:
         return []

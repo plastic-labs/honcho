@@ -26,6 +26,7 @@ def _due_dreams(count: int) -> list[DueDream]:
             observed=f"peer-{i}",
             dream_type=schemas.DreamType.OMNI,
             session_name=f"session-{i}",
+            tenant_id="default",
         )
         for i in range(count)
     ]

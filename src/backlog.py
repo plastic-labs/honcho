@@ -10,7 +10,8 @@ import sentry_sdk
 
 from src import crud, schemas
 from src.config import settings
-from src.dependencies import tracked_db
+from src.db import tenant_context
+from src.dependencies import service_db
 from src.deriver.enqueue import enqueue_dream
 from src.dreamer.dream_due import DueDream, list_due_dreams
 from src.telemetry import prometheus_metrics
@@ -118,7 +119,13 @@ class DeriverMetricsPoller:
     async def refresh(self) -> None:
         """One pass. The snapshot only advances on a complete pass."""
         dreams_refreshed = False
-        async with tracked_db("deriver_metrics", read_only=True) as db:
+        # region ai
+        # Cross-tenant: the metrics query and the due-dream scan both read across every
+        # tenant's queue/documents, so they run on the RLS-bypass service session. Under
+        # MULTI_TENANT tracked_db would fail closed here (this poller runs on API boot
+        # with no request tenant in scope). read_only — no writes on this pass.
+        # endregion
+        async with service_db("deriver_metrics", read_only=True) as db:
             stats = await crud.get_deriver_metrics(db)
             if self._dream_poll_due():
                 self._due_dreams = await list_due_dreams(db)
@@ -162,6 +169,17 @@ class DeriverMetricsPoller:
     async def _enqueue_due_dreams(self) -> None:
         cap = settings.DREAM.MAX_ENQUEUED_PER_POLL
         for due_dream in self._due_dreams[:cap]:
+            # region ai
+            # enqueue_dream runs cross-tenant on service_db; bind this due-dream's tenant
+            # (parsed from its work_unit_key in list_due_dreams) so construct_work_unit_key
+            # namespaces the queued dream to it — the deriver's claim then keeps the batch
+            # tenant-homogeneous. No-op flag off.
+            # endregion
+            tenant_token = (
+                tenant_context.set(due_dream.tenant_id)
+                if settings.MULTI_TENANT
+                else None
+            )
             try:
                 await enqueue_dream(
                     due_dream.workspace_name,
@@ -182,6 +200,9 @@ class DeriverMetricsPoller:
                 )
                 if settings.SENTRY.ENABLED:
                     sentry_sdk.capture_exception(e)
+            finally:
+                if tenant_token is not None:
+                    tenant_context.reset(tenant_token)
 
     async def _maybe_cleanup_stale_work_units(self) -> None:
         interval = settings.DERIVER.STALE_WORK_UNIT_CLEANUP_INTERVAL_SECONDS
@@ -191,5 +212,10 @@ class DeriverMetricsPoller:
         ):
             return
         self._next_stale_cleanup = time.monotonic() + interval
-        async with tracked_db("cleanup_stale_work_units") as db:
+        # region ai
+        # Cross-tenant: stale-session cleanup spans all tenants (service session, not
+        # tracked_db which would fail closed under MULTI_TENANT). Mirrors the deriver's
+        # own cleanup_stale_work_units call in queue_manager.
+        # endregion
+        async with service_db("cleanup_stale_work_units") as db:
             await crud.cleanup_stale_work_units(db)
