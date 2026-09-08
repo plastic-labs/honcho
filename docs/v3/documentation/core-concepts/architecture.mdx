@@ -92,6 +92,8 @@ Honcho runs as two cooperating processes: an **API server** that handles request
 
 **Query path (Dialectic).** A `chat()` call spawns a Dialectic agent that answers your question by exploring memory--searching conclusions semantically, pulling supporting messages, and tracing a conclusion back to the premises it was drawn from--before synthesizing a grounded answer. This all happens inline during the request, since answering well is worth the latency that write-path reasoning is designed to avoid.
 
+The same agent runs in two shapes. `peer.chat()` is anchored to one (observer, observed) pair and prefetches the conclusions relevant to the query, so it can often answer from that context alone. `honcho.chat()` has no anchor peer: it prefetches workspace stats and the most active peers' cards as a routing aid, is required to search before answering, and then reads memory pair by pair with `[observer->observed]` attribution. See [Workspace Chat](/v3/documentation/features/chat#workspace-chat).
+
 ## Configuration & Extensibility
 
 Honcho is designed to be flexible. Settings cascade hierarchically from workspace to peer to session, so you can set defaults at the workspace level and override them for specific peers or sessions. Feature flags let you enable or disable reasoning modes, perspective tracking, and other capabilities. You can bring your own LLM provider--OpenAI, Anthropic, or custom endpoints--and metadata fields let you extend any primitive with custom JSON data. Batch operations let you create up to 100 messages in a single API call for efficient bulk ingestion.
