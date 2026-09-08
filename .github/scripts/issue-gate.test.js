@@ -186,6 +186,12 @@ const review = (over = {}) => ({
 
 const handedBack = { reviewDecision: 'CHANGES_REQUESTED', reviews: [review()] };
 
+// The `needs-changes` label is the other way a maintainer starts the clock.
+const labelled = (over = {}) => ({
+  createdAt: new Date(t(400)).toISOString(), label: { name: 'needs-changes' },
+  actor: { __typename: 'User' }, ...over,
+});
+
 // A review bot runs as CONTRIBUTOR and can submit CHANGES_REQUESTED. If that
 // counted, the sweeper would close pull requests no human ever looked at.
 const botHandedBack = { reviewDecision: 'CHANGES_REQUESTED', reviews: [review({
@@ -197,6 +203,35 @@ const staleCases = [
     { pr: open(), activity: handedBack },
     (l) => l.closed.length === 0 && l.labels.includes(STALE_LABEL)
       && l.comments.some((c) => c.includes(STALE_MARKER))],
+
+  // A `needs-changes` label starts the clock too, so it needs the same guard:
+  // a workflow holding `issues: write` must not be able to apply it and close
+  // work no human reviewed.
+  ['a human applying needs-changes starts the clock',
+    { pr: open(), activity: { labeled: [labelled()] } },
+    (l) => l.labels.includes(STALE_LABEL) && l.closed.length === 0],
+
+  ['a bot applying needs-changes does not start the clock',
+    { pr: open(), activity: { labeled: [labelled({ actor: { __typename: 'Bot' } })] } },
+    (l) => l.closed.length === 0 && l.labels.length === 0 && l.comments.length === 0],
+
+  // Once warned, the label alone must not be trusted: the situation can change
+  // during the grace window, and the label is one a human can apply by hand.
+  ['approving after the warning stands the close down',
+    { pr: open({ labels: [{ name: STALE_LABEL }], updated_at: idleDays(0) }),
+      comments: staleNotice(STALE_GRACE_HOURS + 1),
+      activity: { ...handedBack, reviewDecision: 'APPROVED' } },
+    (l) => l.closed.length === 0 && l.unlabels.includes(STALE_LABEL) && l.deleted.includes(99)],
+
+  ['a writer carrying the stale label is stood down, not closed',
+    { pr: open({ labels: [{ name: STALE_LABEL }], updated_at: idleDays(0) }),
+      comments: staleNotice(STALE_GRACE_HOURS + 1), activity: handedBack, permission: 'write' },
+    (l) => l.closed.length === 0 && l.unlabels.includes(STALE_LABEL)],
+
+  ['a hand-back never reviewed by a human is stood down once warned',
+    { pr: open({ labels: [{ name: STALE_LABEL }], updated_at: idleDays(0) }),
+      comments: staleNotice(STALE_GRACE_HOURS + 1), activity: {} },
+    (l) => l.closed.length === 0 && l.unlabels.includes(STALE_LABEL)],
 
   ['a bot requesting changes does not start the clock',
     { pr: open(), activity: botHandedBack },

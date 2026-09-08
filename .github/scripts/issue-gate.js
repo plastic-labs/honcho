@@ -221,7 +221,9 @@ const ACTIVITY = `
         }
         comments(last: 50) { nodes { createdAt author { login } } }
         timelineItems(last: 50, itemTypes: [LABELED_EVENT]) {
-          nodes { ... on LabeledEvent { createdAt label { name } } }
+          nodes {
+            ... on LabeledEvent { createdAt actor { __typename } label { name } }
+          }
         }
       }
     }
@@ -233,6 +235,18 @@ const latest = (stamps) =>
   stamps.filter(Boolean).map(Date.parse).reduce((a, b) => (b > a ? b : a), 0);
 
 const loginOf = (node) => (node && node.author && node.author.login) || null;
+
+/**
+ * A hand-back label applied by a person.
+ *
+ * Same reasoning as `isHandback`: applying a label needs triage permission, so
+ * any human who can do it has standing — but a workflow holding `issues: write`
+ * does not, and must not be able to start a clock on work no human reviewed.
+ */
+const isHandbackLabel = (node) =>
+  Boolean(node.label) &&
+  HANDBACK_LABELS.includes(node.label.name) &&
+  !isBot({ type: node.actor && node.actor.__typename });
 
 /** A changes-requested review that actually hands the pull request back. */
 const isHandback = (review, prAuthor) =>
@@ -265,9 +279,7 @@ async function prActivity({ github, owner, repo, pr }) {
       ...node.reviews.nodes
         .filter((r) => r.state === 'CHANGES_REQUESTED' && isHandback(r, author))
         .map((r) => r.submittedAt),
-      ...node.timelineItems.nodes
-        .filter((n) => n.label && HANDBACK_LABELS.includes(n.label.name))
-        .map((n) => n.createdAt),
+      ...node.timelineItems.nodes.filter(isHandbackLabel).map((n) => n.createdAt),
     ]),
     answered: latest([
       ...node.commits.nodes.map((n) => n.commit.committedDate),
@@ -448,6 +460,25 @@ async function runSweep({ github, core, context, dryRun }) {
     }
 
     if (hasLabel(pr, STALE_LABEL)) {
+      // The label is not proof that we put it there, and the situation can have
+      // changed since we did. Re-establish both before acting on it, or a
+      // maintainer approving a warned pull request still sees it closed 72h
+      // later — exactly what CONTRIBUTING.md promises will not happen.
+      const exempt = await exemptReason({ github, owner, repo, pr });
+      if (exempt) {
+        await act(`#${pr.number}: ${exempt} — standing down`, () =>
+          clearStale({ github, owner, repo, pr }));
+        continue;
+      }
+
+      const activity = await prActivity({ github, owner, repo, pr });
+      const { turn, why } = whoseTurn(activity);
+      if (turn !== 'author') {
+        await act(`#${pr.number}: no longer waiting on the author (${why}) — standing down`, () =>
+          clearStale({ github, owner, repo, pr }));
+        continue;
+      }
+
       const [notice] = await findNotices({
         github, owner, repo, number: pr.number, marker: STALE_MARKER,
       });
@@ -462,8 +493,10 @@ async function runSweep({ github, core, context, dryRun }) {
         continue;
       }
 
-      const { answered } = await prActivity({ github, owner, repo, pr });
-      if (answered > Date.parse(notice.created_at)) {
+      // Still their turn, but they answered and were handed back again since
+      // the warning. Clear it so the next warning starts its own clock rather
+      // than closing them out on a window they already responded to.
+      if (activity.answered > Date.parse(notice.created_at)) {
         await act(`#${pr.number}: author replied after the warning — standing down`, () =>
           clearStale({ github, owner, repo, pr }));
         continue;
@@ -536,7 +569,7 @@ async function runSweep({ github, core, context, dryRun }) {
 
 module.exports = {
   checkGate, runGate, runSweep, noticeBody, findNotices, exemptReason,
-  prActivity, whoseTurn, staleNoticeBody, isHandback,
+  prActivity, whoseTurn, staleNoticeBody, isHandback, isHandbackLabel,
   REQUIRED_LABEL, GATE_LABEL, EXEMPT_LABEL, MARKER, GRACE_HOURS, DRAFT_STALE_DAYS,
   STALE_LABEL, STALE_MARKER, NO_AUTOCLOSE_LABEL, HANDBACK_LABELS, HANDBACK_ASSOCIATIONS,
   RESPONSE_STALE_DAYS, STALE_GRACE_HOURS, UNREVIEWED_STALE_DAYS, MAX_STALE_CLOSES,
