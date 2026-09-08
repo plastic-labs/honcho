@@ -9,11 +9,13 @@ from contextlib import asynccontextmanager
 
 import jwt as pyjwt
 import pytest
+from fastapi import Request
 from fastapi.security import HTTPAuthorizationCredentials
 
 from src.config import settings
+from src.db import tenant_context
 from src.exceptions import AuthenticationException, ValidationException
-from src.security import JWTParams, auth, create_jwt, verify_jwt
+from src.security import JWTParams, auth, create_jwt, require_auth, verify_jwt
 
 
 @pytest.fixture(autouse=True)
@@ -353,3 +355,45 @@ class TestAuthTenantClaim:
         params = await auth(credentials=creds, workspace_name="ws-a")
         assert params.w == "ws-a"
         assert params.tn is None
+
+
+class TestRequireAuthTenantBinding:
+    """A3/DEV-2478 §4 — require_auth binds the resolved tenant into tenant_context
+    for the duration of the request (a yield-dependency), so A2's checkout hook binds
+    `app.tenant`; reset on teardown so nothing leaks to the next request.
+    """
+
+    @staticmethod
+    def _drive(creds: HTTPAuthorizationCredentials):
+        # A real (empty) Request; require_auth() with no scope never reads it anyway.
+        request = Request(
+            {"type": "http", "query_string": b"", "path_params": {}, "headers": []}
+        )
+        return require_auth()(request=request, credentials=creds)
+
+    @pytest.mark.asyncio
+    async def test_binds_during_request_and_resets_after(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setattr(settings, "MULTI_TENANT", True)
+        creds = _bearer(create_jwt(JWTParams(tn="tenant-a", w="ws-a")))
+        assert tenant_context.get() is None
+        agen = self._drive(creds)
+        jwt_params = await agen.__anext__()
+        assert jwt_params.tn == "tenant-a"
+        assert tenant_context.get() == "tenant-a"  # bound for the request body
+        await agen.aclose()  # teardown
+        assert tenant_context.get() is None  # reset — no leak
+
+    @pytest.mark.asyncio
+    async def test_no_binding_when_token_has_no_tenant(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        # Flag off (or a tenant-less token): nothing is bound.
+        monkeypatch.setattr(settings, "MULTI_TENANT", False)
+        creds = _bearer(create_jwt(JWTParams(w="ws-a")))
+        agen = self._drive(creds)
+        await agen.__anext__()
+        assert tenant_context.get() is None
+        await agen.aclose()
+        assert tenant_context.get() is None

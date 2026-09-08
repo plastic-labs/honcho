@@ -8,6 +8,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
 from src.config import settings
+from src.db import tenant_context
 from src.utils.formatting import parse_datetime_iso, utc_now_iso
 
 from .exceptions import AuthenticationException
@@ -193,7 +194,7 @@ def require_auth(
             else None
         )
 
-        return await auth(
+        jwt_params = await auth(
             credentials=credentials,
             admin=admin,
             workspace_name=workspace_name_param,
@@ -201,6 +202,24 @@ def require_auth(
             session_name=session_name_param,
             allow_member_read=allow_member_read,
         )
+        # region ai
+        # A3/DEV-2478: bind the resolved tenant for the whole request. This is a
+        # yield-dependency, so FastAPI runs the teardown AFTER the response — meaning
+        # tenant_context stays set across the handler and every session lazily checked
+        # out inside it, where A2's checkout hook reads it and binds `app.tenant`.
+        # There is no get_db/auth ordering to get wrong: the checkout is lazy (it
+        # happens in the handler, after this set), so we don't depend on which
+        # dependency FastAPI resolves first. Reset on the way out — a leaked
+        # `app.tenant` is a data breach. No-op when tn is absent (flag off, or a
+        # pre-A3 tenant-less token, which auth() has already rejected under
+        # MULTI_TENANT).
+        # endregion
+        tenant_token = tenant_context.set(jwt_params.tn) if jwt_params.tn else None
+        try:
+            yield jwt_params
+        finally:
+            if tenant_token is not None:
+                tenant_context.reset(tenant_token)
 
     # Tag the closure so route-policy tests can introspect which routes opt into
     # member read without re-deriving it from HTTP method (an unreliable
