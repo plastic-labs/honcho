@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
 
+from scripts import generate_openapi
 from scripts.generate_openapi import (
     SpecGenerationError,
     _hoist_defs,  # pyright: ignore[reportPrivateUsage]
@@ -182,3 +184,81 @@ class TestDescribeDrift:
             "/info/version: differs",
             "/tags: 1 entries in committed, 2 generated",
         }
+
+
+class TestCheckMode:
+    """`--check` has to stay legible when the committed file is unusable.
+
+    Both cases already exited nonzero, but via a traceback -- which tells the
+    author nothing about how to fix it.
+    """
+
+    @staticmethod
+    def _isolate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+        """Point the script at a scratch spec and skip importing the app."""
+        spec_path = tmp_path / "openapi.json"
+        monkeypatch.setattr(generate_openapi, "REPO_ROOT", tmp_path)
+        monkeypatch.setattr(generate_openapi, "SPEC_PATH", spec_path)
+        monkeypatch.setattr(
+            generate_openapi, "build_spec", lambda: {"openapi": "3.1.0"}
+        )
+        return spec_path
+
+    def test_missing_spec_names_the_file_and_fails(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ):
+        _ = self._isolate(tmp_path, monkeypatch)
+
+        assert generate_openapi.main(["--check"]) == 1
+
+        out = capsys.readouterr().out
+        assert "openapi.json is missing" in out
+        assert "uv run python -m scripts.generate_openapi" in out
+
+    def test_malformed_spec_says_so_instead_of_reporting_drift(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ):
+        spec_path = self._isolate(tmp_path, monkeypatch)
+        _ = spec_path.write_text("{ not json")
+
+        assert generate_openapi.main(["--check"]) == 1
+
+        out = capsys.readouterr().out
+        assert "is not valid JSON" in out
+        # The drift report would otherwise bury the real problem under every
+        # key in the spec.
+        assert "out of date" not in out
+        assert "missing from committed spec" not in out
+
+    def test_matching_spec_passes(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ):
+        spec_path = self._isolate(tmp_path, monkeypatch)
+        _ = spec_path.write_text(render({"openapi": "3.1.0"}))
+
+        assert generate_openapi.main(["--check"]) == 0
+        assert "is up to date" in capsys.readouterr().out
+
+    def test_drifted_spec_reports_the_difference(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ):
+        spec_path = self._isolate(tmp_path, monkeypatch)
+        _ = spec_path.write_text(render({"openapi": "3.0.0"}))
+
+        assert generate_openapi.main(["--check"]) == 1
+
+        out = capsys.readouterr().out
+        assert "is out of date" in out
+        assert "/openapi: differs" in out

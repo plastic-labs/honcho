@@ -33,6 +33,15 @@ _REF_KEY = "$ref"
 _DEFS_PREFIX = "#/$defs/"
 _COMPONENTS_PREFIX = "#/components/schemas/"
 
+_REGENERATE_HINT = (
+    "\nRegenerate it with:\n"
+    + "  uv run python -m scripts.generate_openapi\n"
+    + "\nAdding an endpoint also needs a stub page and a nav entry:\n"
+    + "  cd docs && bun run openapi"
+    + "   # writes missing stubs, prints the nav block\n"
+    + "then paste the new group into docs/docs.json."
+)
+
 _MAX_REPORTED_DIFFS = 40
 
 
@@ -188,9 +197,19 @@ def describe_drift(committed: dict[str, Any], generated: dict[str, Any]) -> list
 
 
 def _report_drift(committed_text: str, spec: dict[str, Any], relative: Path) -> None:
+    try:
+        committed = cast(dict[str, Any], json.loads(committed_text))
+    except json.JSONDecodeError as exc:
+        # Checked before the "out of date" header: a file this broken has no
+        # drift to describe, and 40 lines of "missing from committed spec" would
+        # bury the actual problem.
+        print(f"{relative} is not valid JSON: {exc}")
+        print(_REGENERATE_HINT)
+        return
+
     print(f"{relative} is out of date.\n")
 
-    drift = describe_drift(cast(dict[str, Any], json.loads(committed_text)), spec)
+    drift = describe_drift(committed, spec)
     if not drift:
         print("  The content matches; only the formatting differs.")
     else:
@@ -200,14 +219,7 @@ def _report_drift(committed_text: str, spec: dict[str, Any], relative: Path) -> 
         if len(drift) > len(shown):
             print(f"  ... and {len(drift) - len(shown)} more")
 
-    print(
-        "\nRegenerate it with:\n"
-        + "  uv run python -m scripts.generate_openapi\n"
-        + "\nAdding an endpoint also needs a stub page and a nav entry:\n"
-        + "  cd docs && bun run openapi"
-        + "   # writes missing stubs, prints the nav block\n"
-        + "then paste the new group into docs/docs.json."
-    )
+    print(_REGENERATE_HINT)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -233,7 +245,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Wrote {relative}")
         return 0
 
-    committed_text = SPEC_PATH.read_text()
+    try:
+        committed_text = SPEC_PATH.read_text()
+    except FileNotFoundError:
+        print(f"{relative} is missing.")
+        print(_REGENERATE_HINT)
+        return 1
+
     if committed_text == rendered:
         print(f"{relative} is up to date.")
         return 0
