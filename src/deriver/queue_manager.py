@@ -6,7 +6,6 @@ import time
 from asyncio import Task
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
 from logging import getLogger
 from typing import Any, NamedTuple, cast
 
@@ -15,7 +14,7 @@ from dotenv import load_dotenv
 from nanoid import generate as generate_nanoid
 from sentry_sdk.integrations.asyncio import AsyncioIntegration
 from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
-from sqlalchemy import Text, and_, delete, literal, or_, select, true, update
+from sqlalchemy import Text, and_, delete, literal, select, true, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,6 +23,14 @@ from sqlalchemy.sql import func
 from src import models
 from src.cache.client import close_cache, init_cache
 from src.config import settings
+from src.crud.deriver import (
+    REPRESENTATION_WORK_UNIT_PREFIX,
+    representation_batch_threshold_clause,
+    unclaimed_work_unit_clause,
+)
+from src.crud.deriver import (
+    cleanup_stale_work_units as crud_cleanup_stale_work_units,
+)
 from src.db import tenant_context
 from src.dependencies import service_db
 from src.deriver.consumer import (
@@ -218,11 +225,11 @@ class QueueManager:
             )
         logger.debug("Signal handlers registered")
 
-        # Start the reconciler scheduler
-        try:
-            await self.reconciler_scheduler.start()
-        except Exception:
-            logger.exception("Failed to start reconciler scheduler")
+        if settings.DERIVER.SCHEDULER == "deriver":
+            try:
+                await self.reconciler_scheduler.start()
+            except Exception:
+                logger.exception("Failed to start reconciler scheduler")
 
         # Run the polling loop directly in this task
         logger.debug("Starting polling loop directly")
@@ -309,32 +316,13 @@ class QueueManager:
 
     async def cleanup_stale_work_units(self) -> None:
         """Clean up stale work units"""
+        # region ai
+        # Cross-tenant: stale-session cleanup spans all tenants, so it runs on the
+        # RLS-bypass service session — under MULTI_TENANT tracked_db would fail closed
+        # (no tenant in scope). Body is #1136's extracted crud helper.
+        # endregion
         async with service_db("cleanup_stale_work_units") as db:
-            cutoff = datetime.now(UTC) - timedelta(
-                minutes=settings.DERIVER.STALE_SESSION_TIMEOUT_MINUTES
-            )
-
-            stale_ids = (
-                (
-                    await db.execute(
-                        select(models.ActiveQueueSession.id)
-                        .where(models.ActiveQueueSession.last_updated < cutoff)
-                        .order_by(models.ActiveQueueSession.last_updated)
-                        .with_for_update(skip_locked=True)
-                    )
-                )
-                .scalars()
-                .all()
-            )
-
-            # Delete only the records we successfully got locks for
-            if stale_ids:
-                await db.execute(
-                    delete(models.ActiveQueueSession).where(
-                        models.ActiveQueueSession.id.in_(stale_ids)
-                    )
-                )
-            await db.commit()
+            await crud_cleanup_stale_work_units(db)
 
     async def get_and_claim_work_units(self) -> dict[str, str]:
         """
@@ -353,8 +341,13 @@ class QueueManager:
             settings.DERIVER.REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS
         )
 
+        # region ai
+        # Cross-tenant claim: scans every tenant's queue on the service session
+        # (tracked_db would fail closed under MULTI_TENANT). A2 tenant-namespaces
+        # work_unit_key, so each claimed unit is still tenant-homogeneous.
+        # endregion
         async with service_db("get_available_work_units") as db:
-            representation_prefix = "representation:"
+            representation_prefix = REPRESENTATION_WORK_UNIT_PREFIX
             token_stats_subq = (
                 select(
                     models.QueueItem.work_unit_key,
@@ -391,14 +384,7 @@ class QueueManager:
                     token_stats_subq,
                     work_units_subq.c.work_unit_key == token_stats_subq.c.work_unit_key,
                 )
-                .where(
-                    ~select(models.ActiveQueueSession.id)
-                    .where(
-                        models.ActiveQueueSession.work_unit_key
-                        == work_units_subq.c.work_unit_key
-                    )
-                    .exists()
-                )
+                .where(unclaimed_work_unit_clause(work_units_subq.c.work_unit_key))
                 .order_by(
                     work_units_subq.c.oldest_created_at.asc(),
                     work_units_subq.c.work_unit_key.asc(),
@@ -407,26 +393,13 @@ class QueueManager:
             )
 
             # Apply batch threshold filter (skip if FLUSH_ENABLED is True)
-            if not settings.DERIVER.FLUSH_ENABLED and work_unit_target_tokens > 0:
-                max_age_seconds = settings.DERIVER.REPRESENTATION_BATCH_MAX_AGE_SECONDS
-                threshold_clause = (
-                    func.coalesce(token_stats_subq.c.total_tokens, 0)
-                    >= work_unit_target_tokens
-                )
-                if max_age_seconds > 0:
-                    threshold_clause = or_(
-                        threshold_clause,
-                        token_stats_subq.c.oldest_created_at
-                        <= func.now() - timedelta(seconds=max_age_seconds),
-                    )
-                query = query.where(
-                    or_(
-                        ~work_units_subq.c.work_unit_key.startswith(
-                            representation_prefix
-                        ),
-                        threshold_clause,
-                    )
-                )
+            threshold_clause = representation_batch_threshold_clause(
+                work_unit_key=work_units_subq.c.work_unit_key,
+                total_tokens=token_stats_subq.c.total_tokens,
+                oldest_created_at=token_stats_subq.c.oldest_created_at,
+            )
+            if threshold_clause is not None:
+                query = query.where(threshold_clause)
 
             result = await db.execute(query)
             available_rows = result.all()
@@ -559,7 +532,8 @@ class QueueManager:
                     continue
 
                 try:
-                    await self._maybe_cleanup_stale_work_units()
+                    if settings.DERIVER.SCHEDULER == "deriver":
+                        await self._maybe_cleanup_stale_work_units()
                     claimed_work_units = await self.get_and_claim_work_units()
                     if claimed_work_units:
                         if self._is_tenant_work(claimed_work_units):

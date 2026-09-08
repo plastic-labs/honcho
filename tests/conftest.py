@@ -104,6 +104,9 @@ _RUNTIME_MOCK_TEST_BLOCKLIST_PREFIXES = (
     # policies, and drives raw SQL under SET ROLE. It needs neither the shared
     # db_engine nor the app-runtime mocks.
     "tests/integration/test_rls_isolation.py",
+    # The mock provider is a standalone ASGI app with no database or LLM of its
+    # own; the runtime mocks would patch the very seams it exists to replace.
+    "tests/mock_provider/",
 )
 
 _LIVE_LLM_MARKER = "live_llm"

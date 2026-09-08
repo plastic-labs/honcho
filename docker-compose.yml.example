@@ -80,6 +80,34 @@ services:
         required: false
     restart: unless-stopped
 
+  mcp:
+    build:
+      context: ./mcp
+      dockerfile: Dockerfile
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      - HONCHO_API_URL=http://api:8000
+    env_file:
+      - path: .env
+        required: false
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "bun",
+          "-e",
+          "fetch('http://127.0.0.1:3000/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
   database:
     image: pgvector/pgvector:pg15
     restart: unless-stopped

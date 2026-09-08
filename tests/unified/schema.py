@@ -1,7 +1,7 @@
 import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from src.config import ReasoningLevel
 from src.schemas import (
@@ -14,6 +14,8 @@ from src.schemas import (
 
 
 class TestStep(BaseModel):
+    model_config = ConfigDict(extra="forbid")  # pyright: ignore
+
     description: str | None = None
 
 
@@ -89,10 +91,6 @@ class WaitAction(TestStep):
     )
     target: Literal["queue_empty"] = "queue_empty"
     timeout: int = 60
-    flush: bool = Field(
-        False,
-        description="Enable flush mode to bypass batch token threshold before waiting",
-    )
 
 
 # --- Dream Actions ---

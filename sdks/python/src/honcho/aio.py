@@ -777,6 +777,7 @@ class PeerAio(AsyncMetadataConfigMixin):
         reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
         | None = None,
         response_format: type[TResponseFormat],
+        timeout: float | None = None,
     ) -> TResponseFormat | None: ...
 
     @overload
@@ -791,6 +792,7 @@ class PeerAio(AsyncMetadataConfigMixin):
         reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
         | None = None,
         response_format: dict[str, Any] | None = None,
+        timeout: float | None = None,
     ) -> str | None: ...
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
@@ -805,12 +807,17 @@ class PeerAio(AsyncMetadataConfigMixin):
         reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
         | None = None,
         response_format: type[BaseModel] | dict[str, Any] | None = None,
+        timeout: float | None = Field(
+            None, gt=0, description="Timeout in seconds for this chat request"
+        ),
     ) -> BaseModel | str | None:
         """Query the peer's representation asynchronously.
 
         See Peer.chat for parameter details. When response_format is a Pydantic
         model class, the answer is parsed into an instance of it; when it is a
-        JSON Schema dict, the answer is a JSON string.
+        JSON Schema dict, the answer is a JSON string. When timeout is omitted,
+        the Honcho client's configured timeout is used; retries can extend total
+        elapsed time.
         """
         await self._peer._honcho._ensure_workspace_async()
         target_id = resolve_id(target)
@@ -835,6 +842,7 @@ class PeerAio(AsyncMetadataConfigMixin):
         data = await self._peer._honcho._async_http_client.post(
             routes.peer_chat(self._peer.workspace_id, self._peer.id),
             body=body,
+            timeout=timeout,
         )
         content = data.get("content")
         if not content:

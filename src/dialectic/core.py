@@ -14,7 +14,12 @@ from nanoid import generate as generate_nanoid
 from pydantic import BaseModel
 
 from src import crud
-from src.config import ConfiguredModelSettings, ReasoningLevel, settings
+from src.config import (
+    ConfiguredModelSettings,
+    DialecticLevelSettings,
+    ReasoningLevel,
+    settings,
+)
 from src.dependencies import tracked_db
 from src.dialectic import prompts
 from src.embedding_client import embedding_client
@@ -138,6 +143,20 @@ class DialecticAgent:
         if self.session_allowlist is not None:
             tools = [t for t in tools if t.get("name") != "get_reasoning_chain"]
         return tools
+
+    def _tool_choice(
+        self, level_settings: DialecticLevelSettings
+    ) -> str | dict[str, Any] | None:
+        """Pick the tool_choice for this query.
+
+        Defaults to whatever the reasoning level configures. Subclasses override
+        when the agent has no prefetched corpus to fall back on and so must
+        search before it can answer. Forcing "required"/"any" here costs exactly
+        one tool round rather than pinning the loop: `execute_tool_loop` relaxes
+        it to "auto" after the first iteration so the model can still stop and
+        synthesize.
+        """
+        return level_settings.TOOL_CHOICE
 
     async def _initialize_session_history(self) -> None:
         """Fetch and inject session history into the system prompt if configured."""
@@ -505,7 +524,7 @@ class DialecticAgent:
                 prompt="",  # Ignored since we pass messages
                 max_tokens=max_tokens,
                 tools=tools,
-                tool_choice=level_settings.TOOL_CHOICE,
+                tool_choice=self._tool_choice(level_settings),
                 tool_executor=tool_executor,
                 max_tool_iterations=level_settings.MAX_TOOL_ITERATIONS,
                 messages=self.messages,
@@ -581,7 +600,7 @@ class DialecticAgent:
                 stream=True,
                 stream_final_only=True,
                 tools=tools,
-                tool_choice=level_settings.TOOL_CHOICE,
+                tool_choice=self._tool_choice(level_settings),
                 tool_executor=tool_executor,
                 max_tool_iterations=level_settings.MAX_TOOL_ITERATIONS,
                 messages=self.messages,

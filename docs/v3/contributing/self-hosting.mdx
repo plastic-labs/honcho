@@ -389,6 +389,20 @@ The default compose file is already production-oriented — ports bound to `127.
 - You can also run multiple deriver processes across machines — they coordinate via the database queue
 - Monitor deriver logs for processing backlog
 
+### Scaling the API
+
+Set `API_WORKERS` to run multiple API server processes in the Docker container. It defaults to `1`, preserving the existing single-process behavior.
+
+When connection pooling is enabled (`DB_POOL_CLASS` is not `null`), each API process creates its own SQLAlchemy connection pool. Keep the combined capacity below the PostgreSQL connection limit:
+
+```text
+API_WORKERS * (DB_POOL_SIZE + DB_MAX_OVERFLOW) < PostgreSQL max_connections
+```
+
+With the default pooled settings (`10 + 20`), each API worker can open up to 30 connections. For example, `API_WORKERS=3` allows up to 90 API connections. Leave additional headroom for the deriver, migrations, administration, and monitoring.
+
+When `DB_POOL_CLASS=null`, SQLAlchemy uses `NullPool`; `DB_POOL_SIZE` and `DB_MAX_OVERFLOW` do not apply, and connections are opened and closed per use.
+
 ### Caching
 - The production compose enables Redis caching by default (`CACHE_ENABLED=true`)
 - For the development compose, enable manually: `CACHE_ENABLED=true`

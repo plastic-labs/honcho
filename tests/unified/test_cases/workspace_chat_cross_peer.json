@@ -68,8 +68,7 @@
     },
     {
       "step_type": "wait",
-      "target": "queue_empty",
-      "flush": true
+      "target": "queue_empty"
     },
     {
       "step_type": "query",
