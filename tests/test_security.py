@@ -285,3 +285,71 @@ class TestAuthAdminAndUnscoped:
         creds = _bearer(create_jwt(JWTParams()))
         with pytest.raises(AuthenticationException):
             await auth(credentials=creds, workspace_name="ws-a")
+
+
+class TestAuthTenantClaim:
+    """A3/DEV-2478 — the `tn` tenant claim and the MULTI_TENANT tenant gate.
+
+    Under MULTI_TENANT every token must carry a tenant; the gate is enforced before
+    the admin short-circuit, so `ad` is admin-within-tenant, never cross-tenant. Flag
+    off (single-tenant OSS) the gate is inert.
+    """
+
+    def test_verify_jwt_decodes_tn(self):
+        params = verify_jwt(create_jwt(JWTParams(tn="tenant-a", w="ws-a")))
+        assert params.tn == "tenant-a"
+
+    def test_verify_jwt_normalizes_empty_tn_to_none(self):
+        # A blank tn must not masquerade as a present claim (mirrors w/p/s).
+        params = verify_jwt(create_jwt(JWTParams(tn="", w="ws-a")))
+        assert params.tn is None
+
+    @pytest.mark.asyncio
+    async def test_multi_tenant_requires_tn(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setattr(settings, "MULTI_TENANT", True)
+        creds = _bearer(create_jwt(JWTParams(w="ws-a")))  # no tn
+        with pytest.raises(AuthenticationException, match="tenant claim"):
+            await auth(credentials=creds, workspace_name="ws-a")
+
+    @pytest.mark.asyncio
+    async def test_multi_tenant_admin_still_requires_tn(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        # §3: a tenant-less admin token is NOT god-mode under MULTI_TENANT — the
+        # gate runs before the admin short-circuit.
+        monkeypatch.setattr(settings, "MULTI_TENANT", True)
+        creds = _bearer(create_jwt(JWTParams(ad=True)))  # admin, no tn
+        with pytest.raises(AuthenticationException, match="tenant claim"):
+            await auth(credentials=creds, workspace_name="ws-a", peer_name="alice")
+
+    @pytest.mark.asyncio
+    async def test_multi_tenant_token_with_tn_passes(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setattr(settings, "MULTI_TENANT", True)
+        creds = _bearer(create_jwt(JWTParams(tn="tenant-a", w="ws-a")))
+        params = await auth(credentials=creds, workspace_name="ws-a")
+        assert params.tn == "tenant-a"
+
+    @pytest.mark.asyncio
+    async def test_multi_tenant_admin_with_tn_passes(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        # Admin-within-tenant: with a tenant present, `ad` still reaches any route
+        # (RLS confines it to the bound tenant downstream).
+        monkeypatch.setattr(settings, "MULTI_TENANT", True)
+        creds = _bearer(create_jwt(JWTParams(tn="tenant-a", ad=True)))
+        params = await auth(credentials=creds, workspace_name="ws-a", peer_name="alice")
+        assert params.ad is True
+        assert params.tn == "tenant-a"
+
+    @pytest.mark.asyncio
+    async def test_flag_off_tenantless_token_unchanged(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        # Single-tenant OSS default: no tn, no gate — byte-for-byte prior behavior.
+        monkeypatch.setattr(settings, "MULTI_TENANT", False)
+        creds = _bearer(create_jwt(JWTParams(w="ws-a")))
+        params = await auth(credentials=creds, workspace_name="ws-a")
+        assert params.w == "ws-a"
+        assert params.tn is None

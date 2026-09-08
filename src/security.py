@@ -48,14 +48,23 @@ class JWTParams(BaseModel):
     Fields (all optional other than `t`):
 
     `t`: a string timestamp of when the JWT was created
+    `tn`: (string) tenant id the token is scoped to; required under MULTI_TENANT
     `exp`: a string timestamp of when the JWT expires (optional)
-    `ad`: a boolean flag indicating if the JWT is an admin JWT
+    `ad`: a boolean flag indicating if the JWT is an admin JWT (within its tenant)
     `w`: (string) workspace name
     `p`: (string) peer name
     `s`: (string) session name
     """
 
     t: str = Field(default_factory=utc_now_iso)
+    # region ai
+    # Tenant id (A3/DEV-2478). Optional on the model so flag-off (single-tenant OSS)
+    # tokens are unchanged; REQUIRED by auth() when MULTI_TENANT is on — a tenant-less
+    # token is rejected there. `t` was already taken (the created-at timestamp), hence
+    # the two-letter `tn`. Must stay in lockstep with groudon's JWTParams (verified in
+    # the e2e environment, DEV-2687).
+    # endregion
+    tn: str | None = None
     exp: str | None = None
     ad: bool | None = None
     w: str | None = None
@@ -123,8 +132,10 @@ def verify_jwt(token: str) -> JWTParams:
                     raise AuthenticationException("JWT expired")
         if "ad" in decoded:
             params.ad = decoded["ad"]
-        # Normalize empty-string scope claims to None so a blank `w`/`p`/`s`
+        # Normalize empty-string scope claims to None so a blank `tn`/`w`/`p`/`s`
         # cannot masquerade as a present claim in the checks below.
+        if "tn" in decoded:
+            params.tn = decoded["tn"] or None
         if "w" in decoded:
             params.w = decoded["w"] or None
         if "p" in decoded:
@@ -215,6 +226,16 @@ async def auth(
         raise AuthenticationException("No access token provided")
 
     jwt_params = verify_jwt(credentials.credentials)
+
+    # region ai
+    # A3/DEV-2478: under MULTI_TENANT every token must carry a tenant. Enforced before
+    # the admin short-circuit below, so `ad` is admin *within* its tenant, never
+    # cross-tenant — the resolved tenant is bound to app.tenant downstream (A2) and RLS
+    # confines the request to it. A tenant-less token is rejected outright (the A4
+    # above-tenant admin surface authenticates separately). Flag off: unchanged.
+    # endregion
+    if settings.MULTI_TENANT and not jwt_params.tn:
+        raise AuthenticationException("JWT missing required tenant claim")
 
     # Authorize by the token's narrowest scope, not by the route's. A
     # narrower-than-workspace token must NOT fall back to workspace access:
