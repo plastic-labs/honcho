@@ -75,6 +75,7 @@ honcho stop --wipe     # also delete volumes
 | `honcho workspace list` | List accessible workspaces |
 | `honcho workspace create <id>` | Create or get a workspace |
 | `honcho workspace inspect` | Peers, sessions, config for a workspace |
+| `honcho workspace chat <query>` | Query the dialectic across all peers (optional `-s` / `--reasoning`) |
 | `honcho workspace search <query>` | Search messages across workspace |
 | `honcho workspace queue-status` | Deriver queue status (filter with `--observer` / `--sender`) |
 | `honcho workspace delete <id>` | Delete a workspace. Use `--dry-run` to preview, `--cascade` to also delete sessions, `--yes` to skip the confirm prompt |

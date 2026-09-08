@@ -80,7 +80,7 @@ def print_welcome(console: Console) -> None:
         ("[dim]pattern[/dim]", r"[dim]honcho <command> \[args] \[-w workspace] \[-p peer] \[-s session][/dim]"),
         ("[dim]example[/dim]", "[dim]honcho peer chat \"what does alice prefer?\" -p alice -w agents[/dim]"),
         ("", ""),
-        ("workspace",  "list · create · search · delete · inspect · queue-status"),
+        ("workspace",  "list · create · search · chat · delete · inspect · queue-status"),
         ("peer",       "list · create · search · inspect · card · chat"),
         ("",           "get-metadata · set-metadata · representation"),
         ("session",    "list · create · search · delete · inspect · view · add-peers"),
@@ -91,6 +91,7 @@ def print_welcome(console: Console) -> None:
         ("config",     "inspect current configuration"),
     ]
     memory_rows = [
+        ("honcho workspace chat \"...\" -w <workspace>", "query the Dialectic across all peers"),
         ("honcho peer chat \"...\" -p <peer> -w <workspace>", "query the Dialectic about a peer"),
         ("honcho peer inspect -p <peer> -w <workspace>", "dashboard: peer card + recent conclusions + configuration"),
         ("honcho peer representation -p <peer> -w <workspace>", "global peer representation"),
