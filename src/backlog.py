@@ -160,7 +160,8 @@ class DeriverMetricsPoller:
         )
 
     async def _enqueue_due_dreams(self) -> None:
-        for due_dream in self._due_dreams:
+        cap = settings.DREAM.MAX_ENQUEUED_PER_POLL
+        for due_dream in self._due_dreams[:cap]:
             try:
                 await enqueue_dream(
                     due_dream.workspace_name,
