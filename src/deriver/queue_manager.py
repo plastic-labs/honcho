@@ -6,7 +6,6 @@ import time
 from asyncio import Task
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
 from logging import getLogger
 from typing import Any, NamedTuple, cast
 
@@ -28,6 +27,9 @@ from src.crud.deriver import (
     REPRESENTATION_WORK_UNIT_PREFIX,
     representation_batch_threshold_clause,
     unclaimed_work_unit_clause,
+)
+from src.crud.deriver import (
+    cleanup_stale_work_units as crud_cleanup_stale_work_units,
 )
 from src.dependencies import tracked_db
 from src.deriver.consumer import (
@@ -222,11 +224,11 @@ class QueueManager:
             )
         logger.debug("Signal handlers registered")
 
-        # Start the reconciler scheduler
-        try:
-            await self.reconciler_scheduler.start()
-        except Exception:
-            logger.exception("Failed to start reconciler scheduler")
+        if settings.DERIVER.SCHEDULER == "deriver":
+            try:
+                await self.reconciler_scheduler.start()
+            except Exception:
+                logger.exception("Failed to start reconciler scheduler")
 
         # Run the polling loop directly in this task
         logger.debug("Starting polling loop directly")
@@ -314,31 +316,7 @@ class QueueManager:
     async def cleanup_stale_work_units(self) -> None:
         """Clean up stale work units"""
         async with tracked_db("cleanup_stale_work_units") as db:
-            cutoff = datetime.now(UTC) - timedelta(
-                minutes=settings.DERIVER.STALE_SESSION_TIMEOUT_MINUTES
-            )
-
-            stale_ids = (
-                (
-                    await db.execute(
-                        select(models.ActiveQueueSession.id)
-                        .where(models.ActiveQueueSession.last_updated < cutoff)
-                        .order_by(models.ActiveQueueSession.last_updated)
-                        .with_for_update(skip_locked=True)
-                    )
-                )
-                .scalars()
-                .all()
-            )
-
-            # Delete only the records we successfully got locks for
-            if stale_ids:
-                await db.execute(
-                    delete(models.ActiveQueueSession).where(
-                        models.ActiveQueueSession.id.in_(stale_ids)
-                    )
-                )
-            await db.commit()
+            await crud_cleanup_stale_work_units(db)
 
     async def get_and_claim_work_units(self) -> dict[str, str]:
         """
@@ -543,7 +521,8 @@ class QueueManager:
                     continue
 
                 try:
-                    await self._maybe_cleanup_stale_work_units()
+                    if settings.DERIVER.SCHEDULER == "deriver":
+                        await self._maybe_cleanup_stale_work_units()
                     claimed_work_units = await self.get_and_claim_work_units()
                     if claimed_work_units:
                         if self._is_tenant_work(claimed_work_units):

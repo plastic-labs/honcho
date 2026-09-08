@@ -321,6 +321,66 @@ class TestQueueProcessing:
         # This test ensures the cleanup logic doesn't break, though we don't have stale entries yet
         assert isinstance(work_units, dict)
 
+    async def test_initialize_starts_reconciler_when_deriver_owns_scheduling(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(settings.DERIVER, "SCHEDULER", "deriver")
+        queue_manager = QueueManager()
+
+        with (
+            patch.object(
+                queue_manager.reconciler_scheduler, "start", AsyncMock()
+            ) as start,
+            patch.object(queue_manager, "_sleep_startup_jitter", AsyncMock()),
+            patch.object(queue_manager, "polling_loop", AsyncMock()),
+            patch.object(queue_manager, "cleanup", AsyncMock()),
+        ):
+            await queue_manager.initialize()
+
+        assert start.await_count == 1
+
+    async def test_initialize_skips_reconciler_when_api_owns_scheduling(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(settings.DERIVER, "SCHEDULER", "api")
+        queue_manager = QueueManager()
+
+        with (
+            patch.object(
+                queue_manager.reconciler_scheduler, "start", AsyncMock()
+            ) as start,
+            patch.object(queue_manager, "_sleep_startup_jitter", AsyncMock()),
+            patch.object(queue_manager, "polling_loop", AsyncMock()),
+            patch.object(queue_manager, "cleanup", AsyncMock()),
+        ):
+            await queue_manager.initialize()
+
+        assert start.await_count == 0
+
+    async def test_polling_loop_skips_stale_cleanup_when_api_owns_scheduling(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(settings.DERIVER, "SCHEDULER", "api")
+        queue_manager = QueueManager()
+
+        def _claim_nothing_and_stop() -> dict[str, str]:
+            queue_manager.shutdown_event.set()
+            return {}
+
+        with (
+            patch.object(
+                queue_manager, "_maybe_cleanup_stale_work_units", AsyncMock()
+            ) as cleanup,
+            patch.object(
+                queue_manager,
+                "get_and_claim_work_units",
+                AsyncMock(side_effect=_claim_nothing_and_stop),
+            ),
+        ):
+            await queue_manager.polling_loop()
+
+        assert cleanup.await_count == 0
+
     async def test_work_unit_key_format(
         self, sample_session_with_peers: tuple[models.Session, list[models.Peer]]
     ) -> None:
