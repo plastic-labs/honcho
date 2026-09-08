@@ -404,7 +404,7 @@ class TestBatchProcessing:
         db_session.add(session)
         await db_session.commit()
 
-        now = datetime.datetime.now(datetime.timezone.utc)
+        now = datetime.datetime.now(datetime.UTC)
         ineligible_doc = models.Document(
             content="too soon",
             workspace_name=workspace.name,
@@ -611,7 +611,7 @@ class TestSoftDeleteCleanup:
             observer=peer1.name,
             observed=peer1.name,
             session_name=session.name,
-            deleted_at=datetime.datetime.now(datetime.timezone.utc)
+            deleted_at=datetime.datetime.now(datetime.UTC)
             - datetime.timedelta(minutes=2),  # Only 2 minutes ago
         )
         db_session.add(recent_doc)
@@ -623,7 +623,7 @@ class TestSoftDeleteCleanup:
             observer=peer1.name,
             observed=peer1.name,
             session_name=session.name,
-            deleted_at=datetime.datetime.now(datetime.timezone.utc)
+            deleted_at=datetime.datetime.now(datetime.UTC)
             - datetime.timedelta(minutes=10),  # 10 minutes ago
         )
         db_session.add(old_doc)
@@ -631,9 +631,7 @@ class TestSoftDeleteCleanup:
         await db_session.commit()
 
         # Query for documents ready for cleanup (older than 5 minutes)
-        cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(
-            minutes=5
-        )
+        cutoff = datetime.datetime.now(datetime.UTC) - datetime.timedelta(minutes=5)
         stmt = (
             select(models.Document)
             .where(models.Document.deleted_at.is_not(None))
@@ -781,7 +779,7 @@ class TestMessageEmbeddings:
             db_session, workspace, peer
         )
 
-        now = datetime.datetime.now(datetime.timezone.utc)
+        now = datetime.datetime.now(datetime.UTC)
         ineligible_emb.sync_attempts = 1
         ineligible_emb.last_sync_at = now - datetime.timedelta(minutes=9, seconds=59)
         eligible_emb.sync_attempts = 1
@@ -1019,7 +1017,7 @@ class TestReconcilerTracing:
         metrics = ReconciliationMetrics()
         with (
             patch(
-                "src.reconciler.sync_vectors.tracked_db",
+                "src.reconciler.sync_vectors.service_db",
                 self._fake_tracked_db(AsyncMock()),
             ),
             patch(
@@ -1039,7 +1037,7 @@ class TestReconcilerTracing:
         metrics = ReconciliationMetrics()
         with (
             patch(
-                "src.reconciler.sync_vectors.tracked_db",
+                "src.reconciler.sync_vectors.service_db",
                 self._fake_tracked_db(AsyncMock()),
             ),
             patch(
@@ -1066,7 +1064,7 @@ class TestReconcilerTracing:
         metrics = ReconciliationMetrics()
         with (
             patch(
-                "src.reconciler.sync_vectors.tracked_db",
+                "src.reconciler.sync_vectors.service_db",
                 self._fake_tracked_db(AsyncMock()),
             ),
             patch(

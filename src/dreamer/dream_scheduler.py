@@ -77,6 +77,11 @@ class DreamScheduler:
         # Cancel any existing dream for this collection
         await self.cancel_dream(work_unit_key)
 
+        # region ai
+        # create_task snapshots the current context (contextvars), so the ambient
+        # tenant set by process_work_unit rides into the detached timer and is still
+        # present in execute_dream after the delay — no need to thread tenant_id.
+        # endregion
         task = asyncio.create_task(
             self._delayed_dream(
                 work_unit_key,
@@ -190,6 +195,14 @@ class DreamScheduler:
         from src.deriver.enqueue import enqueue_dream
         from src.utils.config_helpers import get_configuration
 
+        # region ai
+        # Go through tracked_db (RLS-scoped), not service_db: the reads below match
+        # Document/session/workspace by name only, and those names are not unique
+        # across tenants — a bypass session would read another tenant's rows. The
+        # tenant is the ambient one carried in from the scheduling context via the
+        # create_task snapshot (see schedule_dream); tracked_db inherits it, and
+        # fails closed if it is somehow absent under MULTI_TENANT.
+        # endregion
         async with tracked_db("dream_session_lookup") as db:
             stmt = (
                 select(models.Document.session_name)
@@ -335,6 +348,11 @@ async def check_and_schedule_dream(
         # Queue is source of truth for in-flight dreams; mirrors
         # uq_queue_dream_pending_work_unit_key.
         enabled_dream_types = settings.DREAM.ENABLED_TYPES
+        # region ai
+        # Runs inside the deriver's representation processing, so the collection's
+        # tenant is the ambient tenant_context set by process_work_unit; the dedup
+        # keys (and the scheduled key below) pick it up so they are tenant-scoped.
+        # endregion
         pending_keys = [
             construct_work_unit_key(
                 collection.workspace_name,

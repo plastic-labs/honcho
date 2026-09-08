@@ -67,6 +67,11 @@ async def _fetch_collection(
     if obj is None:
         return None
     return {
+        # region ai
+        # tenant_id leads the composite PK; without it the reconstructed object
+        # has an incomplete identity and merge/update can't locate its row.
+        # endregion
+        "tenant_id": obj.tenant_id,
         "id": obj.id,
         "observer": obj.observer,
         "observed": obj.observed,
@@ -157,6 +162,7 @@ async def get_or_create_collection(
             await safe_cache_set(
                 key,
                 {
+                    "tenant_id": honcho_collection.tenant_id,
                     "id": honcho_collection.id,
                     "observer": honcho_collection.observer,
                     "observed": honcho_collection.observed,

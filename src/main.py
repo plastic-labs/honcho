@@ -34,7 +34,7 @@ from src.routers import (
     webhooks,
     workspaces,
 )
-from src.startup import validate_embedding_schema
+from src.startup import validate_embedding_schema, validate_tenant_isolation
 from src.telemetry import (
     initialize_telemetry_async,
     metrics_endpoint,
@@ -127,6 +127,10 @@ async def lifespan(_: FastAPI):
     # pgvector columns, the process refuses to start rather than silently
     # writing wrong-dim vectors.
     await validate_embedding_schema(engine)
+    # Fail closed on a multi-tenant half-state (no-op unless MULTI_TENANT is on):
+    # an unsafe pooler mode for the session-scoped binding, or RLS not
+    # enabled+forced on the data tables.
+    await validate_tenant_isolation(engine)
 
     try:
         await init_cache()

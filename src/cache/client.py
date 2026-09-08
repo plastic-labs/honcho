@@ -7,6 +7,7 @@ from urllib.parse import urlparse, urlunparse
 
 import sentry_sdk
 from cashews import cache
+from cashews.commands import PATTERN_CMDS, Command
 from cashews.picklers import PicklerType
 from redis import exceptions as redis_exc
 from tenacity import (
@@ -143,6 +144,49 @@ def cache_key_namespace() -> str:
 def cache_prefix_namespace() -> str:
     """Tagged namespace for cashews `prefix=`, which format-substitutes."""
     return "{{" + get_cache_namespace() + "}}"
+
+
+def _tenant_scope_middleware() -> Any:
+    """Prefix every cache key with the current tenant when MULTI_TENANT is on."""
+
+    # region ai
+    # honcho's cache keys are workspace_name-scoped, and workspace_name is not unique
+    # across tenants (every tenant has a "default" workspace), so without this a
+    # cross-tenant cache hit would return another tenant's row and bypass row-level
+    # security — the cache is read before the DB. Prefixing every key with the
+    # request's tenant keeps entries (and the per-key locks) isolated across
+    # get/set/delete. No-op when MULTI_TENANT is off, so self-host keys are
+    # byte-for-byte unchanged. Modeled on cashews' own add_prefix helper.
+    # endregion
+
+    async def _middleware(
+        call: Any, cmd: Command, _backend: Any, *args: Any, **kwargs: Any
+    ) -> Any:
+        if not settings.MULTI_TENANT:
+            return await call(*args, **kwargs)
+        # ai: deferred import keeps cache.client free of a load-time dependency on db.
+        from src.db import tenant_context
+
+        prefix = f"t:{tenant_context.get() or 'default'}:"
+        if cmd in (Command.GET_MANY, Command.DELETE_MANY):
+            return await call(*[prefix + key for key in args])
+        if cmd == Command.SET_MANY:
+            kwargs["pairs"] = {prefix + k: v for k, v in kwargs["pairs"].items()}
+            return await call(**kwargs)
+        as_key = "pattern" if cmd in PATTERN_CMDS else "key"
+        key = kwargs.get(as_key)
+        if key:
+            kwargs[as_key] = prefix + key
+            return await call(**kwargs)
+        if args:
+            return await call(prefix + args[0], *args[1:], **kwargs)
+        return await call(*args, **kwargs)
+
+    return _middleware
+
+
+# ai: registered once at import; applies to every backend cache.setup() installs.
+cache.add_middleware(_tenant_scope_middleware())
 
 
 async def init_cache() -> None:

@@ -29,7 +29,7 @@ class TestEnqueueDreamMetadataShape:
                 new_callable=AsyncMock,
             ) as mock_get_collection,
             patch(
-                "src.deriver.enqueue.tracked_db",
+                "src.deriver.enqueue.service_db",
             ) as mock_db_ctx,
         ):
             mock_session = AsyncMock()
@@ -54,6 +54,6 @@ class TestEnqueueDreamMetadataShape:
                 "enqueue_dream must not need to load the collection — it no "
                 "longer touches dream metadata."
             )
-            assert (
-                mock_session.execute.called
-            ), "enqueue_dream must still insert the QueueItem row."
+            assert mock_session.execute.called, (
+                "enqueue_dream must still insert the QueueItem row."
+            )

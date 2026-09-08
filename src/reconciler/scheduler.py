@@ -19,7 +19,7 @@ from sqlalchemy.exc import IntegrityError
 
 from src import models
 from src.config import settings
-from src.dependencies import tracked_db
+from src.dependencies import service_db
 from src.models import QueueItem
 from src.reconciler.sync_vectors import record_pending_embeddings_backlog
 
@@ -222,7 +222,7 @@ class ReconcilerScheduler:
         Returns:
             True if a task was enqueued, False if skipped
         """
-        async with tracked_db("reconciler_enqueue") as db:
+        async with service_db("reconciler_enqueue") as db:
             # Check if task is already in progress
             in_progress_check = select(
                 exists(

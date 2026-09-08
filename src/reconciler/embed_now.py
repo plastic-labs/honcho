@@ -29,7 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
 from src.config import settings
-from src.dependencies import tracked_db
+from src.dependencies import service_db
 from src.embedding_client import embedding_client
 from src.exceptions import VectorStoreError
 from src.reconciler.sync_vectors import (
@@ -170,7 +170,7 @@ async def _claim_and_lease(message_ids: list[str]) -> list[_ClaimedChunk]:
     accounting and the eventual ``sync_state='failed'`` backstop, so a transient
     embedding failure on this best-effort path never burns that budget.
     """
-    async with tracked_db("embed_now_claim") as db:
+    async with service_db("embed_now_claim") as db:
         rows_stmt = (
             select(models.MessageEmbedding)
             .where(
@@ -258,7 +258,7 @@ async def _persist(
     external = get_external_vector_store()
 
     if external is None:
-        async with tracked_db("embed_now_persist") as db:
+        async with service_db("embed_now_persist") as db:
             await _persist_pgvector(db, claimed, vector_by_id)
             await db.commit()
         return
@@ -267,7 +267,7 @@ async def _persist(
     if not synced:
         return
 
-    async with tracked_db("embed_now_persist") as db:
+    async with service_db("embed_now_persist") as db:
         await _mark_synced(db, synced, vector_by_id, store_in_postgres)
         await db.commit()
 
@@ -311,7 +311,7 @@ async def _upsert_external(
     ids match whatever the reconciler writes for any chunk we skipped; reading
     them is the only DB work here, done in its own short transaction before any
     network call."""
-    async with tracked_db("embed_now_positions") as db:
+    async with service_db("embed_now_positions") as db:
         chunk_position = await compute_chunk_positions(db, message_ids)
 
     by_namespace: dict[str, list[_ClaimedChunk]] = {}

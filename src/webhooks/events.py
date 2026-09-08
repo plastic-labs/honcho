@@ -43,13 +43,23 @@ class TestEvent(BaseWebhookEvent):
 WebhookEvent = QueueEmptyEvent | TestEvent
 
 
-async def publish_webhook_event(event: WebhookEvent) -> None:
+async def publish_webhook_event(
+    event: WebhookEvent, *, tenant_id: str | None = None
+) -> None:
     """
     Add a webhook event to our DB queue.
 
     Args:
         event: The webhook event to publish.
+        tenant_id: The tenant this event belongs to. Required under MULTI_TENANT.
     """
+    # region ai
+    # webhook is a tenant-scoped task type, but this runs off the deriver's
+    # queue-drain finally, AFTER process_work_unit has reset tenant_context — so
+    # there is no ambient tenant here. The caller must pass the work unit's tenant
+    # explicitly: without it tracked_db fails closed (the event is silently dropped)
+    # and the work_unit_key would collide across tenants sharing a workspace_name.
+    # endregion
     try:
         # Note: workspace_name is no longer included in the payload
         # It's stored directly on the queue item
@@ -58,13 +68,14 @@ async def publish_webhook_event(event: WebhookEvent) -> None:
             data=event.model_dump(mode="json", exclude={"type"}),
         )
 
-        async with tracked_db("publish_webhook_event") as db:
+        async with tracked_db("publish_webhook_event", tenant_id=tenant_id) as db:
             queue_item = QueueItem(
                 work_unit_key=construct_work_unit_key(
                     event.workspace_id,
                     {
                         "task_type": "webhook",
                     },
+                    tenant_id=tenant_id,
                 ),
                 payload=payload,
                 session_id=None,

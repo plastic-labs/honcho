@@ -15,7 +15,9 @@ from src.cache.client import (
     cache_prefix_namespace,
     get_cache_namespace,
 )
+from src.config import settings
 from src.crud.session import SESSION_CACHE_KEY_TEMPLATE, session_cache_key
+from src.db import tenant_context
 
 
 def test_both_spellings_render_the_same_tag():
@@ -60,3 +62,40 @@ def test_namespaces_hash_independently():
         key_slot(("{" + n + "}:v2:workspace:w").encode()) for n in ("a1", "b2", "c3")
     }
     assert len(slots) > 1
+
+
+@pytest.mark.asyncio
+async def test_cache_isolates_tenants_under_multi_tenant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Under MULTI_TENANT the tenant-scope middleware keeps entries per-tenant.
+
+    Cache keys are workspace_name-scoped, and workspace_name is not unique across
+    tenants (every tenant has a "default" workspace). Without tenant scoping a
+    read-through hit would serve another tenant's row and skip RLS. Two tenants
+    sharing a key must not see each other's values; each reads back its own. (This
+    fails if the middleware is inactive — the shared key would collide.)
+    """
+    monkeypatch.setattr(settings, "MULTI_TENANT", True)
+    key = session_cache_key("default", "s1")  # a name-only key that collides
+
+    token = tenant_context.set("tenant-a")
+    try:
+        await cache.set(key, "value-a", expire=60)
+        assert await cache.get(key) == "value-a"
+    finally:
+        tenant_context.reset(token)
+
+    token = tenant_context.set("tenant-b")
+    try:
+        assert await cache.get(key) is None  # tenant-b can't see tenant-a's entry
+        await cache.set(key, "value-b", expire=60)
+        assert await cache.get(key) == "value-b"
+    finally:
+        tenant_context.reset(token)
+
+    token = tenant_context.set("tenant-a")
+    try:
+        assert await cache.get(key) == "value-a"  # tenant-a still reads its own
+    finally:
+        tenant_context.reset(token)

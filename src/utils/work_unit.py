@@ -4,6 +4,41 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from src.config import settings
+from src.db import tenant_context
+
+# The task types that lead a base (non-tenant-namespaced) work_unit_key.
+# region ai
+# Used to tell whether a key carries a leading tenant_id prefix: the prefix is
+# present (added under MULTI_TENANT) iff the first segment is not one of these.
+# endregion
+_TASK_TYPES = frozenset(
+    {
+        "representation",
+        "summary",
+        "dream",
+        "webhook",
+        "deletion",
+        "reconciler",
+        "scope_backfill",
+        "scope_removal",
+    }
+)
+
+# region ai
+# reconciler is the only task type that is NOT tenant-scoped: it scans every
+# tenant's vectors on the service session and is keyed `reconciler:{type}`, with no
+# workspace/tenant component. Every other task type belongs to a single tenant, so
+# under MULTI_TENANT its key must be tenant-namespaced — task_type alone determines
+# which, so this is the single source of truth for that invariant.
+# endregion
+_TENANTLESS_TASK_TYPES = frozenset({"reconciler"})
+
+
+def requires_tenant_id(task_type: str) -> bool:
+    """Whether a task of this type must carry a tenant_id when MULTI_TENANT is on."""
+    return task_type not in _TENANTLESS_TASK_TYPES
+
 
 class ParsedWorkUnit(BaseModel):
     """Parsed work unit components."""
@@ -14,9 +49,50 @@ class ParsedWorkUnit(BaseModel):
     observer: str | None
     observed: str | None
     dream_type: str | None = None
+    # Set when the key was tenant-namespaced (MULTI_TENANT); None otherwise.
+    tenant_id: str | None = None
 
 
 def construct_work_unit_key(
+    workspace_name: str,
+    payload: dict[str, Any] | ParsedWorkUnit,
+    *,
+    tenant_id: str | None = None,
+) -> str:
+    """Generate a work unit key, tenant-namespaced when MULTI_TENANT is on."""
+    # region ai
+    # When MULTI_TENANT is set, a tenant-scoped task's key is prefixed with the
+    # tenant_id so work units — and the batches drained from them — never span
+    # tenants (workspace_name alone is not globally unique). The tenant is taken
+    # from the explicit tenant_id, else the ambient tenant_context.
+    #
+    # Pass tenant_id explicitly for callers that hold the tenant but run without it
+    # in ambient scope — e.g. the dreamer, which schedules per-collection work on
+    # the cross-tenant service session; otherwise the tenant is read from
+    # tenant_context.
+    #
+    # Fail-closed on the invariant: task_type alone determines whether a tenant is
+    # required (requires_tenant_id), so if a tenant-scoped task reaches here with no
+    # tenant resolvable we raise rather than silently emit a colliding, un-namespaced
+    # key. The tenant-less reconciler is returned unchanged.
+    # endregion
+    base_key = _construct_base_work_unit_key(workspace_name, payload)
+    if not settings.MULTI_TENANT:
+        return base_key
+    task_type = base_key.split(":", 1)[0]
+    if not requires_tenant_id(task_type):
+        return base_key
+    tenant = tenant_id or tenant_context.get()
+    if not tenant:
+        raise ValueError(
+            f"work_unit_key for task_type {task_type!r} requires a tenant when "
+            + "MULTI_TENANT is on, but none is in scope — pass tenant_id or set "
+            + "tenant_context (cross-tenant callers must not build tenant-scoped keys)"
+        )
+    return f"{tenant}:{base_key}"
+
+
+def _construct_base_work_unit_key(
     workspace_name: str, payload: dict[str, Any] | ParsedWorkUnit
 ) -> str:
     """
@@ -87,6 +163,22 @@ def construct_work_unit_key(
 
 
 def parse_work_unit_key(work_unit_key: str) -> ParsedWorkUnit:
+    """Parse a work unit key, transparently handling a tenant_id prefix."""
+    # region ai
+    # A key produced under MULTI_TENANT is `{tenant_id}:{base_key}`; otherwise it
+    # is just `{base_key}`. The two are told apart by the leading segment: a known
+    # task type means no prefix; anything else is a tenant_id to strip off and
+    # record.
+    # endregion
+    head, _, rest = work_unit_key.partition(":")
+    if head and head not in _TASK_TYPES and rest:
+        parsed = _parse_base_work_unit_key(rest)
+        parsed.tenant_id = head
+        return parsed
+    return _parse_base_work_unit_key(work_unit_key)
+
+
+def _parse_base_work_unit_key(work_unit_key: str) -> ParsedWorkUnit:
     """
     Parse a work unit key to extract its components.
 

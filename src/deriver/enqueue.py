@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
 from src.config import settings
-from src.dependencies import tracked_db
+from src.dependencies import service_db, tracked_db
 from src.dreamer.dream_scheduler import get_dream_scheduler
 from src.exceptions import ValidationException
 from src.models import QueueItem
@@ -51,6 +51,13 @@ async def enqueue(payload: list[dict[str, Any]]) -> None:
                 f"Cancelled {len(cancelled_dreams)} pending dreams due to new activity"
             )
 
+    # region ai
+    # Per-tenant work: the payload is a single session's messages (one workspace +
+    # session, below), so the session/workspace/peer resolution in handle_session
+    # must be RLS-scoped to the caller's tenant, not run on the cross-tenant service
+    # session. tracked_db inherits the ambient tenant; the queue table has no RLS,
+    # so the insert is fine on it too.
+    # endregion
     async with tracked_db("message_enqueue") as db_session:
         try:
             # Determine if batch or single processing
@@ -477,7 +484,7 @@ async def enqueue_dream(
         session_name: Name of the session to scope the dream to if specified
         rebuild: card_refresh only — rebuild the card without the prior card
     """
-    async with tracked_db("dream_enqueue") as db_session:
+    async with service_db("dream_enqueue") as db_session:
         # Authoritative scope check, in the same transaction as the queue insert.
         # A route-level precheck cannot be relied on: it runs in its own session,
         # and a *missing* reserved name passes it (nothing has flagged that peer
@@ -621,7 +628,7 @@ async def _enqueue_scope_task(
     to "pending" in the same transaction as the queue insert, so the status
     surface never claims a job exists that was never enqueued (or vice versa).
     """
-    async with tracked_db("scope_task_enqueue") as db_session:
+    async with service_db("scope_task_enqueue") as db_session:
         try:
             record = create_scope_task_record(
                 workspace_name,
@@ -809,7 +816,7 @@ async def enqueue_deletion(
             await _do_enqueue(db_session, should_commit=False)
         else:
             # Create a new session and commit
-            async with tracked_db("deletion_enqueue") as new_session:
+            async with service_db("deletion_enqueue") as new_session:
                 await _do_enqueue(new_session, should_commit=True)
 
     except Exception as e:
