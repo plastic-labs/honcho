@@ -75,8 +75,9 @@ export function register(server: McpServer, ctx: ToolContext) {
     "chat",
     {
       description: [
-        "Ask a natural-language question about a peer's knowledge and get an answer from Honcho's reasoning system.",
-        "Use this to query what Honcho knows about any peer — their preferences, history, personality, etc.",
+        "Ask a natural-language question about ONE peer and get an answer from Honcho's reasoning system.",
+        "Requires `peer_id`. Answers from that peer's representation only — not the rest of the workspace.",
+        "For cross-peer themes or questions not tied to one peer, use `workspace_chat`.",
         "Returns a natural-language answer, or 'None' if no relevant information exists.",
       ].join("\n"),
       inputSchema: {
