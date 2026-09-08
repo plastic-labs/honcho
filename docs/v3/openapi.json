@@ -711,7 +711,7 @@
     "/v3/workspaces/{workspace_id}/peers/{peer_id}/chat": {
       "post": {
         "tags": ["peers"],
-        "summary": "Chat",
+        "summary": "Peer Chat",
         "description": "Query a Peer's representation using natural language. Performs agentic search and reasoning to comprehensively\nanswer the query based on all latent knowledge gathered about the peer from their messages and conclusions.",
         "operationId": "chat_v3_workspaces__workspace_id__peers__peer_id__chat_post",
         "security": [{ "HTTPBearer": [] }],
