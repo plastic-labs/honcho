@@ -9,8 +9,9 @@ import typer
 
 from honcho.api_types import PeerConfig
 
-from honcho_cli.commands.workspace import _config_to_dict, _handle_error, _raw_list
+from honcho_cli.commands.workspace import _config_to_dict, _handle_chat_error, _handle_error, _raw_list
 from honcho_cli.output import print_error, print_result, use_json
+from honcho_cli.recall import parse_csv_repeatable, reject_incompatible_recall, scope_for_sdk
 from honcho_cli.validation import validate_resource_id
 
 from honcho_cli._help import HonchoTyperGroup
@@ -130,6 +131,16 @@ def chat(
     query: str = typer.Argument(help="Question to ask about the peer"),
     target: Optional[str] = typer.Option(None, help="Target peer for perspective"),
     reasoning: Optional[str] = typer.Option(None, "--reasoning", "-r", help="Reasoning level: minimal, low, medium, high, max"),
+    scope: Optional[list[str]] = typer.Option(
+        None,
+        "--scope",
+        help="Confine recall to a scope. Repeat or comma-separate for an explicit-only allowlist of names. Mutually exclusive with --sessions and -s.",
+    ),
+    sessions: Optional[list[str]] = typer.Option(
+        None,
+        "--sessions",
+        help="Ad hoc session-ID allowlist (repeat or comma-separate). Explicit conclusions only. Mutually exclusive with --scope and -s.",
+    ),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
     peer: Optional[str] = typer.Option(None, "--peer", "-p", help="Override peer ID"),
     session: Optional[str] = typer.Option(None, "--session", "-s", help="Override session ID"),
@@ -139,7 +150,6 @@ def chat(
 
     _REASONING_LEVELS = ("minimal", "low", "medium", "high", "max")
     if reasoning and reasoning not in _REASONING_LEVELS:
-        from honcho_cli.output import print_error
         print_error("INVALID_REASONING", f"--reasoning must be one of: {', '.join(_REASONING_LEVELS)}")
         raise typer.Exit(1)
 
@@ -147,17 +157,29 @@ def chat(
     pid = _get_peer_id(None)
     client, config = get_client()
     p = client.peer(pid)
+    scope_names = parse_csv_repeatable(scope, kind="scope")
+    session_allowlist = parse_csv_repeatable(sessions, kind="session")
+    session_id = config.session_id or None
+    reject_incompatible_recall(
+        session_id=session_id, scope=scope_names, sessions=session_allowlist
+    )
+
+    chat_kwargs: dict[str, object] = {
+        "target": target,
+        "session": session_id,
+        "reasoning_level": reasoning or None,
+    }
+    scope_arg = scope_for_sdk(scope_names)
+    if scope_arg is not None:
+        chat_kwargs["scope"] = scope_arg
+    if session_allowlist is not None:
+        chat_kwargs["sessions"] = session_allowlist
 
     try:
-        response = p.chat(
-            query,
-            target=target,
-            session=config.session_id or None,
-            reasoning_level=reasoning or None,
-        )
+        response = p.chat(query, **chat_kwargs)
         print_result({"peer_id": pid, "query": query, "response": response})
     except Exception as e:
-        _handle_error(e, "peer", pid)
+        _handle_chat_error(e, "peer", pid)
 
 
 @app.command()

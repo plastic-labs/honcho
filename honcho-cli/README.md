@@ -75,7 +75,7 @@ honcho stop --wipe     # also delete volumes
 | `honcho workspace list` | List accessible workspaces |
 | `honcho workspace create <id>` | Create or get a workspace |
 | `honcho workspace inspect` | Peers, sessions, config for a workspace |
-| `honcho workspace chat <query>` | Query the dialectic across all peers (optional `-s` / `--reasoning`) |
+| `honcho workspace chat <query>` | Query the dialectic across all peers (optional `-s` / `--scope` / `--reasoning`) |
 | `honcho workspace search <query>` | Search messages across workspace |
 | `honcho workspace queue-status` | Deriver queue status (filter with `--observer` / `--sender`) |
 | `honcho workspace delete <id>` | Delete a workspace. Use `--dry-run` to preview, `--cascade` to also delete sessions, `--yes` to skip the confirm prompt |
@@ -88,7 +88,7 @@ honcho stop --wipe     # also delete volumes
 | `honcho peer create <id>` | Create or get a peer |
 | `honcho peer inspect <id>` | Card, session count, recent conclusions |
 | `honcho peer card <id>` | Raw peer card content |
-| `honcho peer chat <query>` | Query the dialectic about a peer (peer via `-p` / `HONCHO_PEER_ID`) |
+| `honcho peer chat <query>` | Query the dialectic about a peer (peer via `-p` / `HONCHO_PEER_ID`; optional `--scope` / `--sessions`) |
 | `honcho peer representation <id>` | Formatted representation |
 | `honcho peer search <query>` | Search a peer's messages (peer via `-p` / `HONCHO_PEER_ID`) |
 | `honcho peer get-metadata <id>` / `set-metadata` | Metadata operations |

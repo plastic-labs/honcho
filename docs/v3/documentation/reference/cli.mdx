@@ -235,8 +235,12 @@ honcho conclusion search "topic" --observer <peer_id> --json
 # Reproduce the query against the CLI
 honcho peer chat <peer_id> "what do you know about X?" --json
 
+# Confine recall to a named scope
+honcho peer chat <peer_id> "what happened here?" --scope my-project --json
+
 # Cross-peer question — not tied to one peer
 honcho workspace chat "what themes show up across peers?" --json
+honcho workspace chat "what happened in this project?" --scope my-project --json
 ```
 
 ## Scripting & automation

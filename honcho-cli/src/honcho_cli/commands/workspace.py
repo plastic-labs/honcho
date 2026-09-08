@@ -17,6 +17,7 @@ from honcho import (
 )
 
 from honcho_cli.output import print_error, print_result, status, use_json
+from honcho_cli.recall import parse_csv_repeatable, reject_incompatible_recall, scope_for_sdk
 from honcho_cli.validation import validate_resource_id
 
 from honcho_cli._help import HonchoTyperGroup
@@ -215,6 +216,11 @@ def delete(
 def chat(
     query: str = typer.Argument(help="Question to ask about the workspace"),
     reasoning: Optional[str] = typer.Option(None, "--reasoning", "-r", help="Reasoning level: minimal, low, medium, high, max"),
+    scope: Optional[list[str]] = typer.Option(
+        None,
+        "--scope",
+        help="Confine recall to a scope. Repeat or comma-separate for an explicit-only allowlist of names. Mutually exclusive with -s.",
+    ),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
     session: Optional[str] = typer.Option(None, "--session", "-s", help="Override session ID"),
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
@@ -229,16 +235,23 @@ def chat(
     handle_cmd_flags(json_output=json_output, workspace=workspace, session=session)
     wid = _get_workspace_id(None)
     client, config = get_client()
+    scope_names = parse_csv_repeatable(scope, kind="scope")
+    session_id = config.session_id or None
+    reject_incompatible_recall(session_id=session_id, scope=scope_names)
+
+    chat_kwargs: dict[str, object] = {
+        "session": session_id,
+        "reasoning_level": reasoning or None,
+    }
+    scope_arg = scope_for_sdk(scope_names)
+    if scope_arg is not None:
+        chat_kwargs["scope"] = scope_arg
 
     try:
-        response = client.chat(
-            query,
-            session=config.session_id or None,
-            reasoning_level=reasoning or None,
-        )
+        response = client.chat(query, **chat_kwargs)
         print_result({"workspace_id": wid, "query": query, "response": response})
     except Exception as e:
-        _handle_error(e, "workspace", wid)
+        _handle_chat_error(e, "workspace", wid)
 
 
 @app.command()
@@ -313,6 +326,21 @@ def _config_to_dict(config) -> dict:
             result[k] = _config_to_dict(v) if hasattr(v, "__dict__") and not isinstance(v, str) else v
         return result
     return config
+
+
+def _handle_chat_error(e: Exception, resource: str, resource_id: str) -> None:
+    """Like ``_handle_error``, but keep the server/SDK message.
+
+    Chat 404s include scope misses (``Scope X not found in workspace Y``). Rewriting
+    those as ``Workspace 'id' not found`` would hide the real error.
+    """
+    if isinstance(e, NotFoundError):
+        print_error("NOT_FOUND", str(e), {resource: resource_id})
+        raise typer.Exit(1)
+    if isinstance(e, ValueError):
+        print_error("INVALID_ARGUMENT", str(e), {resource: resource_id})
+        raise typer.Exit(1)
+    _handle_error(e, resource, resource_id)
 
 
 def _handle_error(e: Exception, resource: str, resource_id: str) -> None:
