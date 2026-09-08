@@ -5,6 +5,10 @@ import {
   createUnscopedClient,
   type Env,
 } from "./config.js";
+import {
+  bindServerClientInfo,
+  identityFromHttpRequest,
+} from "./identity.js";
 import { createServer } from "./server.js";
 
 const CORS_ORIGIN = "*";
@@ -108,11 +112,13 @@ export default {
     }
 
     try {
+      const identity = await identityFromHttpRequest(request);
       const server = createServer({
         config,
-        clientFor: createClientFactory(config),
-        unscoped: createUnscopedClient(config),
+        clientFor: createClientFactory(config, identity),
+        unscoped: createUnscopedClient(config, identity),
       });
+      bindServerClientInfo(server, identity);
       const handler = createMcpHandler(server, {
         route: "/",
         corsOptions: {

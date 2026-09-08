@@ -1,4 +1,9 @@
 import { Honcho } from "@honcho-ai/sdk";
+import {
+  createIdentity,
+  defaultTelemetryHeaders,
+  type IdentitySlot,
+} from "./identity.js";
 
 export interface HonchoConfig {
   apiKey: string;
@@ -86,31 +91,42 @@ export function resolveWorkspaceId(
 export function createClient(
   config: HonchoConfig,
   workspaceId: string,
+  identity: IdentitySlot = createIdentity(),
 ): Honcho {
-  return new Honcho({
+  const client = new Honcho({
     apiKey: config.apiKey,
     baseURL: config.baseUrl,
     workspaceId,
+    defaultHeaders: defaultTelemetryHeaders(identity.get()),
   });
+  identity.bind(client);
+  return client;
 }
 
 /** Client used only for credential-scoped ops (list workspaces). */
-export function createUnscopedClient(config: HonchoConfig): Honcho {
-  return new Honcho({
+export function createUnscopedClient(
+  config: HonchoConfig,
+  identity: IdentitySlot = createIdentity(),
+): Honcho {
+  const client = new Honcho({
     apiKey: config.apiKey,
     baseURL: config.baseUrl,
+    defaultHeaders: defaultTelemetryHeaders(identity.get()),
   });
+  identity.bind(client);
+  return client;
 }
 
 export function createClientFactory(
   config: HonchoConfig,
+  identity: IdentitySlot = createIdentity(),
 ): (workspaceId?: string) => Honcho {
   const cache = new Map<string, Honcho>();
   return (workspaceId?: string) => {
     const id = resolveWorkspaceId(config, workspaceId);
     let client = cache.get(id);
     if (!client) {
-      client = createClient(config, id);
+      client = createClient(config, id, identity);
       cache.set(id, client);
     }
     return client;

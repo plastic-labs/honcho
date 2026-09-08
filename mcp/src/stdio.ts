@@ -4,6 +4,7 @@ import {
   createUnscopedClient,
   parseEnvConfig,
 } from "./config.js";
+import { bindServerClientInfo, createIdentity } from "./identity.js";
 import { createServer } from "./server.js";
 
 declare const process: {
@@ -17,11 +18,13 @@ try {
     HONCHO_API_URL: process.env.HONCHO_API_URL,
     HONCHO_WORKSPACE_ID: process.env.HONCHO_WORKSPACE_ID,
   });
+  const identity = createIdentity();
   const server = createServer({
     config,
-    clientFor: createClientFactory(config),
-    unscoped: createUnscopedClient(config),
+    clientFor: createClientFactory(config, identity),
+    unscoped: createUnscopedClient(config, identity),
   });
+  bindServerClientInfo(server, identity);
   await server.connect(new StdioServerTransport());
 } catch (e) {
   const message = e instanceof Error ? e.message : String(e);

@@ -7,6 +7,10 @@ import {
   type Env,
   type HonchoConfig,
 } from "./config.js";
+import {
+  bindServerClientInfo,
+  identityFromRequest,
+} from "./identity.js";
 import { createServer } from "./server.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
@@ -193,11 +197,13 @@ async function handleMcp(request: Request): Promise<Response> {
   const config = configOrUnauthorized(request);
   if (config instanceof Response) return config;
 
+  const identity = identityFromRequest(request, body);
   const server = createServer({
     config,
-    clientFor: createClientFactory(config),
-    unscoped: createUnscopedClient(config),
+    clientFor: createClientFactory(config, identity),
+    unscoped: createUnscopedClient(config, identity),
   });
+  bindServerClientInfo(server, identity);
 
   const maxSessions = envInt("MCP_SESSION_MAX", DEFAULT_SESSION_MAX);
   if (sessions.size >= maxSessions) {
