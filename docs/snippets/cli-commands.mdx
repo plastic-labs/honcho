@@ -570,9 +570,21 @@ honcho stop
 
 ## honcho workspace
 
-List, create, inspect, delete, and search workspaces.
+List, create, inspect, chat, delete, and search workspaces.
 
 <AccordionGroup>
+<Accordion title="chat">
+Query the dialectic across all peers in the workspace.
+
+```bash
+honcho workspace chat <query>
+```
+
+<ParamField path="query" type="string" required />
+<ParamField path="--reasoning" type="string">
+  Reasoning level: minimal, low, medium, high, max. Short alias: `-r`.
+</ParamField>
+</Accordion>
 <Accordion title="create">
 Create or get a workspace.
 

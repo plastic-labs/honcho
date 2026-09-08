@@ -200,6 +200,28 @@ class TestJsonContract:
             "created_at": "2026-01-01T00:00:00Z",
         }]
 
+    def test_workspace_chat_json_object_shape(self, cfg, runner):
+        cfg.write_text(json.dumps({"apiKey": "k", "environmentUrl": "http://localhost:8000"}))
+        client = MagicMock()
+        client.chat.return_value = "across both peers"
+        config = MagicMock(workspace_id="ws1", session_id="sess1")
+        with patch("honcho_cli.commands.workspace.get_client", return_value=(client, config)):
+            result = runner.invoke(
+                app,
+                ["workspace", "chat", "what themes?", "-w", "ws1", "-s", "sess1", "-r", "low"],
+            )
+        assert result.exit_code == 0, result.stderr
+        assert json.loads(result.stdout) == {
+            "workspace_id": "ws1",
+            "query": "what themes?",
+            "response": "across both peers",
+        }
+        client.chat.assert_called_once_with(
+            "what themes?",
+            session="sess1",
+            reasoning_level="low",
+        )
+
     def test_message_get_returns_single_json_object(self, cfg, runner):
         cfg.write_text(json.dumps({"apiKey": "k", "environmentUrl": "http://localhost:8000"}))
         msg = MagicMock(
@@ -478,3 +500,9 @@ class TestExitCodes:
             result = runner.invoke(app, ["peer", "inspect", "missing", "-w", "ws1"])
         assert result.exit_code == 1
         assert json.loads(result.stderr)["error"]["code"] == "PEER_NOT_FOUND"
+
+    def test_workspace_chat_invalid_reasoning_exits_nonzero(self, cfg, runner):
+        cfg.write_text(json.dumps({"apiKey": "k", "environmentUrl": "http://localhost:8000"}))
+        result = runner.invoke(app, ["workspace", "chat", "what themes?", "-w", "ws1", "-r", "nope"])
+        assert result.exit_code == 1
+        assert json.loads(result.stderr)["error"]["code"] == "INVALID_REASONING"

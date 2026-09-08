@@ -223,7 +223,7 @@ honcho session view <session_id> --last 50
 
 ### Dialectic returns bad answers
 
-When `honcho peer chat` or the dialectic API is hallucinating or missing context.
+When `honcho peer chat`, `honcho workspace chat`, or the dialectic API is hallucinating or missing context.
 
 ```bash
 # What does the peer card actually say?
@@ -234,6 +234,9 @@ honcho conclusion search "topic" --observer <peer_id> --json
 
 # Reproduce the query against the CLI
 honcho peer chat <peer_id> "what do you know about X?" --json
+
+# Cross-peer question — not tied to one peer
+honcho workspace chat "what themes show up across peers?" --json
 ```
 
 ## Scripting & automation

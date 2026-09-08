@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `honcho workspace chat` for reasoned questions across all peers (Honcho v3.1.0+)
+
 ## [0.1.4] - 2026-08-26
 
 ### Added
