@@ -7,13 +7,15 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
+from src.config import settings
+from src.db import tenant_context
 from src.dreamer.dream_scheduler import (
     DreamScheduler,
     check_and_schedule_dream,
     set_dream_scheduler,
 )
 from src.schemas import DreamType
-from src.utils.work_unit import construct_work_unit_key
+from src.utils.work_unit import construct_work_unit_key, parse_work_unit_key
 
 
 @pytest.fixture
@@ -394,6 +396,39 @@ class TestThresholdFilter:
 
         assert scheduled is True
         assert mock_schedule.called, "schedule_dream should fire when threshold met"
+
+    @pytest.mark.asyncio
+    async def test_scheduled_key_is_tenant_namespaced_from_ambient(
+        self,
+        dream_scheduler: DreamScheduler,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        # The dreamer no longer threads tenant_id: under MULTI_TENANT the scheduled
+        # work_unit_key is namespaced from the ambient tenant_context that the
+        # deriver's process_work_unit binds (here simulated by setting it around the
+        # call). This pins the collapse-to-the-global decision — the key must still
+        # come out tenant-scoped without any explicit tenant_id being passed.
+        collection = await self._make_collection(db_session, sample_data)
+        for _ in range(60):
+            await self._insert_doc(db_session, collection, "explicit")
+        await db_session.commit()
+
+        monkeypatch.setattr(settings, "MULTI_TENANT", True)
+        ambient = tenant_context.set("tenant-x")
+        try:
+            with patch.object(
+                dream_scheduler, "schedule_dream", new_callable=AsyncMock
+            ) as mock_schedule:
+                scheduled = await check_and_schedule_dream(db_session, collection)
+        finally:
+            tenant_context.reset(ambient)
+
+        assert scheduled is True
+        scheduled_key = mock_schedule.call_args.args[0]
+        assert scheduled_key.startswith("tenant-x:dream:")
+        assert parse_work_unit_key(scheduled_key).tenant_id == "tenant-x"
 
     @pytest.mark.asyncio
     async def test_contradiction_excluded_from_count(

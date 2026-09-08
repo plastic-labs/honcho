@@ -25,6 +25,20 @@ _TASK_TYPES = frozenset(
     }
 )
 
+# region ai
+# reconciler is the only task type that is NOT tenant-scoped: it scans every
+# tenant's vectors on the service session and is keyed `reconciler:{type}`, with no
+# workspace/tenant component. Every other task type belongs to a single tenant, so
+# under MULTI_TENANT its key must be tenant-namespaced — task_type alone determines
+# which, so this is the single source of truth for that invariant.
+# endregion
+_TENANTLESS_TASK_TYPES = frozenset({"reconciler"})
+
+
+def requires_tenant_id(task_type: str) -> bool:
+    """Whether a task of this type must carry a tenant_id when MULTI_TENANT is on."""
+    return task_type not in _TENANTLESS_TASK_TYPES
+
 
 class ParsedWorkUnit(BaseModel):
     """Parsed work unit components."""
@@ -47,20 +61,35 @@ def construct_work_unit_key(
 ) -> str:
     """Generate a work unit key, tenant-namespaced when MULTI_TENANT is on."""
     # region ai
-    # When MULTI_TENANT is set and a tenant is in scope, the current tenant_id is
-    # prepended so work units — and the batches drained from them — never span
-    # tenants (workspace_name alone is not globally unique). Off, or with no tenant
-    # in scope (e.g. the tenant-less reconciler task), the key is unchanged.
+    # When MULTI_TENANT is set, a tenant-scoped task's key is prefixed with the
+    # tenant_id so work units — and the batches drained from them — never span
+    # tenants (workspace_name alone is not globally unique). The tenant is taken
+    # from the explicit tenant_id, else the ambient tenant_context.
     #
     # Pass tenant_id explicitly for callers that hold the tenant but run without it
     # in ambient scope — e.g. the dreamer, which schedules per-collection work on
     # the cross-tenant service session; otherwise the tenant is read from
     # tenant_context.
+    #
+    # Fail-closed on the invariant: task_type alone determines whether a tenant is
+    # required (requires_tenant_id), so if a tenant-scoped task reaches here with no
+    # tenant resolvable we raise rather than silently emit a colliding, un-namespaced
+    # key. The tenant-less reconciler is returned unchanged.
     # endregion
     base_key = _construct_base_work_unit_key(workspace_name, payload)
-    if settings.MULTI_TENANT and (tenant := tenant_id or tenant_context.get()):
-        return f"{tenant}:{base_key}"
-    return base_key
+    if not settings.MULTI_TENANT:
+        return base_key
+    task_type = base_key.split(":", 1)[0]
+    if not requires_tenant_id(task_type):
+        return base_key
+    tenant = tenant_id or tenant_context.get()
+    if not tenant:
+        raise ValueError(
+            f"work_unit_key for task_type {task_type!r} requires a tenant when "
+            + "MULTI_TENANT is on, but none is in scope — pass tenant_id or set "
+            + "tenant_context (cross-tenant callers must not build tenant-scoped keys)"
+        )
+    return f"{tenant}:{base_key}"
 
 
 def _construct_base_work_unit_key(

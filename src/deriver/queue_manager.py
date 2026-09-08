@@ -834,7 +834,10 @@ class QueueManager:
                                     session_id=work_unit.session_name,
                                     observer=work_unit.observer,
                                     observed=work_unit.observed,
-                                )
+                                ),
+                                # tenant_context is already reset above, so pass the
+                                # work unit's tenant explicitly (None when flag-off).
+                                tenant_id=work_unit.tenant_id,
                             )
                     except Exception:
                         logger.exception("Error triggering queue_empty webhook")

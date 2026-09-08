@@ -7,10 +7,15 @@ from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
+from src.db import tenant_context
+from src.models import QueueItem
 from src.utils.queue_payload import WebhookPayload
 from src.webhooks import webhook_delivery
+from src.webhooks.events import QueueEmptyEvent, publish_webhook_event
 
 
 class FakeAsyncClient:
@@ -234,3 +239,58 @@ async def test_deliver_webhook_catches_request_errors(
 
     payload = WebhookPayload(event_type="workspace.updated", data={"id": "ws_1"})
     await webhook_delivery.deliver_webhook(payload, "workspace-a")
+
+
+async def _webhook_keys(db: AsyncSession, workspace_id: str) -> list[str]:
+    rows = await db.execute(
+        select(QueueItem.work_unit_key).where(
+            QueueItem.task_type == "webhook",
+            QueueItem.workspace_name == workspace_id,
+        )
+    )
+    return list(rows.scalars().all())
+
+
+@pytest.mark.asyncio
+async def test_publish_webhook_event_namespaces_key_with_explicit_tenant(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # T5: queue.empty is published from the deriver's teardown, AFTER tenant_context
+    # is reset, so the tenant must be threaded in explicitly. With it, the enqueued
+    # QueueItem's key is tenant-namespaced — two tenants sharing a workspace_name no
+    # longer collide onto one webhook work unit.
+    monkeypatch.setattr(settings, "MULTI_TENANT", True)
+
+    clear = tenant_context.set(None)  # no ambient tenant, like the real call site
+    try:
+        await publish_webhook_event(
+            QueueEmptyEvent(workspace_id="ws-shared", queue_type="representation"),
+            tenant_id="tenant-a",
+        )
+    finally:
+        tenant_context.reset(clear)
+
+    assert await _webhook_keys(db_session, "ws-shared") == ["tenant-a:webhook:ws-shared"]
+
+
+@pytest.mark.asyncio
+async def test_publish_webhook_event_enqueues_nothing_without_tenant(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The pre-fix bug: flag on with no tenant in scope, the webhook was published on
+    # a non-namespaced (cross-tenant-colliding) key. Now the invariant guard in
+    # construct_work_unit_key raises, publish_webhook_event swallows it, and nothing
+    # is enqueued — a dropped webhook beats a cross-tenant one.
+    monkeypatch.setattr(settings, "MULTI_TENANT", True)
+
+    clear = tenant_context.set(None)
+    try:
+        await publish_webhook_event(
+            QueueEmptyEvent(workspace_id="ws-orphan", queue_type="representation"),
+        )
+    finally:
+        tenant_context.reset(clear)
+
+    assert await _webhook_keys(db_session, "ws-orphan") == []

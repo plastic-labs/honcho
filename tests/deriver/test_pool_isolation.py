@@ -24,7 +24,11 @@ import pytest
 from src.config import settings
 from src.db import tenant_context
 from src.deriver.queue_manager import QueueManager
-from src.utils.work_unit import construct_work_unit_key, parse_work_unit_key
+from src.utils.work_unit import (
+    construct_work_unit_key,
+    parse_work_unit_key,
+    requires_tenant_id,
+)
 
 _PAYLOAD: dict[str, Any] = {
     "task_type": "representation",
@@ -65,6 +69,58 @@ def test_keys_collide_without_namespacing(monkeypatch: pytest.MonkeyPatch) -> No
 
     assert _key_for_tenant("tenant-1") == _key_for_tenant("tenant-2")
     assert parse_work_unit_key(_key_for_tenant("tenant-1")).tenant_id is None
+
+
+def test_requires_tenant_id_exempts_only_the_reconciler() -> None:
+    # task_type alone decides whether a work unit is tenant-scoped. The reconciler
+    # scans every tenant on the service session and is the sole exemption; all other
+    # task types belong to a single tenant.
+    assert requires_tenant_id("reconciler") is False
+    for task_type in (
+        "representation",
+        "summary",
+        "dream",
+        "webhook",
+        "deletion",
+        "scope_backfill",
+        "scope_removal",
+    ):
+        assert requires_tenant_id(task_type) is True
+
+
+def test_construct_key_fails_closed_when_tenant_required_but_absent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The invariant guard: a tenant-scoped task reaching key construction under
+    # MULTI_TENANT with no tenant in scope must raise, not silently emit a
+    # non-namespaced (cross-tenant-colliding) key. This is what turns "forgot to
+    # bind the tenant" into a loud failure instead of a leak (e.g. the webhook path).
+    monkeypatch.setattr(settings, "MULTI_TENANT", True)
+    clear = tenant_context.set(None)
+    try:
+        with pytest.raises(ValueError, match="requires a tenant"):
+            construct_work_unit_key("ws", {"task_type": "webhook"})
+    finally:
+        tenant_context.reset(clear)
+
+
+def test_reconciler_key_is_never_namespaced_and_never_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The reconciler runs tenant-less on the service session: even under MULTI_TENANT
+    # with no tenant in scope its key must be returned unchanged (never prefixed,
+    # never raising), so the single global reconciler unit is not split per-tenant.
+    monkeypatch.setattr(settings, "MULTI_TENANT", True)
+    clear = tenant_context.set(None)
+    try:
+        key = construct_work_unit_key(
+            "ws", {"task_type": "reconciler", "reconciler_type": "vectors"}
+        )
+    finally:
+        tenant_context.reset(clear)
+
+    assert key == "reconciler:vectors"
+    assert parse_work_unit_key(key).tenant_id is None
 
 
 class _CaptureOwnership:

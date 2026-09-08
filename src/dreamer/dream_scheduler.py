@@ -60,7 +60,6 @@ class DreamScheduler:
         *,
         observer: str,
         observed: str,
-        tenant_id: str | None = None,
         trigger_reason: str | None = None,
         delay_reason: str | None = None,
         documents_since_last_dream_at_schedule: int | None = None,
@@ -78,6 +77,11 @@ class DreamScheduler:
         # Cancel any existing dream for this collection
         await self.cancel_dream(work_unit_key)
 
+        # region ai
+        # create_task snapshots the current context (contextvars), so the ambient
+        # tenant set by process_work_unit rides into the detached timer and is still
+        # present in execute_dream after the delay — no need to thread tenant_id.
+        # endregion
         task = asyncio.create_task(
             self._delayed_dream(
                 work_unit_key,
@@ -86,7 +90,6 @@ class DreamScheduler:
                 dream_type,
                 observer=observer,
                 observed=observed,
-                tenant_id=tenant_id,
                 trigger_reason=trigger_reason,
                 delay_reason=delay_reason,
                 documents_since_last_dream_at_schedule=documents_since_last_dream_at_schedule,
@@ -148,7 +151,6 @@ class DreamScheduler:
         *,
         observer: str,
         observed: str,
-        tenant_id: str | None = None,
         trigger_reason: str | None = None,
         delay_reason: str | None = None,
         documents_since_last_dream_at_schedule: int | None = None,
@@ -162,7 +164,6 @@ class DreamScheduler:
                 dream_type,
                 observer=observer,
                 observed=observed,
-                tenant_id=tenant_id,
                 trigger_reason=trigger_reason,
                 delay_reason=delay_reason,
                 documents_since_last_dream_at_schedule=documents_since_last_dream_at_schedule,
@@ -184,7 +185,6 @@ class DreamScheduler:
         *,
         observer: str,
         observed: str,
-        tenant_id: str | None = None,
         trigger_reason: str | None = None,
         delay_reason: str | None = None,
         documents_since_last_dream_at_schedule: int | None = None,
@@ -196,13 +196,14 @@ class DreamScheduler:
         from src.utils.config_helpers import get_configuration
 
         # region ai
-        # Runs from a detached timer with no ambient tenant, so bind the
-        # collection's tenant explicitly and go through tracked_db (RLS-scoped)
-        # rather than service_db: the reads below match Document/session/workspace
-        # by name only, and those names are not unique across tenants — a bypass
-        # session would read another tenant's rows. Per-tenant work, not cross-tenant.
+        # Go through tracked_db (RLS-scoped), not service_db: the reads below match
+        # Document/session/workspace by name only, and those names are not unique
+        # across tenants — a bypass session would read another tenant's rows. The
+        # tenant is the ambient one carried in from the scheduling context via the
+        # create_task snapshot (see schedule_dream); tracked_db inherits it, and
+        # fails closed if it is somehow absent under MULTI_TENANT.
         # endregion
-        async with tracked_db("dream_session_lookup", tenant_id=tenant_id) as db:
+        async with tracked_db("dream_session_lookup") as db:
             stmt = (
                 select(models.Document.session_name)
                 .where(
@@ -347,6 +348,11 @@ async def check_and_schedule_dream(
         # Queue is source of truth for in-flight dreams; mirrors
         # uq_queue_dream_pending_work_unit_key.
         enabled_dream_types = settings.DREAM.ENABLED_TYPES
+        # region ai
+        # Runs inside the deriver's representation processing, so the collection's
+        # tenant is the ambient tenant_context set by process_work_unit; the dedup
+        # keys (and the scheduled key below) pick it up so they are tenant-scoped.
+        # endregion
         pending_keys = [
             construct_work_unit_key(
                 collection.workspace_name,
@@ -356,11 +362,6 @@ async def check_and_schedule_dream(
                     "observed": collection.observed,
                     "dream_type": dream_type,
                 },
-                # region ai
-                # Runs cross-tenant on the service session with no ambient tenant;
-                # pass the collection's tenant so the dedup key is tenant-scoped.
-                # endregion
-                tenant_id=collection.tenant_id,
             )
             for dream_type in enabled_dream_types
         ]
@@ -394,7 +395,6 @@ async def check_and_schedule_dream(
                         "observed": collection.observed,
                         "dream_type": dream_type,
                     },
-                    tenant_id=collection.tenant_id,
                 )
                 await dream_scheduler.schedule_dream(
                     dream_work_unit_key,
@@ -403,7 +403,6 @@ async def check_and_schedule_dream(
                     dream_type=DreamType(dream_type),
                     observer=collection.observer,
                     observed=collection.observed,
-                    tenant_id=collection.tenant_id,
                     trigger_reason=trigger_reason,
                     delay_reason=delay_reason,
                     documents_since_last_dream_at_schedule=documents_since_last_dream,

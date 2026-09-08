@@ -16,6 +16,11 @@ half-states — where isolation looks enabled but isn't — into a hard boot fai
    set (migration window only).
 
 No-op when ``MULTI_TENANT`` is off: self-host runs on plain, RLS-free Postgres.
+
+This is a permanent isolation guard, not a migration-scoped check: it stays in
+OSS so a self-hoster running one instance across multiple tenants gets the same
+fail-closed guarantee, and it defends against a later misconfiguration turning the
+flag on without RLS in place.
 """
 
 from __future__ import annotations
