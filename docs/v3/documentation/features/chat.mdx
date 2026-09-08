@@ -1,11 +1,21 @@
 ---
 title: "Chat Endpoint"
-description: "An endpoint for reasoning about your users"
+description: "Ask Honcho questions about one peer, or across a whole workspace"
 sidebarTitle: "Chat Endpoint"
 icon: "message-question"
 ---
 
-The Chat endpoint (`peer.chat()`) is the natural language interface to Honcho's reasoning. Instead of manually retrieving conclusions, your LLM can ask questions and get synthesized answers based on all the reasoning Honcho has done about a peer. Think of it as agent-to-agent communication.
+The Chat endpoint is the natural language interface to Honcho's reasoning. Instead of manually retrieving conclusions, your LLM can ask questions and get synthesized answers based on all the reasoning Honcho has done. Think of it as agent-to-agent communication.
+
+There are two ways to ask:
+
+| | `peer.chat()` | `honcho.chat()` |
+|--|---------------|-----------------|
+| Answers from | One peer's representation, from an observer's perspective | Every peer in the workspace, with no anchor peer |
+| Good for | Personalization, per-user decisions, "what does this peer know about that peer" | Cross-peer themes, team-wide questions, "what does this workspace know" |
+| Endpoint | `POST /v3/workspaces/{workspace_id}/peers/{peer_id}/chat` | `POST /v3/workspaces/{workspace_id}/chat` |
+
+Most applications start with peer chat. Jump to [Workspace Chat](#workspace-chat) when the question spans more than one peer.
 
 ## Basic Usage
 
@@ -41,11 +51,11 @@ console.log(answer);
 ```
 </CodeGroup>
 
-The chat endpoint searches through the peer's representation--all the conclusions Honcho has reasoned about them--and synthesizes a natural language answer.
+Peer chat searches through the peer's representation--all the conclusions Honcho has reasoned about them--and synthesizes a natural language answer.
 
 ## Reasoning Level
 
-Use `reasoning_level` to trade off speed against depth for a specific chat request. It is optional and defaults to `low`. Accepted values are `minimal`, `low`, `medium`, `high`, and `max`.
+Use `reasoning_level` to trade off speed against depth for a specific chat request. It is optional and defaults to `low`. Accepted values are `minimal`, `low`, `medium`, `high`, and `max`. The same levels apply to [workspace chat](#workspace-chat).
 
 The reasoning level controls which model the request is routed to, the tools used by the agent, the thinking budget, the maximum tool-iteration count, and output token limits.
 
@@ -158,6 +168,194 @@ const status = await peer.chat(
 
 The agent runs its full reasoning loop either way — only the final answer is formatted to your schema. See [Structured Outputs](/v3/documentation/features/advanced/structured-outputs) for the supported schema subset, streaming behavior, and best practices.
 
+## Workspace Chat
+
+`honcho.chat()` asks a question of the whole workspace. There is no observer
+peer and no `target`: the agent orients itself with workspace stats and the
+most active peers, works out which peers are relevant to the question, and then
+reads their memory pair by pair.
+
+### When to Use It
+
+Reach for workspace chat when the question is about more than one peer, or when
+you don't know which peer holds the answer:
+
+- "What themes come up across all users this week?"
+- "Which peers have mentioned the billing migration?"
+- "Where do Alice and Bob disagree?"
+- "What does this workspace know about deployment incidents?"
+
+Stay with `peer.chat()` when you need a perspective (what one peer knows about
+another), when you're personalizing for a single user, or when the caller only
+holds a peer-scoped key.
+
+### Asking the Workspace
+
+`chat()` lives on the client, not on a peer:
+
+<CodeGroup>
+```python Python
+from honcho import Honcho
+
+honcho = Honcho(workspace_id="my-app")
+
+answer = honcho.chat("What themes appear across all peers this week?")
+print(answer)
+# "Three themes recur: onboarding friction (alice, dana), ..."
+```
+
+```typescript TypeScript
+import { Honcho } from '@honcho-ai/sdk';
+
+const honcho = new Honcho({ workspaceId: "my-app" });
+
+const answer = await honcho.chat("What themes appear across all peers this week?");
+console.log(answer);
+```
+
+```bash cURL
+curl -X POST "$HONCHO_URL/v3/workspaces/my-app/chat" \
+  -H "Authorization: Bearer $HONCHO_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "What themes appear across all peers this week?", "reasoning_level": "low"}'
+```
+</CodeGroup>
+
+The response body is `{"content": "..."}`, or `{"content": null}` when nothing
+relevant was found. The SDKs return the string directly (`None` / `null` for no
+answer).
+
+### Narrowing Recall
+
+Two options narrow what the agent can read. They are mutually exclusive.
+
+**`session`** (`session_id` on the REST body) narrows message tools to one
+session. Conclusion recall is unaffected.
+
+<CodeGroup>
+```python Python
+answer = honcho.chat("What was decided in this thread?", session=session.id)
+```
+
+```typescript TypeScript
+const answer = await honcho.chat("What was decided in this thread?", { session: session.id });
+```
+</CodeGroup>
+
+**`scope`** restricts recall to the union of the named
+[scopes](/v3/documentation/features/advanced/scopes)' member sessions. On
+workspace chat this is *always* the allowlist arm, even for a single name,
+because there is no observer to swap. A scope with no member sessions recalls
+nothing rather than everything.
+
+<CodeGroup>
+```python Python
+answer = honcho.chat("What came up in therapy-related sessions?", scope="therapy")
+answer = honcho.chat("What came up at intake?", scope=["therapy", "intake"])
+```
+
+```typescript TypeScript
+const answer = await honcho.chat("What came up in therapy-related sessions?", { scope: "therapy" });
+const both = await honcho.chat("What came up at intake?", { scope: ["therapy", "intake"] });
+```
+</CodeGroup>
+
+Workspace chat does not accept `filters` or `target`.
+
+### Streaming
+
+Use `chat_stream` / `chatStream` for incremental output. The stream yields text
+chunks; the REST endpoint sends `text/event-stream` when `stream` is `true`.
+
+<CodeGroup>
+```python Python
+for chunk in honcho.chat_stream("Summarize the open disagreements between peers"):
+    print(chunk, end="", flush=True)
+```
+
+```typescript TypeScript
+const stream = await honcho.chatStream("Summarize the open disagreements between peers");
+for await (const chunk of stream) {
+  process.stdout.write(chunk);
+}
+```
+</CodeGroup>
+
+### Workspace Structured Outputs
+
+`response_format` works the same way as on peer chat. In Python, passing a
+Pydantic model returns a parsed instance; passing a raw JSON Schema returns a
+JSON string. The TypeScript client accepts a JSON Schema object and returns the
+JSON string for you to parse.
+
+<CodeGroup>
+```python Python
+from pydantic import BaseModel
+
+class Theme(BaseModel):
+    name: str
+    peers: list[str]
+
+class Themes(BaseModel):
+    themes: list[Theme]
+
+result = honcho.chat("What themes recur across peers?", response_format=Themes)
+# result is a Themes instance (or None)
+```
+
+```typescript TypeScript
+const raw = await honcho.chat("What themes recur across peers?", {
+  responseFormat: {
+    type: "object",
+    properties: {
+      themes: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: { name: { type: "string" }, peers: { type: "array", items: { type: "string" } } },
+          required: ["name", "peers"],
+        },
+      },
+    },
+    required: ["themes"],
+  },
+});
+const result = raw ? JSON.parse(raw) : null;
+```
+</CodeGroup>
+
+### How Workspace Chat Answers
+
+When you call `honcho.chat(query)`:
+
+1. Honcho prefetches an orientation overview: workspace stats, the most active peers, and their peer cards. This is a routing aid, not the corpus.
+2. The agent is required to make at least one tool call before answering, so the overview alone is never mistaken for the whole workspace.
+3. Message search runs workspace-wide and reveals which peers discussed a topic. Conclusion search stays pair-scoped: the agent names an `observer` and `observed` per call, and results come back attributed as `[observer->observed]`.
+4. The agent synthesizes a grounded answer, citing which peers the evidence came from.
+
+Keeping conclusion search pair-scoped avoids diluting retrieval with a
+workspace-flat top-k, and matches how memory is stored: one collection per
+`(observer, observed)` pair.
+
+### Authentication
+
+Workspace chat requires a workspace- or admin-level key. Peer- and
+session-scoped keys are rejected with `401` regardless of the other options.
+See [Manage API Keys](/v3/documentation/reference/platform#3-manage-api-keys) for scoping
+rules.
+
+### Peer Chat vs Workspace Chat
+
+| | `peer.chat()` | `honcho.chat()` |
+|--|---------------|-----------------|
+| Perspective | Observer peer, optional `target` | None, whole workspace |
+| `session` / `session_id` | Yes | Yes (message tools only) |
+| `scope` | Single name swaps the observer; a list is an allowlist | Always an allowlist, even a single name |
+| `filters` (session allowlist) | Yes | No |
+| `reasoning_level`, `response_format`, streaming | Yes | Yes |
+| Key required | Peer, workspace, or admin | Workspace or admin |
+| CLI / Explore UI | `honcho peer chat`, Explore Chat tab | API and SDK only |
+
 ## Integration Patterns
 
 ### Dynamic Prompt Enhancement
@@ -253,6 +451,26 @@ const goals = await peer.chat("What are the user's main goals or objectives?");
 ```
 </CodeGroup>
 
+### Team Digests
+
+Use workspace chat where the unit of interest is the group rather than one user:
+
+<CodeGroup>
+```python Python
+digest = honcho.chat(
+    "Summarize what each peer worked on this week and any blockers they raised.",
+    reasoning_level="medium",
+)
+```
+
+```typescript TypeScript
+const digest = await honcho.chat(
+  "Summarize what each peer worked on this week and any blockers they raised.",
+  { reasoningLevel: "medium" },
+);
+```
+</CodeGroup>
+
 ## How Honcho Answers
 
 When you call `peer.chat(query)`:
@@ -262,7 +480,7 @@ When you call `peer.chat(query)`:
 3. Combines them with segments of source messages, if needed, to gather more context
 4. Synthesizes them into a coherent natural language response to your query
 
-Honcho [reasoning](/v3/documentation/core-concepts/reasoning) runs continuously in the background, processing new messages and updating representations. The chat endpoint always has access to Honcho's latest conclusions about the peer.
+Honcho [reasoning](/v3/documentation/core-concepts/reasoning) runs continuously in the background, processing new messages and updating representations. The chat endpoint always has access to Honcho's latest conclusions about the peer. Workspace chat follows the same loop with a different starting point; see [How Workspace Chat Answers](#how-workspace-chat-answers).
 
 ## Best Practices
 
@@ -274,6 +492,9 @@ The chat endpoint shines when your LLM decides what it needs to know. This creat
 
 ### Use for runtime decisions
 Don't just use chat for LLM prompts - use it to drive application logic, routing, and feature flags based on user behavior.
+
+### Pick the right entry point
+Peer chat for one peer's perspective, workspace chat for questions that span peers. Asking `honcho.chat()` about a single known peer works, but costs a routing step that `peer.chat()` skips.
 
 ### Combine with context()
 Use `context()` for conversation context and `peer.chat()` for specific insights. They complement each other.

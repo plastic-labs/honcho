@@ -289,6 +289,7 @@ async def schedule_dream(
 
 @router.post(
     "/{workspace_id}/chat",
+    summary="Workspace Chat",
     responses={
         200: {
             "content": {
@@ -305,10 +306,11 @@ async def chat(
     options: schemas.WorkspaceChatOptions = Body(...),
     jwt_params: JWTParams = Depends(require_auth(workspace_name="workspace_id")),
 ):
-    """Query the entire workspace using natural language.
+    """Query the entire workspace using natural language. Runs the Dialectic agent over every peer in the workspace rather than a single (observer, observed) pair: there is no anchor peer and no `target`.
 
-    Pass `scope` to restrict recall to the union of those scopes' member
-    sessions. A scope with no member sessions recalls nothing (fail-closed).
+    Pass `session_id` to narrow message tools to one session, or `scope` to restrict recall to the union of the named scopes' member sessions (always an allowlist, even for a single name; a scope with no member sessions recalls nothing). `session_id` and `scope` are mutually exclusive.
+
+    Set `stream: true` to receive the answer as a `text/event-stream` of `{"delta": {"content": ...}, "done": false}` chunks terminated by `{"done": true}`. Requires a workspace- or admin-level key.
     """
     session_allowlist: list[str] | None = None
     if options.scope is not None:

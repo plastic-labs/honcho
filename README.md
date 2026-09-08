@@ -163,6 +163,7 @@ const completion = await openai.chat.completions.create({
 | ---------------------------------- | --------------------------------------------------------------- |
 | Save interaction history           | `session.add_messages(...)`                                     |
 | Ask what Honcho knows about a peer | `peer.chat(...)`                                                |
+| Ask across the whole workspace     | `honcho.chat(...)` / `honcho.chat_stream(...)`                  |
 | Get prompt-ready context           | `session.context(...).to_openai(...)` / `.to_anthropic(...)`    |
 | Hybrid search (BM25 + vector)      | `peer.search(...)`, `session.search(...)`, `honcho.search(...)` |
 | Low-latency static representations | `peer.representation(...)`, `session.representation(...)`       |
