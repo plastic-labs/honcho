@@ -37,6 +37,13 @@ router = APIRouter(
     "",
     response_model=schemas.Scope,
     dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
+    responses={
+        201: {"model": schemas.Scope, "description": "Scope created"},
+        409: {
+            "model": schemas.ErrorResponse,
+            "description": "A peer already occupies the scope's reserved name",
+        },
+    },
 )
 async def get_or_create_scope(
     response: Response,
@@ -181,6 +188,9 @@ async def get_scope_sessions(
     "/{scope_id}/status",
     response_model=schemas.ScopeStatus,
     dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
+    responses={
+        404: {"model": schemas.ErrorResponse, "description": "Scope does not exist"},
+    },
 )
 async def get_scope_status(
     workspace_id: str = Path(...),

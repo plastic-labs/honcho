@@ -182,8 +182,9 @@ app = FastAPI(
         "email": "hello@plasticlabs.ai",
     },
     license_info={
+        # The 3.1 License Object treats `identifier` and `url` as mutually
+        # exclusive, and emitting both makes the schema fail validation.
         "name": "GNU Affero General Public License v3.0",
-        "identifier": "AGPL-3.0-only",
         "url": "https://github.com/plastic-labs/honcho/blob/main/LICENSE",
     },
 )
