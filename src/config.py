@@ -788,6 +788,8 @@ class TenantApiSettings(HonchoSettings):
     # and at tenant-creation time the tenant does not exist to be claimed, so the
     # JWT plane cannot express this caller. Unset (the default) keeps the tenant
     # API disabled; it is also disabled whenever MULTI_TENANT is off.
+    # Exactly one secret is accepted, so rotation under a rolling restart is a
+    # brief auth brownout — sequence the caller's secret update last.
     # endregion
     SECRET: str | None = None
 

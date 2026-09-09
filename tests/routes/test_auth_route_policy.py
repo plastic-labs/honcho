@@ -60,15 +60,12 @@ def _auth_dependency_calls(route: APIRoute):
 
     `require_auth(...)` closures are tagged with `honcho_allow_member_read`, so a
     dependency is a honcho auth dependency iff its callable has that attribute.
-    Walks the dependant tree to cover both `dependencies=[Depends(...)]` and
-    parameter-level `Depends(...)`.
     """
-    stack = list(route.dependant.dependencies)
-    while stack:
-        dep = stack.pop()
-        if hasattr(dep.call, "honcho_allow_member_read"):
-            yield dep.call
-        stack.extend(dep.dependencies)
+    return (
+        call
+        for call in _all_dependency_calls(route)
+        if hasattr(call, "honcho_allow_member_read")
+    )
 
 
 def _all_dependency_calls(route: APIRoute):

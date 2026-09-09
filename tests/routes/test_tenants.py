@@ -1,24 +1,17 @@
-"""Route tests for the tenant registry API (A4) — see src/routers/tenants.py.
+"""Route tests for the tenant registry API — see src/routers/tenants.py.
 
 The tenants router sits ABOVE tenant scope: it has its own service-secret auth
 plane (``require_tenant_api``) instead of ``require_auth``, and it talks to the
-database through ``service_db`` rather than the request-scoped ``get_db``. That
-second fact is why this module patches ``src.routers.tenants.service_db`` onto
-the per-test engine — the shared ``mock_tracked_db`` fixture in conftest patches
-the deriver/reconciler ``service_db`` import sites but not this router's, so
-without the local patch the route would talk to the import-time database instead
-of the migrated per-test one.
+database through ``service_db`` (patched onto the per-test engine by conftest's
+``mock_tracked_db``, like every other service_db import site).
 """
 
-from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
 from typing import Any
 
 import pytest
-import pytest_asyncio
 from fastapi.testclient import TestClient
 from nanoid import generate as generate_nanoid
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
 from src.config import settings
@@ -27,30 +20,6 @@ from src.config import settings
 # comparison against this is the whole of the tenant API's auth check.
 SECRET = "test-tenant-api-secret"
 HEADER = "X-Tenant-Api-Key"
-
-
-@pytest_asyncio.fixture(autouse=True)
-async def _mock_tenant_service_db(  # pyright: ignore[reportUnusedFunction]
-    db_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
-) -> AsyncGenerator[None, None]:
-    """Point the router's ``service_db`` at the per-test engine.
-
-    Mirrors conftest's ``mock_tracked_db_context``: a fresh session per call on
-    the migrated per-test engine, accepting (and ignoring) ``read_only`` the way
-    the real ``service_db`` signature is invoked by the router.
-    """
-    session_factory = async_sessionmaker(bind=db_engine, expire_on_commit=False)
-
-    @asynccontextmanager
-    async def _service_db(
-        _: str | None = None, *, read_only: bool = False
-    ) -> AsyncGenerator[AsyncSession, None]:
-        del read_only
-        async with session_factory() as session:
-            yield session
-
-    monkeypatch.setattr("src.routers.tenants.service_db", _service_db)
-    yield
 
 
 @pytest.fixture
@@ -125,6 +94,22 @@ def test_wrong_header_unauthorized(client: TestClient, enabled: str):
         headers={HEADER: enabled + "-nope"},
     )
     assert response.status_code == 401, response.text
+
+
+def test_non_ascii_header_bytes_unauthorized(
+    client: TestClient,
+    enabled: str,  # pyright: ignore[reportUnusedParameter]
+):
+    """A raw high-byte header value must 401, never 500.
+
+    compare_digest rejects non-ASCII str with TypeError; the guard compares
+    bytes so hostile raw bytes fail closed as a clean auth mismatch. httpx
+    blocks non-ASCII header *strings* client-side, so send bytes directly.
+    """
+    response = client.get(
+        f"/v3/tenants/{generate_nanoid()}", headers={HEADER.encode(): b"caf\xe9"}
+    )
+    assert response.status_code == 401
 
 
 # ---------------------------------------------------------------------------
