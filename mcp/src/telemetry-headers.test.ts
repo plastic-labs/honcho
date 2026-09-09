@@ -1,11 +1,11 @@
 import { expect, test } from "bun:test";
 import pkg from "../package.json";
-import { createUnscopedClient } from "./config.ts";
+import { createClient, createUnscopedClient } from "./config.ts";
 import {
   HEADER_HOST,
   HEADER_PLUGIN,
   identityHeaders,
-  pluginFromClientInfo,
+  pluginFromCaller,
 } from "./identity.ts";
 
 const config = { apiKey: "test-key", baseUrl: "https://api.honcho.dev" };
@@ -46,7 +46,7 @@ test("every request carries host identity and no agent model", async () => {
 });
 
 test("clientInfo becomes X-Honcho-Plugin", async () => {
-  const plugin = pluginFromClientInfo({
+  const plugin = pluginFromCaller({
     name: "codex-mcp-client",
     version: "0.148.0",
   });
@@ -57,11 +57,28 @@ test("clientInfo becomes X-Honcho-Plugin", async () => {
   expect(headers[0].get(HEADER_PLUGIN)).toBe("codex-mcp-client/0.148.0");
 });
 
-test("Plugin is only taken from clientInfo, not User-Agent", () => {
-  expect(pluginFromClientInfo(undefined)).toBeUndefined();
+test("self-identifying User-Agent becomes Plugin; runtime UAs do not", async () => {
+  expect(pluginFromCaller(undefined, "codex-mcp-client/0.148.0-alpha.9")).toBe(
+    "codex-mcp-client/0.148.0-alpha.9",
+  );
+  expect(pluginFromCaller(undefined, "node")).toBeUndefined();
+  expect(pluginFromCaller(undefined, "undici")).toBeUndefined();
+  expect(pluginFromCaller(undefined, "httpx/0.27.0")).toBeUndefined();
   expect(
-    pluginFromClientInfo({ name: "hermes", version: "1.2.3" }),
+    pluginFromCaller({ name: "hermes", version: "1.2.3" }, "undici"),
   ).toBe("hermes/1.2.3");
+
+  const plugin = pluginFromCaller(
+    undefined,
+    "codex-mcp-client/0.148.0-alpha.9",
+  );
+  const headers = await capturedHeaders(() =>
+    createClient(config, "sandbox", identityHeaders(plugin)).workspaces(),
+  );
+  expect(headers[0].get(HEADER_HOST)).toBe(hostHeader);
+  expect(headers[0].get(HEADER_PLUGIN)).toBe(
+    "codex-mcp-client/0.148.0-alpha.9",
+  );
 });
 
 test("Plugin set on the map before construct is copied onto the client", async () => {

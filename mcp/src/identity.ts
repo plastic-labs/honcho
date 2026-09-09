@@ -3,6 +3,8 @@ import pkg from "../package.json";
 export const HEADER_HOST = "X-Honcho-Host";
 export const HEADER_PLUGIN = "X-Honcho-Plugin";
 
+const RUNTIME_UA = /^(node|undici|httpx|bun|cloudflare-workers|wrangler)(\/|$)/i;
+
 function token(value: string): string {
   return value.replace(/[\r\n]+/g, " ").trim().replace(/[\s()/;]+/g, "-");
 }
@@ -27,12 +29,17 @@ export function identityHeaders(plugin?: string): Record<string, string> {
   return headers;
 }
 
-/** `name/version` for X-Honcho-Plugin from MCP `initialize` clientInfo. */
-export function pluginFromClientInfo(
+/** `name/version` for X-Honcho-Plugin. Prefer MCP clientInfo; skip generic runtimes. */
+export function pluginFromCaller(
   clientInfo?: { name?: string; version?: string } | null,
+  userAgent?: string | null,
 ): string | undefined {
   const name = clientInfo?.name?.trim();
-  return name ? product(name, clientInfo?.version) : undefined;
+  if (name) return product(name, clientInfo?.version);
+  const ua = userAgent?.trim();
+  if (!ua || RUNTIME_UA.test(ua)) return undefined;
+  const match = ua.match(/^([^\s/]+)(?:\/(\S+))?/);
+  return match ? product(match[1], match[2]) : undefined;
 }
 
 export function pluginFromInitializeBody(body: unknown): string | undefined {
@@ -44,7 +51,7 @@ export function pluginFromInitializeBody(body: unknown): string | undefined {
       params?: { clientInfo?: { name?: string; version?: string } };
     };
     if (rec.method === "initialize") {
-      return pluginFromClientInfo(rec.params?.clientInfo);
+      return pluginFromCaller(rec.params?.clientInfo);
     }
   }
 }
@@ -65,7 +72,7 @@ export function attachClientInfo(
   const previous = raw.oninitialized;
   raw.oninitialized = () => {
     previous?.();
-    const plugin = pluginFromClientInfo(raw.getClientVersion?.());
+    const plugin = pluginFromCaller(raw.getClientVersion?.());
     if (plugin) headers[HEADER_PLUGIN] = plugin;
   };
 }
