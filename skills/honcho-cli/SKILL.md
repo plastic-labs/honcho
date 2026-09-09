@@ -75,6 +75,7 @@ honcho session summaries <session_id> --json
 ```bash
 honcho workspace search "query" --json
 honcho workspace chat "what themes show up across peers?" --json
+honcho workspace chat "what happened in this project?" --scope my-project --json
 honcho peer search <peer_id> "query" --json
 ```
 
@@ -115,5 +116,6 @@ honcho conclusion search "topic" --observer <peer_id> --json
 
 # Exercise the dialectic directly
 honcho peer chat <peer_id> "what do you know about X?" --json
+honcho peer chat <peer_id> "what happened here?" --scope my-project --json
 honcho workspace chat "what themes show up across peers?" --json
 ```
