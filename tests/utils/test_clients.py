@@ -10,6 +10,8 @@ Tests cover:
 """
 
 import contextlib
+from collections.abc import AsyncIterator
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -47,6 +49,60 @@ class SampleTestModel(BaseModel):
     name: str
     age: int
     active: bool = Field(default=True)
+
+
+class _PublicResponsesStream:
+    """Minimal Responses stream used to exercise the public retry boundary."""
+
+    _events: list[Any]
+    _final_response: Any
+
+    def __init__(self, events: list[Any], final_response: Any) -> None:
+        self._events = events
+        self._final_response = final_response
+
+    async def __aenter__(self) -> "_PublicResponsesStream":
+        return self
+
+    async def __aexit__(self, *_args: Any) -> None:
+        return None
+
+    def __aiter__(self) -> AsyncIterator[Any]:
+        async def _iter() -> AsyncIterator[Any]:
+            for event in self._events:
+                yield event
+
+        return _iter()
+
+    async def get_final_response(self) -> Any:
+        return self._final_response
+
+
+def _public_responses_terminal(
+    status: str,
+    *,
+    refusal: str | None = None,
+    incomplete_reason: str | None = None,
+) -> SimpleNamespace:
+    output = []
+    if refusal is not None:
+        output = [
+            SimpleNamespace(
+                type="message",
+                content=[SimpleNamespace(type="refusal", refusal=refusal)],
+            )
+        ]
+    return SimpleNamespace(
+        status=status,
+        output_text="",
+        output=output,
+        incomplete_details=(
+            SimpleNamespace(reason=incomplete_reason)
+            if incomplete_reason is not None
+            else None
+        ),
+        usage=SimpleNamespace(input_tokens=1, output_tokens=0),
+    )
 
 
 class TestLLMCallResponse:
@@ -888,6 +944,230 @@ class TestMainLLMCallFunction:
             assert chunks[0].content == "Stream"
             assert chunks[1].content == " test"
             assert chunks[2].is_done is True
+
+    async def test_responses_refusal_before_text_is_unretried_during_drain(self):
+        """Retry wraps stream setup, not an explicit refusal found while draining."""
+        response = _public_responses_terminal("completed", refusal="unsafe")
+        mock_client = Mock()
+        mock_client.responses.stream = Mock(
+            return_value=_PublicResponsesStream(
+                [SimpleNamespace(type="response.completed", response=response)],
+                response,
+            )
+        )
+
+        with patch.dict(CLIENTS, {"openai": mock_client}):
+            stream = await honcho_llm_call(
+                model_config=ModelConfig(
+                    model="gpt-5.4-mini",
+                    transport="openai",
+                    provider_params={"api_mode": "responses"},
+                ),
+                prompt="Hello",
+                max_tokens=100,
+                stream=True,
+                enable_retry=True,
+                retry_attempts=3,
+            )
+            chunks: list[HonchoLLMCallStreamChunk] = []
+            with pytest.raises(ValidationException, match="provider refusal"):
+                async for chunk in stream:
+                    chunks.append(chunk)
+
+        assert mock_client.responses.stream.call_count == 1
+        assert chunks == []
+
+    @pytest.mark.parametrize(
+        ("status", "event_type", "incomplete_reason"),
+        [
+            ("failed", "response.failed", None),
+            ("cancelled", "response.cancelled", None),
+            ("queued", "response.queued", None),
+            ("incomplete", "response.incomplete", "content_filter"),
+        ],
+    )
+    async def test_responses_drain_status_failures_are_explicit_and_unretried(
+        self,
+        status: str,
+        event_type: str,
+        incomplete_reason: str | None,
+    ) -> None:
+        response = _public_responses_terminal(
+            status, incomplete_reason=incomplete_reason
+        )
+        mock_client = Mock()
+        mock_client.responses.stream = Mock(
+            return_value=_PublicResponsesStream(
+                [SimpleNamespace(type=event_type, response=response)],
+                response,
+            )
+        )
+
+        with patch.dict(CLIENTS, {"openai": mock_client}):
+            stream = await honcho_llm_call(
+                model_config=ModelConfig(
+                    model="gpt-5.4-mini",
+                    transport="openai",
+                    provider_params={"api_mode": "responses"},
+                ),
+                prompt="Hello",
+                max_tokens=100,
+                stream=True,
+                enable_retry=True,
+                retry_attempts=3,
+            )
+            chunks: list[HonchoLLMCallStreamChunk] = []
+            with pytest.raises(
+                ValidationException,
+                match=f"non-success status: {status}",
+            ):
+                async for chunk in stream:
+                    chunks.append(chunk)
+
+        assert mock_client.responses.stream.call_count == 1
+        assert chunks == []
+
+    async def test_responses_refusal_after_text_never_retries_or_emits_done(self):
+        """Visible text cannot be retracted, so a later refusal fails in place."""
+        response = _public_responses_terminal("completed", refusal="unsafe")
+        mock_client = Mock()
+        mock_client.responses.stream = Mock(
+            return_value=_PublicResponsesStream(
+                [
+                    SimpleNamespace(type="response.output_text.delta", delta="partial"),
+                    SimpleNamespace(type="response.completed", response=response),
+                ],
+                response,
+            )
+        )
+
+        with patch.dict(CLIENTS, {"openai": mock_client}):
+            stream = await honcho_llm_call(
+                model_config=ModelConfig(
+                    model="gpt-5.4-mini",
+                    transport="openai",
+                    provider_params={"api_mode": "responses"},
+                ),
+                prompt="Hello",
+                max_tokens=100,
+                stream=True,
+                enable_retry=True,
+                retry_attempts=3,
+            )
+            chunks: list[HonchoLLMCallStreamChunk] = []
+            with pytest.raises(ValidationException, match="provider refusal"):
+                async for chunk in stream:
+                    chunks.append(chunk)
+
+        assert mock_client.responses.stream.call_count == 1
+        assert [chunk.content for chunk in chunks] == ["partial"]
+        assert not any(chunk.is_done for chunk in chunks)
+
+    async def test_stream_final_only_runs_tool_turns_non_streaming(self):
+        """The public stream-final-only path keeps tools off the final stream."""
+        from openai import AsyncOpenAI
+
+        mock_client = AsyncMock(spec=AsyncOpenAI)
+        tool_response = SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    finish_reason="tool_calls",
+                    message=SimpleNamespace(
+                        content="",
+                        tool_calls=[
+                            SimpleNamespace(
+                                id="call_1",
+                                function=SimpleNamespace(
+                                    name="lookup", arguments='{"q":"memory"}'
+                                ),
+                            )
+                        ],
+                        reasoning_details=[],
+                    ),
+                )
+            ],
+            usage=SimpleNamespace(
+                prompt_tokens=3,
+                completion_tokens=2,
+                prompt_tokens_details=None,
+            ),
+        )
+        answer_response = SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop",
+                    message=SimpleNamespace(
+                        content="The answer",
+                        tool_calls=[],
+                        reasoning_details=[],
+                    ),
+                )
+            ],
+            usage=SimpleNamespace(
+                prompt_tokens=4,
+                completion_tokens=3,
+                prompt_tokens_details=None,
+            ),
+        )
+
+        async def final_stream():
+            yield SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        delta=SimpleNamespace(content="Final answer"),
+                        finish_reason=None,
+                    )
+                ]
+            )
+            yield SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        delta=SimpleNamespace(content=None), finish_reason="stop"
+                    )
+                ],
+                usage=SimpleNamespace(completion_tokens=5),
+            )
+
+        mock_client.chat.completions.create = AsyncMock(
+            side_effect=[tool_response, answer_response, final_stream()]
+        )
+        executed_tools: list[tuple[str, dict[str, Any]]] = []
+
+        async def execute_tool(name: str, arguments: dict[str, Any]) -> str:
+            executed_tools.append((name, arguments))
+            return "lookup result"
+
+        with patch.dict(CLIENTS, {"openai": mock_client}):
+            stream = await honcho_llm_call(
+                model_config=ModelConfig(model="gpt-4.1", transport="openai"),
+                prompt="Find the memory",
+                max_tokens=100,
+                stream=True,
+                stream_final_only=True,
+                tools=[
+                    {
+                        "name": "lookup",
+                        "description": "Look up a memory",
+                        "input_schema": {
+                            "type": "object",
+                            "properties": {"q": {"type": "string"}},
+                        },
+                    }
+                ],
+                tool_executor=execute_tool,
+                enable_retry=False,
+            )
+            chunks = [chunk async for chunk in stream]
+
+        assert executed_tools == [("lookup", {"q": "memory"})]
+        calls = mock_client.chat.completions.create.call_args_list
+        assert len(calls) == 3
+        assert "tools" in calls[0].kwargs
+        assert "tools" in calls[1].kwargs
+        assert "tools" not in calls[2].kwargs
+        assert "tool_choice" not in calls[2].kwargs
+        assert [chunk.content for chunk in chunks if chunk.content] == ["Final answer"]
+        assert chunks[-1].is_done is True
 
     async def test_retry_disabled(self):
         """Test that retry can be disabled"""
