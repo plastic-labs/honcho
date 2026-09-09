@@ -51,22 +51,25 @@ def backoff_eligible(
 
 async def has_pending_work(db: AsyncSession) -> bool:
     """True when a reconciliation cycle would find something to sync or clean up."""
-    if await _get_message_embeddings_needing_sync(db, batch_size=1):
-        return True
-    if get_external_vector_store() is not None and await _get_documents_needing_sync(
-        db, batch_size=1
-    ):
-        return True
-    cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(
-        minutes=5
-    )
-    purgeable = (
-        select(models.Document.id)
-        .where(models.Document.deleted_at.is_not(None))
-        .where(models.Document.deleted_at < cutoff)
-        .limit(1)
-    )
-    return (await db.scalar(purgeable)) is not None
+    cutoff = datetime.datetime.now(datetime.UTC) - datetime.timedelta(minutes=5)
+    checks = [
+        select(models.MessageEmbedding.id).where(
+            models.MessageEmbedding.sync_state == "pending",
+            backoff_eligible(models.MessageEmbedding.last_sync_at),
+        ),
+        select(models.Document.id).where(
+            models.Document.deleted_at.is_not(None), models.Document.deleted_at < cutoff
+        ),
+    ]
+    if get_external_vector_store() is not None:
+        checks.append(
+            select(models.Document.id).where(
+                models.Document.deleted_at.is_(None),
+                models.Document.sync_state == "pending",
+                backoff_eligible(models.Document.last_sync_at),
+            )
+        )
+    return any([await db.scalar(c.limit(1)) is not None for c in checks])
 
 
 @dataclass
@@ -604,7 +607,7 @@ async def _cleanup_soft_deleted_documents_pgvector(
     Cleanup soft-deleted documents
     """
 
-    cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(
+    cutoff = datetime.datetime.now(datetime.UTC) - datetime.timedelta(
         minutes=older_than_minutes
     )
 
