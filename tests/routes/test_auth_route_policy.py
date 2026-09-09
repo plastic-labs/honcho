@@ -17,6 +17,16 @@ Two invariants this guards:
 from fastapi.routing import APIRoute
 
 from src.main import app
+from src.routers.tenants import require_tenant_api
+
+# The tenants router intentionally does NOT use require_auth: it runs the
+# above-tenant service-secret plane `require_tenant_api` instead (a JWT can't
+# carry a tenant claim before the tenant exists). See src/routers/tenants.py.
+EXPECTED_TENANT_API_ROUTES = {
+    ("POST", "/v3/tenants"),
+    ("GET", "/v3/tenants/{tenant_id}"),
+    ("DELETE", "/v3/tenants/{tenant_id}"),
+}
 
 # (method, path) pairs intentionally granting member peers read access. Adding a
 # route here is a deliberate security decision: it must be read-only. Never add
@@ -58,6 +68,19 @@ def _auth_dependency_calls(route: APIRoute):
         dep = stack.pop()
         if hasattr(dep.call, "honcho_allow_member_read"):
             yield dep.call
+        stack.extend(dep.dependencies)
+
+
+def _all_dependency_calls(route: APIRoute):
+    """Yield the callable of every dependency attached to a route (auth or not).
+
+    Unlike `_auth_dependency_calls`, this does not filter on the require_auth tag,
+    so it can spot non-require_auth guards such as `require_tenant_api`.
+    """
+    stack = list(route.dependant.dependencies)
+    while stack:
+        dep = stack.pop()
+        yield dep.call
         stack.extend(dep.dependencies)
 
 
@@ -106,3 +129,23 @@ def test_every_message_route_requires_auth():
         assert any(
             _auth_dependency_calls(route)
         ), f"{route.methods} {route.path} has no auth dependency"
+
+
+def test_tenant_api_routes_use_their_own_auth_plane():
+    """The require_tenant_api exemption is bounded and real: exactly the
+    allowlisted routes carry it, and none of them also carry require_auth (the two
+    auth planes must never mix). A tenants route added without require_tenant_api,
+    or require_tenant_api leaking onto another router, fails here."""
+    guarded: set[tuple[str, str]] = set()
+    for route in app.routes:
+        if not isinstance(route, APIRoute):
+            continue
+        if require_tenant_api not in _all_dependency_calls(route):
+            continue
+        guarded.update(_method_path_pairs(route))
+        assert not any(_auth_dependency_calls(route)), (
+            f"{route.methods} {route.path} mixes require_tenant_api with "
+            "require_auth; the tenant registry is a separate auth plane"
+        )
+
+    assert guarded == EXPECTED_TENANT_API_ROUTES

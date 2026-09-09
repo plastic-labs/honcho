@@ -778,6 +778,20 @@ class AuthSettings(HonchoSettings):
         return self
 
 
+class TenantApiSettings(HonchoSettings):
+    model_config = SettingsConfigDict(env_prefix="TENANT_API_", extra="ignore")  # pyright: ignore
+
+    # region ai
+    # The above-tenant auth plane: this secret authenticates the control plane to
+    # the tenant-registry API (/v3/tenants), never any tenant's data. It is
+    # deliberately not a JWT — under MULTI_TENANT every JWT must carry a tenant,
+    # and at tenant-creation time the tenant does not exist to be claimed, so the
+    # JWT plane cannot express this caller. Unset (the default) keeps the tenant
+    # API disabled; it is also disabled whenever MULTI_TENANT is off.
+    # endregion
+    SECRET: str | None = None
+
+
 class SentrySettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="SENTRY_", extra="ignore")  # pyright: ignore
 
@@ -1590,6 +1604,7 @@ class AppSettings(HonchoSettings):
     # Nested settings models
     DB: DBSettings = Field(default_factory=DBSettings)
     AUTH: AuthSettings = Field(default_factory=AuthSettings)
+    TENANT_API: TenantApiSettings = Field(default_factory=TenantApiSettings)
     SENTRY: SentrySettings = Field(default_factory=SentrySettings)
     LLM: LLMSettings = Field(default_factory=LLMSettings)
     EMBEDDING: EmbeddingSettings = Field(default_factory=EmbeddingSettings)
