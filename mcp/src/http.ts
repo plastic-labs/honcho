@@ -1,17 +1,12 @@
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import {
-  clientsFor,
+  honchoClients,
+  identityHeaders,
   parseConfig,
   type Env,
   type HonchoConfig,
 } from "./config.js";
-import {
-  attachClientInfo,
-  identityHeaders,
-  pluginFromCaller,
-  pluginFromInitializeBody,
-} from "./identity.js";
 import { createServer } from "./server.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
@@ -198,15 +193,13 @@ async function handleMcp(request: Request): Promise<Response> {
   const config = configOrUnauthorized(request);
   if (config instanceof Response) return config;
 
-  const headers = identityHeaders(
-    pluginFromInitializeBody(body) ??
-      pluginFromCaller(undefined, request.headers.get("User-Agent")),
-  );
   const server = createServer({
     config,
-    ...clientsFor(config, headers),
+    ...honchoClients(
+      config,
+      identityHeaders(request.headers.get("User-Agent")),
+    ),
   });
-  attachClientInfo(server, headers);
 
   const maxSessions = envInt("MCP_SESSION_MAX", DEFAULT_SESSION_MAX);
   if (sessions.size >= maxSessions) {

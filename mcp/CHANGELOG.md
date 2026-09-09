@@ -11,11 +11,9 @@ This package versions independently of the Honcho API, `@honcho-ai/sdk`, and hos
 
 ### Added
 
-- Every Honcho request carries `X-Honcho-Host: honcho-mcp/<version> (platform)`.
-  `X-Honcho-Plugin` is the calling MCP client, from `initialize` `clientInfo`
-  when present, otherwise from a self-identifying `User-Agent` (generic
-  runtimes like `node`, `undici`, and `httpx` are omitted).
-  `X-Honcho-Agent-Model` is never sent.
+- Every Honcho request carries `X-Honcho-Host: honcho-mcp/<version>`.
+  `X-Honcho-Plugin` is the caller's `User-Agent`, verbatim (absent on stdio
+  and when the caller sends none). `X-Honcho-Agent-Model` is never sent.
 
 ## [0.1.0] - 2026-09-08
 

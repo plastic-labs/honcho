@@ -1,14 +1,10 @@
 import { createMcpHandler } from "agents/mcp";
 import {
+  honchoClients,
+  identityHeaders,
   parseConfig,
-  clientsFor,
   type Env,
 } from "./config.js";
-import {
-  attachClientInfo,
-  identityHeaders,
-  pluginFromCaller,
-} from "./identity.js";
 import { createServer } from "./server.js";
 
 const CORS_ORIGIN = "*";
@@ -112,14 +108,13 @@ export default {
     }
 
     try {
-      const headers = identityHeaders(
-        pluginFromCaller(undefined, request.headers.get("User-Agent")),
-      );
       const server = createServer({
         config,
-        ...clientsFor(config, headers),
+        ...honchoClients(
+          config,
+          identityHeaders(request.headers.get("User-Agent")),
+        ),
       });
-      attachClientInfo(server, headers);
       const handler = createMcpHandler(server, {
         route: "/",
         corsOptions: {
