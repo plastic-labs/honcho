@@ -4,11 +4,7 @@ import {
   clientsFor,
   type Env,
 } from "./config.js";
-import {
-  attachClientInfo,
-  identityHeaders,
-  pluginFromCaller,
-} from "./identity.js";
+import { attachClientInfo, identityHeaders } from "./identity.js";
 import { createServer } from "./server.js";
 
 const CORS_ORIGIN = "*";
@@ -112,9 +108,7 @@ export default {
     }
 
     try {
-      const headers = identityHeaders(
-        pluginFromCaller(undefined, request.headers.get("User-Agent")),
-      );
+      const headers = identityHeaders();
       const server = createServer({
         config,
         ...clientsFor(config, headers),

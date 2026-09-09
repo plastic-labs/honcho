@@ -9,7 +9,6 @@ import {
 import {
   attachClientInfo,
   identityHeaders,
-  pluginFromCaller,
   pluginFromInitializeBody,
 } from "./identity.js";
 import { createServer } from "./server.js";
@@ -198,10 +197,7 @@ async function handleMcp(request: Request): Promise<Response> {
   const config = configOrUnauthorized(request);
   if (config instanceof Response) return config;
 
-  const headers = identityHeaders(
-    pluginFromInitializeBody(body) ??
-      pluginFromCaller(undefined, request.headers.get("User-Agent")),
-  );
+  const headers = identityHeaders(pluginFromInitializeBody(body));
   const server = createServer({
     config,
     ...clientsFor(config, headers),
