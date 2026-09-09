@@ -618,6 +618,19 @@ class TestExitCodes:
         assert result.exit_code == 1
         assert json.loads(result.stderr)["error"]["code"] == "INCOMPATIBLE_FLAGS"
 
+    def test_workspace_chat_env_session_conflict_names_the_variable(self, cfg, runner):
+        cfg.write_text(json.dumps({"apiKey": "k", "environmentUrl": "http://localhost:8000"}))
+        # session_id populated but no -s typed: it came from HONCHO_SESSION_ID
+        config = MagicMock(workspace_id="ws1", session_id="ambient")
+        with patch("honcho_cli.commands.workspace.get_client", return_value=(MagicMock(), config)):
+            result = runner.invoke(app, ["workspace", "chat", "q", "-w", "ws1", "--scope", "therapy"])
+        assert result.exit_code == 1
+        err = json.loads(result.stderr)["error"]
+        assert err["code"] == "INCOMPATIBLE_FLAGS"
+        assert "--scope was not applied" in err["message"]
+        assert "'ambient' by HONCHO_SESSION_ID" in err["message"]
+        assert "env -u HONCHO_SESSION_ID" in err["message"]
+
     def test_workspace_chat_bad_scope_keeps_server_message(self, cfg, runner):
         from honcho import NotFoundError
 

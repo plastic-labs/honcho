@@ -15,7 +15,7 @@ from honcho_cli.recall import parse_csv_repeatable, reject_incompatible_recall, 
 from honcho_cli.validation import validate_resource_id
 
 from honcho_cli._help import HonchoTyperGroup
-from honcho_cli.common import add_common_options, get_client, get_resolved_config, handle_cmd_flags
+from honcho_cli.common import add_common_options, get_client, get_flag_overrides, get_resolved_config, handle_cmd_flags
 
 app = typer.Typer(cls=HonchoTyperGroup, help="List, create, chat with, search, and manage peers and their representations.")
 add_common_options(app)
@@ -134,7 +134,7 @@ def chat(
     scope: Optional[list[str]] = typer.Option(
         None,
         "--scope",
-        help="Confine recall to a scope. Repeat or comma-separate for an explicit-only allowlist of names. Mutually exclusive with --sessions and -s.",
+        help="Confine recall to a scope. One name answers from that scope's own view; several names (repeat or comma-separate) are an explicit-only allowlist of their sessions. Mutually exclusive with --sessions and -s.",
     ),
     sessions: Optional[list[str]] = typer.Option(
         None,
@@ -156,12 +156,14 @@ def chat(
     handle_cmd_flags(json_output=json_output, workspace=workspace, peer=peer, session=session)
     pid = _get_peer_id(None)
     client, config = get_client()
-    p = client.peer(pid)
-    scope_names = parse_csv_repeatable(scope, kind="scope")
-    session_allowlist = parse_csv_repeatable(sessions, kind="session")
+    scope_names = parse_csv_repeatable(scope, kind="scope", flag="--scope")
+    session_allowlist = parse_csv_repeatable(sessions, kind="session", flag="--sessions")
     session_id = config.session_id or None
     reject_incompatible_recall(
-        session_id=session_id, scope=scope_names, sessions=session_allowlist
+        session_id=session_id,
+        scope=scope_names,
+        sessions=session_allowlist,
+        session_from_env=not get_flag_overrides()["session"],
     )
 
     chat_kwargs: dict[str, object] = {
@@ -176,6 +178,7 @@ def chat(
         chat_kwargs["sessions"] = session_allowlist
 
     try:
+        p = client.peer(pid)
         response = p.chat(query, **chat_kwargs)
         print_result({"peer_id": pid, "query": query, "response": response})
     except Exception as e:

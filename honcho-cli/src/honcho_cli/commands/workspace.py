@@ -21,7 +21,7 @@ from honcho_cli.recall import parse_csv_repeatable, reject_incompatible_recall, 
 from honcho_cli.validation import validate_resource_id
 
 from honcho_cli._help import HonchoTyperGroup
-from honcho_cli.common import add_common_options, get_client, get_resolved_config, handle_cmd_flags
+from honcho_cli.common import add_common_options, get_client, get_flag_overrides, get_resolved_config, handle_cmd_flags
 
 app = typer.Typer(cls=HonchoTyperGroup, help="List, create, inspect, chat, delete, and search workspaces.")
 add_common_options(app)
@@ -219,7 +219,7 @@ def chat(
     scope: Optional[list[str]] = typer.Option(
         None,
         "--scope",
-        help="Confine recall to a scope. Repeat or comma-separate for an explicit-only allowlist of names. Mutually exclusive with -s.",
+        help="Confine recall to a scope. One name answers from that scope's own view; several names (repeat or comma-separate) are an explicit-only allowlist of their sessions. Mutually exclusive with -s.",
     ),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
     session: Optional[str] = typer.Option(None, "--session", "-s", help="Override session ID"),
@@ -235,9 +235,13 @@ def chat(
     handle_cmd_flags(json_output=json_output, workspace=workspace, session=session)
     wid = _get_workspace_id(None)
     client, config = get_client()
-    scope_names = parse_csv_repeatable(scope, kind="scope")
+    scope_names = parse_csv_repeatable(scope, kind="scope", flag="--scope")
     session_id = config.session_id or None
-    reject_incompatible_recall(session_id=session_id, scope=scope_names)
+    reject_incompatible_recall(
+        session_id=session_id,
+        scope=scope_names,
+        session_from_env=not get_flag_overrides()["session"],
+    )
 
     chat_kwargs: dict[str, object] = {
         "session": session_id,

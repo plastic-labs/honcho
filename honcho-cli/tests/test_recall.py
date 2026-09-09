@@ -10,25 +10,30 @@ from honcho_cli.recall import parse_csv_repeatable, reject_incompatible_recall, 
 
 class TestParseCsvRepeatable:
     def test_none_and_empty(self):
-        assert parse_csv_repeatable(None, kind="scope") is None
-        assert parse_csv_repeatable([], kind="scope") is None
+        assert parse_csv_repeatable(None, kind="scope", flag="--scope") is None
+        assert parse_csv_repeatable([], kind="scope", flag="--scope") is None
 
     def test_repeatable_and_csv(self):
-        assert parse_csv_repeatable(["therapy", "work,home"], kind="scope") == [
+        assert parse_csv_repeatable(["therapy", "work,home"], kind="scope", flag="--scope") == [
             "therapy",
             "work",
             "home",
         ]
 
     def test_dedupes_and_strips(self):
-        assert parse_csv_repeatable([" therapy ", "therapy,work"], kind="scope") == [
+        assert parse_csv_repeatable([" therapy ", "therapy,work"], kind="scope", flag="--scope") == [
             "therapy",
             "work",
         ]
 
+    def test_given_but_empty_is_an_error(self):
+        for values in ([""], [","], [" , "]):
+            with pytest.raises(typer.Exit):
+                parse_csv_repeatable(values, kind="session", flag="--sessions")
+
     def test_rejects_unsafe_id(self):
         with pytest.raises(SystemExit):
-            parse_csv_repeatable(["bad/slash"], kind="scope")
+            parse_csv_repeatable(["bad/slash"], kind="scope", flag="--scope")
 
 
 class TestScopeForSdk:

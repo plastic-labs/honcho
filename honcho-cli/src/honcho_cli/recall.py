@@ -18,8 +18,16 @@ from honcho_cli.output import print_error
 from honcho_cli.validation import validate_resource_id
 
 
-def parse_csv_repeatable(values: list[str] | None, *, kind: str) -> list[str] | None:
-    """Flatten repeatable and/or comma-separated flag values, de-duped in order."""
+def parse_csv_repeatable(
+    values: list[str] | None, *, kind: str, flag: str
+) -> list[str] | None:
+    """Flatten repeatable and/or comma-separated flag values, de-duped in order.
+
+    A flag that was given but holds no names (``--scope ""``, ``--sessions ,``)
+    is an error rather than "no bound": the server rejects an empty allowlist
+    for the same reason, and silently widening recall to the whole workspace
+    is the wrong default for a caller that built the value programmatically.
+    """
     if not values:
         return None
     seen: set[str] = set()
@@ -31,7 +39,13 @@ def parse_csv_repeatable(values: list[str] | None, *, kind: str) -> list[str] | 
                 continue
             seen.add(name)
             out.append(validate_resource_id(name, kind))
-    return out or None
+    if not out:
+        print_error(
+            "EMPTY_RECALL_BOUND",
+            f"{flag} was given but contains no {kind} names",
+        )
+        raise typer.Exit(1)
+    return out
 
 
 def scope_for_sdk(names: list[str] | None) -> str | list[str] | None:
@@ -48,18 +62,33 @@ def reject_incompatible_recall(
     session_id: str | None,
     scope: list[str] | None,
     sessions: list[str] | None = None,
+    session_from_env: bool = False,
 ) -> None:
-    """Exit if more than one of -s / --scope / --sessions is set."""
-    present: list[str] = []
-    if session_id:
-        present.append("-s/--session")
+    """Exit if more than one of -s / --scope / --sessions is set.
+
+    ``session_from_env`` marks a session that arrived through ``HONCHO_SESSION_ID``
+    rather than a typed ``-s``, so the error can name the variable the caller
+    never typed and how to clear it for one command.
+    """
+    bounds: list[str] = []
     if scope:
-        present.append("--scope")
+        bounds.append("--scope")
     if sessions:
-        present.append("--sessions")
-    if len(present) > 1:
-        print_error(
-            "INCOMPATIBLE_FLAGS",
-            f"{' and '.join(present)} are mutually exclusive",
-        )
-        raise typer.Exit(1)
+        bounds.append("--sessions")
+    if len(bounds) > 1:
+        _exit_incompatible(f"{' and '.join(bounds)} are mutually exclusive")
+    if session_id and bounds:
+        flag = bounds[0]
+        if session_from_env:
+            _exit_incompatible(
+                f"{flag} was not applied: recall is already confined to session "
+                f"'{session_id}' by HONCHO_SESSION_ID in your environment, and a "
+                f"session cannot be combined with {flag}. If that session is not what "
+                f"you meant, unset it for this command: `env -u HONCHO_SESSION_ID honcho ...`"
+            )
+        _exit_incompatible(f"-s/--session and {flag} are mutually exclusive")
+
+
+def _exit_incompatible(message: str) -> None:
+    print_error("INCOMPATIBLE_FLAGS", message)
+    raise typer.Exit(1)
