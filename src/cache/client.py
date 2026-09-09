@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import socket
 from typing import Any, cast
 from urllib.parse import urlparse, urlunparse
 
 import sentry_sdk
 from cashews import cache
+from cashews.backends.redis.client import SafeRedisCluster
 from cashews.picklers import PicklerType
 from redis import exceptions as redis_exc
+from redis.asyncio import RedisCluster
 from tenacity import (
     AsyncRetrying,
     retry_if_exception_type,
@@ -22,6 +25,57 @@ from src.config import settings
 logger = logging.getLogger(__name__)
 
 _cache_lock = asyncio.Lock()
+
+
+# region ai
+# Compatibility shim: cashews 7.5.0 against redis-py >= 8.0.0.
+#
+# REMOVE THIS once cashews ships a release that accepts the arguments redis-py
+# 8.x passes to `RedisCluster.initialize()`. Check `SafeRedisCluster.initialize`
+# upstream: if its signature takes *args/**kwargs (or the two parameters below),
+# this block is dead weight and should go with the cashews bump.
+#
+# cashews 7.5.0 (2026-03-02) predates redis-py 8.0.0 (2026-05-28). redis-py
+# PR #4060 added `additional_startup_nodes_info` and `last_failed_node_name` to
+# `RedisCluster.initialize()`, but cashews still declares its override as
+# `initialize(self)`. redis-py calls it with a keyword on the command-retry path
+# (`redis/asyncio/cluster.py`, guarded by `if self._initialize`), so the call
+# raises TypeError. `_initialize` is set by any ConnectionError/TimeoutError,
+# which makes a single unreachable node enough to trigger it.
+#
+# Two reasons this matters more than a normal signature drift:
+#   * TypeError is not in the tuple cashews catches (RedisError, socket.gaierror,
+#     OSError, asyncio.TimeoutError), so it bypasses SafeRedisCluster's entire
+#     purpose and propagates into request handling instead of degrading.
+#   * `initialize()` is itself the recovery path, so it never clears
+#     `_initialize` and every later command fails too. The client stays wedged
+#     until the process restarts.
+#
+# Only reachable with CACHE.CLUSTER enabled, and only after a node failure, so
+# it does not show up in standalone local stacks or in CI. Not reported upstream
+# at the time of writing; a standalone reproduction lives in DEV-2647.
+async def _safe_cluster_initialize(
+    self: SafeRedisCluster, *args: Any, **kwargs: Any
+) -> SafeRedisCluster:
+    """Forward whatever redis-py passes, keeping cashews' degrade-on-error intent."""
+    try:
+        return await RedisCluster.initialize(self, *args, **kwargs)  # pyright: ignore[reportReturnType]
+    except (
+        redis_exc.RedisError,
+        socket.gaierror,
+        OSError,
+        TimeoutError,
+    ):
+        logger.error("redis: can not initialize cache", exc_info=True)
+        return self
+
+
+# cashews evaluates `__aenter__ = initialize` at class-definition time, so the
+# alias still references the original function. Patching only `initialize` would
+# leave the async-context-manager path broken.
+SafeRedisCluster.initialize = _safe_cluster_initialize
+SafeRedisCluster.__aenter__ = _safe_cluster_initialize
+# endregion
 
 
 # Query parameters that carry secrets when configured via URL:
@@ -203,12 +257,7 @@ async def init_cache() -> None:
                             "Connected to cache at %s",
                             _redact_cache_url(settings.CACHE.URL),
                         )
-        except (
-            redis_exc.TimeoutError,
-            redis_exc.ConnectionError,
-            asyncio.TimeoutError,
-            TimeoutError,
-        ) as e:
+        except (redis_exc.TimeoutError, redis_exc.ConnectionError, TimeoutError) as e:
             logger.warning(
                 "Failed to connect to cache at %s: %s. Falling back to in-memory cache",
                 _redact_cache_url(settings.CACHE.URL),
