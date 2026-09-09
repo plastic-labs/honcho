@@ -50,7 +50,7 @@ src/
   stdio.ts              # Local stdio host (bun src/stdio.ts)
   http.ts               # Streamable HTTP host (bun src/http.ts / Docker)
   server.ts             # createServer() — registers all tools on an McpServer
-  config.ts             # HonchoConfig, parseConfig(), createClientFactory()
+  config.ts             # HonchoConfig, parseConfig(), Honcho clients + X-Honcho-* headers
   types.ts              # ToolContext, result helpers
   tools/
     workspace.ts        # inspect, list, search, workspace_chat, metadata

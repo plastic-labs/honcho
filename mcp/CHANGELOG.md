@@ -9,6 +9,12 @@ This package versions independently of the Honcho API, `@honcho-ai/sdk`, and hos
 
 ## [Unreleased]
 
+### Added
+
+- Every Honcho request carries `X-Honcho-Host: honcho-mcp/<version>`.
+  `X-Honcho-Plugin` is the caller's `User-Agent`, verbatim (absent on stdio
+  and when the caller sends none). `X-Honcho-Agent-Model` is never sent.
+
 ## [0.1.0] - 2026-09-08
 
 ### Added
