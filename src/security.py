@@ -59,11 +59,11 @@ class JWTParams(BaseModel):
 
     t: str = Field(default_factory=utc_now_iso)
     # region ai
-    # Tenant id (A3/DEV-2478). Optional on the model so flag-off (single-tenant OSS)
-    # tokens are unchanged; REQUIRED by auth() when MULTI_TENANT is on — a tenant-less
+    # Tenant id. Optional on the model so flag-off (single-tenant) tokens are
+    # unchanged; REQUIRED by auth() when MULTI_TENANT is on — a tenant-less
     # token is rejected there. `t` was already taken (the created-at timestamp), hence
-    # the two-letter `tn`. Must stay in lockstep with groudon's JWTParams (verified in
-    # the e2e environment, DEV-2687).
+    # the two-letter `tn`. This claim schema is a contract: any service that mints
+    # tokens for a MULTI_TENANT deployment must keep its claim fields in lockstep.
     # endregion
     tn: str | None = None
     exp: str | None = None
@@ -203,18 +203,23 @@ def require_auth(
             allow_member_read=allow_member_read,
         )
         # region ai
-        # A3/DEV-2478: bind the resolved tenant for the whole request. This is a
+        # Bind the resolved tenant for the whole request. This is a
         # yield-dependency, so FastAPI runs the teardown AFTER the response — meaning
         # tenant_context stays set across the handler and every session lazily checked
-        # out inside it, where A2's checkout hook reads it and binds `app.tenant`.
+        # out inside it, where the checkout hook reads it and binds `app.tenant`.
         # There is no get_db/auth ordering to get wrong: the checkout is lazy (it
         # happens in the handler, after this set), so we don't depend on which
         # dependency FastAPI resolves first. Reset on the way out — a leaked
-        # `app.tenant` is a data breach. No-op when tn is absent (flag off, or a
-        # pre-A3 tenant-less token, which auth() has already rejected under
-        # MULTI_TENANT).
+        # `app.tenant` is a data breach. Gated on MULTI_TENANT, not just tn presence:
+        # flag-off rows must keep the default tenant even when a still-valid token
+        # carries `tn`, or `_default_tenant_id()` would stamp new rows with it. A
+        # tenant-less token under MULTI_TENANT never reaches here (auth() rejects it).
         # endregion
-        tenant_token = tenant_context.set(jwt_params.tn) if jwt_params.tn else None
+        tenant_token = (
+            tenant_context.set(jwt_params.tn)
+            if settings.MULTI_TENANT and jwt_params.tn
+            else None
+        )
         try:
             yield jwt_params
         finally:
@@ -247,11 +252,11 @@ async def auth(
     jwt_params = verify_jwt(credentials.credentials)
 
     # region ai
-    # A3/DEV-2478: under MULTI_TENANT every token must carry a tenant. Enforced before
+    # Under MULTI_TENANT every token must carry a tenant. Enforced before
     # the admin short-circuit below, so `ad` is admin *within* its tenant, never
-    # cross-tenant — the resolved tenant is bound to app.tenant downstream (A2) and RLS
-    # confines the request to it. A tenant-less token is rejected outright (the A4
-    # above-tenant admin surface authenticates separately). Flag off: unchanged.
+    # cross-tenant — the resolved tenant is bound to app.tenant downstream and RLS
+    # confines the request to it. A tenant-less token is rejected outright.
+    # Flag off: unchanged.
     # endregion
     if settings.MULTI_TENANT and not jwt_params.tn:
         raise AuthenticationException("JWT missing required tenant claim")
@@ -302,8 +307,14 @@ async def auth(
             # connection, so a peer added to the session in a not-yet-committed
             # transaction reads as a non-member: writes must commit before a
             # member-scoped read. Fails closed.
+            # ai: tenant is passed explicitly — auth() runs before require_auth
+            # binds tenant_context, so the ambient var is unset here and the
+            # fail-closed guard would 500 every member read under MULTI_TENANT.
+            # Do NOT switch this to service_db: the (workspace, session, peer)
+            # triple is unique only per tenant, so an unscoped read could
+            # authorize a cross-tenant name collision.
             async with tracked_db(
-                "auth.is_peer_in_session", read_only=True
+                "auth.is_peer_in_session", read_only=True, tenant_id=jwt_params.tn
             ) as member_db:
                 is_member = await is_peer_in_session(
                     member_db, workspace_name, session_name, jwt_params.p

@@ -64,8 +64,13 @@ async def list_due_dreams(db: AsyncSession) -> list[DueDream]:
     if not settings.DREAM.ENABLED or not dream_types:
         return []
 
+    # ai: grouped and joined by tenant too — this query runs cross-tenant on the
+    # service session, and (workspace, observer, observed) is unique only per
+    # tenant. A tenant-blind join merges same-named triples across tenants:
+    # inflated document counts, and a newest_session_name from another tenant.
     explicit_counts = (
         select(
+            models.Document.tenant_id,
             models.Document.workspace_name,
             models.Document.observer,
             models.Document.observed,
@@ -79,6 +84,7 @@ async def list_due_dreams(db: AsyncSession) -> list[DueDream]:
         )
         .where(models.Document.level == "explicit")
         .group_by(
+            models.Document.tenant_id,
             models.Document.workspace_name,
             models.Document.observer,
             models.Document.observed,
@@ -99,7 +105,8 @@ async def list_due_dreams(db: AsyncSession) -> list[DueDream]:
                 models.Collection.tenant_id,
             ).outerjoin(
                 explicit_counts,
-                (models.Collection.workspace_name == explicit_counts.c.workspace_name)
+                (models.Collection.tenant_id == explicit_counts.c.tenant_id)
+                & (models.Collection.workspace_name == explicit_counts.c.workspace_name)
                 & (models.Collection.observer == explicit_counts.c.observer)
                 & (models.Collection.observed == explicit_counts.c.observed),
             )
@@ -226,8 +233,11 @@ async def _filter_dreams_enabled(
         (due_dream.workspace_name, due_dream.session_name) for due_dream in candidates
     }
 
+    # ai: lookups are keyed by tenant as well as name — this runs on the
+    # cross-tenant service session, so a name-only key would let one tenant's
+    # same-named workspace/session decide another tenant's dream.enabled config.
     workspaces = {
-        workspace.name: workspace
+        (workspace.tenant_id, workspace.name): workspace
         for workspace in (
             await db.execute(
                 select(models.Workspace).where(
@@ -239,7 +249,7 @@ async def _filter_dreams_enabled(
         .all()
     }
 
-    sessions: dict[tuple[str, str], models.Session] = {}
+    sessions: dict[tuple[str, str, str], models.Session] = {}
     if session_keys:
         session_rows = (
             (
@@ -256,15 +266,22 @@ async def _filter_dreams_enabled(
             .all()
         )
         sessions = {
-            (session.workspace_name, session.name): session for session in session_rows
+            (session.tenant_id, session.workspace_name, session.name): session
+            for session in session_rows
         }
 
     enabled: list[DueDream] = []
     for due_dream in candidates:
         configuration = get_configuration(
             None,
-            sessions.get((due_dream.workspace_name, due_dream.session_name)),
-            workspaces.get(due_dream.workspace_name),
+            sessions.get(
+                (
+                    due_dream.tenant_id,
+                    due_dream.workspace_name,
+                    due_dream.session_name,
+                )
+            ),
+            workspaces.get((due_dream.tenant_id, due_dream.workspace_name)),
         )
         if configuration.dream.enabled:
             enabled.append(due_dream)

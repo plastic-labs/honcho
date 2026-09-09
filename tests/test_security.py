@@ -11,7 +11,10 @@ import jwt as pyjwt
 import pytest
 from fastapi import Request
 from fastapi.security import HTTPAuthorizationCredentials
+from nanoid import generate as generate_nanoid
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from src import models
 from src.config import settings
 from src.db import tenant_context
 from src.exceptions import AuthenticationException, ValidationException
@@ -290,7 +293,7 @@ class TestAuthAdminAndUnscoped:
 
 
 class TestAuthTenantClaim:
-    """A3/DEV-2478 — the `tn` tenant claim and the MULTI_TENANT tenant gate.
+    """The `tn` tenant claim and the MULTI_TENANT tenant gate.
 
     Under MULTI_TENANT every token must carry a tenant; the gate is enforced before
     the admin short-circuit, so `ad` is admin-within-tenant, never cross-tenant. Flag
@@ -317,7 +320,7 @@ class TestAuthTenantClaim:
     async def test_multi_tenant_admin_still_requires_tn(
         self, monkeypatch: pytest.MonkeyPatch
     ):
-        # §3: a tenant-less admin token is NOT god-mode under MULTI_TENANT — the
+        # A tenant-less admin token is NOT god-mode under MULTI_TENANT — the
         # gate runs before the admin short-circuit.
         monkeypatch.setattr(settings, "MULTI_TENANT", True)
         creds = _bearer(create_jwt(JWTParams(ad=True)))  # admin, no tn
@@ -358,8 +361,8 @@ class TestAuthTenantClaim:
 
 
 class TestRequireAuthTenantBinding:
-    """A3/DEV-2478 §4 — require_auth binds the resolved tenant into tenant_context
-    for the duration of the request (a yield-dependency), so A2's checkout hook binds
+    """require_auth binds the resolved tenant into tenant_context
+    for the duration of the request (a yield-dependency), so the checkout hook binds
     `app.tenant`; reset on teardown so nothing leaks to the next request.
     """
 
@@ -396,4 +399,145 @@ class TestRequireAuthTenantBinding:
         await agen.__anext__()
         assert tenant_context.get() is None
         await agen.aclose()
+        assert tenant_context.get() is None
+
+    @pytest.mark.asyncio
+    async def test_no_binding_when_flag_off_even_if_token_carries_tenant(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        # Regression: the bind is gated on MULTI_TENANT, not on `tn` presence. A
+        # still-valid token that DOES carry a tenant must NOT bind tenant_context
+        # when the flag is off — otherwise _default_tenant_id() would stamp new
+        # rows with that tenant instead of "default". (Previously the bind keyed
+        # off `tn` alone, so a flag-off request with a tenant-bearing token leaked
+        # the tenant into the row-write path.)
+        monkeypatch.setattr(settings, "MULTI_TENANT", False)
+        creds = _bearer(create_jwt(JWTParams(tn="acme", w="ws-a")))
+        assert tenant_context.get() is None
+        agen = self._drive(creds)
+        jwt_params = await agen.__anext__()
+        assert jwt_params.tn == "acme"  # the claim survives on the params...
+        assert tenant_context.get() is None  # ...but is not bound (flag off)
+        await agen.aclose()  # teardown
+        assert tenant_context.get() is None  # still clean
+
+
+def _bind_tracked_db_to_test_engine(
+    monkeypatch: pytest.MonkeyPatch, db_engine: AsyncEngine
+) -> None:
+    """Point the real tracked_db's session factories at the per-test engine.
+
+    tracked_db is deliberately NOT mocked for this module (see the runtime-mock
+    blocklist in conftest), so auth()'s member-read branch exercises the real
+    tenant-threading. tracked_db builds its session from
+    src.dependencies.SessionLocal / ReadSessionLocal, which bind to the app's
+    global engine — a different database than the migrated per-test one. Rebinding
+    those factories (the idiom in tests/test_dependencies.py) lets the real
+    is_peer_in_session round-trip run against the test schema WITHOUT
+    monkeypatching tracked_db or is_peer_in_session themselves: the tenant
+    threaded through them is exactly what is under test here.
+    """
+    import src.dependencies as dependencies_module
+
+    factory = async_sessionmaker(bind=db_engine, expire_on_commit=False)
+    monkeypatch.setattr(dependencies_module, "SessionLocal", factory)
+    monkeypatch.setattr(dependencies_module, "ReadSessionLocal", factory)
+
+
+class TestAuthMemberReadTenantThreading:
+    """auth()'s member-read branch threads the token's tenant into tracked_db.
+
+    Under MULTI_TENANT, auth() runs BEFORE require_auth binds tenant_context, so
+    the ambient tenant is unset when the membership check opens its read session.
+    The fix passes tenant_id=jwt_params.tn explicitly; without it tracked_db's
+    fail-closed guard raised ValueError (surfaced as HTTP 500) on every member
+    read. These tests drive the REAL tracked_db + is_peer_in_session against the
+    per-test database so the tenant threading is what actually executes.
+    """
+
+    @pytest.mark.asyncio
+    async def test_non_member_denied_with_auth_exception_not_valueerror(
+        self,
+        db_engine: AsyncEngine,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        # No membership seeded: the real is_peer_in_session round-trip returns
+        # False, so the legitimate outcome is AuthenticationException (a clean
+        # deny). Pre-fix, the unthreaded tracked_db hit its fail-closed guard and
+        # raised ValueError before any query ran — a 500, not a deny.
+        _bind_tracked_db_to_test_engine(monkeypatch, db_engine)
+        monkeypatch.setattr(settings, "MULTI_TENANT", True)
+        creds = _bearer(create_jwt(JWTParams(tn="tenant-a", w="ws-a", p="alice")))
+        assert tenant_context.get() is None  # auth() must resolve its own tenant
+        with pytest.raises(AuthenticationException):
+            await auth(
+                credentials=creds,
+                workspace_name="ws-a",
+                session_name="sess-1",
+                allow_member_read=True,
+            )
+
+    @pytest.mark.asyncio
+    async def test_member_allowed_through_real_membership_round_trip(
+        self,
+        db_engine: AsyncEngine,
+        db_session: AsyncSession,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        # Positive case: seed a real membership under tenant-a and confirm the
+        # threaded tenant lets the DB round-trip find it and authorize the read.
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+        tenant_id = "tenant-a"
+        workspace_name = f"ws-{generate_nanoid()}"
+        peer_name = f"alice-{generate_nanoid()}"
+        session_name = f"sess-{generate_nanoid()}"
+
+        # tenants is preserved across tests (see conftest _clear_all_tables), so a
+        # sibling test on this worker may have inserted this tenant already.
+        await db_session.execute(
+            pg_insert(models.Tenant)
+            .values(tenant_id=tenant_id)
+            .on_conflict_do_nothing()
+        )
+        db_session.add(models.Workspace(name=workspace_name, tenant_id=tenant_id))
+        db_session.add(
+            models.Peer(
+                name=peer_name, workspace_name=workspace_name, tenant_id=tenant_id
+            )
+        )
+        db_session.add(
+            models.Session(
+                name=session_name,
+                workspace_name=workspace_name,
+                tenant_id=tenant_id,
+                configuration={},
+            )
+        )
+        await db_session.flush()
+        await db_session.execute(
+            models.SessionPeer.__table__.insert().values(
+                tenant_id=tenant_id,
+                workspace_name=workspace_name,
+                session_name=session_name,
+                peer_name=peer_name,
+            )
+        )
+        await db_session.commit()
+
+        _bind_tracked_db_to_test_engine(monkeypatch, db_engine)
+        monkeypatch.setattr(settings, "MULTI_TENANT", True)
+        creds = _bearer(
+            create_jwt(JWTParams(tn=tenant_id, w=workspace_name, p=peer_name))
+        )
+        params = await auth(
+            credentials=creds,
+            workspace_name=workspace_name,
+            session_name=session_name,
+            allow_member_read=True,
+        )
+        assert params.p == peer_name
+        assert params.tn == tenant_id
+        # auth() only reads membership; binding the request tenant is require_auth's
+        # job, so auth() must leave tenant_context clean.
         assert tenant_context.get() is None
