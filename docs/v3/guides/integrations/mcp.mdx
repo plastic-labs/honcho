@@ -62,7 +62,7 @@ For best results, create a project and paste these [instructions](https://raw.gi
 ```bash
 claude mcp add honcho \
   --transport http \
-  --url "https://mcp.honcho.dev" \
+  "https://mcp.honcho.dev" \
   --header "Authorization: Bearer hch-your-key-here"
 ```
 
@@ -303,7 +303,7 @@ A long-lived Streamable HTTP process. Clients use the same shape as `https://mcp
 
 ```bash
 cd mcp && bun install
-HONCHO_API_URL=http://127.0.0.1:8000 bun run http
+HOST=127.0.0.1 HONCHO_API_URL=http://127.0.0.1:8000 bun run http
 ```
 
 Then point the client at `http://127.0.0.1:3000`:
@@ -311,7 +311,7 @@ Then point the client at `http://127.0.0.1:3000`:
 ```bash
 claude mcp add honcho \
   --transport http \
-  --url "http://127.0.0.1:3000" \
+  "http://127.0.0.1:3000" \
   --header "Authorization: Bearer hch-your-key-here"
 ```
 
@@ -338,7 +338,7 @@ Or with `mcp-remote`:
 
 Bearer auth is required on every request, including established sessions. Optional `X-Honcho-Workspace-ID` fills `workspace_id` when the tool argument is omitted.
 
-`HOST` defaults to `0.0.0.0`, `PORT` to `3000`. `GET /health` is unauthenticated. MCP is served at `/` and `/mcp`.
+`HOST` defaults to `0.0.0.0` (what Docker needs inside the container). For a laptop run, set `HOST=127.0.0.1`. `PORT` defaults to `3000`. `GET /health` is unauthenticated. MCP is served at `/` and `/mcp`.
 
 Sessions live in process memory — run **one** replica. Idle sessions expire after `MCP_SESSION_IDLE_MS` (default 30 minutes); `MCP_SESSION_MAX` (default 128) caps concurrent sessions.
 
@@ -350,7 +350,7 @@ The HTTP host is what the image runs.
 
 ```bash
 docker build -f mcp/Dockerfile -t honcho-mcp mcp
-docker run --rm -p 3000:3000 \
+docker run --rm -p 127.0.0.1:3000:3000 \
   -e HONCHO_API_URL=http://host.docker.internal:8000 \
   honcho-mcp
 ```
