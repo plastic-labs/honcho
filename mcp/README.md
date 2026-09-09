@@ -51,7 +51,7 @@ src/
   http.ts               # Streamable HTTP host (bun src/http.ts / Docker)
   server.ts             # createServer() — registers all tools on an McpServer
   config.ts             # HonchoConfig, parseConfig(), createClientFactory()
-  identity.ts           # X-Honcho-Host (honcho-mcp) + X-Honcho-Plugin (caller)
+  identity.ts           # shared X-Honcho-Host / X-Honcho-Plugin header map
   types.ts              # ToolContext, result helpers
   tools/
     workspace.ts        # inspect, list, search, workspace_chat, metadata

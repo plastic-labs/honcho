@@ -4,15 +4,12 @@ import { createClient, createUnscopedClient } from "./config.ts";
 import {
   HEADER_HOST,
   HEADER_PLUGIN,
-  HOST_ID,
-  callerFromClientInfo,
-  callerFromUserAgent,
-  createIdentity,
-  resolveCallerIdentity,
+  identityHeaders,
+  pluginFromCaller,
 } from "./identity.ts";
 
 const config = { apiKey: "test-key", baseUrl: "https://api.honcho.dev" };
-const hostHeader = `${HOST_ID}/${pkg.version} (${process.platform})`;
+const hostHeader = `honcho-mcp/${pkg.version} (${process.platform})`;
 
 function emptyPage() {
   return { items: [], page: 1, size: 10, total: 0, pages: 0 };
@@ -49,36 +46,34 @@ test("every request carries host identity and no agent model", async () => {
 });
 
 test("clientInfo becomes X-Honcho-Plugin", async () => {
-  const identity = createIdentity(
-    callerFromClientInfo({ name: "codex-mcp-client", version: "0.148.0" }),
-  );
+  const plugin = pluginFromCaller({
+    name: "codex-mcp-client",
+    version: "0.148.0",
+  });
   const headers = await capturedHeaders(() =>
-    createUnscopedClient(config, identity).workspaces(),
+    createUnscopedClient(config, identityHeaders(plugin)).workspaces(),
   );
   expect(headers[0].get(HEADER_HOST)).toBe(hostHeader);
   expect(headers[0].get(HEADER_PLUGIN)).toBe("codex-mcp-client/0.148.0");
 });
 
 test("self-identifying User-Agent becomes Plugin; runtime UAs do not", async () => {
-  expect(callerFromUserAgent("codex-mcp-client/0.148.0-alpha.9")).toEqual({
-    plugin: "codex-mcp-client",
-    pluginVersion: "0.148.0-alpha.9",
-  });
-  expect(callerFromUserAgent("node")).toEqual({});
-  expect(callerFromUserAgent("undici")).toEqual({});
-  expect(callerFromUserAgent("httpx/0.27.0")).toEqual({});
+  expect(pluginFromCaller(undefined, "codex-mcp-client/0.148.0-alpha.9")).toBe(
+    "codex-mcp-client/0.148.0-alpha.9",
+  );
+  expect(pluginFromCaller(undefined, "node")).toBeUndefined();
+  expect(pluginFromCaller(undefined, "undici")).toBeUndefined();
+  expect(pluginFromCaller(undefined, "httpx/0.27.0")).toBeUndefined();
   expect(
-    resolveCallerIdentity({
-      clientInfo: { name: "hermes", version: "1.2.3" },
-      userAgent: "undici",
-    }),
-  ).toEqual({ plugin: "hermes", pluginVersion: "1.2.3" });
+    pluginFromCaller({ name: "hermes", version: "1.2.3" }, "undici"),
+  ).toBe("hermes/1.2.3");
 
-  const identity = createIdentity(
-    callerFromUserAgent("codex-mcp-client/0.148.0-alpha.9"),
+  const plugin = pluginFromCaller(
+    undefined,
+    "codex-mcp-client/0.148.0-alpha.9",
   );
   const headers = await capturedHeaders(() =>
-    createClient(config, "sandbox", identity).workspaces(),
+    createClient(config, "sandbox", identityHeaders(plugin)).workspaces(),
   );
   expect(headers[0].get(HEADER_HOST)).toBe(hostHeader);
   expect(headers[0].get(HEADER_PLUGIN)).toBe(
@@ -86,15 +81,12 @@ test("self-identifying User-Agent becomes Plugin; runtime UAs do not", async () 
   );
 });
 
-test("held clients pick up Plugin after set", async () => {
-  const identity = createIdentity();
-  const client = createUnscopedClient(config, identity);
-  const before = await capturedHeaders(() => client.workspaces());
-  expect(before[0].get(HEADER_HOST)).toBe(hostHeader);
-  expect(before[0].get(HEADER_PLUGIN)).toBeNull();
-
-  identity.set({ plugin: "codex-mcp-client", pluginVersion: "0.148.0" });
-  const after = await capturedHeaders(() => client.workspaces());
-  expect(after[0].get(HEADER_HOST)).toBe(hostHeader);
-  expect(after[0].get(HEADER_PLUGIN)).toBe("codex-mcp-client/0.148.0");
+test("Plugin set on the map before construct is copied onto the client", async () => {
+  const shared = identityHeaders();
+  shared[HEADER_PLUGIN] = "codex-mcp-client/0.148.0";
+  const headers = await capturedHeaders(() =>
+    createUnscopedClient(config, shared).workspaces(),
+  );
+  expect(headers[0].get(HEADER_HOST)).toBe(hostHeader);
+  expect(headers[0].get(HEADER_PLUGIN)).toBe("codex-mcp-client/0.148.0");
 });

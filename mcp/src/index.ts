@@ -1,13 +1,13 @@
 import { createMcpHandler } from "agents/mcp";
 import {
   parseConfig,
-  createClientFactory,
-  createUnscopedClient,
+  clientsFor,
   type Env,
 } from "./config.js";
 import {
-  bindServerClientInfo,
-  identityFromHttpRequest,
+  attachClientInfo,
+  identityHeaders,
+  pluginFromCaller,
 } from "./identity.js";
 import { createServer } from "./server.js";
 
@@ -112,13 +112,14 @@ export default {
     }
 
     try {
-      const identity = await identityFromHttpRequest(request);
+      const headers = identityHeaders(
+        pluginFromCaller(undefined, request.headers.get("User-Agent")),
+      );
       const server = createServer({
         config,
-        clientFor: createClientFactory(config, identity),
-        unscoped: createUnscopedClient(config, identity),
+        ...clientsFor(config, headers),
       });
-      bindServerClientInfo(server, identity);
+      attachClientInfo(server, headers);
       const handler = createMcpHandler(server, {
         route: "/",
         corsOptions: {

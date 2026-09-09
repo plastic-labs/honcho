@@ -1,9 +1,5 @@
 import { Honcho } from "@honcho-ai/sdk";
-import {
-  createIdentity,
-  defaultTelemetryHeaders,
-  type IdentitySlot,
-} from "./identity.js";
+import { identityHeaders } from "./identity.js";
 
 export interface HonchoConfig {
   apiKey: string;
@@ -91,44 +87,58 @@ export function resolveWorkspaceId(
 export function createClient(
   config: HonchoConfig,
   workspaceId: string,
-  identity: IdentitySlot = createIdentity(),
+  headers: Record<string, string> = identityHeaders(),
 ): Honcho {
-  const client = new Honcho({
+  return new Honcho({
     apiKey: config.apiKey,
     baseURL: config.baseUrl,
     workspaceId,
-    defaultHeaders: defaultTelemetryHeaders(identity.get()),
+    defaultHeaders: headers,
   });
-  identity.bind(client);
-  return client;
 }
 
 /** Client used only for credential-scoped ops (list workspaces). */
 export function createUnscopedClient(
   config: HonchoConfig,
-  identity: IdentitySlot = createIdentity(),
+  headers: Record<string, string> = identityHeaders(),
 ): Honcho {
-  const client = new Honcho({
+  return new Honcho({
     apiKey: config.apiKey,
     baseURL: config.baseUrl,
-    defaultHeaders: defaultTelemetryHeaders(identity.get()),
+    defaultHeaders: headers,
   });
-  identity.bind(client);
-  return client;
 }
 
 export function createClientFactory(
   config: HonchoConfig,
-  identity: IdentitySlot = createIdentity(),
+  headers: Record<string, string> = identityHeaders(),
 ): (workspaceId?: string) => Honcho {
   const cache = new Map<string, Honcho>();
   return (workspaceId?: string) => {
     const id = resolveWorkspaceId(config, workspaceId);
     let client = cache.get(id);
     if (!client) {
-      client = createClient(config, id, identity);
+      client = createClient(config, id, headers);
       cache.set(id, client);
     }
     return client;
+  };
+}
+
+/**
+ * Lazy unscoped client so Plugin can be written onto `headers` during MCP
+ * initialize before the first Honcho HTTP client is constructed (the SDK
+ * copies defaultHeaders at construction).
+ */
+export function clientsFor(
+  config: HonchoConfig,
+  headers: Record<string, string> = identityHeaders(),
+) {
+  let unscoped: Honcho | undefined;
+  return {
+    clientFor: createClientFactory(config, headers),
+    get unscoped() {
+      return (unscoped ??= createUnscopedClient(config, headers));
+    },
   };
 }
