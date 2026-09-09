@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- `honcho scope` command group: `list`, `create`, `inspect`, `sessions`, `add-sessions`, `remove-session`, `status` (Honcho v3.1.0+)
 - `honcho workspace chat` for reasoned questions across all peers (Honcho v3.1.0+)
 - `--scope` on `honcho workspace chat` and `honcho peer chat`, and `--sessions` on `honcho peer chat`, to confine recall (Honcho v3.1.0+)
 

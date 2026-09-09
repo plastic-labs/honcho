@@ -309,6 +309,83 @@ honcho peer set-metadata <metadata>
 </Accordion>
 </AccordionGroup>
 
+## honcho scope
+
+List, create, inspect, and manage scopes — named session sets that bound recall.
+
+<AccordionGroup>
+<Accordion title="add-sessions">
+Add existing sessions to a scope. History is backfilled asynchronously — poll `honcho scope status`.
+
+```bash
+honcho scope add-sessions <name> <session_ids>
+```
+
+<ParamField path="name" type="string" required />
+<ParamField path="session_ids" type="string" required />
+</Accordion>
+<Accordion title="create">
+Create or get a scope, optionally adding sessions to it.
+
+```bash
+honcho scope create <name>
+```
+
+<ParamField path="name" type="string" required />
+<ParamField path="--sessions" type="string">
+  Session IDs to add on creation (repeat or comma-separate). Sessions with history are backfilled asynchronously; watch with `honcho scope status`.
+</ParamField>
+<ParamField path="--metadata" type="string">
+  JSON metadata to associate with the scope.
+</ParamField>
+</Accordion>
+<Accordion title="inspect">
+Inspect a scope: metadata, member sessions, and backfill state.
+
+```bash
+honcho scope inspect <name>
+```
+
+<ParamField path="name" type="string" required />
+</Accordion>
+<Accordion title="list">
+List scopes in the workspace.
+
+```bash
+honcho scope list
+```
+
+</Accordion>
+<Accordion title="remove-session">
+Remove a session from a scope. Its conclusions are reconciled out asynchronously.
+
+```bash
+honcho scope remove-session <name> <session_id>
+```
+
+<ParamField path="name" type="string" required />
+<ParamField path="session_id" type="string" required />
+</Accordion>
+<Accordion title="sessions">
+List the sessions that are members of a scope (longest-standing first).
+
+```bash
+honcho scope sessions <name>
+```
+
+<ParamField path="name" type="string" required />
+</Accordion>
+<Accordion title="status">
+Per-session backfill state. Recall through the scope is complete once nothing is pending.
+
+```bash
+honcho scope status <name>
+```
+
+<ParamField path="name" type="string" required />
+</Accordion>
+</AccordionGroup>
+
 ## honcho session
 
 List, inspect, view, create, delete, and manage conversation sessions and their peers.
