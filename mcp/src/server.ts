@@ -12,7 +12,7 @@ export function createServer(ctx: ToolContext): McpServer {
   const server = new McpServer(
     {
       name: "Honcho MCP Server",
-      version: "3.0.0",
+      version: "0.1.0",
     },
     { instructions },
   );
