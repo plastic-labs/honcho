@@ -21,7 +21,10 @@ from src import models
 from src.config import settings
 from src.dependencies import tracked_db
 from src.models import QueueItem
-from src.reconciler.sync_vectors import record_pending_embeddings_backlog
+from src.reconciler.sync_vectors import (
+    has_pending_work,
+    record_pending_embeddings_backlog,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -252,6 +255,10 @@ class ReconcilerScheduler:
                 logger.debug(
                     "Task %s already pending in queue, skipping enqueue", task.name
                 )
+                return False
+
+            if task.name == "sync_vectors" and not await has_pending_work(db):
+                logger.debug("Task %s has nothing to do, skipping enqueue", task.name)
                 return False
 
             # Enqueue the task using ORM
