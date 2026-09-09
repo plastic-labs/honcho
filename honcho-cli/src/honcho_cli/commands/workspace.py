@@ -1,4 +1,4 @@
-"""Workspace commands: list, inspect, create, delete, search, queue-status."""
+"""Workspace commands: list, inspect, create, delete, search, chat, queue-status."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ from honcho_cli.validation import validate_resource_id
 from honcho_cli._help import HonchoTyperGroup
 from honcho_cli.common import add_common_options, get_client, get_resolved_config, handle_cmd_flags
 
-app = typer.Typer(cls=HonchoTyperGroup, help="List, create, inspect, delete, and search workspaces.")
+app = typer.Typer(cls=HonchoTyperGroup, help="List, create, inspect, chat, delete, and search workspaces.")
 add_common_options(app)
 
 
@@ -209,6 +209,36 @@ def delete(
         print_result(result)
     except Exception as e:
         _handle_error(e, "workspace", workspace_id)
+
+
+@app.command()
+def chat(
+    query: str = typer.Argument(help="Question to ask about the workspace"),
+    reasoning: Optional[str] = typer.Option(None, "--reasoning", "-r", help="Reasoning level: minimal, low, medium, high, max"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
+    session: Optional[str] = typer.Option(None, "--session", "-s", help="Override session ID"),
+    json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
+) -> None:
+    """Query the dialectic across all peers in the workspace."""
+
+    _REASONING_LEVELS = ("minimal", "low", "medium", "high", "max")
+    if reasoning and reasoning not in _REASONING_LEVELS:
+        print_error("INVALID_REASONING", f"--reasoning must be one of: {', '.join(_REASONING_LEVELS)}")
+        raise typer.Exit(1)
+
+    handle_cmd_flags(json_output=json_output, workspace=workspace, session=session)
+    wid = _get_workspace_id(None)
+    client, config = get_client()
+
+    try:
+        response = client.chat(
+            query,
+            session=config.session_id or None,
+            reasoning_level=reasoning or None,
+        )
+        print_result({"workspace_id": wid, "query": query, "response": response})
+    except Exception as e:
+        _handle_error(e, "workspace", wid)
 
 
 @app.command()

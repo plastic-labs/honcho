@@ -12,7 +12,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import make_transient_to_detached
 
 from src import models, schemas
-from src.cache.client import cache, get_cache_namespace, safe_cache_delete
+from src.cache.client import (
+    cache,
+    cache_key_namespace,
+    cache_prefix_namespace,
+    safe_cache_delete,
+)
 from src.config import settings
 from src.crud.workspace import get_or_create_workspace
 from src.exceptions import (
@@ -32,13 +37,13 @@ logger = getLogger(__name__)
 PEER_NAME_MAX_LENGTH = 512
 
 PEER_CACHE_KEY_TEMPLATE = "v2:workspace:{workspace_name}:peer:{peer_name}"
-PEER_LOCK_PREFIX = f"{get_cache_namespace()}:lock:v2"
+PEER_LOCK_PREFIX = f"{cache_prefix_namespace()}:lock:v2"
 
 
 def peer_cache_key(workspace_name: str, peer_name: str) -> str:
     """Generate cache key for peer."""
     return (
-        get_cache_namespace()
+        cache_key_namespace()
         + ":"
         + PEER_CACHE_KEY_TEMPLATE.format(
             workspace_name=workspace_name,
@@ -391,7 +396,7 @@ async def get_or_create_peers(
 @cache(
     key=PEER_CACHE_KEY_TEMPLATE,
     ttl=f"{settings.CACHE.DEFAULT_TTL_SECONDS}s",
-    prefix=get_cache_namespace(),
+    prefix=cache_prefix_namespace(),
     condition=NOT_NONE,
 )
 @cache.locked(

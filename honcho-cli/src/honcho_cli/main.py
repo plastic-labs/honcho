@@ -15,6 +15,7 @@ from honcho_cli import __version__
 from honcho_cli._help import HonchoTyperGroup, print_welcome
 from honcho_cli.branding import BANNER
 from honcho_cli.output import set_json_mode
+from honcho_cli.update_check import maybe_print_update_nag
 
 
 app = typer.Typer(
@@ -60,13 +61,18 @@ def main(
     if ctx.invoked_subcommand is None:
         print_welcome(Console())
         raise typer.Exit()
+    maybe_print_update_nag()
 
 
 # Register top-level commands
 from honcho_cli.commands.setup import doctor, init
+from honcho_cli.commands.stack import start, status, stop
 
 app.command()(init)
 app.command()(doctor)
+app.command()(start)
+app.command()(stop)
+app.command()(status)
 
 
 @app.command("help", hidden=True)

@@ -1,0 +1,37 @@
+name: Issue Gate
+
+# Labels pull requests that are not linked to an issue carrying the
+# `maintainer-approved` label, and comments explaining how to fix it.
+#
+# This workflow never closes anything. `pr-sweeper.yml` re-checks later and closes
+# only after the grace period — that gives contributors time to link an issue, and
+# gives maintainers time to wave through a one-line fix. It is also the only thing
+# that can notice a sidebar issue link, which fires no webhook of its own.
+#
+# `pull_request_target` is required so the job has write access on pull requests
+# from forks. It must therefore NEVER run code from the pull request. The checkout
+# below is safe because on `pull_request_target` actions/checkout defaults to the
+# BASE ref, which is repo-trusted code. Never point it at `pr.head.sha`.
+#
+# Not triggered on `synchronize`: re-running on every push would be noise.
+# Drafts are ignored until marked ready.
+
+on:
+  pull_request_target:
+    types: [opened, edited, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const gate = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/issue-gate.js`);
+            await gate.runGate({ github, core, context });

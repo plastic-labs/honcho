@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [2.4.0] - 2026-08-25
+
+### Added
+
+- Scopes: `honcho.scope()` get-or-creates a named visibility boundary, `honcho.scopes()` lists them, and a `Scope` object adds/removes sessions, lists membership, and reads backfill `status()`. `honcho.session({ scopes: [...] })` joins a new session to scopes at creation. Requires a Honcho server with the matching API support (Honcho v3.1.0+).
+- `scope` option on `peer.chat()` / `chatStream()`, representation, session context, and workspace search. A single scope answers from that scope's collection and card; a list of scopes restricts recall to the union of their member sessions (explicit-only). Mutually exclusive with `session` / `sessions` / `filters`.
+- Workspace-level chat: `honcho.chat()` / `honcho.chatStream()` ask a question across every peer in the workspace, with the same `session`, `scope`, `reasoningLevel`, and `responseFormat` options as `peer.chat()`. Requires a Honcho server with the matching API support (Honcho v3.1.0+).
+
+### Changed
+
+- `ConclusionScope` is renamed to `ConclusionsView`. The old name remains as a deprecated alias for one more minor version. "Scope" now means a named set of sessions (`Scope`); these objects are views over one observer/observed pair.
+
 ## [2.3.0] - 2026-08-10
 
 ### Added

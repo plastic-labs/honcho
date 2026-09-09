@@ -113,3 +113,31 @@ def test_openai_history_adapter_omits_empty_thinking_content(
     message = adapter.format_assistant_tool_message(result)
 
     assert "reasoning_content" not in message
+
+
+def test_openai_history_adapter_preserves_null_content_on_tool_call_turns() -> None:
+    adapter = OpenAIHistoryAdapter()
+    reasoning_details = [
+        {
+            "type": "reasoning.encrypted",
+            "data": "opaque",
+            "format": "openai-responses-v1",
+            "id": "binding",
+            "index": 0,
+        }
+    ]
+    result = CompletionResult(
+        content=None,
+        reasoning_details=reasoning_details,
+        tool_calls=[
+            ToolCallResult(id="call_probe", name="search", input={"query": "honcho"})
+        ],
+    )
+
+    message = adapter.format_assistant_tool_message(result)
+
+    assert message["content"] is None
+    assert message["reasoning_details"] == reasoning_details
+    assert message["tool_calls"][0]["id"] == "call_probe"
+    assert message["tool_calls"][0]["function"]["name"] == "search"
+    assert message["tool_calls"][0]["function"]["arguments"] == '{"query": "honcho"}'

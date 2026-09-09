@@ -143,6 +143,9 @@ class TurbopufferVectorStore(VectorStore):
         Returns:
             List of VectorQueryResult objects, ordered by similarity (most similar first)
         """
+        if top_k <= 0:
+            return []
+
         ns = self._get_namespace(namespace)
 
         try:

@@ -44,8 +44,7 @@
     },
     {
       "step_type": "wait",
-      "target": "queue_empty",
-      "flush": true
+      "target": "queue_empty"
     },
     {
       "step_type": "add_messages",
@@ -75,8 +74,7 @@
     },
     {
       "step_type": "wait",
-      "target": "queue_empty",
-      "flush": true
+      "target": "queue_empty"
     },
     {
       "step_type": "add_messages",
@@ -114,8 +112,7 @@
     },
     {
       "step_type": "wait",
-      "target": "queue_empty",
-      "flush": true
+      "target": "queue_empty"
     },
     {
       "step_type": "schedule_dream",
@@ -127,8 +124,7 @@
     {
       "step_type": "wait",
       "target": "queue_empty",
-      "timeout": 180,
-      "flush": true
+      "timeout": 180
     },
     {
       "step_type": "query",
@@ -148,7 +144,6 @@
       "target": "get_representation",
       "observer_peer_id": "assistant",
       "observed_peer_id": "maya",
-      "session_id": "maya_life_story",
       "assertions": [
         {
           "assertion_type": "llm_judge",

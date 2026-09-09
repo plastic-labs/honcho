@@ -106,6 +106,7 @@ The full API for advanced use cases.
 | `create_workspace` | Get or create a workspace when none of the listed ones fit |
 | `inspect_workspace` | Inspect a single workspace's details. Requires `workspace_id`. |
 | `search` | Semantic search across messages — scope with optional `peer_id` or `session_id` params |
+| `workspace_chat` | Ask Honcho a question about the whole workspace — reasons across all peers. Use for cross-peer themes or questions not about one peer; use `chat` for a single peer. Accepts optional `reasoning_level`, and `session_id` / `scope` to confine recall. |
 | `get_metadata` | Read metadata for workspace, peer, or session (scope with optional `peer_id` or `session_id`) |
 | `set_metadata` | Store metadata for workspace, peer, or session (scope with optional `peer_id` or `session_id`) |
 
@@ -115,7 +116,7 @@ The full API for advanced use cases.
 | --- | --- |
 | `create_peer` | Register a new participant (user or agent) |
 | `list_peers` | See all participants in the workspace |
-| `chat` | Ask Honcho what it knows about any peer. Accepts optional `reasoning_level` (`minimal`–`max`) to control depth vs. speed. |
+| `chat` | Ask Honcho what it knows about one peer (`peer_id` required). Use `workspace_chat` for the whole workspace. Accepts optional `reasoning_level` (`minimal`–`max`) to control depth vs. speed. Confine recall with `session_id` (one session), `scope` (a scope name for that scope's reasoned view, or a list of names as an explicit-only allowlist), or `sessions` (an ad hoc session-ID allowlist, explicit-only). |
 | `get_peer_card` | Get compact biographical facts about a peer |
 | `set_peer_card` | Manually set/correct facts about a peer |
 | `get_peer_context` | Get full context (representation + peer card) |
@@ -126,7 +127,7 @@ The full API for advanced use cases.
 | Tool | When to use |
 | --- | --- |
 | `create_session` | Create or get a session with the given ID |
-| `list_sessions` | Discover existing conversations |
+| `list_sessions` | Discover existing conversations (paginated: `page`, `size`, `reverse`) |
 | `delete_session` | Permanently remove a session |
 | `clone_session` | Fork a conversation (optionally up to a specific message) |
 | `add_peers_to_session` | Add peers to a session with optional per-session config |
@@ -134,7 +135,9 @@ The full API for advanced use cases.
 | `get_session_peers` | See who is in a session |
 | `inspect_session` | Inspect detailed session structure/metadata |
 | `add_messages_to_session` | Add messages from specific peers |
-| `get_session_messages` | Read conversation history (paginated, with optional metadata filters) |
+| `get_session_messages` | Read conversation history (paginated: `page`, `size`, `reverse`; optional metadata filters) |
+| `list_scopes` | List the workspace's scopes — named session sets that act as recall boundaries |
+| `get_scope_sessions` | List the sessions a scope covers (paginated) |
 | `get_session_message` | Get a single message from a session by ID |
 | `get_session_context` | Get LLM-ready context (messages + summary) |
 

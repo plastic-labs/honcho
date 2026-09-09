@@ -25,6 +25,7 @@ from src.telemetry.sentry import with_sentry_transaction
 from src.utils.config_helpers import get_configuration
 from src.utils.formatting import format_new_turn_with_timestamp
 from src.utils.representation import PromptRepresentation, Representation
+from src.utils.retryable_errors import is_retryable_error
 from src.utils.tokens import track_deriver_input_tokens
 
 from .prompts import estimate_deriver_prompt_tokens, minimal_deriver_prompt
@@ -344,6 +345,12 @@ async def process_representation_tasks_batch(
         )
     )
 
+    retryable = next(
+        (exc for _, exc in save_errors if is_retryable_error(exc)),
+        None,
+    )
+    if retryable is not None:
+        raise retryable
     if save_errors and successful_observer_count == 0:
         details = "; ".join(
             f"{observer}: {exc.__class__.__name__}: {exc}"

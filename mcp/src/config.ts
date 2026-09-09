@@ -3,13 +3,19 @@ import { Honcho } from "@honcho-ai/sdk";
 export interface HonchoConfig {
   apiKey: string;
   baseUrl: string;
-  /** From X-Honcho-Workspace-ID when set. */
+  /** From X-Honcho-Workspace-ID (HTTP) or HONCHO_WORKSPACE_ID (stdio). */
   workspaceId?: string;
 }
 
 export interface Env {
   HONCHO_API_URL?: string;
   ALERT_WEBHOOK_URL?: string;
+}
+
+export interface EnvConfig {
+  HONCHO_API_KEY?: string;
+  HONCHO_API_URL?: string;
+  HONCHO_WORKSPACE_ID?: string;
 }
 
 /**
@@ -48,8 +54,23 @@ export function parseConfig(request: Request, env: Env = {}): HonchoConfig {
   };
 }
 
+/** Parse configuration from process env. */
+export function parseEnvConfig(env: EnvConfig): HonchoConfig {
+  const apiKey = env.HONCHO_API_KEY?.trim();
+  if (!apiKey) {
+    throw new Error(
+      "Missing HONCHO_API_KEY. Set HONCHO_API_KEY to your Honcho API key.",
+    );
+  }
+  return {
+    apiKey,
+    baseUrl: env.HONCHO_API_URL?.trim() || "https://api.honcho.dev",
+    workspaceId: env.HONCHO_WORKSPACE_ID?.trim() || undefined,
+  };
+}
+
 export const MISSING_WORKSPACE_ID_MESSAGE =
-  "Missing workspace_id. Pass workspace_id on the next tool call, or set the X-Honcho-Workspace-ID header on the connection so it is used automatically.";
+  "Missing workspace_id. Pass workspace_id on the next tool call, or set X-Honcho-Workspace-ID (HTTP) / HONCHO_WORKSPACE_ID (stdio).";
 
 export function resolveWorkspaceId(
   config: HonchoConfig,

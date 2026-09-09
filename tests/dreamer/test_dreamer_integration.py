@@ -17,6 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
+from src.config import settings
 from src.deriver.enqueue import enqueue_dream
 from src.dreamer.dream_scheduler import (
     DreamScheduler,
@@ -79,6 +80,21 @@ async def _get_dream_metadata(
     refreshed = (await db_session.execute(stmt)).scalar_one()
     dream_meta: dict[str, Any] = refreshed.internal_metadata.get("dream", {})
     return dream_meta
+
+
+class TestSchedulerGate:
+    @pytest.mark.asyncio
+    async def test_check_and_schedule_dream_is_off_when_api_owns_scheduling(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        db_session: AsyncSession,
+        seeded_collection: models.Collection,
+    ) -> None:
+        monkeypatch.setattr(settings.DERIVER, "SCHEDULER", "api")
+
+        scheduled = await check_and_schedule_dream(db_session, seeded_collection)
+
+        assert scheduled is False
 
 
 class TestLastDreamAtCompletionWrite:

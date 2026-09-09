@@ -1,0 +1,72 @@
+name: Bug report
+description: Something is broken or incorrect in Honcho (API, deriver, SDK, managed offering, etc.).
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug. Please search [existing issues](https://github.com/plastic-labs/honcho/issues) first.
+
+        **Security vulnerability?** Do not use this form — report privately via [SECURITY.md](https://github.com/plastic-labs/honcho/blob/main/SECURITY.md).
+
+        **Memory / recall quality** (wrong or noisy conclusions, weak dialectic answers) with no crash? Prefer the **Memory / recall quality** template.
+
+  - type: dropdown
+    id: deploy_mode
+    attributes:
+      label: Deploy mode
+      description: Where are you running Honcho?
+      options:
+        - Managed (api.honcho.dev / app.honcho.dev)
+        - Self-hosted
+        - Unsure
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Honcho version
+      description: Server image tag or release, and SDK version if you use one. Write "managed" if you are not self-hosting.
+      placeholder: e.g. server v2.4.1, honcho-ai 2.1.0
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Describe the bug
+      description: Clear and concise description of what is wrong.
+      placeholder: When I…, Honcho…
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps or a short script/API sequence. Redact secrets, JWTs, and production user content.
+      placeholder: |
+        1. Create a session with …
+        2. POST /v3/... with body …
+        3. Observe …
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and evidence
+      description: Relevant API or deriver logs or stack traces. Redact secrets and user content.
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Config knobs, deployment notes, screenshots, related issues/PRs.
+    validations:
+      required: false

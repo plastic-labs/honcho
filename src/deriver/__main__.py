@@ -6,7 +6,11 @@ import uvloop
 from prometheus_client import start_http_server
 
 from src.config import settings
-from src.db import engine, register_db_query_instrumentation
+from src.db import (
+    engine,
+    register_db_connection_instrumentation,
+    register_db_query_instrumentation,
+)
 from src.startup import validate_embedding_schema
 from src.telemetry import (
     initialize_telemetry_async,
@@ -26,6 +30,7 @@ def start_metrics_server() -> None:
     # Expose DB connection-pool stats for this deriver instance.
     register_db_pool_collector("deriver")
     register_db_query_instrumentation("deriver")
+    register_db_connection_instrumentation("deriver")
 
     # region ai
     # Zero-init bounded-label counters so a missing series signals a broken scrape,

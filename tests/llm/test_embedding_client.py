@@ -14,6 +14,7 @@ from src.config import (
 from src.embedding_client import (
     BatchItem,
     EmbeddingClient,
+    EmbeddingTokenLimitError,
     _EmbeddingClient,  # pyright: ignore[reportPrivateUsage]
 )
 
@@ -1173,3 +1174,70 @@ async def test_gemini_process_batch_wraps_contents_as_content_part(
     assert all(isinstance(c, genai_types.Content) for c in contents)
     assert contents[0].parts[0].text == "hello"
     assert contents[1].parts[0].text == "world"
+
+
+# --- Token-limit classification (issue #568) -------------------------------
+#
+# Only genuine "content too long" conditions may raise
+# EmbeddingTokenLimitError. Provider/config failures must stay plain
+# ValueError so callers don't rewrite them as token-limit errors.
+
+
+def test_embedding_token_limit_error_is_value_error() -> None:
+    """Subclassing ValueError keeps pre-existing broad handlers working."""
+    assert issubclass(EmbeddingTokenLimitError, ValueError)
+
+
+@pytest.mark.asyncio
+async def test_embed_raises_token_limit_error_before_calling_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, fake_embeddings = _build_openai_client(
+        monkeypatch,
+        embedding=[0.1, 0.2],
+        model="text-embedding-3-small",
+        send_dimensions=False,
+        vector_dimensions=2,
+    )
+
+    with pytest.raises(EmbeddingTokenLimitError):
+        await client.embed("word " * 20_000)
+
+    assert fake_embeddings.calls == [], "provider must not be called on oversize input"
+
+
+@pytest.mark.asyncio
+async def test_simple_batch_embed_raises_token_limit_error_before_calling_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, fake_embeddings = _build_openai_client(
+        monkeypatch,
+        embedding=[0.1, 0.2],
+        model="text-embedding-3-small",
+        send_dimensions=False,
+        vector_dimensions=2,
+    )
+
+    with pytest.raises(EmbeddingTokenLimitError):
+        await client.simple_batch_embed(["fine", "word " * 20_000])
+
+    assert fake_embeddings.calls == [], "provider must not be called on oversize input"
+
+
+@pytest.mark.asyncio
+async def test_provider_dimension_mismatch_is_not_a_token_limit_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A wrong-width vector is a provider/config fault, not an oversized input."""
+    client, _ = _build_openai_client(
+        monkeypatch,
+        embedding=[0.1, 0.2, 0.3],  # 3 wide, client expects 2
+        model="text-embedding-3-small",
+        send_dimensions=False,
+        vector_dimensions=2,
+    )
+
+    with pytest.raises(ValueError) as excinfo:
+        await client.embed("short query")
+
+    assert not isinstance(excinfo.value, EmbeddingTokenLimitError)

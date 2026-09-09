@@ -1,0 +1,133 @@
+# Honcho sandbox — an ephemeral, seeded stack for harness integration testing.
+#
+# This file is provider-agnostic and is NOT a working stack on its own. Exactly one
+# provider overlay must be composed on top of it:
+#
+#   docker compose -f sandbox/compose.yml -f sandbox/compose.mock.yml up -d   # default
+#   docker compose -f sandbox/compose.yml -f sandbox/compose.real.yml up -d
+#
+# Use sandbox/sandbox.sh rather than driving compose directly.
+
+name: honcho-sandbox
+
+# Everything the api and deriver need in order to behave identically and promptly.
+# Provider wiring lives in the overlays; this block is provider-independent.
+x-honcho-env: &honcho-env
+  DB_CONNECTION_URI: postgresql+psycopg://postgres:postgres@database:5432/honcho_sandbox
+  CACHE_URL: redis://redis:6379/0?suppress=true
+  CACHE_ENABLED: "true"
+  AUTH_USE_AUTH: "false"
+  LOG_LEVEL: INFO
+
+  # The sandbox is configured only by what Compose injects here.
+  #
+  # src/config.py calls load_dotenv(override=True) at import, so a stray .env inside
+  # the image would beat this block. Dockerfile's `COPY config.toml* /app/` means a
+  # developer's local config.toml gets baked into any locally built image. Both are
+  # switched off so the stack cannot inherit machine state.
+  PYTHON_DOTENV_DISABLED: "1"
+  HONCHO_CONFIG_TOML_DISABLED: "1"
+
+  # Derivation has to happen now, not eventually. On stock settings a sandbox seeded
+  # with a handful of messages produces zero conclusions, and it fails silently — it
+  # reads as "the deriver found nothing" rather than "the deriver never ran".
+  #
+  # Three separate gates have to come off (src/config.py, DeriverSettings):
+  #   - work units are not claimed until the batch reaches 512 tokens...
+  #   - ...or REPRESENTATION_BATCH_MAX_AGE_SECONDS (30 min) elapses
+  #   - startup jitter delays the first poll by up to 30s, then backoff stretches
+  #     the interval out to 30s
+  DERIVER_FLUSH_ENABLED: "true"
+  DERIVER_REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS: "0"
+  DERIVER_REPRESENTATION_BATCH_MAX_AGE_SECONDS: "1"
+  DERIVER_POLLING_STARTUP_JITTER_SECONDS: "0"
+  DERIVER_POLLING_JITTER_RATIO: "0"
+  DERIVER_POLLING_BACKOFF_ENABLED: "false"
+  DERIVER_POLLING_SLEEP_INTERVAL_SECONDS: "0.25"
+  DERIVER_STALE_WORK_UNIT_CLEANUP_INTERVAL_SECONDS: "5"
+
+  # Dreams never fire on their own here: the document threshold is 50 and the
+  # minimum gap between dreams is 8 hours. seed.py calls schedule_dream directly,
+  # which bypasses both — but the subsystem still has to be enabled.
+  DREAM_ENABLED: "true"
+
+services:
+  api:
+    image: ${HONCHO_SANDBOX_IMAGE:?set by sandbox.sh from sandbox/image.env}
+    entrypoint: ["sh", "docker/entrypoint.sh"]
+    depends_on:
+      database:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${SANDBOX_API_PORT:-18000}:8000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "/app/.venv/bin/python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2).read()",
+        ]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    environment: *honcho-env
+    restart: "no"
+
+  deriver:
+    image: ${HONCHO_SANDBOX_IMAGE:?set by sandbox.sh from sandbox/image.env}
+    entrypoint: ["/app/.venv/bin/python", "-m", "src.deriver"]
+    depends_on:
+      api:
+        condition: service_healthy
+      database:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment: *honcho-env
+    restart: "no"
+
+  database:
+    image: pgvector/pgvector:pg15
+    ports:
+      - "127.0.0.1:${SANDBOX_DB_PORT:-15432}:5432"
+    command: ["postgres", "-c", "max_connections=200"]
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      # The port is bound to 127.0.0.1 and the whole database is disposable.
+      POSTGRES_HOST_AUTH_METHOD: trust
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      # Creates the honcho_sandbox database. database/init.sql only adds the vector
+      # extension to `postgres`, and the sandbox needs its own database so that
+      # reset can DROP and re-CREATE it from a template.
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - pgdata:/var/lib/postgresql/data/
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d honcho_sandbox"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+    restart: "no"
+
+  redis:
+    image: redis:8.2
+    ports:
+      - "127.0.0.1:${SANDBOX_REDIS_PORT:-16379}:6379"
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+    restart: "no"
+
+# Named volumes are prefixed with the project name (honcho-sandbox_*), so they
+# never collide with a developer's existing local stack. `sandbox.sh down` removes
+# them. Redis is deliberately unbacked — its state is rebuilt by reset.
+volumes:
+  pgdata:

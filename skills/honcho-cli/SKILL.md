@@ -18,7 +18,8 @@ allowed-tools: Bash(honcho:*), Bash(jq:*), Read, Grep
 ## Command groups
 
 - `honcho config` — CLI configuration
-- `honcho workspace` — inspect, delete, search
+- `honcho start` / `stop` / `status` — local Docker stack (does not change `environmentUrl`). First start pins the Honcho image digest and writes `config.toml` into the profile. Pass `--setup basic` or `--setup advanced` for an interactive config wizard (TTY only; writes `.env` overrides). `honcho status` lists every profile; pass `--profile` for one.
+- `honcho workspace` — inspect, delete, search, chat
 - `honcho peer` — inspect, card, chat, search
 - `honcho session` — inspect, view (transcript), context, summaries
 - `honcho message` — list and get
@@ -31,6 +32,7 @@ allowed-tools: Bash(honcho:*), Bash(jq:*), Read, Grep
 - Use `honcho session context` to see exactly what an agent receives.
 - Never run `honcho workspace delete` without `honcho workspace inspect` first.
 - Compare peer card with conclusions to understand memory state.
+- `honcho start` does not rewrite `environmentUrl`. Use `HONCHO_BASE_URL=http://127.0.0.1:8000` to talk to local stack.
 
 ## Inspection tour
 
@@ -72,6 +74,7 @@ honcho session summaries <session_id> --json
 
 ```bash
 honcho workspace search "query" --json
+honcho workspace chat "what themes show up across peers?" --json
 honcho peer search <peer_id> "query" --json
 ```
 
@@ -112,4 +115,5 @@ honcho conclusion search "topic" --observer <peer_id> --json
 
 # Exercise the dialectic directly
 honcho peer chat <peer_id> "what do you know about X?" --json
+honcho workspace chat "what themes show up across peers?" --json
 ```

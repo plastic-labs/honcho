@@ -15,6 +15,7 @@ import asyncio
 import contextlib
 import json
 from datetime import UTC, datetime
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -1037,3 +1038,59 @@ class TestHonchoVersionInjection:
         # The event instance must be unchanged by emit().
         assert before == after
         assert "honcho_version" not in after
+
+
+class TestClientContextInjection:
+    """The ``client`` body object comes from X-Honcho-* request headers via the
+    API middleware; like honcho_version it is emitter-injected and exempt from
+    per-event schema versioning."""
+
+    @staticmethod
+    def _emit_and_capture_body(emitter: TelemetryEmitter) -> dict[str, Any]:
+        with patch("src.config.settings") as mock_settings:
+            mock_settings.TELEMETRY.NAMESPACE = "test"
+            emitter.emit(create_test_event())
+        return emitter._buffer[-1].data
+
+    def test_client_object_null_members_outside_request(self):
+        emitter = TelemetryEmitter(endpoint="http://test:8001/events")
+        emitter._running = True
+
+        body = self._emit_and_capture_body(emitter)
+
+        assert body["client"] == {"host": None, "plugin": None, "agent_model": None}
+
+    def test_request_headers_land_in_client_object(self):
+        """End to end: the real track_request middleware sets the ContextVars
+        from the headers, and an event emitted inside the request carries them."""
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from src.main import track_request
+
+        emitter = TelemetryEmitter(endpoint="http://test:8001/events")
+        emitter._running = True
+
+        app = FastAPI()
+        app.middleware("http")(track_request)
+
+        async def probe() -> dict[str, Any]:
+            return self._emit_and_capture_body(emitter)
+
+        app.get("/probe")(probe)
+
+        with TestClient(app) as client:
+            resp = client.get(
+                "/probe",
+                headers={
+                    "X-Honcho-Host": "claude-code/2.1.3 (darwin)",
+                    "X-Honcho-Plugin": "claude-honcho/0.2.11",
+                    "X-Honcho-Agent-Model": "claude-sonnet-4-5",
+                },
+            )
+
+        assert resp.json()["client"] == {
+            "host": "claude-code/2.1.3 (darwin)",
+            "plugin": "claude-honcho/0.2.11",
+            "agent_model": "claude-sonnet-4-5",
+        }

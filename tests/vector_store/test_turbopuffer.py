@@ -141,3 +141,26 @@ async def test_query_can_skip_attributes(
 
     namespace_mock.query.assert_awaited_once()
     assert namespace_mock.query.await_args.kwargs["include_attributes"] is False
+
+
+@pytest.mark.asyncio
+async def test_query_returns_empty_without_calling_api_on_nonpositive_top_k(
+    store: TurbopufferVectorStore,
+) -> None:
+    """Turbopuffer rejects top_k < 1; never hit the network with a bad value."""
+    namespace_mock = MagicMock()
+    namespace_mock.query = AsyncMock()
+    store._get_namespace = MagicMock(return_value=namespace_mock)  # pyright: ignore[reportPrivateUsage]
+
+    for top_k in (0, -1):
+        assert (
+            await store.query(
+                "honcho.msg.test",
+                [0.1, 0.2, 0.3, 0.4],
+                top_k=top_k,
+            )
+            == []
+        )
+
+    store._get_namespace.assert_not_called()  # pyright: ignore[reportPrivateUsage]
+    namespace_mock.query.assert_not_awaited()

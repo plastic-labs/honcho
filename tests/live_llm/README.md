@@ -63,8 +63,8 @@ export OPENROUTER_API_KEY="sk-or-v1-..."
 Coverage by provider:
 
 - Anthropic: structured output path, prompt caching metrics, thinking blocks, multi-turn tool replay
-- OpenAI GPT-4 class: structured outputs, prompt caching
-- OpenAI GPT-5 class (incl. gpt-5.x point-releases): structured outputs, prompt caching, `reasoning_effort`, `max_completion_tokens` routing
+- OpenAI GPT-4 class: structured outputs, prompt caching, multi-turn tool replay (null `content` preserved)
+- OpenAI GPT-5 class (incl. gpt-5.x point-releases): structured outputs, prompt caching, `reasoning_effort`, `max_completion_tokens` routing, multi-turn tool replay (null `content` preserved)
 - OpenAI transport → OpenRouter non-reasoning models (e.g. `inception/mercury-2`): non-chat / diffusion architectures must stay on `max_tokens`, no `reasoning_effort`, tool-calling parameter-schema compatibility is the canary for exotic OR-served providers
 - Gemini 2.5/3.0 classes: structured outputs, cached-content reuse, thought signatures, multi-turn tool replay
 - Gemini 3.1 class: thinking and tool replay coverage by default; structured-output/caching coverage should only be added once Google documents support for that path

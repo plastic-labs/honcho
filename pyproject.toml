@@ -1,12 +1,12 @@
 [project]
 name = "honcho"
-version = "3.0.12"
+version = "3.1.1"
 description = "Honcho Server"
 authors = [
   {name = "Plastic Labs", email = "hello@plasticlabs.ai"},
 ]
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.13"
 dependencies = [
     "fastapi[standard-no-fastapi-cloud-cli]>=0.131.0",
     "python-dotenv>=1.0.0",
@@ -42,6 +42,9 @@ dependencies = [
 lancedb = [
     "lancedb>=0.25.3; sys_platform != \"darwin\" or platform_machine != \"x86_64\"",
     "pyarrow>=19.0.0",
+]
+qdrant = [
+    "qdrant-client>=1.18.0",
 ]
 [dependency-groups]
 dev = [

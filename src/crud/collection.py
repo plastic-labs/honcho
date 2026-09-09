@@ -10,7 +10,8 @@ from sqlalchemy.orm import make_transient_to_detached
 from src import models
 from src.cache.client import (
     cache,
-    get_cache_namespace,
+    cache_key_namespace,
+    cache_prefix_namespace,
     safe_cache_delete,
     safe_cache_set,
 )
@@ -22,13 +23,13 @@ logger = getLogger(__name__)
 COLLECTION_CACHE_KEY_TEMPLATE = (
     "v2:workspace:{workspace_name}:collection:{observer}:{observed}"
 )
-COLLECTION_LOCK_PREFIX = f"{get_cache_namespace()}:lock:v2"
+COLLECTION_LOCK_PREFIX = f"{cache_prefix_namespace()}:lock:v2"
 
 
 def collection_cache_key(workspace_name: str, observer: str, observed: str) -> str:
     """Generate cache key for collection."""
     return (
-        get_cache_namespace()
+        cache_key_namespace()
         + ":"
         + COLLECTION_CACHE_KEY_TEMPLATE.format(
             workspace_name=workspace_name,
@@ -41,7 +42,7 @@ def collection_cache_key(workspace_name: str, observer: str, observed: str) -> s
 @cache(
     key=COLLECTION_CACHE_KEY_TEMPLATE,
     ttl=f"{settings.CACHE.DEFAULT_TTL_SECONDS}s",
-    prefix=get_cache_namespace(),
+    prefix=cache_prefix_namespace(),
     condition=NOT_NONE,
 )
 @cache.locked(

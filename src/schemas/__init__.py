@@ -54,6 +54,7 @@ from src.schemas.api import (
     WebhookEndpointCreate,
     Workspace,
     WorkspaceBase,
+    WorkspaceChatOptions,
     WorkspaceCreate,
     WorkspaceGet,
     WorkspaceMessageSearchOptions,
@@ -77,6 +78,7 @@ from src.schemas.configuration import (
     WorkspaceConfiguration,
 )
 from src.schemas.internal import (
+    DeriverMetrics,
     DocumentBase,
     DocumentCreate,
     DocumentMetadata,
@@ -114,6 +116,7 @@ __all__ = [
     "ConclusionQuery",
     "DialecticOptions",
     "DialecticResponse",
+    "WorkspaceChatOptions",
     "DialecticStreamChunk",
     "DialecticStreamDelta",
     "Message",
@@ -161,6 +164,7 @@ __all__ = [
     "WorkspaceMessageSearchOptions",
     "WorkspaceUpdate",
     # internal
+    "DeriverMetrics",
     "DocumentBase",
     "DocumentCreate",
     "DocumentMetadata",
