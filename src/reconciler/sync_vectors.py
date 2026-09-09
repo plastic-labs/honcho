@@ -49,6 +49,26 @@ def backoff_eligible(
     )
 
 
+async def has_pending_work(db: AsyncSession) -> bool:
+    """True when a reconciliation cycle would find something to sync or clean up."""
+    if await _get_message_embeddings_needing_sync(db, batch_size=1):
+        return True
+    if get_external_vector_store() is not None and await _get_documents_needing_sync(
+        db, batch_size=1
+    ):
+        return True
+    cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(
+        minutes=5
+    )
+    purgeable = (
+        select(models.Document.id)
+        .where(models.Document.deleted_at.is_not(None))
+        .where(models.Document.deleted_at < cutoff)
+        .limit(1)
+    )
+    return (await db.scalar(purgeable)) is not None
+
+
 @dataclass
 class ReconciliationMetrics:
     """Metrics for a reconciliation cycle."""
