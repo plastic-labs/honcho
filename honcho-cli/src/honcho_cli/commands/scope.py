@@ -107,7 +107,7 @@ def create_scope(
     sessions: Optional[List[str]] = typer.Option(
         None,
         "--sessions",
-        help="Session IDs to add on creation (repeat or comma-separate). Sessions with history are backfilled asynchronously; watch with `honcho scope status`.",
+        help="Sessions to add (repeat or comma-separate). History backfills asynchronously; see `honcho scope status`.",
     ),
     metadata: Optional[str] = typer.Option(None, "--metadata", help="JSON metadata to associate with the scope"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
@@ -193,7 +193,7 @@ def scope_sessions(
 @app.command("add-sessions")
 def add_sessions(
     name: str = typer.Argument(help="Scope name"),
-    session_ids: List[str] = typer.Argument(help="Session IDs to add (space- or comma-separated, at most 100)"),
+    session_ids: List[str] = typer.Argument(help="Session IDs (space- or comma-separated, max 100)"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:

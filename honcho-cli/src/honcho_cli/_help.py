@@ -98,16 +98,17 @@ def print_welcome(console: Console) -> None:
         ("honcho peer inspect -p <peer> -w <workspace>", "dashboard: peer card + recent conclusions + configuration"),
         ("honcho peer representation -p <peer> -w <workspace>", "global peer representation"),
         ("honcho peer representation -p <peer> -w <workspace> -s <session>", "session-scoped peer representation"),
-        ("honcho peer chat \"...\" -p <peer> --scope <scope>", "confine recall to a scope's sessions"),
+        ("honcho scope list -w <workspace>", "which session sets exist; inspect one for members + backfill"),
+        ("honcho peer chat \"...\" -p <peer> --scope <scope>", "answer from one scope's sessions only"),
         ("honcho peer card -p <peer> -w <workspace>", "synthesized identity: traits, preferences, instructions"),
         ("honcho conclusion list -p <peer> -w <workspace>", "browse peer conclusions"),
         ("honcho session view / context -s <session>", "transcript, or what an agent would see"),
         ("honcho workspace queue-status", "is the deriver processing?"),
     ]
     option_rows = [
-        ("-w / --workspace", "scope to a workspace"),
-        ("-p / --peer",      "scope to a peer"),
-        ("-s / --session",   "scope to a session"),
+        ("-w / --workspace", "target a workspace"),
+        ("-p / --peer",      "target a peer"),
+        ("-s / --session",   "target a session"),
         ("--json",           "force JSON output for scripts and agents"),
         ("--help",           "show help for any command (e.g. honcho peer --help)"),
     ]

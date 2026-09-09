@@ -218,10 +218,10 @@ honcho peer chat <query>
   Reasoning level: minimal, low, medium, high, max. Short alias: `-r`.
 </ParamField>
 <ParamField path="--scope" type="string">
-  Confine recall to a scope. One name answers from that scope's own view; several names (repeat or comma-separate) are an explicit-only allowlist of their sessions. Mutually exclusive with --sessions and -s.
+  Recall only from this scope. Repeat or comma-separate for several (explicit conclusions only). Excludes -s and --sessions.
 </ParamField>
 <ParamField path="--sessions" type="string">
-  Ad hoc session-ID allowlist (repeat or comma-separate). Explicit conclusions only. Mutually exclusive with --scope and -s.
+  Recall only from these session IDs (repeat or comma-separate); explicit conclusions only. Excludes -s and --scope.
 </ParamField>
 </Accordion>
 <Accordion title="create">
@@ -333,7 +333,7 @@ honcho scope create <name>
 
 <ParamField path="name" type="string" required />
 <ParamField path="--sessions" type="string">
-  Session IDs to add on creation (repeat or comma-separate). Sessions with history are backfilled asynchronously; watch with `honcho scope status`.
+  Sessions to add (repeat or comma-separate). History backfills asynchronously; see `honcho scope status`.
 </ParamField>
 <ParamField path="--metadata" type="string">
   JSON metadata to associate with the scope.
@@ -668,7 +668,7 @@ honcho workspace chat <query>
   Reasoning level: minimal, low, medium, high, max. Short alias: `-r`.
 </ParamField>
 <ParamField path="--scope" type="string">
-  Confine recall to a scope. One name answers from that scope's own view; several names (repeat or comma-separate) are an explicit-only allowlist of their sessions. Mutually exclusive with -s.
+  Recall only from this scope. Repeat or comma-separate for several (explicit conclusions only). Excludes -s.
 </ParamField>
 </Accordion>
 <Accordion title="create">
