@@ -41,11 +41,16 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 import re
 
-from .aio import ConclusionScopeAio, HonchoAio, PeerAio, SessionAio
-from .api_types import MessageCreateParams
-from .base import PeerBase, SessionBase
+from .aio import ConclusionsViewAio, HonchoAio, PeerAio, ScopeAio, SessionAio
+from .api_types import (
+    MessageCreateParams,
+    ScopeBackfillJob,
+    ScopeResponse,
+    ScopeStatusResponse,
+)
+from .base import PeerBase, ScopeBase, SessionBase
 from .client import Honcho
-from .conclusions import Conclusion, ConclusionScope
+from .conclusions import Conclusion, ConclusionsView
 from .http.exceptions import (
     APIError,
     AuthenticationError,
@@ -63,12 +68,19 @@ from .http.exceptions import (
 from .message import Message
 from .pagination import AsyncPage, SyncPage
 from .peer import Peer
+from .scope import Scope
 from .session import Session
 from .session_context import SessionContext, SessionSummaries, Summary
 from .types import (
     AsyncDialecticStreamResponse,
     DialecticStreamResponse,
 )
+
+# Deprecated aliases. "Scope" now means a named set of sessions (see `Scope`),
+# which these are not — they are views over one observer/observed pair. Kept for
+# one more minor version.
+ConclusionScope = ConclusionsView
+ConclusionScopeAio = ConclusionsViewAio
 
 
 def _detect_version() -> str:
@@ -95,23 +107,32 @@ __all__ = [
     "Honcho",
     # Domain classes
     "Conclusion",
-    "ConclusionScope",
+    "ConclusionsView",
     "Message",
     "MessageCreateParams",
     "Peer",
+    "Scope",
     "Session",
     # Aio views (for type hints)
-    "ConclusionScopeAio",
+    "ConclusionsViewAio",
     "HonchoAio",
     "PeerAio",
+    "ScopeAio",
     "SessionAio",
     # Base classes
     "PeerBase",
+    "ScopeBase",
     "SessionBase",
     # Response types
+    "ScopeBackfillJob",
+    "ScopeResponse",
+    "ScopeStatusResponse",
     "SessionContext",
     "SessionSummaries",
     "Summary",
+    # Deprecated aliases
+    "ConclusionScope",
+    "ConclusionScopeAio",
     # Pagination
     "AsyncPage",
     "SyncPage",

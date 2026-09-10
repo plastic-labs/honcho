@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
 from src.models import Peer, Workspace
+from src.schemas import DreamType
 
 
 def test_get_or_create_workspace(client: TestClient):
@@ -758,3 +759,52 @@ async def test_schedule_dream_invokes_enqueue_dream(
         "Loop 4: enqueue_dream no longer accepts document_count; the baseline "
         "is written atomically with last_dream_at in process_dream."
     )
+
+
+@pytest.mark.asyncio
+async def test_schedule_dream_card_refresh_forwards_rebuild(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+):
+    """POST /schedule_dream accepts dream_type=card_refresh and forwards the
+    rebuild flag to enqueue_dream (manual/event-driven card refreshes bypass
+    the volume gates by design)."""
+    workspace, peer = sample_data
+
+    collection = models.Collection(
+        observer=peer.name,
+        observed=peer.name,
+        workspace_name=workspace.name,
+        internal_metadata={},
+    )
+    db_session.add(collection)
+    await db_session.commit()
+
+    captured: dict[str, Any] = {}
+
+    async def fake_enqueue_dream(*args: Any, **kwargs: Any) -> None:
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+
+    with (
+        patch("src.routers.workspaces.settings.DREAM.ENABLED", True),
+        patch(
+            "src.routers.workspaces.enqueue_dream",
+            new=AsyncMock(side_effect=fake_enqueue_dream),
+        ),
+    ):
+        response = client.post(
+            f"/v3/workspaces/{workspace.name}/schedule_dream",
+            json={
+                "observer": peer.name,
+                "observed": peer.name,
+                "dream_type": "card_refresh",
+                "rebuild": True,
+            },
+        )
+
+    assert response.status_code == 204, response.text
+    assert "kwargs" in captured, "enqueue_dream was not called"
+    assert captured["kwargs"]["dream_type"] == DreamType.CARD_REFRESH
+    assert captured["kwargs"]["rebuild"] is True

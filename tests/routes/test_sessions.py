@@ -7,7 +7,9 @@ from nanoid import generate as generate_nanoid
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
+from src.config import settings
 from src.models import Peer, Workspace
+from src.security import JWTParams, create_jwt
 
 
 def test_get_or_create_session(client: TestClient, sample_data: tuple[Workspace, Peer]):
@@ -1282,6 +1284,59 @@ def test_get_session_context_with_peer_perspective(
     data = response.json()
     assert "peer_representation" in data
     assert "peer_card" in data
+
+
+@pytest.mark.asyncio
+async def test_get_session_context_peer_key_denied_for_co_member_perspective(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """`allow_member_read` gets a peer-scoped key onto this route, but it may only
+    read from its OWN perspective. A co-member's representation and peer card are
+    not session data, so membership must not hand them over."""
+    test_workspace, alice = sample_data
+    bob = str(generate_nanoid())
+    client.post(
+        f"/v3/workspaces/{test_workspace.name}/peers",
+        json={"name": bob, "metadata": {}},
+    )
+    session_id = str(generate_nanoid())
+    client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions",
+        json={"id": session_id, "peer_names": {alice.name: {}, bob: {}}},
+    )
+    # Membership is read on a separate committed-only connection by the auth
+    # dependency, so it must be committed before a member-scoped read.
+    await db_session.commit()
+
+    monkeypatch.setattr(settings.AUTH, "USE_AUTH", True)
+    monkeypatch.setattr(settings.AUTH, "JWT_SECRET", "test-secret")
+    client.headers["Authorization"] = (
+        f"Bearer {create_jwt(JWTParams(w=test_workspace.name, p=alice.name))}"
+    )
+    url = f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/context"
+
+    # Bob's view of alice — alice is not the observer.
+    assert (
+        client.get(
+            url, params={"peer_target": alice.name, "peer_perspective": bob}
+        ).status_code
+        == 401
+    )
+    # The omniscient view of bob — nobody's own perspective.
+    assert client.get(url, params={"peer_target": bob}).status_code == 401
+    # Alice's own perspective on bob is hers to read, as is her own global view.
+    assert (
+        client.get(
+            url, params={"peer_target": bob, "peer_perspective": alice.name}
+        ).status_code
+        == 200
+    )
+    assert client.get(url, params={"peer_target": alice.name}).status_code == 200
+    # Session data itself is still readable by any member.
+    assert client.get(url).status_code == 200
 
 
 def test_get_session_context_peer_perspective_without_target_fails(

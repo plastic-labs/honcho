@@ -1,22 +1,29 @@
-"""Session commands: list, inspect, context, summaries, peers, search, representation, metadata."""
+"""Session commands: list, inspect, view, context, summaries, peers, search, representation, metadata."""
 
 from __future__ import annotations
 
 import json
+import shlex
 from typing import List, Optional
 
 import typer
 
-from honcho import HonchoError
+from honcho import HonchoError, Session
 
 from honcho_cli.commands.workspace import _config_to_dict, _handle_error, _raw_list
-from honcho_cli.output import print_error, print_result, status, use_json
+from honcho_cli.output import print_error, print_result, print_transcript, status, use_json
 from honcho_cli.validation import validate_resource_id
 
 from honcho_cli._help import HonchoTyperGroup
-from honcho_cli.common import add_common_options, get_client, get_resolved_config, handle_cmd_flags
+from honcho_cli.common import (
+    add_common_options,
+    get_client,
+    get_flag_overrides,
+    get_resolved_config,
+    handle_cmd_flags,
+)
 
-app = typer.Typer(cls=HonchoTyperGroup, help="List, inspect, create, delete, and manage conversation sessions and their peers.")
+app = typer.Typer(cls=HonchoTyperGroup, help="List, inspect, view, create, delete, and manage conversation sessions and their peers.")
 add_common_options(app)
 
 
@@ -133,6 +140,240 @@ def inspect(
         print_result(result)
     except Exception as e:
         _handle_error(e, "session", sid)
+
+
+# Server-side ceiling on page size (fastapi-pagination's default ``Params``
+# declares ``size`` as ``Query(50, ge=1, le=100)``).
+MAX_PAGE_SIZE = 100
+DEFAULT_PAGE_SIZE = 50
+
+
+def _fetch_recent_messages(sess, filters: dict | None, last: int) -> tuple[list, int | None]:
+    """Fetch the ``last`` most recent messages, newest first.
+
+    Walks as many newest-first server pages as it takes to fill the window.
+    Returns the messages plus the session's total message count (if reported).
+    """
+    page = sess.messages(
+        filters=filters,
+        reverse=True,
+        size=min(max(last, 1), MAX_PAGE_SIZE),
+    )
+    total = page.total
+    msgs = list(page.items)
+    while len(msgs) < last and page.has_next_page():
+        page = page.get_next_page()
+        if page is None:
+            break
+        msgs.extend(page.items)
+    return msgs[:last], total
+
+
+def _next_page_command(
+    session_id: str,
+    next_page: int,
+    size: int,
+    *,
+    reverse: bool,
+    show_ids: bool,
+    workspace: str | None,
+    peer: str | None,
+) -> str:
+    """Continuation command for the next page, carrying this invocation's scope.
+
+    Scoping flags are echoed only when passed as flags; anything resolved from
+    the environment or config file resolves the same way on the next run. IDs
+    are shell-quoted — they may contain spaces and metacharacters, and this
+    string is meant to be pasted into a shell.
+    """
+    parts = [
+        "honcho",
+        "session",
+        "view",
+        session_id,
+        "--page",
+        str(next_page),
+        "--size",
+        str(size),
+    ]
+    if reverse:
+        parts.append("--reverse")
+    if show_ids:
+        parts.append("--ids")
+    if workspace:
+        parts += ["-w", workspace]
+    if peer:
+        parts += ["-p", peer]
+    return shlex.join(parts)
+
+
+def _fetch_all_messages(sess, filters: dict | None) -> tuple[list, int | None]:
+    """Fetch every message in the session, oldest first."""
+    page = sess.messages(filters=filters, reverse=False, size=MAX_PAGE_SIZE)
+    total = page.total
+    msgs = list(page.items)
+    while page.has_next_page():
+        page = page.get_next_page()
+        if page is None:
+            break
+        msgs.extend(page.items)
+    return msgs, total
+
+
+@app.command()
+def view(
+    session_id: Optional[str] = typer.Argument(None, help="Session ID (uses default if omitted)"),
+    last: Optional[int] = typer.Option(
+        None,
+        "--last",
+        help=f"Show only the N most recent messages (default when no --page/--all: {DEFAULT_PAGE_SIZE})",
+    ),
+    page_number: Optional[int] = typer.Option(
+        None,
+        "--page",
+        help="1-indexed page of the full transcript. Use for page 2+.",
+    ),
+    size: Optional[int] = typer.Option(
+        None,
+        "--size",
+        help=f"Messages per page; requires --page (1-{MAX_PAGE_SIZE}, default: {DEFAULT_PAGE_SIZE})",
+    ),
+    all_messages: bool = typer.Option(False, "--all", help="Show the full transcript (every page)"),
+    reverse: bool = typer.Option(
+        False,
+        "--reverse",
+        help="Newest first (default is chronological: oldest at top)",
+    ),
+    show_ids: bool = typer.Option(False, "--ids", help="Include message IDs in the transcript"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
+    peer: Optional[str] = typer.Option(None, "--peer", "-p", help="Filter by peer ID"),
+    session: Optional[str] = typer.Option(None, "--session", "-s", help="Override session ID"),
+    json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
+) -> None:
+    """View a session transcript as a chat log.
+
+    Modes (pick one):
+
+    - default / --last N: tail of the conversation (most recent N)
+    - --page N [--size M]: page through the full transcript
+    - --all: every message
+
+    Paging follows the requested order: --page 1 starts at the oldest message,
+    or the newest with --reverse.
+
+    Human mode prints a row-delimited table. JSON mode emits the message list
+    (same shape as message list).
+    """
+    handle_cmd_flags(json_output=json_output, workspace=workspace, peer=peer, session=session)
+    sid = _get_session_id(session_id)
+
+    # Validate every flag before touching the network.
+    modes = sum([
+        last is not None,
+        page_number is not None,
+        all_messages,
+    ])
+    if modes > 1:
+        print_error(
+            "INVALID_FLAGS",
+            "--last, --page, and --all are mutually exclusive",
+            {"last": last, "page": page_number, "all": all_messages},
+        )
+        raise typer.Exit(1)
+
+    if page_number is not None and page_number < 1:
+        print_error("INVALID_FLAGS", "--page must be >= 1", {"page": page_number})
+        raise typer.Exit(1)
+    if size is not None and page_number is None:
+        print_error("INVALID_FLAGS", "--size only applies with --page", {"size": size})
+        raise typer.Exit(1)
+    if size is not None and not 1 <= size <= MAX_PAGE_SIZE:
+        print_error(
+            "INVALID_FLAGS",
+            f"--size must be between 1 and {MAX_PAGE_SIZE}",
+            {"size": size},
+        )
+        raise typer.Exit(1)
+    if last is not None and last < 1:
+        print_error("INVALID_FLAGS", "--last must be >= 1", {"last": last})
+        raise typer.Exit(1)
+
+    # Default: tail of conversation (most recent 50).
+    mode = "page" if page_number is not None else ("all" if all_messages else "last")
+    tail = last if last is not None else DEFAULT_PAGE_SIZE
+    page_size = size if size is not None else DEFAULT_PAGE_SIZE
+
+    client, config = get_client()
+    # Read-only: client.session() is a get-or-create POST, so build the Session directly.
+    sess = Session(sid, client)
+
+    try:
+        filters = {"peer_id": config.peer_id} if config.peer_id else None
+        page_meta: int | None = None
+        pages_meta: int | None = None
+
+        if mode == "page":
+            # Page in the order the caller asked for.
+            result_page = sess.messages(
+                filters=filters,
+                page=page_number,
+                size=page_size,
+                reverse=reverse,
+            )
+            msgs = list(result_page.items)
+            total = result_page.total
+            page_meta = result_page.page if result_page.page is not None else page_number
+            pages_meta = result_page.pages
+        elif mode == "all":
+            msgs, total = _fetch_all_messages(sess, filters)
+            if reverse:
+                msgs = list(reversed(msgs))
+        else:
+            # Tail window: fetched newest-first, flipped to chronological unless --reverse.
+            msgs, total = _fetch_recent_messages(sess, filters, tail)
+            if not reverse:
+                msgs = list(reversed(msgs))
+
+        items = [
+            {
+                "id": m.id,
+                "peer_id": m.peer_id,
+                "content": m.content,
+                "token_count": m.token_count,
+                "metadata": m.metadata,
+                "created_at": str(m.created_at),
+            }
+            for m in msgs
+        ]
+    except Exception as e:
+        _handle_error(e, "session", sid)
+        raise  # unreachable: _handle_error always exits
+
+    next_page_hint = None
+    if page_meta is not None and pages_meta is not None and page_meta < pages_meta:
+        # Effective overrides, not the command-level params: -w/-p also parse at
+        # group and top level.
+        overrides = get_flag_overrides()
+        next_page_hint = _next_page_command(
+            sid,
+            page_meta + 1,
+            page_size,
+            reverse=reverse,
+            show_ids=show_ids,
+            workspace=overrides["workspace"],
+            peer=overrides["peer"],
+        )
+
+    # Rendered outside the try: output failures aren't session API errors.
+    print_transcript(
+        items,
+        session_id=sid,
+        total=total,
+        page=page_meta,
+        pages=pages_meta,
+        show_ids=show_ids,
+        next_page_hint=next_page_hint,
+    )
 
 
 @app.command()

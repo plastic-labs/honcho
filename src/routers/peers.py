@@ -10,18 +10,32 @@ from fastapi import APIRouter, Body, Depends, Path, Query, Response
 from fastapi.responses import StreamingResponse
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import apaginate
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, schemas
 from src.config import settings
+from src.crud.message import get_peer_session_names
 from src.crud.session import is_peer_in_session
 from src.dependencies import db, read_db, tracked_db
 from src.dialectic.chat import agentic_chat, agentic_chat_stream
 from src.embedding_client import embedding_client
-from src.exceptions import AuthenticationException, ResourceNotFoundException
+from src.exceptions import (
+    AuthenticationException,
+    ResourceNotFoundException,
+    ValidationException,
+)
 from src.security import JWTParams, require_auth
 from src.telemetry import prometheus_metrics
 from src.telemetry.events import EmbeddingCallPurpose, GetContextEvent, emit
+from src.utils.filter import MAX_SESSION_ALLOWLIST_ENTRIES, extract_session_allowlist
+from src.utils.schema_conversion import json_response_schema_to_pydantic
+from src.utils.scopes import (
+    is_scope_peer,
+    is_scope_peer_name,
+    validate_no_scope_peer_names,
+    validate_scope_read_option,
+)
 from src.utils.search import search
 from src.utils.types import embedding_call_purpose
 
@@ -31,6 +45,37 @@ router = APIRouter(
     prefix="/workspaces/{workspace_id}/peers",
     tags=["peers"],
 )
+
+
+async def _resolve_scope_option(
+    workspace_id: str,
+    scope: str | list[str],
+    *,
+    db_action: str,
+) -> tuple[str | None, list[str] | None]:
+    """Map a validated `scope` option to (observer_override, session_allowlist).
+
+    A single scope swaps the observer to the scope peer: conclusion recall is
+    then confined to the (scope, observed) collection and message recall to
+    the scope's session membership by existing observer semantics. A list of
+    scopes keeps the path peer as observer and returns the union of the
+    scopes' member sessions as an explicit allowlist (fail-closed when empty).
+    """
+    async with tracked_db(db_action, read_only=True) as scope_db:
+        if isinstance(scope, str):
+            [scope_peer] = await crud.resolve_scope_peers(
+                scope_db, workspace_id, [scope]
+            )
+            return scope_peer, None
+
+        union = await crud.resolve_scope_session_union(scope_db, workspace_id, scope)
+
+    if len(union) > MAX_SESSION_ALLOWLIST_ENTRIES:
+        raise ValidationException(
+            "The scopes' combined membership exceeds the maximum of "
+            + f"{MAX_SESSION_ALLOWLIST_ENTRIES} sessions per request"
+        )
+    return None, union
 
 
 @router.post(
@@ -46,7 +91,11 @@ async def get_peers(
     reverse: bool = Query(False, description="Whether to reverse the order of results"),
     db: AsyncSession = read_db,
 ):
-    """Get all Peers for a Workspace, paginated with optional filters."""
+    """Get all Peers for a Workspace, paginated with optional filters.
+
+    Scope peers are excluded by default; set `kind` to "scope" for scope peers
+    only, or "all" for everything.
+    """
     filter_param = None
     if options and hasattr(options, "filters"):
         filter_param = options.filters
@@ -59,6 +108,7 @@ async def get_peers(
             workspace_name=workspace_id,
             filters=filter_param,
             reverse=reverse,
+            kind=options.kind if options else None,
         ),
     )
 
@@ -92,6 +142,14 @@ async def get_or_create_peer(
         if not jwt_params.p:
             raise AuthenticationException("Peer ID not found in query parameter or JWT")
         peer.name = jwt_params.p
+
+    # The scope namespace is reserved: scope peers are only created through
+    # the scopes facade (POST /workspaces/{workspace_id}/scopes).
+    validate_no_scope_peer_names(
+        [peer.name],
+        action="Use the scopes routes to create scopes.",
+    )
+
     result = await crud.get_or_create_peers(
         db, workspace_name=workspace_id, peers=[peer]
     )
@@ -114,7 +172,19 @@ async def update_peer(
     peer: schemas.PeerUpdate = Body(..., description="Updated peer parameters"),
     db: AsyncSession = db,
 ):
-    """Update a Peer's metadata and/or configuration."""
+    """Update a Peer's metadata and/or configuration.
+
+    Returns 422 if the peer is a scope — use the scopes routes to manage scopes.
+    """
+    # Three-way on the reserved namespace, all enforced inside ``crud.update_peer``
+    # on the resolved row so there is no check-then-use window: a real scope is
+    # refused (this route replaces `configuration` wholesale, so it must never touch
+    # a facade-managed peer); an existing *unflagged* peer that merely occupies the
+    # namespace is a normal peer and updates fine; and a reserved-prefix name that
+    # does not exist is refused by create-path validation rather than being minted.
+    #
+    # Kept out of the docstring deliberately: FastAPI publishes that into the
+    # OpenAPI description, and callers need the contract, not the mechanism.
     updated_peer = await crud.update_peer(
         db, workspace_name=workspace_id, peer_name=peer_id, peer=peer
     )
@@ -158,6 +228,7 @@ async def get_sessions_for_peer(
 
 @router.post(
     "/{peer_id}/chat",
+    summary="Peer Chat",
     responses={
         200: {
             "content": {
@@ -181,6 +252,46 @@ async def chat(
     Query a Peer's representation using natural language. Performs agentic search and reasoning to comprehensively
     answer the query based on all latent knowledge gathered about the peer from their messages and conclusions.
     """
+    # Scope peers are never observed, so no representation of them exists to
+    # query. Covers the path-level observer too: a scope `peer_id` no longer
+    # errors out downstream now that crud.get_peer takes a plain name, and
+    # querying from a scope's perspective is a read-side surface that does not
+    # exist yet.
+    scope_candidates = [
+        n for n in (peer_id, options.target) if n is not None and is_scope_peer_name(n)
+    ]
+    if scope_candidates:
+        async with tracked_db("peers.chat.scope_check", read_only=True) as s_db:
+            # Strict variant, matching the representation route: `target` is an
+            # observed position and nothing here creates the peer, so a reserved
+            # name that does not exist yet must be refused rather than answered
+            # and then turned into a scope.
+            await crud.reject_scope_observed(
+                s_db,
+                workspace_id,
+                scope_candidates,
+                action=(
+                    "No representation is formed of a scope, so a scope cannot "
+                    "be a chat observer or target."
+                ),
+            )
+
+    # Scoped reads: a single scope swaps the observer to the scope
+    # peer; a list of scopes becomes a session allowlist over their union.
+    observer = peer_id
+    scope_session_union: list[str] | None = None
+    if options.scope is not None:
+        validate_scope_read_option(
+            filters=options.filters,
+            session_id=options.session_id,
+            jwt_params=jwt_params,
+        )
+        observer_override, scope_session_union = await _resolve_scope_option(
+            workspace_id, options.scope, db_action="peers.chat.resolve_scope"
+        )
+        if observer_override is not None:
+            observer = observer_override
+
     # The session id arrives in the body, so require_auth can't gate on it. A
     # peer-scoped key may only scope a chat to a session its peer belongs to;
     # without this check it could read any session's messages (the dialectic
@@ -193,13 +304,58 @@ async def chat(
             ):
                 raise AuthenticationException("JWT not permissioned for this resource")
 
+    # Parse the session allowlist from filters (422 on unsupported keys/shapes,
+    # and on a session_id the allowlist doesn't cover).
+    session_allowlist = extract_session_allowlist(
+        options.filters, must_include=options.session_id
+    )
+    # A peer-scoped key may only name sessions its peer belongs to — the
+    # allowlist reaches message recall the same way session_id does above.
+    # `active_only` matches the is_peer_in_session check above, so both gates
+    # answer the same question for a peer that has left a session.
+    if jwt_params.p is not None and session_allowlist is not None:
+        async with tracked_db("peers.chat.session_scope_auth", read_only=True) as s_db:
+            member_sessions = set(
+                await get_peer_session_names(
+                    s_db, workspace_id, jwt_params.p, active_only=True
+                )
+            )
+        if not set(session_allowlist) <= member_sessions:
+            raise AuthenticationException("JWT not permissioned for this resource")
+
+    # A list of scopes resolves to a session allowlist over their union, which
+    # replaces any filters-derived allowlist (the two are mutually exclusive, so
+    # only one can be set).
+    if scope_session_union is not None:
+        session_allowlist = scope_session_union
+
+    # Convert the caller's JSON Schema so malformed schemas fail immediately with 422
+    response_model: type[BaseModel] | None = None
+    if options.response_format is not None:
+        try:
+            response_model = json_response_schema_to_pydantic(options.response_format)
+        except ValueError as e:
+            raise ValidationException(f"Invalid response_format: {e}") from None
+
     # Get or create the peer to ensure it exists
     async with tracked_db("peers.chat.get_or_create_peer") as peer_db:
         peers_result = await crud.get_or_create_peers(
             peer_db,
             workspace_name=workspace_id,
-            peers=[schemas.PeerCreate(name=peer_id)],
+            peers=[schemas.PeerSpec(name=peer_id)],
         )
+        # Re-check on the resolved row: the name-level check above ran before the
+        # peer was resolved, so a scope created in between would be picked up here
+        # as existing and used as the chat observer. Deliberately NOT named
+        # `observer` — that holds the effective observer, which a single `scope`
+        # has already swapped to the scope peer, and rebinding it here would
+        # silently undo the swap.
+        path_peer = peers_result.resource[0]
+        if is_scope_peer(path_peer.name, path_peer.internal_metadata):
+            raise ValidationException(
+                "No representation is formed of a scope, so a scope cannot be a "
+                + "chat observer or target."
+            )
         await peer_db.commit()
     await peers_result.post_commit()
 
@@ -227,9 +383,11 @@ async def chat(
                     workspace_name=workspace_id,
                     session_name=options.session_id,
                     query=options.query,
-                    observer=peer_id,
+                    observer=observer,
                     observed=options.target if options.target is not None else peer_id,
                     reasoning_level=options.reasoning_level,
+                    session_allowlist=session_allowlist,
+                    response_model=response_model,
                 )
             ),
             media_type="text/event-stream",
@@ -239,11 +397,14 @@ async def chat(
         workspace_name=workspace_id,
         session_name=options.session_id,
         query=options.query,
-        observer=peer_id,
+        # a single `scope` swaps the observer to the scope peer
+        observer=observer,
         # if target is given, that's the observed peer. otherwise, observer==observed
         # and it's answered from the omniscient Honcho perspective
         observed=options.target if options.target is not None else peer_id,
         reasoning_level=options.reasoning_level,
+        session_allowlist=session_allowlist,
+        response_model=response_model,
     )
 
     # Prometheus metrics
@@ -259,15 +420,15 @@ async def chat(
 @router.post(
     "/{peer_id}/representation",
     response_model=schemas.RepresentationResponse,
-    dependencies=[
-        Depends(require_auth(workspace_name="workspace_id", peer_name="peer_id"))
-    ],
 )
 async def get_representation(
     workspace_id: str = Path(...),
     peer_id: str = Path(...),
     options: schemas.PeerRepresentationGet = Body(
         ..., description="Options for getting the peer representation"
+    ),
+    jwt_params: JWTParams = Depends(
+        require_auth(workspace_name="workspace_id", peer_name="peer_id")
     ),
 ):
     """Get a curated subset of a Peer's Representation. A Representation is always a subset of the total
@@ -278,37 +439,124 @@ async def get_representation(
     If a target is provided, we get the Representation of the target from the perspective of the Peer.
     If no target is provided, we get the omniscient Honcho Representation of the Peer.
     """
+    # Fast-fail before any embedding work. Same guard as the authoritative one
+    # below, so a reserved name is refused here rather than after paying for an
+    # embedding; the check is repeated at the read because this session closes and
+    # a scope could be created in between.
+    scope_candidates = [
+        n for n in (peer_id, options.target) if n is not None and is_scope_peer_name(n)
+    ]
+    if scope_candidates:
+        async with tracked_db(
+            "peers.representation.scope_check", read_only=True
+        ) as s_db:
+            await crud.reject_scope_observed(
+                s_db,
+                workspace_id,
+                scope_candidates,
+                action=(
+                    "No representation is formed of a scope, so a scope cannot "
+                    "be a representation observer or target."
+                ),
+            )
+
+    # Parse the session allowlist from filters (422 on unsupported keys/shapes,
+    # and on a session_id the allowlist doesn't cover).
+    session_allowlist = extract_session_allowlist(
+        options.filters, must_include=options.session_id
+    )
+
+    # Scoped reads: a single scope swaps the observer to the scope
+    # peer; a list of scopes becomes a session allowlist over their union.
+    observer = peer_id
+    scope_session_union: list[str] | None = None
+    if options.scope is not None:
+        validate_scope_read_option(
+            filters=options.filters,
+            session_id=options.session_id,
+            jwt_params=jwt_params,
+        )
+        observer_override, scope_session_union = await _resolve_scope_option(
+            workspace_id, options.scope, db_action="peers.representation.resolve_scope"
+        )
+        if observer_override is not None:
+            observer = observer_override
+    if scope_session_union is not None:
+        session_allowlist = scope_session_union
+
     try:
         embedding: list[float] | None = None
         if options.search_query:
-            with (
-                suppress(Exception),
-                embedding_call_purpose(
+            try:
+                with embedding_call_purpose(
                     EmbeddingCallPurpose.SEARCH_MEMORY.value,
                     workspace_name=workspace_id,
                     parent_category="api",
-                ),
-            ):
-                embedding = await embedding_client.embed(options.search_query)
+                ):
+                    embedding = await embedding_client.embed(options.search_query)
+            except Exception:
+                # Swallowed on purpose (see include_semantic_query below), but not
+                # silently: without this a provider outage degrades every search
+                # request to derived+recent retrieval with no signal anywhere.
+                logger.warning(
+                    "Representation search embedding failed for workspace %s,"
+                    + " degrading to non-semantic retrieval",
+                    workspace_id,
+                    exc_info=True,
+                )
 
-        # If no target specified, get global representation (omniscient Honcho perspective)
-        representation = await crud.get_working_representation(
-            workspace_id,
-            observer=peer_id,
-            observed=options.target if options.target is not None else peer_id,
-            session_name=options.session_id,
-            include_semantic_query=options.search_query,
-            embedding=embedding,
-            semantic_search_top_k=options.search_top_k,
-            semantic_search_max_distance=options.search_max_distance,
-            include_most_derived=options.include_most_frequent
-            if options.include_most_frequent is not None
-            else False,
-            max_observations=options.max_conclusions
-            if options.max_conclusions is not None
-            else settings.DERIVER.WORKING_REPRESENTATION_MAX_OBSERVATIONS,
-            parent_category="api",
-        )
+        observed = options.target if options.target is not None else peer_id
+        # Re-check and read in one short session, opened only now — after the
+        # embedding call above, so no connection is held across external work.
+        # The early check ran in a session that has since closed and, being
+        # name-based, also passed any reserved name that did not yet exist; a scope
+        # created in between would otherwise be used here. Sharing the session with
+        # the read means a scope committed after this check cannot have any
+        # conclusions in the collection the read then examines.
+        async with tracked_db(
+            "peers.representation.read", read_only=True
+        ) as read_session:
+            await crud.reject_scope_observed(
+                read_session,
+                workspace_id,
+                {peer_id, observed},
+                action=(
+                    "No representation is formed of a scope, so a scope cannot be"
+                    " a representation observer or target."
+                ),
+            )
+            # If no target specified, this is the global (omniscient) representation
+            representation = await crud.get_working_representation(
+                workspace_id,
+                db=read_session,
+                # a single `scope` swaps the observer to the scope peer
+                observer=observer,
+                observed=observed,
+                session_allowlist=[options.session_id]
+                if options.session_id is not None
+                else session_allowlist,
+                # Only ask for the semantic branch when we actually have an
+                # embedding. The precompute above is suppressed, and both
+                # `RepresentationManager.get_working_representation` and
+                # `crud.query_documents` fall back to embedding internally when a
+                # query arrives without one — which would run an external call
+                # inside this session, and the innermost fallback is unsuppressed
+                # (a provider outage would surface as a 500). Degrading to
+                # derived+recent retrieval keeps the session DB-only.
+                include_semantic_query=options.search_query
+                if embedding is not None
+                else None,
+                embedding=embedding,
+                semantic_search_top_k=options.search_top_k,
+                semantic_search_max_distance=options.search_max_distance,
+                include_most_derived=options.include_most_frequent
+                if options.include_most_frequent is not None
+                else False,
+                max_observations=options.max_conclusions
+                if options.max_conclusions is not None
+                else settings.DERIVER.WORKING_REPRESENTATION_MAX_OBSERVATIONS,
+                parent_category="api",
+            )
         return schemas.RepresentationResponse(
             representation=representation.format_as_markdown()
         )
@@ -374,6 +622,10 @@ async def set_peer_card(
     # If no target specified, set the observer's own card
     observed = target if target is not None else peer_id
 
+    # The scope guard lives in crud.set_peer_card, in the same transaction as the
+    # JSONB write, so the Dreamer and agent-tool paths are covered too. Nothing
+    # expensive happens between here and there, so a duplicate early check would
+    # only cost an extra query.
     await crud.set_peer_card(
         db,
         workspace_id,
@@ -437,6 +689,25 @@ async def get_peer_context(
     This is useful for getting all the context needed about a peer without
     making multiple API calls.
     """
+    # Scope peers may not appear on the generic peer-context surface: no
+    # representation is formed of a scope, and scoped reads go through the
+    # `scope` option on chat/representation/session-context instead. Flag-based
+    # rather than prefix-based, so a legacy peer merely occupying the reserved
+    # name keeps working; strict on a reserved name that does not exist yet,
+    # since nothing here creates it. Costs no query when no reserved name is
+    # present, and runs before any embedding work.
+    scope_candidates = [
+        n for n in (peer_id, target) if n is not None and is_scope_peer_name(n)
+    ]
+    if scope_candidates:
+        async with tracked_db("peers.context.scope_check", read_only=True) as s_db:
+            await crud.reject_scope_observed(
+                s_db,
+                workspace_id,
+                scope_candidates,
+                action="Use the `scope` option on the read routes instead.",
+            )
+
     # If no target specified, get the peer's own context (self-observation)
     observed = target if target is not None else peer_id
     context_started = perf_counter()
@@ -459,7 +730,7 @@ async def get_peer_context(
             workspace_id,
             observer=peer_id,
             observed=observed,
-            session_name=None,  # Peer context is global, not session-scoped
+            session_allowlist=None,  # Peer context is global, not session-scoped
             include_semantic_query=search_query,
             embedding=embedding,
             semantic_search_top_k=search_top_k,

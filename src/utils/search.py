@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import models
 from src.config import settings
 from src.dependencies import tracked_db
-from src.embedding_client import embedding_client
+from src.embedding_client import EmbeddingTokenLimitError, embedding_client
 from src.exceptions import ValidationException
 from src.models import session_peers_table
 from src.telemetry.events import EmbeddingCallPurpose
@@ -82,6 +82,9 @@ async def query_external_vector_message_ids(
     filters: dict[str, Any] | None = None,
 ) -> list[str]:
     """Query the external vector store and return ordered message IDs."""
+    if limit <= 0:
+        return []
+
     external_vector_store = get_external_vector_store()
     if external_vector_store is None:
         return []
@@ -388,7 +391,7 @@ async def search(
                 parent_category="api",
             ):
                 query_embedding = await embedding_client.embed(query)
-        except ValueError as e:
+        except EmbeddingTokenLimitError as e:
             raise ValidationException(
                 f"Query exceeds maximum token limit of {settings.EMBEDDING.MAX_INPUT_TOKENS}."
             ) from e

@@ -11,10 +11,14 @@ from typing import Any, cast
 
 from pydantic import BaseModel
 
-from src.config import ModelConfig, PromptCachePolicy
+from src.config import ModelConfig, PromptCachePolicy, coerce_provider_timeout
 from src.exceptions import ValidationException
 
-from .backend import CompletionResult, ProviderBackend, StreamChunk
+from .backend import (
+    CompletionResult,
+    ProviderBackend,
+    StreamChunk,
+)
 
 # Operator escape-hatch keys recognized inside ModelConfig.provider_params.
 PASSTHROUGH_KEYS = ("extra_body", "extra_headers", "extra_query")
@@ -99,6 +103,45 @@ def build_config_extra_params(config: ModelConfig) -> dict[str, Any]:
     return extra_params
 
 
+def request_timeout_from_extra_params(
+    extra_params: dict[str, Any] | None,
+) -> float | None:
+    """Return a validated per-request provider timeout from extra params.
+
+    Config-sourced timeouts are already validated and normalized at config
+    load (`coerce_provider_timeout` in src.config); this guards extra_params
+    passed programmatically at call time.
+    """
+    if not extra_params or "timeout" not in extra_params:
+        return None
+
+    try:
+        return coerce_provider_timeout(extra_params["timeout"])
+    except ValueError as exc:
+        raise ValidationException(str(exc)) from exc
+
+
+def _strip_none_params(
+    params: dict[str, Any],
+    keys: tuple[str, ...],
+) -> dict[str, Any]:
+    """Remove specified keys from extra params when their values are None."""
+    return {k: v for k, v in params.items() if not (k in keys and v is None)}
+
+
+def _normalize_extra_params(extra_params: dict[str, Any]) -> dict[str, Any]:
+    """Normalize and clean shared extra params before they reach backends.
+
+    Centralizes per-key coercion and null-stripping so new keys are added
+    here rather than spawning one-off normalizers.
+    """
+    result = dict(extra_params)
+    timeout = request_timeout_from_extra_params(result)
+    if timeout is not None:
+        result["timeout"] = timeout
+    return _strip_none_params(result, ("timeout",))
+
+
 async def execute_completion(
     backend: ProviderBackend,
     config: ModelConfig,
@@ -120,6 +163,7 @@ async def execute_completion(
         **build_config_extra_params(config),
         **(extra_params or {}),
     }
+    merged_extra_params = _normalize_extra_params(merged_extra_params)
     if cache_policy is not None:
         merged_extra_params["cache_policy"] = cache_policy
 
@@ -158,6 +202,7 @@ async def execute_stream(
         **build_config_extra_params(config),
         **(extra_params or {}),
     }
+    merged_extra_params = _normalize_extra_params(merged_extra_params)
     if cache_policy is not None:
         merged_extra_params["cache_policy"] = cache_policy
 

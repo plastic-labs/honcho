@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/plastic-labs/honcho/security/advisories/new
+    about: Private vulnerability reporting only — do not file public security issues.
+  - name: Question or support
+    url: https://discord.gg/honcho
+    about: Ask the community and maintainers on Discord.
+  - name: Documentation
+    url: https://honcho.dev/docs
+    about: Guides, API reference, and self-hosting docs.

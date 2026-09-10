@@ -1381,3 +1381,81 @@ class TestConclusionRoutes:
         # Verify the conclusion has null session_id
         conclusion = next(c for c in data["items"] if c["id"] == created_id)
         assert conclusion["session_id"] is None
+
+    @pytest.mark.asyncio
+    async def test_negation_includes_conclusions_with_no_session(
+        self,
+        client: TestClient,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
+    ):
+        """Negation must not silently drop workspace-level conclusions.
+
+        A conclusion with no session is not "some other session", so excluding
+        that session has to leave it in the result. Under SQL's three-valued
+        logic a comparison against NULL is NULL, which would drop the row.
+
+        This is only visible by counting returned rows — the filter builds and
+        executes cleanly either way.
+        """
+        test_workspace, test_peer = sample_data
+
+        test_peer2 = models.Peer(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add(test_peer2)
+        await db_session.flush()
+
+        test_session = models.Session(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        other_session = models.Session(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add_all([test_session, other_session])
+        await db_session.commit()
+
+        await self._create_collection(
+            db_session, test_workspace.name, test_peer.name, test_peer2.name
+        )
+
+        scoped = models.Document(
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+            content="Scoped to a session",
+            session_name=test_session.name,
+        )
+        workspace_level = models.Document(
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+            content="Not scoped to any session",
+            session_name=None,
+        )
+        db_session.add_all([scoped, workspace_level])
+        await db_session.commit()
+
+        def contents(filters: dict[str, object]) -> set[str]:
+            response = client.post(
+                f"/v3/workspaces/{test_workspace.name}/conclusions/list",
+                json={"filters": filters},
+            )
+            assert response.status_code == 200, response.text
+            return {item["content"] for item in response.json()["items"]}
+
+        both = {"Scoped to a session", "Not scoped to any session"}
+
+        # NOT and ne agree, and both keep the session-less conclusion.
+        assert contents({"NOT": [{"session_id": other_session.name}]}) == both
+        assert contents({"session_id": {"ne": other_session.name}}) == both
+
+        # Requiring the field to be set is how you narrow to sessioned rows.
+        assert contents(
+            {
+                "AND": [
+                    {"session_id": {"ne": other_session.name}},
+                    {"session_id": {"ne": None}},
+                ]
+            }
+        ) == {"Scoped to a session"}

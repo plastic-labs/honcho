@@ -191,12 +191,18 @@ class AgentToolSummaryCreatedEvent(BaseEvent):
     """
 
     _event_type: ClassVar[str] = "agent.tool.summary.created"
-    _schema_version: ClassVar[int] = 2
+    _schema_version: ClassVar[int] = 3
     _category: ClassVar[str] = "agent"
 
-    # Run identification (may be placeholder if not from an agentic loop)
-    run_id: str = Field(..., description="Nanoid for run correlation")
-    iteration: int = Field(..., description="Iteration number when this occurred")
+    # Run identification.
+    run_id: str | None = Field(
+        default=None,
+        description="Run id for agentic correlation; None when not in a run",
+    )
+    iteration: int | None = Field(
+        default=None,
+        description="Iteration within an agentic loop; None when not in one",
+    )
 
     # Context
     parent_category: str = Field(..., description="Parent category")
@@ -258,8 +264,9 @@ class AgentToolSummaryCreatedEvent(BaseEvent):
     )
 
     def get_resource_id(self) -> str:
-        """Resource ID includes run_id and iteration for uniqueness."""
-        return f"{self.run_id}:{self.iteration}:summary_created"
+        """Idempotency key. A summary is unique per (message it covers up to,
+        tier)"""
+        return f"{self.message_id}:{self.summary_type}:summary_created"
 
 
 class AgentToolCallCompletedEvent(BaseEvent):

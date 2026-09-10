@@ -9,12 +9,19 @@ creates committed fixture rows and asserts on the result via the provided sessio
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from fastapi import BackgroundTasks
 from nanoid import generate as generate_nanoid
+from prometheus_client import REGISTRY
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from src import models
-from src.reconciler.embed_now import embed_messages_now, reset_embed_semaphore
+from src.config import settings
+from src.reconciler.embed_now import (
+    embed_messages_now,
+    embed_task_gate,
+    reset_embed_semaphore,
+)
 from src.vector_store import VectorStore
 
 
@@ -65,10 +72,87 @@ async def _create_message_with_pending_chunks(
 
 @pytest.fixture(autouse=True)
 def reset_semaphore_fixture():
-    """Rebuild the module semaphore per test so it binds to the active loop."""
+    """Rebuild the module semaphore per test so it binds to the active loop,
+    and clear the admission gate's in-flight count."""
     reset_embed_semaphore()
+    embed_task_gate.in_flight = 0
     yield
     reset_embed_semaphore()
+    embed_task_gate.in_flight = 0
+
+
+@pytest.mark.asyncio
+class TestEmbedTaskGate:
+    """Admission gate for immediate-embed background tasks
+    (EMBEDDING.MAX_PENDING_EMBED_TASKS)."""
+
+    async def test_admits_under_cap_and_releases_slot(self) -> None:
+        """Under the cap, the task is scheduled; running it embeds the given ids
+        and releases the slot."""
+        tasks = BackgroundTasks()
+        with (
+            patch.object(settings.EMBEDDING, "MAX_PENDING_EMBED_TASKS", 2),
+            patch(
+                "src.reconciler.embed_now.embed_messages_now", new=AsyncMock()
+            ) as mock_embed,
+        ):
+            assert embed_task_gate.try_schedule(tasks, ["msg_1"]) is True
+            assert embed_task_gate.in_flight == 1
+            await tasks()
+        mock_embed.assert_awaited_once_with(["msg_1"])
+        assert embed_task_gate.in_flight == 0
+
+    async def test_rejects_at_cap_without_scheduling(self) -> None:
+        """At the cap, nothing is scheduled and False is returned."""
+        tasks = BackgroundTasks()
+        with patch.object(settings.EMBEDDING, "MAX_PENDING_EMBED_TASKS", 1):
+            assert embed_task_gate.try_schedule(tasks, ["msg_1"]) is True
+            assert embed_task_gate.try_schedule(tasks, ["msg_2"]) is False
+        assert len(tasks.tasks) == 1
+        assert embed_task_gate.in_flight == 1
+
+    async def test_slot_released_when_task_raises(self) -> None:
+        """A failing task still releases its slot (finally path)."""
+        tasks = BackgroundTasks()
+        with (
+            patch.object(settings.EMBEDDING, "MAX_PENDING_EMBED_TASKS", 1),
+            patch(
+                "src.reconciler.embed_now.embed_messages_now",
+                new=AsyncMock(side_effect=RuntimeError("boom")),
+            ),
+        ):
+            assert embed_task_gate.try_schedule(tasks, ["msg_1"]) is True
+            with pytest.raises(RuntimeError):
+                await tasks()
+        assert embed_task_gate.in_flight == 0
+
+    async def test_gauge_mirrors_in_flight_count(self) -> None:
+        """With metrics enabled, the Prometheus gauge tracks the gate's
+        in-flight count through schedule and release."""
+
+        def gauge_value() -> float | None:
+            return REGISTRY.get_sample_value(
+                "embed_now_tasks_in_flight", {"namespace": "test"}
+            )
+
+        tasks = BackgroundTasks()
+        with (
+            patch.object(settings.EMBEDDING, "MAX_PENDING_EMBED_TASKS", 2),
+            patch.object(settings.METRICS, "ENABLED", True),
+            patch.object(settings.METRICS, "NAMESPACE", "test"),
+            patch("src.reconciler.embed_now.embed_messages_now", new=AsyncMock()),
+        ):
+            assert embed_task_gate.try_schedule(tasks, ["msg_1"]) is True
+            assert gauge_value() == 1
+            await tasks()
+            assert gauge_value() == 0
+
+    async def test_zero_cap_disables_fast_path(self) -> None:
+        """MAX_PENDING_EMBED_TASKS=0 rejects every schedule attempt."""
+        tasks = BackgroundTasks()
+        with patch.object(settings.EMBEDDING, "MAX_PENDING_EMBED_TASKS", 0):
+            assert embed_task_gate.try_schedule(tasks, ["msg_1"]) is False
+        assert len(tasks.tasks) == 0
 
 
 @pytest.mark.asyncio

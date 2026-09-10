@@ -109,7 +109,6 @@ Messages are stored but no observations, summaries, or representations are being
    ```bash
    DERIVER_WORKERS=4
    ```
-5. **Representation Batch Max** — By default the deriver buffers representation work until a session has enough tokens for that representation, set via `DERIVER_REPRESENTATION_BATCH_MAX_TOKENS`. Sub-threshold tails become eligible after `DERIVER_REPRESENTATION_BATCH_MAX_AGE_SECONDS` (default 1800 seconds), so quiet sessions eventually flush without disabling batching globally. Set the age to `0` for legacy behavior where sub-threshold tails wait indefinitely. See [token batching](/v3/documentation/core-concepts/reasoning#token-batching) for more details
 
 ## Alternative Provider Issues
 
@@ -203,6 +202,20 @@ uv run alembic history
 # Upgrade to latest
 uv run alembic upgrade head
 ```
+
+### "permission denied to create extension \"vector\""
+
+**Cause:** The role in `DB_CONNECTION_URI` is not a superuser and lacks privileges to create extensions. Honcho issues `CREATE EXTENSION IF NOT EXISTS vector` both before running migrations and again at server startup, so this fails in both places. `IF NOT EXISTS` does not help — Postgres checks the privilege before checking whether the extension exists.
+
+**Fix:** Preinstall pgvector once with a privileged role (superuser, or `rds_superuser` on RDS) in the Honcho database:
+
+```sql
+CREATE EXTENSION IF NOT EXISTS vector;
+```
+
+The `IF NOT EXISTS` calls then short-circuit and the application role needs no extension privileges. This is the supported path for deployments where the platform, not the application, owns extension management.
+
+You won't hit this with `docker compose` — the bundled stack connects as `postgres`, a superuser, and its database service also creates the extension from `database/init.sql` on first boot. It comes up on managed Postgres, Kubernetes operators, and other setups where you bring your own database and its role is deliberately not a superuser.
 
 ## Cache & Redis
 
@@ -302,11 +315,37 @@ docker compose build --no-cache
 docker compose up -d
 ```
 
+## CLI local stack (`honcho start`)
+
+The CLI local stack lives under `~/.honcho/profiles/` (default profile `local`) and uses the published image `ghcr.io/plastic-labs/honcho:latest`. Logs: `docker compose -p honcho-local logs`. Full flags: [CLI reference](/v3/documentation/reference/cli#local-stack).
+
+### `MISSING_LLM_KEY`
+
+**Cause:** No provider key in the environment or the profile `.env`.
+
+**Fix:** Export `LLM_OPENAI_API_KEY`, `LLM_ANTHROPIC_API_KEY`, or `LLM_GEMINI_API_KEY`, or run `honcho start --setup basic` in a TTY (not with `--json`).
+
+### Timed out waiting for `/health`
+
+**Cause:** The API container started but did not become ready within `--timeout` (default 180s).
+
+**Fix:** Check `docker compose -p honcho-local logs api` and `... logs deriver`. Increase `--timeout`. Confirm Docker is running. A first-time GHCR pull happens *before* this wait (during image pin) — if that step hung, look at Docker pull logs instead.
+
+### CLI still talks to `api.honcho.dev`
+
+**Cause:** `honcho start` does not rewrite `environmentUrl` in `~/.honcho/config.json`.
+
+**Fix:** Prefix commands with `HONCHO_BASE_URL=http://127.0.0.1:8000`, or run `honcho init --base-url http://127.0.0.1:8000` to persist local as the default. `honcho status` prints the one-shot hint.
+
+### Port already in use
+
+The CLI remaps 8000/5432/6379 automatically unless you pinned them with `--api-port` / `--db-port` / `--redis-port`. Pass those flags if you need a specific host port.
+
 ## Getting Help
 
 If your issue isn't covered here:
 
-- **Check the logs** — most issues are diagnosed from server or deriver logs
+- **Check the logs** — most issues are diagnosed from server or deriver logs (`docker compose logs` for from-source compose; `docker compose -p honcho-local logs` for `honcho start`)
 - **GitHub Issues** — [Report bugs](https://github.com/plastic-labs/honcho/issues)
 - **Discord** — [Join our community](https://discord.gg/plasticlabs)
 - **Configuration** — See the [Configuration Guide](./configuration) for all available settings

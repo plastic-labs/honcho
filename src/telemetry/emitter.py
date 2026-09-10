@@ -20,6 +20,7 @@ from cloudevents.conversion import to_json  # pyright: ignore[reportUnknownVaria
 from cloudevents.http import CloudEvent
 
 from src._version import HONCHO_VERSION
+from src.telemetry.client_context import client_context_body
 
 if TYPE_CHECKING:
     from src.telemetry.events.base import BaseEvent
@@ -100,6 +101,7 @@ class TelemetryEmitter:
     max_retries: int
     max_buffer_size: int
     enabled: bool
+    drop_reason_prefix: str
     _buffer: deque[CloudEvent]
     _flush_task: asyncio.Task[None] | None
     _client: httpx.AsyncClient | None
@@ -118,6 +120,7 @@ class TelemetryEmitter:
         max_retries: int = 3,
         max_buffer_size: int = 10000,
         enabled: bool = True,
+        drop_reason_prefix: str = "",
     ):
         """Initialize the telemetry emitter.
 
@@ -130,6 +133,9 @@ class TelemetryEmitter:
             max_retries: Maximum retry attempts on failure
             max_buffer_size: Maximum events to buffer (oldest dropped if exceeded)
             enabled: Whether emission is enabled
+            drop_reason_prefix: Prefix for the dropped-event metric reason label
+                (e.g. "trace_") so a second emitter's drops are distinguishable
+                from the primary metrics emitter's in Prometheus.
         """
         self.endpoint = endpoint
         self.headers = headers or {}
@@ -139,6 +145,7 @@ class TelemetryEmitter:
         self.max_retries = max_retries
         self.max_buffer_size = max_buffer_size
         self.enabled = enabled and endpoint is not None
+        self.drop_reason_prefix = drop_reason_prefix
 
         self._buffer = deque(maxlen=max_buffer_size)
         self._flush_task = None
@@ -166,6 +173,21 @@ class TelemetryEmitter:
         )
         self._running = True
         self._flush_task = asyncio.create_task(self._periodic_flush())
+
+        # region ai
+        # Pre-create the dropped-event counter children at 0: a labeled counter
+        # exports nothing until its first observation, so this makes the metric
+        # visible before any drop and lets us tell "no drops" from "metric missing".
+        # endregion
+        from src.telemetry.prometheus.metrics import prometheus_metrics
+
+        prometheus_metrics.initialize_telemetry_dropped_metrics(
+            reasons=[
+                f"{self.drop_reason_prefix}buffer_full",
+                f"{self.drop_reason_prefix}send_failed",
+            ]
+        )
+
         logger.info("Telemetry emitter started, endpoint: %s", self.endpoint)
 
     async def shutdown(self) -> None:
@@ -282,6 +304,9 @@ class TelemetryEmitter:
         # unchanged. Only the serialized body that hits the wire carries the extras.
         body: dict[str, Any] = event.model_dump(mode="json")
         body["honcho_version"] = HONCHO_VERSION
+        # Client identity from the request headers (set by the API middleware);
+        # members are null outside a request, e.g. in the deriver worker.
+        body["client"] = client_context_body()
 
         # Buffer-full check happens here because deque(maxlen=) silently evicts.
         # Detect by length-before-append; if at capacity, the append will displace
@@ -292,7 +317,9 @@ class TelemetryEmitter:
         cloud_event = CloudEvent(attributes, body)
 
         if will_drop_oldest:
-            prometheus_metrics.record_telemetry_event_dropped(reason="buffer_full")
+            prometheus_metrics.record_telemetry_event_dropped(
+                reason=f"{self.drop_reason_prefix}buffer_full"
+            )
 
         self._buffer.append(cloud_event)
         buffer_size = len(self._buffer)
@@ -375,7 +402,7 @@ class TelemetryEmitter:
                 for event in reversed(batch):
                     if len(self._buffer) >= self.max_buffer_size:
                         prometheus_metrics.record_telemetry_event_dropped(
-                            reason="send_failed"
+                            reason=f"{self.drop_reason_prefix}send_failed"
                         )
                     self._buffer.appendleft(event)
             logger.warning(
@@ -527,3 +554,54 @@ async def shutdown_emitter() -> None:
     if _emitter is not None:
         await _emitter.shutdown()
         _emitter = None
+
+
+# Separate emitter for the full-fidelity trace stream (llm.call.traced /
+# trace.content). Kept distinct from the metrics `_emitter` so a trace burst
+# can never evict billing events from the metrics buffer.
+_trace_emitter: TelemetryEmitter | None = None
+
+
+def get_trace_emitter() -> TelemetryEmitter | None:
+    """Get the global trace-stream emitter instance (None when payload tracing off)."""
+    return _trace_emitter
+
+
+async def initialize_trace_emitter(
+    endpoint: str | None = None,
+    headers: dict[str, str] | None = None,
+    batch_size: int = 100,
+    flush_interval_seconds: float = 1.0,
+    flush_threshold: int = 50,
+    max_retries: int = 3,
+    max_buffer_size: int = 10000,
+    enabled: bool = True,
+) -> TelemetryEmitter:
+    """Initialize and start the global trace-stream emitter.
+
+    Drops are recorded under the ``trace_`` reason prefix so they're
+    distinguishable from the metrics emitter's drops in Prometheus.
+    """
+    global _trace_emitter
+
+    _trace_emitter = TelemetryEmitter(
+        endpoint=endpoint,
+        headers=headers,
+        batch_size=batch_size,
+        flush_interval_seconds=flush_interval_seconds,
+        flush_threshold=flush_threshold,
+        max_retries=max_retries,
+        max_buffer_size=max_buffer_size,
+        enabled=enabled,
+        drop_reason_prefix="trace_",
+    )
+    await _trace_emitter.start()
+    return _trace_emitter
+
+
+async def shutdown_trace_emitter() -> None:
+    """Shutdown the global trace-stream emitter."""
+    global _trace_emitter
+    if _trace_emitter is not None:
+        await _trace_emitter.shutdown()
+        _trace_emitter = None

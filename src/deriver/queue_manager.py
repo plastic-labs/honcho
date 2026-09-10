@@ -4,9 +4,8 @@ import random
 import signal
 import time
 from asyncio import Task
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
 from logging import getLogger
 from typing import Any, NamedTuple, cast
 
@@ -15,7 +14,7 @@ from dotenv import load_dotenv
 from nanoid import generate as generate_nanoid
 from sentry_sdk.integrations.asyncio import AsyncioIntegration
 from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
-from sqlalchemy import and_, delete, or_, select, update
+from sqlalchemy import Text, and_, delete, literal, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,6 +23,14 @@ from sqlalchemy.sql import func
 from src import models
 from src.cache.client import close_cache, init_cache
 from src.config import settings
+from src.crud.deriver import (
+    REPRESENTATION_WORK_UNIT_PREFIX,
+    representation_batch_threshold_clause,
+    unclaimed_work_unit_clause,
+)
+from src.crud.deriver import (
+    cleanup_stale_work_units as crud_cleanup_stale_work_units,
+)
 from src.dependencies import tracked_db
 from src.deriver.consumer import (
     process_item,
@@ -43,6 +50,8 @@ from src.reconciler import (
 from src.schemas import ResolvedConfiguration
 from src.telemetry import prometheus_metrics
 from src.telemetry.sentry import initialize_sentry
+from src.utils.queue_payload import RETRY_ATTEMPTS_PAYLOAD_KEY
+from src.utils.retryable_errors import is_retryable_error
 from src.utils.work_unit import parse_work_unit_key
 from src.webhooks.events import (
     QueueEmptyEvent,
@@ -52,6 +61,12 @@ from src.webhooks.events import (
 logger = getLogger(__name__)
 
 load_dotenv(override=True)
+
+# Total processing attempts per work unit for transient errors. Count is
+# stored on the oldest unprocessed queue item so every deriver instance
+# shares one budget.
+MAX_RETRYABLE_ATTEMPTS = 3
+RETRY_BACKOFF_SECONDS = 1.0
 
 
 class WorkerOwnership(NamedTuple):
@@ -209,16 +224,17 @@ class QueueManager:
             )
         logger.debug("Signal handlers registered")
 
-        # Start the reconciler scheduler
-        try:
-            await self.reconciler_scheduler.start()
-        except Exception:
-            logger.exception("Failed to start reconciler scheduler")
+        if settings.DERIVER.SCHEDULER == "deriver":
+            try:
+                await self.reconciler_scheduler.start()
+            except Exception:
+                logger.exception("Failed to start reconciler scheduler")
 
         # Run the polling loop directly in this task
         logger.debug("Starting polling loop directly")
         try:
-            await self._sleep_startup_jitter()
+            if settings.DERIVER.SCHEDULER == "deriver":
+                await self._sleep_startup_jitter()
             await self.polling_loop()
         finally:
             await self.cleanup()
@@ -301,49 +317,27 @@ class QueueManager:
     async def cleanup_stale_work_units(self) -> None:
         """Clean up stale work units"""
         async with tracked_db("cleanup_stale_work_units") as db:
-            cutoff = datetime.now(timezone.utc) - timedelta(
-                minutes=settings.DERIVER.STALE_SESSION_TIMEOUT_MINUTES
-            )
-
-            stale_ids = (
-                (
-                    await db.execute(
-                        select(models.ActiveQueueSession.id)
-                        .where(models.ActiveQueueSession.last_updated < cutoff)
-                        .order_by(models.ActiveQueueSession.last_updated)
-                        .with_for_update(skip_locked=True)
-                    )
-                )
-                .scalars()
-                .all()
-            )
-
-            # Delete only the records we successfully got locks for
-            if stale_ids:
-                await db.execute(
-                    delete(models.ActiveQueueSession).where(
-                        models.ActiveQueueSession.id.in_(stale_ids)
-                    )
-                )
-            await db.commit()
+            await crud_cleanup_stale_work_units(db)
 
     async def get_and_claim_work_units(self) -> dict[str, str]:
         """
         Get available work units that aren't being processed.
         For representation tasks, only returns work units whose accumulated
-        tokens reach REPRESENTATION_BATCH_MAX_TOKENS or whose oldest pending
-        item exceeds REPRESENTATION_BATCH_MAX_AGE_SECONDS, unless
-        FLUSH_ENABLED is True.
+        tokens reach REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS or whose
+        oldest pending item exceeds REPRESENTATION_BATCH_MAX_AGE_SECONDS,
+        unless FLUSH_ENABLED is True.
         Returns a dict mapping work_unit_key to aqs_id.
         """
         limit: int = max(0, self.workers - self.get_total_owned_work_units())
         if limit == 0:
             return {}
 
-        batch_max_tokens = settings.DERIVER.REPRESENTATION_BATCH_MAX_TOKENS
+        work_unit_target_tokens = (
+            settings.DERIVER.REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS
+        )
 
         async with tracked_db("get_available_work_units") as db:
-            representation_prefix = "representation:"
+            representation_prefix = REPRESENTATION_WORK_UNIT_PREFIX
             token_stats_subq = (
                 select(
                     models.QueueItem.work_unit_key,
@@ -380,14 +374,7 @@ class QueueManager:
                     token_stats_subq,
                     work_units_subq.c.work_unit_key == token_stats_subq.c.work_unit_key,
                 )
-                .where(
-                    ~select(models.ActiveQueueSession.id)
-                    .where(
-                        models.ActiveQueueSession.work_unit_key
-                        == work_units_subq.c.work_unit_key
-                    )
-                    .exists()
-                )
+                .where(unclaimed_work_unit_clause(work_units_subq.c.work_unit_key))
                 .order_by(
                     work_units_subq.c.oldest_created_at.asc(),
                     work_units_subq.c.work_unit_key.asc(),
@@ -396,26 +383,13 @@ class QueueManager:
             )
 
             # Apply batch threshold filter (skip if FLUSH_ENABLED is True)
-            if not settings.DERIVER.FLUSH_ENABLED and batch_max_tokens > 0:
-                max_age_seconds = settings.DERIVER.REPRESENTATION_BATCH_MAX_AGE_SECONDS
-                threshold_clause = (
-                    func.coalesce(token_stats_subq.c.total_tokens, 0)
-                    >= batch_max_tokens
-                )
-                if max_age_seconds > 0:
-                    threshold_clause = or_(
-                        threshold_clause,
-                        token_stats_subq.c.oldest_created_at
-                        <= func.now() - timedelta(seconds=max_age_seconds),
-                    )
-                query = query.where(
-                    or_(
-                        ~work_units_subq.c.work_unit_key.startswith(
-                            representation_prefix
-                        ),
-                        threshold_clause,
-                    )
-                )
+            threshold_clause = representation_batch_threshold_clause(
+                work_unit_key=work_units_subq.c.work_unit_key,
+                total_tokens=token_stats_subq.c.total_tokens,
+                oldest_created_at=token_stats_subq.c.oldest_created_at,
+            )
+            if threshold_clause is not None:
+                query = query.where(threshold_clause)
 
             result = await db.execute(query)
             available_rows = result.all()
@@ -426,13 +400,13 @@ class QueueManager:
                     not settings.DERIVER.FLUSH_ENABLED
                     and settings.DERIVER.REPRESENTATION_BATCH_MAX_AGE_SECONDS > 0
                     and work_unit_key.startswith(representation_prefix)
-                    and int(total_tokens or 0) < batch_max_tokens
+                    and int(total_tokens or 0) < work_unit_target_tokens
                 ):
                     logger.info(
                         "age-flushing work unit %s (tokens=%s < %s, oldest=%s)",
                         work_unit_key,
                         total_tokens or 0,
-                        batch_max_tokens,
+                        work_unit_target_tokens,
                         oldest_created_at,
                     )
             if not available_units:
@@ -473,6 +447,17 @@ class QueueManager:
     def _reset_poll_interval(self) -> None:
         """Snap the polling interval back to the base after finding work."""
         self._current_poll_interval = settings.DERIVER.POLLING_SLEEP_INTERVAL_SECONDS
+
+    @staticmethod
+    def _is_tenant_work(work_unit_keys: Iterable[str]) -> bool:
+        """True if any claimed work unit is real tenant work, not housekeeping."""
+        for key in work_unit_keys:
+            try:
+                if parse_work_unit_key(key).task_type != "reconciler":
+                    return True
+            except ValueError:
+                return True
+        return False
 
     def _jitter(self, seconds: float) -> float:
         """Scatter a sleep by +/- POLLING_JITTER_RATIO to avoid lockstep polling.
@@ -537,10 +522,12 @@ class QueueManager:
                     continue
 
                 try:
-                    await self._maybe_cleanup_stale_work_units()
+                    if settings.DERIVER.SCHEDULER == "deriver":
+                        await self._maybe_cleanup_stale_work_units()
                     claimed_work_units = await self.get_and_claim_work_units()
                     if claimed_work_units:
-                        self._reset_poll_interval()
+                        if self._is_tenant_work(claimed_work_units):
+                            self._reset_poll_interval()
                         for work_unit_key, aqs_id in claimed_work_units.items():
                             # Create a new task for processing this work unit
                             if not self.shutdown_event.is_set():
@@ -577,11 +564,24 @@ class QueueManager:
         items: list[QueueItem],
         work_unit_key: str,
         context: str,
-    ) -> None:
+    ) -> bool:
         """
-        Handle processing errors by marking queue items as errored, logging, and forwarding to Sentry.
-        We only mark the first queue item as errored so we don't potentially throw away a batch. This allows us
-        to incrementally attempt to process the batch while still maintaining progress in a work unit.
+        Handle a processing error. Returns True when the caller should stop
+        processing and release the work unit for a later re-claim.
+
+        Transient errors (is_retryable_error) get up to MAX_RETRYABLE_ATTEMPTS
+        attempts per work unit: items stay unprocessed with no error recorded.
+        The attempt count lives on the oldest unprocessed queue item so a
+        different deriver instance continues the same budget after reclaim.
+        Reprocessing is at-least-once, not idempotent: the batch is re-derived
+        by a fresh LLM call, so identical text collapses via exact dedup and
+        near-identical text via semantic dedup. Retries can therefore inflate
+        times_derived and double-count LLM telemetry -- acceptable because the
+        alternative is dropping the batch.
+
+        Terminal errors mark only the first queue item as errored so we don't
+        potentially throw away a batch. This allows us to incrementally attempt
+        to process the batch while still maintaining progress in a work unit.
 
         Args:
             error: The exception that occurred
@@ -589,12 +589,37 @@ class QueueManager:
             work_unit_key: The work unit key for the queue items
             context: Context string describing what was being processed (e.g., "processing representation batch")
         """
+        if is_retryable_error(error):
+            try:
+                attempts = await self._get_work_unit_retry_attempts(work_unit_key) + 1
+                if attempts < MAX_RETRYABLE_ATTEMPTS:
+                    await self._set_work_unit_retry_attempts(work_unit_key, attempts)
+                    logger.warning(
+                        "Transient error %s for work unit %s (attempt %d/%d); leaving items unprocessed for retry",
+                        context,
+                        work_unit_key,
+                        attempts,
+                        MAX_RETRYABLE_ATTEMPTS,
+                        exc_info=error,
+                    )
+                    return True
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "Retry-counter I/O failed for work unit %s; releasing %s without recording an attempt",
+                    work_unit_key,
+                    context,
+                )
+                return True
+
         error_msg = f"{error.__class__.__name__}: {str(error)}"
         try:
             if items:
+                # Clear retry metadata only after the terminal mark commits so a
+                # failed mark leaves the shared budget intact for the next claim.
                 await self.mark_queue_item_as_errored(
                     items[0], work_unit_key, error_msg
                 )
+            await self._clear_work_unit_retry_attempts(work_unit_key)
         except Exception as mark_error:
             logger.error(
                 f"Failed to mark queue items as errored for work unit {work_unit_key}: {mark_error}",
@@ -607,6 +632,7 @@ class QueueManager:
         )
         if settings.SENTRY.ENABLED:
             sentry_sdk.capture_exception(error)
+        return False
 
     async def process_work_unit(self, work_unit_key: str, worker_id: str) -> None:
         """Process all queue items for a specific work unit by routing to the correct handler."""
@@ -672,12 +698,18 @@ class QueueManager:
                                 )
                                 queue_item_count += len(items_to_process)
                             except Exception as e:
-                                await self._handle_processing_error(
+                                if await self._handle_processing_error(
                                     e,
                                     items_to_process,
                                     work_unit_key,
                                     f"processing {work_unit.task_type} batch",
-                                )
+                                ):
+                                    # Release the work unit (via the finally
+                                    # below) and let a later poll re-claim it.
+                                    await asyncio.sleep(
+                                        self._jitter(RETRY_BACKOFF_SECONDS)
+                                    )
+                                    break
 
                         else:
                             queue_item = await self.get_next_queue_item(
@@ -696,12 +728,16 @@ class QueueManager:
                                 )
                                 queue_item_count += 1
                             except Exception as e:
-                                await self._handle_processing_error(
+                                if await self._handle_processing_error(
                                     e,
                                     [queue_item],
                                     work_unit_key,
                                     "processing queue item",
-                                )
+                                ):
+                                    await asyncio.sleep(
+                                        self._jitter(RETRY_BACKOFF_SECONDS)
+                                    )
+                                    break
 
                     except Exception as e:
                         logger.error(
@@ -816,7 +852,7 @@ class QueueManager:
                 f"{task_type} tasks are not supported for get_queue_item_batch"
             )
 
-        batch_max_tokens = settings.DERIVER.REPRESENTATION_BATCH_MAX_TOKENS
+        batch_max_tokens = settings.DERIVER.REPRESENTATION_BATCH_TARGET_INPUT_TOKENS
         was_flush_enabled = settings.DERIVER.FLUSH_ENABLED
         parsed_key = parse_work_unit_key(work_unit_key)
         messages_context: list[models.Message] = []
@@ -1053,6 +1089,87 @@ class QueueManager:
             was_flush_enabled=was_flush_enabled,
             batch_max_tokens=batch_max_tokens,
         )
+
+    async def _oldest_unprocessed_item(
+        self,
+        db: AsyncSession,
+        work_unit_key: str,
+        *,
+        for_update: bool = False,
+    ) -> models.QueueItem | None:
+        stmt = (
+            select(models.QueueItem)
+            .where(
+                models.QueueItem.work_unit_key == work_unit_key,
+                models.QueueItem.processed.is_(False),
+            )
+            .order_by(models.QueueItem.id)
+            .limit(1)
+        )
+        if for_update:
+            stmt = stmt.with_for_update()
+        result = await db.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def _get_work_unit_retry_attempts(self, work_unit_key: str) -> int:
+        """Read the shared transient-failure attempt count for a work unit."""
+        async with tracked_db("get_work_unit_retry_attempts") as db:
+            item = await self._oldest_unprocessed_item(db, work_unit_key)
+            if item is None:
+                return 0
+            raw = (item.payload or {}).get(RETRY_ATTEMPTS_PAYLOAD_KEY, 0)
+            try:
+                return max(0, int(raw))
+            except (TypeError, ValueError):
+                return 0
+
+    async def _set_work_unit_retry_attempts(
+        self, work_unit_key: str, attempts: int
+    ) -> None:
+        """Persist the shared attempt count on the oldest unprocessed item."""
+        async with tracked_db("set_work_unit_retry_attempts") as db:
+            item = await self._oldest_unprocessed_item(
+                db, work_unit_key, for_update=True
+            )
+            if item is None:
+                await db.commit()
+                return
+            new_payload = dict(item.payload or {})
+            new_payload[RETRY_ATTEMPTS_PAYLOAD_KEY] = attempts
+            await db.execute(
+                update(models.QueueItem)
+                .where(models.QueueItem.id == item.id)
+                .values(payload=new_payload)
+            )
+            await db.commit()
+
+    async def _clear_work_unit_retry_attempts(self, work_unit_key: str) -> None:
+        """Drop the shared attempt count from remaining unprocessed items.
+
+        One statement on purpose: a multi-row ``SELECT ... FOR UPDATE`` here
+        would take locks on ``queue`` in scan order, which is a deadlock partner
+        for any other multi-row writer on the same table. The JSONB ``-``
+        operator does the strip server-side, so no rows are locked ahead of the
+        write and there is no lock order to get wrong.
+        """
+        async with tracked_db("clear_work_unit_retry_attempts") as db:
+            await db.execute(
+                update(models.QueueItem)
+                .where(
+                    models.QueueItem.work_unit_key == work_unit_key,
+                    models.QueueItem.processed.is_(False),
+                    models.QueueItem.payload.has_key(RETRY_ATTEMPTS_PAYLOAD_KEY),
+                )
+                .values(
+                    # literal(..., Text) is required: an untyped bind leaves
+                    # Postgres unable to pick between jsonb - text and its
+                    # integer/array siblings.
+                    payload=models.QueueItem.payload.op("-")(
+                        literal(RETRY_ATTEMPTS_PAYLOAD_KEY, Text)
+                    )
+                )
+            )
+            await db.commit()
 
     async def mark_queue_items_as_processed(
         self, items: list[QueueItem], work_unit_key: str

@@ -63,8 +63,9 @@ async def test_create_message_schedules_immediate_embed(
 
     with (
         patch("src.config.settings.EMBED_MESSAGES", True),
+        patch.object(settings.EMBEDDING, "MAX_PENDING_EMBED_TASKS", 50),
         patch(
-            "src.routers.messages.embed_messages_now", new=AsyncMock()
+            "src.reconciler.embed_now.embed_messages_now", new=AsyncMock()
         ) as mock_embed_now,
     ):
         response = client.post(
@@ -91,7 +92,35 @@ async def test_create_message_skips_embed_when_disabled(
     with (
         patch("src.config.settings.EMBED_MESSAGES", False),
         patch(
-            "src.routers.messages.embed_messages_now", new=AsyncMock()
+            "src.reconciler.embed_now.embed_messages_now", new=AsyncMock()
+        ) as mock_embed_now,
+    ):
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages",
+            json={"messages": [{"content": "hello", "peer_id": test_peer.name}]},
+        )
+    assert response.status_code == 201
+    mock_embed_now.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_create_message_defers_embed_when_saturated(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    """When the immediate-embed task cap is saturated, message creation still
+    succeeds and no embed task runs — rows stay pending for the reconciler."""
+    test_workspace, test_peer = sample_data
+    test_session = models.Session(
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
+    )
+    db_session.add(test_session)
+    await db_session.commit()
+
+    with (
+        patch("src.config.settings.EMBED_MESSAGES", True),
+        patch.object(settings.EMBEDDING, "MAX_PENDING_EMBED_TASKS", 0),
+        patch(
+            "src.reconciler.embed_now.embed_messages_now", new=AsyncMock()
         ) as mock_embed_now,
     ):
         response = client.post(
@@ -119,8 +148,9 @@ async def test_file_upload_schedules_immediate_embed(
 
     with (
         patch("src.config.settings.EMBED_MESSAGES", True),
+        patch.object(settings.EMBEDDING, "MAX_PENDING_EMBED_TASKS", 50),
         patch(
-            "src.routers.messages.embed_messages_now", new=AsyncMock()
+            "src.reconciler.embed_now.embed_messages_now", new=AsyncMock()
         ) as mock_embed_now,
     ):
         files = {"file": ("note.txt", io.BytesIO(b"hello world"), "text/plain")}

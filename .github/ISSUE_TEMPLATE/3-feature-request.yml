@@ -1,0 +1,58 @@
+name: Feature request
+description: Propose a new capability or an improvement to an existing one.
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Tell us what problem you are trying to solve. Concrete use cases beat abstract wishlists.
+
+        Questions about how to use Honcho belong on [Discord](https://discord.gg/honcho), not here.
+
+  - type: dropdown
+    id: request_type
+    attributes:
+      label: Request type
+      options:
+        - New capability
+        - Improve an existing capability
+        - API / SDK surface
+        - Managed offering
+        - Docs / DX
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is hard or impossible today? Who hits this?
+      placeholder: I'm always frustrated when… / My integration needs…
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: What you would like Honcho to support. Sketches and API shapes welcome.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Workarounds, other APIs, or designs you already tried or ruled out.
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Links, prior art, screenshots, related issues/PRs.
+    validations:
+      required: false

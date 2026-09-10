@@ -1,9 +1,11 @@
 import logging
+import math
 import os
-from pathlib import Path
-from typing import Annotated, Any, ClassVar, Literal, cast
-
 import tomllib
+from pathlib import Path
+from typing import Annotated, Any, ClassVar, Literal, cast, get_args
+from urllib.parse import urlparse
+
 from dotenv import load_dotenv
 from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
 from pydantic.fields import FieldInfo
@@ -25,11 +27,16 @@ logger = logging.getLogger(__name__)
 ModelTransport = Literal["anthropic", "openai", "gemini"]
 EmbeddingTransport = Literal["openai", "gemini"]
 EmbeddingDimensionsMode = Literal["auto", "always", "never"]
+EmbeddingEncodingFormat = Literal["float", "base64"]
+EmbeddingEncodingFormatMode = Literal["auto", "float", "base64"]
 
 # OpenAI-compatible models that reject the `dimensions=` request parameter.
 _EMBEDDING_KNOWN_REJECTING_MODELS: frozenset[str] = frozenset(
     {"text-embedding-ada-002"}
 )
+
+# Hosts known to serve base64 embeddings, which are ~3.6x smaller on the wire.
+_EMBEDDING_BASE64_CAPABLE_HOSTS: frozenset[str] = frozenset({"api.openai.com"})
 
 
 def _default_embedding_model_for_transport(transport: EmbeddingTransport) -> str:
@@ -66,6 +73,37 @@ ThinkingEffortLevel = Literal[
 StructuredOutputMode = Literal["json_schema", "json_object"]
 
 
+PROVIDER_TIMEOUT_ERROR_TEXT = (
+    "provider_params.timeout must be a positive number of seconds"
+)
+
+
+def coerce_provider_timeout(value: Any) -> float:
+    """Coerce a `provider_params.timeout` value to positive, finite seconds.
+
+    Canonical implementation shared by config-load validation (here) and
+    per-request validation (`src.llm.request_builder.request_timeout_from_extra_params`,
+    which translates the ValueError into a ValidationException). Lives in
+    config.py because src.exceptions imports src.config, so config validators
+    cannot raise Honcho exception types.
+    """
+    if isinstance(value, bool):
+        raise ValueError(PROVIDER_TIMEOUT_ERROR_TEXT)
+    if isinstance(value, int | float):
+        timeout = float(value)
+    elif isinstance(value, str):
+        try:
+            timeout = float(value.strip())
+        except ValueError as exc:
+            raise ValueError(PROVIDER_TIMEOUT_ERROR_TEXT) from exc
+    else:
+        raise ValueError(PROVIDER_TIMEOUT_ERROR_TEXT)
+
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError(PROVIDER_TIMEOUT_ERROR_TEXT)
+    return timeout
+
+
 class ModelOverrideSettings(BaseModel):
     """Advanced module-level transport overrides."""
 
@@ -90,6 +128,14 @@ class ModelOverrideSettings(BaseModel):
             "supplying an `extra_body.thinking` for Anthropic-via-proxy)."
         ),
     )
+
+    @field_validator("provider_params")
+    @classmethod
+    def _validate_provider_timeout(cls, v: dict[str, Any]) -> dict[str, Any]:
+        """Reject bad `timeout` values at config load; normalize good ones to float."""
+        if "timeout" not in v:
+            return v
+        return {**v, "timeout": coerce_provider_timeout(v["timeout"])}
 
 
 class PromptCachePolicy(BaseModel):
@@ -346,6 +392,17 @@ class ConfiguredEmbeddingModelSettings(BaseModel):
     transport: EmbeddingTransport = "openai"
     overrides: ModelOverrideSettings = Field(default_factory=ModelOverrideSettings)
     dimensions_mode: EmbeddingDimensionsMode = "auto"
+    encoding_format_mode: EmbeddingEncodingFormatMode = "auto"
+    max_batch_size: Annotated[int, Field(gt=0)] | None = None
+    # Client HTTP timeout in seconds. OpenAI receives seconds; Gemini converts to ms.
+    timeout: float | None = None
+
+    @field_validator("timeout", mode="before")
+    @classmethod
+    def _validate_timeout(cls, v: Any) -> float | None:
+        if v is None:
+            return None
+        return coerce_provider_timeout(v)
 
     @model_validator(mode="before")
     @classmethod
@@ -382,6 +439,16 @@ class EmbeddingModelConfig(BaseModel):
     transport: EmbeddingTransport = "openai"
     api_key: str | None = None
     base_url: str | None = None
+    max_batch_size: Annotated[int, Field(gt=0)] | None = None
+    # Client HTTP timeout in seconds. OpenAI receives seconds; Gemini converts to ms.
+    timeout: float | None = None
+
+    @field_validator("timeout", mode="before")
+    @classmethod
+    def _validate_timeout(cls, v: Any) -> float | None:
+        if v is None:
+            return None
+        return coerce_provider_timeout(v)
 
     @model_validator(mode="before")
     @classmethod
@@ -506,6 +573,8 @@ def resolve_embedding_model_config(
         transport=configured.transport,
         api_key=api_key,
         base_url=configured.overrides.base_url,
+        max_batch_size=configured.max_batch_size,
+        timeout=configured.timeout,
     )
 
 
@@ -754,6 +823,10 @@ class EmbeddingSettings(HonchoSettings):
     # Caps concurrent message-embedding fan-out on the API request path (the
     # immediate-embed background task). The reconciler is unaffected.
     MAX_CONCURRENT_EMBEDDINGS: Annotated[int, Field(default=10, gt=0, le=100)] = 10
+    # Caps in-flight immediate-embed background tasks per API process. When
+    # saturated, message creation skips the fast path entirely and the
+    # reconciler embeds on its next cycle. 0 disables the fast path.
+    MAX_PENDING_EMBED_TASKS: Annotated[int, Field(default=50, ge=0)] = 50
 
     @model_validator(mode="before")
     @classmethod
@@ -782,6 +855,22 @@ class EmbeddingSettings(HonchoSettings):
         if self.MODEL_CONFIG.model in _EMBEDDING_KNOWN_REJECTING_MODELS:
             return False
         return "VECTOR_DIMENSIONS" in self.model_fields_set
+
+    def resolve_encoding_format(self) -> EmbeddingEncodingFormat:
+        """Pick the ``encoding_format`` for OpenAI embedding calls.
+
+        ``auto`` keeps the compact base64 wire format on hosts known to support
+        it and falls back to float elsewhere, since OpenAI-compatible providers
+        may answer a base64 request with an error or empty data.
+        """
+        mode = self.MODEL_CONFIG.encoding_format_mode
+        if mode != "auto":
+            return mode
+        base_url = self.MODEL_CONFIG.overrides.base_url
+        if not base_url:
+            return "base64"
+        host = urlparse(base_url).hostname
+        return "base64" if host in _EMBEDDING_BASE64_CAPABLE_HOSTS else "float"
 
 
 class DeriverSettings(HonchoSettings):
@@ -857,7 +946,20 @@ class DeriverSettings(HonchoSettings):
         int, Field(default=100, gt=0, le=1000)
     ] = 100
 
-    REPRESENTATION_BATCH_MAX_TOKENS: Annotated[
+    # Minimum tokens a representation work unit must accumulate (summed over
+    # its own unprocessed messages) before it becomes claimable. Bypassed by
+    # FLUSH_ENABLED and by REPRESENTATION_BATCH_MAX_AGE_SECONDS age-flushing.
+    # 0 disables the accumulation gate entirely (equivalent to FLUSH_ENABLED
+    # for claiming): work units are claimable as soon as anything is pending.
+    REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS: Annotated[
+        int,
+        Field(default=512, ge=0, le=16_384),
+    ] = 512
+    # Cumulative-token cap on the conversation window (queued messages plus
+    # interleaved context) fed to a single deriver LLM call when draining a
+    # claimed work unit. The first unprocessed message is always included,
+    # even if it alone exceeds the cap.
+    REPRESENTATION_BATCH_TARGET_INPUT_TOKENS: Annotated[
         int,
         Field(default=1024, ge=128, le=16_384),
     ] = 1024
@@ -869,6 +971,10 @@ class DeriverSettings(HonchoSettings):
 
     # When enabled, bypasses the batch token threshold and processes work immediately
     FLUSH_ENABLED: bool = False
+
+    BACKLOG_METRICS_POLL_INTERVAL_SECONDS: Annotated[int, Field(default=30, ge=1)] = 30
+
+    SCHEDULER: Literal["api", "deriver"] = "deriver"
 
     @model_validator(mode="before")
     @classmethod
@@ -883,9 +989,9 @@ class DeriverSettings(HonchoSettings):
 
     @model_validator(mode="after")
     def validate_batch_tokens_vs_context_limit(self):
-        if self.REPRESENTATION_BATCH_MAX_TOKENS > self.MAX_INPUT_TOKENS:
+        if self.REPRESENTATION_BATCH_TARGET_INPUT_TOKENS > self.MAX_INPUT_TOKENS:
             raise ValueError(
-                f"REPRESENTATION_BATCH_MAX_TOKENS ({self.REPRESENTATION_BATCH_MAX_TOKENS}) cannot exceed max deriver input tokens ({self.MAX_INPUT_TOKENS})"
+                f"REPRESENTATION_BATCH_TARGET_INPUT_TOKENS ({self.REPRESENTATION_BATCH_TARGET_INPUT_TOKENS}) cannot exceed max deriver input tokens ({self.MAX_INPUT_TOKENS})"
             )
         return self
 
@@ -896,15 +1002,14 @@ class PeerCardSettings(HonchoSettings):
     ENABLED: bool = True
 
 
-# Reasoning levels for dialectic - defined here to avoid circular imports with schemas
+# Reasoning levels for dialectic - defined here to avoid circular imports with schemas.
+# region ai
+# REASONING_LEVELS is derived from the Literal, not hand-listed: the annotation
+# rejects an invalid member but not a MISSING one, so a hand-written copy could
+# silently drop a level and still typecheck.
+# endregion
 ReasoningLevel = Literal["minimal", "low", "medium", "high", "max"]
-REASONING_LEVELS: list[ReasoningLevel] = [
-    "minimal",
-    "low",
-    "medium",
-    "high",
-    "max",
-]
+REASONING_LEVELS: list[ReasoningLevel] = list(get_args(ReasoningLevel))
 
 
 class DialecticLevelSettings(BaseModel):
@@ -1176,12 +1281,29 @@ class TelemetrySettings(HonchoSettings):
     # that join high-volume events to aggregate envelopes first.
     HIGH_VOLUME_SAMPLE_RATE: Annotated[float, Field(default=1.0, ge=0.0, le=1.0)] = 1.0
 
+    # --- Full-fidelity payload tracing (llm.call.traced / trace.content) ---
+    # Master toggle for replay-grade content capture. Default-off.
+    TRACE_PAYLOADS_ENABLED: bool = False
+
+    # Per-message cap (bytes) for captured content; oversized string content is
+    # clipped (with a marker) and the call is flagged was_truncated.
+    TRACE_MAX_BYTES: Annotated[int, Field(default=262144, gt=0)] = 262144
+
+    # Allowlist of CallPurpose values to capture; empty = all. Typed as str to
+    # keep the enum out of config (validated against CallPurpose at the producer,
+    # same pattern as LLMTelemetryContext.call_purpose).
+    TRACE_PURPOSES: list[str] = Field(default_factory=list)
+
 
 class CacheSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="CACHE_", extra="ignore")  # pyright: ignore
 
     ENABLED: bool = False
     URL: str = "redis://localhost:6379/0?suppress=true"
+    # URL points at a Redis Cluster (OSS cluster protocol, e.g. GCP Memorystore
+    # for Redis Cluster). A standalone client cannot follow the MOVED redirects
+    # such deployments return for keys hashed to another shard.
+    CLUSTER: bool = False
     NAMESPACE: str | None = None
     DEFAULT_TTL_SECONDS: Annotated[int, Field(default=300, ge=1, le=86_400)] = (
         300  # how long to keep items in cache
@@ -1190,6 +1312,12 @@ class CacheSettings(HonchoSettings):
     DEFAULT_LOCK_TTL_SECONDS: Annotated[int, Field(default=5, ge=1, le=86_400)] = (
         5  # how long to hold a lock on a resource when fetching DB after cache miss
     )
+
+    # Polling interval while waiting for another worker's fetch lock. cashews
+    # defaults to 0, which busy-spins the event loop for the whole wait.
+    LOCK_WAIT_CHECK_INTERVAL_SECONDS: Annotated[
+        float, Field(default=0.1, gt=0, le=5)
+    ] = 0.1
 
 
 class SurprisalSettings(BaseModel):
@@ -1227,6 +1355,8 @@ class DreamSettings(HonchoSettings):
     DOCUMENT_THRESHOLD: Annotated[int, Field(default=50, gt=0, le=1000)] = 50
     IDLE_TIMEOUT_MINUTES: Annotated[int, Field(default=60, gt=0, le=1440)] = 60
     MIN_HOURS_BETWEEN_DREAMS: Annotated[int, Field(default=8, gt=0, le=72)] = 8
+    DUE_POLL_INTERVAL_SECONDS: Annotated[int, Field(default=300, ge=1)] = 300
+    MAX_ENQUEUED_PER_POLL: Annotated[int, Field(default=100, gt=0, le=10_000)] = 100
     ENABLED_TYPES: list[str] = ["omni"]
 
     # Agent iteration limit - increased for extended reasoning workflow
@@ -1301,12 +1431,14 @@ class DreamSettings(HonchoSettings):
 
 
 class VectorStoreSettings(HonchoSettings):
-    """Settings for vector store (pgvector, Turbopuffer, LanceDB, or ChromaDB)."""
+    """Settings for vector store (pgvector, Turbopuffer, LanceDB, Qdrant, or ChromaDB)."""
 
     model_config = SettingsConfigDict(env_prefix="VECTOR_STORE_", extra="ignore")  # pyright: ignore
 
     # Vector store type to use
-    TYPE: Literal["pgvector", "turbopuffer", "lancedb", "chromadb"] = "pgvector"
+    TYPE: Literal["pgvector", "turbopuffer", "lancedb", "qdrant", "chromadb"] = (
+        "pgvector"
+    )
 
     MIGRATED: bool = False
 
@@ -1331,6 +1463,15 @@ class VectorStoreSettings(HonchoSettings):
 
     # LanceDB-specific settings (local embedded mode)
     LANCEDB_PATH: str = "./lancedb_data"
+
+    # Qdrant-specific settings
+    QDRANT_URL: str = "http://localhost:6333"
+    QDRANT_API_KEY: str | None = None
+    QDRANT_PREFER_GRPC: bool = False
+    QDRANT_GRPC_PORT: int = 6334
+    QDRANT_HTTPS: bool | None = None
+    QDRANT_PREFIX: str | None = None
+    QDRANT_TIMEOUT: int | None = None
 
     # ChromaDB-specific settings
     # CHROMA_CLIENT_MODE selects the deployment shape:
@@ -1374,6 +1515,17 @@ class VectorStoreSettings(HonchoSettings):
         return self
 
 
+class TraceViewerSettings(HonchoSettings):
+    model_config = SettingsConfigDict(env_prefix="TRACE_VIEWER_", extra="ignore")  # pyright: ignore
+
+    ENABLED: bool = False
+    HOST: str = "127.0.0.1"
+    PORT: int = 8002
+    STORAGE_DIR: str = "./traces"
+    MAX_REQUEST_BYTES: int = 10 * 1024 * 1024  # 10 MB
+    VENDOR_CDN_BASE: str = "https://cdn.jsdelivr.net/npm"
+
+
 class AppSettings(HonchoSettings):
     # No env_prefix for app-level settings
     model_config = SettingsConfigDict(  # pyright: ignore
@@ -1393,6 +1545,29 @@ class AppSettings(HonchoSettings):
     EMBED_MESSAGES: bool = True
     LANGFUSE_HOST: str | None = None
     LANGFUSE_PUBLIC_KEY: str | None = None
+    # How Langfuse traces are produced:
+    #   "exporter" (default) — Langfuse is a projection over the captured
+    #     CapturedLLMCall stream (LangfuseExporter), the same source of truth as
+    #     the CloudEvents trace stream.
+    #   "inline" — legacy live instrumentation (@observe + propagate_attributes
+    #     spans during execution). Kept one release for side-by-side validation.
+    LANGFUSE_EXPORTER_MODE: Literal["inline", "exporter"] = "exporter"
+
+    @property
+    def langfuse_inline_enabled(self) -> bool:
+        """True when the legacy inline Langfuse instrumentation is active
+        (keys configured + ``LANGFUSE_EXPORTER_MODE == "inline"``)."""
+        return (
+            bool(self.LANGFUSE_PUBLIC_KEY) and self.LANGFUSE_EXPORTER_MODE == "inline"
+        )
+
+    @property
+    def langfuse_exporter_enabled(self) -> bool:
+        """True when the Langfuse exporter (a projection over the captured call
+        stream) is active (keys configured + ``LANGFUSE_EXPORTER_MODE == "exporter"``)."""
+        return (
+            bool(self.LANGFUSE_PUBLIC_KEY) and self.LANGFUSE_EXPORTER_MODE == "exporter"
+        )
 
     # Origins allowed by the FastAPI CORSMiddleware
     CORS_ORIGINS: list[str] = [
@@ -1423,6 +1598,7 @@ class AppSettings(HonchoSettings):
     CACHE: CacheSettings = Field(default_factory=CacheSettings)
     DREAM: DreamSettings = Field(default_factory=DreamSettings)
     VECTOR_STORE: VectorStoreSettings = Field(default_factory=VectorStoreSettings)
+    TRACE_VIEWER: TraceViewerSettings = Field(default_factory=TraceViewerSettings)
 
     @field_validator("LOG_LEVEL")
     def validate_log_level(cls, v: str) -> str:

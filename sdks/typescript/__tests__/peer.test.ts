@@ -16,6 +16,7 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test'
+import { z } from 'zod'
 import { Honcho, Peer } from '../src'
 import { createTestClient, generateId, requireServer } from './setup'
 import {
@@ -624,6 +625,44 @@ describe('Peer', () => {
       expect(response === null || typeof response === 'string').toBe(true)
     })
 
+    test('chat with responseFormat as JSON schema object returns JSON string', async () => {
+      const peer = await client.peer('chat-rf-peer')
+
+      const response = await peer.chat('What do you know?', {
+        responseFormat: {
+          type: 'object',
+          properties: { summary: { type: 'string' } },
+        },
+      })
+
+      expect(response === null || typeof response === 'string').toBe(true)
+      if (response !== null) {
+        expect(() => JSON.parse(response)).not.toThrow()
+      }
+    })
+
+    test('chat with responseFormat as Zod schema returns parsed object', async () => {
+      const peer = await client.peer('chat-rf-zod-peer')
+      const ResultSchema = z.object({ summary: z.string().optional() })
+
+      const response = await peer.chat('What do you know?', {
+        responseFormat: ResultSchema,
+      })
+
+      expect(response === null || typeof response === 'object').toBe(true)
+    })
+
+    test('chat with unsupported responseFormat is rejected by the server', async () => {
+      const peer = await client.peer('chat-rf-invalid-peer')
+
+      // Non-object root is rejected with 422
+      await expect(
+        peer.chat('What do you know?', {
+          responseFormat: { type: 'string' },
+        })
+      ).rejects.toThrow()
+    })
+
     // Streaming tests are in streaming.test.ts
   })
 
@@ -632,7 +671,7 @@ describe('Peer', () => {
   // ===========================================================================
 
   describe('Conclusion scope access', () => {
-    test('conclusions property returns ConclusionScope for self', async () => {
+    test('conclusions property returns ConclusionsView for self', async () => {
       const peer = await client.peer('self-conclusions-peer')
 
       const scope = peer.conclusions
@@ -642,7 +681,7 @@ describe('Peer', () => {
       expect(scope.workspaceId).toBe(client.workspaceId)
     })
 
-    test('conclusionsOf returns ConclusionScope for target', async () => {
+    test('conclusionsOf returns ConclusionsView for target', async () => {
       const observer = await client.peer('obs-conclusions-peer')
       const target = await client.peer('target-conclusions-peer')
 

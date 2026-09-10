@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ToolContext } from "../types.js";
-import { textResult, errorResult } from "../types.js";
+import { textResult, errorResult, workspaceIdSchema } from "../types.js";
 
 export function register(server: McpServer, ctx: ToolContext) {
   // ── list_conclusions ────────────────────────────────────────────────
@@ -14,6 +14,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         "Returns conclusion objects with pagination metadata.",
       ].join("\n"),
       inputSchema: {
+        workspace_id: workspaceIdSchema(ctx),
         peer_id: z.string().describe("The observer peer."),
         target_peer_id: z
           .string()
@@ -23,9 +24,9 @@ export function register(server: McpServer, ctx: ToolContext) {
           ),
       },
     },
-    async ({ peer_id, target_peer_id }) => {
+    async ({ workspace_id, peer_id, target_peer_id }) => {
       try {
-        const peer = await ctx.honcho.peer(peer_id);
+        const peer = await ctx.clientFor(workspace_id).peer(peer_id);
         const scope = target_peer_id
           ? peer.conclusionsOf(target_peer_id)
           : peer.conclusions;
@@ -61,6 +62,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         "Returns an array of matching conclusions ranked by relevance.",
       ].join("\n"),
       inputSchema: {
+        workspace_id: workspaceIdSchema(ctx),
         peer_id: z.string().describe("The observer peer."),
         query: z.string().describe("Semantic search query."),
         target_peer_id: z
@@ -71,19 +73,26 @@ export function register(server: McpServer, ctx: ToolContext) {
           .number()
           .optional()
           .describe("Max results to return."),
+        filters: z
+          .record(z.string(), z.unknown())
+          .optional()
+          .describe(
+            'Optional: filter criteria, e.g. {"level": ["deductive", "inductive"]} to only return conclusions derived during dreaming. Levels: explicit (extracted directly from messages), deductive, inductive, contradiction. See https://honcho.dev/docs/v3/documentation/features/advanced/using-filters',
+          ),
       },
     },
-    async ({ peer_id, query, target_peer_id, top_k }) => {
+    async ({ workspace_id, peer_id, query, target_peer_id, top_k, filters }) => {
       try {
-        const peer = await ctx.honcho.peer(peer_id);
+        const peer = await ctx.clientFor(workspace_id).peer(peer_id);
         const scope = target_peer_id
           ? peer.conclusionsOf(target_peer_id)
           : peer.conclusions;
-        const conclusions = await scope.query(query, top_k);
+        const conclusions = await scope.query(query, top_k, undefined, filters);
         return textResult(
           conclusions.map((c) => ({
             id: c.id,
             content: c.content,
+            level: c.level,
             observer_id: c.observerId,
             observed_id: c.observedId,
             session_id: c.sessionId,
@@ -108,6 +117,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         "Returns the number of conclusions created.",
       ].join("\n"),
       inputSchema: {
+        workspace_id: workspaceIdSchema(ctx),
         peer_id: z.string().describe("The observer peer."),
         target_peer_id: z
           .string()
@@ -123,9 +133,15 @@ export function register(server: McpServer, ctx: ToolContext) {
           ),
       },
     },
-    async ({ peer_id, target_peer_id, conclusions, session_id }) => {
+    async ({
+      workspace_id,
+      peer_id,
+      target_peer_id,
+      conclusions,
+      session_id,
+    }) => {
       try {
-        const peer = await ctx.honcho.peer(peer_id);
+        const peer = await ctx.clientFor(workspace_id).peer(peer_id);
         const scope = peer.conclusionsOf(target_peer_id);
         const params = conclusions.map((content) => ({
           content,
@@ -149,9 +165,11 @@ export function register(server: McpServer, ctx: ToolContext) {
     {
       description: [
         "Delete a specific conclusion by ID.",
+        "Use query_conclusions or list_conclusions to find the ID first.",
         "Use this to remove incorrect or outdated knowledge.",
       ].join("\n"),
       inputSchema: {
+        workspace_id: workspaceIdSchema(ctx),
         peer_id: z.string().describe("The observer peer."),
         target_peer_id: z
           .string()
@@ -159,9 +177,9 @@ export function register(server: McpServer, ctx: ToolContext) {
         conclusion_id: z.string().describe("The conclusion to delete."),
       },
     },
-    async ({ peer_id, target_peer_id, conclusion_id }) => {
+    async ({ workspace_id, peer_id, target_peer_id, conclusion_id }) => {
       try {
-        const peer = await ctx.honcho.peer(peer_id);
+        const peer = await ctx.clientFor(workspace_id).peer(peer_id);
         const scope = peer.conclusionsOf(target_peer_id);
         await scope.delete(conclusion_id);
         return textResult("Conclusion deleted successfully");

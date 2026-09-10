@@ -1,12 +1,16 @@
+import asyncio
 import datetime
+from typing import Any
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from nanoid import generate as generate_nanoid
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from src import crud, models, schemas
-from src.crud.document import is_rejected_duplicate
+from src.crud.document import SemanticRejectionResult, is_rejected_duplicate
 from src.exceptions import ResourceNotFoundException
 
 
@@ -194,7 +198,7 @@ class TestDocumentCRUD:
         deleted_doc = docs["User likes pizza"]
         kept_doc = docs["User dislikes vegetables"]
 
-        deleted_doc.deleted_at = datetime.datetime.now(datetime.timezone.utc)
+        deleted_doc.deleted_at = datetime.datetime.now(datetime.UTC)
         await db_session.commit()
 
         results = await crud.query_documents(
@@ -289,7 +293,7 @@ class TestDocumentCRUD:
             db_session, test_workspace, test_peer
         )
 
-        base = datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc)
+        base = datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC)
         # Three conclusions, all reinforced once -- the real-world steady state
         # before the fix -- inserted oldest-first.
         for i in range(3):
@@ -381,7 +385,7 @@ class TestDocumentCRUD:
             observed=test_peer2.name,
         )
 
-        assert rejected is True
+        assert rejected is SemanticRejectionResult.REJECTED
         surviving = (
             await db_session.execute(
                 select(models.Document).where(
@@ -445,7 +449,7 @@ class TestDocumentCRUD:
             observed=test_peer2.name,
         )
 
-        assert rejected is False
+        assert rejected is SemanticRejectionResult.REPLACED_EXISTING
         # Count carried forward onto the replacement (3 -> 4), not reset to 1.
         assert new_doc.times_derived == 4
         live = (
@@ -509,7 +513,7 @@ class TestDocumentCRUD:
             ),
         ]
 
-        accepted = await crud.create_documents(
+        result = await crud.create_documents(
             db_session,
             documents=doc_schemas,
             workspace_name=test_workspace.name,
@@ -517,8 +521,13 @@ class TestDocumentCRUD:
             observed=test_peer2.name,
             deduplicate=False,
         )
+        accepted = result.created_documents
 
         assert len(accepted) == 1
+        assert result.exact_dup_in_batch_count == 2
+        assert result.exact_dup_existing_count == 0
+        assert result.semantic_dup_rejected_count == 0
+        assert result.semantic_dup_replaced_count == 0
         live = (
             (
                 await db_session.execute(
@@ -571,7 +580,7 @@ class TestDocumentCRUD:
         )
 
         # Case/whitespace variant of the existing content -> exact match.
-        accepted = await crud.create_documents(
+        result = await crud.create_documents(
             db_session,
             [
                 schemas.DocumentCreate(
@@ -590,8 +599,13 @@ class TestDocumentCRUD:
             observed=test_peer2.name,
             deduplicate=False,
         )
+        accepted = result.created_documents
 
         assert len(accepted) == 0
+        assert result.exact_dup_existing_count == 1
+        assert result.exact_dup_in_batch_count == 0
+        assert result.semantic_dup_rejected_count == 0
+        assert result.semantic_dup_replaced_count == 0
         surviving = (
             (
                 await db_session.execute(
@@ -663,25 +677,27 @@ class TestDocumentCRUD:
 
         # Incoming exact match claims more accumulated reinforcement (5) than
         # existing + 1 (3) -> incoming wins.
-        accepted = await crud.create_documents(
-            db_session,
-            [
-                schemas.DocumentCreate(
-                    content="user likes coffee ",
-                    embedding=[0.9] * 1536,
-                    session_name=test_session.name,
-                    times_derived=5,
-                    metadata=schemas.DocumentMetadata(
-                        message_ids=[2],
-                        message_created_at="2026-01-02T00:00:00Z",
-                    ),
-                )
-            ],
-            workspace_name=test_workspace.name,
-            observer=test_peer.name,
-            observed=test_peer2.name,
-            deduplicate=False,
-        )
+        accepted = (
+            await crud.create_documents(
+                db_session,
+                [
+                    schemas.DocumentCreate(
+                        content="user likes coffee ",
+                        embedding=[0.9] * 1536,
+                        session_name=test_session.name,
+                        times_derived=5,
+                        metadata=schemas.DocumentMetadata(
+                            message_ids=[2],
+                            message_created_at="2026-01-02T00:00:00Z",
+                        ),
+                    )
+                ],
+                workspace_name=test_workspace.name,
+                observer=test_peer.name,
+                observed=test_peer2.name,
+                deduplicate=False,
+            )
+        ).created_documents
         assert len(accepted) == 0
         live = await _live()
         assert len(live) == 1
@@ -689,24 +705,26 @@ class TestDocumentCRUD:
 
         # A normal re-derivation (times_derived defaults to 1) now bumps by one:
         # greatest(existing + 1, 1) -> existing + 1.
-        accepted = await crud.create_documents(
-            db_session,
-            [
-                schemas.DocumentCreate(
-                    content="USER LIKES COFFEE",
-                    embedding=[0.4] * 1536,
-                    session_name=test_session.name,
-                    metadata=schemas.DocumentMetadata(
-                        message_ids=[3],
-                        message_created_at="2026-01-03T00:00:00Z",
-                    ),
-                )
-            ],
-            workspace_name=test_workspace.name,
-            observer=test_peer.name,
-            observed=test_peer2.name,
-            deduplicate=False,
-        )
+        accepted = (
+            await crud.create_documents(
+                db_session,
+                [
+                    schemas.DocumentCreate(
+                        content="USER LIKES COFFEE",
+                        embedding=[0.4] * 1536,
+                        session_name=test_session.name,
+                        metadata=schemas.DocumentMetadata(
+                            message_ids=[3],
+                            message_created_at="2026-01-03T00:00:00Z",
+                        ),
+                    )
+                ],
+                workspace_name=test_workspace.name,
+                observer=test_peer.name,
+                observed=test_peer2.name,
+                deduplicate=False,
+            )
+        ).created_documents
         assert len(accepted) == 0
         live = await _live()
         assert len(live) == 1
@@ -746,7 +764,7 @@ class TestDocumentCRUD:
         )
 
         db_session.autoflush = False
-        accepted = await crud.create_documents(
+        result = await crud.create_documents(
             db_session,
             [
                 schemas.DocumentCreate(
@@ -775,9 +793,14 @@ class TestDocumentCRUD:
             observed=test_peer2.name,
             deduplicate=True,
         )
+        accepted = result.created_documents
 
         assert len(accepted) == 1
         assert accepted[0].content == "User likes coffee and tea"
+        assert result.exact_dup_existing_count == 1
+        assert result.semantic_dup_replaced_count == 1
+        assert result.exact_dup_in_batch_count == 0
+        assert result.semantic_dup_rejected_count == 0
 
         surviving = (
             (
@@ -796,6 +819,65 @@ class TestDocumentCRUD:
         assert len(surviving) == 1
         assert surviving[0].content == "User likes coffee and tea"
         assert surviving[0].times_derived == 3
+
+    @pytest.mark.asyncio
+    async def test_semantic_dedup_rejected_counts(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """A semantically-similar doc with less information than the existing one
+        is rejected, and the rejection is counted on the result."""
+        test_workspace, test_peer = sample_data
+        test_peer2, test_session, _ = await self._setup_test_data(
+            db_session, test_workspace, test_peer
+        )
+
+        await crud.create_documents(
+            db_session,
+            [
+                schemas.DocumentCreate(
+                    content="eri loves cats and dogs and birds and snakes",
+                    embedding=[0.5] * 1536,
+                    session_name=test_session.name,
+                    times_derived=1,
+                    metadata=schemas.DocumentMetadata(
+                        message_ids=[1],
+                        message_created_at="2026-01-01T00:00:00Z",
+                    ),
+                )
+            ],
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+        )
+
+        # Fewer unique tokens -> existing wins -> new doc is rejected.
+        result = await crud.create_documents(
+            db_session,
+            [
+                schemas.DocumentCreate(
+                    content="eri loves cats",
+                    embedding=[0.5] * 1536,
+                    session_name=test_session.name,
+                    times_derived=1,
+                    metadata=schemas.DocumentMetadata(
+                        message_ids=[2],
+                        message_created_at="2026-01-02T00:00:00Z",
+                    ),
+                )
+            ],
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+            deduplicate=True,
+        )
+
+        assert len(result.created_documents) == 0
+        assert result.semantic_dup_rejected_count == 1
+        assert result.exact_dup_in_batch_count == 0
+        assert result.exact_dup_existing_count == 0
+        assert result.semantic_dup_replaced_count == 0
 
     @pytest.mark.asyncio
     async def test_delete_document_success(
@@ -902,15 +984,17 @@ class TestDocumentCRUD:
         ]
 
         # Create documents
-        count = await crud.create_documents(
-            db_session,
-            documents=doc_schemas,
-            workspace_name=test_workspace.name,
-            observer=test_peer.name,
-            observed=test_peer2.name,
-        )
+        created_documents = (
+            await crud.create_documents(
+                db_session,
+                documents=doc_schemas,
+                workspace_name=test_workspace.name,
+                observer=test_peer.name,
+                observed=test_peer2.name,
+            )
+        ).created_documents
 
-        assert len(count) == 2
+        assert len(created_documents) == 2
 
         # Verify documents were created
         stmt = select(models.Document).where(
@@ -924,3 +1008,1005 @@ class TestDocumentCRUD:
         assert len(documents) == 2
         assert documents[0].content in ["Observation 1", "Observation 2"]
         assert documents[1].content in ["Observation 1", "Observation 2"]
+
+    @pytest.mark.asyncio
+    async def test_create_observations_embeds_with_truncate_on_oversize(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """API conclusion creates must opt into truncation on oversize content."""
+        test_workspace, test_peer = sample_data
+        test_peer2, test_session, _ = await self._setup_test_data(
+            db_session, test_workspace, test_peer
+        )
+
+        with patch(
+            "src.crud.document.embedding_client.simple_batch_embed",
+            new=AsyncMock(return_value=[[0.1] * 1536, [0.2] * 1536]),
+        ) as mock_embed:
+            created = await crud.create_observations(
+                db_session,
+                observations=[
+                    schemas.ConclusionCreate(
+                        content="short conclusion",
+                        observer_id=test_peer.name,
+                        observed_id=test_peer2.name,
+                        session_id=test_session.name,
+                    ),
+                    schemas.ConclusionCreate(
+                        content="another conclusion",
+                        observer_id=test_peer.name,
+                        observed_id=test_peer2.name,
+                        session_id=test_session.name,
+                    ),
+                ],
+                workspace_name=test_workspace.name,
+            )
+
+        assert len(created) == 2
+        mock_embed.assert_awaited_once_with(
+            ["short conclusion", "another conclusion"], on_oversize="truncate"
+        )
+
+
+class TestSessionPurityInvariant:
+    """Regression tests for the explicit-document session-purity invariant.
+
+    Explicit documents are session-pure records of what was derived from one
+    session's messages (the Scopes copy-by-session model depends on this):
+
+    - an explicit document must always carry a non-null session_name
+    - dedup/merge (exact and semantic) must never cross document levels
+    - dedup/merge must never cross sessions for explicit documents
+    """
+
+    async def _setup(
+        self,
+        db_session: AsyncSession,
+        test_workspace: models.Workspace,
+        test_peer: models.Peer,
+    ) -> tuple[models.Peer, models.Session, models.Session]:
+        """Create an observed peer, two sessions, and the collection."""
+        test_peer2 = models.Peer(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add(test_peer2)
+        session_a = models.Session(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        session_b = models.Session(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add_all([session_a, session_b])
+        await db_session.flush()
+
+        collection = models.Collection(
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+        )
+        db_session.add(collection)
+        await db_session.flush()
+        return test_peer2, session_a, session_b
+
+    def _doc(
+        self,
+        content: str,
+        *,
+        session_name: str | None,
+        level: str = "explicit",
+        message_id: int = 1,
+    ) -> schemas.DocumentCreate:
+        return schemas.DocumentCreate(
+            content=content,
+            embedding=[0.1] * 1536,
+            session_name=session_name,
+            level=level,  # pyright: ignore[reportArgumentType]
+            metadata=schemas.DocumentMetadata(
+                message_ids=[message_id],
+                message_created_at="2026-01-01T00:00:00Z",
+            ),
+        )
+
+    async def _live_docs(
+        self,
+        db_session: AsyncSession,
+        workspace_name: str,
+        observer: str,
+        observed: str,
+    ) -> list[models.Document]:
+        return list(
+            (
+                await db_session.execute(
+                    select(models.Document).where(
+                        models.Document.workspace_name == workspace_name,
+                        models.Document.observer == observer,
+                        models.Document.observed == observed,
+                        models.Document.deleted_at.is_(None),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    @pytest.mark.asyncio
+    async def test_explicit_without_session_is_refused(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """An explicit document with session_name=None must not be written;
+        derived levels remain allowed without a session (dream output)."""
+        test_workspace, test_peer = sample_data
+        test_peer2, _, _ = await self._setup(db_session, test_workspace, test_peer)
+
+        accepted = (
+            await crud.create_documents(
+                db_session,
+                [
+                    self._doc("Global explicit fact", session_name=None),
+                    self._doc(
+                        "Dream-derived conclusion",
+                        session_name=None,
+                        level="deductive",
+                        message_id=2,
+                    ),
+                ],
+                workspace_name=test_workspace.name,
+                observer=test_peer.name,
+                observed=test_peer2.name,
+            )
+        ).created_documents
+
+        assert [d.content for d in accepted] == ["Dream-derived conclusion"]
+        live = await self._live_docs(
+            db_session, test_workspace.name, test_peer.name, test_peer2.name
+        )
+        assert len(live) == 1
+        assert live[0].level == "deductive"
+
+    @pytest.mark.asyncio
+    async def test_exact_dedup_never_merges_explicit_across_sessions(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """The same explicit fact stated in two sessions produces two
+        session-pure documents; the other session's row is not reinforced."""
+        test_workspace, test_peer = sample_data
+        test_peer2, session_a, session_b = await self._setup(
+            db_session, test_workspace, test_peer
+        )
+
+        await crud.create_documents(
+            db_session,
+            [self._doc("User likes coffee", session_name=session_a.name)],
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+        )
+        accepted = (
+            await crud.create_documents(
+                db_session,
+                [
+                    self._doc(
+                        "user likes coffee ", session_name=session_b.name, message_id=2
+                    )
+                ],
+                workspace_name=test_workspace.name,
+                observer=test_peer.name,
+                observed=test_peer2.name,
+            )
+        ).created_documents
+
+        assert len(accepted) == 1
+        live = await self._live_docs(
+            db_session, test_workspace.name, test_peer.name, test_peer2.name
+        )
+        assert len(live) == 2
+        assert {doc.session_name for doc in live} == {session_a.name, session_b.name}
+        assert all(doc.times_derived == 1 for doc in live)
+
+    @pytest.mark.asyncio
+    async def test_exact_dedup_never_merges_across_levels(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """An explicit fact must not be dropped/reinforced against a derived
+        document that happens to share its content."""
+        test_workspace, test_peer = sample_data
+        test_peer2, session_a, _ = await self._setup(
+            db_session, test_workspace, test_peer
+        )
+
+        await crud.create_documents(
+            db_session,
+            [
+                self._doc(
+                    "User likes coffee", session_name=session_a.name, level="deductive"
+                )
+            ],
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+        )
+        accepted = (
+            await crud.create_documents(
+                db_session,
+                [
+                    self._doc(
+                        "User likes coffee", session_name=session_a.name, message_id=2
+                    )
+                ],
+                workspace_name=test_workspace.name,
+                observer=test_peer.name,
+                observed=test_peer2.name,
+            )
+        ).created_documents
+
+        assert len(accepted) == 1
+        live = await self._live_docs(
+            db_session, test_workspace.name, test_peer.name, test_peer2.name
+        )
+        assert len(live) == 2
+        assert {doc.level for doc in live} == {"explicit", "deductive"}
+        assert all(doc.times_derived == 1 for doc in live)
+
+    @pytest.mark.asyncio
+    async def test_exact_dedup_still_merges_derived_levels_across_sessions(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """Derived levels are consolidations, not session-pure records:
+        cross-session exact dedup still reinforces the existing row."""
+        test_workspace, test_peer = sample_data
+        test_peer2, session_a, session_b = await self._setup(
+            db_session, test_workspace, test_peer
+        )
+
+        await crud.create_documents(
+            db_session,
+            [
+                self._doc(
+                    "Probably a morning person",
+                    session_name=session_a.name,
+                    level="deductive",
+                )
+            ],
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+        )
+        accepted = (
+            await crud.create_documents(
+                db_session,
+                [
+                    self._doc(
+                        "probably a morning person",
+                        session_name=session_b.name,
+                        level="deductive",
+                        message_id=2,
+                    )
+                ],
+                workspace_name=test_workspace.name,
+                observer=test_peer.name,
+                observed=test_peer2.name,
+            )
+        ).created_documents
+
+        assert len(accepted) == 0
+        live = await self._live_docs(
+            db_session, test_workspace.name, test_peer.name, test_peer2.name
+        )
+        assert len(live) == 1
+        assert live[0].times_derived == 2
+
+    @pytest.mark.asyncio
+    async def test_semantic_dedup_scoped_to_level_and_session(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """is_rejected_duplicate must constrain candidate search to the same
+        level, and to the same session for explicit documents."""
+        test_workspace, test_peer = sample_data
+        test_peer2, session_a, _ = await self._setup(
+            db_session, test_workspace, test_peer
+        )
+
+        explicit_doc = self._doc("User likes coffee", session_name=session_a.name)
+        with patch(
+            "src.crud.document.query_documents", new=AsyncMock(return_value=[])
+        ) as mock_query:
+            rejected = await is_rejected_duplicate(
+                db_session,
+                explicit_doc,
+                test_workspace.name,
+                observer=test_peer.name,
+                observed=test_peer2.name,
+            )
+        assert rejected is SemanticRejectionResult.NOT_DUPLICATE
+        assert mock_query.await_args is not None
+        assert mock_query.await_args.kwargs["filters"] == {
+            "level": "explicit",
+            "session_name": session_a.name,
+        }
+
+        deductive_doc = self._doc(
+            "User likes coffee", session_name=None, level="deductive"
+        )
+        with patch(
+            "src.crud.document.query_documents", new=AsyncMock(return_value=[])
+        ) as mock_query:
+            rejected = await is_rejected_duplicate(
+                db_session,
+                deductive_doc,
+                test_workspace.name,
+                observer=test_peer.name,
+                observed=test_peer2.name,
+            )
+        assert rejected is SemanticRejectionResult.NOT_DUPLICATE
+        assert mock_query.await_args is not None
+        assert mock_query.await_args.kwargs["filters"] == {"level": "deductive"}
+
+    @pytest.mark.asyncio
+    async def test_semantic_dedup_refuses_sessionless_explicit(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """A session-less explicit document has no valid merge partner: it is
+        never treated as a duplicate and no candidate search runs."""
+        test_workspace, test_peer = sample_data
+        test_peer2, _, _ = await self._setup(db_session, test_workspace, test_peer)
+
+        doc = self._doc("User likes coffee", session_name=None)
+        with patch(
+            "src.crud.document.query_documents", new=AsyncMock(return_value=[])
+        ) as mock_query:
+            rejected = await is_rejected_duplicate(
+                db_session,
+                doc,
+                test_workspace.name,
+                observer=test_peer.name,
+                observed=test_peer2.name,
+            )
+        assert rejected is SemanticRejectionResult.NOT_DUPLICATE
+        mock_query.assert_not_awaited()
+
+
+class TestCreateDocumentsConcurrency:
+    """Concurrent same-collection reinforcements lock rows in id order."""
+
+    N_DOCS: int = 20
+    N_ROUNDS: int = 5
+
+    async def _setup(
+        self,
+        db_session: AsyncSession,
+        test_workspace: models.Workspace,
+        test_peer: models.Peer,
+    ) -> tuple[models.Peer, models.Session]:
+        """Create an observed peer, session, and collection, committed so
+        they are visible to independent concurrent sessions."""
+        test_peer2 = models.Peer(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        test_session = models.Session(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add_all([test_peer2, test_session])
+        await db_session.flush()
+        collection = models.Collection(
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+        )
+        db_session.add(collection)
+        await db_session.commit()
+        return test_peer2, test_session
+
+    def _batch(self, session_name: str) -> list[schemas.DocumentCreate]:
+        return [
+            schemas.DocumentCreate(
+                content=f"user fact number {i}",
+                embedding=[0.1] * 1536,
+                session_name=session_name,
+                metadata=schemas.DocumentMetadata(
+                    message_ids=[i],
+                    message_created_at="2026-01-01T00:00:00Z",
+                ),
+            )
+            for i in range(self.N_DOCS)
+        ]
+
+    @staticmethod
+    def _chain(exc: BaseException) -> str:
+        parts: list[str] = []
+        seen: set[int] = set()
+        e: BaseException | None = exc
+        while e is not None and id(e) not in seen:
+            seen.add(id(e))
+            parts.append(f"{type(e).__name__}: {e}")
+            e = e.__cause__ or e.__context__
+        return " <- ".join(parts)
+
+    @pytest.mark.asyncio
+    async def test_concurrent_reinforcement_does_not_deadlock(
+        self,
+        db_engine: "AsyncEngine",
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """Opposing-order batches on one collection must not deadlock."""
+        test_workspace, test_peer = sample_data
+        test_peer2, test_session = await self._setup(
+            db_session, test_workspace, test_peer
+        )
+
+        # Seed the rows both writers will reinforce.
+        await crud.create_documents(
+            db_session,
+            self._batch(test_session.name),
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+        )
+
+        session_factory = async_sessionmaker(bind=db_engine, expire_on_commit=False)
+
+        for round_num in range(self.N_ROUNDS):
+            forward = self._batch(test_session.name)
+            backward = list(reversed(self._batch(test_session.name)))
+
+            async def _run(batch: list[schemas.DocumentCreate]) -> None:
+                async with session_factory() as db:
+                    await crud.create_documents(
+                        db,
+                        batch,
+                        workspace_name=test_workspace.name,
+                        observer=test_peer.name,
+                        observed=test_peer2.name,
+                    )
+
+            results = await asyncio.gather(
+                _run(forward), _run(backward), return_exceptions=True
+            )
+            errors = [r for r in results if isinstance(r, BaseException)]
+            assert not errors, (
+                f"round {round_num}: concurrent create_documents failed: "
+                + "; ".join(self._chain(e) for e in errors)
+            )
+
+        # Every round reinforced the same rows: 1 seed + 2 per round.
+        docs = (
+            (
+                await db_session.execute(
+                    select(models.Document).where(
+                        models.Document.workspace_name == test_workspace.name,
+                        models.Document.observer == test_peer.name,
+                        models.Document.observed == test_peer2.name,
+                        models.Document.deleted_at.is_(None),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(docs) == self.N_DOCS
+        assert all(d.times_derived == 1 + 2 * self.N_ROUNDS for d in docs)
+
+
+class TestCreateDocumentsErrorHandling:
+    """A dead transaction aborts the batch; per-document failures skip one document."""
+
+    async def _setup(
+        self,
+        db_session: AsyncSession,
+        test_workspace: models.Workspace,
+        test_peer: models.Peer,
+    ) -> tuple[models.Peer, models.Session]:
+        test_peer2 = models.Peer(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        test_session = models.Session(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add_all([test_peer2, test_session])
+        await db_session.flush()
+        collection = models.Collection(
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+        )
+        db_session.add(collection)
+        await db_session.commit()
+        return test_peer2, test_session
+
+    def _doc(self, content: str, session_name: str) -> schemas.DocumentCreate:
+        return schemas.DocumentCreate(
+            content=content,
+            embedding=[0.1] * 1536,
+            session_name=session_name,
+            metadata=schemas.DocumentMetadata(
+                message_ids=[1],
+                message_created_at="2026-01-01T00:00:00Z",
+            ),
+        )
+
+    @pytest.mark.asyncio
+    async def test_db_error_on_row_update_flush_aborts_batch(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """A DB error while applying row updates raises and commits nothing."""
+        test_workspace, test_peer = sample_data
+        test_peer2, test_session = await self._setup(
+            db_session, test_workspace, test_peer
+        )
+        # Plain strings: the rollback below expires ORM objects in the session.
+        workspace_name = test_workspace.name
+        observer = test_peer.name
+        observed = test_peer2.name
+        session_name = test_session.name
+
+        await crud.create_documents(
+            db_session,
+            [self._doc("existing fact", session_name)],
+            workspace_name=workspace_name,
+            observer=observer,
+            observed=observed,
+        )
+
+        class FakePGError(Exception):
+            sqlstate: str = "40P01"
+
+        deadlock = OperationalError("UPDATE documents", {}, FakePGError())
+        with (
+            patch.object(db_session, "flush", AsyncMock(side_effect=deadlock)),
+            pytest.raises(OperationalError),
+        ):
+            await crud.create_documents(
+                db_session,
+                [
+                    self._doc("existing fact", session_name),
+                    self._doc("a brand new fact", session_name),
+                ],
+                workspace_name=workspace_name,
+                observer=observer,
+                observed=observed,
+            )
+
+        docs = (
+            (
+                await db_session.execute(
+                    select(models.Document).where(
+                        models.Document.workspace_name == workspace_name,
+                        models.Document.observer == observer,
+                        models.Document.observed == observed,
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert [d.content for d in docs] == ["existing fact"]
+        assert docs[0].times_derived == 1
+
+    @pytest.mark.asyncio
+    async def test_db_error_in_loop_aborts_batch(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """A DB error during per-document classification raises and commits nothing."""
+        test_workspace, test_peer = sample_data
+        test_peer2, test_session = await self._setup(
+            db_session, test_workspace, test_peer
+        )
+        workspace_name = test_workspace.name
+        observer = test_peer.name
+        observed = test_peer2.name
+        session_name = test_session.name
+
+        class FakePGError(Exception):
+            sqlstate: str = "40P01"
+
+        deadlock = OperationalError("SELECT documents", {}, FakePGError())
+        with (
+            patch(
+                "src.crud.document._semantic_dup_decision",
+                AsyncMock(side_effect=deadlock),
+            ),
+            pytest.raises(OperationalError),
+        ):
+            await crud.create_documents(
+                db_session,
+                [
+                    self._doc("a brand new fact", session_name),
+                    self._doc("another new fact", session_name),
+                ],
+                workspace_name=workspace_name,
+                observer=observer,
+                observed=observed,
+                deduplicate=True,
+            )
+
+        docs = (
+            (
+                await db_session.execute(
+                    select(models.Document).where(
+                        models.Document.workspace_name == workspace_name,
+                        models.Document.observer == observer,
+                        models.Document.observed == observed,
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert docs == []
+
+    @pytest.mark.asyncio
+    async def test_per_document_error_still_skips_only_that_document(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """Non-DB per-document failures keep their skip semantics."""
+        test_workspace, test_peer = sample_data
+        test_peer2, test_session = await self._setup(
+            db_session, test_workspace, test_peer
+        )
+
+        from src.crud import document as document_module
+
+        real_dedup_key = document_module._dedup_key  # pyright: ignore[reportPrivateUsage]
+
+        def flaky_dedup_key(
+            content: str, level: str, session_name: str | None
+        ) -> tuple[str, str, str | None]:
+            if content == "poison":
+                raise ValueError("bad content")
+            return real_dedup_key(content, level, session_name)
+
+        with patch.object(document_module, "_dedup_key", flaky_dedup_key):
+            result = await crud.create_documents(
+                db_session,
+                [
+                    self._doc("good fact one", test_session.name),
+                    self._doc("poison", test_session.name),
+                    self._doc("good fact two", test_session.name),
+                ],
+                workspace_name=test_workspace.name,
+                observer=test_peer.name,
+                observed=test_peer2.name,
+            )
+
+        assert sorted(d.content for d in result.created_documents) == [
+            "good fact one",
+            "good fact two",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_empty_embedding_skips_semantic_without_embed(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """Empty embeddings must not trigger embed() under an open session."""
+        from src.config import settings
+
+        test_workspace, test_peer = sample_data
+        test_peer2, test_session = await self._setup(
+            db_session, test_workspace, test_peer
+        )
+        monkeypatch.setattr(settings.VECTOR_STORE, "TYPE", "pgvector")
+        monkeypatch.setattr(settings.VECTOR_STORE, "MIGRATED", True)
+
+        empty = self._doc("fact without vector", test_session.name)
+        empty.embedding = []
+
+        with patch(
+            "src.crud.document.embedding_client.embed",
+            new_callable=AsyncMock,
+        ) as mock_embed:
+            result = await crud.create_documents(
+                db_session,
+                [empty],
+                workspace_name=test_workspace.name,
+                observer=test_peer.name,
+                observed=test_peer2.name,
+                deduplicate=True,
+            )
+
+        assert len(result.created_documents) == 1
+        mock_embed.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_stale_reinforce_target_falls_back_to_insert(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """If a reinforce target vanishes under lock, insert the incoming doc."""
+        from src.crud import document as document_module
+
+        test_workspace, test_peer = sample_data
+        test_peer2, test_session = await self._setup(
+            db_session, test_workspace, test_peer
+        )
+        workspace_name = test_workspace.name
+        observer = test_peer.name
+        observed = test_peer2.name
+        session_name = test_session.name
+
+        seeded = await crud.create_documents(
+            db_session,
+            [self._doc("shared fact", session_name)],
+            workspace_name=workspace_name,
+            observer=observer,
+            observed=observed,
+        )
+        assert len(seeded.created_documents) == 1
+
+        existing = (
+            await db_session.execute(
+                select(models.Document).where(
+                    models.Document.workspace_name == workspace_name,
+                    models.Document.observer == observer,
+                    models.Document.observed == observed,
+                    models.Document.deleted_at.is_(None),
+                )
+            )
+        ).scalar_one()
+
+        real_apply = document_module._apply_document_row_updates  # pyright: ignore[reportPrivateUsage]
+
+        async def delete_then_apply(*args: Any, **kwargs: Any) -> Any:
+            existing.deleted_at = datetime.datetime.now(datetime.UTC)
+            await db_session.flush()
+            return await real_apply(*args, **kwargs)
+
+        with patch.object(
+            document_module,
+            "_apply_document_row_updates",
+            side_effect=delete_then_apply,
+        ):
+            result = await crud.create_documents(
+                db_session,
+                [self._doc("shared fact", session_name)],
+                workspace_name=workspace_name,
+                observer=observer,
+                observed=observed,
+            )
+
+        assert len(result.created_documents) == 1
+        live = (
+            (
+                await db_session.execute(
+                    select(models.Document).where(
+                        models.Document.workspace_name == workspace_name,
+                        models.Document.observer == observer,
+                        models.Document.observed == observed,
+                        models.Document.deleted_at.is_(None),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(live) == 1
+        assert live[0].id != existing.id
+        assert live[0].content == "shared fact"
+
+    @pytest.mark.asyncio
+    async def test_same_batch_replace_then_reinforce_does_not_resurrect(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """A reinforce after a same-batch replace must not insert the inferior copy."""
+        from src.crud import document as document_module
+
+        test_workspace, test_peer = sample_data
+        test_peer2, test_session = await self._setup(
+            db_session, test_workspace, test_peer
+        )
+        workspace_name = test_workspace.name
+        observer = test_peer.name
+        observed = test_peer2.name
+        session_name = test_session.name
+
+        await crud.create_documents(
+            db_session,
+            [self._doc("shared fact", session_name)],
+            workspace_name=workspace_name,
+            observer=observer,
+            observed=observed,
+        )
+        existing = (
+            await db_session.execute(
+                select(models.Document).where(
+                    models.Document.workspace_name == workspace_name,
+                    models.Document.observer == observer,
+                    models.Document.observed == observed,
+                    models.Document.deleted_at.is_(None),
+                )
+            )
+        ).scalar_one()
+
+        fallback = self._doc("shared fact", session_name)
+        ops = [
+            document_module._DocumentRowOp("replace", existing.id),  # pyright: ignore[reportPrivateUsage]
+            document_module._DocumentRowOp(  # pyright: ignore[reportPrivateUsage]
+                "reinforce",
+                existing.id,
+                fallback_document=fallback,
+            ),
+        ]
+        fallbacks = await document_module._apply_document_row_updates(  # pyright: ignore[reportPrivateUsage]
+            db_session,
+            ops,
+            workspace_name=workspace_name,
+            observer=observer,
+            observed=observed,
+        )
+        assert fallbacks == []
+        await db_session.commit()
+        live = (
+            (
+                await db_session.execute(
+                    select(models.Document).where(
+                        models.Document.workspace_name == workspace_name,
+                        models.Document.observer == observer,
+                        models.Document.observed == observed,
+                        models.Document.deleted_at.is_(None),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert live == []
+
+
+class TestExternalCandidateHoist:
+    """External-store dup candidates resolve before the first DB statement."""
+
+    async def _setup(
+        self,
+        db_session: AsyncSession,
+        test_workspace: models.Workspace,
+        test_peer: models.Peer,
+    ) -> tuple[models.Peer, models.Session]:
+        observed_peer = models.Peer(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        test_session = models.Session(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add_all([observed_peer, test_session])
+        await db_session.flush()
+        db_session.add(
+            models.Collection(
+                workspace_name=test_workspace.name,
+                observer=test_peer.name,
+                observed=observed_peer.name,
+            )
+        )
+        await db_session.commit()
+        return observed_peer, test_session
+
+    def _doc(self, content: str, session_name: str) -> schemas.DocumentCreate:
+        return schemas.DocumentCreate(
+            content=content,
+            embedding=[0.1] * 1536,
+            session_name=session_name,
+            metadata=schemas.DocumentMetadata(
+                message_ids=[1],
+                message_created_at="2026-01-01T00:00:00Z",
+            ),
+        )
+
+    @pytest.mark.asyncio
+    async def test_external_candidates_resolved_before_db(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        from src.config import settings
+
+        test_workspace, test_peer = sample_data
+        observed_peer, test_session = await self._setup(
+            db_session, test_workspace, test_peer
+        )
+        monkeypatch.setattr(settings.VECTOR_STORE, "TYPE", "turbopuffer")
+        monkeypatch.setattr(settings.VECTOR_STORE, "MIGRATED", True)
+
+        events: list[str] = []
+        real_execute = db_session.execute
+
+        async def spying_execute(statement: Any, *args: Any, **kwargs: Any) -> Any:
+            events.append("execute")
+            return await real_execute(statement, *args, **kwargs)
+
+        async def fake_resolve(*_args: Any, **_kwargs: Any) -> list[str]:
+            events.append("resolve")
+            return []
+
+        with (
+            patch.object(db_session, "execute", side_effect=spying_execute),
+            patch(
+                "src.crud.document.query_external_vector_document_ids",
+                side_effect=fake_resolve,
+            ),
+            patch(
+                "src.crud.document.get_external_vector_store",
+                return_value=None,
+            ),
+        ):
+            result = await crud.create_documents(
+                db_session,
+                [
+                    self._doc("fact one", test_session.name),
+                    self._doc("fact two", test_session.name),
+                ],
+                workspace_name=test_workspace.name,
+                observer=test_peer.name,
+                observed=observed_peer.name,
+                deduplicate=True,
+            )
+
+        assert len(result.created_documents) == 2
+        assert events[:2] == ["resolve", "resolve"]
+        assert "execute" in events
+
+    @pytest.mark.asyncio
+    async def test_resolve_failure_skips_semantic_without_query_documents(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        from src.config import settings
+
+        test_workspace, test_peer = sample_data
+        observed_peer, test_session = await self._setup(
+            db_session, test_workspace, test_peer
+        )
+        monkeypatch.setattr(settings.VECTOR_STORE, "TYPE", "turbopuffer")
+        monkeypatch.setattr(settings.VECTOR_STORE, "MIGRATED", True)
+
+        with (
+            patch(
+                "src.crud.document.query_external_vector_document_ids",
+                side_effect=RuntimeError("store down"),
+            ),
+            patch(
+                "src.crud.document.get_external_vector_store",
+                return_value=None,
+            ),
+            patch(
+                "src.crud.document.query_documents",
+                new_callable=AsyncMock,
+            ) as mock_query,
+        ):
+            result = await crud.create_documents(
+                db_session,
+                [self._doc("fact one", test_session.name)],
+                workspace_name=test_workspace.name,
+                observer=test_peer.name,
+                observed=observed_peer.name,
+                deduplicate=True,
+            )
+
+        assert len(result.created_documents) == 1
+        mock_query.assert_not_awaited()

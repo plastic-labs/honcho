@@ -76,7 +76,7 @@ async def validate_embedding_schema(
     dims = await _introspect_pgvector_dims_with_retry(engine, schema)
     _assert_pgvector_dims_match(dims, schema=schema, target_dim=target_dim)
 
-    if s.VECTOR_STORE.TYPE in ("turbopuffer", "lancedb", "chromadb"):
+    if s.VECTOR_STORE.TYPE in ("turbopuffer", "lancedb", "qdrant", "chromadb"):
         await _sample_external_namespaces(engine, target_dim=target_dim)
 
 

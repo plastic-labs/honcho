@@ -74,6 +74,11 @@ MAX_TOKENS_PER_REQUEST = 300000
 [embedding.model_config]
 transport = "openai"
 model = "text-embedding-3-small"
+# Optional provider request input cap. Useful for OpenAI-compatible embedding
+# APIs with smaller limits, such as DashScope text-embedding-v4.
+# max_batch_size = 10
+# Optional client HTTP timeout in seconds (OpenAI + Gemini).
+# timeout = 90.0
 
 # Optional module-level endpoint overrides
 # [embedding.model_config.overrides]
@@ -109,7 +114,8 @@ LOG_OBSERVATIONS = false
 MAX_INPUT_TOKENS = 25000
 MAX_CUSTOM_INSTRUCTIONS_TOKENS = 2000
 WORKING_REPRESENTATION_MAX_OBSERVATIONS = 100
-REPRESENTATION_BATCH_MAX_TOKENS = 1024
+REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS = 512  # Min tokens a work unit accumulates before the deriver claims it; 0 disables the gate
+REPRESENTATION_BATCH_TARGET_INPUT_TOKENS = 1024  # Max context-window tokens per deriver LLM call
 REPRESENTATION_BATCH_MAX_AGE_SECONDS = 1800
 FLUSH_ENABLED = false  # Bypass batch token threshold, process work immediately
 
@@ -137,6 +143,7 @@ model = "gpt-5.4-mini"
 # api_key_env = "DERIVER_CUSTOM_BACKUP_API_KEY"
 # [deriver.model_config.overrides.provider_params]
 # verbosity = "low"
+# timeout = 3600.0
 
 # Peer card settings
 [peer_card]
@@ -272,7 +279,7 @@ DEFAULT_LOCK_TTL_SECONDS = 5
 
 # Vector store settings
 [vector_store]
-# Vector store type: "pgvector", "turbopuffer", "lancedb", or "chromadb"
+# Vector store type: "pgvector", "turbopuffer", "lancedb", "qdrant", or "chromadb"
 TYPE = "pgvector"
 # Migration flag: set to true when migration from pgvector is complete
 MIGRATED = false
@@ -281,6 +288,14 @@ NAMESPACE = "honcho"
 # TURBOPUFFER_API_KEY = "your-turbopuffer-api-key"
 # TURBOPUFFER_REGION = "us-east-1"
 LANCEDB_PATH = "./lancedb_data"
+# QDRANT_URL = "http://localhost:6333"
+# QDRANT_API_KEY = "your-qdrant-api-key"
+# QDRANT_PREFER_GRPC = false
+# QDRANT_GRPC_PORT = 6334
+# QDRANT_HTTPS = false
+# QDRANT_PREFIX = ""
+# QDRANT_TIMEOUT = 30
+
 # ChromaDB settings (requires the chromadb extra: uv sync --extra chromadb)
 # CHROMA_CLIENT_MODE: "persistent" (local embedded), "http" (self-hosted server),
 # or "cloud" (Chroma Cloud; requires API key)

@@ -26,7 +26,11 @@ from sqlalchemy import func, select
 from src import crud, models
 from src.config import settings
 from src.dependencies import tracked_db
-from src.dreamer.specialists import SPECIALISTS, SpecialistResult
+from src.dreamer.specialists import (
+    SPECIALISTS,
+    CardRefreshSpecialist,
+    SpecialistResult,
+)
 from src.dreamer.surprisal import SurprisalScore  # type: ignore
 from src.exceptions import SurprisalError
 from src.schemas import DreamType
@@ -307,6 +311,151 @@ async def run_dream(
     )
 
 
+async def run_card_refresh_dream(
+    workspace_name: str,
+    observer: str,
+    observed: str,
+    session_name: str | None = None,
+    *,
+    rebuild: bool = False,
+    dream_type: str | None = None,
+    trigger_reason: str | None = None,
+    delay_reason: str | None = None,
+) -> DreamResult | None:
+    """
+    Run a lightweight card-only refresh dream.
+
+    Runs a single CardRefreshSpecialist restricted to peer-card tools
+    (get_recent_observations, search_memory, update_peer_card) with a low
+    tool-iteration cap. It never creates or deletes observations.
+
+    Args:
+        workspace_name: Workspace identifier
+        observer: Observer peer name
+        observed: Observed peer name
+        session_name: Session identifier if specified
+        rebuild: When True the existing card is NOT injected into the prompt
+            and the specialist rebuilds it solely from observations present in
+            the collection (used after removals).
+    """
+    if not settings.DREAM.ENABLED:
+        return None
+
+    run_id = generate_nanoid()
+    task_name = f"dream_orchestrator_{run_id}"
+    start_time = time.perf_counter()
+
+    logger.info(
+        f"[{run_id}] Starting card-refresh dream for {workspace_name}/{observer}/{observed} (rebuild={rebuild})"
+    )
+
+    # Short-lived DB session for config resolution
+    async with tracked_db("dream.config") as db:
+        if session_name is not None:
+            session = await crud.get_session(
+                db, workspace_name=workspace_name, session_name=session_name
+            )
+        else:
+            session = None
+
+        workspace = await crud.get_workspace(db, workspace_name=workspace_name)
+        configuration = get_configuration(None, session, workspace)
+    if not configuration.dream.enabled:
+        logger.info(
+            f"[{run_id}] Dreams disabled for {workspace_name}/{session_name}, skipping card refresh"
+        )
+        return None
+    if not configuration.peer_card.create:
+        logger.info(
+            f"[{run_id}] Peer card creation disabled for {workspace_name}, skipping card refresh"
+        )
+        return None
+
+    specialist_success = False
+    specialist_result: SpecialistResult | None = None
+    duration_ms = 0.0
+    try:
+        specialist = CardRefreshSpecialist(rebuild=rebuild)
+        try:
+            specialist_result = await specialist.run(
+                workspace_name=workspace_name,
+                observer=observer,
+                observed=observed,
+                session_name=session_name,
+                configuration=configuration,
+                parent_run_id=run_id,
+            )
+            logger.info(
+                f"[{run_id}] Card refresh completed: {specialist_result.content[:200]}..."
+            )
+            accumulate_metric(
+                task_name, "card_refresh_result", specialist_result.content, "blob"
+            )
+            specialist_success = specialist_result.success
+        except Exception as e:
+            # Exception (not BaseException) — CancelledError must propagate so
+            # the worker can shut down; the finally still emits the run event.
+            logger.error(
+                f"[{run_id}] Card refresh specialist failed: {e}", exc_info=True
+            )
+            accumulate_metric(task_name, "card_refresh_error", str(e), "blob")
+
+        duration_ms = (time.perf_counter() - start_time) * 1000
+        accumulate_metric(task_name, "total_duration", duration_ms, "ms")
+        logger.info(f"[{run_id}] Card-refresh dream completed in {duration_ms:.0f}ms")
+        log_performance_metrics("dream_orchestrator", run_id)
+    finally:
+        # Emit DreamRunEvent unconditionally so analytics see a parent for the
+        # specialist event, mirroring run_dream. Card refresh is a
+        # deduction-family run, so its outcome rides on deduction_success.
+        if duration_ms == 0.0:
+            duration_ms = (time.perf_counter() - start_time) * 1000
+        try:
+            emit(
+                DreamRunEvent(
+                    run_id=run_id,
+                    workspace_name=workspace_name,
+                    session_name=session_name,
+                    observer=observer,
+                    observed=observed,
+                    specialists_run=["card_refresh"],
+                    deduction_success=specialist_success,
+                    induction_success=False,
+                    surprisal_enabled=False,
+                    surprisal_conclusion_count=0,
+                    total_iterations=(
+                        specialist_result.iterations if specialist_result else 0
+                    ),
+                    total_input_tokens=(
+                        specialist_result.input_tokens if specialist_result else 0
+                    ),
+                    total_output_tokens=(
+                        specialist_result.output_tokens if specialist_result else 0
+                    ),
+                    total_duration_ms=duration_ms,
+                    dream_type=dream_type,
+                    enabled_types_count=len(settings.DREAM.ENABLED_TYPES),
+                    trigger_reason=trigger_reason,
+                    delay_reason=delay_reason,
+                )
+            )
+        except Exception:  # pragma: no cover - telemetry must not raise
+            logger.debug("Failed to emit DreamRunEvent", exc_info=True)
+
+    return DreamResult(
+        run_id=run_id,
+        specialists_run=["card_refresh"],
+        deduction_success=specialist_success,
+        induction_success=False,
+        surprisal_enabled=False,
+        surprisal_conclusion_count=0,
+        total_iterations=specialist_result.iterations if specialist_result else 0,
+        total_duration_ms=duration_ms,
+        input_tokens=specialist_result.input_tokens if specialist_result else 0,
+        output_tokens=specialist_result.output_tokens if specialist_result else 0,
+    )
+
+
 def _create_queries_from_surprisal(
     high_surprisal_obs: list[SurprisalScore],
 ) -> list[str]:
@@ -400,6 +549,28 @@ DREAM: {payload.dream_type} documents for {workspace_name}/{payload.observer}/{p
                             payload.observed,
                             update_data={"dream": dream_meta},
                         )
+
+            case DreamType.CARD_REFRESH:
+                # Card-only refresh: never touches observations and never
+                # advances the omni dream guard pair (last_dream_at /
+                # last_dream_document_count) — a card refresh must not delay
+                # or satisfy consolidation scheduling.
+                result = await run_card_refresh_dream(
+                    workspace_name=workspace_name,
+                    observer=payload.observer,
+                    observed=payload.observed,
+                    session_name=payload.session_name,
+                    rebuild=payload.rebuild,
+                    dream_type=payload.dream_type.value,
+                    trigger_reason=payload.trigger_reason,
+                    delay_reason=payload.delay_reason,
+                )
+                if result is not None:
+                    logger.info(
+                        f"Card-refresh dream completed: run_id={result.run_id}, "
+                        + f"iterations={result.total_iterations}, "
+                        + f"duration={result.total_duration_ms:.0f}ms"
+                    )
 
     except Exception as e:
         logger.error(

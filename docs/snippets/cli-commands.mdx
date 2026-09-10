@@ -217,6 +217,12 @@ honcho peer chat <query>
 <ParamField path="--reasoning" type="string">
   Reasoning level: minimal, low, medium, high, max. Short alias: `-r`.
 </ParamField>
+<ParamField path="--scope" type="string">
+  Confine recall to a scope. One name answers from that scope's own view; several names (repeat or comma-separate) are an explicit-only allowlist of their sessions. Mutually exclusive with --sessions and -s.
+</ParamField>
+<ParamField path="--sessions" type="string">
+  Ad hoc session-ID allowlist (repeat or comma-separate). Explicit conclusions only. Mutually exclusive with --scope and -s.
+</ParamField>
 </Accordion>
 <Accordion title="create">
 Create or get a peer.
@@ -305,7 +311,7 @@ honcho peer set-metadata <metadata>
 
 ## honcho session
 
-List, inspect, create, delete, and manage conversation sessions and their peers.
+List, inspect, view, create, delete, and manage conversation sessions and their peers.
 
 <AccordionGroup>
 <Accordion title="add-peers">
@@ -461,13 +467,133 @@ honcho session summaries [<session_id>]
 
 <ParamField path="session_id" type="string" />
 </Accordion>
+<Accordion title="view">
+View a session transcript as a chat log.
+
+Modes (pick one):
+
+- default / --last N: tail of the conversation (most recent N)
+- --page N [--size M]: page through the full transcript
+- --all: every message
+
+Paging follows the requested order: --page 1 starts at the oldest message,
+or the newest with --reverse.
+
+Human mode prints a row-delimited table. JSON mode emits the message list
+(same shape as message list).
+
+```bash
+honcho session view [<session_id>]
+```
+
+<ParamField path="session_id" type="string" />
+<ParamField path="--last" type="number">
+  Show only the N most recent messages (default when no --page/--all: 50).
+</ParamField>
+<ParamField path="--page" type="number">
+  1-indexed page of the full transcript. Use for page 2+.
+</ParamField>
+<ParamField path="--size" type="number">
+  Messages per page; requires --page (1-100, default: 50).
+</ParamField>
+<ParamField path="--all" type="boolean">
+  Show the full transcript (every page).
+</ParamField>
+<ParamField path="--reverse" type="boolean">
+  Newest first (default is chronological: oldest at top).
+</ParamField>
+<ParamField path="--ids" type="boolean">
+  Include message IDs in the transcript.
+</ParamField>
+<ParamField path="--peer" type="string">
+  Filter by peer ID. Short alias: `-p`.
+</ParamField>
+</Accordion>
 </AccordionGroup>
+
+## honcho start
+
+Start a local Honcho stack (API, deriver, Postgres, Redis).
+
+Requires Docker. Uses cloud LLM providers. Does not change the CLI's
+configured server URL — pass HONCHO_BASE_URL to talk to this stack.
+``--setup basic`` or ``--setup advanced`` runs an interactive config wizard.
+
+```bash
+honcho start
+```
+
+<ParamField path="--profile" type="string" default="local">
+  Local stack profile name.
+</ParamField>
+<ParamField path="--api-port" type="string">
+  Host port for the API.
+</ParamField>
+<ParamField path="--db-port" type="string">
+  Host port for Postgres.
+</ParamField>
+<ParamField path="--redis-port" type="string">
+  Host port for Redis.
+</ParamField>
+<ParamField path="--setup" type="string">
+  Interactive config wizard: basic (provider/model) or advanced (embeddings, deriver, dialectic, dreams, flush).
+</ParamField>
+<ParamField path="--image" type="string">
+  Honcho image to pull and pin by digest (default: ghcr.io/plastic-labs/honcho:latest).
+</ParamField>
+<ParamField path="--timeout" type="string" default="180">
+  Seconds to wait for /health after compose up.
+</ParamField>
+
+## honcho status
+
+Show local stack endpoints and container health.
+
+With no ``--profile``, lists every stack under ``~/.honcho/profiles/``.
+
+```bash
+honcho status
+```
+
+<ParamField path="--profile" type="string">
+  Limit to this profile. Omit to show every local stack.
+</ParamField>
+
+## honcho stop
+
+Stop the local stack started by `honcho start`. Keeps data unless --wipe.
+
+```bash
+honcho stop
+```
+
+<ParamField path="--profile" type="string" default="local">
+  Local stack profile name.
+</ParamField>
+<ParamField path="--wipe" type="boolean">
+  Also delete volumes (Postgres data).
+</ParamField>
 
 ## honcho workspace
 
-List, create, inspect, delete, and search workspaces.
+List, create, inspect, chat, delete, and search workspaces.
 
 <AccordionGroup>
+<Accordion title="chat">
+Query the dialectic across all peers in the workspace.
+
+```bash
+honcho workspace chat <query>
+```
+
+<ParamField path="query" type="string" required />
+<ParamField path="--reasoning" type="string">
+  Reasoning level: minimal, low, medium, high, max. Short alias: `-r`.
+</ParamField>
+<ParamField path="--scope" type="string">
+  Confine recall to a scope. One name answers from that scope's own view; several names (repeat or comma-separate) are an explicit-only allowlist of their sessions. Mutually exclusive with -s.
+</ParamField>
+</Accordion>
 <Accordion title="create">
 Create or get a workspace.
 

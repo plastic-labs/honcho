@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Sequence
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
@@ -20,7 +21,7 @@ from .api_types import (
     SessionPeerConfig,
     SessionResponse,
 )
-from .base import PeerBase, SessionBase
+from .base import PeerBase, ScopeBase, SessionBase
 from .http import routes
 from .message import Message
 from .mixins import MetadataConfigMixin
@@ -32,6 +33,7 @@ from .utils import (
     normalize_peers_to_dict,
     prepare_file_for_upload,
     resolve_id,
+    scope_context_fields,
 )
 
 if TYPE_CHECKING:
@@ -574,6 +576,14 @@ class Session(SessionBase, MetadataConfigMixin):
             None,
             description="A peer ID to get context *from the perspective of*. If given, response will attempt to include representation and card from the perspective of `peer_perspective`. Must be provided with `peer_target`.",
         ),
+        scope: str | ScopeBase | None = Field(
+            None,
+            description="A scope to use as the perspective source instead of a peer: `peer_target`'s representation and card are read from what that scope observed. Must be provided with `peer_target`; mutually exclusive with `peer_perspective`. Requires a workspace-level key.",
+        ),
+        sessions: Sequence[str | SessionBase] | None = Field(
+            None,
+            description="An allowlist of sessions confining `peer_target`'s representation to that set. This session must be one of them. Mutually exclusive with `scope` and `limit_to_session`.",
+        ),
         limit_to_session: bool = Field(
             False,
             description="Whether to limit the representation to this session only. If True, only conclusions from this session will be included.",
@@ -616,6 +626,11 @@ class Session(SessionBase, MetadataConfigMixin):
             peer_target: A peer ID to get context for.
             search_query: A query string for semantic search.
             peer_perspective: A peer ID to get context from the perspective of.
+            scope: A scope to read `peer_target`'s representation and card from.
+            sessions: An allowlist of sessions confining `peer_target`'s
+                representation. Recall is limited to conclusions stated directly in
+                those sessions, and the peer card is omitted, since neither derived
+                conclusions nor cards carry provable per-session provenance.
             limit_to_session: Whether to limit the representation to this session only.
             search_top_k: Number of semantically relevant facts to return.
             search_max_distance: Maximum semantic distance for search results.
@@ -626,6 +641,11 @@ class Session(SessionBase, MetadataConfigMixin):
             A SessionContext object containing the optimized message history and
             summary, if available, that maximizes conversational context while
             respecting the token limit
+
+        Raises:
+            ValueError: If `peer_target` is missing when required, or if `scope`,
+                `sessions`, `peer_perspective`, and `limit_to_session` are combined
+                in ways the server rejects.
 
         Note:
             Token counting is performed using tiktoken. For models using different
@@ -650,6 +670,13 @@ class Session(SessionBase, MetadataConfigMixin):
         query: dict[str, Any] = {
             "summary": summary,
             "limit_to_session": limit_to_session,
+            **scope_context_fields(
+                scope=scope,
+                sessions=sessions,
+                peer_target=peer_target,
+                peer_perspective=peer_perspective,
+                limit_to_session=limit_to_session,
+            ),
         }
         if tokens is not None:
             query["tokens"] = tokens

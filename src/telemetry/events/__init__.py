@@ -89,6 +89,11 @@ from src.telemetry.events.reconciliation import (
     SyncVectorsCompletedEvent,
 )
 from src.telemetry.events.representation import RepresentationCompletedEvent
+from src.telemetry.events.trace import (
+    EmbeddingCallTracedEvent,
+    LLMCallTracedEvent,
+    TraceContentEvent,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +125,11 @@ __all__ = [
     "CallPurpose",
     "EmbeddingCallCompletedEvent",
     "EmbeddingCallPurpose",
+    # Trace (full-fidelity payload) events
+    "emit_trace",
+    "EmbeddingCallTracedEvent",
+    "LLMCallTracedEvent",
+    "TraceContentEvent",
     # Reconciliation events
     "SyncVectorsCompletedEvent",
     "CleanupStaleItemsCompletedEvent",
@@ -128,7 +138,72 @@ __all__ = [
     # Lifecycle
     "initialize_telemetry_events",
     "shutdown_telemetry_events",
+    # Zero-init registry
+    "ALL_EVENT_TYPES",
+    "HIGH_VOLUME_EVENT_TYPES",
 ]
+
+
+# Explicit registry of CloudEvents `type` values, used to zero-initialize the
+# telemetry_events_emitted / telemetry_events_sampled_out counter children.
+# region ai
+# See metrics.py:initialize_bounded_metrics for why absent and zero are worth
+# distinguishing. Explicit literal, not a set derived from BaseEvent subclasses: a
+# derived set would follow whatever happens to be imported at init time, so a type
+# could drop out of the registry with no code change. A hand-maintained list plus a
+# drift-guard test fails loud at the right moment instead.
+#
+# When you add a BaseEvent subclass, add its `_event_type` here (and to
+# HIGH_VOLUME_EVENT_TYPES if `_volume_class == "high_volume"`). The drift-guard test
+# tests/telemetry/test_metric_zero_init.py fails until you do — it asserts this
+# registry equals the set discovered by walking BaseEvent subclasses.
+# endregion
+ALL_EVENT_TYPES: tuple[str, ...] = (
+    # api
+    "message.created",
+    "file.uploaded",
+    "context.retrieved",
+    # agent
+    "agent.iteration",
+    "agent.tool.conclusions.created",
+    "agent.tool.conclusions.deleted",
+    "agent.tool.peer_card.updated",
+    "agent.tool.summary.created",
+    "agent.tool.call.completed",
+    # deletion / dialectic / dream / representation
+    "deletion.completed",
+    "dialectic.completed",
+    "dream.run",
+    "dream.specialist",
+    "representation.completed",
+    # llm / embedding
+    "llm.call.completed",
+    "embedding.call.completed",
+    # reconciliation
+    "reconciliation.sync_vectors.completed",
+    "reconciliation.cleanup_stale_items.completed",
+    # trace stream
+    # region ai
+    # Only emitted when TELEMETRY.TRACE_PAYLOADS_ENABLED, but they flow through the
+    # same emit() path and increment the same counters, so they belong in the set.
+    # endregion
+    "llm.call.traced",
+    "embedding.call.traced",
+    "trace.content",
+)
+
+# Subset of ALL_EVENT_TYPES whose `_volume_class == "high_volume"`.
+# region ai
+# Only these can ever be counted by ``telemetry_events_sampled_out``; ground_truth
+# events skip the sampler entirely (pre-creating their sampled_out series would be a
+# permanently-misleading 0).
+# endregion
+HIGH_VOLUME_EVENT_TYPES: tuple[str, ...] = (
+    "agent.iteration",
+    "agent.tool.call.completed",
+    "llm.call.completed",
+    "embedding.call.completed",
+)
 
 
 def emit(event: BaseEvent) -> None:
@@ -172,6 +247,27 @@ def emit(event: BaseEvent) -> None:
         )
 
 
+def emit_trace(event: BaseEvent) -> None:
+    """Queue a payload-trace event on the SEPARATE trace emitter.
+
+    Distinct from `emit()` so a trace burst can never evict billing events from
+    the metrics buffer. No-op when payload tracing is off (trace emitter None).
+    Best-effort — swallows failures so telemetry never breaks the LLM path.
+    """
+    try:
+        from src.telemetry.emitter import get_trace_emitter
+
+        emitter = get_trace_emitter()
+        if emitter is None:
+            logger.debug("Trace emitter not initialized, dropping trace event")
+            return
+        emitter.emit(event)
+    except Exception:  # pragma: no cover - best-effort telemetry
+        logger.debug(
+            "Failed to emit trace event %s", type(event).__name__, exc_info=True
+        )
+
+
 async def initialize_telemetry_events() -> None:
     """Initialize the telemetry events system based on configuration.
 
@@ -188,6 +284,17 @@ async def initialize_telemetry_events() -> None:
         logger.info("CloudEvents telemetry disabled")
         return
 
+    # Langfuse as a projection over the captured LLM stream. Gated behind the
+    # telemetry master switch above, so disabling telemetry disables Langfuse
+    # too. Registering the exporter makes has_exporters() true, which is what
+    # turns on CapturedLLMCall building.
+    if settings.langfuse_exporter_enabled:
+        from src.llm.capture import register_exporter
+        from src.telemetry.langfuse_exporter import LangfuseExporter
+
+        register_exporter(LangfuseExporter())
+        logger.info("Langfuse exporter registered (LANGFUSE_EXPORTER_MODE=exporter)")
+
     await initialize_emitter(
         endpoint=settings.TELEMETRY.ENDPOINT,
         headers=settings.TELEMETRY.HEADERS,
@@ -203,6 +310,27 @@ async def initialize_telemetry_events() -> None:
         "CloudEvents telemetry initialized, endpoint: %s", settings.TELEMETRY.ENDPOINT
     )
 
+    # Full-fidelity payload tracing — opt-in, separate emitter + content exporter.
+    if settings.TELEMETRY.TRACE_PAYLOADS_ENABLED:
+        from src.llm.capture import register_exporter
+        from src.telemetry.emitter import initialize_trace_emitter
+        from src.telemetry.trace_exporter import TraceExporter
+
+        await initialize_trace_emitter(
+            endpoint=settings.TELEMETRY.ENDPOINT,
+            headers=settings.TELEMETRY.HEADERS,
+            batch_size=settings.TELEMETRY.BATCH_SIZE,
+            flush_interval_seconds=settings.TELEMETRY.FLUSH_INTERVAL_SECONDS,
+            flush_threshold=settings.TELEMETRY.FLUSH_THRESHOLD,
+            max_retries=settings.TELEMETRY.MAX_RETRIES,
+            max_buffer_size=settings.TELEMETRY.MAX_BUFFER_SIZE,
+            enabled=True,
+        )
+        register_exporter(TraceExporter())
+        logger.info(
+            "Payload tracing initialized, endpoint: %s", settings.TELEMETRY.ENDPOINT
+        )
+
 
 async def shutdown_telemetry_events() -> None:
     """Shutdown the telemetry events system.
@@ -210,7 +338,16 @@ async def shutdown_telemetry_events() -> None:
     This should be called during application shutdown to ensure
     all buffered events are flushed before exit.
     """
-    from src.telemetry.emitter import shutdown_emitter
+    # Tear down the trace path first (flush its buffer, drop exporters + dedup
+    # state) before the primary emitter, so a late capture can't re-register work.
+    from src.llm.capture import clear_exporters
+    from src.telemetry import langfuse_session, trace_session
+    from src.telemetry.emitter import shutdown_emitter, shutdown_trace_emitter
+
+    clear_exporters()
+    await shutdown_trace_emitter()
+    trace_session.reset()
+    langfuse_session.reset()
 
     await shutdown_emitter()
     logger.info("CloudEvents telemetry shutdown complete")

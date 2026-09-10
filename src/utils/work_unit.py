@@ -74,6 +74,15 @@ def construct_work_unit_key(
             raise ValueError("reconciler_type is required for reconciler tasks")
         return f"reconciler:{reconciler_type}"
 
+    if task_type in ("scope_backfill", "scope_removal"):
+        scope_peer = payload.get("scope_peer")
+        session_name = payload.get("session_name")
+        if not scope_peer or not session_name:
+            raise ValueError(
+                f"scope_peer and session_name are required for {task_type} tasks"
+            )
+        return f"{task_type}:{workspace_name}:{scope_peer}:{session_name}"
+
     raise ValueError(f"Invalid task type: {task_type}")
 
 
@@ -180,6 +189,21 @@ def parse_work_unit_key(work_unit_key: str) -> ParsedWorkUnit:
             workspace_name=None,
             session_name=None,
             observer=None,
+            observed=None,
+        )
+
+    if task_type in ("scope_backfill", "scope_removal"):
+        # {task_type}:{workspace}:{scope_peer}:{session}
+        if len(parts) != 4:
+            raise ValueError(
+                f"Invalid work_unit_key format for task_type {task_type}: {work_unit_key}"
+            )
+        return ParsedWorkUnit(
+            task_type=task_type,
+            workspace_name=parts[1],
+            session_name=parts[3],
+            # The scope peer is the observer of every collection the task touches.
+            observer=parts[2],
             observed=None,
         )
 

@@ -45,7 +45,7 @@ def _response(
 
 class TestTelemetryForIteration:
     def test_returns_none_when_base_is_none(self):
-        assert _telemetry_for_iteration(None, 1) is None
+        assert _telemetry_for_iteration(None, 1, step_seq=1) is None
 
     def test_returns_fresh_copy_with_iteration_set(self):
         base = LLMTelemetryContext(
@@ -54,12 +54,13 @@ class TestTelemetryForIteration:
             parent_category="dialectic",
             agent_type="dialectic",
             run_id="run-xyz",
+            span_id="run-xyz",
             iteration=None,
             peer_name="user_peer",
         )
 
-        copy_a = _telemetry_for_iteration(base, 3)
-        copy_b = _telemetry_for_iteration(base, 4)
+        copy_a = _telemetry_for_iteration(base, 3, step_seq=3)
+        copy_b = _telemetry_for_iteration(base, 4, step_seq=4)
 
         assert copy_a is not None and copy_b is not None
         assert copy_a is not base and copy_b is not base
@@ -67,6 +68,9 @@ class TestTelemetryForIteration:
         assert base.iteration is None
         assert copy_a.iteration == 3
         assert copy_b.iteration == 4
+        # Per-step correlation is set; parent_span_id is derived from the span.
+        assert copy_a.step_seq == 3
+        assert copy_a.parent_span_id == "run-xyz"
         # All other fields round-trip.
         assert copy_a.run_id == "run-xyz"
         assert copy_a.peer_name == "user_peer"

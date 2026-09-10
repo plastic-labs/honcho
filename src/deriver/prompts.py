@@ -71,10 +71,14 @@ RULES:
 - Extract ALL observations from the target peer's messages, using others as context.
 - Contextualize each observation sufficiently (e.g. "Ann is nervous about the job interview at the pharmacy" not just "Ann is nervous")
 
+<examples>
+These examples are fabricated illustrations of the output format. Never emit a conclusion for which content comes from these examples. Every conclusion must be supported by the <messages> block only.
+
 EXAMPLES (using `alice` as the target peer id):
-- EXPLICIT: "I just had my 25th birthday last Saturday" → "alice is 25 years old", "alice's birthday is June 21st"
-- EXPLICIT: "I took my dog for a walk in NYC" → "alice has a dog", "alice lives in NYC"
-- EXPLICIT: "alice attended college" + general knowledge → "alice completed high school or equivalent"
+- EXPLICIT: "I just turned 25" → "alice is 25 years old"
+- EXPLICIT: "I took my dog for a walk in NYC" → "alice has a dog", "alice walked her dog in NYC"
+- EXPLICIT: "I've lived in NYC for six years" → "alice lives in NYC", "alice has lived in NYC for six years"
+</examples>
 
 {custom_instructions_section}
 

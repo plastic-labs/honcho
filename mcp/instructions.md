@@ -4,12 +4,21 @@
 
 The simplest way to use Honcho for a standard user/assistant conversation. Three steps using the general tools.
 
+Every workspace-scoped tool takes `workspace_id`. The simplest setup is for the client to set `X-Honcho-Workspace-ID` on the connection — then omit `workspace_id` on every call. Do not list or create a workspace just to rediscover a header that is already set.
+
+If the header is unset and you don't already know the workspace:
+
+1. Call `list_workspaces` and pick the workspace whose id or metadata best matches this work.
+2. If none fit, call `create_workspace` with a descriptive id (and optional metadata like `{ "project": "...", "purpose": "..." }`).
+3. Reuse that same `workspace_id` for the rest of the conversation.
+
 ### 1. Start a conversation (once per conversation)
 
 Create a session and set up the user and assistant peers:
 
 ```
 create_session
+  workspace_id: "<workspace-id>"
   session_id: "<unique-id>"
 ```
 
@@ -17,12 +26,15 @@ Then add peers to the session:
 
 ```
 create_peer
+  workspace_id: "<workspace-id>"
   peer_id: "<user-name>"
 
 create_peer
+  workspace_id: "<workspace-id>"
   peer_id: "Assistant"
 
 add_peers_to_session
+  workspace_id: "<workspace-id>"
   session_id: "<session_id>"
   peers:
     - peer_id: "<user-name>"
@@ -39,6 +51,7 @@ Store the `session_id` for the rest of this conversation.
 
 ```
 chat
+  workspace_id: "<workspace-id>"
   peer_id: "Assistant"
   query: "What communication style does this user prefer?"
   target_peer_id: "<user-name>"
@@ -58,6 +71,7 @@ This calls Honcho's reasoning system to answer your question about the user, gro
 
 ```
 add_messages_to_session
+  workspace_id: "<workspace-id>"
   session_id: "<session_id>"
   messages:
     - peer_id: "<user-name>"
@@ -70,6 +84,16 @@ add_messages_to_session
 
 ---
 
+## Best Practices
+
+- **Group messages into coherent context buckets** — give each distinct context its own `session_id` (a chat thread, a project, a channel) and reuse that same `session_id` for every turn within it, rather than minting a new one per turn. Honcho reasons over the messages in a session together, so keeping a context's messages in one bucket produces a coherent representation; scattering them across sessions fragments it.
+- **Use one stable `peer_id` per real person**, reused across every session and channel. A fresh or per-channel ID (`user-web` vs. `user-discord`) builds separate, weaker representations instead of one.
+- **`observe_me: false` skips building a model of a peer** — reserve it for deterministic bots (nothing meaningful to model). For a real AI assistant it's fine to leave observation on.
+- **Reasoning is asynchronous** — don't poll or wait for it to finish before responding. A brand-new or low-volume peer legitimately has little to show yet.
+- **Reach for reads before `chat`** — `get_session_context` / `get_peer_context` / `get_representation` / `search` are near-instant; `chat` runs live reasoning and takes a few seconds. Use `chat` only when you need a reasoned answer.
+
+---
+
 ## General Tools
 
 The full API for advanced use cases.
@@ -78,9 +102,11 @@ The full API for advanced use cases.
 
 | Tool | When to use |
 | --- | --- |
-| `inspect_workspace` | Inspect a single workspace's details |
-| `list_workspaces` | Enumerate available workspaces |
+| `list_workspaces` | Discover available workspaces (id, metadata, created_at). No `workspace_id` needed. |
+| `create_workspace` | Get or create a workspace when none of the listed ones fit |
+| `inspect_workspace` | Inspect a single workspace's details. Requires `workspace_id`. |
 | `search` | Semantic search across messages — scope with optional `peer_id` or `session_id` params |
+| `workspace_chat` | Ask Honcho a question about the whole workspace — reasons across all peers. Use for cross-peer themes or questions not about one peer; use `chat` for a single peer. Accepts optional `reasoning_level`, and `session_id` / `scope` to confine recall. |
 | `get_metadata` | Read metadata for workspace, peer, or session (scope with optional `peer_id` or `session_id`) |
 | `set_metadata` | Store metadata for workspace, peer, or session (scope with optional `peer_id` or `session_id`) |
 
@@ -90,7 +116,7 @@ The full API for advanced use cases.
 | --- | --- |
 | `create_peer` | Register a new participant (user or agent) |
 | `list_peers` | See all participants in the workspace |
-| `chat` | Ask Honcho what it knows about any peer. Accepts optional `reasoning_level` (`minimal`–`max`) to control depth vs. speed. |
+| `chat` | Ask Honcho what it knows about one peer (`peer_id` required). Use `workspace_chat` for the whole workspace. Accepts optional `reasoning_level` (`minimal`–`max`) to control depth vs. speed. Confine recall with `session_id` (one session), `scope` (a scope name for that scope's reasoned view, or a list of names as an explicit-only allowlist), or `sessions` (an ad hoc session-ID allowlist, explicit-only). |
 | `get_peer_card` | Get compact biographical facts about a peer |
 | `set_peer_card` | Manually set/correct facts about a peer |
 | `get_peer_context` | Get full context (representation + peer card) |
@@ -101,7 +127,7 @@ The full API for advanced use cases.
 | Tool | When to use |
 | --- | --- |
 | `create_session` | Create or get a session with the given ID |
-| `list_sessions` | Discover existing conversations |
+| `list_sessions` | Discover existing conversations (paginated: `page`, `size`, `reverse`) |
 | `delete_session` | Permanently remove a session |
 | `clone_session` | Fork a conversation (optionally up to a specific message) |
 | `add_peers_to_session` | Add peers to a session with optional per-session config |
@@ -109,7 +135,9 @@ The full API for advanced use cases.
 | `get_session_peers` | See who is in a session |
 | `inspect_session` | Inspect detailed session structure/metadata |
 | `add_messages_to_session` | Add messages from specific peers |
-| `get_session_messages` | Read conversation history (paginated, with optional metadata filters) |
+| `get_session_messages` | Read conversation history (paginated: `page`, `size`, `reverse`; optional metadata filters) |
+| `list_scopes` | List the workspace's scopes — named session sets that act as recall boundaries |
+| `get_scope_sessions` | List the sessions a scope covers (paginated) |
 | `get_session_message` | Get a single message from a session by ID |
 | `get_session_context` | Get LLM-ready context (messages + summary) |
 

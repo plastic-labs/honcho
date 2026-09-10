@@ -935,6 +935,7 @@ class TestMainLLMCallFunction:
         with (
             patch.dict(CLIENTS, {"anthropic": mock_llm_client}),
             patch.object(settings, "LANGFUSE_PUBLIC_KEY", "test-public-key"),
+            patch.object(settings, "LANGFUSE_EXPORTER_MODE", "inline"),
             patch("langfuse.get_client", return_value=mock_langfuse_client),
             patch("langfuse.propagate_attributes", fake_propagate),
         ):
@@ -1008,6 +1009,7 @@ class TestMainLLMCallFunction:
         with (
             patch.dict(CLIENTS, {"anthropic": mock_llm_client}),
             patch.object(settings, "LANGFUSE_PUBLIC_KEY", "test-public-key"),
+            patch.object(settings, "LANGFUSE_EXPORTER_MODE", "inline"),
             patch("langfuse.get_client", return_value=mock_langfuse_client),
             patch("langfuse.propagate_attributes", fake_propagate),
         ):

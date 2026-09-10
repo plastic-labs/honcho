@@ -237,6 +237,39 @@ describe('URL building', () => {
     expect(url.searchParams.get('present')).toBe('value')
     expect(url.searchParams.has('missing')).toBe(false)
   })
+
+  test('sends array query parameters as repeated params, not comma-joined', async () => {
+    let capturedURL = ''
+    globalThis.fetch = async (url) => {
+      capturedURL = url.toString()
+      return mockResponse({ ok: true })
+    }
+
+    await client.get('/v1/test', {
+      query: { sessions: ['session-a', 'session-b'] },
+    })
+
+    const url = new URL(capturedURL)
+    // The API reads list-valued params as ?k=a&k=b. A comma-joined single value
+    // would arrive as one malformed entry.
+    expect(url.searchParams.getAll('sessions')).toEqual([
+      'session-a',
+      'session-b',
+    ])
+  })
+
+  test('an empty array query parameter contributes nothing', async () => {
+    let capturedURL = ''
+    globalThis.fetch = async (url) => {
+      capturedURL = url.toString()
+      return mockResponse({ ok: true })
+    }
+
+    await client.get('/v1/test', { query: { sessions: [] } })
+
+    const url = new URL(capturedURL)
+    expect(url.searchParams.has('sessions')).toBe(false)
+  })
 })
 
 // =============================================================================

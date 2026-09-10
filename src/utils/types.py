@@ -1,10 +1,24 @@
-from collections.abc import Awaitable, Callable, Generator
+from collections.abc import Awaitable, Callable, Generator, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any, Generic, Literal, TypeVar
 
 T = TypeVar("T")
+
+
+def walk_subclasses(cls: type[T]) -> Iterator[type[T]]:
+    """Yield every subclass of ``cls``, recursively."""
+    # region ai
+    # ``type.__subclasses__()`` is direct-children-only, so a grandchild class is
+    # silently invisible to it. Any registry that enumerates subclasses to decide
+    # what to initialize or validate wants the transitive closure — otherwise
+    # subclassing a concrete class is enough to slip past the check.
+    # endregion
+    for subclass in cls.__subclasses__():
+        yield subclass
+        yield from walk_subclasses(subclass)
+
 
 # Context variable for tracking current iteration in tool execution loop
 # This is used for telemetry to associate tool calls with their iteration
@@ -114,6 +128,12 @@ _embedding_run_id: ContextVar[str | None] = ContextVar("embedding_run_id", defau
 _embedding_parent_category: ContextVar[str | None] = ContextVar(
     "embedding_parent_category", default=None
 )
+# Honcho Session.id for the embedding's trace grouping (e.g. a dialectic
+# prefetch embedding shares the dialectic invocation's session). None when the
+# embedding isn't scoped to a session.
+_embedding_session_id: ContextVar[str | None] = ContextVar(
+    "embedding_session_id", default=None
+)
 
 
 def get_embedding_call_purpose() -> str | None:
@@ -136,6 +156,11 @@ def get_embedding_parent_category() -> str | None:
     return _embedding_parent_category.get()
 
 
+def get_embedding_session_id() -> str | None:
+    """Read the Honcho Session.id attached to the current embedding call scope."""
+    return _embedding_session_id.get()
+
+
 @contextmanager
 def embedding_call_purpose(
     purpose: str,
@@ -143,6 +168,7 @@ def embedding_call_purpose(
     workspace_name: str | None = None,
     run_id: str | None = None,
     parent_category: str | None = None,
+    session_id: str | None = None,
 ) -> Generator[None]:
     """Tag any embedding calls made inside this `with` block.
 
@@ -172,6 +198,9 @@ def embedding_call_purpose(
         if parent_category is not None
         else None
     )
+    session_id_token = (
+        _embedding_session_id.set(session_id) if session_id is not None else None
+    )
     try:
         yield
     finally:
@@ -182,6 +211,8 @@ def embedding_call_purpose(
             _embedding_run_id.reset(run_id_token)
         if parent_category_token is not None:
             _embedding_parent_category.reset(parent_category_token)
+        if session_id_token is not None:
+            _embedding_session_id.reset(session_id_token)
 
 
 @dataclass
@@ -234,7 +265,14 @@ class GetOrCreateResult(Generic[T]):
 
 
 TaskType = Literal[
-    "webhook", "summary", "representation", "dream", "deletion", "reconciler"
+    "webhook",
+    "summary",
+    "representation",
+    "dream",
+    "deletion",
+    "reconciler",
+    "scope_backfill",
+    "scope_removal",
 ]
 VectorSyncState = Literal["synced", "pending", "failed"]
 DocumentLevel = Literal["explicit", "deductive", "inductive", "contradiction"]

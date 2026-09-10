@@ -1,0 +1,61 @@
+# Code owners for Honcho.
+#
+# Beyond review routing, this file is the allowlist for manually triggering
+# the live-llm-tests and unified-tests workflows (via their PR labels and
+# workflow_dispatch). The gate jobs grep every @username in this file —
+# regardless of which path pattern it sits on — and read it from `main`,
+# never from the PR branch, so additions only take effect once merged.
+#
+# The workflow gates only understand individual @usernames (no @org/team
+# entries).
+#
+# Order matters: GitHub applies the LAST matching pattern, so narrower rules
+# go further down. Paths not listed here have no automatic reviewer.
+
+# Telemetry, tracing, metrics.
+/src/telemetry/              @akattelu @Rajat-Ahuja1997
+
+# Data model, connections, configuration, LLM transport.
+/src/db.py                   @akattelu @eisene
+/src/models.py               @akattelu @eisene
+/src/config.py               @akattelu @eisene
+/src/cache/                  @akattelu @eisene
+/src/crud/                   @akattelu @eisene
+/migrations/                 @akattelu @eisene
+/src/llm/                    @akattelu @eisene
+
+# Client-facing surfaces and API shape.
+/sdks/                       @ajspig @akattelu
+/mcp/                        @ajspig @akattelu
+/honcho-cli/                 @ajspig @akattelu
+/src/routers/                @ajspig @akattelu
+/src/schemas/                @ajspig @akattelu
+
+# The reasoning agents, their prompts, and shared agent tooling.
+/src/deriver/                @eisene @akattelu
+/src/dreamer/                @eisene @akattelu
+/src/dialectic/              @eisene @akattelu
+/src/utils/                  @eisene @akattelu
+
+# Deployment, and swappable storage and inference backends.
+# /src/llm/backends/ must stay below /src/llm/ above — last match wins.
+/docker/                     @eisene @Rajat-Ahuja1997
+/Dockerfile                  @eisene @Rajat-Ahuja1997
+/docker-compose.yml.example  @eisene @Rajat-Ahuja1997
+/src/vector_store/           @eisene @Rajat-Ahuja1997
+/src/llm/backends/           @eisene @Rajat-Ahuja1997
+
+# Documentation and contributor-facing policy.
+/docs/                       @ajspig @akattelu
+/README.md                   @ajspig @akattelu
+/CONTRIBUTING.md             @akattelu @ajspig
+/SECURITY.md                 @Rajat-Ahuja1997 @ajspig
+
+# Reviewers auto-requested on changes under .github/ (workflows, this file,
+# templates).
+/.github/ @akattelu @eisene @Rajat-Ahuja1997 @VVoruganti
+
+# CI-trigger allowlist only: this path matches no real file, so these people
+# are never auto-requested for review, but the workflow gates still pick
+# them up.
+/ci-trigger-allowlist @ajspig @courtlandleer @erosika @lowyelling @vintrocode

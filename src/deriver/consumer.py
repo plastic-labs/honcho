@@ -8,6 +8,10 @@ from sqlalchemy import select
 from src import crud, models
 from src.dependencies import tracked_db
 from src.deriver.deriver import process_representation_tasks_batch
+from src.deriver.scope_backfill import (
+    process_scope_backfill,
+    process_scope_removal,
+)
 from src.dreamer import process_dream
 from src.exceptions import ResourceNotFoundException, ValidationException
 from src.models import Message
@@ -23,9 +27,12 @@ from src.telemetry.events import (
 from src.telemetry.logging import log_performance_metrics
 from src.utils import summarizer
 from src.utils.queue_payload import (
+    RETRY_ATTEMPTS_PAYLOAD_KEY,
     DeletionPayload,
     DreamPayload,
     ReconcilerPayload,
+    ScopeBackfillPayload,
+    ScopeRemovalPayload,
     SummaryPayload,
     WebhookPayload,
 )
@@ -38,7 +45,11 @@ logging.getLogger("sqlalchemy.engine.Engine").disabled = True
 async def process_item(queue_item: models.QueueItem) -> None:
     """Process a single item from the queue."""
     task_type = queue_item.task_type
-    queue_payload = queue_item.payload
+    # Drop the work-unit retry counter before payload validation: every payload
+    # model sets extra="forbid", so leaving it in burns the item as
+    # extra_forbidden on the reclaim that was supposed to retry it.
+    queue_payload = dict(queue_item.payload or {})
+    queue_payload.pop(RETRY_ATTEMPTS_PAYLOAD_KEY, None)
     workspace_name = queue_item.workspace_name
 
     # Handle reconciler first - it's the only task type that doesn't require workspace_name
@@ -150,6 +161,36 @@ async def process_item(queue_item: models.QueueItem) -> None:
                 raise ValueError(f"Invalid payload structure: {str(e)}") from e
             await process_deletion(validated, workspace_name)
 
+    elif task_type == "scope_backfill":
+        with sentry_sdk.start_transaction(
+            name="process_scope_backfill_task", op="deriver"
+        ):
+            try:
+                validated = ScopeBackfillPayload(**queue_payload)
+            except ValidationError as e:
+                logger.error(
+                    "Invalid scope_backfill payload received: %s. Payload: %s",
+                    str(e),
+                    queue_payload,
+                )
+                raise ValueError(f"Invalid payload structure: {str(e)}") from e
+            await process_scope_backfill(validated, workspace_name)
+
+    elif task_type == "scope_removal":
+        with sentry_sdk.start_transaction(
+            name="process_scope_removal_task", op="deriver"
+        ):
+            try:
+                validated = ScopeRemovalPayload(**queue_payload)
+            except ValidationError as e:
+                logger.error(
+                    "Invalid scope_removal payload received: %s. Payload: %s",
+                    str(e),
+                    queue_payload,
+                )
+                raise ValueError(f"Invalid payload structure: {str(e)}") from e
+            await process_scope_removal(validated, workspace_name)
+
     else:
         raise ValueError(f"Invalid task type: {task_type}")
 
@@ -176,7 +217,7 @@ async def process_representation_batch(
         queue_item_message_ids: Message IDs from queue items
         hit_batch_token_cap: whether the queue batcher clamped this batch to fit
         was_flush_enabled: snapshot of DERIVER.FLUSH_ENABLED at fetch time
-        batch_max_tokens: DERIVER.REPRESENTATION_BATCH_MAX_TOKENS snapshot
+        batch_max_tokens: DERIVER.REPRESENTATION_BATCH_TARGET_INPUT_TOKENS snapshot
     """
     if not messages or not messages[0]:
         logger.debug("process_representation_batch received no messages")

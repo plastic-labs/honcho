@@ -6,6 +6,7 @@ from functools import cache
 from inspect import cleandoc as c
 from typing import TypedDict
 
+from nanoid import generate as generate_nanoid
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -219,6 +220,9 @@ async def create_short_summary(
         formatted_messages, output_words, previous_summary_text
     )
 
+    # Mint a root span id.
+    # No session_id or run_id for tracing
+    trace_id = generate_nanoid()
     return await honcho_llm_call(
         model_config=_get_summary_model_config(),
         prompt=prompt,
@@ -227,6 +231,9 @@ async def create_short_summary(
             workspace_name=workspace_name,
             call_purpose=CallPurpose.SUMMARY_SHORT.value,
             parent_category="summary",
+            trace_id=trace_id,
+            span_id=trace_id,
+            track_name="Short Summary",
         ),
     )
 
@@ -251,6 +258,9 @@ async def create_long_summary(
         formatted_messages, output_words, previous_summary_text
     )
 
+    # Mint a root span id.
+    # No session_id or run_id for tracing
+    trace_id = generate_nanoid()
     return await honcho_llm_call(
         model_config=_get_summary_model_config(),
         prompt=prompt,
@@ -259,6 +269,9 @@ async def create_long_summary(
             workspace_name=workspace_name,
             call_purpose=CallPurpose.SUMMARY_LONG.value,
             parent_category="summary",
+            trace_id=trace_id,
+            span_id=trace_id,
+            track_name="Long Summary",
         ),
     )
 
@@ -514,17 +527,13 @@ async def _create_and_save_summary(
         "ms",
     )
 
-    # Emit telemetry event (only for non-fallback summaries)
-    # Note: Using AgentToolSummaryCreatedEvent with dummy run_id/iteration since
-    # this is called from the deriver, not from an agentic loop
+    # Emit telemetry event (only for non-fallback summaries).
     if not is_fallback:
         # `prompt_tokens` is set in the `if not is_fallback` block above for
         # both SHORT and LONG summary types — we're inside the same branch, so
         # it's guaranteed bound here.
         emit(
             AgentToolSummaryCreatedEvent(
-                run_id="deriver",  # Placeholder - not from an agentic run
-                iteration=0,  # Placeholder - not from an agentic loop
                 parent_category="deriver",
                 agent_type="summarizer",
                 workspace_name=workspace_name,
@@ -877,12 +886,21 @@ async def get_session_context(
             )
             messages_tokens = token_limit - latest_short_summary["token_count"]
             messages_start_id = latest_short_summary["message_id"]
+        elif latest_short_summary or latest_long_summary:
+            # A summary exists but does not fit the 40% allocation. The caller
+            # receives `summary: null`, which is indistinguishable from a session
+            # that has none, so this is reported rather than left at debug.
+            logger.info(
+                "Summary dropped: budget %s too small (short=%s, long=%s, limit=%s)",
+                summary_tokens_limit,
+                short_len or None,
+                long_len or None,
+                token_limit,
+            )
         else:
             logger.debug(
-                "No summary available for get_context call with token limit %s, returning empty string. Normal if brand-new session. long_summary_len: %s, short_summary_len: %s",
+                "No summary for get_context with token limit %s. Normal for a new session.",
                 token_limit,
-                long_len,
-                short_len,
             )
 
     # Get recent messages after summary

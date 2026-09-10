@@ -4,6 +4,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 from nanoid import generate as generate_nanoid
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models
@@ -1270,3 +1271,114 @@ def test_set_peer_card(client: TestClient, sample_data: tuple[Workspace, Peer]):
     )
     assert response.status_code == 200
     assert response.json()["peer_card"] == target_card
+
+
+FOOD_PREFS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "preferences": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "food": {"type": "string"},
+                    "sentiment": {"enum": ["loves", "likes", "dislikes"]},
+                },
+                "required": ["food", "sentiment"],
+            },
+        },
+        "summary": {"type": "string"},
+    },
+    "required": ["preferences", "summary"],
+}
+
+
+def test_chat_with_response_format(
+    client: TestClient,
+    sample_data: tuple[Workspace, Peer],
+    mock_llm_call_functions: dict[str, Any],
+):
+    """A valid response_format converts to a Pydantic model and is passed to
+    the dialectic as response_model."""
+    test_workspace, test_peer = sample_data
+
+    response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}/chat",
+        json={
+            "query": "What are this user's food preferences?",
+            "stream": False,
+            "response_format": FOOD_PREFS_SCHEMA,
+        },
+    )
+    assert response.status_code == 200
+    assert "content" in response.json()
+
+    kwargs = mock_llm_call_functions["agentic_chat"].await_args.kwargs
+    response_model = kwargs["response_model"]
+    assert isinstance(response_model, type)
+    assert issubclass(response_model, BaseModel)
+    # The converted model enforces the caller's schema.
+    instance = response_model.model_validate(
+        {"preferences": [{"food": "sushi", "sentiment": "loves"}], "summary": "s"}
+    )
+    assert instance.summary == "s"  # pyright: ignore
+
+
+def test_chat_with_response_format_streaming(
+    client: TestClient,
+    sample_data: tuple[Workspace, Peer],
+    mock_llm_call_functions: dict[str, Any],
+):
+    test_workspace, test_peer = sample_data
+
+    response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}/chat",
+        json={
+            "query": "What are this user's food preferences?",
+            "stream": True,
+            "response_format": FOOD_PREFS_SCHEMA,
+        },
+    )
+    assert response.status_code == 200
+    assert "data:" in response.text
+
+    kwargs = mock_llm_call_functions["agentic_chat_stream"].call_args.kwargs
+    response_model = kwargs["response_model"]
+    assert isinstance(response_model, type)
+    assert issubclass(response_model, BaseModel)
+
+
+@pytest.mark.parametrize(
+    "bad_schema",
+    [
+        {"type": "string"},  # non-object root
+        {"type": "object", "properties": {"a": {"$ref": "#/x"}}},
+        {"type": "object", "properties": {"a": {"allOf": [{"type": "string"}]}}},
+        {
+            "type": "object",
+            "properties": {
+                "m": {"type": "object", "additionalProperties": {"type": "string"}}
+            },
+        },
+    ],
+)
+def test_chat_with_invalid_response_format(
+    client: TestClient,
+    sample_data: tuple[Workspace, Peer],
+    mock_llm_call_functions: dict[str, Any],
+    bad_schema: dict[str, Any],
+):
+    """Unsupported schemas are rejected with 422 before the dialectic runs."""
+    test_workspace, test_peer = sample_data
+
+    response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}/chat",
+        json={
+            "query": "Hello?",
+            "stream": False,
+            "response_format": bad_schema,
+        },
+    )
+    assert response.status_code == 422
+    assert "Invalid response_format" in response.json()["detail"]
+    mock_llm_call_functions["agentic_chat"].assert_not_awaited()

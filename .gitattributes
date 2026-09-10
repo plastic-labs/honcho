@@ -1,0 +1,5 @@
+# Shell entrypoints are executed with sh/dash inside the container image. A
+# Windows checkout with core.autocrlf=true rewrites them to CRLF, and dash
+# then aborts with "set: Illegal option" because the carriage return becomes
+# part of the "-e" flag argument (docker/entrypoint.sh).
+*.sh text eol=lf

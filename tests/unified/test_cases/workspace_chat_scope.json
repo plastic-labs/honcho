@@ -1,0 +1,97 @@
+{
+  "description": "Workspace chat with `scope` only recalls the scope's member sessions.",
+  "workspace_config": {
+    "reasoning": {
+      "enabled": true
+    }
+  },
+  "steps": [
+    {
+      "step_type": "create_session",
+      "session_id": "in_scope",
+      "peer_configs": {
+        "alice": {
+          "observe_me": true,
+          "observe_others": false
+        }
+      }
+    },
+    {
+      "step_type": "create_session",
+      "session_id": "out_of_scope",
+      "peer_configs": {
+        "bob": {
+          "observe_me": true,
+          "observe_others": false
+        }
+      }
+    },
+    {
+      "step_type": "create_scope",
+      "scope_id": "therapy",
+      "session_ids": ["in_scope"]
+    },
+    {
+      "step_type": "add_messages",
+      "session_id": "in_scope",
+      "messages": [
+        {
+          "peer_id": "alice",
+          "content": "My favorite tea is jasmine green tea from Hangzhou."
+        }
+      ]
+    },
+    {
+      "step_type": "add_messages",
+      "session_id": "out_of_scope",
+      "messages": [
+        {
+          "peer_id": "bob",
+          "content": "The vault code is 7491-orange-lantern."
+        }
+      ]
+    },
+    {
+      "step_type": "wait",
+      "duration": 2,
+      "target": "queue_empty"
+    },
+    {
+      "step_type": "query",
+      "target": "workspace_chat",
+      "scope": "therapy",
+      "input": "What facts do you know about people in this workspace? Mention any codes or secrets if you have them.",
+      "reasoning_level": "low",
+      "assertions": [
+        {
+          "assertion_type": "not_contains",
+          "text": "7491-orange-lantern",
+          "case_sensitive": false
+        },
+        {
+          "assertion_type": "not_contains",
+          "text": "scope.therapy",
+          "case_sensitive": false
+        },
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "Does the response mention Alice's jasmine tea (or that Alice likes tea), and does it NOT mention a vault code or 7491? Return true only if both are true.",
+          "pass_if": true
+        }
+      ]
+    },
+    {
+      "step_type": "query",
+      "target": "workspace_chat",
+      "input": "List every peer in this workspace and how many messages each has.",
+      "reasoning_level": "low",
+      "assertions": [
+        {
+          "assertion_type": "not_contains",
+          "text": "scope.therapy",
+          "case_sensitive": false
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,84 @@
+name: Load staging secrets
+description: >-
+  Resolve staging secret ids from the two newest v<major.minor.patch> git tags,
+  then load the newest fetchable secret's keys into the job environment from
+  AWS Secrets Manager. Falls back to the second-latest tag when the latest
+  tag's secret isn't published yet, and fails the job loudly when neither can
+  be fetched. Requires the repository to be checked out and AWS credentials to
+  be configured beforehand.
+
+inputs:
+  secret-prefix:
+    description: >-
+      Secret-name prefix combined with a resolved tag version to form the full
+      secret id. Masked so it stays out of public CI logs.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve secret ids from latest git tags
+      id: resolve-secret
+      shell: bash
+      env:
+        SECRET_PREFIX: ${{ inputs.secret-prefix }}
+      run: |
+        set -euo pipefail
+        : "${SECRET_PREFIX:?secret-prefix input is empty — is the STAGING_SECRET_PREFIX secret set for this environment?}"
+        # Keep the secret-name prefix out of public CI logs.
+        echo "::add-mask::${SECRET_PREFIX}"
+
+        # Two newest v<major.minor.patch> tags, highest first (tags are public).
+        versions="$(git ls-remote --tags origin 'v*' \
+          | sed -n 's#.*refs/tags/v\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)$#\1#p' \
+          | sort -t. -k1,1nr -k2,2nr -k3,3nr -u)"
+        latest="$(printf '%s\n' "$versions" | sed -n '1p')"
+        second="$(printf '%s\n' "$versions" | sed -n '2p')"
+        if [ -z "${latest:-}" ]; then
+          echo "::error::No v<semver> git tags found to resolve a secret version"
+          exit 1
+        fi
+
+        latest_id="${SECRET_PREFIX}${latest}"
+        echo "::add-mask::${latest_id}"
+        echo "latest-id=${latest_id}" >> "$GITHUB_OUTPUT"
+        echo "Latest version: ${latest}"
+        if [ -n "${second:-}" ]; then
+          second_id="${SECRET_PREFIX}${second}"
+          echo "::add-mask::${second_id}"
+          echo "second-id=${second_id}" >> "$GITHUB_OUTPUT"
+          echo "Fallback version: ${second}"
+        fi
+
+    # Fetch the latest tag's secret. continue-on-error so a not-yet-published
+    # latest falls through to the second-latest instead of failing the job.
+    - name: Fetch staging secret (latest)
+      id: fetch-latest
+      continue-on-error: true
+      uses: aws-actions/aws-secretsmanager-get-secrets@v2
+      with:
+        secret-ids: |
+          ,${{ steps.resolve-secret.outputs.latest-id }}
+        parse-json-secrets: true
+
+    # Runs only if the latest fetch failed; this one is NOT continue-on-error,
+    # so if the fallback also fails the job fails loudly.
+    - name: Fetch staging secret (fallback to second-latest)
+      id: fetch-fallback
+      if: steps.fetch-latest.outcome == 'failure' && steps.resolve-secret.outputs.second-id != ''
+      uses: aws-actions/aws-secretsmanager-get-secrets@v2
+      with:
+        secret-ids: |
+          ,${{ steps.resolve-secret.outputs.second-id }}
+        parse-json-secrets: true
+
+    # If the latest fetch failed and the fallback was skipped (no second tag),
+    # no secret keys were loaded — fail here instead of letting the job run
+    # without staging config (e.g. every live LLM test would silently skip via
+    # require_provider_key and the run would go green).
+    - name: Verify staging secrets were loaded
+      if: steps.fetch-latest.outcome != 'success' && steps.fetch-fallback.outcome != 'success'
+      shell: bash
+      run: |
+        echo "::error::No staging secret could be fetched (latest failed; fallback skipped or failed)"
+        exit 1
