@@ -135,7 +135,9 @@ async def seed_work_unit(
                 task_type=task_type,
                 payload={},
                 processed=processed,
-                workspace_name=workspace.name,
+                # The reconciler is the tenant-less lane and carries no
+                # workspace (the queue CHECK enforces it).
+                workspace_name=(None if task_type == "reconciler" else workspace.name),
                 message_id=message_id,
                 tenant_id=tenant_id,
                 created_at=enqueued_at - timedelta(seconds=age_seconds),

@@ -274,7 +274,9 @@ class TestDeriverStatusEndpoint:
             )
         )
 
-        # Add internal task types (should NOT be counted)
+        # Add internal task types (should NOT be counted). The reconciler is
+        # the tenant-less lane and carries no workspace (the queue CHECK
+        # enforces it); the other internal types belong to a workspace.
         for task_type in ("reconciler", "webhook", "deletion"):
             internal_payload = {
                 "task_type": task_type,
@@ -287,7 +289,9 @@ class TestDeriverStatusEndpoint:
                     work_unit_key=f"{task_type}:{workspace.name}:internal",
                     payload=internal_payload,
                     processed=False,
-                    workspace_name=workspace.name,
+                    workspace_name=(
+                        None if task_type == "reconciler" else workspace.name
+                    ),
                 )
             )
 

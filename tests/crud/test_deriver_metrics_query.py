@@ -182,7 +182,9 @@ class TestDeriverMetrics:
                 task_type="reconciler",
                 payload={},
                 processed=False,
-                workspace_name=workspace.name,
+                # The reconciler is the tenant-less lane: no workspace (the
+                # queue CHECK enforces it).
+                workspace_name=None,
             )
         )
         await db_session.commit()

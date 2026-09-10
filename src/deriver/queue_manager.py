@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import math
 import random
 import signal
 import time
@@ -157,8 +158,36 @@ class QueueManager:
         # random walk and untestable at non-zero jitter ratios).
         self._stale_cleanup_gate_seconds: float = 0.0
 
-        # Initialize from settings
-        self.workers: int = settings.DERIVER.WORKERS
+        # region ai
+        # Derive-with-visibility: the effective concurrency is the configured
+        # WORKERS capped by DB-pool headroom (each in-flight unit opens several
+        # sequential short sessions, so one connection services ~WORKERS_PER_
+        # POOL_CONNECTION units). Derivation only lowers; when it does, the
+        # warning plus the deriver_effective_worker_cap gauge make the binding
+        # constraint visible instead of surfacing as pool-timeout errors under
+        # load. The ratio's default is conservative until measured (DEV-2744).
+        # endregion
+        configured_workers: int = settings.DERIVER.WORKERS
+        pool_capacity: int = settings.DB.POOL_SIZE + settings.DB.MAX_OVERFLOW
+        pool_bounded_workers: int = max(
+            1,
+            math.floor(settings.DERIVER.WORKERS_PER_POOL_CONNECTION * pool_capacity),
+        )
+        self.workers: int = min(configured_workers, pool_bounded_workers)
+        if self.workers < configured_workers:
+            logger.warning(
+                "DERIVER_WORKERS=%d exceeds the pool-derived cap %d "
+                + "(WORKERS_PER_POOL_CONNECTION=%.1f x pool capacity %d); "
+                + "running %d workers",
+                configured_workers,
+                pool_bounded_workers,
+                settings.DERIVER.WORKERS_PER_POOL_CONNECTION,
+                pool_capacity,
+                self.workers,
+            )
+        else:
+            logger.info("Deriver worker concurrency: %d", self.workers)
+        prometheus_metrics.set_deriver_effective_worker_cap(self.workers)
         self.semaphore: asyncio.Semaphore = asyncio.Semaphore(self.workers)
 
         # Get or create the singleton dream scheduler

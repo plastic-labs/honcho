@@ -134,6 +134,14 @@ def _stamp_tenant_id(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     # endregion
     for record in records:
         record["tenant_id"] = tenant_id_for_work_unit_key(record["work_unit_key"])
+        if settings.MULTI_TENANT and record["tenant_id"] is None:
+            # Tenant-scoped types raise at key construction before reaching
+            # here; this guards the invariant for any future record builder
+            # that skips construct_work_unit_key.
+            raise ValueError(
+                f"queue record for task_type {record['task_type']!r} carries "
+                + "no tenant under MULTI_TENANT"
+            )
     return records
 
 
