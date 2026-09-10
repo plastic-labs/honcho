@@ -6,6 +6,7 @@ normal LLM responses, ensuring fallback logic prevents empty summaries
 from being persisted.
 """
 
+import hashlib
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -19,6 +20,7 @@ from src.utils.summarizer import (
     _create_summary,  # pyright: ignore[reportPrivateUsage]
     create_long_summary,
     create_short_summary,
+    summary_prompt,
 )
 
 # Common test arguments for _create_summary
@@ -29,17 +31,24 @@ _LAST_MESSAGE_ID = 42
 _LAST_MESSAGE_CONTENT_PREVIEW = "hello there how are you"
 _MESSAGE_COUNT = 5
 
+# The real coroutines, bound at import time (before the autouse
+# `mock_llm_call_functions` fixture swaps the module attributes for stubs).
+# `TestSummaryPromptIdentity` restores them so the real prompt builder runs.
+_REAL_CREATE_SHORT_SUMMARY = create_short_summary
+_REAL_CREATE_LONG_SUMMARY = create_long_summary
+
 
 async def _call_create_summary(
     summary_type: SummaryType,
     *,
     message_count: int = _MESSAGE_COUNT,
     input_tokens: int = _INPUT_TOKENS,
+    previous_summary_text: str | None = None,
 ) -> tuple[Summary, bool, int, int]:
     """Helper to call _create_summary with standard test arguments."""
     return await _create_summary(
         formatted_messages=_FORMATTED_MESSAGES,
-        previous_summary_text=None,
+        previous_summary_text=previous_summary_text,
         summary_type=summary_type,
         input_tokens=input_tokens,
         message_public_id=_MESSAGE_PUBLIC_ID,
@@ -330,3 +339,168 @@ class TestSummaryCallerMigration:
         assert "model_config" in kwargs
         assert kwargs["model_config"].model == expected_config.model
         assert "llm_settings" not in kwargs
+
+
+@pytest.mark.asyncio
+class TestSummaryPromptIdentity:
+    """The prompt the provider saw is the prompt the error triage fields name.
+
+    `EmptySummaryError.prompt_digest` / `prompt_bytes` exist to correlate a
+    repeated failure, so they must describe the string actually handed to
+    `honcho_llm_call` -- instructions, previous summary, messages and the hard
+    word limit -- using the deriver's 16-hex convention
+    (`deriver.py` raises `EmptyRepresentationError` the same way). Hashing only
+    `formatted_messages` makes two different prompts collide.
+
+    The autouse `mock_llm_call_functions` fixture replaces the *module
+    attributes* `create_short_summary` / `create_long_summary` with stubs that
+    return a plain string, so `_create_summary` would never reach the prompt
+    builder. These tests restore the real coroutines (bound at import time) for
+    the duration of the test, because the real prompt-building path is the
+    subject under test.
+    """
+
+    @staticmethod
+    def _degraded() -> HonchoLLMCallResponse[str]:
+        """A response the provider cut off: empty body, `length`, no tokens."""
+        return HonchoLLMCallResponse(
+            content="",
+            input_tokens=100,
+            output_tokens=0,
+            finish_reasons=["length"],
+        )
+
+    async def _run_degraded(
+        self,
+        summary_type: SummaryType,
+        previous_summary_text: str | None = None,
+    ) -> tuple[str, EmptySummaryError]:
+        short = summary_type is SummaryType.SHORT
+        with (
+            patch(
+                "src.utils.summarizer.create_short_summary"
+                if short
+                else "src.utils.summarizer.create_long_summary",
+                side_effect=(
+                    _REAL_CREATE_SHORT_SUMMARY if short else _REAL_CREATE_LONG_SUMMARY
+                ),
+            ),
+            patch(
+                "src.utils.summarizer.honcho_llm_call",
+                new_callable=AsyncMock,
+                return_value=self._degraded(),
+            ) as mock_llm_call,
+            pytest.raises(EmptySummaryError, match="empty summary") as exc,
+        ):
+            await _call_create_summary(
+                summary_type, previous_summary_text=previous_summary_text
+            )
+
+        await_args = mock_llm_call.await_args
+        if await_args is None:
+            raise AssertionError("Expected summary LLM call")
+        sent_prompt = await_args.kwargs["prompt"]
+        return sent_prompt, exc.value
+
+    async def test_create_short_summary_prompt_comes_from_the_builder(self):
+        """Single source of truth: the caller and the error path agree."""
+        response = HonchoLLMCallResponse(
+            content="short summary",
+            input_tokens=10,
+            output_tokens=5,
+            finish_reasons=["STOP"],
+        )
+        with patch(
+            "src.utils.summarizer.honcho_llm_call",
+            new_callable=AsyncMock,
+            return_value=response,
+        ) as mock_llm_call:
+            await create_short_summary(
+                formatted_messages=_FORMATTED_MESSAGES,
+                input_tokens=_INPUT_TOKENS,
+                previous_summary=None,
+            )
+
+        await_args = mock_llm_call.await_args
+        if await_args is None:
+            raise AssertionError("Expected summary LLM call")
+        assert await_args.kwargs["prompt"] == summary_prompt(
+            SummaryType.SHORT, _FORMATTED_MESSAGES, None, _INPUT_TOKENS
+        )
+
+    async def test_create_long_summary_prompt_comes_from_the_builder(self):
+        response = HonchoLLMCallResponse(
+            content="long summary",
+            input_tokens=10,
+            output_tokens=5,
+            finish_reasons=["STOP"],
+        )
+        with patch(
+            "src.utils.summarizer.honcho_llm_call",
+            new_callable=AsyncMock,
+            return_value=response,
+        ) as mock_llm_call:
+            await create_long_summary(
+                formatted_messages=_FORMATTED_MESSAGES,
+                previous_summary=None,
+            )
+
+        await_args = mock_llm_call.await_args
+        if await_args is None:
+            raise AssertionError("Expected summary LLM call")
+        assert await_args.kwargs["prompt"] == summary_prompt(
+            SummaryType.LONG, _FORMATTED_MESSAGES, None
+        )
+
+    async def test_short_summary_digest_identifies_the_sent_prompt(self):
+        sent_prompt, failure = await self._run_degraded(SummaryType.SHORT)
+
+        assert sent_prompt == summary_prompt(
+            SummaryType.SHORT, _FORMATTED_MESSAGES, None, _INPUT_TOKENS
+        )
+        assert failure.prompt_bytes == len(sent_prompt.encode("utf-8"))
+        assert (
+            failure.prompt_digest
+            == hashlib.sha256(sent_prompt.encode("utf-8")).hexdigest()[:16]
+        )
+        assert len(failure.prompt_digest) == 16
+        # The prompt is not just the messages: a digest over the bare messages
+        # would be both shorter and a different value.
+        assert failure.prompt_bytes > len(_FORMATTED_MESSAGES.encode("utf-8"))
+        assert (
+            failure.prompt_digest
+            != hashlib.sha256(_FORMATTED_MESSAGES.encode("utf-8")).hexdigest()[:16]
+        )
+
+    async def test_long_summary_digest_identifies_the_sent_prompt(self):
+        sent_prompt, failure = await self._run_degraded(SummaryType.LONG)
+
+        assert sent_prompt == summary_prompt(
+            SummaryType.LONG, _FORMATTED_MESSAGES, None
+        )
+        assert failure.prompt_bytes == len(sent_prompt.encode("utf-8"))
+        assert (
+            failure.prompt_digest
+            == hashlib.sha256(sent_prompt.encode("utf-8")).hexdigest()[:16]
+        )
+        assert (
+            failure.prompt_digest
+            != hashlib.sha256(_FORMATTED_MESSAGES.encode("utf-8")).hexdigest()[:16]
+        )
+
+    async def test_different_previous_summaries_do_not_share_a_digest(self):
+        """The regression the finding names: only the previous summary differs."""
+        results: list[tuple[str, str]] = []
+        for previous in ("previous summary A", "previous summary B"):
+            sent_prompt, failure = await self._run_degraded(
+                SummaryType.SHORT, previous_summary_text=previous
+            )
+            assert previous in sent_prompt
+            assert (
+                failure.prompt_digest
+                == hashlib.sha256(sent_prompt.encode("utf-8")).hexdigest()[:16]
+            )
+            results.append((sent_prompt, failure.prompt_digest))
+
+        assert results[0][0] != results[1][0]
+        assert results[0][1] != results[1][1]
