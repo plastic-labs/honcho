@@ -32,14 +32,33 @@ CONSTRAINT_NAME = "ck_queue_workspace_null_iff_reconciler"
 
 
 def upgrade() -> None:
-    if not constraint_exists("queue", CONSTRAINT_NAME, "check"):
-        op.execute(
-            f"""
-            ALTER TABLE {schema}.queue
-            ADD CONSTRAINT {CONSTRAINT_NAME}
-            CHECK ((workspace_name IS NULL) = (task_type = 'reconciler'))
-            """
-        )
+    if constraint_exists("queue", CONSTRAINT_NAME, "check"):
+        return
+    # region ai
+    # Legacy cleanup first: reconciler rows enqueued while workspace_name was
+    # still NOT NULL carry a real workspace and would fail validation (errored
+    # rows outlive the retention-window cleanup). NULLing the workspace matches
+    # what every current writer produces for the lane.
+    # endregion
+    op.execute(
+        f"""
+        UPDATE {schema}.queue
+        SET workspace_name = NULL
+        WHERE task_type = 'reconciler' AND workspace_name IS NOT NULL
+        """
+    )
+    # NOT VALID + VALIDATE: the plain form takes ACCESS EXCLUSIVE and
+    # full-scans the table, blocking every enqueue and claim for the scan;
+    # split, the validation runs under SHARE UPDATE EXCLUSIVE instead.
+    op.execute(
+        f"""
+        ALTER TABLE {schema}.queue
+        ADD CONSTRAINT {CONSTRAINT_NAME}
+        CHECK ((workspace_name IS NULL) = (task_type = 'reconciler'))
+        NOT VALID
+        """
+    )
+    op.execute(f"ALTER TABLE {schema}.queue VALIDATE CONSTRAINT {CONSTRAINT_NAME}")
 
 
 def downgrade() -> None:

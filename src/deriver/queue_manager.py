@@ -168,26 +168,34 @@ class QueueManager:
         # load. The ratio's default is conservative until measured (DEV-2744).
         # endregion
         configured_workers: int = settings.DERIVER.WORKERS
-        pool_capacity: int = settings.DB.POOL_SIZE + settings.DB.MAX_OVERFLOW
-        pool_bounded_workers: int = max(
-            1,
-            math.floor(settings.DERIVER.WORKERS_PER_POOL_CONNECTION * pool_capacity),
-        )
+        if settings.DB.POOL_CLASS == "null":
+            # NullPool opens a connection per session and POOL_SIZE/MAX_OVERFLOW
+            # are inert, so there is no pool headroom to derive against.
+            pool_bounded_workers = configured_workers
+        else:
+            pool_capacity: int = settings.DB.POOL_SIZE + settings.DB.MAX_OVERFLOW
+            pool_bounded_workers = max(
+                1,
+                math.floor(
+                    settings.DERIVER.WORKERS_PER_POOL_CONNECTION * pool_capacity
+                ),
+            )
         self.workers: int = min(configured_workers, pool_bounded_workers)
         if self.workers < configured_workers:
             logger.warning(
                 "DERIVER_WORKERS=%d exceeds the pool-derived cap %d "
-                + "(WORKERS_PER_POOL_CONNECTION=%.1f x pool capacity %d); "
+                + "(WORKERS_PER_POOL_CONNECTION=%g x pool capacity %d); "
                 + "running %d workers",
                 configured_workers,
                 pool_bounded_workers,
                 settings.DERIVER.WORKERS_PER_POOL_CONNECTION,
-                pool_capacity,
+                settings.DB.POOL_SIZE + settings.DB.MAX_OVERFLOW,
                 self.workers,
             )
         else:
             logger.info("Deriver worker concurrency: %d", self.workers)
-        prometheus_metrics.set_deriver_effective_worker_cap(self.workers)
+        if settings.METRICS.ENABLED:
+            prometheus_metrics.set_deriver_effective_worker_cap(self.workers)
         self.semaphore: asyncio.Semaphore = asyncio.Semaphore(self.workers)
 
         # Get or create the singleton dream scheduler

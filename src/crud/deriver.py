@@ -54,16 +54,17 @@ def backlog_threshold_clause() -> ColumnElement[bool] | None:
     return or_(models.WorkUnitBacklog.task_type != "representation", threshold)
 
 
-def claim_excluded_tenants_clause() -> ColumnElement[bool] | None:
-    """Tenants the claim must skip, or None when no exclusion applies."""
+def claim_excluded_tenant_ids() -> Sequence[str] | None:
+    """Tenant ids the claim must skip, or None when no exclusion applies."""
     # region ai
-    # The billing-pause seam: pausing derivation for a tenant means filtering
-    # its backlog rows out of the claim's eligible set right here, before
-    # ranking, so a paused whale contributes nothing to any round. The paused-
-    # tenant source is out of scope for the fair scheduler itself and there is
-    # no source yet, hence None; the seam exists so wiring one in is a WHERE
-    # clause, not another pass over the claim query. Tenant-less (reconciler)
-    # rows must never be excluded by any future source.
+    # The suspension seam: excluding a tenant means filtering its backlog rows
+    # out of the claim's eligible set before ranking, so an excluded whale
+    # contributes nothing to any round. No exclusion source exists yet, hence
+    # None; the seam returns ids rather than a clause so wiring a source in
+    # cannot reintroduce the NULL footgun — the claim composes `tenant_id IS
+    # NULL OR tenant_id NOT IN (ids)` itself, keeping the tenant-less
+    # (reconciler) lane in rotation by construction (a bare NOT IN is
+    # NULL-false and would silently starve it).
     # endregion
     return None
 
@@ -174,9 +175,14 @@ def claim_rows_query(limit: int) -> Select[Any]:
     threshold_clause = backlog_threshold_clause()
     if threshold_clause is not None:
         eligible = eligible.where(threshold_clause)
-    excluded_tenants_clause = claim_excluded_tenants_clause()
-    if excluded_tenants_clause is not None:
-        eligible = eligible.where(excluded_tenants_clause)
+    excluded_tenant_ids = claim_excluded_tenant_ids()
+    if excluded_tenant_ids:
+        eligible = eligible.where(
+            or_(
+                models.WorkUnitBacklog.tenant_id.is_(None),
+                models.WorkUnitBacklog.tenant_id.notin_(excluded_tenant_ids),
+            )
+        )
     eligible_subq = eligible.subquery()
 
     return (
@@ -198,6 +204,7 @@ def claim_rows_query(limit: int) -> Select[Any]:
         .limit(limit)
         .with_for_update(skip_locked=True, of=models.WorkUnitBacklog)
     )
+
 
 def stale_claim_cutoff() -> datetime:
     return datetime.now(UTC) - timedelta(

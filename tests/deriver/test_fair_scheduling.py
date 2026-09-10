@@ -8,7 +8,7 @@ starve a quiet one, the tenant-less reconciler lane is a bucket in the rotation
 rather than an exception to it, and a deployment where every row is tenant-less
 degenerates to plain oldest-first. They also pin the seams around that ordering
 — eligibility placement (a claimed unit must not shadow its tenant's next one),
-the billing-pause hook, the queue's lane CHECK, the pool-derived worker cap that
+the tenant-exclusion hook, the queue's lane CHECK, the pool-derived worker cap that
 sets the claim's limit, and the enqueue stamp that fills the column the ranking
 partitions on.
 """
@@ -19,22 +19,17 @@ import logging
 from collections.abc import Callable, Sequence
 
 import pytest
-from sqlalchemy import ColumnElement
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import src.crud.deriver as crud_deriver_module
 from src import models
 from src.config import settings
-from src.crud.deriver import claim_excluded_tenants_clause
+from src.crud.deriver import claim_excluded_tenant_ids
 from src.deriver import queue_manager as queue_manager_module
 from src.deriver.enqueue import _stamp_tenant_id
 from src.deriver.queue_manager import QueueManager
-from tests.deriver.test_work_unit_backlog import (  # noqa: F401 -- re-exported fixtures
-    SeedWorkUnit,
-    _read_backlog_keys,
-    batch_gate_settings,
-    seed_work_unit,
-)
+from tests.deriver.conftest import SeedWorkUnit, _read_backlog_keys
 
 # The tenant ids used as backlog partitions. They are opaque strings on a
 # no-FK attribution column, so a test may mint whatever reads clearly.
@@ -45,7 +40,8 @@ PAUSED_TENANT = "t-paused"
 LIVE_TENANT = "t-live"
 
 # Every seeded unit is backdated past this flush window, so the batch gate is
-# live (as it is in production) without any test depending on token counts.
+# live (as it is under the shipped defaults) without any test depending on
+# token counts.
 AGE_FLUSH_SECONDS = 60
 
 
@@ -89,6 +85,10 @@ def pool_derivation_settings(monkeypatch: pytest.MonkeyPatch) -> Callable[..., N
         pool_size: int,
         max_overflow: int,
     ) -> None:
+        # A "null" pool class skips the derivation entirely, so pin it too:
+        # otherwise a NullPool deployment config turns every cap assertion below
+        # into an assertion that the configured count passed through untouched.
+        monkeypatch.setattr(settings.DB, "POOL_CLASS", "default")
         monkeypatch.setattr(settings.DERIVER, "WORKERS", configured_workers)
         monkeypatch.setattr(
             settings.DERIVER, "WORKERS_PER_POOL_CONNECTION", workers_per_connection
@@ -105,8 +105,8 @@ class TestRoundRobinInterleavesTenants:
 
     async def test_every_tenant_is_offered_its_oldest_unit_before_any_tenant_repeats(
         self,
-        seed_work_unit: SeedWorkUnit,  # noqa: F811
-        batch_gate_settings: Callable[..., None],  # noqa: F811
+        seed_work_unit: SeedWorkUnit,
+        batch_gate_settings: Callable[..., None],
         recorded_claim_order: list[str],
     ) -> None:
         """A claim walks rank 1 for every tenant, then rank 2, oldest-first inside each round.
@@ -190,8 +190,8 @@ class TestAWhaleCannotStarveAMinnow:
 
     async def test_a_flooding_whale_never_pushes_a_minnow_past_the_first_round(
         self,
-        seed_work_unit: SeedWorkUnit,  # noqa: F811
-        batch_gate_settings: Callable[..., None],  # noqa: F811
+        seed_work_unit: SeedWorkUnit,
+        batch_gate_settings: Callable[..., None],
         recorded_claim_order: list[str],
     ) -> None:
         """Twenty units all older than the minnow's one still leave it second in line."""
@@ -226,8 +226,8 @@ class TestAWhaleCannotStarveAMinnow:
 
     async def test_a_minnow_shares_a_two_slot_claim_with_a_flooding_whale(
         self,
-        seed_work_unit: SeedWorkUnit,  # noqa: F811
-        batch_gate_settings: Callable[..., None],  # noqa: F811
+        seed_work_unit: SeedWorkUnit,
+        batch_gate_settings: Callable[..., None],
     ) -> None:
         """Scarcity is where fairness matters: two slots, two tenants, one each."""
         batch_gate_settings(
@@ -263,8 +263,8 @@ class TestTheTenantlessBucketParticipates:
 
     async def test_a_reconciler_unit_claims_in_the_first_round_beside_the_tenants(
         self,
-        seed_work_unit: SeedWorkUnit,  # noqa: F811
-        batch_gate_settings: Callable[..., None],  # noqa: F811
+        seed_work_unit: SeedWorkUnit,
+        batch_gate_settings: Callable[..., None],
         recorded_claim_order: list[str],
     ) -> None:
         """The youngest unit in the queue still claims first round because it is its own bucket.
@@ -319,8 +319,8 @@ class TestFlagOffDegeneratesToOldestFirst:
 
     async def test_successive_single_unit_claims_walk_the_backlog_oldest_first(
         self,
-        seed_work_unit: SeedWorkUnit,  # noqa: F811
-        batch_gate_settings: Callable[..., None],  # noqa: F811
+        seed_work_unit: SeedWorkUnit,
+        batch_gate_settings: Callable[..., None],
     ) -> None:
         """A self-hosted deployment sees exactly the pre-fairness ordering."""
         batch_gate_settings(
@@ -349,8 +349,8 @@ class TestFlagOffDegeneratesToOldestFirst:
 
     async def test_one_wide_claim_returns_the_whole_backlog_oldest_first(
         self,
-        seed_work_unit: SeedWorkUnit,  # noqa: F811
-        batch_gate_settings: Callable[..., None],  # noqa: F811
+        seed_work_unit: SeedWorkUnit,
+        batch_gate_settings: Callable[..., None],
         recorded_claim_order: list[str],
     ) -> None:
         """However many logical tenants the keys imply, one NULL partition ranks them by age."""
@@ -386,8 +386,8 @@ class TestAClaimedUnitDoesNotShadowItsTenantsNext:
     async def test_a_tenants_second_unit_ranks_first_once_its_oldest_is_claimed(
         self,
         db_session: AsyncSession,
-        seed_work_unit: SeedWorkUnit,  # noqa: F811
-        batch_gate_settings: Callable[..., None],  # noqa: F811
+        seed_work_unit: SeedWorkUnit,
+        batch_gate_settings: Callable[..., None],
         recorded_claim_order: list[str],
     ) -> None:
         """Ranking after the eligibility filter would demote this unit to round two.
@@ -435,12 +435,12 @@ class TestAClaimedUnitDoesNotShadowItsTenantsNext:
 
 @pytest.mark.asyncio
 class TestThePauseSeam:
-    """The exclusion hook a billing pause will hang off, and what it does to a claim."""
+    """The exclusion hook a tenant suspension will hang off, and what it does to a claim."""
 
-    async def test_the_seam_excludes_nothing_today(
+    async def test_the_seam_excludes_nothing_with_no_source_wired(
         self,
-        seed_work_unit: SeedWorkUnit,  # noqa: F811
-        batch_gate_settings: Callable[..., None],  # noqa: F811
+        seed_work_unit: SeedWorkUnit,
+        batch_gate_settings: Callable[..., None],
     ) -> None:
         """With no paused-tenant source wired in, every bucket claims as usual."""
         batch_gate_settings(
@@ -469,14 +469,14 @@ class TestThePauseSeam:
 
         claimed_work_units = await QueueManager().get_and_claim_work_units()
 
-        assert claim_excluded_tenants_clause() is None
+        assert claim_excluded_tenant_ids() is None
         assert set(claimed_work_units) == {paused_key, live_key, reconciler_key}
 
     async def test_an_exclusion_clause_skips_the_paused_tenant_and_nobody_else(
         self,
         db_session: AsyncSession,
-        seed_work_unit: SeedWorkUnit,  # noqa: F811
-        batch_gate_settings: Callable[..., None],  # noqa: F811
+        seed_work_unit: SeedWorkUnit,
+        batch_gate_settings: Callable[..., None],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """A clause wired into the seam filters before ranking, leaving the rest untouched.
@@ -488,15 +488,16 @@ class TestThePauseSeam:
             target_tokens=512, max_age_seconds=AGE_FLUSH_SECONDS, workers=10
         )
 
-        def exclude_the_paused_tenant() -> ColumnElement[bool]:
-            return models.WorkUnitBacklog.tenant_id.is_(None) | (
-                models.WorkUnitBacklog.tenant_id != PAUSED_TENANT
-            )
-
+        # region ai
+        # The seam hands back ids, not a clause: the claim composes the
+        # NULL-safe predicate itself, so a wired source cannot accidentally
+        # exclude the tenant-less reconciler lane (a bare NOT IN is NULL-false).
+        # Patched where the claim builder resolves it.
+        # endregion
         monkeypatch.setattr(
-            queue_manager_module,
-            "claim_excluded_tenants_clause",
-            exclude_the_paused_tenant,
+            crud_deriver_module,
+            "claim_excluded_tenant_ids",
+            lambda: [PAUSED_TENANT],
         )
         paused_keys = [
             representation_key(PAUSED_TENANT, f"paused-{index}") for index in range(2)
@@ -662,6 +663,9 @@ class TestThePoolDerivedWorkerCap:
     ) -> None:
         """The binding constraint is visible in metrics, not only in pool-timeout errors."""
         published_caps: list[int] = []
+        # The publish is behind the metrics toggle, which defaults off, so the
+        # gauge can only be observed with metrics turned on.
+        monkeypatch.setattr(settings.METRICS, "ENABLED", True)
         monkeypatch.setattr(
             queue_manager_module.prometheus_metrics,
             "set_deriver_effective_worker_cap",

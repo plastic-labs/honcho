@@ -250,8 +250,10 @@ deriver_queue_oldest_pending_age_seconds_gauge = NamespacedGauge(
 deriver_effective_worker_cap_gauge = NamespacedGauge(
     "deriver_effective_worker_cap",
     "Per-process worker concurrency after the DB-pool headroom derivation — "
-    + "min(DERIVER_WORKERS, floor(WORKERS_PER_POOL_CONNECTION * pool capacity)). "
-    + "Lower than DERIVER_WORKERS means the pool, not config, is the binding cap",
+    + "min(DERIVER_WORKERS, max(1, floor(WORKERS_PER_POOL_CONNECTION * pool "
+    + "capacity))). Genuinely per-replica: sum() across deriver replicas is "
+    + "total fleet worker capacity; min() below DERIVER_WORKERS means some "
+    + "replica's pool, not config, is the binding cap",
     ["namespace"],
 )
 

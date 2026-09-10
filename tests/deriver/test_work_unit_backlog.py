@@ -10,50 +10,26 @@ triggers maintain, and what the claim and the metrics query do with it.
 
 from __future__ import annotations
 
-import itertools
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
-from nanoid import generate as generate_nanoid
 from sqlalchemy import Select, delete, func, select
-from sqlalchemy.engine import Row
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from src import crud, models
 from src.config import settings
 from src.crud.deriver import claim_rows_query
 from src.deriver.queue_manager import QueueManager
 from src.models import DEFAULT_TENANT_ID
-from src.utils.types import TaskType
-
-SeedWorkUnit = Callable[..., Awaitable[list[models.QueueItem]]]
-
-
-async def _read_backlog_row(db: AsyncSession, work_unit_key: str) -> Row[Any] | None:
-    """Read one backlog row as plain columns, outside the ORM identity map.
-
-    The triggers write this table behind the session's back, so a mapped
-    instance loaded earlier in a test would keep answering from its stale state.
-    """
-    result = await db.execute(
-        select(
-            models.WorkUnitBacklog.tenant_id,
-            models.WorkUnitBacklog.task_type,
-            models.WorkUnitBacklog.pending_count,
-            models.WorkUnitBacklog.total_tokens,
-            models.WorkUnitBacklog.oldest_created_at,
-        ).where(models.WorkUnitBacklog.work_unit_key == work_unit_key)
-    )
-    return result.one_or_none()
-
-
-async def _read_backlog_keys(db: AsyncSession) -> set[str]:
-    """Every work unit the backlog currently considers pending."""
-    result = await db.execute(select(models.WorkUnitBacklog.work_unit_key))
-    return set(result.scalars().all())
+from tests.deriver.conftest import (
+    SeedWorkUnit,
+    _independent_sessions,
+    _read_backlog_keys,
+    _read_backlog_row,
+)
 
 
 async def _count_unprocessed_queue_items(db: AsyncSession) -> int:
@@ -71,109 +47,6 @@ def _claim_candidate_query(limit: int) -> Select[Any]:
     SQL, so these tests exercise the exact shape the deriver runs and drift is
     impossible."""
     return claim_rows_query(limit)
-
-
-def _independent_sessions(db_engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
-    """A factory for sessions on their own connections, for concurrency tests."""
-    return async_sessionmaker(bind=db_engine, expire_on_commit=False)
-
-
-@pytest.fixture
-async def seed_work_unit(
-    db_session: AsyncSession,
-    sample_data: tuple[models.Workspace, models.Peer],
-) -> SeedWorkUnit:
-    """Commit queue rows — with the messages their tokens are read from — for one unit.
-
-    ``token_counts`` has one entry per queue row; ``ages_seconds`` backdates each
-    row's ``created_at`` so age-based behavior is exercised without sleeping.
-    ``with_messages=False`` leaves ``message_id`` NULL, the shape infrastructure
-    tasks like webhook and deletion enqueue.
-    """
-    workspace, peer = sample_data
-    session = models.Session(name=str(generate_nanoid()), workspace_name=workspace.name)
-    db_session.add(session)
-    await db_session.flush()
-    sequence_numbers = itertools.count(1)
-
-    async def _seed(
-        work_unit_key: str,
-        *,
-        task_type: TaskType = "representation",
-        token_counts: Sequence[int] = (1,),
-        ages_seconds: Sequence[int] | None = None,
-        tenant_id: str | None = DEFAULT_TENANT_ID,
-        processed: bool = False,
-        with_messages: bool = True,
-    ) -> list[models.QueueItem]:
-        ages = (
-            list(ages_seconds)
-            if ages_seconds is not None
-            else [0] * len(list(token_counts))
-        )
-        enqueued_at = datetime.now(UTC)
-        queue_items: list[models.QueueItem] = []
-
-        for token_count, age_seconds in zip(token_counts, ages, strict=True):
-            message_id: int | None = None
-            if with_messages:
-                message = models.Message(
-                    session_name=session.name,
-                    workspace_name=workspace.name,
-                    peer_name=peer.name,
-                    content="seeded message",
-                    token_count=token_count,
-                    seq_in_session=next(sequence_numbers),
-                )
-                db_session.add(message)
-                await db_session.flush()
-                message_id = message.id
-
-            queue_item = models.QueueItem(
-                session_id=session.id,
-                work_unit_key=work_unit_key,
-                task_type=task_type,
-                payload={},
-                processed=processed,
-                # The reconciler is the tenant-less lane and carries no
-                # workspace (the queue CHECK enforces it).
-                workspace_name=(None if task_type == "reconciler" else workspace.name),
-                message_id=message_id,
-                tenant_id=tenant_id,
-                created_at=enqueued_at - timedelta(seconds=age_seconds),
-            )
-            db_session.add(queue_item)
-            queue_items.append(queue_item)
-
-        await db_session.commit()
-        return queue_items
-
-    return _seed
-
-
-@pytest.fixture
-def batch_gate_settings(monkeypatch: pytest.MonkeyPatch) -> Callable[..., None]:
-    """Pin the claim gate's inputs so a test never depends on deployed defaults."""
-
-    def _configure(
-        *,
-        target_tokens: int = 512,
-        max_age_seconds: int = 1800,
-        flush_enabled: bool = False,
-        workers: int = 1,
-    ) -> None:
-        monkeypatch.setattr(
-            settings.DERIVER,
-            "REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS",
-            target_tokens,
-        )
-        monkeypatch.setattr(
-            settings.DERIVER, "REPRESENTATION_BATCH_MAX_AGE_SECONDS", max_age_seconds
-        )
-        monkeypatch.setattr(settings.DERIVER, "FLUSH_ENABLED", flush_enabled)
-        monkeypatch.setattr(settings.DERIVER, "WORKERS", workers)
-
-    return _configure
 
 
 @pytest.mark.asyncio
