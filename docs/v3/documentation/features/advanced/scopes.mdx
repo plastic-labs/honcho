@@ -193,7 +193,7 @@ curl -X DELETE "$HONCHO_URL/v3/workspaces/my-app/scopes/therapy/sessions/therapy
 Scope IDs are unprefixed, must match `^[a-zA-Z0-9_-]+$`, and are at most 506
 characters. Get-or-create is idempotent: if the scope already exists, the same
 call returns it, and any `metadata` you pass is written onto it. When a lookup
-must not create anything — resolving a user-supplied name, for example — use
+must not create a scope — resolving a user-supplied name, for example — use
 `get_scope` / `getScope` instead, which fails with a not-found error.
 
 <Note>
