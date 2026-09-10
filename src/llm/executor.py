@@ -133,7 +133,7 @@ def _outcome_from_error(
     """
     if err is None:
         return "success"
-    if isinstance(err, asyncio.CancelledError):
+    if isinstance(err, asyncio.CancelledError | GeneratorExit):
         return "cancelled"
     return "error"
 
@@ -244,29 +244,45 @@ def infer_provider_label(
     return None
 
 
-def _maybe_dispatch_capture(
+def _emit_call_telemetry(
     *,
     plan: AttemptPlan | None,
     telemetry: LLMTelemetryContext | None,
     provider: ModelTransport,
     model: str,
+    max_tokens: int,
+    started_at: float,
     messages: list[dict[str, Any]],
     tools: list[dict[str, Any]] | None,
     tool_choice: Any,
+    was_stream: bool,
     result: BackendCompletionResult | None,
     error: BaseException | None,
 ) -> None:
-    """Build a CapturedLLMCall and fan it out to registered exporters.
+    """Record one provider attempt in both telemetry streams from the same facts.
 
-    No-op when payload capture is off
-    `has_exporters()` is checked BEFORE building.
-    Best-effort: never raises into the call path.
+    The captured-payload half is skipped entirely when no exporter is
+    registered, and both halves are best-effort: telemetry never raises into
+    the call path.
     """
+    duration_ms = (time.perf_counter() - started_at) * 1000
+    outcome = _outcome_from_error(error)
+    _emit_llm_call_completed(
+        plan=plan,
+        telemetry=telemetry,
+        provider=provider,
+        model=model,
+        max_tokens=max_tokens,
+        duration_ms=duration_ms,
+        has_tools=bool(tools),
+        was_stream=was_stream,
+        outcome=outcome,
+        result=result,
+        error=error,
+    )
     if not has_exporters():
         return
     try:
-        outcome = _outcome_from_error(error)
-        finish_reason = result.finish_reason if result is not None else outcome
         dispatch_captured_call(
             build_captured_call(
                 telemetry=telemetry,
@@ -279,8 +295,17 @@ def _maybe_dispatch_capture(
                 result=result,
                 attempt=plan.attempt if plan is not None else 1,
                 was_fallback=plan.is_fallback if plan is not None else False,
-                was_stream=False,
-                finish_reason=finish_reason,
+                was_stream=was_stream,
+                finish_reason=(
+                    result.finish_reason
+                    if result is not None and error is None
+                    else outcome
+                ),
+                duration_ms=duration_ms,
+                outcome=outcome,
+                error_class=type(error).__name__ if error is not None else None,
+                retry_attempts=plan.retry_attempts if plan is not None else 1,
+                effective_max_output_tokens=max_tokens,
             )
         )
     except Exception:  # pragma: no cover - best-effort telemetry
@@ -430,14 +455,11 @@ async def honcho_llm_call_inner(
     The outer src/llm/api.py `honcho_llm_call` handles retry + fallback +
     tool orchestration on top of this.
 
-    Emits one LLMCallCompletedEvent per call. On the stream path, setup
-    runs inside the awaited coroutine (so it sits inside any outer retry
-    wrapper) and emits its own event on failure; the wrapping generator
-    emits a second event from its finally block after drain completes or
-    raises. `was_stream` is True for streamed calls. Token counts are
-    zero on the stream path because provider token totals aren't surfaced
-    post-stream at this layer; aggregate envelopes (DialecticCompletedEvent
-    etc.) carry the accurate totals.
+    Emits one completed event and, when enabled, one captured trace per
+    provider attempt. Stream setup failures are recorded inside the awaited
+    coroutine, within the retry boundary. Successfully opened streams are
+    recorded when drained or interrupted, preserving partial output and any
+    output token count reported by the backend.
     """
     client = client_override or default_client(provider)
     if client is None:
@@ -499,7 +521,7 @@ async def honcho_llm_call_inner(
         #
         # Drain failures stay unretried by design (chunks may have already
         # been sent to the client) and report via the wrapper's finally.
-        # Token counts are 0 on this path; aggregate envelopes carry totals.
+        # Only output token counts are available from normalized stream chunks.
         stream_start = time.perf_counter()
         try:
             stream_iter = await execute_stream(
@@ -514,16 +536,17 @@ async def honcho_llm_call_inner(
                 extra_params=call_extras,
             )
         except BaseException as exc:
-            _emit_llm_call_completed(
+            _emit_call_telemetry(
                 plan=plan,
                 telemetry=telemetry,
                 provider=provider,
                 model=model,
                 max_tokens=max_tokens,
-                duration_ms=(time.perf_counter() - stream_start) * 1000,
-                has_tools=bool(tools),
+                started_at=stream_start,
+                messages=messages,
+                tools=tools,
+                tool_choice=tool_choice,
                 was_stream=True,
-                outcome=_outcome_from_error(exc),
                 result=None,
                 error=exc,
             )
@@ -531,24 +554,35 @@ async def honcho_llm_call_inner(
 
         async def _wrap_stream() -> AsyncIterator[HonchoLLMCallStreamChunk]:
             stream_error: BaseException | None = None
+            capture_output = has_exporters()
+            parts: list[str] = []
+            result = BackendCompletionResult()
             try:
                 async for chunk in stream_iter:
+                    if capture_output and chunk.content:
+                        parts.append(chunk.content)
+                    if chunk.output_tokens is not None:
+                        result.output_tokens = chunk.output_tokens
+                    if chunk.finish_reason is not None:
+                        result.finish_reason = chunk.finish_reason
                     yield stream_chunk_to_response_chunk(chunk)
             except BaseException as exc:
                 stream_error = exc
                 raise
             finally:
-                _emit_llm_call_completed(
+                result.content = "".join(parts)
+                _emit_call_telemetry(
                     plan=plan,
                     telemetry=telemetry,
                     provider=provider,
                     model=model,
                     max_tokens=max_tokens,
-                    duration_ms=(time.perf_counter() - stream_start) * 1000,
-                    has_tools=bool(tools),
+                    started_at=stream_start,
+                    messages=messages,
+                    tools=tools,
+                    tool_choice=tool_choice,
                     was_stream=True,
-                    outcome=_outcome_from_error(stream_error),
-                    result=None,
+                    result=result,
                     error=stream_error,
                 )
 
@@ -583,27 +617,17 @@ async def honcho_llm_call_inner(
         error = exc
         raise
     finally:
-        _emit_llm_call_completed(
+        _emit_call_telemetry(
             plan=plan,
             telemetry=telemetry,
             provider=provider,
             model=model,
             max_tokens=max_tokens,
-            duration_ms=(time.perf_counter() - start) * 1000,
-            has_tools=bool(tools),
-            was_stream=False,
-            outcome=_outcome_from_error(error),
-            result=backend_result,
-            error=error,
-        )
-        _maybe_dispatch_capture(
-            plan=plan,
-            telemetry=telemetry,
-            provider=provider,
-            model=model,
+            started_at=start,
             messages=messages,
             tools=tools,
             tool_choice=tool_choice,
+            was_stream=False,
             result=backend_result,
             error=error,
         )

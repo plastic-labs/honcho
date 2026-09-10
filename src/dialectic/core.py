@@ -392,6 +392,9 @@ class DialecticAgent:
             trace_id=self._run_id,
             span_id=self._run_id,
             session_id=self.session_id,
+            observer=self.observer,
+            observers=[self.observer],
+            observed=self.observed,
             peer_name=self.observed,
             track_name=track_name,
         )

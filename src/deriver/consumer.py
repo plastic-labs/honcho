@@ -132,6 +132,7 @@ async def process_item(queue_item: models.QueueItem) -> None:
                 validated.message_seq_in_session,
                 message_public_id,
                 validated.configuration,
+                queue_item_id=queue_item.id,
             )
             log_performance_metrics("summary", f"{workspace_name}_{message_id}")
 
@@ -146,7 +147,7 @@ async def process_item(queue_item: models.QueueItem) -> None:
                     queue_payload,
                 )
                 raise ValueError(f"Invalid payload structure: {str(e)}") from e
-            await process_dream(validated, workspace_name)
+            await process_dream(validated, workspace_name, queue_item_id=queue_item.id)
 
     elif task_type == "deletion":
         with sentry_sdk.start_transaction(name="process_deletion_task", op="deriver"):
@@ -202,6 +203,8 @@ async def process_representation_batch(
     observers: list[str] | None,
     observed: str | None,
     queue_item_message_ids: list[int],
+    session_id: str | None = None,
+    queue_item_ids: list[int] | None = None,
     hit_batch_token_cap: bool = False,
     was_flush_enabled: bool = False,
     batch_max_tokens: int = 0,
@@ -215,6 +218,8 @@ async def process_representation_batch(
         observers: List of observers for the messages
         observed: The observed of the messages
         queue_item_message_ids: Message IDs from queue items
+        session_id: Canonical Session.id from the queue.
+        queue_item_ids: Queue rows that triggered this batch, when available.
         hit_batch_token_cap: whether the queue batcher clamped this batch to fit
         was_flush_enabled: snapshot of DERIVER.FLUSH_ENABLED at fetch time
         batch_max_tokens: DERIVER.REPRESENTATION_BATCH_TARGET_INPUT_TOKENS snapshot
@@ -232,6 +237,8 @@ async def process_representation_batch(
         observers=observers,
         observed=observed,
         queue_item_message_ids=queue_item_message_ids,
+        session_id=session_id,
+        queue_item_ids=queue_item_ids,
         hit_batch_token_cap=hit_batch_token_cap,
         was_flush_enabled=was_flush_enabled,
         batch_max_tokens=batch_max_tokens,

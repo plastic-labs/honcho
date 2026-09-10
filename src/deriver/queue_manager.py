@@ -689,6 +689,10 @@ class QueueManager:
                                     observers=observers,
                                     observed=work_unit.observed,
                                     queue_item_message_ids=queue_item_message_ids,
+                                    session_id=items_to_process[0].session_id,
+                                    queue_item_ids=[
+                                        item.id for item in items_to_process
+                                    ],
                                     hit_batch_token_cap=batch_result.hit_batch_token_cap,
                                     was_flush_enabled=batch_result.was_flush_enabled,
                                     batch_max_tokens=batch_result.batch_max_tokens,
