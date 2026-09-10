@@ -110,7 +110,7 @@ def main():
 
     exp_str: str | None = None
     if args.expires:
-        expiry = datetime.datetime.now(datetime.timezone.utc) + args.expires
+        expiry = datetime.datetime.now(datetime.UTC) + args.expires
         exp_str = format_datetime_utc(expiry)
 
     params = JWTParams(

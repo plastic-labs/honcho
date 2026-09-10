@@ -110,9 +110,9 @@ async def test_peer_retry_still_invalidates_mutated_peer(
     assert race.fired, "the race must actually have fired"
 
     purged = {call.args[0] for call in mock_delete.await_args_list}
-    assert (
-        peer_cache_key(test_workspace.name, existing_peer.name) in purged
-    ), "the mutated peer's cache key must still be purged after the retry"
+    assert peer_cache_key(test_workspace.name, existing_peer.name) in purged, (
+        "the mutated peer's cache key must still be purged after the retry"
+    )
 
     # The mutation really did land — which is what makes a missed purge stale.
     await db_session.refresh(existing_peer)
@@ -170,9 +170,9 @@ async def test_scope_retry_still_invalidates_mutated_scope(
     assert race.fired, "the race must actually have fired"
 
     purged = {call.args[0] for call in mock_delete.await_args_list}
-    assert (
-        peer_cache_key(test_workspace.name, scope_peer_name(kept_scope)) in purged
-    ), "the mutated scope peer's cache key must still be purged after the retry"
+    assert peer_cache_key(test_workspace.name, scope_peer_name(kept_scope)) in purged, (
+        "the mutated scope peer's cache key must still be purged after the retry"
+    )
 
 
 @pytest.mark.asyncio

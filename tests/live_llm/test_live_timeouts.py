@@ -112,6 +112,6 @@ async def test_live_tight_provider_timeout_aborts_request(
         )
     elapsed = time.monotonic() - started
 
-    assert (
-        elapsed < TIGHT_TIMEOUT_WALL_CLOCK_LIMIT_SECONDS
-    ), f"tight timeout took {elapsed:.1f}s — per-request timeout likely not applied"
+    assert elapsed < TIGHT_TIMEOUT_WALL_CLOCK_LIMIT_SECONDS, (
+        f"tight timeout took {elapsed:.1f}s — per-request timeout likely not applied"
+    )

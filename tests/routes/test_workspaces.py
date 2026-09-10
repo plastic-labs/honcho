@@ -173,9 +173,7 @@ async def test_get_all_workspaces_reverse_uses_id_tiebreaker(
 ):
     """Workspaces with identical created_at fall back to ordering by id (nanoid PK)."""
     reverse_group = f"tiebreaker-{generate_nanoid()}"
-    shared_created_at = datetime.datetime(
-        2026, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc
-    )
+    shared_created_at = datetime.datetime(2026, 1, 1, 12, 0, 0, tzinfo=datetime.UTC)
 
     low_id = "A" * 21
     high_id = "z" * 21
