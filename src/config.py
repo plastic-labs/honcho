@@ -914,7 +914,23 @@ class DeriverSettings(HonchoSettings):
 
     ENABLED: bool = True
 
-    WORKERS: Annotated[int, Field(default=1, gt=0, le=100)] = 1
+    # Per-pod concurrency of a generic pool worker: the fleet's total worker
+    # count is pods x WORKERS, autoscaled at the pod grain.
+    WORKERS: Annotated[int, Field(default=1, gt=0, le=512)] = 1
+    # region ai
+    # Bounds the DB-pool headroom the claim may assume per configured worker:
+    # effective concurrency = min(WORKERS, floor(ratio * (POOL_SIZE +
+    # MAX_OVERFLOW))). Each in-flight work unit opens several SEQUENTIAL,
+    # short-lived sessions, so one pooled connection services several units —
+    # a 1:1 cap would waste real capacity, and no cap at all lets WORKERS
+    # exhaust the pool under load. The default is deliberately conservative
+    # until the sessions-per-unit ratio is measured (DEV-2744 holds the
+    # measurement plan); derivation only ever LOWERS the configured WORKERS,
+    # and the queue manager logs and gauges the derived cap at boot.
+    # endregion
+    WORKERS_PER_POOL_CONNECTION: Annotated[
+        float, Field(default=4.0, gt=0.0, le=64.0)
+    ] = 4.0
     POLLING_SLEEP_INTERVAL_SECONDS: Annotated[
         float, Field(default=1.0, gt=0.0, le=60.0)
     ] = 1.0
