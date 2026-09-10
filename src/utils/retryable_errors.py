@@ -1,7 +1,8 @@
 """Classify exceptions as transient (safe to retry) or terminal.
 
-Imports only exception taxonomies, so it is importable from anywhere and
-unit-testable without a DB.
+Imports only exception taxonomies (plus the Honcho exception types, which are
+themselves config-only), so it is importable from anywhere and unit-testable
+without a DB.
 """
 
 import asyncio
@@ -9,6 +10,8 @@ from collections.abc import Iterator
 
 import httpx
 from sqlalchemy.exc import DBAPIError
+
+from src.exceptions import EmptyRepresentationError, EmptySummaryError
 
 __all__ = ["is_retryable_db_error", "is_retryable_error"]
 
@@ -34,6 +37,13 @@ _TRANSPORT_ERRORS = (
     asyncio.TimeoutError,
     TimeoutError,
 )
+
+# Degraded-but-successful LLM responses: the call returned, the parse produced
+# an empty structured model. Nothing is wrong with the DB or the transport, so
+# these are classified here rather than by the taxonomy chain -- but they carry
+# the same consequence (a work unit with no derived facts) and the same remedy
+# (re-claim and try again with a bounded budget).
+_EMPTY_RESPONSE_ERRORS = (EmptyRepresentationError, EmptySummaryError)
 
 
 def _iter_cause_chain(exc: BaseException) -> Iterator[BaseException]:
@@ -74,12 +84,18 @@ def is_retryable_db_error(exc: BaseException) -> bool:
 
 def is_retryable_error(exc: BaseException) -> bool:
     """Superset of ``is_retryable_db_error``: also transient network/provider
-    transport failures (timeouts, connection refused/reset).
+    transport failures (timeouts, connection refused/reset) and empty structured
+    responses (see ``_EMPTY_RESPONSE_ERRORS``).
 
     Auth failures (401 from a rotated key) are deliberately terminal: they
     never self-heal, so retrying only delays the burn.
     """
     if is_retryable_db_error(exc):
+        return True
+    if any(
+        isinstance(current, _EMPTY_RESPONSE_ERRORS)
+        for current in _iter_cause_chain(exc)
+    ):
         return True
     return any(
         isinstance(current, _TRANSPORT_ERRORS) for current in _iter_cause_chain(exc)
