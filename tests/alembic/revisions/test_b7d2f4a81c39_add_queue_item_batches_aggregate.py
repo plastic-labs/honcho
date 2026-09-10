@@ -20,7 +20,7 @@ WEBHOOK_UNIT = "webhook:backfill"
 DRAINED_UNIT = "representation:backfill-drained"
 
 INDEXES = (
-    ("queue_item_batches", "ix_queue_item_batches_tenant_id"),
+    ("queue_item_batches", "ix_queue_item_batches_tenant_oldest_key"),
     ("queue_item_batches", "ix_queue_item_batches_oldest_created_at_key"),
 )
 

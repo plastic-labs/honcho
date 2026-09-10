@@ -87,8 +87,8 @@ def active_queue_session_match(
         tenant = tenant_context.get()
         if not tenant:
             raise ValueError(
-                "active_queue_session_match requires a tenant when MULTI_TENANT "
-                + "is on, but none is in scope"
+                f"cannot match claim rows for workspace {workspace_name!r} "
+                + "without a tenant when MULTI_TENANT is on"
             )
         workspace_position, session_position = 3, 4
         tenant_match: ColumnElement[bool] | None = (
@@ -115,6 +115,41 @@ def active_queue_session_match(
     if tenant_match is not None:
         match = and_(tenant_match, match)
     return match
+
+
+def claim_rows_query(limit: int) -> Select[Any]:
+    """The claim's locked candidate SELECT: eligible units in scheduling order, skipping rows a concurrent claimer holds."""
+    # region ai
+    # One statement on purpose: FOR UPDATE SKIP LOCKED locks rows in output
+    # order below the LIMIT, so a concurrent claimer's locked rows are skipped
+    # and BACKFILLED from the sorted stream — both claimers fill their batch,
+    # disjointly, with zero wasted claims. A two-step select-then-lock variant
+    # loses that backfill (the loser picks the same blind candidates, skips
+    # them all, and claims nothing for the poll). The cost of locking in
+    # scheduling order is that a rare lock-order inversion against the enqueue
+    # trigger's batch upserts can deadlock; Postgres's detector breaks it and
+    # both sides retry — the enqueue in _insert_queue_records, the claim on its
+    # next poll (the polling loop's catch-all backs off and continues).
+    # endregion
+    query = (
+        select(
+            models.QueueItemBatch.work_unit_key,
+            models.QueueItemBatch.task_type,
+            models.QueueItemBatch.total_tokens,
+            models.QueueItemBatch.oldest_created_at,
+        )
+        .where(unclaimed_work_unit_clause(models.QueueItemBatch.work_unit_key))
+        .order_by(
+            models.QueueItemBatch.oldest_created_at.asc(),
+            models.QueueItemBatch.work_unit_key.asc(),
+        )
+        .limit(limit)
+        .with_for_update(skip_locked=True)
+    )
+    threshold_clause = batch_threshold_clause()
+    if threshold_clause is not None:
+        query = query.where(threshold_clause)
+    return query
 
 
 def stale_claim_cutoff() -> datetime:
@@ -167,10 +202,10 @@ async def get_deriver_metrics(db: AsyncSession) -> schemas.DeriverMetrics:
 
     # region ai
     # Reads the trigger-maintained queue_item_batches, not the queue: this poller
-    # ran the same two GROUP BYs as the old claim path every 30s, the identical
-    # ~O(depth²) cost. sum(pending_count) equals the old per-item count and
-    # min(oldest_created_at) the old per-item min by construction of the
-    # triggers (see the queue_item_batches migration).
+    # ran the same two GROUP BYs as the old claim path on every backlog-metrics
+    # poll, the identical ~O(depth²) cost. sum(pending_count) equals the old
+    # per-item count and min(oldest_created_at) the old per-item min by
+    # construction of the triggers (see the queue_item_batches migration).
     # endregion
     eligible = (
         select(func.count())
