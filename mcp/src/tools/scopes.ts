@@ -5,13 +5,20 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ToolContext } from "../types.js";
 import { textResult, errorResult, workspaceIdSchema } from "../types.js";
 
+// Match the SDK's scope ID rules; the constructor bypasses honcho.scope() validation.
+const scopeIdSchema = z
+  .string()
+  .min(1)
+  .max(512 - "scope.".length)
+  .regex(/^[a-zA-Z0-9_-]+$/, "Scope ID may only contain letters, numbers, underscores, and hyphens");
+
 /**
  * Reference an existing scope without the get-or-create round trip that
  * `honcho.scope()` performs, so read/remove tools never create a scope as a
  * side effect. The server returns 404 if the scope does not exist.
  */
 function existingScope(honcho: Honcho, scopeId: string): Scope {
-  return new Scope(scopeId, honcho.workspaceId, honcho.http);
+  return new Scope(scopeIdSchema.parse(scopeId), honcho.workspaceId, honcho.http);
 }
 
 const pageSchema = z.number().int().min(1).optional().describe("Page number (1-indexed).");
@@ -179,7 +186,9 @@ export function register(server: McpServer, ctx: ToolContext) {
         const counts = { pending: 0, completed: 0, failed: 0 };
         const sessions: Record<string, { state: string; updated_at: string; docs_copied?: number }> = {};
         for (const [sid, st] of entries) {
-          counts[st.state] += 1;
+          if (Object.hasOwn(counts, st.state)) {
+            counts[st.state] += 1;
+          }
           sessions[sid] = { state: st.state, updated_at: st.updatedAt };
           if (st.docsCopied !== undefined) sessions[sid].docs_copied = st.docsCopied;
         }
