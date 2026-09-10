@@ -10,7 +10,7 @@ const cfg = loadConfig({ host: 'harness' })
 const cfg = resolveConfig(file, { host: 'harness', overlay: { workspace: 'harness', auth: { apiKey } } })
 ```
 
-Install: `bun add @honcho-ai/harness-plugin-core`. Locally: `"@honcho-ai/harness-plugin-core": "file:../harness-plugin-core"` (bun imports the TypeScript source).
+Install: `bun add @honcho-ai/harness-plugin-core` (or `npm install`). The package ships compiled ESM plus type declarations in `dist/`, so it loads under plain Node and `tsc` as well as bun. Locally: `"@honcho-ai/harness-plugin-core": "file:../harness-plugin-core"`, after running `bun run build` here so `dist/` exists.
 
 ## File shape
 
