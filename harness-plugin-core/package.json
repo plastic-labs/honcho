@@ -27,7 +27,7 @@
   "scripts": {
     "test": "bun test",
     "typecheck": "tsc --noEmit",
-    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "build": "tsc",
     "prepublishOnly": "bun run build"
   },
   "devDependencies": {
