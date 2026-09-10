@@ -733,6 +733,87 @@ class ActiveQueueSession(Base):
 
 
 @final
+class QueueItemBatch(Base):
+    """One pending work unit's queue items, aggregated for the deriver claim.
+
+    Maintained entirely by database triggers on ``queue`` — application code
+    never writes this table. A row exists exactly while its work unit has
+    unprocessed queue items, and the claim path reads this table instead of
+    re-aggregating ``queue`` on every poll. If the table exists without the
+    triggers below, the deriver claims from a stale picture or nothing at all.
+
+    Alembic revision ``b7d2f4a81c39`` installs all of the following on the
+    database; every one of them must be present:
+
+    - ``trg_queue_item_batches_insert`` — AFTER INSERT ON queue, FOR EACH ROW
+      → ``queue_item_batches_apply_insert()``: upserts the unit's row
+      (pending_count +1, total_tokens += the item's tokens,
+      oldest_created_at = LEAST); already-processed inserts are ignored.
+    - ``trg_queue_item_batches_update`` — AFTER UPDATE ON queue, FOR EACH
+      STATEMENT over transition tables → ``queue_item_batches_apply_update()``:
+      one exact recompute per distinct work_unit_key whose ``processed``
+      flag changed in the statement.
+    - ``trg_queue_item_batches_delete`` — AFTER DELETE ON queue, FOR EACH
+      STATEMENT over the OLD transition table →
+      ``queue_item_batches_apply_delete()``: one exact recompute per distinct
+      work_unit_key that lost an unprocessed row.
+    - ``_queue_item_batches_recompute(key)`` — the shared recompute: locks the
+      unit's row FOR UPDATE, re-aggregates its unprocessed ``queue`` rows, and
+      deletes the row only when ``queue`` holds none (membership, not the
+      counter, decides).
+    - ``_queue_item_token_count(tenant_id, message_id, task_type)`` — token
+      lookup shared by the insert path and the recompute; representation
+      items only, probing ``messages`` by its (tenant_id, id) primary key.
+
+    Anything that writes ``queue`` without firing ordinary triggers leaves
+    this table stale: logical-replication apply (``session_replication_role
+    = replica``), ``COPY``/``pg_restore`` with triggers disabled, and
+    ``TRUNCATE queue`` (no DELETE trigger fires — truncate this table too).
+    Recover by re-running the migration's backfill aggregate, or by draining
+    ``queue``.
+    """
+
+    __tablename__: str = "queue_item_batches"
+
+    # region ai
+    # The claim path reads THIS table instead of re-aggregating the queue: the
+    # queue's two GROUP BYs plus messages join are ~O(depth²) per poll on a
+    # shared queue, while this stays one indexed row per pending work unit. Rows
+    # are written ONLY by the triggers installed in the queue_item_batches
+    # migration (insert = fast increment; completion/delete = exact recompute
+    # over the unit's remaining unprocessed rows; a unit with nothing pending
+    # has NO row — existence, not pending_count, is what the delete guard keys
+    # on, so a live unit never loses its row to a racing recompute). Application
+    # code must never write it. Service table: tenant_id is plain attribution
+    # for fair scheduling — no FK, no RLS — and pending_count is bookkeeping,
+    # not a claim input; the claim gate reads task_type/total_tokens/
+    # oldest_created_at and claims by row existence.
+    # endregion
+    work_unit_key: Mapped[str] = mapped_column(TEXT, primary_key=True)
+    tenant_id: Mapped[str | None] = mapped_column(TEXT, nullable=True, index=True)
+    task_type: Mapped[TaskType] = mapped_column(TEXT, nullable=False)
+    pending_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    total_tokens: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, server_default=text("0")
+    )
+    oldest_created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+    __table_args__ = (
+        # The claim's ORDER BY (oldest first, key tiebreak) walks this index.
+        Index(
+            "ix_queue_item_batches_oldest_created_at_key",
+            "oldest_created_at",
+            "work_unit_key",
+        ),
+    )
+
+    def __repr__(self) -> str:
+        return f"QueueItemBatch(work_unit_key={self.work_unit_key}, tenant_id={self.tenant_id}, task_type={self.task_type}, pending_count={self.pending_count}, total_tokens={self.total_tokens}, oldest_created_at={self.oldest_created_at})"
+
+
+@final
 class WebhookEndpoint(Base):
     __tablename__: str = "webhook_endpoints"
     tenant_id: Mapped[str] = mapped_column(
