@@ -6,7 +6,11 @@ name: PR Sweeper
 #      that now link an approved issue; close the ones still failing 72h after they
 #      were told. The re-check is the point — linking an issue through the sidebar
 #      fires no webhook, so `issue-gate.yml` never sees it.
-#   2. Close drafts from outside the org after 30 days without activity.
+#   2. Warn, and then close, pull requests that have been waiting on their author
+#      for more than 7 days. Only ones waiting on the *author* — a pull request
+#      sitting unreviewed in our queue is our backlog, not an SLA breach, and is
+#      never closed for inactivity.
+#   3. Close drafts from outside the org after 30 days without activity.
 #
 # Runs on `schedule`, so it never touches pull request code and needs none of the
 # `pull_request_target` precautions. Dispatch manually with dry_run to see what it
