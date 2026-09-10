@@ -733,6 +733,50 @@ class ActiveQueueSession(Base):
 
 
 @final
+class WorkUnitBacklog(Base):
+    """Per-work-unit claim aggregate, maintained by database triggers on ``queue``."""
+
+    __tablename__: str = "work_unit_backlog"
+
+    # region ai
+    # The claim path reads THIS table instead of re-aggregating the queue: the
+    # queue's two GROUP BYs plus messages join are ~O(depth²) per poll on a
+    # shared queue, while this stays one indexed row per pending work unit. Rows
+    # are written ONLY by the triggers installed in the work_unit_backlog
+    # migration (insert = fast increment; completion/delete = exact recompute
+    # over the unit's remaining unprocessed rows; a unit with nothing pending
+    # has NO row — existence, not pending_count, is what the delete guard keys
+    # on, so a live unit never loses its row to a racing recompute). Application
+    # code must never write it. Service table: tenant_id is plain attribution
+    # for fair scheduling — no FK, no RLS — and pending_count is bookkeeping,
+    # not a claim input; the claim gate reads task_type/total_tokens/
+    # oldest_created_at and claims by row existence.
+    # endregion
+    work_unit_key: Mapped[str] = mapped_column(TEXT, primary_key=True)
+    tenant_id: Mapped[str | None] = mapped_column(TEXT, nullable=True, index=True)
+    task_type: Mapped[TaskType] = mapped_column(TEXT, nullable=False)
+    pending_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    total_tokens: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, server_default=text("0")
+    )
+    oldest_created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+    __table_args__ = (
+        # The claim's ORDER BY (oldest first, key tiebreak) walks this index.
+        Index(
+            "ix_work_unit_backlog_oldest_created_at_key",
+            "oldest_created_at",
+            "work_unit_key",
+        ),
+    )
+
+    def __repr__(self) -> str:
+        return f"WorkUnitBacklog(work_unit_key={self.work_unit_key}, tenant_id={self.tenant_id}, task_type={self.task_type}, pending_count={self.pending_count}, total_tokens={self.total_tokens}, oldest_created_at={self.oldest_created_at})"
+
+
+@final
 class WebhookEndpoint(Base):
     __tablename__: str = "webhook_endpoints"
     tenant_id: Mapped[str] = mapped_column(

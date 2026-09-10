@@ -24,11 +24,11 @@ from src import models
 from src.cache.client import close_cache, init_cache
 from src.config import settings
 from src.crud.deriver import (
-    cleanup_stale_work_units as crud_cleanup_stale_work_units,
+    backlog_threshold_clause,
+    unclaimed_work_unit_clause,
 )
 from src.crud.deriver import (
-    representation_batch_threshold_clause,
-    unclaimed_work_unit_clause,
+    cleanup_stale_work_units as crud_cleanup_stale_work_units,
 )
 from src.db import tenant_context
 from src.dependencies import service_db
@@ -341,81 +341,60 @@ class QueueManager:
         )
 
         # region ai
-        # Cross-tenant claim: scans every tenant's queue on the service session
-        # (tracked_db would fail closed under MULTI_TENANT). A2 tenant-namespaces
-        # work_unit_key, so each claimed unit is still tenant-homogeneous.
+        # Cross-tenant claim on the service session (tracked_db would fail
+        # closed under MULTI_TENANT); A2 tenant-namespaces work_unit_key, so
+        # each claimed unit is still tenant-homogeneous. The candidate set is
+        # the trigger-maintained work_unit_backlog — one indexed row per pending
+        # unit — instead of re-aggregating the queue, whose two GROUP BYs plus
+        # messages join are ~O(depth²) per poll at shared-queue depth. FOR
+        # UPDATE SKIP LOCKED makes concurrent claimers pick disjoint candidate
+        # sets (zero wasted claims); the backlog row locks release at commit,
+        # and the ActiveQueueSession insert below remains the durable claim
+        # marker for the processing duration. Ordering is unchanged: oldest
+        # unit first, key tiebreak.
         # endregion
         async with service_db("get_available_work_units") as db:
-            token_stats_subq = (
-                select(
-                    models.QueueItem.work_unit_key,
-                    func.sum(models.Message.token_count).label("total_tokens"),
-                    func.min(models.QueueItem.created_at).label("oldest_created_at"),
-                )
-                .join(
-                    models.Message,
-                    models.QueueItem.message_id == models.Message.id,
-                )
-                .where(~models.QueueItem.processed)
-                .where(models.QueueItem.task_type == "representation")
-                .group_by(models.QueueItem.work_unit_key)
-                .subquery()
-            )
-
-            work_units_subq = (
-                select(
-                    models.QueueItem.work_unit_key,
-                    func.min(models.QueueItem.created_at).label("oldest_created_at"),
-                )
-                .where(~models.QueueItem.processed)
-                .group_by(models.QueueItem.work_unit_key)
-                .subquery()
-            )
-
             query = (
                 select(
-                    work_units_subq.c.work_unit_key,
-                    token_stats_subq.c.total_tokens,
-                    token_stats_subq.c.oldest_created_at,
+                    models.WorkUnitBacklog.work_unit_key,
+                    models.WorkUnitBacklog.task_type,
+                    models.WorkUnitBacklog.total_tokens,
+                    models.WorkUnitBacklog.oldest_created_at,
                 )
-                .outerjoin(
-                    token_stats_subq,
-                    work_units_subq.c.work_unit_key == token_stats_subq.c.work_unit_key,
-                )
-                .where(unclaimed_work_unit_clause(work_units_subq.c.work_unit_key))
+                .where(unclaimed_work_unit_clause(models.WorkUnitBacklog.work_unit_key))
                 .order_by(
-                    work_units_subq.c.oldest_created_at.asc(),
-                    work_units_subq.c.work_unit_key.asc(),
+                    models.WorkUnitBacklog.oldest_created_at.asc(),
+                    models.WorkUnitBacklog.work_unit_key.asc(),
                 )
                 .limit(limit)
+                .with_for_update(skip_locked=True)
             )
 
             # Apply batch threshold filter (skip if FLUSH_ENABLED is True)
-            threshold_clause = representation_batch_threshold_clause(
-                representation_work_unit_key=token_stats_subq.c.work_unit_key,
-                total_tokens=token_stats_subq.c.total_tokens,
-                oldest_created_at=token_stats_subq.c.oldest_created_at,
-            )
+            threshold_clause = backlog_threshold_clause()
             if threshold_clause is not None:
                 query = query.where(threshold_clause)
 
             result = await db.execute(query)
             available_rows = result.all()
             available_units: list[str] = []
-            for work_unit_key, total_tokens, oldest_created_at in available_rows:
+            for (
+                work_unit_key,
+                task_type,
+                total_tokens,
+                oldest_created_at,
+            ) in available_rows:
                 available_units.append(work_unit_key)
-                # ai: a non-NULL token row marks a representation unit (see
-                # representation_batch_threshold_clause) — no key-prefix test.
                 if (
                     not settings.DERIVER.FLUSH_ENABLED
                     and settings.DERIVER.REPRESENTATION_BATCH_MAX_AGE_SECONDS > 0
-                    and total_tokens is not None
+                    and task_type == "representation"
                     and int(total_tokens) < work_unit_target_tokens
                 ):
                     logger.info(
                         "age-flushing work unit %s (tokens=%s < %s, oldest=%s)",
                         work_unit_key,
-                        total_tokens or 0,
+                        total_tokens,
                         work_unit_target_tokens,
                         oldest_created_at,
                     )

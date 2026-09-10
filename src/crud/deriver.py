@@ -3,7 +3,17 @@ from datetime import UTC, datetime, timedelta
 from logging import getLogger
 from typing import Any
 
-from sqlalchemy import ColumnElement, Select, and_, case, delete, func, or_, select
+from sqlalchemy import (
+    ColumnElement,
+    Select,
+    SQLColumnExpression,
+    and_,
+    case,
+    delete,
+    func,
+    or_,
+    select,
+)
 from sqlalchemy.engine import Row
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,22 +24,13 @@ from src.db import tenant_context
 logger = getLogger(__name__)
 
 
-def representation_batch_threshold_clause(
-    *,
-    representation_work_unit_key: ColumnElement[Any],
-    total_tokens: ColumnElement[Any],
-    oldest_created_at: ColumnElement[Any],
-) -> ColumnElement[bool] | None:
-    """The batch gate a representation work unit passes before it is claimable, or None when no gate applies."""
+def backlog_threshold_clause() -> ColumnElement[bool] | None:
+    """The batch gate a backlog row passes before its unit is claimable, or None when no gate applies."""
     # region ai
-    # Membership, not string-matching: representation_work_unit_key is the
-    # token-stats subquery's key column after the outer join, and that subquery
-    # selects exactly the representation units (task_type filter + inner join on
-    # message_id, which every representation item carries). NULL therefore means
-    # "not a representation unit". No key-prefix test, so tenant-namespaced keys
-    # ({tenant}:representation:...) gate identically to un-prefixed ones — a
-    # startswith("representation:") here silently disabled the gate for every
-    # tenant-prefixed key.
+    # Typed by task_type on the backlog row, never by key prefix — a
+    # startswith("representation:") test here silently disabled the gate for
+    # every tenant-prefixed key. Non-representation units are always eligible;
+    # representation units wait for the token target or the age flush.
     # endregion
     if settings.DERIVER.FLUSH_ENABLED:
         return None
@@ -38,20 +39,23 @@ def representation_batch_threshold_clause(
     if target_tokens <= 0:
         return None
 
-    threshold: ColumnElement[bool] = func.coalesce(total_tokens, 0) >= target_tokens
+    threshold: ColumnElement[bool] = (
+        models.WorkUnitBacklog.total_tokens >= target_tokens
+    )
 
     max_age_seconds = settings.DERIVER.REPRESENTATION_BATCH_MAX_AGE_SECONDS
     if max_age_seconds > 0:
         threshold = or_(
             threshold,
-            oldest_created_at <= func.now() - timedelta(seconds=max_age_seconds),
+            models.WorkUnitBacklog.oldest_created_at
+            <= func.now() - timedelta(seconds=max_age_seconds),
         )
 
-    return or_(representation_work_unit_key.is_(None), threshold)
+    return or_(models.WorkUnitBacklog.task_type != "representation", threshold)
 
 
 def unclaimed_work_unit_clause(
-    work_unit_key: ColumnElement[str],
+    work_unit_key: SQLColumnExpression[str],
 ) -> ColumnElement[bool]:
     """No claim row exists for this work unit, stale ones included."""
     return (
@@ -122,7 +126,7 @@ def stale_claim_cutoff() -> datetime:
 
 
 def not_live_claimed_work_unit_clause(
-    work_unit_key: ColumnElement[str],
+    work_unit_key: SQLColumnExpression[str],
 ) -> ColumnElement[bool]:
     """No claim refreshed inside the stale timeout exists, so a stale claim leaves its work unit claimable."""
     return (
@@ -163,41 +167,20 @@ async def get_deriver_metrics(db: AsyncSession) -> schemas.DeriverMetrics:
     """Count the outstanding deriver work in the whole database, read-only."""
     from src.reconciler.sync_vectors import backoff_eligible  # noqa: PLC0415
 
-    token_stats = (
-        select(
-            models.QueueItem.work_unit_key,
-            func.sum(models.Message.token_count).label("total_tokens"),
-            func.min(models.QueueItem.created_at).label("oldest_created_at"),
-        )
-        .join(models.Message, models.QueueItem.message_id == models.Message.id)
-        .where(~models.QueueItem.processed)
-        .where(models.QueueItem.task_type == "representation")
-        .group_by(models.QueueItem.work_unit_key)
-        .subquery()
-    )
-
-    work_units = (
-        select(models.QueueItem.work_unit_key)
-        .where(~models.QueueItem.processed)
-        .group_by(models.QueueItem.work_unit_key)
-        .subquery()
-    )
-
+    # region ai
+    # Reads the trigger-maintained work_unit_backlog, not the queue: this poller
+    # ran the same two GROUP BYs as the old claim path every 30s, the identical
+    # ~O(depth²) cost. sum(pending_count) equals the old per-item count and
+    # min(oldest_created_at) the old per-item min by construction of the
+    # triggers (see the work_unit_backlog migration).
+    # endregion
     eligible = (
         select(func.count())
-        .select_from(work_units)
-        .outerjoin(
-            token_stats,
-            work_units.c.work_unit_key == token_stats.c.work_unit_key,
-        )
-        .where(not_live_claimed_work_unit_clause(work_units.c.work_unit_key))
+        .select_from(models.WorkUnitBacklog)
+        .where(not_live_claimed_work_unit_clause(models.WorkUnitBacklog.work_unit_key))
     )
 
-    threshold_clause = representation_batch_threshold_clause(
-        representation_work_unit_key=token_stats.c.work_unit_key,
-        total_tokens=token_stats.c.total_tokens,
-        oldest_created_at=token_stats.c.oldest_created_at,
-    )
+    threshold_clause = backlog_threshold_clause()
     if threshold_clause is not None:
         eligible = eligible.where(threshold_clause)
 
@@ -208,12 +191,15 @@ async def get_deriver_metrics(db: AsyncSession) -> schemas.DeriverMetrics:
     )
 
     pending = select(
-        func.count(models.QueueItem.id),
+        func.coalesce(func.sum(models.WorkUnitBacklog.pending_count), 0),
         func.coalesce(
-            func.extract("epoch", func.now() - func.min(models.QueueItem.created_at)),
+            func.extract(
+                "epoch",
+                func.now() - func.min(models.WorkUnitBacklog.oldest_created_at),
+            ),
             0,
         ),
-    ).where(~models.QueueItem.processed)
+    )
 
     embeddings = select(
         func.count(),
