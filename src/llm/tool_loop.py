@@ -326,6 +326,10 @@ async def stream_final_response(
             stop=stop_after_attempt(retry_attempts),
             wait=wait_exponential(multiplier=1, min=4, max=10),
             before_sleep=before_retry_callback,
+            # Surface the provider's own error once the budget is spent.
+            # Without this tenacity raises RetryError, which erases the cause
+            # and lands every outage on the generic 500 handler.
+            reraise=True,
         )(_setup_stream)
         stream = await wrapped()
     else:
@@ -466,6 +470,11 @@ async def execute_tool_loop(
                     stop=stop_after_attempt(retry_attempts),
                     wait=wait_exponential(multiplier=1, min=4, max=10),
                     before_sleep=before_retry_callback,
+                    # Surface the provider's own error once the budget is
+                    # spent. Without this tenacity raises RetryError, which
+                    # erases the cause and lands every outage on the generic
+                    # 500 handler.
+                    reraise=True,
                 )(_call_with_messages)
             else:
                 call_func = _call_with_messages  # pyright: ignore[reportGeneralTypeIssues]
@@ -755,6 +764,10 @@ async def execute_tool_loop(
             stop=stop_after_attempt(retry_attempts),
             wait=wait_exponential(multiplier=1, min=4, max=10),
             before_sleep=before_retry_callback,
+            # Surface the provider's own error once the budget is spent.
+            # Without this tenacity raises RetryError, which erases the cause
+            # and lands every outage on the generic 500 handler.
+            reraise=True,
         )(_final_call)
     else:
         final_call_func = _final_call
