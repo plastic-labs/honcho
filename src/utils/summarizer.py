@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import logging
 import time
 from enum import Enum
@@ -15,9 +16,13 @@ from src.cache.client import cache as cache_client
 from src.config import ConfiguredModelSettings, settings
 from src.crud.session import session_cache_key
 from src.dependencies import tracked_db
-from src.exceptions import ResourceNotFoundException
+from src.exceptions import EmptySummaryError, ResourceNotFoundException
 from src.llm import HonchoLLMCallResponse, honcho_llm_call
-from src.llm.types import LLMTelemetryContext
+from src.llm.types import (
+    LLMTelemetryContext,
+    degraded_response_parse_class,
+    empty_response_is_degraded,
+)
 from src.models import Message
 from src.telemetry import prometheus_metrics
 from src.telemetry.events import AgentToolSummaryCreatedEvent, emit
@@ -610,6 +615,37 @@ async def _create_summary(
 
         # Detect potential issues with the summary
         if not summary_text.strip():
+            if message_count > 0 and empty_response_is_degraded(response):
+                # Degraded, not empty: the provider cut the answer off (or
+                # withheld it). The placeholder fallback below is never
+                # persisted (the only _save_summary call is gated on
+                # `not is_fallback`), so accepting it here would consume this
+                # summary boundary with nothing stored and no way to regenerate
+                # it. Raise instead: the queue treats EmptySummaryError as
+                # retryable and re-claims the item under a bounded budget.
+                parse_class = degraded_response_parse_class(response)
+                logger.warning(
+                    "Generated summary is empty and looks degraded "
+                    "(parse_class=%s, finish_reasons=%s, output_tokens=%d); refusing "
+                    "this attempt so the summary item is retried",
+                    parse_class,
+                    response.finish_reasons,
+                    response.output_tokens,
+                )
+                summary_prompt_bytes = len(formatted_messages.encode("utf-8"))
+                raise EmptySummaryError(
+                    "empty summary "
+                    f"(parse_class={parse_class}, "
+                    f"finish_reasons={response.finish_reasons}, "
+                    f"output_tokens={response.output_tokens})",
+                    parse_class=parse_class,
+                    provider=settings.SUMMARY.MODEL_CONFIG.transport or "unknown",
+                    model=settings.SUMMARY.MODEL_CONFIG.model or "unknown",
+                    prompt_bytes=summary_prompt_bytes,
+                    prompt_digest=hashlib.sha256(
+                        formatted_messages.encode("utf-8")
+                    ).hexdigest()[:16],
+                )
             logger.error(
                 "Generated summary is empty (finish_reasons=%s). Falling back to basic summary.",
                 response.finish_reasons,
@@ -623,6 +659,10 @@ async def _create_summary(
             summary_tokens = estimate_tokens(summary_text) if summary_text else 0
             llm_input_tokens = 0
             llm_output_tokens = 0
+    except EmptySummaryError:
+        # Retry signal, not a generation failure: the generic handler below
+        # would swallow it into the (never-persisted) placeholder fallback.
+        raise
     except Exception:
         logger.exception("Error generating summary!")
         # Fallback to a basic summary in case of error

@@ -141,6 +141,95 @@ class RepresentationSaveError(HonchoException):
     detail: str = "Representation save failed for all observers"
 
 
+@final
+class EmptyRepresentationError(HonchoException):
+    """Raised when a batch's structured response is empty in a way that looks
+    degraded (truncated output, provider content filter, or nothing returned at
+    all) rather than a model that read the messages and asserted nothing.
+
+    Raising this is what keeps the queue item unprocessed: the deriver calls it
+    *before* the batch is marked processed, and the queue worker treats it as a
+    retryable failure, so the work unit is re-claimed instead of being consumed
+    with zero observations derived from it.
+
+    The constructor carries the classification fields an operator needs to
+    triage the failure without logging the prompt itself (upstream issue #993's
+    observability contract): parse class, provider/model, attempt count, and the
+    prompt's byte length + digest.
+    """
+
+    status_code: int = 500
+    detail: str = "Deriver generated an empty representation"
+
+    #: Triage fields; all optional so existing callers keep working.
+    parse_class: str = "unknown"
+    provider: str = "unknown"
+    model: str = "unknown"
+    attempts: int = 1
+    prompt_bytes: int = 0
+    prompt_digest: str = ""
+
+    def __init__(
+        self,
+        detail: str,
+        *,
+        parse_class: str = "unknown",
+        provider: str = "unknown",
+        model: str = "unknown",
+        attempts: int = 1,
+        prompt_bytes: int = 0,
+        prompt_digest: str = "",
+    ) -> None:
+        super().__init__(detail)
+        self.parse_class = parse_class
+        self.provider = provider
+        self.model = model
+        self.attempts = attempts
+        self.prompt_bytes = prompt_bytes
+        self.prompt_digest = prompt_digest
+
+
+@final
+class EmptySummaryError(HonchoException):
+    """Raised when a summary's structured response is empty in a way that looks
+    degraded rather than a genuinely empty conversation.
+
+    The summarizer persists nothing when it falls back to a placeholder, so
+    raising (and thereby requeueing the summary item) is the only path that can
+    still produce a real summary for that boundary. Carries the same triage
+    fields as :class:`EmptyRepresentationError`.
+    """
+
+    status_code: int = 500
+    detail: str = "Summarizer generated an empty summary"
+
+    parse_class: str = "unknown"
+    provider: str = "unknown"
+    model: str = "unknown"
+    attempts: int = 1
+    prompt_bytes: int = 0
+    prompt_digest: str = ""
+
+    def __init__(
+        self,
+        detail: str,
+        *,
+        parse_class: str = "unknown",
+        provider: str = "unknown",
+        model: str = "unknown",
+        attempts: int = 1,
+        prompt_bytes: int = 0,
+        prompt_digest: str = "",
+    ) -> None:
+        super().__init__(detail)
+        self.parse_class = parse_class
+        self.provider = provider
+        self.model = model
+        self.attempts = attempts
+        self.prompt_bytes = prompt_bytes
+        self.prompt_digest = prompt_digest
+
+
 class LLMError(Exception):
     """Exception raised when an LLM call fails.
 

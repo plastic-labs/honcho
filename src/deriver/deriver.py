@@ -1,4 +1,7 @@
+import asyncio
+import hashlib
 import logging
+import random
 import time
 
 from nanoid import generate as generate_nanoid
@@ -7,9 +10,14 @@ from src import crud
 from src.config import ConfiguredModelSettings, settings
 from src.crud.representation import RepresentationManager
 from src.dependencies import tracked_db
-from src.exceptions import RepresentationSaveError
+from src.exceptions import EmptyRepresentationError, RepresentationSaveError
 from src.llm import honcho_llm_call
-from src.llm.types import LLMTelemetryContext
+from src.llm.types import (
+    HonchoLLMCallResponse,
+    LLMTelemetryContext,
+    degraded_response_parse_class,
+    empty_response_is_degraded,
+)
 from src.models import Message
 from src.schemas import ResolvedConfiguration
 from src.telemetry import prometheus_metrics
@@ -35,6 +43,16 @@ logger = logging.getLogger(__name__)
 
 def _get_deriver_model_config() -> ConfiguredModelSettings:
     return settings.DERIVER.MODEL_CONFIG
+
+
+def _jittered_backoff(seconds: float) -> float:
+    """Scatter an empty-parse backoff by +/-25%.
+
+    Concurrent workers draining the same degraded provider would otherwise
+    re-request in lockstep. Scheduling jitter, not security/crypto -- stdlib
+    random is appropriate.
+    """
+    return seconds * (1.0 + random.uniform(-0.25, 0.25))  # nosec B311
 
 
 @with_sentry_transaction("minimal_deriver_batch", op="deriver")
@@ -145,55 +163,122 @@ async def process_representation_tasks_batch(
     max_tokens = base_model_config.max_output_tokens or settings.LLM.DEFAULT_MAX_TOKENS
     model_config = base_model_config
 
-    # Single LLM call
-    trace_id = generate_nanoid()
-    llm_start = time.perf_counter()
-    response = await honcho_llm_call(
-        model_config=model_config,
-        prompt=prompt,
-        max_tokens=max_tokens,
-        response_model=PromptRepresentation,
-        json_mode=True,
-        max_input_tokens=settings.DERIVER.MAX_INPUT_TOKENS,
-        enable_retry=True,
-        retry_attempts=3,
-        trace_name="minimal_deriver",
-        telemetry=LLMTelemetryContext(
-            workspace_name=latest_message.workspace_name,
-            call_purpose=CallPurpose.DERIVER_REPRESENTATION.value,
-            parent_category="representation",
-            observed=observed,
-            track_name="Minimal Deriver",
-            trace_id=trace_id,
-            span_id=trace_id,
-        ),
-    )
-    llm_duration = (time.perf_counter() - llm_start) * 1000
-
-    accumulate_metric(
-        f"minimal_deriver_{latest_message.id}_{observed}",
-        "llm_call_duration",
-        llm_duration,
-        "ms",
-    )
-
-    # Prometheus metrics
-    if settings.METRICS.ENABLED:
-        prometheus_metrics.record_deriver_tokens(
-            count=response.output_tokens,
-            task_type=DeriverTaskTypes.INGESTION.value,
-            token_type=TokenTypes.OUTPUT.value,
-            component=DeriverComponents.OUTPUT_TOTAL.value,
-        )
-
     message_ids = [m.id for m in messages if m.peer_name == observed]
 
-    # Convert to Representation and save
+    # An empty representation gets re-requested in-line, bounded by
+    # DERIVER.EMPTY_PARSE_MAX_ATTEMPTS, before the batch can be accepted as an
+    # empty one. With no observed-peer messages there is nothing a re-request
+    # could add, so the budget collapses to a single call.
+    empty_parse_max_attempts = (
+        settings.DERIVER.EMPTY_PARSE_MAX_ATTEMPTS if message_ids else 0
+    )
+    max_llm_attempts = 1 + empty_parse_max_attempts
+
+    async def _request_representation() -> tuple[
+        HonchoLLMCallResponse[PromptRepresentation], float
+    ]:
+        """One structured deriver call, with its own trace and metrics."""
+        call_trace_id = generate_nanoid()
+        started = time.perf_counter()
+        call_response = await honcho_llm_call(
+            model_config=model_config,
+            prompt=prompt,
+            max_tokens=max_tokens,
+            response_model=PromptRepresentation,
+            json_mode=True,
+            max_input_tokens=settings.DERIVER.MAX_INPUT_TOKENS,
+            enable_retry=True,
+            retry_attempts=3,
+            trace_name="minimal_deriver",
+            telemetry=LLMTelemetryContext(
+                workspace_name=latest_message.workspace_name,
+                call_purpose=CallPurpose.DERIVER_REPRESENTATION.value,
+                parent_category="representation",
+                observed=observed,
+                track_name="Minimal Deriver",
+                trace_id=call_trace_id,
+                span_id=call_trace_id,
+            ),
+        )
+        duration_ms = (time.perf_counter() - started) * 1000
+
+        accumulate_metric(
+            f"minimal_deriver_{latest_message.id}_{observed}",
+            "llm_call_duration",
+            duration_ms,
+            "ms",
+        )
+
+        # Prometheus metrics
+        if settings.METRICS.ENABLED:
+            prometheus_metrics.record_deriver_tokens(
+                count=call_response.output_tokens,
+                task_type=DeriverTaskTypes.INGESTION.value,
+                token_type=TokenTypes.OUTPUT.value,
+                component=DeriverComponents.OUTPUT_TOTAL.value,
+            )
+        return call_response, duration_ms
+
+    # First LLM call. `enable_retry`/`retry_attempts` above retry *exceptions*
+    # only: a response that parses cleanly is never re-asked, so an empty parse
+    # has to be handled here or the batch is consumed with nothing derived.
+    response, llm_duration = await _request_representation()
+    llm_attempts = 1
+
     observations = Representation.from_prompt_representation(
         response.content,
         message_ids,
         latest_message.session_name,
         latest_message.created_at,
+    )
+    while observations.is_empty() and llm_attempts < max_llm_attempts:
+        backoff_seconds = settings.DERIVER.EMPTY_PARSE_BACKOFF_SECONDS * (
+            2 ** (llm_attempts - 1)
+        )
+        logger.warning(
+            "Deriver parsed an empty representation on attempt %d/%d for messages %s:%s "
+            "in %s/%s (finish_reasons=%s, output_tokens=%d); re-requesting in %.2fs",
+            llm_attempts,
+            max_llm_attempts,
+            earliest_message.id,
+            latest_message.id,
+            latest_message.workspace_name,
+            latest_message.session_name,
+            response.finish_reasons,
+            response.output_tokens,
+            backoff_seconds,
+        )
+        await asyncio.sleep(_jittered_backoff(backoff_seconds))
+        llm_attempts += 1
+        response, llm_duration = await _request_representation()
+        observations = Representation.from_prompt_representation(
+            response.content,
+            message_ids,
+            latest_message.session_name,
+            latest_message.created_at,
+        )
+
+    empty_parse_attempts = llm_attempts
+    # Still empty after the inline budget: only a *degraded*-looking response is
+    # refused outright (see `empty_response_is_degraded`); a legitimately empty
+    # batch keeps today's semantics further down.
+    empty_parse_refused = (
+        bool(message_ids)
+        and observations.is_empty()
+        and empty_response_is_degraded(response)
+    )
+
+    accumulate_metric(
+        f"minimal_deriver_{latest_message.id}_{observed}",
+        "empty_parse_attempts",
+        empty_parse_attempts,
+        "count",
+    )
+    accumulate_metric(
+        f"minimal_deriver_{latest_message.id}_{observed}",
+        "empty_parse_refused",
+        int(empty_parse_refused),
+        "count",
     )
 
     agg_representation_result = crud.CreateDocumentsResult()
@@ -201,11 +286,16 @@ async def process_representation_tasks_batch(
     save_errors: list[tuple[str, Exception]] = []
     if observations.is_empty() or not message_ids:
         logger.warning(
-            "Deriver generated zero observations for messages %s:%s in %s/%s!",
+            "Deriver generated zero observations for messages %s:%s in %s/%s! "
+            "(attempts=%d, finish_reasons=%s, output_tokens=%d, refused=%s)",
             earliest_message.id,
             latest_message.id,
             latest_message.workspace_name,
             latest_message.session_name,
+            empty_parse_attempts,
+            response.finish_reasons,
+            response.output_tokens,
+            empty_parse_refused,
         )
     else:
         # Save to all observer collections
@@ -342,8 +432,34 @@ async def process_representation_tasks_batch(
             semantic_dup_rejected_count=agg_representation_result.semantic_dup_rejected_count,
             semantic_dup_replaced_count=agg_representation_result.semantic_dup_replaced_count,
             failed_observer_count=len(save_errors),
+            empty_parse_attempts=empty_parse_attempts,
+            empty_parse_refused=empty_parse_refused,
         )
     )
+
+    # Refuse a degraded empty parse *after* telemetry, so the attempt is still
+    # observable: the caller (process_representation_batch -> the queue worker)
+    # then leaves this batch's queue items unprocessed and requeues them under a
+    # bounded budget instead of marking the batch processed with nothing derived
+    # from it. A legitimately empty batch never reaches here.
+    if empty_parse_refused:
+        prompt_bytes = len(prompt.encode("utf-8"))
+        parse_class = degraded_response_parse_class(response)
+        raise EmptyRepresentationError(
+            f"empty representation after {empty_parse_attempts} attempt(s) "
+            f"(parse_class={parse_class}, finish_reasons={response.finish_reasons}, "
+            f"output_tokens={response.output_tokens}) for messages "
+            f"{earliest_message.id}:{latest_message.id} in "
+            f"{latest_message.workspace_name}/{latest_message.session_name}",
+            parse_class=parse_class,
+            provider=model_config.transport or "unknown",
+            model=model_config.model or "unknown",
+            attempts=empty_parse_attempts,
+            prompt_bytes=prompt_bytes,
+            # Digest, not the prompt: enough to correlate a repeated failure
+            # across workers without putting conversation text in the error.
+            prompt_digest=hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:16],
+        )
 
     retryable = next(
         (exc for _, exc in save_errors if is_retryable_error(exc)),

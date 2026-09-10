@@ -41,6 +41,7 @@ from src.dreamer.dream_scheduler import (
     get_dream_scheduler,
     set_dream_scheduler,
 )
+from src.exceptions import EmptyRepresentationError, EmptySummaryError
 from src.models import QueueItem
 from src.reconciler import (
     ReconcilerScheduler,
@@ -62,11 +63,20 @@ logger = getLogger(__name__)
 
 load_dotenv(override=True)
 
-# Total processing attempts per work unit for transient errors. Count is
-# stored on the oldest unprocessed queue item so every deriver instance
-# shares one budget.
+# Total processing attempts per work unit for retryable errors. The count is
+# stored on the oldest unprocessed queue item so every deriver instance shares
+# one budget. Nothing here is unbounded: process_work_unit breaks out of its
+# loop on a retry (releasing the work unit for a later poll) and this cap turns
+# the last attempt terminal.
 MAX_RETRYABLE_ATTEMPTS = 3
 RETRY_BACKOFF_SECONDS = 1.0
+
+# Retryable errors whose cause is the *batch*, not one item in it. A degraded
+# structured response (empty representation/summary) poisons every item it saw,
+# so the terminal attempt marks the whole batch errored -- otherwise the
+# remaining items are re-fetched one at a time, each with a fresh retry budget,
+# and a degraded provider burns the work unit item by item.
+_BATCH_SCOPE_RETRYABLE_ERRORS = (EmptyRepresentationError, EmptySummaryError)
 
 
 class WorkerOwnership(NamedTuple):
@@ -569,7 +579,8 @@ class QueueManager:
         Handle a processing error. Returns True when the caller should stop
         processing and release the work unit for a later re-claim.
 
-        Transient errors (is_retryable_error) get up to MAX_RETRYABLE_ATTEMPTS
+        Retryable errors (is_retryable_error: transient DB/transport failures
+        and empty structured responses) get up to MAX_RETRYABLE_ATTEMPTS
         attempts per work unit: items stay unprocessed with no error recorded.
         The attempt count lives on the oldest unprocessed queue item so a
         different deriver instance continues the same budget after reclaim.
@@ -579,9 +590,12 @@ class QueueManager:
         times_derived and double-count LLM telemetry -- acceptable because the
         alternative is dropping the batch.
 
-        Terminal errors mark only the first queue item as errored so we don't
+        Terminal errors mark the first queue item as errored so we don't
         potentially throw away a batch. This allows us to incrementally attempt
         to process the batch while still maintaining progress in a work unit.
+        Errors caused by the batch itself (see _BATCH_SCOPE_RETRYABLE_ERRORS)
+        mark every item instead: re-attempting the rest one item at a time with
+        a fresh budget just repeats the same degraded response.
 
         Args:
             error: The exception that occurred
@@ -595,7 +609,7 @@ class QueueManager:
                 if attempts < MAX_RETRYABLE_ATTEMPTS:
                     await self._set_work_unit_retry_attempts(work_unit_key, attempts)
                     logger.warning(
-                        "Transient error %s for work unit %s (attempt %d/%d); leaving items unprocessed for retry",
+                        "Retryable error %s for work unit %s (attempt %d/%d); leaving items unprocessed for retry",
                         context,
                         work_unit_key,
                         attempts,
@@ -616,9 +630,14 @@ class QueueManager:
             if items:
                 # Clear retry metadata only after the terminal mark commits so a
                 # failed mark leaves the shared budget intact for the next claim.
-                await self.mark_queue_item_as_errored(
-                    items[0], work_unit_key, error_msg
-                )
+                if isinstance(error, _BATCH_SCOPE_RETRYABLE_ERRORS):
+                    await self.mark_queue_items_as_errored(
+                        items, work_unit_key, error_msg
+                    )
+                else:
+                    await self.mark_queue_item_as_errored(
+                        items[0], work_unit_key, error_msg
+                    )
             await self._clear_work_unit_retry_attempts(work_unit_key)
         except Exception as mark_error:
             logger.error(
@@ -1112,7 +1131,13 @@ class QueueManager:
         return result.scalar_one_or_none()
 
     async def _get_work_unit_retry_attempts(self, work_unit_key: str) -> int:
-        """Read the shared transient-failure attempt count for a work unit."""
+        """Read the shared retry attempt count for a work unit.
+
+        The count rides on the oldest *unprocessed* item, which is by
+        construction the item the next claim re-fetches -- so once the batch
+        succeeds (items processed) the count is invisible to this read and a
+        later failure starts from zero. No success-path cleanup is needed.
+        """
         async with tracked_db("get_work_unit_retry_attempts") as db:
             item = await self._oldest_unprocessed_item(db, work_unit_key)
             if item is None:
@@ -1203,16 +1228,21 @@ class QueueManager:
                     task_type=work_unit.task_type,
                 )
 
-    async def mark_queue_item_as_errored(
-        self, item: QueueItem, work_unit_key: str, error: str
+    async def mark_queue_items_as_errored(
+        self, items: list[QueueItem], work_unit_key: str, error: str
     ) -> None:
-        """Mark queue item as processed with an error"""
-        if not item:
+        """Mark queue items as processed with an error.
+
+        Called with the whole batch for batch-scope failures (a degraded
+        structured response poisons every item it saw) and with a single item
+        for terminal per-item failures.
+        """
+        if not items:
             return
-        async with tracked_db("mark_queue_item_as_errored") as db:
+        async with tracked_db("mark_queue_items_as_errored") as db:
             await db.execute(
                 update(models.QueueItem)
-                .where(models.QueueItem.id == item.id)
+                .where(models.QueueItem.id.in_([item.id for item in items]))
                 .where(models.QueueItem.work_unit_key == work_unit_key)
                 .values(processed=True, error=error[:65535])  # Truncate to TEXT limit
             )
@@ -1222,6 +1252,14 @@ class QueueManager:
                 .values(last_updated=func.now())
             )
             await db.commit()
+
+    async def mark_queue_item_as_errored(
+        self, item: QueueItem, work_unit_key: str, error: str
+    ) -> None:
+        """Mark queue item as processed with an error"""
+        if not item:
+            return
+        await self.mark_queue_items_as_errored([item], work_unit_key, error)
 
     async def _cleanup_work_unit(
         self,

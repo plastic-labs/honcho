@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from src.config import settings
+from src.exceptions import EmptySummaryError
 from src.llm import HonchoLLMCallResponse
 from src.utils.summarizer import (
     Summary,
@@ -81,13 +82,65 @@ class TestCreateSummary:
         assert input_tokens == 100
         assert output_tokens == 15
 
-    async def test_empty_response_uses_fallback(self):
-        """Empty LLM response triggers fallback text instead of saving empty string."""
+    async def test_degraded_empty_response_is_refused(self):
+        """An empty response the provider cut off is refused, not papered over.
+
+        The placeholder fallback is never persisted (the only `_save_summary`
+        call is gated on `not is_fallback`), so accepting it would consume the
+        summary boundary with nothing stored. Raising lets the queue re-claim
+        the item under its bounded retry budget.
+        """
         mock_response = HonchoLLMCallResponse(
             content="",
             input_tokens=100,
             output_tokens=0,
             finish_reasons=["SAFETY"],
+        )
+
+        with (
+            patch(
+                "src.utils.summarizer.create_short_summary",
+                new_callable=AsyncMock,
+                return_value=mock_response,
+            ),
+            pytest.raises(EmptySummaryError, match="empty summary"),
+        ):
+            await _call_create_summary(SummaryType.SHORT)
+
+    async def test_truncated_empty_response_is_refused(self):
+        """`length` with nothing in the body is the measured production cause."""
+        mock_response = HonchoLLMCallResponse(
+            content="   \n",
+            input_tokens=4000,
+            output_tokens=16000,
+            finish_reasons=["length"],
+        )
+
+        with (
+            patch(
+                "src.utils.summarizer.create_short_summary",
+                new_callable=AsyncMock,
+                return_value=mock_response,
+            ),
+            pytest.raises(
+                EmptySummaryError, match="finish_reasons=\\['length'\\]"
+            ) as exc,
+        ):
+            await _call_create_summary(SummaryType.SHORT)
+
+        failure = exc.value
+        assert failure.parse_class == "truncated"
+        assert failure.prompt_bytes > 0
+        assert len(failure.prompt_digest) == 16
+        assert failure.provider and failure.model
+
+    async def test_legitimately_empty_response_uses_fallback(self):
+        """A clean stop with tokens spent is a real (empty) answer: no retry."""
+        mock_response = HonchoLLMCallResponse(
+            content="  ",
+            input_tokens=100,
+            output_tokens=12,
+            finish_reasons=["stop"],
         )
 
         with patch(
@@ -104,7 +157,6 @@ class TestCreateSummary:
 
         assert is_fallback is True
         assert "Conversation with 5 messages" in summary["content"]
-        assert summary["content"] != ""
         assert input_tokens == 0
         assert output_tokens == 0
 
