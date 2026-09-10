@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { ZodError } from 'zod'
+import { Honcho } from '../src/client'
 import type { HonchoHTTPClient } from '../src/http/client'
 import { Peer } from '../src/peer'
 import { Scope } from '../src/scope'
@@ -15,7 +16,9 @@ function capturingHttp(response: unknown): {
   body: () => Record<string, unknown> | undefined
   query: () => Record<string, unknown> | undefined
   path: () => string | undefined
+  method: () => string | undefined
 } {
+  let capturedMethod: string | undefined
   let capturedBody: Record<string, unknown> | undefined
   let capturedQuery: Record<string, unknown> | undefined
   let capturedPath: string | undefined
@@ -24,6 +27,7 @@ function capturingHttp(response: unknown): {
       path: string,
       options?: { body?: Record<string, unknown> }
     ) => {
+      capturedMethod = 'post'
       capturedPath = path
       capturedBody = options?.body
       return response
@@ -32,11 +36,13 @@ function capturingHttp(response: unknown): {
       path: string,
       options?: { query?: Record<string, unknown> }
     ) => {
+      capturedMethod = 'get'
       capturedPath = path
       capturedQuery = options?.query
       return response
     },
     delete: async (path: string) => {
+      capturedMethod = 'delete'
       capturedPath = path
       return undefined
     },
@@ -46,6 +52,7 @@ function capturingHttp(response: unknown): {
     body: () => capturedBody,
     query: () => capturedQuery,
     path: () => capturedPath,
+    method: () => capturedMethod,
   }
 }
 
@@ -385,5 +392,28 @@ describe('Scope membership and status', () => {
     const status = await scope.status()
 
     expect(status.backfillStatus).toEqual({})
+  })
+})
+
+describe('getScope', () => {
+  test('GETs the scope route and never POSTs a get-or-create', async () => {
+    const honcho = new Honcho({ apiKey: 'test', workspaceId: 'ws' })
+    const captured = capturingHttp({
+      id: 'therapy',
+      metadata: { k: 'v' },
+      created_at: '2026-09-10T00:00:00Z',
+    })
+    ;(honcho as unknown as { _http: HonchoHTTPClient })._http = captured.http
+    ;(honcho as unknown as { _ensureWorkspace: () => Promise<void> })._ensureWorkspace =
+      async () => undefined
+
+    const scope = await honcho.getScope('therapy')
+
+    expect(captured.method()).toBe('get')
+    expect(captured.path()).toBe('/v3/workspaces/ws/scopes/therapy')
+    expect(captured.body()).toBeUndefined()
+    expect(scope.id).toBe('therapy')
+    expect(scope.metadata).toEqual({ k: 'v' })
+    expect(scope.createdAt).toBe('2026-09-10T00:00:00Z')
   })
 })
