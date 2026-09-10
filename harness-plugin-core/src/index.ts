@@ -9,6 +9,7 @@ export {
 
 export type {
   AuthConfig,
+  Env,
   FileConfig,
   HostBlock,
   ResolvedConfig,
