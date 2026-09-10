@@ -16,7 +16,7 @@ documents plus dependent derived documents).
 """
 
 from collections.abc import Sequence
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from logging import getLogger
 from typing import Any, Literal
 from typing import cast as py_cast
@@ -528,7 +528,7 @@ async def update_scope_backfill_status(
     """
     entry: dict[str, Any] = {
         "state": state,
-        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(UTC).isoformat(),
     }
     if docs_copied is not None:
         entry["docs_copied"] = docs_copied

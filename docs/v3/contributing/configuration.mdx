@@ -635,6 +635,8 @@ uv sync --extra chromadb
 
 ChromaDB's `persistent` mode stores data on local disk (embedded, like LanceDB) and is intended for development and small deployments: Honcho creates one Chroma collection per `(observer, observed)` peer pair, and embedded Chroma serializes writes across collections through a single SQLite file and keeps a bounded number of collection indices warm in memory. For production volume, use `cloud` (Chroma Cloud) or `http` against a self-hosted distributed Chroma deployment — both are designed for many collections.
 
+ChromaDB queries return no results during connection failures, rate limiting, or temporary server errors. Failed writes remain eligible for reconciliation. Authentication and invalid-request errors remain visible. Selecting ChromaDB without its optional dependency raises an installation error when the backend is initialized.
+
 ## Monitoring
 
 ### Prometheus Metrics

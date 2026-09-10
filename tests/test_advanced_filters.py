@@ -3,7 +3,7 @@ Tests for advanced filter functionality including logical operators,
 comparison operators, and wildcards across multiple models.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any, TypedDict
 
 import pytest
@@ -1645,7 +1645,7 @@ async def test_real_datetime_column_filtering(
     )
 
     # Test datetime filtering with various formats
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     one_minute_ago = now - timedelta(minutes=1)
 
     # Test ISO format
@@ -1660,7 +1660,7 @@ async def test_real_datetime_column_filtering(
     assert peer2_name in found_names
 
     # Test date-only format
-    today = datetime.now(timezone.utc).date().isoformat()
+    today = datetime.now(UTC).date().isoformat()
     response = client.post(
         f"/v3/workspaces/{test_workspace.name}/peers/list",
         json={"filters": {"created_at": {"gte": today}}},

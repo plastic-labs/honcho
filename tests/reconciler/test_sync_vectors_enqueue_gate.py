@@ -88,13 +88,13 @@ async def test_soft_deleted_document_is_work_only_after_grace(
         session_name=session.name,
         sync_state="synced",
         embedding=[0.0] * 1536,
-        deleted_at=datetime.datetime.now(datetime.timezone.utc),
+        deleted_at=datetime.datetime.now(datetime.UTC),
     )
     db_session.add(doc)
     await db_session.commit()
     assert await has_pending_work(db_session) is False
 
-    doc.deleted_at = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(
+    doc.deleted_at = datetime.datetime.now(datetime.UTC) - datetime.timedelta(
         minutes=10
     )
     await db_session.commit()
@@ -106,7 +106,7 @@ async def test_enqueue_gated_on_pending_work(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch, has_work: bool
 ) -> None:
     @asynccontextmanager
-    async def _db(_: str | None = None) -> AsyncGenerator[AsyncSession, None]:
+    async def _db(_: str | None = None) -> AsyncGenerator[AsyncSession]:
         yield db_session
 
     monkeypatch.setattr(scheduler_module, "tracked_db", _db)
@@ -137,7 +137,7 @@ async def test_cleanup_queue_is_not_gated(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     @asynccontextmanager
-    async def _db(_: str | None = None) -> AsyncGenerator[AsyncSession, None]:
+    async def _db(_: str | None = None) -> AsyncGenerator[AsyncSession]:
         yield db_session
 
     monkeypatch.setattr(scheduler_module, "tracked_db", _db)

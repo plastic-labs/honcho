@@ -11,10 +11,11 @@ import pytest
 
 from src.exceptions import VectorStoreError
 from src.vector_store import VectorRecord
-from src.vector_store.chroma import ChromaVectorStore
 
 chromadb = pytest.importorskip("chromadb")
 from chromadb.errors import NotFoundError  # noqa: E402
+
+from src.vector_store.chroma import ChromaVectorStore  # noqa: E402
 
 # Chroma collection naming rules: 3-512 chars, starts/ends with a lowercase
 # alphanumeric, dots/dashes/underscores allowed in between.
@@ -380,5 +381,129 @@ async def test_persistent_round_trip(
 
         await store.delete_namespace(ns)
         assert await store.probe_namespace_dim(ns) is None
+    finally:
+        await store.close()
+
+
+@pytest.mark.parametrize("membership", [["explicit"], ("explicit",), {"explicit"}])
+async def test_persistent_bare_membership(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: object, membership: Any
+) -> None:
+    monkeypatch.setattr(
+        "src.config.settings.VECTOR_STORE.CHROMA_CLIENT_MODE", "persistent"
+    )
+    monkeypatch.setattr("src.config.settings.VECTOR_STORE.CHROMA_PATH", str(tmp_path))
+    store = ChromaVectorStore()
+    try:
+        await store.upsert_many(
+            "membership",
+            [
+                VectorRecord(
+                    id="match", embedding=[1.0, 0.0], metadata={"level": "explicit"}
+                ),
+                VectorRecord(
+                    id="other", embedding=[1.0, 0.0], metadata={"level": "deductive"}
+                ),
+            ],
+        )
+        results = await store.query(
+            "membership", [1.0, 0.0], filters={"level": membership}
+        )
+        assert [result.id for result in results] == ["match"]
+    finally:
+        await store.close()
+
+
+@pytest.mark.parametrize("membership", [{"in": []}, [], (), set[str]()])
+async def test_persistent_empty_membership_matches_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: object, membership: Any
+) -> None:
+    monkeypatch.setattr(
+        "src.config.settings.VECTOR_STORE.CHROMA_CLIENT_MODE", "persistent"
+    )
+    monkeypatch.setattr("src.config.settings.VECTOR_STORE.CHROMA_PATH", str(tmp_path))
+    store = ChromaVectorStore()
+    try:
+        await store.upsert_many(
+            "membership",
+            [
+                VectorRecord(
+                    id="present",
+                    embedding=[1.0, 0.0],
+                    metadata={"level": "explicit", "session_name": "s1"},
+                ),
+                VectorRecord(
+                    id="empty",
+                    embedding=[1.0, 0.0],
+                    metadata={"level": "explicit", "session_name": ""},
+                ),
+                VectorRecord(
+                    id="missing", embedding=[1.0, 0.0], metadata={"level": "explicit"}
+                ),
+            ],
+        )
+        assert (
+            await store.query(
+                "membership", [1.0, 0.0], filters={"session_name": membership}
+            )
+            == []
+        )
+        assert (
+            await store.query(
+                "membership",
+                [1.0, 0.0],
+                filters={"level": "explicit", "session_name": membership},
+            )
+            == []
+        )
+    finally:
+        await store.close()
+
+
+@pytest.mark.parametrize("top_k", [0, -1])
+async def test_nonpositive_top_k_skips_client(
+    store: ChromaVectorStore, top_k: int
+) -> None:
+    client = AsyncMock(side_effect=AssertionError("must not connect"))
+    store._get_client = client  # pyright: ignore[reportPrivateUsage]
+    assert await store.query("unused", [1.0, 0.0], top_k=top_k) == []
+    client.assert_not_called()
+
+
+async def test_probe_retains_dimension_after_deleting_every_record(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: object
+) -> None:
+    monkeypatch.setattr(
+        "src.config.settings.VECTOR_STORE.CHROMA_CLIENT_MODE", "persistent"
+    )
+    monkeypatch.setattr("src.config.settings.VECTOR_STORE.CHROMA_PATH", str(tmp_path))
+    store = ChromaVectorStore()
+    await store.upsert_many("dimension", [VectorRecord(id="a", embedding=[0.1] * 4)])
+    await store.delete_many("dimension", ["a"])
+    await store.close()
+
+    reopened = ChromaVectorStore()
+    try:
+        assert await reopened.probe_namespace_dim("dimension") == 4
+        # The probe must agree with the dimension still enforced by Chroma.
+        with pytest.raises(chromadb.errors.InvalidArgumentError, match="dimension"):
+            await reopened.upsert_many(
+                "dimension", [VectorRecord(id="b", embedding=[0.1] * 8)]
+            )
+    finally:
+        await reopened.close()
+
+
+async def test_probe_returns_none_for_never_written_collection(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: object
+) -> None:
+    monkeypatch.setattr(
+        "src.config.settings.VECTOR_STORE.CHROMA_CLIENT_MODE", "persistent"
+    )
+    monkeypatch.setattr("src.config.settings.VECTOR_STORE.CHROMA_PATH", str(tmp_path))
+    store = ChromaVectorStore()
+    try:
+        await store._get_or_create_collection("fresh")  # pyright: ignore[reportPrivateUsage]
+        assert await store.probe_namespace_dim("fresh") is None
     finally:
         await store.close()

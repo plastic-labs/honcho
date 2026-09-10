@@ -23,9 +23,12 @@ original namespace is stored in collection metadata for debuggability.
 import asyncio
 import hashlib
 import logging
+from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any, cast
 
+import chromadb
 import httpx
+from chromadb.errors import ChromaError, InternalError, NotFoundError, RateLimitError
 
 from src.config import settings
 from src.exceptions import VectorStoreError
@@ -44,13 +47,34 @@ logger = logging.getLogger(__name__)
 CLOUD_MAX_BATCH_SIZE = 300
 
 # Errors that indicate the store is unreachable/unavailable rather than a
-# logic error. Chroma's http/cloud clients surface transport failures as
-# httpx errors; persistent mode has no transport layer.
+# logic error. Chroma can wrap these exceptions during client initialization
+# or when decoding HTTP responses, so inspect their exception chains too.
 _TRANSIENT_ERRORS: tuple[type[BaseException], ...] = (
     httpx.TransportError,
     ConnectionError,
     TimeoutError,
+    InternalError,
+    RateLimitError,
 )
+
+
+def _is_transient_error(exc: BaseException) -> bool:
+    """Recognize SDK/transport outages without swallowing invalid requests."""
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, _TRANSIENT_ERRORS):
+            return True
+        if isinstance(current, httpx.HTTPStatusError):
+            return (
+                current.response.status_code == 429 or current.response.is_server_error
+            )
+        if isinstance(current, ChromaError):
+            # Auth, dimension and other SDK validation errors must stay visible.
+            return False
+        current = current.__cause__ or current.__context__
+    return False
 
 
 class ChromaVectorStore(VectorStore):
@@ -80,8 +104,6 @@ class ChromaVectorStore(VectorStore):
         Runs inside a worker thread: PersistentClient does disk I/O and the
         http/cloud clients issue a version heartbeat on construction.
         """
-        import chromadb
-
         mode = settings.VECTOR_STORE.CHROMA_CLIENT_MODE
         if mode == "persistent":
             return chromadb.PersistentClient(path=settings.VECTOR_STORE.CHROMA_PATH)
@@ -162,6 +184,7 @@ class ChromaVectorStore(VectorStore):
         Supports filter formats:
         - {"key": "value"} -> {"key": {"$eq": "value"}}
         - {"key": {"in": [...]}} -> {"key": {"$in": [...]}}
+        - {"key": [...]} -> {"key": {"$in": [...]}}
         Multiple filters combine with {"$and": [...]} (Chroma requires at
         least two operands for $and, so a single clause is passed bare).
 
@@ -171,9 +194,20 @@ class ChromaVectorStore(VectorStore):
         """
         clauses: list[dict[str, Any]] = []
         for key, value in filters.items():
-            if isinstance(value, dict) and "in" in value:
-                in_values = cast(list[Any], value["in"])
-                clauses.append({key: {"$in": list(in_values)}})
+            if (isinstance(value, dict) and "in" in value) or isinstance(
+                value, list | tuple | set
+            ):
+                in_values = list(
+                    cast(
+                        Iterable[Any], value["in"] if isinstance(value, dict) else value
+                    )
+                )
+                if not in_values:
+                    # Chroma rejects an empty $in. A contradiction matches
+                    # nothing, including records where this key is missing.
+                    clauses.append({"$and": [{key: {"$eq": ""}}, {key: {"$ne": ""}}]})
+                else:
+                    clauses.append({key: {"$in": in_values}})
             elif value is None:
                 raise ValueError(
                     f"ChromaDB backend does not support filtering on null values (key: {key!r})"
@@ -189,8 +223,6 @@ class ChromaVectorStore(VectorStore):
 
     async def _get_collection(self, namespace: str) -> "Collection | None":
         """Get a collection if it exists, otherwise return None."""
-        from chromadb.errors import NotFoundError
-
         client = await self._get_client()
         try:
             return await asyncio.to_thread(
@@ -247,16 +279,16 @@ class ChromaVectorStore(VectorStore):
                 )
 
             logger.debug(f"Upserted {len(vectors)} vectors to namespace {namespace}")
-        except _TRANSIENT_ERRORS as exc:
-            logger.warning(
-                "ChromaDB unavailable for upsert to namespace %s: %s",
-                namespace,
-                exc,
-            )
-            raise VectorStoreError(
-                f"ChromaDB unavailable for upsert to namespace {namespace}"
-            ) from exc
-        except Exception:
+        except Exception as exc:
+            if _is_transient_error(exc):
+                logger.warning(
+                    "ChromaDB unavailable for upsert to namespace %s: %s",
+                    namespace,
+                    exc,
+                )
+                raise VectorStoreError(
+                    f"ChromaDB unavailable for upsert to namespace {namespace}"
+                ) from exc
             logger.exception(
                 f"Failed to upsert {len(vectors)} vectors to namespace {namespace}"
             )
@@ -289,6 +321,9 @@ class ChromaVectorStore(VectorStore):
         Returns:
             List of VectorQueryResult objects, ordered by similarity (most similar first)
         """
+        if top_k <= 0:
+            return []
+
         try:
             collection = await self._get_collection(namespace)
             if collection is None:
@@ -354,16 +389,14 @@ class ChromaVectorStore(VectorStore):
             )
             return query_results
 
-        except _TRANSIENT_ERRORS as exc:
-            # Store unavailable — degrade to empty results, matching the
-            # Turbopuffer backend's behavior on 5xx.
-            logger.warning(
-                "ChromaDB unavailable for query on namespace %s, returning empty results: %s",
-                namespace,
-                exc,
-            )
-            return []
-        except Exception:
+        except Exception as exc:
+            if _is_transient_error(exc):
+                logger.warning(
+                    "ChromaDB unavailable for query on namespace %s, returning empty results: %s",
+                    namespace,
+                    exc,
+                )
+                return []
             logger.exception(f"Failed to query namespace {namespace}")
             raise
 
@@ -392,16 +425,16 @@ class ChromaVectorStore(VectorStore):
                 batch = ids[start : start + batch_limit]
                 await asyncio.to_thread(collection.delete, ids=batch)
             logger.debug(f"Deleted {len(ids)} vectors from namespace {namespace}")
-        except _TRANSIENT_ERRORS as exc:
-            logger.warning(
-                "ChromaDB unavailable for delete from namespace %s: %s",
-                namespace,
-                exc,
-            )
-            raise VectorStoreError(
-                f"ChromaDB unavailable while deleting vectors in namespace {namespace}"
-            ) from exc
-        except Exception:
+        except Exception as exc:
+            if _is_transient_error(exc):
+                logger.warning(
+                    "ChromaDB unavailable for delete from namespace %s: %s",
+                    namespace,
+                    exc,
+                )
+                raise VectorStoreError(
+                    f"ChromaDB unavailable while deleting vectors in namespace {namespace}"
+                ) from exc
             logger.exception(
                 f"Failed to delete {len(ids)} vectors from namespace {namespace}"
             )
@@ -414,8 +447,6 @@ class ChromaVectorStore(VectorStore):
         Args:
             namespace: The namespace to delete
         """
-        from chromadb.errors import NotFoundError
-
         try:
             client = await self._get_client()
             await asyncio.to_thread(
@@ -424,7 +455,11 @@ class ChromaVectorStore(VectorStore):
             logger.debug(f"Deleted namespace {namespace}")
         except NotFoundError:
             logger.debug(f"Namespace {namespace} does not exist, nothing to delete")
-        except Exception:
+        except Exception as exc:
+            if _is_transient_error(exc):
+                raise VectorStoreError(
+                    f"ChromaDB unavailable while deleting namespace {namespace}"
+                ) from exc
             logger.exception(f"Failed to delete namespace {namespace}")
             raise
 
@@ -444,16 +479,18 @@ class ChromaVectorStore(VectorStore):
     async def probe_namespace_dim(self, namespace: str) -> int | None:
         """Recover the vector dimension of an existing Chroma collection.
 
-        Chroma locks a collection's dimensionality on first write but does
-        not expose it reliably through the collection model, so this peeks
-        one stored embedding. Returns ``None`` when the collection does not
-        exist (lazy-create model) or exists but has no records yet — in
-        both cases no dimension has been locked, which the startup
-        validator treats as "nothing to check".
+        Fetch a fresh collection model: the object returned at creation can
+        retain dimension=None after writes. The stored dimension survives
+        deletion of every record. Fall back to sampling an embedding for
+        servers that omit the model's dimension.
         """
         collection = await self._get_collection(namespace)
         if collection is None:
             return None
+
+        declared_dim = collection.get_model().dimension
+        if declared_dim is not None:
+            return declared_dim
 
         peek = cast(
             dict[str, Any],

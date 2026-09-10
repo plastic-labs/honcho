@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from nanoid import generate as generate_nanoid
@@ -75,7 +75,7 @@ class TestSessionCRUD:
                 )
             )
         ).scalar_one()
-        session_peer.left_at = datetime.now(timezone.utc)
+        session_peer.left_at = datetime.now(UTC)
         await db_session.commit()
 
         await crud.get_or_create_session(
@@ -152,7 +152,7 @@ class TestSessionCRUD:
                 )
             )
         ).scalar_one()
-        session_peer.joined_at = datetime(2020, 1, 1, tzinfo=timezone.utc)
+        session_peer.joined_at = datetime(2020, 1, 1, tzinfo=UTC)
         await db_session.commit()
 
         await crud.set_peers_for_session(
@@ -164,7 +164,7 @@ class TestSessionCRUD:
         active_joined_at, active_left_at, active_config = (
             await db_session.execute(session_peer_stmt)
         ).one()
-        assert active_joined_at == datetime(2020, 1, 1, tzinfo=timezone.utc)
+        assert active_joined_at == datetime(2020, 1, 1, tzinfo=UTC)
         assert active_left_at is None
         # A replace states the desired end state, so the incoming config lands even
         # though the membership window is untouched.

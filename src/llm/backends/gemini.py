@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any, ClassVar, cast
 
 from google.genai import types as genai_types
@@ -489,7 +489,7 @@ class GeminiBackend:
             )
             expires_at = getattr(cached_content, "expire_time", None)
             if expires_at is None:
-                expires_at = datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)
+                expires_at = datetime.now(UTC) + timedelta(seconds=ttl_seconds)
             cached_handle = gemini_cache_store.set(
                 GeminiCacheHandle(
                     key=cache_key,
