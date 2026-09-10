@@ -35,6 +35,7 @@ from src.cache.client import (
     safe_cache_set,
 )
 from src.config import settings
+from src.crud.deriver import active_queue_session_match
 from src.exceptions import (
     ConflictException,
     ObserverException,
@@ -590,16 +591,11 @@ async def delete_session(
     # Perform cascading deletes in order
     # Order is important to avoid foreign key constraint violations
     try:
-        # Delete ActiveQueueSession entries
-        # Work unit keys have format: {task_type}:{workspace_name}:{session_name}:{...}
+        # Delete ActiveQueueSession entries, matching on the work_unit_key
+        # (flag-aware position + tenant pinning; rationale lives on the helper).
         await db.execute(
             delete(models.ActiveQueueSession).where(
-                and_(
-                    func.split_part(models.ActiveQueueSession.work_unit_key, ":", 2)
-                    == workspace_name,
-                    func.split_part(models.ActiveQueueSession.work_unit_key, ":", 3)
-                    == session_name,
-                )
+                active_queue_session_match(workspace_name, session_name)
             )
         )
 

@@ -77,6 +77,7 @@ async def publish_webhook_event(
                     },
                     tenant_id=tenant_id,
                 ),
+                tenant_id=tenant_id,
                 payload=payload,
                 session_id=None,
                 task_type="webhook",
