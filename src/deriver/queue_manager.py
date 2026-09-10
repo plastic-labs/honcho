@@ -24,12 +24,11 @@ from src import models
 from src.cache.client import close_cache, init_cache
 from src.config import settings
 from src.crud.deriver import (
-    REPRESENTATION_WORK_UNIT_PREFIX,
-    representation_batch_threshold_clause,
-    unclaimed_work_unit_clause,
+    cleanup_stale_work_units as crud_cleanup_stale_work_units,
 )
 from src.crud.deriver import (
-    cleanup_stale_work_units as crud_cleanup_stale_work_units,
+    representation_batch_threshold_clause,
+    unclaimed_work_unit_clause,
 )
 from src.db import tenant_context
 from src.dependencies import service_db
@@ -53,7 +52,7 @@ from src.telemetry import prometheus_metrics
 from src.telemetry.sentry import initialize_sentry
 from src.utils.queue_payload import RETRY_ATTEMPTS_PAYLOAD_KEY
 from src.utils.retryable_errors import is_retryable_error
-from src.utils.work_unit import parse_work_unit_key
+from src.utils.work_unit import parse_work_unit_key, tenant_id_for_work_unit_key
 from src.webhooks.events import (
     QueueEmptyEvent,
     publish_webhook_event,
@@ -347,7 +346,6 @@ class QueueManager:
         # work_unit_key, so each claimed unit is still tenant-homogeneous.
         # endregion
         async with service_db("get_available_work_units") as db:
-            representation_prefix = REPRESENTATION_WORK_UNIT_PREFIX
             token_stats_subq = (
                 select(
                     models.QueueItem.work_unit_key,
@@ -359,7 +357,7 @@ class QueueManager:
                     models.QueueItem.message_id == models.Message.id,
                 )
                 .where(~models.QueueItem.processed)
-                .where(models.QueueItem.work_unit_key.startswith(representation_prefix))
+                .where(models.QueueItem.task_type == "representation")
                 .group_by(models.QueueItem.work_unit_key)
                 .subquery()
             )
@@ -394,7 +392,7 @@ class QueueManager:
 
             # Apply batch threshold filter (skip if FLUSH_ENABLED is True)
             threshold_clause = representation_batch_threshold_clause(
-                work_unit_key=work_units_subq.c.work_unit_key,
+                representation_work_unit_key=token_stats_subq.c.work_unit_key,
                 total_tokens=token_stats_subq.c.total_tokens,
                 oldest_created_at=token_stats_subq.c.oldest_created_at,
             )
@@ -406,11 +404,13 @@ class QueueManager:
             available_units: list[str] = []
             for work_unit_key, total_tokens, oldest_created_at in available_rows:
                 available_units.append(work_unit_key)
+                # ai: a non-NULL token row marks a representation unit (see
+                # representation_batch_threshold_clause) — no key-prefix test.
                 if (
                     not settings.DERIVER.FLUSH_ENABLED
                     and settings.DERIVER.REPRESENTATION_BATCH_MAX_AGE_SECONDS > 0
-                    and work_unit_key.startswith(representation_prefix)
-                    and int(total_tokens or 0) < work_unit_target_tokens
+                    and total_tokens is not None
+                    and int(total_tokens) < work_unit_target_tokens
                 ):
                     logger.info(
                         "age-flushing work unit %s (tokens=%s < %s, oldest=%s)",
@@ -435,7 +435,19 @@ class QueueManager:
         Claim work units and return a mapping of work_unit_key to aqs_id.
         Returns only the work units that were successfully claimed.
         """
-        values = [{"work_unit_key": key} for key in work_unit_keys]
+        # region ai
+        # tenant_id is derived from the claimed key's prefix so the claim row
+        # carries the same tenant attribution as its queue rows — the
+        # workspace/session cleanup paths (active_queue_session_match) filter on
+        # this column flag-on, so an unstamped row would survive those deletes.
+        # endregion
+        values = [
+            {
+                "work_unit_key": key,
+                "tenant_id": tenant_id_for_work_unit_key(key),
+            }
+            for key in work_unit_keys
+        ]
 
         stmt = (
             insert(models.ActiveQueueSession)

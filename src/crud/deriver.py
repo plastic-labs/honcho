@@ -3,25 +3,34 @@ from datetime import UTC, datetime, timedelta
 from logging import getLogger
 from typing import Any
 
-from sqlalchemy import ColumnElement, Select, case, delete, func, or_, select
+from sqlalchemy import ColumnElement, Select, and_, case, delete, func, or_, select
 from sqlalchemy.engine import Row
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models, schemas
 from src.config import settings
+from src.db import tenant_context
 
 logger = getLogger(__name__)
-
-REPRESENTATION_WORK_UNIT_PREFIX = "representation:"
 
 
 def representation_batch_threshold_clause(
     *,
-    work_unit_key: ColumnElement[str],
+    representation_work_unit_key: ColumnElement[Any],
     total_tokens: ColumnElement[Any],
     oldest_created_at: ColumnElement[Any],
 ) -> ColumnElement[bool] | None:
     """The batch gate a representation work unit passes before it is claimable, or None when no gate applies."""
+    # region ai
+    # Membership, not string-matching: representation_work_unit_key is the
+    # token-stats subquery's key column after the outer join, and that subquery
+    # selects exactly the representation units (task_type filter + inner join on
+    # message_id, which every representation item carries). NULL therefore means
+    # "not a representation unit". No key-prefix test, so tenant-namespaced keys
+    # ({tenant}:representation:...) gate identically to un-prefixed ones — a
+    # startswith("representation:") here silently disabled the gate for every
+    # tenant-prefixed key.
+    # endregion
     if settings.DERIVER.FLUSH_ENABLED:
         return None
 
@@ -38,10 +47,7 @@ def representation_batch_threshold_clause(
             oldest_created_at <= func.now() - timedelta(seconds=max_age_seconds),
         )
 
-    return or_(
-        ~work_unit_key.startswith(REPRESENTATION_WORK_UNIT_PREFIX),
-        threshold,
-    )
+    return or_(representation_work_unit_key.is_(None), threshold)
 
 
 def unclaimed_work_unit_clause(
@@ -53,6 +59,60 @@ def unclaimed_work_unit_clause(
         .where(models.ActiveQueueSession.work_unit_key == work_unit_key)
         .exists()
     )
+
+
+def active_queue_session_match(
+    workspace_name: str,
+    session_name: str | None = None,
+) -> ColumnElement[bool]:
+    """Match claim rows whose work unit belongs to this workspace (and session), flag-aware."""
+    # region ai
+    # Flag-off keys are {task_type}:{workspace}:{session?}:... — workspace at
+    # split position 2, session at position 3. Under MULTI_TENANT tenant-scoped
+    # keys gain a {tenant_id}: prefix, shifting both positions by one; rows are
+    # additionally pinned to the ambient tenant via the tenant_id attribution
+    # column (a position match alone would hit other tenants' rows for a
+    # same-named workspace), and tenant-less (reconciler) rows are left to the
+    # stale-claim GC that owns them. Fail closed flag-on with no ambient tenant —
+    # every caller (API routes via require_auth, the deriver via
+    # process_work_unit) is tenant-bound when the flag is on.
+    # Known, pre-existing wrinkle both branches inherit: dream keys carry
+    # workspace one position deeper ({task}:{dream_type}:{workspace}:...) and
+    # scope keys carry session at the peer's position + 1, so those units are
+    # missed here and swept by the stale-claim GC instead — unchanged behavior.
+    # endregion
+    if settings.MULTI_TENANT:
+        tenant = tenant_context.get()
+        if not tenant:
+            raise ValueError(
+                "active_queue_session_match requires a tenant when MULTI_TENANT "
+                + "is on, but none is in scope"
+            )
+        workspace_position, session_position = 3, 4
+        tenant_match: ColumnElement[bool] | None = (
+            models.ActiveQueueSession.tenant_id == tenant
+        )
+    else:
+        workspace_position, session_position = 2, 3
+        tenant_match = None
+
+    match: ColumnElement[bool] = (
+        func.split_part(
+            models.ActiveQueueSession.work_unit_key, ":", workspace_position
+        )
+        == workspace_name
+    )
+    if session_name is not None:
+        match = and_(
+            match,
+            func.split_part(
+                models.ActiveQueueSession.work_unit_key, ":", session_position
+            )
+            == session_name,
+        )
+    if tenant_match is not None:
+        match = and_(tenant_match, match)
+    return match
 
 
 def stale_claim_cutoff() -> datetime:
@@ -111,9 +171,7 @@ async def get_deriver_metrics(db: AsyncSession) -> schemas.DeriverMetrics:
         )
         .join(models.Message, models.QueueItem.message_id == models.Message.id)
         .where(~models.QueueItem.processed)
-        .where(
-            models.QueueItem.work_unit_key.startswith(REPRESENTATION_WORK_UNIT_PREFIX)
-        )
+        .where(models.QueueItem.task_type == "representation")
         .group_by(models.QueueItem.work_unit_key)
         .subquery()
     )
@@ -136,7 +194,7 @@ async def get_deriver_metrics(db: AsyncSession) -> schemas.DeriverMetrics:
     )
 
     threshold_clause = representation_batch_threshold_clause(
-        work_unit_key=work_units.c.work_unit_key,
+        representation_work_unit_key=token_stats.c.work_unit_key,
         total_tokens=token_stats.c.total_tokens,
         oldest_created_at=token_stats.c.oldest_created_at,
     )

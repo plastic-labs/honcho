@@ -21,7 +21,7 @@ from src.cache.client import (
     safe_cache_set,
 )
 from src.config import settings
-from src.db import tenant_context
+from src.crud.deriver import active_queue_session_match
 from src.exceptions import ConflictException, ResourceNotFoundException
 from src.utils.filter import apply_filter
 from src.utils.types import GetOrCreateResult
@@ -401,37 +401,9 @@ async def delete_workspace(
     # then peers
     # then workspace
 
-    # Delete ActiveQueueSession entries first, matching on the work_unit_key.
-    # region ai
-    # Flag-off keys are {task_type}:{workspace_name}:{...}, so workspace_name is
-    # split position 2. Under MULTI_TENANT, tenant-scoped keys are prefixed
-    # {tenant_id}:{task_type}:{workspace_name}:{...} — a position-2 match would
-    # hit nothing for this tenant's scoped keys (stale claim rows survive the
-    # delete) while matching OTHER tenants' un-prefixed reconciler keys for a
-    # same-named workspace. So flag-on we match this tenant's rows by the
-    # claim's tenant_id attribution column plus position 3, and leave
-    # tenant-less (reconciler) rows to the stale-work cleanup, which is the
-    # process that owns them. Fail closed like construct_work_unit_key: flag-on
-    # with no ambient tenant must raise, not silently mismatch — both callers
-    # (the API route via require_auth, the deriver via process_work_unit) are
-    # tenant-bound when the flag is on.
-    # endregion
-    if settings.MULTI_TENANT:
-        tenant = tenant_context.get()
-        if not tenant:
-            raise ValueError(
-                "delete_workspace requires a tenant when MULTI_TENANT is on, "
-                + "but none is in scope"
-            )
-        active_queue_match = (models.ActiveQueueSession.tenant_id == tenant) & (
-            func.split_part(models.ActiveQueueSession.work_unit_key, ":", 3)
-            == workspace_name
-        )
-    else:
-        active_queue_match = (
-            func.split_part(models.ActiveQueueSession.work_unit_key, ":", 2)
-            == workspace_name
-        )
+    # Delete ActiveQueueSession entries first, matching on the work_unit_key
+    # (flag-aware position + tenant pinning; rationale lives on the helper).
+    active_queue_match = active_queue_session_match(workspace_name)
     try:
         await db.execute(delete(models.ActiveQueueSession).where(active_queue_match))
 

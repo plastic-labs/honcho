@@ -19,7 +19,10 @@ from src.utils.queue_payload import (
     create_payload,
     create_scope_task_payload,
 )
-from src.utils.work_unit import construct_work_unit_key
+from src.utils.work_unit import (
+    construct_work_unit_key,
+    tenant_id_for_work_unit_key,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +79,7 @@ async def enqueue(payload: list[dict[str, Any]]) -> None:
 
             if queue_records:
                 stmt = insert(QueueItem).returning(QueueItem)
-                await db_session.execute(stmt, queue_records)
+                await db_session.execute(stmt, _stamp_tenant_id(queue_records))
                 await db_session.commit()
 
         except Exception as e:
@@ -85,6 +88,20 @@ async def enqueue(payload: list[dict[str, Any]]) -> None:
                 import sentry_sdk
 
                 sentry_sdk.capture_exception(e)
+
+
+def _stamp_tenant_id(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Set each queue record's tenant_id from its work_unit_key's tenant prefix."""
+    # region ai
+    # queue.tenant_id is the fair-scheduling column the claim path partitions on;
+    # deriving it from the already-namespaced key keeps the column and the key
+    # prefix identical by construction at every insert site. Flag-off keys (and
+    # the tenant-less reconciler) have no prefix, so the column stays NULL — the
+    # tenant-less lane.
+    # endregion
+    for record in records:
+        record["tenant_id"] = tenant_id_for_work_unit_key(record["work_unit_key"])
+    return records
 
 
 async def handle_session(
@@ -558,7 +575,7 @@ async def enqueue_dream(
                 return
 
             stmt = insert(QueueItem).returning(QueueItem)
-            await db_session.execute(stmt, [dream_record])
+            await db_session.execute(stmt, _stamp_tenant_id([dream_record]))
             await db_session.commit()
 
             logger.info(
@@ -681,7 +698,7 @@ async def _enqueue_scope_task(
                 return
 
             stmt = insert(QueueItem).returning(QueueItem)
-            await db_session.execute(stmt, [record])
+            await db_session.execute(stmt, _stamp_tenant_id([record]))
 
             if task_type == "scope_backfill":
                 await crud.update_scope_backfill_status(
@@ -807,7 +824,7 @@ async def enqueue_deletion(
         )
 
         stmt = insert(QueueItem).returning(QueueItem)
-        await session.execute(stmt, [deletion_record])
+        await session.execute(stmt, _stamp_tenant_id([deletion_record]))
 
         if should_commit:
             await session.commit()
