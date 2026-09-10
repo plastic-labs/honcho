@@ -98,6 +98,45 @@ class SummaryType(Enum):
     LONG = "honcho_chat_summary_long"
 
 
+# Degeneration guard (#899). A model that loops until the output cap emits non-empty
+# text, so the empty-check in _create_summary can't catch it. distinct-4 is chosen over
+# zlib compression ratio because it is length-stable: measured 1.00 on clean prose from
+# 3.7k-30k chars, while zlib drifts 2.17 -> 2.50 and would cross Whisper's 2.4 threshold
+# on perfectly good long text. Against this PR's fixtures the #899 degenerate loop scores
+# 0.003 while heavily templated but legitimate prose that also hits the cap scores 0.467,
+# so 0.35 leaves the clean case a 1.33x margin and the degenerate case two orders below.
+_DEGENERATE_NGRAM_N = 4
+_DEGENERATE_DISTINCT_RATIO = 0.35
+# Provider-native cap-hit spellings; never normalized by completion_result_to_response.
+_CAP_FINISH_REASONS = frozenset({"max_tokens", "length"})
+
+
+def _distinct_ngram_ratio(text: str, n: int = _DEGENERATE_NGRAM_N) -> float:
+    """Fraction of n-grams in `text` that are unique. 1.0 = no repetition."""
+    words = text.split()
+    if len(words) < n:
+        return 1.0
+    grams = [tuple(words[i : i + n]) for i in range(len(words) - n + 1)]
+    return len(set(grams)) / len(grams)
+
+
+def _hit_output_cap(finish_reasons: list[str]) -> bool:
+    """True when any provider reported stopping at the output-token cap."""
+    return any(r.lower() in _CAP_FINISH_REASONS for r in finish_reasons)
+
+
+def _basic_fallback_summary(
+    message_count: int, last_message_content_preview: str
+) -> str:
+    """Deterministic one-liner used when the LLM summary is unusable."""
+    if message_count <= 0:
+        return ""
+    return (
+        f"Conversation with {message_count} messages about "
+        f"{last_message_content_preview}..."
+    )
+
+
 def short_summary_prompt(
     formatted_messages: str,
     output_words: int,
@@ -615,21 +654,44 @@ async def _create_summary(
                 response.finish_reasons,
             )
             is_fallback = True
-            summary_text = (
-                f"Conversation with {message_count} messages about {last_message_content_preview}..."
-                if message_count > 0
-                else ""
+            summary_text = _basic_fallback_summary(
+                message_count, last_message_content_preview
             )
             summary_tokens = estimate_tokens(summary_text) if summary_text else 0
             llm_input_tokens = 0
             llm_output_tokens = 0
+        elif _hit_output_cap(response.finish_reasons):
+            repetition_ratio = _distinct_ngram_ratio(summary_text)
+            if repetition_ratio < _DEGENERATE_DISTINCT_RATIO:
+                logger.error(
+                    (
+                        "Generated %s summary is degenerate: hit the output cap "
+                        "(finish_reasons=%s) with a distinct-%d ratio of %.3f < %.2f. "
+                        "Discarding; the previous summary is retained."
+                    ),
+                    summary_type.name,
+                    response.finish_reasons,
+                    _DEGENERATE_NGRAM_N,
+                    repetition_ratio,
+                    _DEGENERATE_DISTINCT_RATIO,
+                )
+                is_fallback = True
+                summary_text = _basic_fallback_summary(
+                    message_count, last_message_content_preview
+                )
+                summary_tokens = estimate_tokens(summary_text) if summary_text else 0
+                llm_input_tokens = 0  # match the documented fallback contract
+                llm_output_tokens = 0
+                if settings.METRICS.ENABLED:
+                    prometheus_metrics.record_summary_rejection(
+                        summary_type=summary_type.name.lower(),
+                        reason="degenerate_repetition",
+                    )
     except Exception:
         logger.exception("Error generating summary!")
         # Fallback to a basic summary in case of error
-        summary_text = (
-            f"Conversation with {message_count} messages about {last_message_content_preview}..."
-            if message_count > 0
-            else ""
+        summary_text = _basic_fallback_summary(
+            message_count, last_message_content_preview
         )
         summary_tokens = 0
         is_fallback = True
