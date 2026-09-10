@@ -6,6 +6,7 @@ import httpx
 import pytest
 from sqlalchemy.exc import DBAPIError, OperationalError
 
+from src.exceptions import EmptyRepresentationError, EmptySummaryError
 from src.utils.retryable_errors import is_retryable_db_error, is_retryable_error
 
 
@@ -89,7 +90,7 @@ def test_non_db_exceptions_are_not_db_retryable():
         (httpx.ReadTimeout("timed out"), True),
         (httpx.ConnectError("connection refused"), True),
         (ConnectionResetError("reset"), True),
-        (TimeoutError(), True),
+        # `asyncio.TimeoutError` is `TimeoutError` on 3.11+, so one case covers both.
         (TimeoutError(), True),
         (ValueError("bad input"), False),
         (httpx.HTTPStatusError("401", request=None, response=None), False),  # pyright: ignore[reportArgumentType]
@@ -114,3 +115,28 @@ def test_cause_cycle_terminates():
     a.__cause__ = b
     b.__cause__ = a
     assert not is_retryable_error(a)
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [EmptyRepresentationError("empty after 2 attempts"), EmptySummaryError("empty")],
+)
+def test_empty_response_errors_are_retryable_but_not_db_retryable(
+    exc: BaseException,
+):
+    """A degraded empty response is retryable so the work unit is re-claimed.
+
+    It is not a *DB* retryable: the distinction matters because the queue
+    worker's batch-scope handling keys off the exception type, while the
+    retry budget keys off `is_retryable_error`.
+    """
+    assert is_retryable_error(exc)
+    assert not is_retryable_db_error(exc)
+
+
+def test_empty_response_error_nested_in_cause_chain():
+    """The classifier walks __cause__, so a wrapper stays retryable."""
+    wrapper = RuntimeError("batch failed")
+    wrapper.__cause__ = EmptyRepresentationError("empty after 2 attempts")
+    assert is_retryable_error(wrapper)
+    assert not is_retryable_db_error(wrapper)
