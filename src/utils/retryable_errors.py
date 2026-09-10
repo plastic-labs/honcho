@@ -13,7 +13,7 @@ from sqlalchemy.exc import DBAPIError
 
 from src.exceptions import EmptyRepresentationError, EmptySummaryError
 
-__all__ = ["is_retryable_db_error", "is_retryable_error"]
+__all__ = ["is_empty_response_error", "is_retryable_db_error", "is_retryable_error"]
 
 _RETRYABLE_SQLSTATES = frozenset(
     {
@@ -82,6 +82,21 @@ def is_retryable_db_error(exc: BaseException) -> bool:
     return False
 
 
+def is_empty_response_error(exc: BaseException) -> bool:
+    """True when ``exc`` -- or any wrapper it chains to via ``__cause__`` -- is
+    a degraded-but-successful empty structured response.
+
+    These are *batch-scope*: the empty parse saw every item in the batch, so the
+    terminal attempt marks the whole batch errored. Classifying on the outer
+    exception alone would miss a wrapped error and mark only the first item,
+    handing the rest of the batch a fresh retry budget.
+    """
+    return any(
+        isinstance(current, _EMPTY_RESPONSE_ERRORS)
+        for current in _iter_cause_chain(exc)
+    )
+
+
 def is_retryable_error(exc: BaseException) -> bool:
     """Superset of ``is_retryable_db_error``: also transient network/provider
     transport failures (timeouts, connection refused/reset) and empty structured
@@ -92,10 +107,7 @@ def is_retryable_error(exc: BaseException) -> bool:
     """
     if is_retryable_db_error(exc):
         return True
-    if any(
-        isinstance(current, _EMPTY_RESPONSE_ERRORS)
-        for current in _iter_cause_chain(exc)
-    ):
+    if is_empty_response_error(exc):
         return True
     return any(
         isinstance(current, _TRANSPORT_ERRORS) for current in _iter_cause_chain(exc)

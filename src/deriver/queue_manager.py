@@ -41,7 +41,6 @@ from src.dreamer.dream_scheduler import (
     get_dream_scheduler,
     set_dream_scheduler,
 )
-from src.exceptions import EmptyRepresentationError, EmptySummaryError
 from src.models import QueueItem
 from src.reconciler import (
     ReconcilerScheduler,
@@ -52,7 +51,7 @@ from src.schemas import ResolvedConfiguration
 from src.telemetry import prometheus_metrics
 from src.telemetry.sentry import initialize_sentry
 from src.utils.queue_payload import RETRY_ATTEMPTS_PAYLOAD_KEY
-from src.utils.retryable_errors import is_retryable_error
+from src.utils.retryable_errors import is_empty_response_error, is_retryable_error
 from src.utils.work_unit import parse_work_unit_key
 from src.webhooks.events import (
     QueueEmptyEvent,
@@ -71,12 +70,13 @@ load_dotenv(override=True)
 MAX_RETRYABLE_ATTEMPTS = 3
 RETRY_BACKOFF_SECONDS = 1.0
 
-# Retryable errors whose cause is the *batch*, not one item in it. A degraded
-# structured response (empty representation/summary) poisons every item it saw,
-# so the terminal attempt marks the whole batch errored -- otherwise the
-# remaining items are re-fetched one at a time, each with a fresh retry budget,
-# and a degraded provider burns the work unit item by item.
-_BATCH_SCOPE_RETRYABLE_ERRORS = (EmptyRepresentationError, EmptySummaryError)
+# A degraded structured response (empty representation/summary) poisons every
+# item it saw, so the terminal attempt marks the whole batch errored -- otherwise
+# the remaining items are re-fetched one at a time, each with a fresh retry
+# budget, and a degraded provider burns the work unit item by item. The
+# classification walks the cause chain (`is_empty_response_error`), matching the
+# retry budget's `is_retryable_error`, so a *wrapped* empty response is caught
+# here too instead of being mistaken for a single-item terminal error.
 
 
 class WorkerOwnership(NamedTuple):
@@ -593,7 +593,7 @@ class QueueManager:
         Terminal errors mark the first queue item as errored so we don't
         potentially throw away a batch. This allows us to incrementally attempt
         to process the batch while still maintaining progress in a work unit.
-        Errors caused by the batch itself (see _BATCH_SCOPE_RETRYABLE_ERRORS)
+        Errors caused by the batch itself (see `is_empty_response_error`)
         mark every item instead: re-attempting the rest one item at a time with
         a fresh budget just repeats the same degraded response.
 
@@ -630,7 +630,7 @@ class QueueManager:
             if items:
                 # Clear retry metadata only after the terminal mark commits so a
                 # failed mark leaves the shared budget intact for the next claim.
-                if isinstance(error, _BATCH_SCOPE_RETRYABLE_ERRORS):
+                if is_empty_response_error(error):
                     await self.mark_queue_items_as_errored(
                         items, work_unit_key, error_msg
                     )

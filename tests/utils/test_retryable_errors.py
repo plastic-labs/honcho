@@ -7,7 +7,11 @@ import pytest
 from sqlalchemy.exc import DBAPIError, OperationalError
 
 from src.exceptions import EmptyRepresentationError, EmptySummaryError
-from src.utils.retryable_errors import is_retryable_db_error, is_retryable_error
+from src.utils.retryable_errors import (
+    is_empty_response_error,
+    is_retryable_db_error,
+    is_retryable_error,
+)
 
 
 class FakePGError(Exception):
@@ -127,7 +131,7 @@ def test_empty_response_errors_are_retryable_but_not_db_retryable(
     """A degraded empty response is retryable so the work unit is re-claimed.
 
     It is not a *DB* retryable: the distinction matters because the queue
-    worker's batch-scope handling keys off the exception type, while the
+    worker's batch-scope handling keys off `is_empty_response_error`, while the
     retry budget keys off `is_retryable_error`.
     """
     assert is_retryable_error(exc)
@@ -140,3 +144,42 @@ def test_empty_response_error_nested_in_cause_chain():
     wrapper.__cause__ = EmptyRepresentationError("empty after 2 attempts")
     assert is_retryable_error(wrapper)
     assert not is_retryable_db_error(wrapper)
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [EmptyRepresentationError("empty after 2 attempts"), EmptySummaryError("empty")],
+)
+def test_empty_response_errors_are_batch_scope(exc: BaseException):
+    """The batch-scope classifier is true for the bare empty-response errors."""
+    assert is_empty_response_error(exc)
+
+
+def test_wrapped_empty_response_error_is_batch_scope():
+    """A wrapper must classify as batch-scope, same traversal as the budget.
+
+    The queue worker keys the whole-batch terminal mark off this helper; if it
+    only recognised the outer exception a wrapped empty response would mark
+    items[0] alone and hand the rest of the batch a fresh retry budget.
+    """
+    wrapper = RuntimeError("representation batch failed")
+    wrapper.__cause__ = EmptySummaryError("empty summary (finish_reasons=['length'])")
+    assert is_empty_response_error(wrapper)
+    assert is_retryable_error(wrapper)
+
+
+def test_non_empty_errors_are_not_batch_scope():
+    """Transient-but-not-empty failures stay single-item terminal."""
+    assert not is_empty_response_error(ValueError("bad batch"))
+    transport_wrapper = RuntimeError("provider call failed")
+    transport_wrapper.__cause__ = httpx.ConnectError("connection refused")
+    assert is_retryable_error(transport_wrapper)
+    assert not is_empty_response_error(transport_wrapper)
+
+
+def test_batch_scope_classification_terminates_on_cause_cycle():
+    a = RuntimeError("a")
+    b = RuntimeError("b")
+    a.__cause__ = b
+    b.__cause__ = a
+    assert not is_empty_response_error(a)
