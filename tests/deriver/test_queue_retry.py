@@ -461,6 +461,59 @@ class TestEmptyRepresentationRequeue(_QueueRetryTestBase):
         )
         assert await self._retry_attempts_on_items(db_session, work_unit_key) is None
 
+    async def test_exhausted_wrapped_empty_representation_fails_the_whole_batch(
+        self,
+        db_session: AsyncSession,
+        sample_session_with_peers: tuple[models.Session, list[models.Peer]],
+        create_queue_payload: Callable[..., Any],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A *wrapped* empty parse is still batch-scope at the attempt cap.
+
+        `is_retryable_error` walks ``__cause__``, so a wrapper around
+        `EmptyRepresentationError` earns the same retry budget as the bare
+        error. The terminal classification must walk that chain too: keying
+        off the outer type alone marks items[0] and leaves the rest of the
+        batch unprocessed with a cleared counter -- a fresh budget for the
+        very failure that just exhausted it.
+        """
+        monkeypatch.setattr("src.deriver.queue_manager.RETRY_BACKOFF_SECONDS", 0.0)
+        qm, work_unit_key, worker_id, _ = await self._seed_work_unit(
+            db_session, sample_session_with_peers, create_queue_payload, n_messages=3
+        )
+        await qm._set_work_unit_retry_attempts(  # pyright: ignore[reportPrivateUsage]
+            work_unit_key, MAX_RETRYABLE_ATTEMPTS - 1
+        )
+
+        def wrapped_empty_representation() -> RuntimeError:
+            try:
+                raise EmptyRepresentationError("empty representation after 2 attempts")
+            except EmptyRepresentationError as inner:
+                raise RuntimeError("representation batch failed") from inner
+
+        with pytest.raises(RuntimeError) as exc_info:
+            wrapped_empty_representation()
+        wrapped_error = exc_info.value
+        assert isinstance(wrapped_error.__cause__, EmptyRepresentationError)
+
+        with patch(
+            "src.deriver.queue_manager.process_representation_batch",
+            side_effect=wrapped_error,
+        ):
+            await qm.process_work_unit(work_unit_key, worker_id)
+
+        items = await self._fetch_items(db_session, work_unit_key)
+        assert len(items) == 3
+        assert all(item.processed for item in items), (
+            "a wrapped empty parse must mark the whole batch, not just items[0]"
+        )
+        assert all(item.error is not None for item in items)
+        assert all("RuntimeError" in item.error for item in items if item.error)
+        assert len({item.error for item in items}) == 1, (
+            "every item of the poisoned batch carries the same terminal error"
+        )
+        assert await self._retry_attempts_on_items(db_session, work_unit_key) is None
+
     async def test_success_after_a_retry_consumes_the_batch_exactly_once(
         self,
         db_session: AsyncSession,
