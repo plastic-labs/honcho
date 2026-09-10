@@ -20,7 +20,7 @@ WEBHOOK_UNIT = "webhook:backfill"
 DRAINED_UNIT = "representation:backfill-drained"
 
 INDEXES = (
-    ("work_unit_backlog", "ix_work_unit_backlog_tenant_id"),
+    ("work_unit_backlog", "ix_work_unit_backlog_tenant_oldest_key"),
     ("work_unit_backlog", "ix_work_unit_backlog_oldest_created_at_key"),
 )
 

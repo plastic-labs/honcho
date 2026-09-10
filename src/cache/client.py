@@ -247,12 +247,7 @@ async def init_cache() -> None:
                             "Connected to cache at %s",
                             _redact_cache_url(settings.CACHE.URL),
                         )
-        except (
-            redis_exc.TimeoutError,
-            redis_exc.ConnectionError,
-            asyncio.TimeoutError,
-            TimeoutError,
-        ) as e:
+        except (redis_exc.TimeoutError, redis_exc.ConnectionError, TimeoutError) as e:
             logger.warning(
                 "Failed to connect to cache at %s: %s. Falling back to in-memory cache",
                 _redact_cache_url(settings.CACHE.URL),

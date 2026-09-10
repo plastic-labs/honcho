@@ -696,5 +696,5 @@ class TestDeleteWorkspaceTenantScopedQueueCleanup:
         await db_session.commit()
 
         monkeypatch.setattr(settings, "MULTI_TENANT", True)
-        with pytest.raises(ValueError, match="requires a tenant"):
+        with pytest.raises(ValueError, match="without a tenant when MULTI_TENANT"):
             await crud.delete_workspace(db_session, workspace_name)

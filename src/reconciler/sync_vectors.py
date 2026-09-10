@@ -584,7 +584,7 @@ async def _cleanup_soft_deleted_documents_pgvector(
     Cleanup soft-deleted documents
     """
 
-    cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(
+    cutoff = datetime.datetime.now(datetime.UTC) - datetime.timedelta(
         minutes=older_than_minutes
     )
 

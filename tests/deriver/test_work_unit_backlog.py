@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from src import crud, models
 from src.config import settings
-from src.crud.deriver import backlog_threshold_clause, unclaimed_work_unit_clause
+from src.crud.deriver import claim_rows_query
 from src.deriver.queue_manager import QueueManager
 from src.models import DEFAULT_TENANT_ID
 from src.utils.types import TaskType
@@ -66,22 +66,11 @@ async def _count_unprocessed_queue_items(db: AsyncSession) -> int:
     return int(result.scalar_one())
 
 
-def _claim_candidate_query(limit: int) -> Select[tuple[str]]:
-    """The claim path's candidate SELECT, mirrored so a test can run it directly."""
-    query = (
-        select(models.WorkUnitBacklog.work_unit_key)
-        .where(unclaimed_work_unit_clause(models.WorkUnitBacklog.work_unit_key))
-        .order_by(
-            models.WorkUnitBacklog.oldest_created_at.asc(),
-            models.WorkUnitBacklog.work_unit_key.asc(),
-        )
-        .limit(limit)
-        .with_for_update(skip_locked=True)
-    )
-    threshold_clause = backlog_threshold_clause()
-    if threshold_clause is not None:
-        query = query.where(threshold_clause)
-    return query
+def _claim_candidate_query(limit: int) -> Select[Any]:
+    """The real claim query, straight from the production builder — no mirrored
+    SQL, so these tests exercise the exact shape the deriver runs and drift is
+    impossible."""
+    return claim_rows_query(limit)
 
 
 def _independent_sessions(db_engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:

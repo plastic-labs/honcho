@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Any, Literal
 
@@ -19,6 +20,7 @@ from src.utils.queue_payload import (
     create_payload,
     create_scope_task_payload,
 )
+from src.utils.retryable_errors import is_retryable_error
 from src.utils.work_unit import (
     construct_work_unit_key,
     tenant_id_for_work_unit_key,
@@ -78,16 +80,47 @@ async def enqueue(payload: list[dict[str, Any]]) -> None:
             )
 
             if queue_records:
-                stmt = insert(QueueItem).returning(QueueItem)
-                await db_session.execute(stmt, _stamp_tenant_id(queue_records))
-                await db_session.commit()
+                await _insert_queue_records(db_session, queue_records)
 
         except Exception as e:
+            # Reached only after _insert_queue_records has exhausted its
+            # transient-error retries; enqueue stays fire-and-forget by
+            # contract, so the failure surfaces here rather than to a caller.
             logger.exception("Failed to enqueue message(s)!")
             if settings.SENTRY.ENABLED:
                 import sentry_sdk
 
                 sentry_sdk.capture_exception(e)
+
+
+async def _insert_queue_records(
+    db_session: AsyncSession, queue_records: list[dict[str, Any]]
+) -> None:
+    """Insert a stamped, key-sorted batch of queue records, retrying transient failures."""
+    # region ai
+    # Sorted by work_unit_key so the insert trigger's backlog upserts acquire
+    # row locks in canonical key order — the same order the claim's lock step
+    # and the statement-trigger recomputes use — making trigger-vs-claim
+    # deadlock by lock-order inversion impossible. The bounded retry covers
+    # residual transient failures (deadlock, serialization, lost connection):
+    # before it, a deadlock-victim enqueue was swallowed by the caller's
+    # catch-all and the batch was silently never derived.
+    # endregion
+    records = sorted(
+        _stamp_tenant_id(queue_records), key=lambda record: record["work_unit_key"]
+    )
+    stmt = insert(QueueItem).returning(QueueItem)
+    last_attempt = 2
+    for attempt in range(last_attempt + 1):
+        try:
+            await db_session.execute(stmt, records)
+            await db_session.commit()
+            return
+        except Exception as exc:
+            await db_session.rollback()
+            if attempt == last_attempt or not is_retryable_error(exc):
+                raise
+            await asyncio.sleep(0.1 * (attempt + 1))
 
 
 def _stamp_tenant_id(records: list[dict[str, Any]]) -> list[dict[str, Any]]:

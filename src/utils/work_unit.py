@@ -92,9 +92,9 @@ def construct_work_unit_key(
     # region ai
     # A tenant_id equal to a task-type name would make the prefixed key
     # indistinguishable from an un-prefixed one in parse_work_unit_key (the two
-    # are told apart by leading-segment membership in _TASK_TYPES). Groudon mints
-    # nanoid tenant ids so this cannot happen in practice; the guard makes the
-    # invariant explicit instead of latent.
+    # are told apart by leading-segment membership in _TASK_TYPES). The tenant
+    # id issuer mints opaque nanoids, so this cannot happen in practice; the
+    # guard makes the invariant explicit instead of latent.
     # endregion
     if tenant in _TASK_TYPES:
         raise ValueError(
@@ -174,6 +174,19 @@ def _construct_base_work_unit_key(
     raise ValueError(f"Invalid task type: {task_type}")
 
 
+def _split_tenant_prefix(work_unit_key: str) -> tuple[str | None, str]:
+    """(tenant prefix or None, remaining key) — the one home of the prefix test."""
+    # region ai
+    # A key produced under MULTI_TENANT is `{tenant_id}:{base_key}`; otherwise it
+    # is just `{base_key}`. The two are told apart by the leading segment: a known
+    # task type means no prefix; anything else is a tenant_id to strip off.
+    # endregion
+    head, _, rest = work_unit_key.partition(":")
+    if head and head not in _TASK_TYPES and rest:
+        return head, rest
+    return None, work_unit_key
+
+
 def tenant_id_for_work_unit_key(work_unit_key: str) -> str | None:
     """The tenant a key is namespaced to, or None for un-prefixed keys."""
     # region ai
@@ -182,26 +195,15 @@ def tenant_id_for_work_unit_key(work_unit_key: str) -> str | None:
     # than resolving the tenant a second time) makes column ≡ key-prefix hold by
     # construction at every write site.
     # endregion
-    head, _, rest = work_unit_key.partition(":")
-    if head and head not in _TASK_TYPES and rest:
-        return head
-    return None
+    return _split_tenant_prefix(work_unit_key)[0]
 
 
 def parse_work_unit_key(work_unit_key: str) -> ParsedWorkUnit:
     """Parse a work unit key, transparently handling a tenant_id prefix."""
-    # region ai
-    # A key produced under MULTI_TENANT is `{tenant_id}:{base_key}`; otherwise it
-    # is just `{base_key}`. The two are told apart by the leading segment: a known
-    # task type means no prefix; anything else is a tenant_id to strip off and
-    # record.
-    # endregion
-    head, _, rest = work_unit_key.partition(":")
-    if head and head not in _TASK_TYPES and rest:
-        parsed = _parse_base_work_unit_key(rest)
-        parsed.tenant_id = head
-        return parsed
-    return _parse_base_work_unit_key(work_unit_key)
+    tenant_id, base_key = _split_tenant_prefix(work_unit_key)
+    parsed = _parse_base_work_unit_key(base_key)
+    parsed.tenant_id = tenant_id
+    return parsed
 
 
 def _parse_base_work_unit_key(work_unit_key: str) -> ParsedWorkUnit:

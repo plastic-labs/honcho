@@ -23,10 +23,7 @@ from sqlalchemy.sql import func
 from src import models
 from src.cache.client import close_cache, init_cache
 from src.config import settings
-from src.crud.deriver import (
-    backlog_threshold_clause,
-    unclaimed_work_unit_clause,
-)
+from src.crud.deriver import claim_rows_query
 from src.crud.deriver import (
     cleanup_stale_work_units as crud_cleanup_stale_work_units,
 )
@@ -342,40 +339,19 @@ class QueueManager:
 
         # region ai
         # Cross-tenant claim on the service session (tracked_db would fail
-        # closed under MULTI_TENANT); A2 tenant-namespaces work_unit_key, so
+        # closed under MULTI_TENANT); work_unit_key is tenant-namespaced, so
         # each claimed unit is still tenant-homogeneous. The candidate set is
         # the trigger-maintained work_unit_backlog — one indexed row per pending
         # unit — instead of re-aggregating the queue, whose two GROUP BYs plus
-        # messages join are ~O(depth²) per poll at shared-queue depth. FOR
-        # UPDATE SKIP LOCKED makes concurrent claimers pick disjoint candidate
-        # sets (zero wasted claims); the backlog row locks release at commit,
-        # and the ActiveQueueSession insert below remains the durable claim
-        # marker for the processing duration. Ordering is unchanged: oldest
-        # unit first, key tiebreak.
+        # messages join are ~O(depth²) per poll at shared-queue depth.
+        # claim_rows_query locks its rows FOR UPDATE SKIP LOCKED, so concurrent
+        # claimers stay disjoint and backfill from the sorted stream (the
+        # builder carries the locking rationale, deadlock story included); the
+        # row locks release at commit, and the ActiveQueueSession insert below
+        # remains the durable claim marker for the processing duration.
         # endregion
         async with service_db("get_available_work_units") as db:
-            query = (
-                select(
-                    models.WorkUnitBacklog.work_unit_key,
-                    models.WorkUnitBacklog.task_type,
-                    models.WorkUnitBacklog.total_tokens,
-                    models.WorkUnitBacklog.oldest_created_at,
-                )
-                .where(unclaimed_work_unit_clause(models.WorkUnitBacklog.work_unit_key))
-                .order_by(
-                    models.WorkUnitBacklog.oldest_created_at.asc(),
-                    models.WorkUnitBacklog.work_unit_key.asc(),
-                )
-                .limit(limit)
-                .with_for_update(skip_locked=True)
-            )
-
-            # Apply batch threshold filter (skip if FLUSH_ENABLED is True)
-            threshold_clause = backlog_threshold_clause()
-            if threshold_clause is not None:
-                query = query.where(threshold_clause)
-
-            result = await db.execute(query)
+            result = await db.execute(claim_rows_query(limit))
             available_rows = result.all()
             available_units: list[str] = []
             for (

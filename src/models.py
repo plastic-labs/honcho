@@ -747,13 +747,13 @@ class WorkUnitBacklog(Base):
     # over the unit's remaining unprocessed rows; a unit with nothing pending
     # has NO row — existence, not pending_count, is what the delete guard keys
     # on, so a live unit never loses its row to a racing recompute). Application
-    # code must never write it. Service table: tenant_id is plain attribution
-    # for fair scheduling — no FK, no RLS — and pending_count is bookkeeping,
-    # not a claim input; the claim gate reads task_type/total_tokens/
-    # oldest_created_at and claims by row existence.
+    # code must never write it. pending_count is bookkeeping, not a claim
+    # input; the claim gate reads task_type/total_tokens/oldest_created_at and
+    # claims by row existence.
     # endregion
     work_unit_key: Mapped[str] = mapped_column(TEXT, primary_key=True)
-    tenant_id: Mapped[str | None] = mapped_column(TEXT, nullable=True, index=True)
+    # ai: Service table: tenant_id is plain attribution, no FK / RLS.
+    tenant_id: Mapped[str | None] = mapped_column(TEXT, nullable=True)
     task_type: Mapped[TaskType] = mapped_column(TEXT, nullable=False)
     pending_count: Mapped[int] = mapped_column(Integer, nullable=False)
     total_tokens: Mapped[int] = mapped_column(
@@ -764,7 +764,15 @@ class WorkUnitBacklog(Base):
     )
 
     __table_args__ = (
-        # The claim's ORDER BY (oldest first, key tiebreak) walks this index.
+        # Feeds the fair claim's PARTITION BY tenant_id ORDER BY
+        # (oldest_created_at, work_unit_key) window with pre-sorted input.
+        Index(
+            "ix_work_unit_backlog_tenant_oldest_key",
+            "tenant_id",
+            "oldest_created_at",
+            "work_unit_key",
+        ),
+        # Serves the plain oldest-first candidate scan and the metrics min().
         Index(
             "ix_work_unit_backlog_oldest_created_at_key",
             "oldest_created_at",

@@ -15,7 +15,11 @@ from src import schemas
 from src.config import settings
 from src.crud import tenant as tenant_crud
 from src.dependencies import service_db
-from src.exceptions import AuthenticationException, DisabledException, ValidationException
+from src.exceptions import (
+    AuthenticationException,
+    DisabledException,
+    ValidationException,
+)
 from src.models import DEFAULT_TENANT_ID
 
 logger = logging.getLogger(__name__)
