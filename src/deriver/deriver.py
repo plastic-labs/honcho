@@ -224,6 +224,12 @@ async def process_representation_tasks_batch(
     # has to be handled here or the batch is consumed with nothing derived.
     response, llm_duration = await _request_representation()
     llm_attempts = 1
+    # Usage is accumulated over every attempt so the completed event reports
+    # what the batch actually cost: reporting only the final attempt would
+    # under-report a re-requested (retried) parse's duration and tokens.
+    total_llm_duration_ms = llm_duration
+    total_input_tokens = response.input_tokens
+    total_output_tokens = response.output_tokens
 
     observations = Representation.from_prompt_representation(
         response.content,
@@ -251,6 +257,9 @@ async def process_representation_tasks_batch(
         await asyncio.sleep(_jittered_backoff(backoff_seconds))
         llm_attempts += 1
         response, llm_duration = await _request_representation()
+        total_llm_duration_ms += llm_duration
+        total_input_tokens += response.input_tokens
+        total_output_tokens += response.output_tokens
         observations = Representation.from_prompt_representation(
             response.content,
             message_ids,
@@ -409,11 +418,11 @@ async def process_representation_tasks_batch(
             message_count=len(messages),
             explicit_conclusion_count=len(observations.explicit),
             context_preparation_ms=context_prep_duration,
-            llm_call_ms=llm_duration,
+            llm_call_ms=total_llm_duration_ms,
             total_duration_ms=overall_duration,
             input_tokens=messages_tokens,
-            total_input_tokens=response.input_tokens,
-            output_tokens=response.output_tokens,
+            total_input_tokens=total_input_tokens,
+            output_tokens=total_output_tokens,
             # additive fields
             queued_message_count=queued_message_count,
             prompt_message_count=prompt_message_count,
