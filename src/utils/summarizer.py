@@ -149,6 +149,50 @@ def _basic_fallback_summary(
     )
 
 
+# Substituted into the prompt when there is no previous summary to fold in.
+_NO_PREVIOUS_SUMMARY_TEXT = "There is no previous summary -- the messages are the beginning of the conversation."
+
+
+def _previous_summary_text(previous_summary: str | None) -> str:
+    """Resolve the text the prompt carries when there is no previous summary."""
+    return previous_summary or _NO_PREVIOUS_SUMMARY_TEXT
+
+
+def summary_prompt(
+    summary_type: SummaryType,
+    formatted_messages: str,
+    previous_summary: str | None,
+    input_tokens: int = 0,
+    custom_instructions: str | None = None,
+) -> str:
+    """Build the exact prompt handed to `honcho_llm_call` for a summary.
+
+    Single source of truth: the request path and the `EmptySummaryError` triage
+    fields (`prompt_bytes` / `prompt_digest`) must identify the *same* string,
+    otherwise the digest correlates retries of text the provider never saw.
+    Change the instructions in one place only.
+    """
+    previous_summary_text = _previous_summary_text(previous_summary)
+    if summary_type is SummaryType.SHORT:
+        # input_tokens indicates how many tokens the message list + previous
+        # summary take up. Short summaries should be smaller than the content
+        # being summarized, so the target scales with the input up to the cap.
+        target_tokens = int(
+            min(input_tokens, settings.SUMMARY.MAX_TOKENS_SHORT) * SUMMARY_TARGET_RATIO
+        )
+        return short_summary_prompt(
+            formatted_messages,
+            target_tokens,
+            previous_summary_text,
+            custom_instructions,
+        )
+
+    target_tokens = int(settings.SUMMARY.MAX_TOKENS_LONG * SUMMARY_TARGET_RATIO)
+    return long_summary_prompt(
+        formatted_messages, target_tokens, previous_summary_text, custom_instructions
+    )
+
+
 def short_summary_prompt(
     formatted_messages: str,
     target_tokens: int,
@@ -263,20 +307,12 @@ async def create_short_summary(
     *,
     telemetry: LLMTelemetryContext | None = None,
 ) -> HonchoLLMCallResponse[str]:
-    # input_tokens indicates how many tokens the message list + previous summary take up.
-    # Short summaries should be smaller than the content being summarized, so the target
-    # scales with the input up to the cap.
-    target_tokens = int(
-        min(input_tokens, settings.SUMMARY.MAX_TOKENS_SHORT) * SUMMARY_TARGET_RATIO
-    )
-
-    if previous_summary:
-        previous_summary_text = previous_summary
-    else:
-        previous_summary_text = "There is no previous summary -- the messages are the beginning of the conversation."
-
-    prompt = short_summary_prompt(
-        formatted_messages, target_tokens, previous_summary_text, custom_instructions
+    prompt = summary_prompt(
+        SummaryType.SHORT,
+        formatted_messages,
+        previous_summary,
+        input_tokens,
+        custom_instructions,
     )
 
     # Mint a root span id.
@@ -304,15 +340,11 @@ async def create_long_summary(
     *,
     telemetry: LLMTelemetryContext | None = None,
 ) -> HonchoLLMCallResponse[str]:
-    target_tokens = int(settings.SUMMARY.MAX_TOKENS_LONG * SUMMARY_TARGET_RATIO)
-
-    if previous_summary:
-        previous_summary_text = previous_summary
-    else:
-        previous_summary_text = "There is no previous summary -- the messages are the beginning of the conversation."
-
-    prompt = long_summary_prompt(
-        formatted_messages, target_tokens, previous_summary_text, custom_instructions
+    prompt = summary_prompt(
+        SummaryType.LONG,
+        formatted_messages,
+        previous_summary,
+        custom_instructions=custom_instructions,
     )
 
     # Mint a root span id.
@@ -717,7 +749,19 @@ async def _create_summary(
                     response.finish_reasons,
                     response.output_tokens,
                 )
-                summary_prompt_bytes = len(formatted_messages.encode("utf-8"))
+                # Hash the prompt the provider was actually given (instructions +
+                # previous summary + messages + hard output limit) with the
+                # deriver's 16-hex convention. `formatted_messages` alone is not
+                # the prompt identity: two attempts with different instructions or
+                # a different previous summary would collide on the digest.
+                prompt = summary_prompt(
+                    summary_type,
+                    formatted_messages,
+                    previous_summary_text,
+                    input_tokens,
+                    custom_instructions,
+                )
+                summary_prompt_bytes = len(prompt.encode("utf-8"))
                 raise EmptySummaryError(
                     "empty summary "
                     f"(parse_class={parse_class}, "
@@ -727,9 +771,9 @@ async def _create_summary(
                     provider=settings.SUMMARY.MODEL_CONFIG.transport or "unknown",
                     model=settings.SUMMARY.MODEL_CONFIG.model or "unknown",
                     prompt_bytes=summary_prompt_bytes,
-                    prompt_digest=hashlib.sha256(
-                        formatted_messages.encode("utf-8")
-                    ).hexdigest()[:16],
+                    prompt_digest=hashlib.sha256(prompt.encode("utf-8")).hexdigest()[
+                        :16
+                    ],
                 )
             logger.error(
                 "Generated summary is empty (finish_reasons=%s). Falling back to basic summary.",
