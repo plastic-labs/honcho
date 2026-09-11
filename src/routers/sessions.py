@@ -350,10 +350,21 @@ async def get_or_create_session(
             db, workspace_id, session.peer_names.keys(), action=_SCOPES_ROUTE_GUIDANCE
         )
 
+    # A peer-scoped key may only add its own peer. Membership grants read access
+    # to the session (`allow_member_read`), so naming another peer, or joining a
+    # session the caller is not already in, would hand out that access; the
+    # latter is enforced inside the CRUD call via `acting_peer`.
+    acting_peer = None if jwt_params.ad else jwt_params.p
+    if acting_peer is not None and set(session.peer_names or {}) - {acting_peer}:
+        raise AuthenticationException("Unauthorized access to resource")
+
     # Handle session creation with proper error handling
     try:
         result = await crud.get_or_create_session(
-            db, workspace_name=workspace_id, session=session
+            db,
+            workspace_name=workspace_id,
+            session=session,
+            acting_peer=acting_peer,
         )
         response.status_code = 201 if result.created else 200
         return result.resource
