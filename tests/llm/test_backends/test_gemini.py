@@ -8,6 +8,8 @@ from pydantic import BaseModel
 from src.exceptions import LLMError, ValidationException
 from src.llm.backends.gemini import GeminiBackend
 from src.llm.caching import PromptCachePolicy, gemini_cache_store
+from src.llm.structured_output import StructuredOutputError
+from src.utils.representation import PromptRepresentation
 
 
 @pytest.mark.asyncio
@@ -659,3 +661,53 @@ async def test_gemini_backend_structured_without_tools_uses_native_schema() -> N
     assert call["config"]["response_mime_type"] == "application/json"
     # No instruction injected on the tool-less path.
     assert call["contents"][-1]["parts"][-1]["text"] == "Hello"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "parsed", [{"wrong": 1}, '{"wrong": 1}', PromptRepresentation()]
+)
+async def test_gemini_backend_rejects_wrong_structured_output_keys(
+    parsed: dict[str, int] | str | PromptRepresentation,
+) -> None:
+    client = Mock()
+    client.aio.models.generate_content = AsyncMock(
+        return_value=_gemini_response(
+            [SimpleNamespace(text='{"wrong": 1}')],
+            parsed=parsed,
+        )
+    )
+
+    backend = GeminiBackend(client)
+    with pytest.raises(StructuredOutputError) as exc_info:
+        await backend.complete(
+            model="gemini-2.5-flash",
+            messages=[{"role": "user", "content": "Hello"}],
+            max_tokens=100,
+            response_format=PromptRepresentation,
+        )
+
+    message = str(exc_info.value)
+    assert "model=gemini-2.5-flash" in message
+    assert "payload_sha256=" in message
+    assert "wrong" not in message
+
+
+@pytest.mark.asyncio
+async def test_gemini_backend_accepts_schema_valid_empty_object() -> None:
+    client = Mock()
+    client.aio.models.generate_content = AsyncMock(
+        return_value=_gemini_response(
+            [SimpleNamespace(text="{}")],
+            parsed=PromptRepresentation(),
+        )
+    )
+
+    result = await GeminiBackend(client).complete(
+        model="gemini-test",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        response_format=PromptRepresentation,
+    )
+
+    assert result.content == PromptRepresentation(explicit=[])
