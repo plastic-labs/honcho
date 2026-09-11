@@ -118,7 +118,7 @@ def verify_jwt(token: str) -> JWTParams:
             params.exp = decoded["exp"]
             if params.exp:
                 exp_time = parse_datetime_iso(params.exp)
-                current_time = datetime.datetime.now(datetime.timezone.utc)
+                current_time = datetime.datetime.now(datetime.UTC)
                 if exp_time < current_time:
                     raise AuthenticationException("JWT expired")
         if "ad" in decoded:

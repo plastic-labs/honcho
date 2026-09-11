@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 This package versions independently of the Honcho API, `@honcho-ai/sdk`, and host plugins.
 
+## [Unreleased]
+
+### Added
+
+- Scope membership tools: `create_scope`, `add_sessions_to_scope`,
+  `remove_session_from_scope`, and `get_scope_status` (Honcho v3.1.0+), so
+  clients can provision recall boundaries instead of only reading them.
+
 ## [0.1.0] - 2026-09-09
 
 ### Added

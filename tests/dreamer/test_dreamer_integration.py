@@ -120,19 +120,19 @@ class TestLastDreamAtCompletionWrite:
             await process_dream(payload, seeded_collection.workspace_name)
 
         dream_meta = await _get_dream_metadata(db_session, seeded_collection)
-        assert (
-            "last_dream_at" in dream_meta
-        ), "process_dream must write last_dream_at when run_dream returns a result"
+        assert "last_dream_at" in dream_meta, (
+            "process_dream must write last_dream_at when run_dream returns a result"
+        )
         # Must be a tz-aware UTC ISO timestamp. A naive datetime.now().isoformat()
         # would pass a loose "T in string" check but corrupt the 8h guard math
         # against tz-aware now() comparisons downstream.
         parsed = datetime.fromisoformat(dream_meta["last_dream_at"])
-        assert (
-            parsed.tzinfo is not None
-        ), f"last_dream_at must be timezone-aware, got {dream_meta['last_dream_at']!r}"
-        assert parsed.utcoffset() == timedelta(
-            0
-        ), f"last_dream_at must be UTC, got offset {parsed.utcoffset()}"
+        assert parsed.tzinfo is not None, (
+            f"last_dream_at must be timezone-aware, got {dream_meta['last_dream_at']!r}"
+        )
+        assert parsed.utcoffset() == timedelta(0), (
+            f"last_dream_at must be UTC, got offset {parsed.utcoffset()}"
+        )
 
     @pytest.mark.asyncio
     async def test_failure_path_leaves_last_dream_at_null(
@@ -598,9 +598,9 @@ class TestGuardPairCoherence:
             "pre-Loop-4 the baseline was consumed at enqueue time and a "
             "silent failure would lock out retries on the same corpus."
         )
-        assert (
-            "last_dream_at" not in dream_meta
-        ), "Failed dream must not advance last_dream_at either."
+        assert "last_dream_at" not in dream_meta, (
+            "Failed dream must not advance last_dream_at either."
+        )
 
         with patch.object(
             _scheduler, "schedule_dream", new_callable=AsyncMock

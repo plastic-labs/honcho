@@ -11,7 +11,7 @@ from src.utils.representation import (
 
 def test_representation_is_empty_and_diff():
     """is_empty and diff_representation behave per the new definitions."""
-    now = datetime.datetime.now(datetime.timezone.utc)
+    now = datetime.datetime.now(datetime.UTC)
     shared_time = now - datetime.timedelta(seconds=10)
     exp_shared_1 = ExplicitObservation(
         content="A",
@@ -48,7 +48,7 @@ def test_representation_is_empty_and_diff():
 
 def test_representation_formatting_methods():
     """__str__ and format_as_markdown produce expected section headers and content."""
-    now = datetime.datetime.now(datetime.timezone.utc)
+    now = datetime.datetime.now(datetime.UTC)
     e = ExplicitObservation(
         content="has a dog",
         created_at=now,
@@ -93,7 +93,7 @@ def test_prompt_representation_conversion():
         #     )
         # ],
     )
-    timestamp = datetime.datetime(2025, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc)
+    timestamp = datetime.datetime(2025, 1, 1, 12, 0, 0, tzinfo=datetime.UTC)
     rep = Representation.from_prompt_representation(
         pr,
         message_ids=[1],
