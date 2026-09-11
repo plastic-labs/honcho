@@ -179,9 +179,9 @@ def test_vector_store_dimensions_explicit_set_warns(
     messages = [
         str(w.message) for w in captured if issubclass(w.category, DeprecationWarning)
     ]
-    assert any(
-        "VECTOR_STORE_DIMENSIONS is deprecated" in m for m in messages
-    ), f"expected deprecation warning, got {messages!r}"
+    assert any("VECTOR_STORE_DIMENSIONS is deprecated" in m for m in messages), (
+        f"expected deprecation warning, got {messages!r}"
+    )
 
 
 def test_non_1536_pgvector_without_migrated_no_longer_raises_at_config_time() -> None:

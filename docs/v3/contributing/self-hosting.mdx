@@ -108,7 +108,9 @@ The first build takes a few minutes (compiling from source). Subsequent starts a
 
 The default image does not include LanceDB. To use `VECTOR_STORE_TYPE=lancedb`, build with `INSTALL_LANCEDB=true docker compose up -d --build`.
 
-This starts four services: **api** (port 8000), **deriver** (background worker), **database** (PostgreSQL with pgvector, port 5432), and **redis** (port 6379). All ports are bound to `127.0.0.1`. Redis caching is enabled by default.
+This starts five services: **api** (port 8000), **deriver** (background worker), **mcp** (Streamable HTTP on port 3000), **database** (PostgreSQL with pgvector, port 5432), and **redis** (port 6379). All ports are bound to `127.0.0.1`. Redis caching is enabled by default.
+
+Point MCP clients at `http://127.0.0.1:3000` — see [Run locally](/v3/guides/integrations/mcp#run-locally) for stdio, HTTP, and Docker.
 
 For development, uncomment the source mount and monitoring sections inside `docker-compose.yml` to enable live reload, Prometheus, and Grafana.
 
@@ -122,6 +124,9 @@ docker compose ps
 
 # Health check (confirms the process is up)
 curl http://localhost:8000/health
+
+# MCP health check
+curl http://localhost:3000/health
 
 # Check the deriver is processing (look for "polling" or "processing" in logs)
 docker compose logs deriver --tail 20

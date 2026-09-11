@@ -24,10 +24,10 @@ repos:
 
   # Python code formatting and linting with ruff
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.8.4
+    rev: v0.15.12
     hooks:
       # Linter - only on Python directories
-      - id: ruff
+      - id: ruff-check
         args: [--fix]
         files: ^(src/|tests/|scripts/|migrations/|sdks/python/|sandbox/).*\.py$
       # Formatter - only on Python directories

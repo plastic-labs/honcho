@@ -1,9 +1,5 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import {
-  createClientFactory,
-  createUnscopedClient,
-  parseEnvConfig,
-} from "./config.js";
+import { honchoClients, parseEnvConfig } from "./config.js";
 import { createServer } from "./server.js";
 
 declare const process: {
@@ -17,11 +13,8 @@ try {
     HONCHO_API_URL: process.env.HONCHO_API_URL,
     HONCHO_WORKSPACE_ID: process.env.HONCHO_WORKSPACE_ID,
   });
-  const server = createServer({
-    config,
-    clientFor: createClientFactory(config),
-    unscoped: createUnscopedClient(config),
-  });
+  // No HTTP caller on stdio, so only X-Honcho-Host is sent.
+  const server = createServer({ config, ...honchoClients(config) });
   await server.connect(new StdioServerTransport());
 } catch (e) {
   const message = e instanceof Error ? e.message : String(e);

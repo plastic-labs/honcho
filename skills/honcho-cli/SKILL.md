@@ -19,7 +19,7 @@ allowed-tools: Bash(honcho:*), Bash(jq:*), Read, Grep
 
 - `honcho config` — CLI configuration
 - `honcho start` / `stop` / `status` — local Docker stack (does not change `environmentUrl`). First start pins the Honcho image digest and writes `config.toml` into the profile. Pass `--setup basic` or `--setup advanced` for an interactive config wizard (TTY only; writes `.env` overrides). `honcho status` lists every profile; pass `--profile` for one.
-- `honcho workspace` — inspect, delete, search
+- `honcho workspace` — inspect, delete, search, chat
 - `honcho peer` — inspect, card, chat, search
 - `honcho session` — inspect, view (transcript), context, summaries
 - `honcho message` — list and get
@@ -74,6 +74,8 @@ honcho session summaries <session_id> --json
 
 ```bash
 honcho workspace search "query" --json
+honcho workspace chat "what themes show up across peers?" --json
+honcho workspace chat "what happened in this project?" --scope my-project --json
 honcho peer search <peer_id> "query" --json
 ```
 
@@ -114,4 +116,6 @@ honcho conclusion search "topic" --observer <peer_id> --json
 
 # Exercise the dialectic directly
 honcho peer chat <peer_id> "what do you know about X?" --json
+honcho peer chat <peer_id> "what happened here?" --scope my-project --json
+honcho workspace chat "what themes show up across peers?" --json
 ```

@@ -233,7 +233,8 @@ class QueueManager:
         # Run the polling loop directly in this task
         logger.debug("Starting polling loop directly")
         try:
-            await self._sleep_startup_jitter()
+            if settings.DERIVER.SCHEDULER == "deriver":
+                await self._sleep_startup_jitter()
             await self.polling_loop()
         finally:
             await self.cleanup()

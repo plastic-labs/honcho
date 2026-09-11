@@ -289,9 +289,7 @@ async def test_get_sessions_reverse_uses_id_tiebreaker(
     """Sessions with identical created_at fall back to ordering by id (nanoid PK)."""
     test_workspace, _ = sample_data
     reverse_group = f"tiebreaker-sessions-{generate_nanoid()}"
-    shared_created_at = datetime.datetime(
-        2026, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc
-    )
+    shared_created_at = datetime.datetime(2026, 1, 1, 12, 0, 0, tzinfo=datetime.UTC)
 
     low_id = "A" * 21
     high_id = "z" * 21

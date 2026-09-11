@@ -101,9 +101,9 @@ def test_deriver_response_model_round_trips() -> None:
     content = json.dumps(generate(schema))
 
     representation = PromptRepresentation.model_validate_json(content)
-    assert (
-        representation.explicit
-    ), "an empty explicit list is exactly the silent failure this mock avoids"
+    assert representation.explicit, (
+        "an empty explicit list is exactly the silent failure this mock avoids"
+    )
 
 
 def test_json_schema_response_is_never_prose(client: TestClient) -> None:

@@ -49,6 +49,29 @@ def backoff_eligible(
     )
 
 
+async def has_pending_work(db: AsyncSession) -> bool:
+    """True when a reconciliation cycle would find something to sync or clean up."""
+    cutoff = datetime.datetime.now(datetime.UTC) - datetime.timedelta(minutes=5)
+    checks = [
+        select(models.MessageEmbedding.id).where(
+            models.MessageEmbedding.sync_state == "pending",
+            backoff_eligible(models.MessageEmbedding.last_sync_at),
+        ),
+        select(models.Document.id).where(
+            models.Document.deleted_at.is_not(None), models.Document.deleted_at < cutoff
+        ),
+    ]
+    if get_external_vector_store() is not None:
+        checks.append(
+            select(models.Document.id).where(
+                models.Document.deleted_at.is_(None),
+                models.Document.sync_state == "pending",
+                backoff_eligible(models.Document.last_sync_at),
+            )
+        )
+    return any([await db.scalar(c.limit(1)) is not None for c in checks])
+
+
 @dataclass
 class ReconciliationMetrics:
     """Metrics for a reconciliation cycle."""
@@ -584,7 +607,7 @@ async def _cleanup_soft_deleted_documents_pgvector(
     Cleanup soft-deleted documents
     """
 
-    cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(
+    cutoff = datetime.datetime.now(datetime.UTC) - datetime.timedelta(
         minutes=older_than_minutes
     )
 
