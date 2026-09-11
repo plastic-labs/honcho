@@ -175,3 +175,65 @@ async def test_exhausted_retries_surface_the_provider_error_not_retry_error() ->
         )
 
     assert caught.value.status_code == 503
+
+
+async def test_toolless_path_also_surfaces_the_provider_error() -> None:
+    """The deriver's path, from Rootly 3WyMAJ.
+
+    `minimal_deriver_batch` calls `honcho_llm_call` with no tools, so it goes
+    through `_toolless_call` in `api.py` rather than the tool loop -- a
+    separate pair of `retry(...)` sites that the tool-loop fix does not cover.
+    """
+    from src.llm import api as api_module
+
+    async def _always_502(*_args: object, **_kwargs: object) -> object:
+        raise UpstreamLLMError("Model provider returned HTTP 502")
+
+    with (
+        patch.object(api_module, "honcho_llm_call_inner", new=_always_502),
+        pytest.raises(UpstreamLLMError) as caught,
+    ):
+        await api_module.honcho_llm_call(
+            model_config=ModelConfig(
+                model="claude-haiku-4-5",
+                transport="anthropic",
+                # Enough for the registry to build a client; it is never used,
+                # since honcho_llm_call_inner is patched out.
+                api_key="test-key",
+            ),
+            prompt="hi",
+            max_tokens=64,
+            enable_retry=True,
+            # One attempt: exhausts the budget without a backoff sleep.
+            retry_attempts=1,
+        )
+
+    assert caught.value.status_code == 503
+
+
+def test_every_llm_retry_site_sets_reraise() -> None:
+    """Structural guard for the gap 3WyMAJ exposed.
+
+    The first pass at this fix patched the three `retry(...)` sites in
+    `tool_loop.py` and missed the two in `api.py`, so the deriver kept raising
+    bare `RetryError`. Any new site has to opt in too.
+    """
+    import ast
+    from pathlib import Path
+
+    offenders: list[str] = []
+    for path in sorted(Path("src/llm").rglob("*.py")):
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if not (isinstance(func, ast.Name) and func.id == "retry"):
+                continue
+            if not any(kw.arg == "reraise" for kw in node.keywords):
+                offenders.append(f"{path}:{node.lineno}")
+
+    assert offenders == [], (
+        f"tenacity retry() without reraise=True: {offenders}. "
+        "Without it an exhausted budget raises RetryError, erasing the cause."
+    )
