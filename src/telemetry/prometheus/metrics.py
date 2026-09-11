@@ -247,6 +247,16 @@ deriver_queue_oldest_pending_age_seconds_gauge = NamespacedGauge(
     ["namespace"],
 )
 
+deriver_effective_worker_cap_gauge = NamespacedGauge(
+    "deriver_effective_worker_cap",
+    "Per-process worker concurrency after the DB-pool headroom derivation — "
+    + "min(DERIVER_WORKERS, max(1, floor(WORKERS_PER_POOL_CONNECTION * pool "
+    + "capacity))). Genuinely per-replica: sum() across deriver replicas is "
+    + "total fleet worker capacity; min() below DERIVER_WORKERS means some "
+    + "replica's pool, not config, is the binding cap",
+    ["namespace"],
+)
+
 dreams_due_gauge = NamespacedGauge(
     "dreams_due",
     "Collections whose next dream is due and would actually run. "
@@ -355,6 +365,12 @@ class PrometheusMetrics:
             embed_now_tasks_in_flight_gauge.labels().set(count)
         except Exception as e:
             self._handle_metric_error("set_embed_now_tasks_in_flight", e)
+
+    def set_deriver_effective_worker_cap(self, count: int) -> None:
+        try:
+            deriver_effective_worker_cap_gauge.labels().set(count)
+        except Exception as e:
+            self._handle_metric_error("set_deriver_effective_worker_cap", e)
 
     def record_dialectic_call(
         self,

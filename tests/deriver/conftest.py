@@ -1,16 +1,21 @@
 import asyncio
+import itertools
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any, Literal, TypeAlias, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from nanoid import generate as generate_nanoid
 from sqlalchemy import delete, select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.engine import Row
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from src import crud, models, schemas
+from src.config import settings
+from src.models import DEFAULT_TENANT_ID
 from src.utils.queue_payload import create_payload
+from src.utils.types import TaskType
 from src.utils.work_unit import construct_work_unit_key
 
 
@@ -322,3 +327,152 @@ def mock_representation_manager(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:  
     mock_manager.save_representation.return_value = 0
 
     return mock_manager
+
+
+# The trigger-maintained work_unit_backlog and the claim that reads it are
+# exercised from several modules (the aggregate's own behavior, the fair
+# scheduler's ordering, the race regressions), so the seeding fixture, the claim
+# gate's settings and the plain readers live here rather than in whichever test
+# module happened to need them first.
+
+SeedWorkUnit = Callable[..., Awaitable[list[models.QueueItem]]]
+
+
+async def _read_backlog_row(db: AsyncSession, work_unit_key: str) -> Row[Any] | None:
+    """Read one backlog row as plain columns, outside the ORM identity map.
+
+    The triggers write this table behind the session's back, so a mapped
+    instance loaded earlier in a test would keep answering from its stale state.
+    """
+    result = await db.execute(
+        select(
+            models.WorkUnitBacklog.tenant_id,
+            models.WorkUnitBacklog.task_type,
+            models.WorkUnitBacklog.pending_count,
+            models.WorkUnitBacklog.total_tokens,
+            models.WorkUnitBacklog.oldest_created_at,
+        ).where(models.WorkUnitBacklog.work_unit_key == work_unit_key)
+    )
+    return result.one_or_none()
+
+
+async def _read_backlog_keys(db: AsyncSession) -> set[str]:
+    """Every work unit the backlog currently considers pending."""
+    result = await db.execute(select(models.WorkUnitBacklog.work_unit_key))
+    return set(result.scalars().all())
+
+
+def _independent_sessions(db_engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
+    """A factory for sessions on their own connections, for concurrency tests."""
+    return async_sessionmaker(bind=db_engine, expire_on_commit=False)
+
+
+@pytest.fixture
+async def seed_work_unit(
+    db_session: AsyncSession,
+    sample_data: tuple[models.Workspace, models.Peer],
+) -> SeedWorkUnit:
+    """Commit queue rows — with the messages their tokens are read from — for one unit.
+
+    ``token_counts`` has one entry per queue row; ``ages_seconds`` backdates each
+    row's ``created_at`` so age-based behavior is exercised without sleeping.
+    ``with_messages=False`` leaves ``message_id`` NULL, the shape infrastructure
+    tasks like webhook and deletion enqueue.
+    """
+    workspace, peer = sample_data
+    session = models.Session(name=str(generate_nanoid()), workspace_name=workspace.name)
+    db_session.add(session)
+    await db_session.flush()
+    sequence_numbers = itertools.count(1)
+
+    async def _seed(
+        work_unit_key: str,
+        *,
+        task_type: TaskType = "representation",
+        token_counts: Sequence[int] = (1,),
+        ages_seconds: Sequence[int] | None = None,
+        tenant_id: str | None = DEFAULT_TENANT_ID,
+        processed: bool = False,
+        with_messages: bool = True,
+    ) -> list[models.QueueItem]:
+        ages = (
+            list(ages_seconds)
+            if ages_seconds is not None
+            else [0] * len(list(token_counts))
+        )
+        enqueued_at = datetime.now(UTC)
+        queue_items: list[models.QueueItem] = []
+
+        for token_count, age_seconds in zip(token_counts, ages, strict=True):
+            message_id: int | None = None
+            if with_messages:
+                message = models.Message(
+                    session_name=session.name,
+                    workspace_name=workspace.name,
+                    peer_name=peer.name,
+                    content="seeded message",
+                    token_count=token_count,
+                    seq_in_session=next(sequence_numbers),
+                )
+                db_session.add(message)
+                await db_session.flush()
+                message_id = message.id
+
+            queue_item = models.QueueItem(
+                session_id=session.id,
+                work_unit_key=work_unit_key,
+                task_type=task_type,
+                payload={},
+                processed=processed,
+                # The reconciler is the tenant-less lane and carries no
+                # workspace (the queue CHECK enforces it).
+                workspace_name=(None if task_type == "reconciler" else workspace.name),
+                message_id=message_id,
+                tenant_id=tenant_id,
+                created_at=enqueued_at - timedelta(seconds=age_seconds),
+            )
+            db_session.add(queue_item)
+            queue_items.append(queue_item)
+
+        await db_session.commit()
+        return queue_items
+
+    return _seed
+
+
+@pytest.fixture
+def batch_gate_settings(monkeypatch: pytest.MonkeyPatch) -> Callable[..., None]:
+    """Pin the claim gate's inputs so a test never depends on deployed defaults."""
+
+    def _configure(
+        *,
+        target_tokens: int = 512,
+        max_age_seconds: int = 1800,
+        flush_enabled: bool = False,
+        workers: int = 1,
+    ) -> None:
+        monkeypatch.setattr(
+            settings.DERIVER,
+            "REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS",
+            target_tokens,
+        )
+        monkeypatch.setattr(
+            settings.DERIVER, "REPRESENTATION_BATCH_MAX_AGE_SECONDS", max_age_seconds
+        )
+        monkeypatch.setattr(settings.DERIVER, "FLUSH_ENABLED", flush_enabled)
+        monkeypatch.setattr(settings.DERIVER, "WORKERS", workers)
+        # region ai
+        # `workers` only reaches the claim's LIMIT after the pool derivation
+        # min(WORKERS, max(1, floor(WORKERS_PER_POOL_CONNECTION x (POOL_SIZE +
+        # MAX_OVERFLOW)))), so a deployment or CI config with a small pool would
+        # quietly cap it and turn every fairness assertion into an assertion
+        # about claim width instead. Pin the pool wide enough that the
+        # derivation never binds, and keep POOL_CLASS off "null" so the
+        # derivation is the path actually taken rather than skipped.
+        # endregion
+        monkeypatch.setattr(settings.DB, "POOL_CLASS", "default")
+        monkeypatch.setattr(settings.DERIVER, "WORKERS_PER_POOL_CONNECTION", 4.0)
+        monkeypatch.setattr(settings.DB, "POOL_SIZE", 64)
+        monkeypatch.setattr(settings.DB, "MAX_OVERFLOW", 64)
+
+    return _configure

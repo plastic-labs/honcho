@@ -122,13 +122,13 @@ cd sdks/typescript && bun run tsc --noEmit
 
 #### Multi-row locking and deadlocks
 
-Tables written concurrently by more than one worker — `documents` (deriver, dreamer, scope backfill/removal, reconciler) and `queue` (every deriver replica) — deadlock when two writers touch an overlapping row set in different orders. Rules:
+Tables written concurrently by more than one worker — `documents` (deriver, dreamer, scope backfill/removal, reconciler), `queue` (every deriver replica), and `work_unit_backlog` (trigger-maintained from every `queue` write, and claimed `FOR UPDATE SKIP LOCKED` by every deriver replica) — deadlock when two writers touch an overlapping row set in different orders. Rules:
 
 - **A multi-row `SELECT ... FOR UPDATE` MUST carry an explicit `ORDER BY <pk>`.** Without it Postgres locks in scan order, which differs per plan, so two writers with overlapping sets can cycle. `_apply_document_row_updates` in `src/crud/document.py` is the reference implementation.
 - **`WHERE id IN (...)` does NOT impose an order**, so sorting the Python list is a no-op — the list order is discarded and the planner picks `Bitmap Heap Scan` (ctid order), `Index Scan` (id order), or `Seq Scan` per invocation. Deterministic ordering requires either a preceding `SELECT ... ORDER BY id FOR UPDATE` or `WHERE id IN (SELECT id ... ORDER BY id FOR UPDATE)`.
 - **`Document.id` is a random nanoid** (`models.py`), so id order is uncorrelated with physical order — an unordered predicate `UPDATE`/`DELETE` is roughly a coin flip against an id-ordered locker per row pair, not a rare edge case. (`QueueItem.id` is an integer identity, so there id order is also chronological.)
 - **Prefer no lock at all.** A single `UPDATE ... WHERE <predicate>` acquires row locks as it writes and has no separate lock phase to get wrong. Reach for `FOR UPDATE` only when a value must be read, computed in Python, and written back — that read-modify-write is the only reason `_apply_document_row_updates` locks (it replaced a server-side `func.greatest()`), and `populate_existing=True` is required with it so the identity map doesn't serve a stale pre-lock value. Server-side expressions (`func.greatest`, the JSONB `-` operator) avoid the lock entirely; see `_clear_work_unit_retry_attempts` in `src/deriver/queue_manager.py`.
-- `FOR UPDATE SKIP LOCKED` (the reconciler's claim pattern) never waits, so it cannot be a deadlock partner — but holding those locks across an external call still stalls other writers. See the "never hold a DB session during external calls" rule above.
+- `FOR UPDATE SKIP LOCKED` (the reconciler's claim pattern, and the deriver's own work-unit claim over `work_unit_backlog` — `claim_rows_query` in `src/crud/deriver.py`) never waits, so it cannot be a deadlock partner for other SKIP LOCKED lockers — but it still locks in output order, its held locks can be the partner a blocking locker deadlocks against (the backlog triggers retry for exactly this), and holding those locks across an external call still stalls other writers. See the "never hold a DB session during external calls" rule above.
 
 #### Auth scoping
 
@@ -142,7 +142,7 @@ Tables written concurrently by more than one worker — `documents` (deriver, dr
 Honcho runs as two cooperating processes that share a Postgres database and Redis cache:
 
 - **API server** (`uv run fastapi dev src/main.py`) — handles HTTP, enqueues background work, returns immediately. Hosts the **Dialectic** agent inline (synchronous tool loop during chat requests).
-- **Deriver worker** (`uv run python -m src.deriver`) — long-running queue consumer (uvloop). Runs the **Deriver**, **Summarizer**, and **Dreamer** off the queue. Can run multiple instances (`DERIVER_WORKERS`). Also hosts an in-process **Reconciler scheduler** (`src/reconciler/`) that periodically embeds messages with `sync_state='pending'` in `MessageEmbedding` and cleans up stale queue items — embedding generation is decoupled from message creation by design.
+- **Deriver worker** (`uv run python -m src.deriver`) — long-running queue consumer (uvloop). Runs the **Deriver**, **Summarizer**, and **Dreamer** off the queue. Can run multiple process replicas (a deployment concern, orthogonal to config); within one process, `DERIVER_WORKERS` (≤512) sets concurrent work-unit tasks, further capped by DB-pool headroom via `DERIVER_WORKERS_PER_POOL_CONNECTION` — when the pool is the binding cap, the process logs it at boot and exports `deriver_effective_worker_cap`. Also hosts an in-process **Reconciler scheduler** (`src/reconciler/`) that periodically embeds messages with `sync_state='pending'` in `MessageEmbedding` and cleans up stale queue items — embedding generation is decoupled from message creation by design.
 
 ### Agent Architecture
 
@@ -157,6 +157,7 @@ Honcho uses several specialized LLM agents. They share tool definitions and the 
 The Deriver processes batches of incoming messages and extracts conclusions about peers. The current architecture is "minimal deriver" — a **single LLM call** per batch using structured output, not an agentic tool loop. This trades flexibility for cost and predictability.
 
 - **Trigger**: Messages enqueued by `src/deriver/enqueue.py` on message create; consumed by `src/deriver/queue_manager.py` → `consumer.process_item()` → `deriver.process_representation_tasks_batch()`.
+- **Claim**: workers claim whole work units from `work_unit_backlog` — a database-trigger-maintained aggregate (one row per pending unit: tenant, task type, token sum, oldest age) — via `FOR UPDATE SKIP LOCKED`, round-robin over `tenant_id` so no tenant starves another within a claim; a claimed unit is marked by an `ActiveQueueSession` row for the processing duration. Single-tenant deployments (every `tenant_id` NULL) get plain oldest-first ordering, unchanged.
 - **Output**: Explicit conclusions (direct facts) and deductive conclusions (inferences) saved to `(observer, observed)` collections.
 - **Entry point**: `src/deriver/__main__.py` → `queue_manager.main()`.
 - **Prompts**: `src/deriver/prompts.py` (`minimal_deriver_prompt`).
@@ -211,7 +212,8 @@ The Dreamer is an orchestrated multi-specialist system that runs during schedule
 src/
 ├── main.py              # FastAPI app: middleware, routers, lifespan, exception handlers
 ├── models.py            # SQLAlchemy ORM models (Workspace/Peer/Session/Message/
-│                        #   MessageEmbedding/Collection/Document/QueueItem/...)
+│                        #   MessageEmbedding/Collection/Document/QueueItem/
+│                        #   WorkUnitBacklog/...)
 ├── config.py            # Pydantic-settings configuration (very large; see README)
 ├── db.py                # Engine + session/context management (request_context var)
 ├── dependencies.py      # FastAPI DI (tracked_db, etc.)
@@ -287,7 +289,7 @@ src/
 
 ### Database Design
 
-- All tables use text IDs (nanoid format) as primary keys
+- All tables use text IDs (nanoid format) as primary keys, except service tables with no FK/RLS surface: `queue.id` is an integer identity (see the locking section) and `work_unit_backlog.work_unit_key` is the unit's own derived key
 - Composite foreign keys for multi-tenant relationships
 - Feature flags on workspace, peer, and session levels
 - Token counting on messages for usage tracking

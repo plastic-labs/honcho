@@ -54,6 +54,21 @@ def backlog_threshold_clause() -> ColumnElement[bool] | None:
     return or_(models.WorkUnitBacklog.task_type != "representation", threshold)
 
 
+def claim_excluded_tenant_ids() -> Sequence[str] | None:
+    """Tenant ids the claim must skip, or None when no exclusion applies."""
+    # region ai
+    # The suspension seam: excluding a tenant means filtering its backlog rows
+    # out of the claim's eligible set before ranking, so an excluded whale
+    # contributes nothing to any round. No exclusion source exists yet, hence
+    # None; the seam returns ids rather than a clause so wiring a source in
+    # cannot reintroduce the NULL footgun — the claim composes `tenant_id IS
+    # NULL OR tenant_id NOT IN (ids)` itself, keeping the tenant-less
+    # (reconciler) lane in rotation by construction (a bare NOT IN is
+    # NULL-false and would silently starve it).
+    # endregion
+    return None
+
+
 def unclaimed_work_unit_clause(
     work_unit_key: SQLColumnExpression[str],
 ) -> ColumnElement[bool]:
@@ -120,38 +135,75 @@ def active_queue_session_match(
 
 
 def claim_rows_query(limit: int) -> Select[Any]:
-    """The claim's locked candidate SELECT: eligible units in scheduling order, skipping rows a concurrent claimer holds."""
+    """The claim's locked candidate SELECT: every tenant's oldest eligible unit before any tenant's second, skipping rows a concurrent claimer holds."""
     # region ai
-    # One statement on purpose: FOR UPDATE SKIP LOCKED locks rows in output
-    # order below the LIMIT, so a concurrent claimer's locked rows are skipped
-    # and BACKFILLED from the sorted stream — both claimers fill their batch,
-    # disjointly, with zero wasted claims. A two-step select-then-lock variant
-    # loses that backfill (the loser picks the same blind candidates, skips
-    # them all, and claims nothing for the poll). The cost of locking in
+    # Fairness = round-robin over tenant_id: ranks number each tenant's
+    # ELIGIBLE units oldest-first (eligibility inside the subquery, so a
+    # claimed rank-1 unit never shadows its tenant's rank-2), and the outer
+    # ORDER BY takes every tenant's rank-1 before any rank-2 — a whale
+    # contributes one unit per round. NULLs group as one partition, so the
+    # tenant-less reconciler lane is a bucket in the rotation and a flag-off
+    # deployment (every tenant_id NULL) degenerates to plain oldest-first,
+    # identical to the pre-fairness ordering. The window function cannot
+    # combine with FOR UPDATE, hence the rank-then-join shape.
+    #
+    # One locking statement on purpose: FOR UPDATE SKIP LOCKED locks rows in
+    # output order below the LIMIT, so a concurrent claimer's locked rows are
+    # skipped and BACKFILLED from the sorted stream — both claimers fill their
+    # batch, disjointly, with zero wasted claims. A two-step select-then-lock
+    # variant loses that backfill (the loser picks the same blind candidates,
+    # skips them all, and claims nothing for the poll). The cost of locking in
     # scheduling order is that a rare lock-order inversion against the enqueue
-    # trigger's backlog upserts can deadlock; Postgres's detector breaks it and
-    # both sides retry — the enqueue in _insert_queue_records, the claim on its
-    # next poll (the polling loop's catch-all backs off and continues).
+    # trigger's backlog upserts can deadlock; Postgres's detector breaks it
+    # and both sides retry — the enqueue in _insert_queue_records, the claim
+    # on its next poll (the polling loop's catch-all backs off and continues).
     # endregion
-    query = (
+    eligible = select(
+        models.WorkUnitBacklog.work_unit_key,
+        models.WorkUnitBacklog.oldest_created_at,
+        func.row_number()
+        .over(
+            partition_by=models.WorkUnitBacklog.tenant_id,
+            order_by=(
+                models.WorkUnitBacklog.oldest_created_at.asc(),
+                models.WorkUnitBacklog.work_unit_key.asc(),
+            ),
+        )
+        .label("rank_within_tenant"),
+    ).where(unclaimed_work_unit_clause(models.WorkUnitBacklog.work_unit_key))
+
+    threshold_clause = backlog_threshold_clause()
+    if threshold_clause is not None:
+        eligible = eligible.where(threshold_clause)
+    excluded_tenant_ids = claim_excluded_tenant_ids()
+    if excluded_tenant_ids:
+        eligible = eligible.where(
+            or_(
+                models.WorkUnitBacklog.tenant_id.is_(None),
+                models.WorkUnitBacklog.tenant_id.notin_(excluded_tenant_ids),
+            )
+        )
+    eligible_subq = eligible.subquery()
+
+    return (
         select(
             models.WorkUnitBacklog.work_unit_key,
             models.WorkUnitBacklog.task_type,
             models.WorkUnitBacklog.total_tokens,
             models.WorkUnitBacklog.oldest_created_at,
         )
-        .where(unclaimed_work_unit_clause(models.WorkUnitBacklog.work_unit_key))
+        .join(
+            eligible_subq,
+            models.WorkUnitBacklog.work_unit_key == eligible_subq.c.work_unit_key,
+        )
         .order_by(
-            models.WorkUnitBacklog.oldest_created_at.asc(),
+            eligible_subq.c.rank_within_tenant.asc(),
+            eligible_subq.c.oldest_created_at.asc(),
             models.WorkUnitBacklog.work_unit_key.asc(),
         )
         .limit(limit)
-        .with_for_update(skip_locked=True)
+        .with_for_update(skip_locked=True, of=models.WorkUnitBacklog)
     )
-    threshold_clause = backlog_threshold_clause()
-    if threshold_clause is not None:
-        query = query.where(threshold_clause)
-    return query
 
 
 def stale_claim_cutoff() -> datetime:
