@@ -192,9 +192,9 @@ async def test_live_openai_float_encoding_matches_base64(
     base64_response = await openai_client.embeddings.create(**base64_kwargs)
 
     similarity = cosine_similarity(float_vector, base64_response.data[0].embedding)
-    assert (
-        similarity > 0.99999
-    ), f"{spec.id}: float encoding diverges from base64 (cosine={similarity:.8f})"
+    assert similarity > 0.99999, (
+        f"{spec.id}: float encoding diverges from base64 (cosine={similarity:.8f})"
+    )
 
 
 @pytest.mark.asyncio

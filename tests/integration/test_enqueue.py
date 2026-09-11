@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -120,9 +120,9 @@ class TestEnqueueFunction:
         # When deriver is disabled, only summary records should be created (if applicable)
         # Since this is message 1, and 1 % 20 != 0 and 1 % 60 != 0, no summary should be created
         # No representation records should be created either (deriver disabled)
-        assert (
-            final_count == initial_count
-        ), f"Expected no queue items, but got {final_count - initial_count}"
+        assert final_count == initial_count, (
+            f"Expected no queue items, but got {final_count - initial_count}"
+        )
 
     @pytest.mark.asyncio
     async def test_session_normal_processing_single_peer(
@@ -528,7 +528,7 @@ class TestEnqueueFunction:
             )
         )
         session_peer = session_peer_result.scalar_one()
-        session_peer.left_at = datetime.now(timezone.utc)
+        session_peer.left_at = datetime.now(UTC)
         await db_session.commit()
 
         # Create message payload from the peer who left
@@ -609,7 +609,7 @@ class TestEnqueueFunction:
             )
         )
         session_peer = session_peer_result.scalar_one()
-        session_peer.left_at = datetime.now(timezone.utc)
+        session_peer.left_at = datetime.now(UTC)
         await db_session.commit()
 
         # Create message payload
@@ -711,7 +711,7 @@ class TestEnqueueFunction:
                 )
             )
             session_peer = session_peer_result.scalar_one()
-            session_peer.left_at = datetime.now(timezone.utc)
+            session_peer.left_at = datetime.now(UTC)
         await db_session.commit()
 
         # Create message payload from sender
@@ -853,9 +853,9 @@ class TestGetEffectiveObserveMeFunction:
                 observed = f"sender_{i}"
 
             result = get_effective_observe_me(observed, peers_with_configuration)
-            assert (
-                result == expected
-            ), f"Test case {i} failed: peer_config={peer_config}, session_config={session_config}, expected={expected}, got={result}"
+            assert result == expected, (
+                f"Test case {i} failed: peer_config={peer_config}, session_config={session_config}, expected={expected}, got={result}"
+            )
 
 
 @pytest.mark.asyncio
@@ -963,7 +963,7 @@ class TestAdvancedEnqueueEdgeCases:
                 )
             )
             session_peer = session_peer_result.scalar_one()
-            session_peer.left_at = datetime.now(timezone.utc)
+            session_peer.left_at = datetime.now(UTC)
         await db_session.commit()
 
         # Create message payload
@@ -1025,7 +1025,7 @@ class TestAdvancedEnqueueEdgeCases:
 
         # Mark both as having left (observer left first, then sender)
 
-        base_time = datetime.now(timezone.utc)
+        base_time = datetime.now(UTC)
 
         # Observer left first
         observer_session_peer_result = await db_session.execute(
@@ -1169,7 +1169,7 @@ class TestGenerateQueueRecordsSeqInSession:
             "session_name": test_session.name,
             "content": "Test message",
             "seq_in_session": 20,  # Multiple of MESSAGES_PER_SHORT_SUMMARY to trigger summary creation
-            "created_at": datetime.now(timezone.utc),  # Required by create_payload
+            "created_at": datetime.now(UTC),  # Required by create_payload
         }
 
         # Mock the CRUD function to track if it's called
@@ -1246,7 +1246,7 @@ class TestGenerateQueueRecordsSeqInSession:
             "workspace_name": test_workspace.name,
             "session_name": test_session.name,
             "content": "Test message",
-            "created_at": datetime.now(timezone.utc),
+            "created_at": datetime.now(UTC),
             # seq_in_session is MISSING
         }
 

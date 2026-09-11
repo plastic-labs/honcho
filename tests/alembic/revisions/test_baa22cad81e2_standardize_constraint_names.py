@@ -164,6 +164,6 @@ def verify_standardize_constraint_names(verifier: MigrationVerifier) -> None:
     )
     row = result.fetchone()
     assert row is not None, "FK fk_message_embeddings_message_id_messages not found"
-    assert (
-        row[0] == "c"
-    ), f"FK should have ON DELETE CASCADE (confdeltype='c'), got '{row[0]}'"
+    assert row[0] == "c", (
+        f"FK should have ON DELETE CASCADE (confdeltype='c'), got '{row[0]}'"
+    )

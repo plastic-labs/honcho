@@ -71,9 +71,9 @@ async def test_live_anthropic_structured_output_and_prefix_caching(
     assert later_results, "Anthropic caching validation requires at least two calls"
     for result in later_results:
         assert isinstance(result.content, StructuredLiveResponse)
-    assert any(
-        result.cache_read_input_tokens > 0 for result in later_results
-    ), "Anthropic prompt caching did not report a cache hit after repeated identical requests"
+    assert any(result.cache_read_input_tokens > 0 for result in later_results), (
+        "Anthropic prompt caching did not report a cache hit after repeated identical requests"
+    )
 
     assert len(create_calls) == len(results)
     for call in create_calls:

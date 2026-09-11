@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import sentry_sdk
@@ -523,7 +523,7 @@ DREAM: {payload.dream_type} documents for {workspace_name}/{payload.observer}/{p
                     )
 
                     # Both guard fields advance together only on successful consolidation.
-                    now_iso = datetime.now(timezone.utc).isoformat()
+                    now_iso = datetime.now(UTC).isoformat()
                     async with tracked_db("dream.guard_pair_write") as db:
                         collection = await crud.get_collection(
                             db,
