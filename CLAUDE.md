@@ -46,6 +46,7 @@ All API routes follow the pattern: `/v3/{resource}/{id}/{action}`. Most "list/se
 - **Messages**: Create (batch up to 100), upload (file), list, get, update
 - **Conclusions**: Create, list, query (semantic search), delete — the API-facing name for observations stored in `(observer, observed)` collections
 - **Keys**: Create scoped JWTs
+- **Tenants**: Create (idempotent), get, delete — the above-tenant provisioning surface for control-plane use; authenticated by a service secret, not a JWT (see Tenant isolation)
 - **Webhooks**: Register endpoint, list, delete, test
 
 ### Key Features
@@ -117,7 +118,7 @@ cd sdks/typescript && bun run tsc --noEmit
 - Docstrings: Use Google style docstrings
 - **Never hold a DB session during external calls** (LLM, embedding, HTTP). If a function needs both a DB session and an external call result, compute the external result first and pass it as a parameter. This avoids tying up DB connections during slow network I/O. Use `tracked_db` for short-lived, DB-only operations; pass a shared session when multiple DB-only calls can reuse one connection.
 - **Never write through a read-only session** (`tracked_db(..., read_only=True)`, `get_read_db`, `ReadSessionLocal`). These run in AUTOCOMMIT mode with no transaction: writes are NOT blocked by the database — they silently commit immediately, and `begin_nested()` savepoints break. There is no runtime guard; this is enforced by convention only. Use `read_only=True` strictly for SELECT-only windows; anything that mutates (including get-or-create paths) must use a regular write session.
-- **Tenant isolation (`MULTI_TENANT`, default off).** When enabled, every DB session carries a request-scoped `app.tenant` GUC so row-level-security policies scope reads and writes to a single tenant. `tracked_db` is then the per-tenant path and is fail-closed — it raises before any query if no tenant is in scope (a passed `tenant_id` or an ambient `tenant_context`). `service_db` is the explicit RLS-bypass path for the legitimately cross-tenant work (the deriver's queue claim, the reconciler, the dreamer); never do per-tenant writes on it. For an HTTP request, the ambient `tenant_context` is bound once, in `require_auth` (`src/security.py`), from the tenant claim on the caller's JWT, and reset when the request completes — never do a per-tenant write outside a request without threading `tenant_id` explicitly. A startup validator (`src/startup/tenant_isolation_validator.py`) refuses to boot on unsafe half-states (a transaction-mode pooler, RLS not enforced, or no service role). Off (the default, self-host), all of this is inert and honcho runs single-tenant on plain Postgres.
+- **Tenant isolation (`MULTI_TENANT`, default off).** When enabled, every DB session carries a request-scoped `app.tenant` GUC so row-level-security policies scope reads and writes to a single tenant. `tracked_db` is then the per-tenant path and is fail-closed — it raises before any query if no tenant is in scope (a passed `tenant_id` or an ambient `tenant_context`). `service_db` is the explicit RLS-bypass path for the legitimately cross-tenant work (the deriver's queue claim, the reconciler, the dreamer); never do per-tenant writes on it. For an HTTP request, the ambient `tenant_context` is bound once, in `require_auth` (`src/security.py`), from the tenant claim on the caller's JWT, and reset when the request completes — never do a per-tenant write outside a request without threading `tenant_id` explicitly. A third plane sits above both: the tenant-registry API (`/v3/tenants`) provisions tenants before any JWT for that tenant can exist, so it cannot use `require_auth` at all — it is guarded by a constant-time-compared service secret (`TENANT_API_SECRET`), disabled by default and inert unless `MULTI_TENANT` is also on. That plane authenticates the caller as the control plane, never as a tenant, and the two planes are enforced never to mix on the same route. A startup validator (`src/startup/tenant_isolation_validator.py`) refuses to boot on unsafe half-states (a transaction-mode pooler, RLS not enforced, or no service role). Off (the default, self-host), all of this is inert and honcho runs single-tenant on plain Postgres.
 
 #### Multi-row locking and deadlocks
 
@@ -133,6 +134,7 @@ Tables written concurrently by more than one worker — `documents` (deriver, dr
 
 - **`allow_member_read=True` (in `require_auth(...)`) is read-only — NEVER set it on a route that mutates state.** It lets a peer-scoped key reach a session route when its peer is an active member of the session, so on a mutating route it would hand any session member write access (message injection, config mutation, deletion). HTTP method is not a reliable read/write signal here (some read routes use POST for a richer body), so this is enforced by an explicit allowlist in `tests/routes/test_auth_route_policy.py` — adding the flag to a new route fails that test until you consciously add the route to `EXPECTED_MEMBER_READ_ROUTES`, and you must never add a mutating method there.
 - **Under `MULTI_TENANT`, the tenant-claim check in `auth()` must run before the admin short-circuit.** An admin JWT (`ad: true`) is admin only within its own tenant; if the tenant gate moved after the admin check, a tenant-less admin token would bypass tenant scoping entirely.
+- **The tenant-registry API (`/v3/tenants`) uses `require_tenant_api`, never `require_auth`.** It is a separate, above-tenant auth plane authenticated by a service secret; a route must not carry both dependencies. Enforced by `test_tenant_api_routes_use_their_own_auth_plane` in `tests/routes/test_auth_route_policy.py`.
 - **When a member-read route is keyed by another sub-resource** (e.g. `peers/{peer_id}/config`), the handler must additionally confirm a peer-scoped caller only reads its OWN resource (`jwt_params.p == peer_id`, else raise `AuthenticationException`). Membership grants session access, not access to a co-member's data. See `get_peer_config` in `src/routers/sessions.py`.
 
 ### Runtime Architecture
@@ -224,10 +226,10 @@ src/
 ├── crud/                # Per-resource DB operations
 │   ├── collection.py, deriver.py, document.py, message.py
 │   ├── peer.py, peer_card.py, representation.py  (RepresentationManager)
-│   ├── session.py, webhook.py, workspace.py
+│   ├── session.py, tenant.py, webhook.py, workspace.py
 ├── routers/             # FastAPI route handlers (all under /v3)
 │   ├── workspaces.py, peers.py (dialectic /chat lives here), sessions.py
-│   ├── messages.py, conclusions.py, keys.py, webhooks.py
+│   ├── messages.py, conclusions.py, keys.py, tenants.py, webhooks.py
 ├── dialectic/           # Dialectic agent — runs inline per chat request
 │   ├── chat.py           # agentic_chat() / agentic_chat_stream()
 │   ├── core.py           # DialecticAgent (the tool-loop driver)
@@ -303,7 +305,7 @@ src/
 7. **Hybrid search**: Postgres FTS (GIN index on `to_tsvector('english', content)`) + vector similarity (HNSW on `MessageEmbedding.embedding`). `MessageEmbedding` is a separate table from `Message` with its own `sync_state` so embedding is decoupled from message creation.
 8. **Pluggable external vector stores**: defaults to pgvector inline; can swap to turbopuffer or lancedb (`VECTOR_STORE_*` config; `src/vector_store/`).
 9. **Composite-FK multi-tenancy**: `workspace_name` participates in nearly every composite FK. Cross-workspace data leakage is structurally impossible at the schema level.
-10. **Scoped Authentication**: JWTs can be scoped to tenant, workspace, peer, or session level. Under `MULTI_TENANT`, every JWT must carry a tenant claim (`tn`), checked before any admin/workspace/peer/session scope logic — an admin token is admin only within its own tenant.
+10. **Scoped Authentication**: JWTs can be scoped to tenant, workspace, peer, or session level. Under `MULTI_TENANT`, every JWT must carry a tenant claim (`tn`), checked before any admin/workspace/peer/session scope logic — an admin token is admin only within its own tenant. The tenant registry itself (creating/deleting tenants) sits above this scoping and is authenticated separately by a service secret rather than a JWT, since a JWT cannot carry a claim for a tenant that does not exist yet.
 11. **Batch Operations**: Bulk message creation up to 100 messages per request.
 12. **Session History**: Two-tier summarization — short every `SUMMARY_MESSAGES_PER_SHORT_SUMMARY` (default 20), long every `SUMMARY_MESSAGES_PER_LONG_SUMMARY` (default 60).
 
