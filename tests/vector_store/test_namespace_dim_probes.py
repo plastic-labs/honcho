@@ -1,8 +1,8 @@
 """Per-store namespace dim probe tests.
 
-LanceDB has an embedded driver we can spin up in a tmp dir, so we exercise
-the real probe end-to-end. Turbopuffer needs a network + API key, so it is
-covered only by static analysis + the parsing test below.
+LanceDB and ChromaDB have embedded drivers we can spin up in a tmp dir, so we
+exercise their real probes end-to-end. Turbopuffer needs a network + API key,
+so it is covered only by static analysis + the parsing test below.
 """
 
 from __future__ import annotations
@@ -49,6 +49,53 @@ async def test_lancedb_probe_returns_none_for_missing_namespace(
     store = LanceDBVectorStore()
     try:
         dim = await store.probe_namespace_dim("does_not_exist")
+        assert dim is None
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_chroma_probe_returns_declared_dim(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: object
+) -> None:
+    """Write real vectors at dim 8, confirm the probe recovers the dim."""
+    pytest.importorskip("chromadb")
+    from src.vector_store import VectorRecord
+    from src.vector_store.chroma import ChromaVectorStore
+
+    monkeypatch.setattr(
+        "src.config.settings.VECTOR_STORE.CHROMA_CLIENT_MODE", "persistent"
+    )
+    monkeypatch.setattr("src.config.settings.VECTOR_STORE.CHROMA_PATH", str(tmp_path))
+
+    store = ChromaVectorStore()
+    try:
+        await store.upsert_many(
+            "honcho.msg.probe", [VectorRecord(id="m1", embedding=[0.1] * 8)]
+        )
+
+        dim = await store.probe_namespace_dim("honcho.msg.probe")
+        assert dim == 8
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_chroma_probe_returns_none_for_missing_namespace(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: object
+) -> None:
+    """Lazy-create model: probing a nonexistent collection is not an error."""
+    pytest.importorskip("chromadb")
+    from src.vector_store.chroma import ChromaVectorStore
+
+    monkeypatch.setattr(
+        "src.config.settings.VECTOR_STORE.CHROMA_CLIENT_MODE", "persistent"
+    )
+    monkeypatch.setattr("src.config.settings.VECTOR_STORE.CHROMA_PATH", str(tmp_path))
+
+    store = ChromaVectorStore()
+    try:
+        dim = await store.probe_namespace_dim("honcho.msg.does_not_exist")
         assert dim is None
     finally:
         await store.close()

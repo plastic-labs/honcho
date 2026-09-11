@@ -1431,12 +1431,14 @@ class DreamSettings(HonchoSettings):
 
 
 class VectorStoreSettings(HonchoSettings):
-    """Settings for vector store (pgvector, Turbopuffer, LanceDB or Qdrant)."""
+    """Settings for vector store (pgvector, Turbopuffer, LanceDB, Qdrant, or ChromaDB)."""
 
     model_config = SettingsConfigDict(env_prefix="VECTOR_STORE_", extra="ignore")  # pyright: ignore
 
     # Vector store type to use
-    TYPE: Literal["pgvector", "turbopuffer", "lancedb", "qdrant"] = "pgvector"
+    TYPE: Literal["pgvector", "turbopuffer", "lancedb", "qdrant", "chromadb"] = (
+        "pgvector"
+    )
 
     MIGRATED: bool = False
 
@@ -1471,6 +1473,22 @@ class VectorStoreSettings(HonchoSettings):
     QDRANT_PREFIX: str | None = None
     QDRANT_TIMEOUT: int | None = None
 
+    # ChromaDB-specific settings
+    # CHROMA_CLIENT_MODE selects the deployment shape:
+    # - "persistent": local embedded storage at CHROMA_PATH
+    # - "http": self-hosted Chroma server at CHROMA_HOST:CHROMA_PORT
+    # - "cloud": Chroma Cloud (requires CHROMA_API_KEY)
+    CHROMA_CLIENT_MODE: Literal["persistent", "http", "cloud"] = "persistent"
+    CHROMA_PATH: str = "./chroma_data"
+    CHROMA_HOST: str = "localhost"
+    CHROMA_PORT: Annotated[int, Field(default=8000, gt=0)] = 8000
+    CHROMA_SSL: bool = False
+    CHROMA_API_KEY: str | None = None
+    # Tenant/database are optional for cloud mode (resolved from the API key
+    # when omitted); ignored in persistent and http modes.
+    CHROMA_TENANT: str | None = None
+    CHROMA_DATABASE: str | None = None
+
     RECONCILIATION_INTERVAL_SECONDS: Annotated[int, Field(default=300, gt=0)] = (
         300  # 5 minutes
     )
@@ -1480,6 +1498,19 @@ class VectorStoreSettings(HonchoSettings):
         if self.TYPE == "turbopuffer" and not self.TURBOPUFFER_API_KEY:
             raise ValueError(
                 "VECTOR_STORE_TURBOPUFFER_API_KEY must be set when TYPE is 'turbopuffer'"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _require_api_key_for_chroma_cloud(self) -> "VectorStoreSettings":
+        if (
+            self.TYPE == "chromadb"
+            and self.CHROMA_CLIENT_MODE == "cloud"
+            and not self.CHROMA_API_KEY
+        ):
+            raise ValueError(
+                "VECTOR_STORE_CHROMA_API_KEY must be set when TYPE is 'chromadb'"
+                + " and CHROMA_CLIENT_MODE is 'cloud'"
             )
         return self
 
