@@ -55,6 +55,7 @@ describe('Session', () => {
       expect(session.id).toBe('simple-session')
       expect(session.workspaceId).toBe(client.workspaceId)
       expect(session.createdAt).toBeDefined()
+      expect(session.lastMessageAt).toBeNull()
       expect(session.isActive).toBe(true)
     })
 
@@ -171,6 +172,55 @@ describe('Session', () => {
       expect(page.items.length).toBe(1)
       expect(page.items[0].metadata.tag).toBe(tag)
     })
+
+    test('sessions sort by last message activity and keep empty sessions last', async () => {
+      const activityGroup = generateId('last-activity-group')
+      const recentId = generateId('last-activity-recent')
+      const olderId = generateId('last-activity-older')
+      const emptyId = generateId('last-activity-empty')
+      const peer = await client.peer(generateId('last-activity-peer'))
+      const recentTime = new Date('2026-01-10T00:00:00Z')
+      const olderTime = new Date('2026-01-05T00:00:00Z')
+
+      const older = await client.session(olderId, {
+        metadata: { activityGroup },
+        peers: [peer],
+      })
+      const recent = await client.session(recentId, {
+        metadata: { activityGroup },
+        peers: [peer],
+      })
+      await client.session(emptyId, {
+        metadata: { activityGroup },
+        peers: [peer],
+      })
+      await recent.addMessages(
+        peer.message('recent activity', { createdAt: recentTime })
+      )
+      await older.addMessages(
+        peer.message('older activity', { createdAt: olderTime })
+      )
+
+      const page = await client.sessions({
+        filters: { metadata: { activityGroup } },
+        sortBy: 'last_message_at',
+        reverse: true,
+        size: 1,
+      })
+      const sessions = await page.toArray()
+
+      expect(sessions.map((session) => session.id)).toEqual([
+        recentId,
+        olderId,
+        emptyId,
+      ])
+      const returnedActivity = sessions[0].lastMessageAt
+      expect(typeof returnedActivity).toBe('string')
+      expect(new Date(returnedActivity ?? '').getTime()).toBe(
+        recentTime.getTime()
+      )
+      expect(sessions[2].lastMessageAt).toBeNull()
+    })
   })
 
   // ===========================================================================
@@ -247,6 +297,8 @@ describe('Session', () => {
       const cloned = await original.clone()
 
       expect(cloned.id).not.toBe(original.id)
+      expect(cloned.lastMessageAt).toBeDefined()
+      expect(cloned.lastMessageAt).not.toBeNull()
       // Cloned session should have same messages
       const messages = await cloned.messages()
       expect(messages.items.length).toBe(1)

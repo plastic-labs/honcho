@@ -265,6 +265,7 @@ class SessionResponse(BaseModel):
         default_factory=SessionConfigurationResponse
     )
     created_at: datetime.datetime
+    last_message_at: datetime.datetime | None = None
 
 
 class SessionCreateParams(BaseModel):

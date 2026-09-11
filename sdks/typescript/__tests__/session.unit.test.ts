@@ -14,6 +14,7 @@ function createSessionResponse(
     metadata: {},
     configuration: {},
     created_at: '2024-01-01T00:00:00Z',
+    last_message_at: null,
     ...overrides,
   }
 }
@@ -35,6 +36,7 @@ describe('Session unit behavior', () => {
         createSessionResponse({
           metadata: { topic: 'testing' },
           created_at: '2024-02-01T12:00:00Z',
+          last_message_at: '2024-02-02T12:00:00Z',
           is_active: true,
         }),
     } as unknown as HonchoHTTPClient
@@ -48,6 +50,7 @@ describe('Session unit behavior', () => {
 
     expect(metadata).toEqual({ topic: 'testing' })
     expect(session.createdAt).toBe('2024-02-01T12:00:00Z')
+    expect(session.lastMessageAt).toBe('2024-02-02T12:00:00Z')
     expect(session.isActive).toBe(true)
   })
 
