@@ -305,6 +305,10 @@ async def get_or_create_session(
                 raise AuthenticationException(
                     "Peer-scoped keys cannot modify an existing session"
                 )
+            # The caller is already a member, so the only effect of naming
+            # itself would be the upsert's rejoin (it clears ``left_at``), which
+            # would undo a removal committed since the check above. Skip it.
+            session.peer_names = None
 
         # Update existing session with metadata and feature flags if provided
         if (
