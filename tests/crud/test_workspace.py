@@ -612,3 +612,89 @@ class TestWorkspaceCRUD:
         # And workspace deletion should succeed
         result = await crud.delete_workspace(db_session, test_workspace.name)
         assert result.workspace.name == test_workspace.name
+
+
+class TestDeleteWorkspaceTenantScopedQueueCleanup:
+    """delete_workspace's ActiveQueueSession cleanup must be tenant-aware.
+
+    Under MULTI_TENANT, tenant-scoped work-unit keys are prefixed
+    {tenant_id}:{task_type}:{workspace_name}:... — a tenant-blind position-2
+    match deletes nothing of the tenant's own scoped claims while hitting other
+    tenants' un-prefixed reconciler keys for a same-named workspace.
+    """
+
+    @pytest.mark.asyncio
+    async def test_cleanup_scoped_to_deleting_tenant(
+        self, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+    ):
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+        from src.config import settings
+        from src.db import tenant_context
+
+        workspace_name = str(generate_nanoid())
+        for tenant_id in ("tenant-a", "tenant-b"):
+            await db_session.execute(
+                pg_insert(models.Tenant)
+                .values(tenant_id=tenant_id, tier="shared")
+                .on_conflict_do_nothing()
+            )
+        db_session.add(
+            models.Workspace(name=workspace_name, tenant_id="tenant-a")
+        )
+        db_session.add_all(
+            [
+                models.ActiveQueueSession(
+                    work_unit_key=f"tenant-a:dream:{workspace_name}:alice:alice",
+                    tenant_id="tenant-a",
+                ),
+                models.ActiveQueueSession(
+                    work_unit_key=f"tenant-b:dream:{workspace_name}:alice:alice",
+                    tenant_id="tenant-b",
+                ),
+                # Reconciler claims are never tenant-prefixed; they belong to the
+                # stale-work cleanup, and a workspace delete must not touch them.
+                models.ActiveQueueSession(
+                    work_unit_key=f"reconciler:{workspace_name}",
+                    tenant_id=None,
+                ),
+            ]
+        )
+        await db_session.commit()
+
+        monkeypatch.setattr(settings, "MULTI_TENANT", True)
+        token = tenant_context.set("tenant-a")
+        try:
+            await crud.delete_workspace(db_session, workspace_name)
+        finally:
+            tenant_context.reset(token)
+
+        surviving = (
+            (await db_session.execute(select(models.ActiveQueueSession.work_unit_key)))
+            .scalars()
+            .all()
+        )
+        assert f"tenant-a:dream:{workspace_name}:alice:alice" not in surviving
+        assert f"tenant-b:dream:{workspace_name}:alice:alice" in surviving
+        assert f"reconciler:{workspace_name}" in surviving
+
+    @pytest.mark.asyncio
+    async def test_flag_on_without_tenant_fails_closed(
+        self, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+    ):
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+        from src.config import settings
+
+        workspace_name = str(generate_nanoid())
+        await db_session.execute(
+            pg_insert(models.Tenant)
+            .values(tenant_id="tenant-a", tier="shared")
+            .on_conflict_do_nothing()
+        )
+        db_session.add(models.Workspace(name=workspace_name, tenant_id="tenant-a"))
+        await db_session.commit()
+
+        monkeypatch.setattr(settings, "MULTI_TENANT", True)
+        with pytest.raises(ValueError, match="requires a tenant"):
+            await crud.delete_workspace(db_session, workspace_name)

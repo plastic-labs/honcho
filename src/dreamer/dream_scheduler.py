@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
 from src.config import settings
+from src.db import tenant_context
 from src.dependencies import tracked_db
 from src.schemas import DreamType
 from src.utils.work_unit import construct_work_unit_key, parse_work_unit_key
@@ -111,7 +112,7 @@ class DreamScheduler:
         return False
 
     async def cancel_dreams_for_observed(
-        self, workspace_name: str, observed: str
+        self, workspace_name: str, observed: str, tenant_id: str | None = None
     ) -> set[str]:
         """
         Cancel all pending dreams where the observed peer matches.
@@ -122,17 +123,42 @@ class DreamScheduler:
         Args:
             workspace_name: The workspace to match
             observed: The observed peer name to match
+            tenant_id: Tenant to match under MULTI_TENANT; defaults to the
+                ambient tenant_context (callers on a request/work-unit path
+                are already tenant-bound)
 
         Returns:
             Set of work_unit_keys that were cancelled
         """
         cancelled: set[str] = set()
 
+        # region ai
+        # The tenant is part of the match, mirroring construct_work_unit_key:
+        # (workspace, observed) names recur across tenants, so a tenant-blind
+        # match lets one tenant's message activity cancel another tenant's
+        # pending dream. Fail closed like construct_work_unit_key — silently
+        # matching nothing would just leak un-cancelled dreams instead.
+        # endregion
+        if settings.MULTI_TENANT:
+            tenant = tenant_id or tenant_context.get()
+            if not tenant:
+                raise ValueError(
+                    "cancel_dreams_for_observed requires a tenant when "
+                    + "MULTI_TENANT is on, but none is in scope — pass tenant_id "
+                    + "or set tenant_context"
+                )
+        else:
+            tenant = None
+
         # Collect keys to cancel (can't modify dict while iterating)
         keys_to_cancel: list[str] = []
         for work_unit_key in self.pending_dreams:
             parsed = parse_work_unit_key(work_unit_key)
-            if parsed.workspace_name == workspace_name and parsed.observed == observed:
+            if (
+                parsed.workspace_name == workspace_name
+                and parsed.observed == observed
+                and parsed.tenant_id == tenant
+            ):
                 keys_to_cancel.append(work_unit_key)
 
         # Cancel each matching dream

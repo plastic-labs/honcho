@@ -8,6 +8,7 @@ from nanoid import generate as generate_nanoid
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
+from src.config import settings
 from src.dreamer.dream_due import count_due_dreams
 from src.schemas import DreamType
 from src.utils.work_unit import construct_work_unit_key
@@ -15,6 +16,26 @@ from src.utils.work_unit import construct_work_unit_key
 
 def _now() -> datetime.datetime:
     return datetime.datetime.now(datetime.UTC)
+
+
+def test_observed_key_includes_tenant_only_under_multi_tenant(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    # The API scheduler runs cross-tenant, so the "is representation work still
+    # pending?" check must be keyed per tenant — otherwise one tenant's pending work
+    # suppresses another tenant's due dream (both share names like default/observed).
+    from src.dreamer.dream_due import _observed_key  # pyright: ignore[reportPrivateUsage]
+
+    monkeypatch.setattr(settings, "MULTI_TENANT", True)
+    assert _observed_key("tenant-a", "ws", "obs") == ("tenant-a", "ws", "obs")
+    # Same (workspace, observed), different tenants -> distinct keys, no cross-suppress.
+    assert _observed_key("tenant-a", "ws", "obs") != _observed_key("tenant-b", "ws", "obs")
+
+    # Flag off: the tenant is dropped, so a parsed (unnamespaced -> tenant_id=None) key
+    # and the collection's real tenant still line up.
+    monkeypatch.setattr(settings, "MULTI_TENANT", False)
+    assert _observed_key("tenant-a", "ws", "obs") == ("ws", "obs")
+    assert _observed_key(None, "ws", "obs") == _observed_key("tenant-a", "ws", "obs")
 
 
 async def _make_collection(
@@ -353,3 +374,138 @@ class TestCountDueDreams:
             "src.dreamer.dream_due.settings.DREAM.ENABLED_TYPES", ["card_refresh"]
         ):
             assert await count_due_dreams(db_session) == 0
+
+
+async def _seed_tenant_collection(
+    db_session: AsyncSession,
+    *,
+    tenant_id: str,
+    workspace_name: str,
+    peer_name: str,
+) -> None:
+    """Seed the composite-FK parent chain for a self-observation collection.
+
+    Mirrors _make_collection but pins tenant_id explicitly across
+    tenants -> workspaces -> peers -> collections, so two tenants can share the
+    same (workspace_name, observer, observed) triple. tenants is preserved between
+    tests (see conftest _clear_all_tables), so the tenant row is inserted
+    idempotently.
+    """
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    await db_session.execute(
+        pg_insert(models.Tenant).values(tenant_id=tenant_id).on_conflict_do_nothing()
+    )
+    db_session.add(models.Workspace(name=workspace_name, tenant_id=tenant_id))
+    db_session.add(
+        models.Peer(name=peer_name, workspace_name=workspace_name, tenant_id=tenant_id)
+    )
+    await db_session.flush()
+    db_session.add(
+        models.Collection(
+            observer=peer_name,
+            observed=peer_name,
+            workspace_name=workspace_name,
+            tenant_id=tenant_id,
+            internal_metadata={},
+        )
+    )
+    await db_session.commit()
+
+
+async def _seed_tenant_docs(
+    db_session: AsyncSession,
+    *,
+    tenant_id: str,
+    workspace_name: str,
+    peer_name: str,
+    count: int,
+    age_minutes: int,
+) -> str:
+    """Seed a Session and `count` idle explicit Documents for a tenant; return the session name."""
+    session_name = f"s-{generate_nanoid()}"
+    db_session.add(
+        models.Session(
+            name=session_name,
+            workspace_name=workspace_name,
+            tenant_id=tenant_id,
+            configuration={},
+        )
+    )
+    await db_session.flush()
+    created_at = _now() - datetime.timedelta(minutes=age_minutes)
+    for _ in range(count):
+        db_session.add(
+            models.Document(
+                content="test",
+                level="explicit",
+                workspace_name=workspace_name,
+                observer=peer_name,
+                observed=peer_name,
+                session_name=session_name,
+                tenant_id=tenant_id,
+                created_at=created_at,
+            )
+        )
+    await db_session.commit()
+    return session_name
+
+
+@pytest.mark.asyncio
+class TestMultiTenantDueDreams:
+    """Under MULTI_TENANT the due-dream scan runs cross-tenant on the service
+    session, so its explicit-count grouping and every downstream lookup must be
+    keyed by tenant. Otherwise two tenants sharing (workspace, observer, observed)
+    merge into one row: tenant A trips the threshold on tenant B's documents and
+    inherits B's newest session.
+    """
+
+    async def test_due_dreams_are_isolated_by_tenant(
+        self,
+        db_session: AsyncSession,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        from src.dreamer.dream_due import DueDream, list_due_dreams
+
+        workspace_name = "ws-shared"
+        peer_name = "peer-shared"
+
+        # Two tenants share the SAME (workspace_name, observer, observed) triple.
+        await _seed_tenant_collection(
+            db_session,
+            tenant_id="tenant-a",
+            workspace_name=workspace_name,
+            peer_name=peer_name,
+        )
+        await _seed_tenant_collection(
+            db_session,
+            tenant_id="tenant-b",
+            workspace_name=workspace_name,
+            peer_name=peer_name,
+        )
+        # Only tenant-b has documents — past the threshold (50) and idle (> 60m).
+        # tenant-a has ZERO documents.
+        b_session = await _seed_tenant_docs(
+            db_session,
+            tenant_id="tenant-b",
+            workspace_name=workspace_name,
+            peer_name=peer_name,
+            count=60,
+            age_minutes=90,
+        )
+
+        monkeypatch.setattr(settings, "MULTI_TENANT", True)
+        due = await list_due_dreams(db_session)
+
+        # Exactly tenant-b is due. Pre-fix the tenant-blind join merged the two
+        # triples, so tenant-a's empty collection inherited tenant-b's count AND
+        # session_name and both came back due.
+        assert len(due) == 1
+        (due_dream,) = due
+        assert isinstance(due_dream, DueDream)
+        assert due_dream.tenant_id == "tenant-b"
+        assert due_dream.session_name == b_session
+        assert due_dream.workspace_name == workspace_name
+        assert due_dream.observer == peer_name
+        assert due_dream.observed == peer_name
+        assert all(d.tenant_id != "tenant-a" for d in due)

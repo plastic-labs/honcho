@@ -286,6 +286,122 @@ class TestCancelDreamsForObserved:
             assert key_ws2 not in cancelled
             assert key_ws2 in dream_scheduler.pending_dreams
 
+    @pytest.mark.asyncio
+    async def test_cancel_is_scoped_to_tenant_under_multi_tenant(
+        self, dream_scheduler: DreamScheduler, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Regression: a tenant-blind match let one tenant's activity cancel another's.
+
+        Two dreams share the same (workspace, observer, observed) but belong to
+        different tenants. Cancelling for tenant-a must cancel ONLY tenant-a's key;
+        tenant-b's identically-shaped dream must survive.
+        """
+        monkeypatch.setattr(settings, "MULTI_TENANT", True)
+        workspace_name = "test_workspace"
+        observed = "bob"
+
+        key_a = construct_work_unit_key(
+            workspace_name,
+            {
+                "task_type": "dream",
+                "observer": "alice",
+                "observed": observed,
+                "dream_type": "omni",
+            },
+            tenant_id="tenant-a",
+        )
+        key_b = construct_work_unit_key(
+            workspace_name,
+            {
+                "task_type": "dream",
+                "observer": "alice",
+                "observed": observed,
+                "dream_type": "omni",
+            },
+            tenant_id="tenant-b",
+        )
+        assert key_a != key_b  # the tenant prefix makes them distinct keys
+
+        with patch.object(dream_scheduler, "execute_dream", new_callable=AsyncMock):
+            await dream_scheduler.schedule_dream(
+                key_a,
+                workspace_name,
+                delay_minutes=60,
+                dream_type=DreamType.OMNI,
+                observer="alice",
+                observed=observed,
+            )
+            await dream_scheduler.schedule_dream(
+                key_b,
+                workspace_name,
+                delay_minutes=60,
+                dream_type=DreamType.OMNI,
+                observer="alice",
+                observed=observed,
+            )
+            assert len(dream_scheduler.pending_dreams) == 2
+
+            cancelled = await dream_scheduler.cancel_dreams_for_observed(
+                workspace_name, observed, tenant_id="tenant-a"
+            )
+
+            assert cancelled == {key_a}
+            assert key_a not in dream_scheduler.pending_dreams
+            assert key_b in dream_scheduler.pending_dreams  # tenant-b survives
+
+    @pytest.mark.asyncio
+    async def test_cancel_requires_tenant_under_multi_tenant(
+        self, dream_scheduler: DreamScheduler, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Fail closed: MULTI_TENANT on, no tenant_id arg and no ambient tenant.
+
+        Silently matching nothing would leak un-cancelled dreams, so the resolver
+        raises rather than run a tenant-blind pass.
+        """
+        monkeypatch.setattr(settings, "MULTI_TENANT", True)
+        assert tenant_context.get() is None  # no ambient tenant to fall back on
+        with pytest.raises(ValueError):
+            await dream_scheduler.cancel_dreams_for_observed("test_workspace", "bob")
+
+    @pytest.mark.asyncio
+    async def test_cancel_flag_off_matches_unprefixed_key(
+        self, dream_scheduler: DreamScheduler, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Guard: flag off, the un-prefixed key is still cancelled with no tenant arg.
+
+        Under flag-off the key carries no tenant prefix and the parsed tenant_id is
+        None, which must still line up with the (None) tenant the resolver uses.
+        """
+        monkeypatch.setattr(settings, "MULTI_TENANT", False)
+        workspace_name = "test_workspace"
+        observed = "bob"
+        key = construct_work_unit_key(
+            workspace_name,
+            {
+                "task_type": "dream",
+                "observer": "alice",
+                "observed": observed,
+                "dream_type": "omni",
+            },
+        )
+        assert parse_work_unit_key(key).tenant_id is None
+
+        with patch.object(dream_scheduler, "execute_dream", new_callable=AsyncMock):
+            await dream_scheduler.schedule_dream(
+                key,
+                workspace_name,
+                delay_minutes=60,
+                dream_type=DreamType.OMNI,
+                observer="alice",
+                observed=observed,
+            )
+            cancelled = await dream_scheduler.cancel_dreams_for_observed(
+                workspace_name, observed
+            )
+
+            assert cancelled == {key}
+            assert key not in dream_scheduler.pending_dreams
+
 
 class TestThresholdFilter:
     """Regression tests for Finding 2: threshold must count only explicit-level docs.
