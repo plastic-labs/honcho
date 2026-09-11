@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import logging
 import time
 from enum import Enum
@@ -15,9 +16,13 @@ from src.cache.client import cache as cache_client
 from src.config import ConfiguredModelSettings, settings
 from src.crud.session import session_cache_key
 from src.dependencies import tracked_db
-from src.exceptions import ResourceNotFoundException
+from src.exceptions import EmptySummaryError, ResourceNotFoundException
 from src.llm import HonchoLLMCallResponse, honcho_llm_call
-from src.llm.types import LLMTelemetryContext
+from src.llm.types import (
+    LLMTelemetryContext,
+    degraded_response_parse_class,
+    empty_response_is_degraded,
+)
 from src.models import Message
 from src.telemetry import prometheus_metrics
 from src.telemetry.events import AgentToolSummaryCreatedEvent, emit
@@ -96,6 +101,45 @@ SUMMARIES_KEY = "summaries"
 class SummaryType(Enum):
     SHORT = "honcho_chat_summary_short"
     LONG = "honcho_chat_summary_long"
+
+
+# Substituted into the prompt when there is no previous summary to fold in.
+_NO_PREVIOUS_SUMMARY_TEXT = "There is no previous summary -- the messages are the beginning of the conversation."
+
+
+def _previous_summary_text(previous_summary: str | None) -> str:
+    """Resolve the text the prompt carries when there is no previous summary."""
+    return previous_summary or _NO_PREVIOUS_SUMMARY_TEXT
+
+
+def summary_prompt(
+    summary_type: SummaryType,
+    formatted_messages: str,
+    previous_summary: str | None,
+    input_tokens: int = 0,
+) -> str:
+    """Build the exact prompt handed to `honcho_llm_call` for a summary.
+
+    Single source of truth: the request path and the `EmptySummaryError` triage
+    fields (`prompt_bytes` / `prompt_digest`) must identify the *same* string,
+    otherwise the digest correlates retries of text the provider never saw.
+    Change the instructions in one place only.
+    """
+    previous_summary_text = _previous_summary_text(previous_summary)
+    if summary_type is SummaryType.SHORT:
+        # input_tokens indicates how many tokens the message list + previous
+        # summary take up. Short summaries are optimized to be smaller than the
+        # content being summarized, so ask for a word count roughly equal to
+        # either the input, or the configured max when the input is larger. The
+        # word/token ratio is roughly 4:3 so we multiply by 0.75.
+        output_words = int(min(input_tokens, settings.SUMMARY.MAX_TOKENS_SHORT) * 0.75)
+        return short_summary_prompt(
+            formatted_messages, output_words, previous_summary_text
+        )
+
+    # the word/token ratio is roughly 4:3 so we multiply by 0.75.
+    output_words = int(settings.SUMMARY.MAX_TOKENS_LONG * 0.75)
+    return long_summary_prompt(formatted_messages, output_words, previous_summary_text)
 
 
 def short_summary_prompt(
@@ -209,15 +253,8 @@ async def create_short_summary(
     # so we ask the agent to produce a word count roughly equal to either the input, or the max
     # size if the input is larger. the word/token ratio is roughly 4:3 so we multiply by 0.75.
     # LLMs *seem* to respond better to getting asked for a word count but should workshop this.
-    output_words = int(min(input_tokens, settings.SUMMARY.MAX_TOKENS_SHORT) * 0.75)
-
-    if previous_summary:
-        previous_summary_text = previous_summary
-    else:
-        previous_summary_text = "There is no previous summary -- the messages are the beginning of the conversation."
-
-    prompt = short_summary_prompt(
-        formatted_messages, output_words, previous_summary_text
+    prompt = summary_prompt(
+        SummaryType.SHORT, formatted_messages, previous_summary, input_tokens
     )
 
     # Mint a root span id.
@@ -247,16 +284,7 @@ async def create_long_summary(
 ) -> HonchoLLMCallResponse[str]:
     # the word/token ratio is roughly 4:3 so we multiply by 0.75.
     # LLMs *seem* to respond better to getting asked for a word count but should workshop this.
-    output_words = int(settings.SUMMARY.MAX_TOKENS_LONG * 0.75)
-
-    if previous_summary:
-        previous_summary_text = previous_summary
-    else:
-        previous_summary_text = "There is no previous summary -- the messages are the beginning of the conversation."
-
-    prompt = long_summary_prompt(
-        formatted_messages, output_words, previous_summary_text
-    )
+    prompt = summary_prompt(SummaryType.LONG, formatted_messages, previous_summary)
 
     # Mint a root span id.
     # No session_id or run_id for tracing
@@ -610,6 +638,48 @@ async def _create_summary(
 
         # Detect potential issues with the summary
         if not summary_text.strip():
+            if message_count > 0 and empty_response_is_degraded(response):
+                # Degraded, not empty: the provider cut the answer off (or
+                # withheld it). The placeholder fallback below is never
+                # persisted (the only _save_summary call is gated on
+                # `not is_fallback`), so accepting it here would consume this
+                # summary boundary with nothing stored and no way to regenerate
+                # it. Raise instead: the queue treats EmptySummaryError as
+                # retryable and re-claims the item under a bounded budget.
+                parse_class = degraded_response_parse_class(response)
+                logger.warning(
+                    "Generated summary is empty and looks degraded "
+                    "(parse_class=%s, finish_reasons=%s, output_tokens=%d); refusing "
+                    "this attempt so the summary item is retried",
+                    parse_class,
+                    response.finish_reasons,
+                    response.output_tokens,
+                )
+                # Hash the prompt the provider was actually given (instructions +
+                # previous summary + messages + hard output limit) with the
+                # deriver's 16-hex convention. `formatted_messages` alone is not
+                # the prompt identity: two attempts with different instructions or
+                # a different previous summary would collide on the digest.
+                prompt = summary_prompt(
+                    summary_type,
+                    formatted_messages,
+                    previous_summary_text,
+                    input_tokens,
+                )
+                summary_prompt_bytes = len(prompt.encode("utf-8"))
+                raise EmptySummaryError(
+                    "empty summary "
+                    f"(parse_class={parse_class}, "
+                    f"finish_reasons={response.finish_reasons}, "
+                    f"output_tokens={response.output_tokens})",
+                    parse_class=parse_class,
+                    provider=settings.SUMMARY.MODEL_CONFIG.transport or "unknown",
+                    model=settings.SUMMARY.MODEL_CONFIG.model or "unknown",
+                    prompt_bytes=summary_prompt_bytes,
+                    prompt_digest=hashlib.sha256(prompt.encode("utf-8")).hexdigest()[
+                        :16
+                    ],
+                )
             logger.error(
                 "Generated summary is empty (finish_reasons=%s). Falling back to basic summary.",
                 response.finish_reasons,
@@ -623,6 +693,10 @@ async def _create_summary(
             summary_tokens = estimate_tokens(summary_text) if summary_text else 0
             llm_input_tokens = 0
             llm_output_tokens = 0
+    except EmptySummaryError:
+        # Retry signal, not a generation failure: the generic handler below
+        # would swallow it into the (never-persisted) placeholder fallback.
+        raise
     except Exception:
         logger.exception("Error generating summary!")
         # Fallback to a basic summary in case of error

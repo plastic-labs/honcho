@@ -158,6 +158,23 @@ class RepresentationCompletedEvent(BaseEvent):
         default=0,
         description="Number of observers whose save_representation failed (partial or total)",
     )
+    empty_parse_attempts: int = Field(
+        default=1,
+        description=(
+            "How many LLM attempts this batch took before its response was accepted "
+            "(1 = first try). Values > 1 mean the structured response parsed to an empty "
+            "representation and was re-requested; a batch whose retries were all empty is "
+            "refused (EmptyRepresentationError) and does not reach this event."
+        ),
+    )
+    empty_parse_refused: bool = Field(
+        default=False,
+        description=(
+            "True when every in-line attempt returned an empty representation and the "
+            "batch was refused so the queue can requeue it (see EmptyRepresentationError). "
+            "Distinct from empty_parse_attempts, which counts the retries themselves."
+        ),
+    )
 
     def get_resource_id(self) -> str:
         """Resource ID includes workspace, session, and latest message for uniqueness."""
