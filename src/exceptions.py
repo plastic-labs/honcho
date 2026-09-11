@@ -141,6 +141,19 @@ class RepresentationSaveError(HonchoException):
     detail: str = "Representation save failed for all observers"
 
 
+@final
+class UpstreamLLMError(HonchoException):
+    """Raised when the upstream model provider is unreachable or failing.
+
+    Distinct from a bug in our own request: the provider (or the proxy in front
+    of it) returned 5xx or refused the connection, so the caller should retry
+    rather than treat the request as malformed.
+    """
+
+    status_code = 503
+    detail = "Upstream language model provider is unavailable"
+
+
 class LLMError(Exception):
     """Exception raised when an LLM call fails.
 
