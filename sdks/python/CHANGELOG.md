@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- `honcho.get_scope(id)` (sync and async) fetches an existing scope by ID and raises `NotFoundError` when it does not exist. Unlike `honcho.scope()`, it never creates the scope, so lookups cannot provision a recall boundary by accident.
 - Optional per-call `timeout` on synchronous and asynchronous `Peer.chat()`. It overrides the timeout for each HTTP attempt; when omitted or set to `None`, the client-wide timeout configured on `Honcho` remains in effect.
 
 ## [2.4.0] - 2026-08-25

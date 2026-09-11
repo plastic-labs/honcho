@@ -584,6 +584,40 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
             created_at=scope_data.created_at,
         )
 
+    @validate_call
+    def get_scope(
+        self,
+        id: str = Field(  # noqa: A002
+            ..., min_length=1, description="Unprefixed name for the scope"
+        ),
+    ) -> Scope:
+        """
+        Get an existing scope by ID without creating it.
+
+        Unlike :meth:`scope`, this never creates the scope, so it is safe for
+        lookups where a typo must not provision a new recall boundary.
+
+        Args:
+            id: Unprefixed scope name, unique within the workspace.
+
+        Returns:
+            A Scope object for managing membership.
+
+        Raises:
+            ValueError: If the scope ID is invalid.
+            NotFoundError: If no scope with this ID exists in the workspace.
+        """
+        validate_scope_id(id)
+        self._ensure_workspace()
+        data = self._http.get(routes.scope(self.workspace_id, id))
+        scope_data = ScopeResponse.model_validate(data)
+        return Scope(
+            id,
+            self,
+            metadata=scope_data.metadata,
+            created_at=scope_data.created_at,
+        )
+
     def scopes(
         self,
         *,

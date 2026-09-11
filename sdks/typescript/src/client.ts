@@ -339,6 +339,15 @@ export class Honcho {
     )
   }
 
+  private async _getScope(
+    workspaceId: string,
+    scopeId: string
+  ): Promise<ScopeResponse> {
+    return this._http.get<ScopeResponse>(
+      `/${API_VERSION}/workspaces/${workspaceId}/scopes/${scopeId}`
+    )
+  }
+
   private async _listScopes(
     workspaceId: string,
     params?: {
@@ -664,6 +673,32 @@ export class Honcho {
       id: validatedId,
       metadata: options?.metadata,
     })
+    return new Scope(
+      validatedId,
+      this.workspaceId,
+      this._http,
+      scopeData.metadata ?? undefined,
+      () => this._ensureWorkspace(),
+      scopeData.created_at
+    )
+  }
+
+  /**
+   * Get an existing scope by ID without creating it.
+   *
+   * Unlike {@link scope}, this never creates the scope, so it is safe for
+   * lookups where a typo must not provision a new recall boundary.
+   *
+   * @param id - Unprefixed scope name, unique within the workspace
+   * @returns Promise resolving to a Scope object for managing membership
+   * @throws {NotFoundError} if no scope with this ID exists in the workspace
+   * @throws Error if the scope ID is empty or invalid
+   */
+  async getScope(id: string): Promise<Scope> {
+    await this._ensureWorkspace()
+    const validatedId = ScopeIdSchema.parse(id)
+
+    const scopeData = await this._getScope(this.workspaceId, validatedId)
     return new Scope(
       validatedId,
       this.workspaceId,
