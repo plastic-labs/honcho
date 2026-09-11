@@ -228,6 +228,7 @@ async def get_sessions_for_peer(
 
 @router.post(
     "/{peer_id}/chat",
+    summary="Peer Chat",
     responses={
         200: {
             "content": {
