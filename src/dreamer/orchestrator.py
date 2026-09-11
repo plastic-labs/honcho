@@ -119,6 +119,7 @@ async def run_dream(
 
         workspace = await crud.get_workspace(db, workspace_name=workspace_name)
         configuration = get_configuration(None, session, workspace)
+        resolved_session_id = session.id if session else None
     if not configuration.dream.enabled:
         logger.info(
             f"[{run_id}] Dreams disabled for {workspace_name}/{session_name}, skipping dream"
@@ -205,7 +206,7 @@ async def run_dream(
                 hints=exploration_hints,
                 configuration=configuration,
                 parent_run_id=run_id,
-                session_id=session.id if session else None,
+                session_id=resolved_session_id,
                 queue_item_id=queue_item_id,
             )
             logger.info(
@@ -235,7 +236,7 @@ async def run_dream(
                 hints=exploration_hints,
                 configuration=configuration,
                 parent_run_id=run_id,
-                session_id=session.id if session else None,
+                session_id=resolved_session_id,
                 queue_item_id=queue_item_id,
             )
             logger.info(
@@ -366,6 +367,7 @@ async def run_card_refresh_dream(
 
         workspace = await crud.get_workspace(db, workspace_name=workspace_name)
         configuration = get_configuration(None, session, workspace)
+        resolved_session_id = session.id if session else None
     if not configuration.dream.enabled:
         logger.info(
             f"[{run_id}] Dreams disabled for {workspace_name}/{session_name}, skipping card refresh"
@@ -390,7 +392,7 @@ async def run_card_refresh_dream(
                 session_name=session_name,
                 configuration=configuration,
                 parent_run_id=run_id,
-                session_id=session.id if session else None,
+                session_id=resolved_session_id,
                 queue_item_id=queue_item_id,
             )
             logger.info(

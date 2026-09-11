@@ -8,7 +8,13 @@ from typing import Any
 import pytest
 
 from src.llm.backend import CompletionResult
-from src.llm.capture import CapturedLLMCall, build_captured_call
+from src.llm.capture import (
+    ROLE_REASONING,
+    CapturedLLMCall,
+    build_captured_call,
+    canonical_json,
+    compute_content_hash,
+)
 from src.telemetry import trace_session
 from src.telemetry.events.trace import LLMCallTracedEvent, TraceContentEvent
 
@@ -166,6 +172,45 @@ def _captured(
 
 
 class TestTraceExporter:
+    @pytest.mark.parametrize("max_bytes", [0, 64, 4096])
+    def test_reasoning_is_serialized_before_clipping(
+        self,
+        trace_on: _FakeTraceEmitter,
+        monkeypatch: pytest.MonkeyPatch,
+        max_bytes: int,
+    ):
+        from src.config import settings
+        from src.telemetry.trace_exporter import TraceExporter
+
+        monkeypatch.setattr(settings.TELEMETRY, "TRACE_MAX_BYTES", max_bytes)
+        call = _captured([])
+        reasoning = {"type": "reasoning.text", "text": "思考" * 100}
+        exporter = TraceExporter()
+        for detail in (reasoning, dict(reversed(list(reasoning.items())))):
+            call.reasoning_details = [detail]
+            exporter.export(call)
+
+        (content,) = [
+            e
+            for e in trace_on.events
+            if isinstance(e, TraceContentEvent) and e.role == ROLE_REASONING
+        ]
+        assert isinstance(content.content, str)
+        truncated = max_bytes == 64
+        if truncated:
+            assert len(content.content.encode("utf-8")) <= max_bytes
+            assert content.content.endswith("…[truncated]")
+        else:
+            assert content.content == canonical_json([reasoning])
+        assert content.content_hash == compute_content_hash(
+            ROLE_REASONING, content.content, None
+        )
+        traced = [e for e in trace_on.events if isinstance(e, LLMCallTracedEvent)]
+        assert len(traced) == 2
+        for event in traced:
+            assert event.output_reasoning_ref == content.content_hash
+            assert event.was_truncated is truncated
+
     def test_refs_match_emitted_content(self, trace_on: _FakeTraceEmitter):
         from src.telemetry.trace_exporter import TraceExporter
 

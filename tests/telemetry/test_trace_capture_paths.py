@@ -132,7 +132,9 @@ async def test_export_preserves_identity_and_content(
             f"instruction {i}" for i in range(system_count)
         )
     assert trace.output_reasoning_ref is not None
-    assert content[trace.output_reasoning_ref].content == reasoning
+    assert content[trace.output_reasoning_ref].content == capture.canonical_json(
+        reasoning
+    )
     assert trace.duration_ms == completed.duration_ms
     assert backend.complete.await_args is not None
     assert (
@@ -154,15 +156,27 @@ async def test_export_preserves_identity_and_content(
 async def test_stream_records_partial_output_and_outcome(
     ending: str, with_tools: bool, backend: AsyncMock, recorded: list[BaseEvent]
 ) -> None:
+    events_at_cleanup: list[list[BaseEvent]] = []
+
     async def chunks() -> AsyncIterator[StreamChunk]:
-        yield StreamChunk(content="partial", output_tokens=2)
-        if ending == "error":
-            raise RuntimeError("synthetic disconnect")
-        if ending == "cancelled":
-            raise asyncio.CancelledError()
-        yield StreamChunk(
-            content=" answer", is_done=True, finish_reason="length", output_tokens=4
-        )
+        try:
+            yield StreamChunk(content="partial", output_tokens=2)
+            if ending == "error":
+                raise RuntimeError("synthetic disconnect")
+            if ending == "cancelled":
+                raise asyncio.CancelledError()
+            yield StreamChunk(
+                content=" answer", is_done=True, finish_reason="length", output_tokens=4
+            )
+        finally:
+            events_at_cleanup.append(
+                [
+                    event
+                    for event in recorded
+                    if isinstance(event, LLMCallCompletedEvent | LLMCallTracedEvent)
+                    and event.was_stream
+                ]
+            )
 
     def setup(**_: Any) -> AsyncIterator[StreamChunk]:
         return chunks()
@@ -198,6 +212,7 @@ async def test_stream_records_partial_output_and_outcome(
     (trace,) = [
         e for e in recorded if isinstance(e, LLMCallTracedEvent) and e.was_stream
     ]
+    assert events_at_cleanup == [[]]
     (completed,) = [
         e for e in recorded if isinstance(e, LLMCallCompletedEvent) and e.was_stream
     ]
@@ -223,6 +238,7 @@ async def test_stream_records_partial_output_and_outcome(
         }[ending]
     )
     assert trace.finish_reason == ("length" if ending == "success" else trace.outcome)
+    assert completed.finish_reason == ("length" if ending == "success" else None)
     assert trace.provider_output_tokens == (4 if ending == "success" else 2)
     assert trace.was_stream is True and trace.session_id == "session"
     assert trace.duration_ms == completed.duration_ms

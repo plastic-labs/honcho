@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 from typing import Any, Literal, TypeVar, overload
 
 from pydantic import BaseModel
@@ -556,16 +556,20 @@ async def honcho_llm_call_inner(
             stream_error: BaseException | None = None
             capture_output = has_exporters()
             parts: list[str] = []
-            result = BackendCompletionResult()
+            result = BackendCompletionResult(finish_reason=None)
             try:
-                async for chunk in stream_iter:
-                    if capture_output and chunk.content:
-                        parts.append(chunk.content)
-                    if chunk.output_tokens is not None:
-                        result.output_tokens = chunk.output_tokens
-                    if chunk.finish_reason is not None:
-                        result.finish_reason = chunk.finish_reason
-                    yield stream_chunk_to_response_chunk(chunk)
+                try:
+                    async for chunk in stream_iter:
+                        if capture_output and chunk.content:
+                            parts.append(chunk.content)
+                        if chunk.output_tokens is not None:
+                            result.output_tokens = chunk.output_tokens
+                        if chunk.finish_reason is not None:
+                            result.finish_reason = chunk.finish_reason
+                        yield stream_chunk_to_response_chunk(chunk)
+                finally:
+                    if isinstance(stream_iter, AsyncGenerator):
+                        await stream_iter.aclose()
             except BaseException as exc:
                 stream_error = exc
                 raise

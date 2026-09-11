@@ -8,13 +8,20 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from nanoid import generate as generate_nanoid
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from tenacity import wait_none
 
 from src import crud, dependencies, models
 from src.config import ConfiguredModelSettings, FallbackModelSettings, settings
+from src.dependencies import tracked_db
 from src.deriver import deriver
 from src.deriver.consumer import process_item, process_representation_batch
+from src.dreamer import orchestrator
+from src.dreamer.specialists import (
+    SPECIALISTS,
+    CardRefreshSpecialist,
+    SpecialistResult,
+)
 from src.llm import api, capture, executor, runtime
 from src.llm.backend import CompletionResult, ProviderBackend
 from src.telemetry import trace_exporter
@@ -137,6 +144,58 @@ async def conversations(
             conversations.append((session, messages))
     await db_session.commit()
     return conversations
+
+
+@pytest.mark.parametrize("card_refresh", [False, True])
+@pytest.mark.parametrize("with_session", [False, True])
+async def test_dream_resolves_session_id_before_db_cleanup(
+    card_refresh: bool,
+    with_session: bool,
+    conversations: list[tuple[models.Session, list[models.Message]]],
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session, _ = conversations[0]
+    monkeypatch.setattr(settings.DREAM, "ENABLED", True)
+    monkeypatch.setattr(settings.DREAM.SURPRISAL, "ENABLED", False)
+    monkeypatch.setattr(
+        dependencies,
+        "SessionLocal",
+        async_sessionmaker(db_engine, expire_on_commit=False),
+    )
+    monkeypatch.setattr(orchestrator, "tracked_db", tracked_db)
+    run = AsyncMock(
+        return_value=SpecialistResult(
+            run_id="specialist",
+            specialist_type="card_refresh" if card_refresh else "deduction",
+            iterations=1,
+            tool_calls_count=0,
+            input_tokens=1,
+            output_tokens=1,
+            duration_ms=1,
+            success=True,
+            content="done",
+        )
+    )
+    if card_refresh:
+        monkeypatch.setattr(CardRefreshSpecialist, "run", run)
+        dream = orchestrator.run_card_refresh_dream
+    else:
+        for specialist in SPECIALISTS.values():
+            monkeypatch.setattr(specialist, "run", run)
+        dream = orchestrator.run_dream
+
+    result = await dream(
+        workspace_name=session.workspace_name,
+        observer="alice",
+        observed="alice",
+        session_name=session.name if with_session else None,
+    )
+
+    assert result is not None and result.deduction_success
+    assert run.await_count == (1 if card_refresh else 2)
+    for call in run.await_args_list:
+        assert call.kwargs["session_id"] == (session.id if with_session else None)
 
 
 @pytest.mark.parametrize("session_source", ["queue", "lookup", "configuration"])

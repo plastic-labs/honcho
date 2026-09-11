@@ -118,7 +118,7 @@ class TraceExporter:
         output_reasoning_ref: str | None = None
         if call.reasoning_details:
             output_reasoning_ref, truncated = self._emit_hashed_content(
-                run_key, ROLE_REASONING, call.reasoning_details
+                run_key, ROLE_REASONING, canonical_json(call.reasoning_details)
             )
             was_truncated = was_truncated or truncated
 
