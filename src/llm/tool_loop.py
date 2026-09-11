@@ -14,7 +14,7 @@ from __future__ import annotations
 import dataclasses
 import functools
 import logging
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from typing import Any, ParamSpec, TypeVar
 
 from pydantic import BaseModel
@@ -30,12 +30,7 @@ from src.utils.types import (
     set_last_tool_metadata,
 )
 
-from .capture import (
-    build_captured_call,
-    dispatch_captured_call,
-    has_exporters,
-)
-from .executor import honcho_llm_call_inner, infer_provider_label
+from .executor import honcho_llm_call_inner
 from .registry import history_adapter_for_provider
 from .runtime import (
     AttemptPlan,
@@ -107,46 +102,6 @@ def _telemetry_for_iteration(
         step_seq=step_seq,
         parent_span_id=base.span_identity(),
     )
-
-
-def _make_stream_capture_finalizer(
-    telemetry: LLMTelemetryContext | None,
-    plan: AttemptPlan,
-    messages: list[dict[str, Any]],
-) -> Callable[[str, str], None] | None:
-    """Build the streamed-call capture finalizer, or None when capture is off.
-
-    Snapshots the input messages now and returns a closure the streaming wrapper
-    calls on drain with `(streamed_text, finish_reason)`. Tool calls already ran
-    in the loop, so the final streamed turn is text-only. Returns None when no
-    exporter is registered.
-    """
-    if not has_exporters():
-        return None
-    captured_messages = list(messages)
-
-    def _finalize(text: str, finish_reason: str) -> None:
-        from .backend import CompletionResult as BackendCompletionResult
-
-        result = BackendCompletionResult(content=text, finish_reason=finish_reason)
-        dispatch_captured_call(
-            build_captured_call(
-                telemetry=telemetry,
-                transport=str(plan.provider),
-                provider_label=infer_provider_label(plan.provider, plan.model, plan),
-                model=plan.model,
-                messages=captured_messages,
-                tools=None,
-                tool_choice=None,
-                result=result,
-                attempt=plan.attempt,
-                was_fallback=plan.is_fallback,
-                was_stream=True,
-                finish_reason=finish_reason,
-            )
-        )
-
-    return _finalize
 
 
 def _emit_agent_iteration(
@@ -331,8 +286,12 @@ async def stream_final_response(
     else:
         stream = await _setup_stream()
 
-    async for chunk in stream:
-        yield chunk
+    try:
+        async for chunk in stream:
+            yield chunk
+    finally:
+        if isinstance(stream, AsyncGenerator):
+            await stream.aclose()
 
 
 @_with_iteration_scope
@@ -551,9 +510,6 @@ async def execute_tool_loop(
                         iterations=iteration + 1,
                         hit_input_token_cap=hit_input_token_cap,
                         langfuse_run_handle=langfuse_run_handle,
-                        capture_finalizer=_make_stream_capture_finalizer(
-                            stream_telemetry, winning_plan, conversation_messages
-                        ),
                     )
 
                 response.tool_calls_made = all_tool_calls
@@ -717,9 +673,6 @@ async def execute_tool_loop(
             iterations=iteration + 1,
             hit_input_token_cap=hit_input_token_cap,
             langfuse_run_handle=langfuse_run_handle,
-            capture_finalizer=_make_stream_capture_finalizer(
-                stream_telemetry, winning_plan, conversation_messages
-            ),
         )
 
     current_attempt.set(1)

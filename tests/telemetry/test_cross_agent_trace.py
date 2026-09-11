@@ -101,29 +101,30 @@ def test_dialectic_global_has_no_session(spy: SpyExporter):
     assert spy.calls[-1].session_id is None
 
 
-# --- Background agents: sessionless single-shot / shared-tree contracts -----
+# --- Background agents: single-shot / shared-tree contracts -----------------
 
 
 @pytest.mark.parametrize(
     ("call_purpose", "parent_category", "track_name"),
     [
         ("deriver.representation", "representation", "Minimal Deriver"),
-        ("summary.short", "summary", None),
+        ("summary.short", "summary", "Short Summary"),
+        ("summary.long", "summary", "Long Summary"),
     ],
 )
-def test_background_agents_are_sessionless_single_shot(
+def test_background_agents_keep_session_identity_in_single_shot_traces(
     spy: SpyExporter,
     call_purpose: str,
     parent_category: str,
     track_name: str | None,
 ):
-    # Deriver + summarizer mirror their src/ contexts: trace_id == span_id, no
-    # run_id/session_id, self-rooted.
+    # Producer paths are exercised in test_session_trace_identity.py.
     tid = f"{parent_category}-trace"
     _dispatch(
         LLMTelemetryContext(
             workspace_name="ws",
             call_purpose=call_purpose,
+            session_id="canonical-session-id",
             parent_category=parent_category,
             track_name=track_name,
             trace_id=tid,
@@ -131,7 +132,7 @@ def test_background_agents_are_sessionless_single_shot(
         )
     )
     call = spy.calls[-1]
-    assert call.session_id is None
+    assert call.session_id == "canonical-session-id"
     assert call.run_id is None
     assert call.trace_id == call.span_id == tid
     assert call.parent_span_id is None

@@ -213,6 +213,9 @@ If you update it, send the full deduplicated list and remove stale entries.
         hints: list[str] | None = None,
         configuration: ResolvedConfiguration | None = None,
         parent_run_id: str | None = None,
+        *,
+        session_id: str | None = None,
+        queue_item_id: int | None = None,
     ) -> SpecialistResult:
         """
         Run the specialist agent.
@@ -266,6 +269,11 @@ If you update it, send the full deduplicated list and remove stale entries.
         try:
             # Short-lived DB session for preflight operations
             async with tracked_db("dream.specialist.preflight") as db:
+                if session_name is not None and session_id is None:
+                    session = await crud.get_session(
+                        db, workspace_name=workspace_name, session_name=session_name
+                    )
+                    session_id = session.id
                 await crud.get_peer(db, workspace_name, observer)
                 if observer != observed:
                     await crud.get_peer(db, workspace_name, observed)
@@ -365,6 +373,9 @@ If you update it, send the full deduplicated list and remove stale entries.
                     observer=observer,
                     observed=observed,
                     track_name=f"Dreamer/{self.name}",
+                    observers=[observer],
+                    session_id=session_id,
+                    queue_item_ids=[queue_item_id] if queue_item_id is not None else [],
                 ),
             )
 

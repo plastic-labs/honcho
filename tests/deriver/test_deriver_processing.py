@@ -55,6 +55,7 @@ class TestDeriverProcessing:
                 observers=["bob"],
                 observed="alice",
                 queue_item_message_ids=[1],
+                session_id="canonical-session-1",
             )
 
         await_args = mock_llm_call.await_args
@@ -116,6 +117,7 @@ class TestDeriverProcessing:
                 observers=["bob"],
                 observed="alice",
                 queue_item_message_ids=[1],
+                session_id="canonical-session-1",
             )
 
         # Telemetry must fire *before* the raise so a total save failure is still
@@ -175,6 +177,7 @@ class TestDeriverProcessing:
                 observers=["bob", "carol"],
                 observed="alice",
                 queue_item_message_ids=[1],
+                session_id="canonical-session-1",
             )
 
         assert emitted, "expected a telemetry event to be emitted"
@@ -231,6 +234,7 @@ class TestDeriverProcessing:
                 observers=["bob", "carol"],
                 observed="alice",
                 queue_item_message_ids=[1],
+                session_id="canonical-session-1",
             )
 
         assert emitted, "expected telemetry to be emitted before the raised failure"
@@ -284,6 +288,7 @@ class TestDeriverProcessing:
                 observers=["bob"],
                 observed="alice",
                 queue_item_message_ids=[1],
+                session_id="canonical-session-1",
             )
 
         mock_estimate_prompt_tokens.assert_called_once_with(
@@ -424,6 +429,7 @@ class TestDeriverProcessing:
                 observers=["bob"],
                 observed="alice",
                 queue_item_message_ids=[1],
+                session_id="canonical-session-1",
             )
 
         assert any(
@@ -479,6 +485,7 @@ class TestDeriverProcessing:
                 observers=["bob"],
                 observed="alice",
                 queue_item_message_ids=[1],
+                session_id="canonical-session-1",
             )
 
         assert any(
@@ -549,6 +556,7 @@ class TestDeriverProcessing:
                 observers=["bob", "carol"],
                 observed="alice",
                 queue_item_message_ids=[1],
+                session_id="canonical-session-1",
             )
 
         assert len(emitted) == 1

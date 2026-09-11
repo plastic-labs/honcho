@@ -58,6 +58,13 @@ def test_embedding_traced_event_carries_correlation(
     assert ev.parent_span_id == "run-1"
     assert ev.span_id and ev.span_id != "run-1"
     assert ev.session_id == "sess-1"
+    assert ev.workspace_name == "ws"
+    assert ev.run_id == "run-1"
+    assert ev.duration_ms == 1.0
+    assert ev.outcome == "success"
+    assert ev.error_class is None
+    assert ev.attempt == ev.retry_attempts == 1
+    assert ev.is_final_attempt is True
     assert ev.call_purpose == "dialectic.prefetch"
     assert ev.parent_category == "dialectic"
     assert ev.provider == "openai" and ev.model == "text-embedding-3"
