@@ -1,6 +1,6 @@
 import asyncio
 import contextlib
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from logging import getLogger
 
 import sentry_sdk
@@ -354,7 +354,7 @@ async def check_and_schedule_dream(
             try:
                 last_dream_time = datetime.fromisoformat(last_dream_at)
                 hours_since_last_dream = (
-                    datetime.now(timezone.utc) - last_dream_time
+                    datetime.now(UTC) - last_dream_time
                 ).total_seconds() / 3600
 
                 if hours_since_last_dream < settings.DREAM.MIN_HOURS_BETWEEN_DREAMS:

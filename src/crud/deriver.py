@@ -3,25 +3,35 @@ from datetime import UTC, datetime, timedelta
 from logging import getLogger
 from typing import Any
 
-from sqlalchemy import ColumnElement, Select, case, delete, func, or_, select
+from sqlalchemy import (
+    ColumnElement,
+    Select,
+    SQLColumnExpression,
+    and_,
+    case,
+    delete,
+    func,
+    or_,
+    select,
+)
 from sqlalchemy.engine import Row
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models, schemas
 from src.config import settings
+from src.db import tenant_context
 
 logger = getLogger(__name__)
 
-REPRESENTATION_WORK_UNIT_PREFIX = "representation:"
 
-
-def representation_batch_threshold_clause(
-    *,
-    work_unit_key: ColumnElement[str],
-    total_tokens: ColumnElement[Any],
-    oldest_created_at: ColumnElement[Any],
-) -> ColumnElement[bool] | None:
-    """The batch gate a representation work unit passes before it is claimable, or None when no gate applies."""
+def backlog_threshold_clause() -> ColumnElement[bool] | None:
+    """The batch gate a backlog row passes before its unit is claimable, or None when no gate applies."""
+    # region ai
+    # Typed by task_type on the backlog row, never by key prefix — a
+    # startswith("representation:") test here silently disabled the gate for
+    # every tenant-prefixed key. Non-representation units are always eligible;
+    # representation units wait for the token target or the age flush.
+    # endregion
     if settings.DERIVER.FLUSH_ENABLED:
         return None
 
@@ -29,23 +39,23 @@ def representation_batch_threshold_clause(
     if target_tokens <= 0:
         return None
 
-    threshold: ColumnElement[bool] = func.coalesce(total_tokens, 0) >= target_tokens
+    threshold: ColumnElement[bool] = (
+        models.WorkUnitBacklog.total_tokens >= target_tokens
+    )
 
     max_age_seconds = settings.DERIVER.REPRESENTATION_BATCH_MAX_AGE_SECONDS
     if max_age_seconds > 0:
         threshold = or_(
             threshold,
-            oldest_created_at <= func.now() - timedelta(seconds=max_age_seconds),
+            models.WorkUnitBacklog.oldest_created_at
+            <= func.now() - timedelta(seconds=max_age_seconds),
         )
 
-    return or_(
-        ~work_unit_key.startswith(REPRESENTATION_WORK_UNIT_PREFIX),
-        threshold,
-    )
+    return or_(models.WorkUnitBacklog.task_type != "representation", threshold)
 
 
 def unclaimed_work_unit_clause(
-    work_unit_key: ColumnElement[str],
+    work_unit_key: SQLColumnExpression[str],
 ) -> ColumnElement[bool]:
     """No claim row exists for this work unit, stale ones included."""
     return (
@@ -55,6 +65,95 @@ def unclaimed_work_unit_clause(
     )
 
 
+def active_queue_session_match(
+    workspace_name: str,
+    session_name: str | None = None,
+) -> ColumnElement[bool]:
+    """Match claim rows whose work unit belongs to this workspace (and session), flag-aware."""
+    # region ai
+    # Flag-off keys are {task_type}:{workspace}:{session?}:... — workspace at
+    # split position 2, session at position 3. Under MULTI_TENANT tenant-scoped
+    # keys gain a {tenant_id}: prefix, shifting both positions by one; rows are
+    # additionally pinned to the ambient tenant via the tenant_id attribution
+    # column (a position match alone would hit other tenants' rows for a
+    # same-named workspace), and tenant-less (reconciler) rows are left to the
+    # stale-claim GC that owns them. Fail closed flag-on with no ambient tenant —
+    # every caller (API routes via require_auth, the deriver via
+    # process_work_unit) is tenant-bound when the flag is on.
+    # Known, pre-existing wrinkle both branches inherit: dream keys carry
+    # workspace one position deeper ({task}:{dream_type}:{workspace}:...) and
+    # scope keys carry session at the peer's position + 1, so those units are
+    # missed here and swept by the stale-claim GC instead — unchanged behavior.
+    # endregion
+    if settings.MULTI_TENANT:
+        tenant = tenant_context.get()
+        if not tenant:
+            raise ValueError(
+                f"cannot match claim rows for workspace {workspace_name!r} "
+                + "without a tenant when MULTI_TENANT is on"
+            )
+        workspace_position, session_position = 3, 4
+        tenant_match: ColumnElement[bool] | None = (
+            models.ActiveQueueSession.tenant_id == tenant
+        )
+    else:
+        workspace_position, session_position = 2, 3
+        tenant_match = None
+
+    match: ColumnElement[bool] = (
+        func.split_part(
+            models.ActiveQueueSession.work_unit_key, ":", workspace_position
+        )
+        == workspace_name
+    )
+    if session_name is not None:
+        match = and_(
+            match,
+            func.split_part(
+                models.ActiveQueueSession.work_unit_key, ":", session_position
+            )
+            == session_name,
+        )
+    if tenant_match is not None:
+        match = and_(tenant_match, match)
+    return match
+
+
+def claim_rows_query(limit: int) -> Select[Any]:
+    """The claim's locked candidate SELECT: eligible units in scheduling order, skipping rows a concurrent claimer holds."""
+    # region ai
+    # One statement on purpose: FOR UPDATE SKIP LOCKED locks rows in output
+    # order below the LIMIT, so a concurrent claimer's locked rows are skipped
+    # and BACKFILLED from the sorted stream — both claimers fill their batch,
+    # disjointly, with zero wasted claims. A two-step select-then-lock variant
+    # loses that backfill (the loser picks the same blind candidates, skips
+    # them all, and claims nothing for the poll). The cost of locking in
+    # scheduling order is that a rare lock-order inversion against the enqueue
+    # trigger's backlog upserts can deadlock; Postgres's detector breaks it and
+    # both sides retry — the enqueue in _insert_queue_records, the claim on its
+    # next poll (the polling loop's catch-all backs off and continues).
+    # endregion
+    query = (
+        select(
+            models.WorkUnitBacklog.work_unit_key,
+            models.WorkUnitBacklog.task_type,
+            models.WorkUnitBacklog.total_tokens,
+            models.WorkUnitBacklog.oldest_created_at,
+        )
+        .where(unclaimed_work_unit_clause(models.WorkUnitBacklog.work_unit_key))
+        .order_by(
+            models.WorkUnitBacklog.oldest_created_at.asc(),
+            models.WorkUnitBacklog.work_unit_key.asc(),
+        )
+        .limit(limit)
+        .with_for_update(skip_locked=True)
+    )
+    threshold_clause = backlog_threshold_clause()
+    if threshold_clause is not None:
+        query = query.where(threshold_clause)
+    return query
+
+
 def stale_claim_cutoff() -> datetime:
     return datetime.now(UTC) - timedelta(
         minutes=settings.DERIVER.STALE_SESSION_TIMEOUT_MINUTES
@@ -62,7 +161,7 @@ def stale_claim_cutoff() -> datetime:
 
 
 def not_live_claimed_work_unit_clause(
-    work_unit_key: ColumnElement[str],
+    work_unit_key: SQLColumnExpression[str],
 ) -> ColumnElement[bool]:
     """No claim refreshed inside the stale timeout exists, so a stale claim leaves its work unit claimable."""
     return (
@@ -103,43 +202,20 @@ async def get_deriver_metrics(db: AsyncSession) -> schemas.DeriverMetrics:
     """Count the outstanding deriver work in the whole database, read-only."""
     from src.reconciler.sync_vectors import backoff_eligible  # noqa: PLC0415
 
-    token_stats = (
-        select(
-            models.QueueItem.work_unit_key,
-            func.sum(models.Message.token_count).label("total_tokens"),
-            func.min(models.QueueItem.created_at).label("oldest_created_at"),
-        )
-        .join(models.Message, models.QueueItem.message_id == models.Message.id)
-        .where(~models.QueueItem.processed)
-        .where(
-            models.QueueItem.work_unit_key.startswith(REPRESENTATION_WORK_UNIT_PREFIX)
-        )
-        .group_by(models.QueueItem.work_unit_key)
-        .subquery()
-    )
-
-    work_units = (
-        select(models.QueueItem.work_unit_key)
-        .where(~models.QueueItem.processed)
-        .group_by(models.QueueItem.work_unit_key)
-        .subquery()
-    )
-
+    # region ai
+    # Reads the trigger-maintained work_unit_backlog, not the queue: this poller
+    # ran the same two GROUP BYs as the old claim path on every backlog-metrics
+    # poll, the identical ~O(depth²) cost. sum(pending_count) equals the old
+    # per-item count and min(oldest_created_at) the old per-item min by
+    # construction of the triggers (see the work_unit_backlog migration).
+    # endregion
     eligible = (
         select(func.count())
-        .select_from(work_units)
-        .outerjoin(
-            token_stats,
-            work_units.c.work_unit_key == token_stats.c.work_unit_key,
-        )
-        .where(not_live_claimed_work_unit_clause(work_units.c.work_unit_key))
+        .select_from(models.WorkUnitBacklog)
+        .where(not_live_claimed_work_unit_clause(models.WorkUnitBacklog.work_unit_key))
     )
 
-    threshold_clause = representation_batch_threshold_clause(
-        work_unit_key=work_units.c.work_unit_key,
-        total_tokens=token_stats.c.total_tokens,
-        oldest_created_at=token_stats.c.oldest_created_at,
-    )
+    threshold_clause = backlog_threshold_clause()
     if threshold_clause is not None:
         eligible = eligible.where(threshold_clause)
 
@@ -150,12 +226,15 @@ async def get_deriver_metrics(db: AsyncSession) -> schemas.DeriverMetrics:
     )
 
     pending = select(
-        func.count(models.QueueItem.id),
+        func.coalesce(func.sum(models.WorkUnitBacklog.pending_count), 0),
         func.coalesce(
-            func.extract("epoch", func.now() - func.min(models.QueueItem.created_at)),
+            func.extract(
+                "epoch",
+                func.now() - func.min(models.WorkUnitBacklog.oldest_created_at),
+            ),
             0,
         ),
-    ).where(~models.QueueItem.processed)
+    )
 
     embeddings = select(
         func.count(),

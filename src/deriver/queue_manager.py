@@ -23,11 +23,7 @@ from sqlalchemy.sql import func
 from src import models
 from src.cache.client import close_cache, init_cache
 from src.config import settings
-from src.crud.deriver import (
-    REPRESENTATION_WORK_UNIT_PREFIX,
-    representation_batch_threshold_clause,
-    unclaimed_work_unit_clause,
-)
+from src.crud.deriver import claim_rows_query
 from src.crud.deriver import (
     cleanup_stale_work_units as crud_cleanup_stale_work_units,
 )
@@ -53,7 +49,7 @@ from src.telemetry import prometheus_metrics
 from src.telemetry.sentry import initialize_sentry
 from src.utils.queue_payload import RETRY_ATTEMPTS_PAYLOAD_KEY
 from src.utils.retryable_errors import is_retryable_error
-from src.utils.work_unit import parse_work_unit_key
+from src.utils.work_unit import parse_work_unit_key, tenant_id_for_work_unit_key
 from src.webhooks.events import (
     QueueEmptyEvent,
     publish_webhook_event,
@@ -342,80 +338,39 @@ class QueueManager:
         )
 
         # region ai
-        # Cross-tenant claim: scans every tenant's queue on the service session
-        # (tracked_db would fail closed under MULTI_TENANT). A2 tenant-namespaces
-        # work_unit_key, so each claimed unit is still tenant-homogeneous.
+        # Cross-tenant claim on the service session (tracked_db would fail
+        # closed under MULTI_TENANT); work_unit_key is tenant-namespaced, so
+        # each claimed unit is still tenant-homogeneous. The candidate set is
+        # the trigger-maintained work_unit_backlog — one indexed row per pending
+        # unit — instead of re-aggregating the queue, whose two GROUP BYs plus
+        # messages join are ~O(depth²) per poll at shared-queue depth.
+        # claim_rows_query locks its rows FOR UPDATE SKIP LOCKED, so concurrent
+        # claimers stay disjoint and backfill from the sorted stream (the
+        # builder carries the locking rationale, deadlock story included); the
+        # row locks release at commit, and the ActiveQueueSession insert below
+        # remains the durable claim marker for the processing duration.
         # endregion
         async with service_db("get_available_work_units") as db:
-            representation_prefix = REPRESENTATION_WORK_UNIT_PREFIX
-            token_stats_subq = (
-                select(
-                    models.QueueItem.work_unit_key,
-                    func.sum(models.Message.token_count).label("total_tokens"),
-                    func.min(models.QueueItem.created_at).label("oldest_created_at"),
-                )
-                .join(
-                    models.Message,
-                    models.QueueItem.message_id == models.Message.id,
-                )
-                .where(~models.QueueItem.processed)
-                .where(models.QueueItem.work_unit_key.startswith(representation_prefix))
-                .group_by(models.QueueItem.work_unit_key)
-                .subquery()
-            )
-
-            work_units_subq = (
-                select(
-                    models.QueueItem.work_unit_key,
-                    func.min(models.QueueItem.created_at).label("oldest_created_at"),
-                )
-                .where(~models.QueueItem.processed)
-                .group_by(models.QueueItem.work_unit_key)
-                .subquery()
-            )
-
-            query = (
-                select(
-                    work_units_subq.c.work_unit_key,
-                    token_stats_subq.c.total_tokens,
-                    token_stats_subq.c.oldest_created_at,
-                )
-                .outerjoin(
-                    token_stats_subq,
-                    work_units_subq.c.work_unit_key == token_stats_subq.c.work_unit_key,
-                )
-                .where(unclaimed_work_unit_clause(work_units_subq.c.work_unit_key))
-                .order_by(
-                    work_units_subq.c.oldest_created_at.asc(),
-                    work_units_subq.c.work_unit_key.asc(),
-                )
-                .limit(limit)
-            )
-
-            # Apply batch threshold filter (skip if FLUSH_ENABLED is True)
-            threshold_clause = representation_batch_threshold_clause(
-                work_unit_key=work_units_subq.c.work_unit_key,
-                total_tokens=token_stats_subq.c.total_tokens,
-                oldest_created_at=token_stats_subq.c.oldest_created_at,
-            )
-            if threshold_clause is not None:
-                query = query.where(threshold_clause)
-
-            result = await db.execute(query)
+            result = await db.execute(claim_rows_query(limit))
             available_rows = result.all()
             available_units: list[str] = []
-            for work_unit_key, total_tokens, oldest_created_at in available_rows:
+            for (
+                work_unit_key,
+                task_type,
+                total_tokens,
+                oldest_created_at,
+            ) in available_rows:
                 available_units.append(work_unit_key)
                 if (
                     not settings.DERIVER.FLUSH_ENABLED
                     and settings.DERIVER.REPRESENTATION_BATCH_MAX_AGE_SECONDS > 0
-                    and work_unit_key.startswith(representation_prefix)
-                    and int(total_tokens or 0) < work_unit_target_tokens
+                    and task_type == "representation"
+                    and int(total_tokens) < work_unit_target_tokens
                 ):
                     logger.info(
                         "age-flushing work unit %s (tokens=%s < %s, oldest=%s)",
                         work_unit_key,
-                        total_tokens or 0,
+                        total_tokens,
                         work_unit_target_tokens,
                         oldest_created_at,
                     )
@@ -435,7 +390,19 @@ class QueueManager:
         Claim work units and return a mapping of work_unit_key to aqs_id.
         Returns only the work units that were successfully claimed.
         """
-        values = [{"work_unit_key": key} for key in work_unit_keys]
+        # region ai
+        # tenant_id is derived from the claimed key's prefix so the claim row
+        # carries the same tenant attribution as its queue rows — the
+        # workspace/session cleanup paths (active_queue_session_match) filter on
+        # this column flag-on, so an unstamped row would survive those deletes.
+        # endregion
+        values = [
+            {
+                "work_unit_key": key,
+                "tenant_id": tenant_id_for_work_unit_key(key),
+            }
+            for key in work_unit_keys
+        ]
 
         stmt = (
             insert(models.ActiveQueueSession)
