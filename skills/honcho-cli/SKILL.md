@@ -22,6 +22,7 @@ allowed-tools: Bash(honcho:*), Bash(jq:*), Read, Grep
 - `honcho workspace` — inspect, delete, search, chat
 - `honcho peer` — inspect, card, chat, search
 - `honcho session` — inspect, view (transcript), context, summaries
+- `honcho scope` — list, create, inspect, sessions, add-sessions, remove-session, status
 - `honcho message` — list and get
 - `honcho conclusion` — list, search, create, delete
 
@@ -32,6 +33,7 @@ allowed-tools: Bash(honcho:*), Bash(jq:*), Read, Grep
 - Use `honcho session context` to see exactly what an agent receives.
 - Never run `honcho workspace delete` without `honcho workspace inspect` first.
 - Compare peer card with conclusions to understand memory state.
+- After `honcho scope add-sessions`, check `honcho scope status <name>` before a scoped `chat`: a `pending` backfill means the scope has not caught up yet, not that there is nothing to recall.
 - `honcho start` does not rewrite `environmentUrl`. Use `HONCHO_BASE_URL=http://127.0.0.1:8000` to talk to local stack.
 
 ## Inspection tour
@@ -77,6 +79,16 @@ honcho workspace search "query" --json
 honcho workspace chat "what themes show up across peers?" --json
 honcho workspace chat "what happened in this project?" --scope my-project --json
 honcho peer search <peer_id> "query" --json
+```
+
+### 6. Bound recall with a scope
+
+```bash
+honcho scope list --json
+honcho scope inspect <name> --json                       # members + backfill summary
+honcho scope create <name> --sessions <id1>,<id2> --json
+honcho scope status <name> --json                        # wait until nothing is pending
+honcho workspace chat "what happened here?" --scope <name> --json
 ```
 
 ## Debugging playbook

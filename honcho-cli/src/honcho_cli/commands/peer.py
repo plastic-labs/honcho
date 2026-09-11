@@ -134,12 +134,12 @@ def chat(
     scope: Optional[list[str]] = typer.Option(
         None,
         "--scope",
-        help="Confine recall to a scope. One name answers from that scope's own view; several names (repeat or comma-separate) are an explicit-only allowlist of their sessions. Mutually exclusive with --sessions and -s.",
+        help="Recall only from this scope. Repeat or comma-separate for several (explicit conclusions only). Excludes -s and --sessions.",
     ),
     sessions: Optional[list[str]] = typer.Option(
         None,
         "--sessions",
-        help="Ad hoc session-ID allowlist (repeat or comma-separate). Explicit conclusions only. Mutually exclusive with --scope and -s.",
+        help="Recall only from these session IDs (repeat or comma-separate); explicit conclusions only. Excludes -s and --scope.",
     ),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
     peer: Optional[str] = typer.Option(None, "--peer", "-p", help="Override peer ID"),
