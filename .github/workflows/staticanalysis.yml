@@ -48,3 +48,27 @@ jobs:
       # The gate runs from `pull_request_target`, where a crash is invisible until
       # a contributor's PR is silently ungated. Check it here instead.
       - run: node .github/scripts/issue-gate.test.js
+
+  openapi-drift:
+    runs-on: ubuntu-latest
+    # Advisory, not a merge gate: `main` requires pull requests but declares no
+    # required status checks, so a red run here reports drift without blocking.
+    # Deliberately not `continue-on-error` -- that reports neutral-green, which
+    # is exactly the outcome this job exists to avoid.
+    steps:
+      - uses: actions/checkout@v4
+      - name: "Set up Python"
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: ".python-version"
+      - name: Install uv
+        uses: astral-sh/setup-uv@v2
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+      - name: Install the project
+        run: uv sync --all-extras --dev
+      # No DB or cache: importing the app and reading its schema touches
+      # neither, so this needs no services.
+      - name: check docs/v3/openapi.json matches the app
+        run: uv run python -m scripts.generate_openapi --check
