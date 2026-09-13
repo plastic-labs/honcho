@@ -18,6 +18,8 @@ from src.utils.summarizer import (
     _create_summary,  # pyright: ignore[reportPrivateUsage]
     create_long_summary,
     create_short_summary,
+    long_summary_prompt,
+    short_summary_prompt,
 )
 
 # Common test arguments for _create_summary
@@ -220,6 +222,68 @@ class TestCreateSummary:
         assert is_fallback is True
         assert summary["content"] == ""
         assert summary["token_count"] == 0
+
+
+class TestSummaryCustomInstructions:
+    def test_short_summary_prompt_includes_custom_instructions(self):
+        prompt = short_summary_prompt(
+            formatted_messages=_FORMATTED_MESSAGES,
+            output_words=50,
+            previous_summary_text="previous context",
+            custom_instructions="Always write the summary in German.",
+        )
+
+        assert "CUSTOM INSTRUCTIONS:" in prompt
+        assert "Always write the summary in German." in prompt
+        assert "previous context" in prompt
+        assert _FORMATTED_MESSAGES in prompt
+
+    def test_long_summary_prompt_omits_blank_custom_instructions(self):
+        prompt = long_summary_prompt(
+            formatted_messages=_FORMATTED_MESSAGES,
+            output_words=250,
+            previous_summary_text="previous context",
+            custom_instructions="   \n\t   ",
+        )
+
+        assert "CUSTOM INSTRUCTIONS:" not in prompt
+        assert "previous context" in prompt
+        assert _FORMATTED_MESSAGES in prompt
+
+    @pytest.mark.asyncio
+    async def test_create_summary_passes_custom_instructions_to_short_summary(self):
+        mock_response = HonchoLLMCallResponse(
+            content="Benutzer bevorzugt kurze Antworten.",
+            input_tokens=100,
+            output_tokens=8,
+            finish_reasons=["STOP"],
+        )
+
+        with patch(
+            "src.utils.summarizer.create_short_summary",
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ) as mock_short:
+            summary, is_fallback, _, _ = await _create_summary(
+                formatted_messages=_FORMATTED_MESSAGES,
+                previous_summary_text=None,
+                summary_type=SummaryType.SHORT,
+                input_tokens=_INPUT_TOKENS,
+                message_public_id=_MESSAGE_PUBLIC_ID,
+                last_message_id=_LAST_MESSAGE_ID,
+                last_message_content_preview=_LAST_MESSAGE_CONTENT_PREVIEW,
+                message_count=_MESSAGE_COUNT,
+                custom_instructions="Always write summaries in German.",
+            )
+
+        assert is_fallback is False
+        assert "Benutzer" in summary["content"]
+        await_args = mock_short.await_args
+        if await_args is None:
+            raise AssertionError("Expected short summary call")
+        assert await_args.kwargs["custom_instructions"] == (
+            "Always write summaries in German."
+        )
 
 
 @pytest.mark.asyncio
