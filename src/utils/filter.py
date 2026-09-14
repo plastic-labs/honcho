@@ -538,7 +538,7 @@ def _build_source_ids_condition(
     def _member(sid: Any) -> ColumnElement[bool]:
         if not isinstance(sid, str) or not sid:
             raise FilterError("source_ids filter entries must be non-empty strings")
-        return (
+        linked = (
             select(literal(1))
             .where(
                 DocumentSource.derived_id == model_class.id,
@@ -546,6 +546,8 @@ def _build_source_ids_condition(
             )
             .exists()
         )
+        # Undrained rows still carry linkage in the legacy JSONB column.
+        return or_(linked, model_class.legacy_source_ids.contains([sid]))
 
     if value == "*":
         return None

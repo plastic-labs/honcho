@@ -1,6 +1,7 @@
 import datetime
+import re
 from logging import getLogger
-from typing import Any, final, override
+from typing import Any, cast, final, override
 
 from dotenv import load_dotenv
 from nanoid import generate as generate_nanoid
@@ -374,6 +375,10 @@ class Collection(Base):
     )
 
 
+# Shape of a document id; legacy linkage arrays occasionally hold other refs.
+SOURCE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{21}$")
+
+
 @final
 class Document(Base):
     __tablename__: str = "documents"
@@ -425,10 +430,34 @@ class Document(Base):
         lazy="selectin",
     )
 
+    # Pre-document_sources linkage. Read-only: the reconciler drains it into
+    # document_sources and NULLs it; a follow-up migration drops the column.
+    legacy_source_ids: Mapped[list[str] | None] = mapped_column(
+        "source_ids", JSONB(none_as_null=True), nullable=True
+    )
+
     @property
     def source_ids(self) -> list[str] | None:
-        """Parent conclusion IDs in original order; None when unlinked."""
-        return [link.source_id for link in self.source_links] or None
+        """Parent conclusion IDs in original order; None when unlinked.
+
+        Falls back to the legacy JSONB locations for rows the reconciler has
+        not drained yet, in the same precedence order as the drain.
+        """
+        if self.source_links:
+            return [link.source_id for link in self.source_links]
+        for candidate in (
+            self.legacy_source_ids,
+            self.internal_metadata.get("source_ids"),
+            self.internal_metadata.get("premise_ids"),
+        ):
+            if isinstance(candidate, list):
+                ids = [
+                    sid
+                    for sid in dict.fromkeys(cast(list[Any], candidate))
+                    if isinstance(sid, str) and SOURCE_ID_RE.match(sid)
+                ]
+                return ids or None
+        return None
 
     @source_ids.setter
     def source_ids(self, value: list[str] | None) -> None:
@@ -486,6 +515,13 @@ class Document(Base):
             "ix_documents_sync_state_last_sync_at",
             "sync_state",
             "last_sync_at",
+        ),
+        # Serves reverse traversal on undrained legacy rows; dropped with the
+        # column in the follow-up migration.
+        Index(
+            "ix_documents_source_ids_gin",
+            "source_ids",
+            postgresql_using="gin",
         ),
     )
 

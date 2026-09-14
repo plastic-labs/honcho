@@ -1,13 +1,12 @@
 import asyncio
 import datetime
-import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from logging import getLogger
 from typing import Any, Literal, cast
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, literal, or_, select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import DBAPIError, IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,8 +34,6 @@ from src.vector_store import (
 
 logger = getLogger(__name__)
 
-_SOURCE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{21}$")
-
 
 def build_source_links(
     source_ids: list[str] | None, workspace_name: str
@@ -52,7 +49,7 @@ def build_source_links(
     return [
         models.DocumentSource(source_id=sid, position=i, workspace_name=workspace_name)
         for i, sid in enumerate(dict.fromkeys(source_ids))
-        if _SOURCE_ID_RE.match(sid)
+        if models.SOURCE_ID_RE.match(sid)
     ]
 
 
@@ -1596,8 +1593,8 @@ def get_child_observations(
     Get all observations that have this document as a source/premise.
 
     Useful for traversing the reasoning tree upward (source -> derived
-    observations). Joins through document_sources, which the backfill
-    migration populated from both current and legacy linkage storage.
+    observations). Matches through document_sources, falling back to the
+    legacy JSONB column for rows the reconciler has not drained yet.
 
     Args:
         workspace_name: Workspace identifier
@@ -1610,17 +1607,19 @@ def get_child_observations(
         Select query for documents that reference this document as a source,
         for pagination support via apaginate()
     """
-    stmt = (
-        select(models.Document)
-        .join(
-            models.DocumentSource,
-            models.DocumentSource.derived_id == models.Document.id,
-        )
+    linked = (
+        select(literal(1))
         .where(
-            models.Document.workspace_name == workspace_name,
+            models.DocumentSource.derived_id == models.Document.id,
             models.DocumentSource.source_id == parent_id,
-            models.Document.deleted_at.is_(None),
         )
+        .exists()
+    )
+    # Undrained rows still carry linkage in the legacy JSONB column.
+    stmt = select(models.Document).where(
+        models.Document.workspace_name == workspace_name,
+        or_(linked, models.Document.legacy_source_ids.contains([parent_id])),
+        models.Document.deleted_at.is_(None),
     )
     if observer:
         stmt = stmt.where(models.Document.observer == observer)
