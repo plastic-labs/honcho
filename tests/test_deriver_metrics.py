@@ -337,6 +337,7 @@ class TestLifespanScheduler:
             patch.object(main_module, "register_db_query_instrumentation"),
             patch.object(main_module, "register_db_connection_instrumentation"),
             patch.object(main_module, "validate_embedding_schema", AsyncMock()),
+            patch.object(main_module, "validate_queue_item_batches", AsyncMock()),
             patch.object(main_module, "init_cache", AsyncMock()),
             patch.object(main_module, "close_cache", AsyncMock()),
             patch.object(main_module, "shutdown_telemetry", AsyncMock()),

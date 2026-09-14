@@ -736,41 +736,17 @@ class ActiveQueueSession(Base):
 class QueueItemBatch(Base):
     """One pending work unit's queue items, aggregated for the deriver claim.
 
-    Maintained entirely by database triggers on ``queue`` — application code
-    never writes this table. A row exists exactly while its work unit has
-    unprocessed queue items, and the claim path reads this table instead of
-    re-aggregating ``queue`` on every poll. If the table exists without the
-    triggers below, the deriver claims from a stale picture or nothing at all.
+    This table is updated via **database triggers,** not python. Alembic
+    revision ``b7d2f4a81c39`` installs the triggers and their helper functions:
 
-    Alembic revision ``b7d2f4a81c39`` installs all of the following on the
-    database; every one of them must be present:
+    - ``trg_queue_item_batches_insert``
+    - ``trg_queue_item_batches_update``
+    - ``trg_queue_item_batches_delete``
+    - ``_queue_item_batches_recompute(key)``
+    - ``_queue_item_token_count(tenant_id, message_id, task_type)``
 
-    - ``trg_queue_item_batches_insert`` — AFTER INSERT ON queue, FOR EACH ROW
-      → ``queue_item_batches_apply_insert()``: upserts the unit's row
-      (pending_count +1, total_tokens += the item's tokens,
-      oldest_created_at = LEAST); already-processed inserts are ignored.
-    - ``trg_queue_item_batches_update`` — AFTER UPDATE ON queue, FOR EACH
-      STATEMENT over transition tables → ``queue_item_batches_apply_update()``:
-      one exact recompute per distinct work_unit_key whose ``processed``
-      flag changed in the statement.
-    - ``trg_queue_item_batches_delete`` — AFTER DELETE ON queue, FOR EACH
-      STATEMENT over the OLD transition table →
-      ``queue_item_batches_apply_delete()``: one exact recompute per distinct
-      work_unit_key that lost an unprocessed row.
-    - ``_queue_item_batches_recompute(key)`` — the shared recompute: locks the
-      unit's row FOR UPDATE, re-aggregates its unprocessed ``queue`` rows, and
-      deletes the row only when ``queue`` holds none (membership, not the
-      counter, decides).
-    - ``_queue_item_token_count(tenant_id, message_id, task_type)`` — token
-      lookup shared by the insert path and the recompute; representation
-      items only, probing ``messages`` by its (tenant_id, id) primary key.
-
-    Anything that writes ``queue`` without firing ordinary triggers leaves
-    this table stale: logical-replication apply (``session_replication_role
-    = replica``), ``COPY``/``pg_restore`` with triggers disabled, and
-    ``TRUNCATE queue`` (no DELETE trigger fires — truncate this table too).
-    Recover by re-running the migration's backfill aggregate, or by draining
-    ``queue``.
+    The ``validate_queue_item_batches`` boot validator will crash the app
+    at launch if the table or any of the three triggers is missing or disabled.
     """
 
     __tablename__: str = "queue_item_batches"

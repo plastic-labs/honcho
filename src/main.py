@@ -38,7 +38,11 @@ from src.routers import (
     webhooks,
     workspaces,
 )
-from src.startup import validate_embedding_schema, validate_tenant_isolation
+from src.startup import (
+    validate_embedding_schema,
+    validate_queue_item_batches,
+    validate_tenant_isolation,
+)
 from src.telemetry import (
     initialize_telemetry_async,
     metrics_endpoint,
@@ -142,6 +146,10 @@ async def lifespan(_: FastAPI):
     # an unsafe pooler mode for the session-scoped binding, or RLS not
     # enabled+forced on the data tables.
     await validate_tenant_isolation(engine)
+    # Fail closed if the deriver claim's trigger-maintained aggregate is not
+    # wired: missing or disabled queue_item_batches triggers would leave
+    # enqueued work invisible to every deriver, with no error anywhere.
+    await validate_queue_item_batches(engine)
 
     try:
         await init_cache()
