@@ -11,7 +11,11 @@ from src.db import (
     register_db_connection_instrumentation,
     register_db_query_instrumentation,
 )
-from src.startup import validate_embedding_schema, validate_tenant_isolation
+from src.startup import (
+    validate_embedding_schema,
+    validate_queue_item_batches,
+    validate_tenant_isolation,
+)
 from src.telemetry import (
     initialize_telemetry_async,
     prometheus_metrics,
@@ -84,6 +88,7 @@ async def run_deriver():
         # telemetry buffer is still flushed if validation raises.
         await validate_embedding_schema(engine)
         await validate_tenant_isolation(engine)
+        await validate_queue_item_batches(engine)
         await main()
     finally:
         # Shutdown telemetry (flush CloudEvents buffer)

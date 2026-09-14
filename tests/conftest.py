@@ -487,16 +487,17 @@ async def client(
     # for isolation and so data written by a test is visible to its reads.
     app.dependency_overrides[get_read_db] = override_get_db
 
-    # No-op the startup embedding-schema validator inside the lifespan. The
-    # global `engine` it would inspect points to a DB that isn't migrated in
-    # CI (per-worker test DBs are migrated separately by db_engine), and we
-    # don't want the validator to dispose the test engine via the lifespan
-    # finally block either. The validator has its own dedicated coverage in
-    # tests/startup/test_embedding_validator.py against db_engine directly.
+    # No-op the startup embedding-schema and queue_item_batches-trigger
+    # validators inside the lifespan. The global `engine` they would inspect
+    # points to a DB that isn't migrated in CI (per-worker test DBs are
+    # migrated separately by db_engine), and we don't want a validator to
+    # dispose the test engine via the lifespan finally block either. Both have
+    # dedicated coverage in tests/startup/ against db_engine directly.
     async def _skip_validate(_engine: object) -> None:
         return None
 
     monkeypatch.setattr("src.main.validate_embedding_schema", _skip_validate)
+    monkeypatch.setattr("src.main.validate_queue_item_batches", _skip_validate)
 
     with TestClient(app) as c:
         if settings.AUTH.USE_AUTH:

@@ -733,6 +733,71 @@ class ActiveQueueSession(Base):
 
 
 @final
+class QueueItemBatch(Base):
+    """One pending work unit's queue items, aggregated for the deriver claim.
+
+    This table is updated via **database triggers,** not python. Alembic
+    revision ``b7d2f4a81c39`` installs the triggers and their helper functions:
+
+    - ``trg_queue_item_batches_insert``
+    - ``trg_queue_item_batches_update``
+    - ``trg_queue_item_batches_delete``
+    - ``_queue_item_batches_recompute(key)``
+    - ``_queue_item_token_count(tenant_id, message_id, task_type)``
+
+    The ``validate_queue_item_batches`` boot validator will crash the app
+    at launch if the table or any of the three triggers is missing or disabled.
+    """
+
+    __tablename__: str = "queue_item_batches"
+
+    # region ai
+    # The claim path reads THIS table instead of re-aggregating the queue: the
+    # queue's two GROUP BYs plus messages join are ~O(depth²) per poll on a
+    # shared queue, while this stays one indexed row per pending work unit. Rows
+    # are written ONLY by the triggers installed in the queue_item_batches
+    # migration (insert = fast increment; completion/delete = exact recompute
+    # over the unit's remaining unprocessed rows; a unit with nothing pending
+    # has NO row — existence, not pending_count, is what the delete guard keys
+    # on, so a live unit never loses its row to a racing recompute). Application
+    # code must never write it. pending_count is bookkeeping, not a claim
+    # input; the claim gate reads task_type/total_tokens/oldest_created_at and
+    # claims by row existence.
+    # endregion
+    work_unit_key: Mapped[str] = mapped_column(TEXT, primary_key=True)
+    # ai: Service table: tenant_id is plain attribution, no FK / RLS.
+    tenant_id: Mapped[str | None] = mapped_column(TEXT, nullable=True)
+    task_type: Mapped[TaskType] = mapped_column(TEXT, nullable=False)
+    pending_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    total_tokens: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, server_default=text("0")
+    )
+    oldest_created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+    __table_args__ = (
+        # Feeds the fair claim's PARTITION BY tenant_id ORDER BY
+        # (oldest_created_at, work_unit_key) window with pre-sorted input.
+        Index(
+            "ix_queue_item_batches_tenant_oldest_key",
+            "tenant_id",
+            "oldest_created_at",
+            "work_unit_key",
+        ),
+        # Serves the plain oldest-first candidate scan and the metrics min().
+        Index(
+            "ix_queue_item_batches_oldest_created_at_key",
+            "oldest_created_at",
+            "work_unit_key",
+        ),
+    )
+
+    def __repr__(self) -> str:
+        return f"QueueItemBatch(work_unit_key={self.work_unit_key}, tenant_id={self.tenant_id}, task_type={self.task_type}, pending_count={self.pending_count}, total_tokens={self.total_tokens}, oldest_created_at={self.oldest_created_at})"
+
+
+@final
 class WebhookEndpoint(Base):
     __tablename__: str = "webhook_endpoints"
     tenant_id: Mapped[str] = mapped_column(
