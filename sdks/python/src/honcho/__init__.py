@@ -39,6 +39,10 @@ Usage:
 
 from .aio import ConclusionsViewAio, HonchoAio, PeerAio, ScopeAio, SessionAio
 from .api_types import (
+    Evidence,
+    EvidenceMessageRef,
+    EvidenceObservation,
+    EvidenceToolCall,
     MessageCreateParams,
     ScopeBackfillJob,
     ScopeResponse,
@@ -70,6 +74,7 @@ from .session import Session
 from .session_context import SessionContext, SessionSummaries, Summary
 from .types import (
     AsyncDialecticStreamResponse,
+    ChatResponse,
     DialecticStreamResponse,
 )
 
@@ -119,7 +124,12 @@ __all__ = [
     "SyncPage",
     # Streaming
     "AsyncDialecticStreamResponse",
+    "ChatResponse",
     "DialecticStreamResponse",
+    "Evidence",
+    "EvidenceMessageRef",
+    "EvidenceObservation",
+    "EvidenceToolCall",
     # Exceptions
     "APIError",
     "AuthenticationError",
