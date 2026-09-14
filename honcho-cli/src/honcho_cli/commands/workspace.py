@@ -16,6 +16,7 @@ from honcho import (
     ServerError,
 )
 
+from honcho_cli.config import identity_headers
 from honcho_cli.output import print_error, print_result, status, use_json
 from honcho_cli.recall import parse_csv_repeatable, reject_incompatible_recall, scope_for_sdk
 from honcho_cli.validation import validate_resource_id
@@ -317,6 +318,7 @@ def _with_workspace(client, workspace_id: str):
         base_url=str(client.base_url),
         api_key=client._http.api_key if hasattr(client._http, "api_key") else None,
         workspace_id=workspace_id,
+        default_headers=identity_headers(),
     )
 
 

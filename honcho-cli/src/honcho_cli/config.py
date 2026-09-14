@@ -27,10 +27,13 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+from honcho_cli import __version__
 
 if TYPE_CHECKING:
     from honcho_cli.oauth import TokenResponse
@@ -279,9 +282,19 @@ class CLIConfig:
         return result
 
 
+def identity_headers() -> dict[str, str]:
+    """Headers identifying the CLI to Honcho's telemetry.
+
+    Overrides the Python SDK's own ``X-Honcho-Host`` default so CLI traffic is not
+    counted as direct SDK use. Follows the identity convention harness plugins use:
+    ``name/version (platform)``.
+    """
+    return {"X-Honcho-Host": f"honcho-cli/{__version__} ({sys.platform})"}
+
+
 def get_client_kwargs(config: CLIConfig) -> dict:
     """Build kwargs for Honcho client from config."""
-    kwargs: dict = {}
+    kwargs: dict = {"default_headers": identity_headers()}
     if config.base_url:
         kwargs["base_url"] = config.base_url
     api_key = config.resolved_api_key()
