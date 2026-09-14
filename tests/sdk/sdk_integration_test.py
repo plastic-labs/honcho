@@ -16,7 +16,7 @@ from sdks.python.src.honcho.session import Session, SessionPeerConfig  # noqa: E
 
 
 @pytest.fixture
-def honcho_test_client(client: TestClient) -> Generator[Honcho, None, None]:
+def honcho_test_client(client: TestClient) -> Generator[Honcho]:
     """
     Returns a Honcho SDK client configured to talk to the test API.
     """

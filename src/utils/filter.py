@@ -927,7 +927,7 @@ def _validate_datetime_string(value: str) -> datetime.datetime | None:
         try:
             parsed = datetime.datetime.strptime(value, fmt)
             # Assume UTC timezone for naive datetimes
-            return parsed.replace(tzinfo=datetime.timezone.utc)
+            return parsed.replace(tzinfo=datetime.UTC)
         except ValueError:
             continue
 

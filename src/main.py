@@ -25,6 +25,7 @@ from src.db import (
     request_context,
 )
 from src.exceptions import HonchoException
+from src.reconciler import ReconcilerScheduler, set_reconciler_scheduler
 from src.routers import (
     conclusions,
     deriver_metrics,
@@ -43,6 +44,13 @@ from src.telemetry import (
     prometheus_metrics,
     register_db_pool_collector,
     shutdown_telemetry,
+)
+from src.telemetry.client_context import (
+    HEADER_AGENT_MODEL,
+    HEADER_HOST,
+    HEADER_PLUGIN,
+    reset_client_context,
+    set_client_context,
 )
 from src.telemetry.logging import get_route_template
 from src.telemetry.sentry import initialize_sentry
@@ -144,12 +152,23 @@ async def lifespan(_: FastAPI):
     except Exception as e:
         logger.error("Failed to start backlog metrics poller: %s", e)
 
+    reconciler_scheduler = None
+    if settings.DERIVER.SCHEDULER == "api":
+        reconciler_scheduler = ReconcilerScheduler()
+        set_reconciler_scheduler(reconciler_scheduler)
+        try:
+            await reconciler_scheduler.start()
+        except Exception as e:
+            logger.error("Failed to start reconciler scheduler: %s", e)
+
     try:
         yield
     finally:
         # Import here to avoid circular import at module load time
         from src.vector_store import close_external_vector_store
 
+        if reconciler_scheduler is not None:
+            await reconciler_scheduler.shutdown()
         await deriver_metrics_poller.shutdown()
         deriver_metrics.set_deriver_metrics_poller(None)
         await close_external_vector_store()
@@ -248,6 +267,13 @@ async def track_request(
     # Store in request state and context var
     request.state.request_id = request_id
     token = request_context.set(f"api:{request_id}")
+    # Optional client identity headers; the telemetry emitter injects these
+    # into every event body emitted during this request.
+    client_tokens = set_client_context(
+        host=request.headers.get(HEADER_HOST),
+        plugin=request.headers.get(HEADER_PLUGIN),
+        agent_model=request.headers.get(HEADER_AGENT_MODEL),
+    )
 
     try:
         start_time = time.perf_counter()
@@ -265,4 +291,5 @@ async def track_request(
 
         return response
     finally:
+        reset_client_context(client_tokens)
         request_context.reset(token)

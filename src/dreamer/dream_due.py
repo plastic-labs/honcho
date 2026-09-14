@@ -1,8 +1,8 @@
-"""Read-only count of the collections whose next dream is due. Enqueues nothing."""
+"""Read-only listing of the collections whose next dream is due. Enqueues nothing."""
 
 from datetime import UTC, datetime, timedelta
 from logging import getLogger
-from typing import Any, cast
+from typing import Any, NamedTuple, cast
 
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import aggregate_order_by
@@ -12,20 +12,35 @@ from src import models
 from src.config import settings
 from src.schemas import DreamType
 from src.utils.config_helpers import get_configuration
-from src.utils.work_unit import construct_work_unit_key
+from src.utils.work_unit import construct_work_unit_key, parse_work_unit_key
 
 logger = getLogger(__name__)
 
 
+class DueDream(NamedTuple):
+    """One collection whose next dream is due, with everything needed to enqueue it."""
+
+    workspace_name: str
+    observer: str
+    observed: str
+    dream_type: DreamType
+    session_name: str
+
+
 async def count_due_dreams(db: AsyncSession) -> int:
-    """Count collections past the threshold, the idle timeout, the min-hours gate, any earlier attempt, and the session's dream setting."""
+    """Count collections whose next dream is due."""
+    return len(await list_due_dreams(db))
+
+
+async def list_due_dreams(db: AsyncSession) -> list[DueDream]:
+    """List collections past the threshold, the idle timeout, the min-hours gate, any earlier attempt, pending representation work, and the session's dream setting."""
     dream_types = [
         DreamType(dream_type)
         for dream_type in settings.DREAM.ENABLED_TYPES
         if dream_type == DreamType.OMNI.value
     ]
     if not settings.DREAM.ENABLED or not dream_types:
-        return 0
+        return []
 
     explicit_counts = (
         select(
@@ -70,7 +85,7 @@ async def count_due_dreams(db: AsyncSession) -> int:
 
     now = datetime.now(UTC)
     idle_cutoff = now - timedelta(minutes=settings.DREAM.IDLE_TIMEOUT_MINUTES)
-    candidates: dict[str, tuple[str, str, datetime]] = {}
+    candidates: dict[str, tuple[DueDream, datetime]] = {}
 
     for row in rows:
         workspace_name = cast(str, row[0])
@@ -109,13 +124,18 @@ async def count_due_dreams(db: AsyncSession) -> int:
                 },
             )
             candidates[work_unit_key] = (
-                workspace_name,
-                newest_session_name,
+                DueDream(
+                    workspace_name=workspace_name,
+                    observer=observer,
+                    observed=observed,
+                    dream_type=dream_type,
+                    session_name=newest_session_name,
+                ),
                 newest_created_at,
             )
 
     if not candidates:
-        return 0
+        return []
 
     attempt_rows = (
         await db.execute(
@@ -134,28 +154,48 @@ async def count_due_dreams(db: AsyncSession) -> int:
         cast(str, row[0]): cast(datetime, row[1]) for row in attempt_rows
     }
 
+    pending_representation_keys = (
+        (
+            await db.execute(
+                select(models.QueueItem.work_unit_key)
+                .where(
+                    models.QueueItem.task_type == "representation",
+                    models.QueueItem.processed == False,  # noqa: E712
+                )
+                .distinct()
+            )
+        )
+        .scalars()
+        .all()
+    )
+    active_observed = {
+        (parsed.workspace_name, parsed.observed)
+        for parsed in (parse_work_unit_key(key) for key in pending_representation_keys)
+    }
+
     unattempted = [
-        (workspace_name, session_name)
-        for work_unit_key, (
-            workspace_name,
-            session_name,
-            newest_created_at,
-        ) in candidates.items()
-        if work_unit_key not in newest_attempts
-        or newest_attempts[work_unit_key] < newest_created_at
+        due_dream
+        for work_unit_key, (due_dream, newest_created_at) in candidates.items()
+        if (
+            work_unit_key not in newest_attempts
+            or newest_attempts[work_unit_key] < newest_created_at
+        )
+        and (due_dream.workspace_name, due_dream.observed) not in active_observed
     ]
     if not unattempted:
-        return 0
+        return []
 
-    return await _count_with_dreams_enabled(db, unattempted)
+    return await _filter_dreams_enabled(db, unattempted)
 
 
-async def _count_with_dreams_enabled(
-    db: AsyncSession, candidates: list[tuple[str, str]]
-) -> int:
+async def _filter_dreams_enabled(
+    db: AsyncSession, candidates: list[DueDream]
+) -> list[DueDream]:
     """Drop candidates whose resolved configuration has dreams turned off."""
-    workspace_names = {workspace_name for workspace_name, _ in candidates}
-    session_keys = set(candidates)
+    workspace_names = {due_dream.workspace_name for due_dream in candidates}
+    session_keys = {
+        (due_dream.workspace_name, due_dream.session_name) for due_dream in candidates
+    }
 
     workspaces = {
         workspace.name: workspace
@@ -178,7 +218,7 @@ async def _count_with_dreams_enabled(
                     select(models.Session).where(
                         models.Session.workspace_name.in_(workspace_names),
                         models.Session.name.in_(
-                            {session_name for _, session_name in candidates}
+                            {due_dream.session_name for due_dream in candidates}
                         ),
                     )
                 )
@@ -190,15 +230,15 @@ async def _count_with_dreams_enabled(
             (session.workspace_name, session.name): session for session in session_rows
         }
 
-    enabled = 0
-    for workspace_name, session_name in candidates:
+    enabled: list[DueDream] = []
+    for due_dream in candidates:
         configuration = get_configuration(
             None,
-            sessions.get((workspace_name, session_name)),
-            workspaces.get(workspace_name),
+            sessions.get((due_dream.workspace_name, due_dream.session_name)),
+            workspaces.get(due_dream.workspace_name),
         )
         if configuration.dream.enabled:
-            enabled += 1
+            enabled.append(due_dream)
     return enabled
 
 

@@ -417,6 +417,39 @@ class HonchoAio(AsyncMetadataConfigMixin):
             created_at=scope_data.created_at,
         )
 
+    async def get_scope(
+        self,
+        id: str,  # noqa: A002
+    ) -> Scope:
+        """
+        Get an existing scope by ID asynchronously, without creating it.
+
+        Unlike :meth:`scope`, this never creates the scope, so it is safe for
+        lookups where a typo must not provision a new recall boundary.
+
+        Args:
+            id: Unprefixed scope name, unique within the workspace.
+
+        Returns:
+            A Scope object for managing membership.
+
+        Raises:
+            ValueError: If the scope ID is invalid.
+            NotFoundError: If no scope with this ID exists in the workspace.
+        """
+        validate_scope_id(id)
+        await self._honcho._ensure_workspace_async()
+        data = await self._honcho._async_http_client.get(
+            routes.scope(self._honcho.workspace_id, id)
+        )
+        scope_data = ScopeResponse.model_validate(data)
+        return Scope(
+            id,
+            self._honcho,
+            metadata=scope_data.metadata,
+            created_at=scope_data.created_at,
+        )
+
     async def scopes(
         self,
         *,

@@ -3,54 +3,54 @@ import {
   HEADER_AGENT_MODEL,
   HEADER_HOST,
   HEADER_PLUGIN,
-  HEADER_RUNTIME,
   setTelemetryHeaders,
   telemetryHeaders,
-  version,
-} from '../src/index.ts'
+} from '../src/index'
 
 describe('telemetryHeaders', () => {
-  test('empty identity still sends the runtime version', () => {
-    expect(telemetryHeaders()).toEqual({ [HEADER_RUNTIME]: version })
-  })
-
-  test('maps identity to headers', () => {
-    expect(
-      telemetryHeaders({
-        host: 'opencode',
-        hostVersion: '1.3.13',
-        pluginVersion: '0.1.3',
-        model: 'claude-sonnet-4-5',
-      })
-    ).toEqual({
-      [HEADER_RUNTIME]: version,
-      [HEADER_HOST]: 'opencode/1.3.13',
-      [HEADER_PLUGIN]: '0.1.3',
+  test('maps identity to the three headers', () => {
+    const headers = telemetryHeaders({
+      host: 'harness',
+      hostVersion: '2.1.3',
+      platform: 'darwin',
+      plugin: 'harness-honcho',
+      pluginVersion: '0.2.11',
+      model: 'claude-sonnet-4-5',
+    })
+    expect(headers).toEqual({
+      [HEADER_HOST]: 'harness/2.1.3 (darwin)',
+      [HEADER_PLUGIN]: 'harness-honcho/0.2.11',
       [HEADER_AGENT_MODEL]: 'claude-sonnet-4-5',
     })
   })
 
-  test('merges extra headers last, skipping blanks', () => {
-    const headers = telemetryHeaders({ host: 'codex', pluginVersion: '0.1.1' }, {
-      'X-Custom': 'yes',
+  test('omits unknown fields and defaults platform', () => {
+    expect(telemetryHeaders()).toEqual({})
+    expect(telemetryHeaders({ host: 'harness' })).toEqual({
+      [HEADER_HOST]: `harness (${process.platform})`,
+    })
+  })
+
+  test('strips separators that would break parsing', () => {
+    expect(telemetryHeaders({ host: 'a b;(c)/d', hostVersion: '1\r\n2', platform: 'darwin' })).toEqual({
+      [HEADER_HOST]: 'a-b-c-d/1-2 (darwin)',
+    })
+  })
+
+  test('extra headers win, blanks are dropped', () => {
+    const headers = telemetryHeaders({ plugin: 'harness-honcho' }, {
       [HEADER_PLUGIN]: 'override',
       'X-Empty': '  ',
     })
-    expect(headers[HEADER_HOST]).toBe('codex')
-    expect(headers[HEADER_PLUGIN]).toBe('override')
-    expect(headers['X-Custom']).toBe('yes')
-    expect(headers).not.toHaveProperty('X-Empty')
+    expect(headers).toEqual({ [HEADER_PLUGIN]: 'override' })
   })
 })
 
-describe('setTelemetryHeaders', () => {
-  test('mutates an existing header map in place', () => {
-    const headers = telemetryHeaders({ host: 'cursor', pluginVersion: '0.1.2' })
-    const returned = setTelemetryHeaders(headers, { model: 'claude-opus-4' })
-    expect(returned).toBe(headers)
-    expect(headers[HEADER_HOST]).toBe('cursor')
-    expect(headers[HEADER_PLUGIN]).toBe('0.1.2')
-    expect(headers[HEADER_RUNTIME]).toBe(version)
-    expect(headers[HEADER_AGENT_MODEL]).toBe('claude-opus-4')
+test('setTelemetryHeaders updates only the named fields in place', () => {
+  const headers = telemetryHeaders({ plugin: 'harness-honcho', pluginVersion: '0.1.2' })
+  expect(setTelemetryHeaders(headers, { model: 'claude-opus-4' })).toBe(headers)
+  expect(headers).toEqual({
+    [HEADER_PLUGIN]: 'harness-honcho/0.1.2',
+    [HEADER_AGENT_MODEL]: 'claude-opus-4',
   })
 })

@@ -1,4 +1,29 @@
 import { Honcho } from "@honcho-ai/sdk";
+import pkg from "../package.json";
+
+export const HEADER_HOST = "X-Honcho-Host";
+export const HEADER_PLUGIN = "X-Honcho-Plugin";
+
+/** Honcho's API caps client header values at 256 chars; match it. */
+const MAX_PLUGIN_LEN = 256;
+
+const HOST_VALUE = `honcho-mcp/${
+  typeof pkg.version === "string" && pkg.version ? pkg.version : "unknown"
+}`;
+
+/**
+ * Identity headers for every Honcho API request made on behalf of one MCP
+ * request. Host names this server; Plugin is the caller's `User-Agent`,
+ * verbatim, so the API sees whatever the harness calls itself.
+ */
+export function identityHeaders(
+  userAgent?: string | null,
+): Record<string, string> {
+  const headers: Record<string, string> = { [HEADER_HOST]: HOST_VALUE };
+  const plugin = userAgent?.replace(/\s+/g, " ").trim().slice(0, MAX_PLUGIN_LEN);
+  if (plugin) headers[HEADER_PLUGIN] = plugin;
+  return headers;
+}
 
 export interface HonchoConfig {
   apiKey: string;
@@ -86,33 +111,51 @@ export function resolveWorkspaceId(
 export function createClient(
   config: HonchoConfig,
   workspaceId: string,
+  headers: Record<string, string> = identityHeaders(),
 ): Honcho {
   return new Honcho({
     apiKey: config.apiKey,
     baseURL: config.baseUrl,
     workspaceId,
+    defaultHeaders: headers,
   });
 }
 
 /** Client used only for credential-scoped ops (list workspaces). */
-export function createUnscopedClient(config: HonchoConfig): Honcho {
+export function createUnscopedClient(
+  config: HonchoConfig,
+  headers: Record<string, string> = identityHeaders(),
+): Honcho {
   return new Honcho({
     apiKey: config.apiKey,
     baseURL: config.baseUrl,
+    defaultHeaders: headers,
   });
 }
 
 export function createClientFactory(
   config: HonchoConfig,
+  headers: Record<string, string> = identityHeaders(),
 ): (workspaceId?: string) => Honcho {
   const cache = new Map<string, Honcho>();
   return (workspaceId?: string) => {
     const id = resolveWorkspaceId(config, workspaceId);
     let client = cache.get(id);
     if (!client) {
-      client = createClient(config, id);
+      client = createClient(config, id, headers);
       cache.set(id, client);
     }
     return client;
+  };
+}
+
+/** Both Honcho clients for one MCP request, sharing one identity header set. */
+export function honchoClients(
+  config: HonchoConfig,
+  headers: Record<string, string> = identityHeaders(),
+): { clientFor: (workspaceId?: string) => Honcho; unscoped: Honcho } {
+  return {
+    clientFor: createClientFactory(config, headers),
+    unscoped: createUnscopedClient(config, headers),
   };
 }

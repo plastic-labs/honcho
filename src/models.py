@@ -1,6 +1,6 @@
 import datetime
 from logging import getLogger
-from typing import Any, final
+from typing import Any, final, override
 
 from dotenv import load_dotenv
 from nanoid import generate as generate_nanoid
@@ -23,7 +23,6 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB, TEXT
 from sqlalchemy.orm import Mapped, MappedColumn, mapped_column, relationship
 from sqlalchemy.sql import func
-from typing_extensions import override
 
 from src.config import settings
 from src.utils.types import DocumentLevel, TaskType, VectorSyncState

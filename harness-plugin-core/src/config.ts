@@ -216,8 +216,18 @@ export function resolveConfig(
   }
 }
 
+/**
+ * `HONCHO_CONFIG_PATH` if set, returned verbatim. Otherwise `.honcho/config.json`
+ * under `HOME`, then `USERPROFILE` (Windows), then `os.homedir()`.
+ *
+ * `env.HOME` is consulted before `os.homedir()` because Bun's `homedir()` ignores
+ * in-process changes to `process.env.HOME`, so tests that redirect HOME would
+ * otherwise read and write the real config file.
+ */
 export function configPath(env: NodeJS.Dict<string> = process.env): string {
-  return env.HONCHO_CONFIG_PATH || join(homedir(), '.honcho', 'config.json')
+  if (env.HONCHO_CONFIG_PATH) return env.HONCHO_CONFIG_PATH
+  const home = env.HOME || env.USERPROFILE || homedir()
+  return join(home, '.honcho', 'config.json')
 }
 
 export function loadConfig(opts: {

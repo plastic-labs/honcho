@@ -54,6 +54,6 @@ class TestEnqueueDreamMetadataShape:
                 "enqueue_dream must not need to load the collection — it no "
                 "longer touches dream metadata."
             )
-            assert (
-                mock_session.execute.called
-            ), "enqueue_dream must still insert the QueueItem row."
+            assert mock_session.execute.called, (
+                "enqueue_dream must still insert the QueueItem row."
+            )
