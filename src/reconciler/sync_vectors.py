@@ -39,7 +39,7 @@ MAX_SYNC_ATTEMPTS = 20  # After this many failures, mark as failed
 SYNC_BACKOFF = datetime.timedelta(minutes=10)
 
 
-def _backoff_eligible(
+def backoff_eligible(
     last_sync_at: InstrumentedAttribute[datetime.datetime | None],
 ) -> ColumnElement[bool]:
     """Rows are eligible for sync if never attempted or past the backoff window."""
@@ -47,6 +47,29 @@ def _backoff_eligible(
         last_sync_at.is_(None),
         last_sync_at < func.now() - SYNC_BACKOFF,
     )
+
+
+async def has_pending_work(db: AsyncSession) -> bool:
+    """True when a reconciliation cycle would find something to sync or clean up."""
+    cutoff = datetime.datetime.now(datetime.UTC) - datetime.timedelta(minutes=5)
+    checks = [
+        select(models.MessageEmbedding.id).where(
+            models.MessageEmbedding.sync_state == "pending",
+            backoff_eligible(models.MessageEmbedding.last_sync_at),
+        ),
+        select(models.Document.id).where(
+            models.Document.deleted_at.is_not(None), models.Document.deleted_at < cutoff
+        ),
+    ]
+    if get_external_vector_store() is not None:
+        checks.append(
+            select(models.Document.id).where(
+                models.Document.deleted_at.is_(None),
+                models.Document.sync_state == "pending",
+                backoff_eligible(models.Document.last_sync_at),
+            )
+        )
+    return any([await db.scalar(c.limit(1)) is not None for c in checks])
 
 
 @dataclass
@@ -92,7 +115,7 @@ async def _get_documents_needing_sync(
             and_(
                 models.Document.deleted_at.is_(None),
                 models.Document.sync_state == "pending",  # Only pending items
-                _backoff_eligible(models.Document.last_sync_at),
+                backoff_eligible(models.Document.last_sync_at),
             )
         )
         .order_by(models.Document.last_sync_at.asc().nullsfirst())
@@ -132,7 +155,7 @@ async def _get_message_embeddings_needing_sync(
         .where(
             and_(
                 models.MessageEmbedding.sync_state == "pending",
-                _backoff_eligible(models.MessageEmbedding.last_sync_at),
+                backoff_eligible(models.MessageEmbedding.last_sync_at),
             )
         )
         .group_by(models.MessageEmbedding.message_id)
@@ -153,7 +176,7 @@ async def _get_message_embeddings_needing_sync(
             and_(
                 models.MessageEmbedding.message_id.in_(message_ids),
                 models.MessageEmbedding.sync_state == "pending",
-                _backoff_eligible(models.MessageEmbedding.last_sync_at),
+                backoff_eligible(models.MessageEmbedding.last_sync_at),
             )
         )
         .order_by(models.MessageEmbedding.message_id, models.MessageEmbedding.id)
@@ -584,7 +607,7 @@ async def _cleanup_soft_deleted_documents_pgvector(
     Cleanup soft-deleted documents
     """
 
-    cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(
+    cutoff = datetime.datetime.now(datetime.UTC) - datetime.timedelta(
         minutes=older_than_minutes
     )
 

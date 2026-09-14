@@ -10,7 +10,7 @@ for coordination.
 import asyncio
 import contextlib
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import sentry_sdk
 from pydantic import BaseModel
@@ -21,7 +21,10 @@ from src import models
 from src.config import settings
 from src.dependencies import tracked_db
 from src.models import QueueItem
-from src.reconciler.sync_vectors import record_pending_embeddings_backlog
+from src.reconciler.sync_vectors import (
+    has_pending_work,
+    record_pending_embeddings_backlog,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -113,7 +116,7 @@ class ReconcilerScheduler:
 
         self._shutdown_event.clear()
         # Initialize next run times to first interval
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         for task_name, task in RECONCILER_TASKS.items():
             self._next_run[task_name] = now + timedelta(seconds=task.interval_seconds)
 
@@ -134,7 +137,7 @@ class ReconcilerScheduler:
 
         try:
             await asyncio.wait_for(self._scheduler_task, timeout=5.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning("ReconcilerScheduler shutdown timed out, cancelling task")
             self._scheduler_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -156,7 +159,7 @@ class ReconcilerScheduler:
         """
         try:
             while not self._shutdown_event.is_set():
-                now = datetime.now(timezone.utc)
+                now = datetime.now(UTC)
 
                 # region ai
                 # Refresh on EVERY replica, not just whichever wins the sync_vectors
@@ -190,7 +193,7 @@ class ReconcilerScheduler:
                     next_task_time = min(self._next_run.values())
                     sleep_seconds = max(
                         1.0,  # At least 1 second to avoid busy loop
-                        (next_task_time - datetime.now(timezone.utc)).total_seconds(),
+                        (next_task_time - datetime.now(UTC)).total_seconds(),
                     )
                 else:
                     sleep_seconds = 60.0  # Default if no tasks
@@ -201,7 +204,7 @@ class ReconcilerScheduler:
                         timeout=sleep_seconds,
                     )
                     break  # Shutdown event was set
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     # Timeout means interval elapsed, continue loop
                     pass
 
@@ -252,6 +255,10 @@ class ReconcilerScheduler:
                 logger.debug(
                     "Task %s already pending in queue, skipping enqueue", task.name
                 )
+                return False
+
+            if task.name == "sync_vectors" and not await has_pending_work(db):
+                logger.debug("Task %s has nothing to do, skipping enqueue", task.name)
                 return False
 
             # Enqueue the task using ORM

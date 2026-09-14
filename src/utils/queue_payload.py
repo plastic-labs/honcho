@@ -5,6 +5,14 @@ from pydantic import BaseModel, ConfigDict
 
 from src.schemas import DreamType, ReconcilerType, ResolvedConfiguration
 
+# Queue mechanics, not task data: the deriver stores a per-work-unit transient
+# failure count under this key so a retry budget survives work-unit reclaim.
+# Every payload model below forbids extras, so anything that reads a raw
+# QueueItem.payload must strip this key before validating. Lives here rather
+# than in the deriver because both the writer (queue_manager) and the stripper
+# (consumer) need it, and queue_manager imports consumer.
+RETRY_ATTEMPTS_PAYLOAD_KEY = "_retry_attempts"
+
 
 class BasePayload(BaseModel):
     """Base payload with common fields."""

@@ -1,5 +1,5 @@
 import signal
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -32,7 +32,7 @@ class TestDeriverProcessing:
             peer_name="alice",
             content="hello",
             token_count=5,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         configuration = Mock()
         configuration.reasoning.enabled = True
@@ -82,7 +82,7 @@ class TestDeriverProcessing:
             peer_name="alice",
             content="hello",
             token_count=5,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         configuration = Mock()
         configuration.reasoning.enabled = True
@@ -136,7 +136,7 @@ class TestDeriverProcessing:
             peer_name="alice",
             content="hello",
             token_count=5,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         configuration = Mock()
         configuration.reasoning.enabled = True
@@ -182,6 +182,61 @@ class TestDeriverProcessing:
         assert event.observer_count == 1
         assert event.failed_observer_count == 1
 
+    async def test_retryable_observer_save_reraises_after_telemetry(self):
+        """A deadlock on one observer must propagate so the queue can retry."""
+        from sqlalchemy.exc import OperationalError
+
+        class FakePGError(Exception):
+            sqlstate: str = "40P01"
+
+        deadlock = OperationalError("UPDATE documents", {}, FakePGError())
+        message = Mock(
+            id=1,
+            public_id="msg_1",
+            session_name="session-1",
+            workspace_name="workspace-1",
+            peer_name="alice",
+            content="hello",
+            token_count=5,
+            created_at=datetime.now(UTC),
+        )
+        configuration = Mock()
+        configuration.reasoning.enabled = True
+
+        mock_response = HonchoLLMCallResponse(
+            content=PromptRepresentation(
+                explicit=[
+                    ExplicitObservationBase(content="The user has a dog named Rover")
+                ]
+            ),
+            input_tokens=10,
+            output_tokens=5,
+            finish_reasons=["STOP"],
+        )
+        partial_save = AsyncMock(side_effect=[crud.CreateDocumentsResult(), deadlock])
+        emitted: list[Any] = []
+        with (
+            patch(
+                "src.deriver.deriver.honcho_llm_call",
+                new_callable=AsyncMock,
+                return_value=mock_response,
+            ),
+            patch.object(RepresentationManager, "save_representation", partial_save),
+            patch("src.deriver.deriver.emit", side_effect=emitted.append),
+            pytest.raises(OperationalError),
+        ):
+            await process_representation_tasks_batch(
+                messages=[message],
+                message_level_configuration=configuration,
+                observers=["bob", "carol"],
+                observed="alice",
+                queue_item_message_ids=[1],
+            )
+
+        assert emitted, "expected telemetry to be emitted before the raised failure"
+        assert emitted[-1].observer_count == 1
+        assert emitted[-1].failed_observer_count == 1
+
     async def test_process_representation_tasks_batch_passes_custom_instructions_into_prompt(
         self,
     ) -> None:
@@ -193,7 +248,7 @@ class TestDeriverProcessing:
             peer_name="alice",
             content="hello",
             token_count=5,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         configuration = Mock()
         configuration.reasoning.enabled = True
@@ -343,7 +398,7 @@ class TestDeriverProcessing:
             peer_name="alice",
             content="hello",
             token_count=100,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         configuration = Mock()
         configuration.reasoning.enabled = True
@@ -394,7 +449,7 @@ class TestDeriverProcessing:
             peer_name="alice",
             content="hello",
             token_count=5,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         configuration = Mock()
         configuration.reasoning.enabled = True
@@ -443,7 +498,7 @@ class TestDeriverProcessing:
             peer_name="alice",
             content="hello",
             token_count=5,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         configuration = Mock()
         configuration.reasoning.enabled = True

@@ -1,4 +1,5 @@
 import json
+from datetime import UTC
 
 import pytest
 
@@ -341,13 +342,13 @@ async def test_file_upload_with_created_at(
     honcho_client, client_type = client_fixture
 
     text_content = "Test file with created_at"
-    from datetime import datetime, timezone
+    from datetime import datetime
     from io import BytesIO
 
     text_file = BytesIO(text_content.encode("utf-8"))
     text_file.name = "test_timestamp.txt"
 
-    test_timestamp = datetime(2023, 1, 15, 10, 30, 45, tzinfo=timezone.utc)
+    test_timestamp = datetime(2023, 1, 15, 10, 30, 45, tzinfo=UTC)
     created_at_str = test_timestamp.isoformat()
 
     if client_type == "async":
@@ -387,7 +388,7 @@ async def test_file_upload_with_all_parameters(
     honcho_client, client_type = client_fixture
 
     text_content = "Test file with all parameters"
-    from datetime import datetime, timezone
+    from datetime import datetime
     from io import BytesIO
 
     text_file = BytesIO(text_content.encode("utf-8"))
@@ -395,7 +396,7 @@ async def test_file_upload_with_all_parameters(
 
     metadata: dict[str, object] = {"source": "comprehensive_test", "version": "1.0"}
     configuration = {"skip_deriver": False, "test_mode": True}
-    test_timestamp = datetime(2023, 6, 20, 14, 15, 30, tzinfo=timezone.utc)
+    test_timestamp = datetime(2023, 6, 20, 14, 15, 30, tzinfo=UTC)
     created_at_str = test_timestamp.isoformat()
 
     if client_type == "async":
@@ -441,13 +442,13 @@ async def test_file_upload_with_datetime_object(
     honcho_client, client_type = client_fixture
 
     text_content = "Test file with datetime object"
-    from datetime import datetime, timezone
+    from datetime import datetime
     from io import BytesIO
 
     text_file = BytesIO(text_content.encode("utf-8"))
     text_file.name = "test_datetime.txt"
 
-    test_timestamp = datetime(2023, 3, 10, 8, 45, 20, tzinfo=timezone.utc)
+    test_timestamp = datetime(2023, 3, 10, 8, 45, 20, tzinfo=UTC)
 
     if client_type == "async":
         session = await honcho_client.aio.session(id="test-session-datetime")

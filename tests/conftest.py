@@ -91,6 +91,9 @@ _RUNTIME_MOCK_TEST_BLOCKLIST_PREFIXES = (
     # Pure JWT scope tests — operate on src.security directly, no DB needed.
     "tests/test_security.py",
     "tests/test_generate_jwt_script.py",
+    # The mock provider is a standalone ASGI app with no database or LLM of its
+    # own; the runtime mocks would patch the very seams it exists to replace.
+    "tests/mock_provider/",
 )
 
 _LIVE_LLM_MARKER = "live_llm"

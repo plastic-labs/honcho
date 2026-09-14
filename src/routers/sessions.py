@@ -248,6 +248,19 @@ def _select_summary_for_context(
             token_limit - short_len,
         )
 
+    if short_summary or long_summary:
+        # A summary exists but none fits. The caller sees `summary: null`, which
+        # is indistinguishable from "this session has no summary", so say so.
+        # `token_limit` here is already net of the representation and peer card,
+        # which is usually why the budget is smaller than the request suggests.
+        logger.info(
+            "Summary dropped: budget %s too small (short=%s, long=%s, limit=%s)",
+            summary_budget,
+            short_len or None,
+            long_len or None,
+            token_limit,
+        )
+
     return None, 0, token_limit
 
 

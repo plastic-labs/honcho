@@ -2,6 +2,7 @@ import logging
 from typing import Any, Literal
 
 from sqlalchemy import exists, insert, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
@@ -561,6 +562,14 @@ async def enqueue_dream(
                 dream_type.value,
             )
 
+        except IntegrityError:
+            logger.debug(
+                "Dream already enqueued by another process: %s/%s/%s (type: %s)",
+                workspace_name,
+                observer,
+                observed,
+                dream_type.value,
+            )
         except Exception as e:
             logger.exception("Failed to enqueue dream task!")
             if settings.SENTRY.ENABLED:

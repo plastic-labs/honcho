@@ -85,9 +85,9 @@ def verify_session_name_enforced(verifier: MigrationVerifier) -> None:
             "workspace_name": WORKSPACE_NAME,
         },
     ).one_or_none()
-    assert (
-        session is not None
-    ), "Session with expected name and workspace does not exist"
+    assert session is not None, (
+        "Session with expected name and workspace does not exist"
+    )
 
     message = conn.execute(
         text(

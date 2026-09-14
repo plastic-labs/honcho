@@ -5,7 +5,7 @@ This module provides a periodic cleanup job that removes old processed queue ite
 """
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
 from sqlalchemy import CursorResult, delete
@@ -28,7 +28,7 @@ async def cleanup_queue_items() -> int:
         The number of queue items deleted.
     """
     async with tracked_db("cleanup_queue_items") as db:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         error_cutoff = now - timedelta(
             seconds=settings.DERIVER.QUEUE_ERROR_RETENTION_SECONDS
         )

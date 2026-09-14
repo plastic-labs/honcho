@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, cast
+from typing import Any
 
+from src.utils.json_coerce import as_dict, as_list
 from src.utils.tokens import estimate_tokens
 
 logger = logging.getLogger(__name__)
@@ -34,6 +35,24 @@ def count_message_tokens(messages: list[dict[str, Any]]) -> int:
     return total
 
 
+def _has_content_block(msg: dict[str, Any], block_type: str) -> bool:
+    """Whether an Anthropic-style ``content`` list carries a block of this type."""
+    for block in as_list(msg.get("content")) or ():
+        entry = as_dict(block)
+        if entry is not None and entry.get("type") == block_type:
+            return True
+    return False
+
+
+def _has_part_key(msg: dict[str, Any], key: str) -> bool:
+    """Whether a Gemini-style ``parts`` list carries an entry with this key."""
+    for part in as_list(msg.get("parts")) or ():
+        entry = as_dict(part)
+        if entry is not None and key in entry:
+            return True
+    return False
+
+
 def _is_tool_use_message(msg: dict[str, Any]) -> bool:
     """Check if a message contains tool calls (any format).
 
@@ -42,17 +61,11 @@ def _is_tool_use_message(msg: dict[str, Any]) -> bool:
     - Gemini: ``parts`` is a list containing a ``{"function_call": …}`` entry.
     - OpenAI: assistant message with a non-empty ``tool_calls`` field.
     """
-    content = msg.get("content")
-    if isinstance(content, list):
-        for block in cast(list[dict[str, Any]], content):
-            if block.get("type") == "tool_use":
-                return True
-    parts = msg.get("parts")
-    if isinstance(parts, list):
-        for part in cast(list[dict[str, Any]], parts):
-            if "function_call" in part:
-                return True
-    return bool(msg.get("tool_calls"))
+    return (
+        _has_content_block(msg, "tool_use")
+        or _has_part_key(msg, "function_call")
+        or bool(msg.get("tool_calls"))
+    )
 
 
 def _is_tool_result_message(msg: dict[str, Any]) -> bool:
@@ -63,17 +76,11 @@ def _is_tool_result_message(msg: dict[str, Any]) -> bool:
     - Gemini: ``parts`` is a list containing a ``{"function_response": …}`` entry.
     - OpenAI: message with ``role == "tool"``.
     """
-    content = msg.get("content")
-    if isinstance(content, list):
-        for block in cast(list[dict[str, Any]], content):
-            if block.get("type") == "tool_result":
-                return True
-    parts = msg.get("parts")
-    if isinstance(parts, list):
-        for part in cast(list[dict[str, Any]], parts):
-            if "function_response" in part:
-                return True
-    return msg.get("role") == "tool"
+    return (
+        _has_content_block(msg, "tool_result")
+        or _has_part_key(msg, "function_response")
+        or msg.get("role") == "tool"
+    )
 
 
 def _group_into_units(

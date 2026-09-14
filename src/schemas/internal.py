@@ -140,6 +140,17 @@ class QueueCounts(BaseModel):
     sessions: dict[str, SessionCounts]
 
 
+class DeriverMetrics(BaseModel):
+    """Database-wide view of the deriver's outstanding work."""
+
+    eligible_work_units: int = 0
+    claimed_work_units: int = 0
+    pending_items: int = 0
+    oldest_pending_age_seconds: float = 0.0
+    embeddings_pending: int = 0
+    embeddings_pending_due: int = 0
+
+
 class QueueStatusRow(BaseModel):
     """Represents a row from the queue status SQL query result."""
 

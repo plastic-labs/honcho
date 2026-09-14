@@ -246,6 +246,7 @@ class Peer(PeerBase, MetadataConfigMixin):
         reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
         | None = None,
         response_format: type[TResponseFormat],
+        timeout: float | None = None,
     ) -> TResponseFormat | None: ...
 
     @overload
@@ -260,6 +261,7 @@ class Peer(PeerBase, MetadataConfigMixin):
         reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
         | None = None,
         response_format: dict[str, Any] | None = None,
+        timeout: float | None = None,
     ) -> str | None: ...
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
@@ -274,6 +276,9 @@ class Peer(PeerBase, MetadataConfigMixin):
         reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
         | None = None,
         response_format: type[BaseModel] | dict[str, Any] | None = None,
+        timeout: float | None = Field(
+            None, gt=0, description="Timeout in seconds for this chat request"
+        ),
     ) -> BaseModel | str | None:
         """
         Query the peer's representation with a natural language question.
@@ -310,6 +315,9 @@ class Peer(PeerBase, MetadataConfigMixin):
                              model class to get a parsed instance back, or a raw
                              JSON Schema dict (root type "object") to get the
                              answer as a JSON string.
+            timeout: Optional timeout in seconds for each HTTP attempt made by
+                     this request. When omitted, the Honcho client's configured
+                     timeout is used. Retries can extend total elapsed time.
 
         Returns:
             Response string containing the answer (a JSON string when a schema
@@ -342,6 +350,7 @@ class Peer(PeerBase, MetadataConfigMixin):
         data = self._honcho._http.post(
             routes.peer_chat(self.workspace_id, self.id),
             body=body,
+            timeout=timeout,
         )
         content = data.get("content")
         if not content:

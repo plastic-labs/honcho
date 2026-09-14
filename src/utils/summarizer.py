@@ -886,12 +886,21 @@ async def get_session_context(
             )
             messages_tokens = token_limit - latest_short_summary["token_count"]
             messages_start_id = latest_short_summary["message_id"]
+        elif latest_short_summary or latest_long_summary:
+            # A summary exists but does not fit the 40% allocation. The caller
+            # receives `summary: null`, which is indistinguishable from a session
+            # that has none, so this is reported rather than left at debug.
+            logger.info(
+                "Summary dropped: budget %s too small (short=%s, long=%s, limit=%s)",
+                summary_tokens_limit,
+                short_len or None,
+                long_len or None,
+                token_limit,
+            )
         else:
             logger.debug(
-                "No summary available for get_context call with token limit %s, returning empty string. Normal if brand-new session. long_summary_len: %s, short_summary_len: %s",
+                "No summary for get_context with token limit %s. Normal for a new session.",
                 token_limit,
-                long_len,
-                short_len,
             )
 
     # Get recent messages after summary

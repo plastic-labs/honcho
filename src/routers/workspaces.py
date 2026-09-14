@@ -289,6 +289,7 @@ async def schedule_dream(
 
 @router.post(
     "/{workspace_id}/chat",
+    summary="Workspace Chat",
     responses={
         200: {
             "content": {
