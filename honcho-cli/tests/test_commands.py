@@ -649,3 +649,46 @@ class TestExitCodes:
         err = json.loads(result.stderr)["error"]
         assert err["code"] == "NOT_FOUND"
         assert err["message"] == "Scope no-such-scope not found in workspace ws1"
+
+
+# --------------------------------------------------------------------------- #
+# `honcho scope` — CRUD over the scopes routes, fail-closed name resolution
+
+class TestScopeCommands:
+    def test_scope_create_with_sessions_json_shape(self, cfg, runner):
+        """create → client.scope(name, metadata) then add_sessions with the flattened CSV list."""
+        cfg.write_text(json.dumps({"apiKey": "k", "environmentUrl": "http://localhost:8000"}))
+        scope = MagicMock(id="therapy", metadata={"team": "care"}, created_at="2026-01-01T00:00:00Z")
+        client = MagicMock()
+        client.scope.return_value = scope
+        with patch("honcho_cli.commands.scope.get_client", return_value=(client, MagicMock(workspace_id="ws1"))):
+            result = runner.invoke(
+                app,
+                [
+                    "scope", "create", "therapy", "-w", "ws1",
+                    "--metadata", '{"team": "care"}',
+                    "--sessions", "s1,s2", "--sessions", "s3",
+                ],
+            )
+        assert result.exit_code == 0, result.stderr
+        assert json.loads(result.stdout) == {
+            "id": "therapy",
+            "metadata": {"team": "care"},
+            "created_at": "2026-01-01T00:00:00Z",
+            "added_sessions": ["s1", "s2", "s3"],
+        }
+        client.scope.assert_called_once_with("therapy", metadata={"team": "care"})
+        scope.add_sessions.assert_called_once_with(["s1", "s2", "s3"])
+
+    def test_scope_inspect_unknown_name_fails_closed(self, cfg, runner):
+        """inspect never calls the get-or-create `client.scope()`; a miss is SCOPE_NOT_FOUND, exit 1."""
+        cfg.write_text(json.dumps({"apiKey": "k", "environmentUrl": "http://localhost:8000"}))
+        client = MagicMock()
+        client.scopes.return_value = [MagicMock(id="work")]
+        with patch("honcho_cli.commands.scope.get_client", return_value=(client, MagicMock(workspace_id="ws1"))):
+            result = runner.invoke(app, ["scope", "inspect", "therapy", "-w", "ws1"])
+        assert result.exit_code == 1
+        err = json.loads(result.stderr)["error"]
+        assert err["code"] == "SCOPE_NOT_FOUND"
+        assert "honcho scope create therapy" in err["message"]
+        client.scope.assert_not_called()

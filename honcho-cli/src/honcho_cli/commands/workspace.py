@@ -219,7 +219,7 @@ def chat(
     scope: Optional[list[str]] = typer.Option(
         None,
         "--scope",
-        help="Confine recall to a scope. One name answers from that scope's own view; several names (repeat or comma-separate) are an explicit-only allowlist of their sessions. Mutually exclusive with -s.",
+        help="Recall only from this scope. Repeat or comma-separate for several (explicit conclusions only). Excludes -s.",
     ),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
     session: Optional[str] = typer.Option(None, "--session", "-s", help="Override session ID"),
