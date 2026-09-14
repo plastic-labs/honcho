@@ -514,6 +514,7 @@ export const ChatQuerySchema = z
     responseFormat: z
       .union([z.instanceof(z.ZodType), z.record(z.string(), z.unknown())])
       .optional(),
+    includeEvidence: z.boolean().optional(),
   })
   .strict()
   .superRefine(scopeExclusivityIssues)
