@@ -170,6 +170,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         "- No scope params: search all messages in the workspace.",
         "- peer_id only: search messages authored by that peer across all sessions.",
         "- session_id only: search messages within that session.",
+        "- scope: search messages in that scope's member sessions (optionally narrowed to peer_id's messages). Not combinable with session_id.",
         "Conclusions require peer_id (self-conclusions are searched; conclusion IDs are usable with delete_conclusion).",
         "Returns {messages, conclusions}.",
       ].join("\n"),
@@ -184,6 +185,12 @@ export function register(server: McpServer, ctx: ToolContext) {
           .string()
           .optional()
           .describe("Optional: scope search to messages in this session."),
+        scope: z
+          .string()
+          .optional()
+          .describe(
+            "Optional: restrict message search to this scope's member sessions. A scope with no members matches nothing. Mutually exclusive with session_id.",
+          ),
         message_limit: z
           .number()
           .optional()
@@ -211,11 +218,17 @@ export function register(server: McpServer, ctx: ToolContext) {
       query,
       peer_id,
       session_id,
+      scope,
       message_limit,
       message_filters,
       conclusion_top_k,
       conclusion_filters,
     }) => {
+      if (scope !== undefined && session_id) {
+        return errorResult(
+          "Search failed: `scope` and `session_id` are mutually exclusive — a scope already names a set of sessions.",
+        );
+      }
       try {
         const honcho = ctx.clientFor(workspace_id);
         const peer = peer_id ? await honcho.peer(peer_id) : null;
@@ -225,6 +238,17 @@ export function register(server: McpServer, ctx: ToolContext) {
         };
 
         const searchMessages = async () => {
+          if (scope !== undefined) {
+            // The scope-aware route is workspace-level; a peer narrows it via
+            // the message filter rather than the peer-level search route.
+            return honcho.search(query, {
+              ...messageOptions,
+              scope,
+              filters: peer_id
+                ? { ...message_filters, peer_id }
+                : message_filters,
+            });
+          }
           if (session_id) {
             const session = await honcho.session(session_id);
             return session.search(query, messageOptions);

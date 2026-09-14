@@ -30,11 +30,11 @@ Every workspace-scoped tool takes a `workspace_id` argument. If you set `X-Honch
 
 ## Available Tools
 
-**Workspace:** `list_workspaces` (id, metadata, created_at), `create_workspace` (get-or-create with optional metadata), `inspect_workspace` (aggregates metadata, configuration, and peer/session IDs), `search` (semantic search scoped by optional peer/session params), `workspace_chat` (reasoned answer across all peers; optional session / scope recall bounds), `get_metadata`, `set_metadata`
+**Workspace:** `list_workspaces` (id, metadata, created_at), `create_workspace` (get-or-create with optional metadata), `inspect_workspace` (aggregates metadata, configuration, and peer/session IDs), `search` (semantic search scoped by optional peer/session/scope params), `workspace_chat` (reasoned answer across all peers; optional session / scope recall bounds), `get_metadata`, `set_metadata`
 
-**Peers:** `create_peer`, `list_peers`, `chat` (reasoned answer about one peer; optional session / scope / sessions recall bounds), `get_peer_card`, `set_peer_card`, `get_peer_context`, `get_representation`
+**Peers:** `create_peer`, `list_peers`, `chat` (reasoned answer about one peer; optional session / scope / sessions recall bounds), `get_peer_card`, `set_peer_card`, `get_peer_context`, `get_representation` (optional session / scope / sessions recall bounds)
 
-**Sessions:** `create_session`, `list_sessions`, `delete_session`, `clone_session`, `add_peers_to_session`, `remove_peers_from_session`, `get_session_peers`, `inspect_session`, `add_messages_to_session`, `get_session_messages`, `get_session_message`, `get_session_context`
+**Sessions:** `create_session` (optional `scopes` to join at creation), `list_sessions`, `delete_session`, `clone_session`, `add_peers_to_session`, `remove_peers_from_session`, `get_session_peers`, `inspect_session`, `add_messages_to_session`, `get_session_messages`, `get_session_message`, `get_session_context` (optional `peer_target` with `peer_perspective` / `scope` / `limit_to_session` to include a peer's representation and card)
 
 **Scopes:** `list_scopes`, `get_scope_sessions`, `create_scope` (get-or-create with optional metadata), `add_sessions_to_scope`, `remove_session_from_scope`, `get_scope_status` (backfill progress per session)
 
