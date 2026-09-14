@@ -1007,6 +1007,7 @@ def mock_tracked_db(request: pytest.FixtureRequest):
         "src.crud.message.tracked_db",
         "src.reconciler.sync_vectors.service_db",
         "src.reconciler.embed_now.service_db",
+        "src.routers.tenants.service_db",
         "src.dialectic.core.tracked_db",
         "src.dreamer.specialists.tracked_db",
         "src.dreamer.surprisal.tracked_db",
