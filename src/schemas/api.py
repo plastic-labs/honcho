@@ -864,6 +864,18 @@ class SessionQueueStatus(BaseModel):
     pending_work_units: int = Field(description="Work units waiting to be processed")
 
 
+class ErrorResponse(BaseModel):
+    """The body returned for every raised HonchoException.
+
+    `HTTPValidationError` is FastAPI's own 422 shape, whose `detail` is an array
+    of per-field errors. Honcho's handler returns a single message string
+    instead (see `honcho_exception_handler` in `src/main.py`), so error codes
+    raised from application code document this schema rather than that one.
+    """
+
+    detail: str = Field(description="What went wrong")
+
+
 class QueueStatus(BaseModel):
     """Aggregated processing queue status.
 
