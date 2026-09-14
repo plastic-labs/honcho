@@ -9,6 +9,8 @@ This package versions independently of the Honcho API, `@honcho-ai/sdk`, and hos
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-09-11
+
 ### Added
 
 - Scope membership tools: `create_scope`, `add_sessions_to_scope`,
