@@ -154,6 +154,53 @@ class HonchoLLMCallResponse(BaseModel, Generic[T]):
     hit_input_token_cap: bool = False
 
 
+def empty_response_is_degraded(response: HonchoLLMCallResponse[Any]) -> bool:
+    """True when an empty structured response looks like a degraded provider
+    result rather than a model that genuinely answered with nothing.
+
+    This is the discriminator both structured-output consumers need (the
+    minimal deriver and the summarizer): the parse pipeline converts a
+    truncated or provider-mangled body into a *valid but empty* model instead of
+    raising, so what the provider reported alongside the body is the only
+    evidence left:
+
+    * ``finish_reasons`` contains ``length`` -- output was cut off (the measured
+      production cause: reasoning tokens exhaust the output budget);
+    * ``finish_reasons`` contains ``content_filter`` -- the provider withheld
+      the body;
+    * ``output_tokens == 0`` -- the provider returned nothing at all.
+
+    A clean ``stop`` with tokens spent is *not* degraded: the model did answer
+    and asserted nothing durable, which is normal for chit-chat.
+    """
+    return (
+        any(
+            reason in ("length", "content_filter") for reason in response.finish_reasons
+        )
+        or response.output_tokens == 0
+    )
+
+
+def degraded_response_parse_class(response: HonchoLLMCallResponse[Any]) -> str:
+    """Classify *why* an empty response looks degraded, for triage and alerting.
+
+    One of:
+
+    * ``truncated`` -- the output budget was hit;
+    * ``content_filtered`` -- the provider withheld the body;
+    * ``empty_body`` -- the provider returned nothing at all;
+    * ``unknown`` -- empty without any of the signals above (callers treat that
+      as a legitimate empty assertion, not a degraded response).
+    """
+    if any(reason == "length" for reason in response.finish_reasons):
+        return "truncated"
+    if any(reason == "content_filter" for reason in response.finish_reasons):
+        return "content_filtered"
+    if response.output_tokens == 0:
+        return "empty_body"
+    return "unknown"
+
+
 class HonchoLLMCallStreamChunk(BaseModel):
     """A single chunk in a streaming LLM response."""
 
@@ -311,4 +358,6 @@ __all__ = [
     "StreamingResponseWithMetadata",
     "T",
     "VerbosityType",
+    "degraded_response_parse_class",
+    "empty_response_is_degraded",
 ]
