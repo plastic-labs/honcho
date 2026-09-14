@@ -9,6 +9,25 @@ from src.config import settings
 
 pytestmark = pytest.mark.asyncio
 
+_BATCH_TARGET_TOKENS = 512
+_BATCH_MAX_AGE_SECONDS = 1800
+
+
+@pytest.fixture(autouse=True)
+def batching_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep batch-gate scenarios independent of local .env/config.toml settings."""
+    monkeypatch.setattr(settings.DERIVER, "FLUSH_ENABLED", False)
+    monkeypatch.setattr(
+        settings.DERIVER,
+        "REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS",
+        _BATCH_TARGET_TOKENS,
+    )
+    monkeypatch.setattr(
+        settings.DERIVER,
+        "REPRESENTATION_BATCH_MAX_AGE_SECONDS",
+        _BATCH_MAX_AGE_SECONDS,
+    )
+
 
 async def _make_session(
     db: AsyncSession, workspace: models.Workspace
@@ -356,11 +375,11 @@ class TestPendingEmbeddings:
 
 class TestMetricsAgreeWithDeriver:
     @pytest.mark.parametrize(
-        "token_count,age_seconds",
+        "token_count,age_seconds,expected_count",
         [
-            (1, 0),
-            (settings.DERIVER.REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS, 0),
-            (1, settings.DERIVER.REPRESENTATION_BATCH_MAX_AGE_SECONDS + 60),
+            (1, 0, 0),
+            (_BATCH_TARGET_TOKENS, 0, 1),
+            (1, _BATCH_MAX_AGE_SECONDS + 60, 1),
         ],
         ids=["sub-threshold", "token-threshold", "age-flush"],
     )
@@ -370,6 +389,7 @@ class TestMetricsAgreeWithDeriver:
         sample_data: tuple[models.Workspace, models.Peer],
         token_count: int,
         age_seconds: int,
+        expected_count: int,
     ):
         """The gauge is only trustworthy if it uses the deriver's own rule."""
         from src.deriver.queue_manager import QueueManager
@@ -388,7 +408,50 @@ class TestMetricsAgreeWithDeriver:
         )
         await db_session.commit()
 
-        expected = (await crud.get_deriver_metrics(db_session)).eligible_work_units
+        stats = await crud.get_deriver_metrics(db_session)
         claimed = await QueueManager().get_and_claim_work_units()
 
-        assert len(claimed) == expected
+        assert stats.eligible_work_units == expected_count
+        assert len(claimed) == expected_count
+
+    @pytest.mark.parametrize(
+        "flush_enabled,target_tokens",
+        [(True, _BATCH_TARGET_TOKENS), (False, 0)],
+        ids=["flush-enabled", "token-threshold-disabled"],
+    )
+    async def test_bypassed_batch_gate_makes_fresh_work_eligible(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+        monkeypatch: pytest.MonkeyPatch,
+        flush_enabled: bool,
+        target_tokens: int,
+    ) -> None:
+        """Immediate flushing must agree between the metric and queue claiming."""
+        from src.deriver.queue_manager import QueueManager
+
+        monkeypatch.setattr(settings.DERIVER, "FLUSH_ENABLED", flush_enabled)
+        monkeypatch.setattr(
+            settings.DERIVER,
+            "REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS",
+            target_tokens,
+        )
+        workspace, peer = sample_data
+        session = await _make_session(db_session, workspace)
+        work_unit_key = "representation:immediate"
+        await _add_representation_item(
+            db_session,
+            workspace,
+            peer,
+            session,
+            work_unit_key=work_unit_key,
+            token_count=1,
+        )
+        await db_session.commit()
+
+        stats = await crud.get_deriver_metrics(db_session)
+        claimed = await QueueManager().get_and_claim_work_units()
+
+        assert stats.pending_items == 1
+        assert stats.eligible_work_units == 1
+        assert set(claimed) == {work_unit_key}
