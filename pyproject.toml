@@ -1,6 +1,6 @@
 [project]
 name = "honcho"
-version = "3.1.1"
+version = "3.1.2"
 description = "Honcho Server"
 authors = [
   {name = "Plastic Labs", email = "hello@plasticlabs.ai"},
@@ -32,7 +32,7 @@ dependencies = [
     "typing-extensions>=4.11.0",
     "json-repair>=0.49.0",
     "turbopuffer>=1.8.1",
-    "redis>=7.0.0,<8.0.0",
+    "redis>=8.0.1,<9.0.0",
     "cashews[redis]==7.5.0",
     "scikit-learn>=1.6.0",
     "prometheus_client>=0.21.0",
@@ -54,7 +54,7 @@ dev = [
     "coverage>=7.6.0",
     "interrogate>=1.7.0",
     "py-spy>=0.3.14",
-    "ruff>=0.11.2",
+    "ruff==0.15.12",
     "basedpyright>=1.29.4",
     "pre-commit>=4.2.0",
     "pytest-cov>=6.2.1",
@@ -93,7 +93,9 @@ select = [
     # isort
     "I",
 ]
-ignore = ["E501", "B008", "COM812"]
+# UP040/UP042/UP046/UP047: StrEnum and PEP 695 generics are behavior/signature
+# changes, not formatting; adopt deliberately rather than via autofix.
+ignore = ["E501", "B008", "COM812", "UP040", "UP042", "UP046", "UP047"]
 
 [tool.ruff.lint.flake8-bugbear]
 extend-immutable-calls = ["fastapi.Depends"]

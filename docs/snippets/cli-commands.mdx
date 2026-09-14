@@ -217,6 +217,12 @@ honcho peer chat <query>
 <ParamField path="--reasoning" type="string">
   Reasoning level: minimal, low, medium, high, max. Short alias: `-r`.
 </ParamField>
+<ParamField path="--scope" type="string">
+  Confine recall to a scope. One name answers from that scope's own view; several names (repeat or comma-separate) are an explicit-only allowlist of their sessions. Mutually exclusive with --sessions and -s.
+</ParamField>
+<ParamField path="--sessions" type="string">
+  Ad hoc session-ID allowlist (repeat or comma-separate). Explicit conclusions only. Mutually exclusive with --scope and -s.
+</ParamField>
 </Accordion>
 <Accordion title="create">
 Create or get a peer.
@@ -570,9 +576,24 @@ honcho stop
 
 ## honcho workspace
 
-List, create, inspect, delete, and search workspaces.
+List, create, inspect, chat, delete, and search workspaces.
 
 <AccordionGroup>
+<Accordion title="chat">
+Query the dialectic across all peers in the workspace.
+
+```bash
+honcho workspace chat <query>
+```
+
+<ParamField path="query" type="string" required />
+<ParamField path="--reasoning" type="string">
+  Reasoning level: minimal, low, medium, high, max. Short alias: `-r`.
+</ParamField>
+<ParamField path="--scope" type="string">
+  Confine recall to a scope. One name answers from that scope's own view; several names (repeat or comma-separate) are an explicit-only allowlist of their sessions. Mutually exclusive with -s.
+</ParamField>
+</Accordion>
 <Accordion title="create">
 Create or get a workspace.
 

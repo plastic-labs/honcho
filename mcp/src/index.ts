@@ -1,8 +1,8 @@
 import { createMcpHandler } from "agents/mcp";
 import {
+  honchoClients,
+  identityHeaders,
   parseConfig,
-  createClientFactory,
-  createUnscopedClient,
   type Env,
 } from "./config.js";
 import { createServer } from "./server.js";
@@ -110,8 +110,10 @@ export default {
     try {
       const server = createServer({
         config,
-        clientFor: createClientFactory(config),
-        unscoped: createUnscopedClient(config),
+        ...honchoClients(
+          config,
+          identityHeaders(request.headers.get("User-Agent")),
+        ),
       });
       const handler = createMcpHandler(server, {
         route: "/",

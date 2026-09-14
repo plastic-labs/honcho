@@ -1,8 +1,8 @@
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import {
-  createClientFactory,
-  createUnscopedClient,
+  honchoClients,
+  identityHeaders,
   parseConfig,
   type Env,
   type HonchoConfig,
@@ -195,8 +195,10 @@ async function handleMcp(request: Request): Promise<Response> {
 
   const server = createServer({
     config,
-    clientFor: createClientFactory(config),
-    unscoped: createUnscopedClient(config),
+    ...honchoClients(
+      config,
+      identityHeaders(request.headers.get("User-Agent")),
+    ),
   });
 
   const maxSessions = envInt("MCP_SESSION_MAX", DEFAULT_SESSION_MAX);

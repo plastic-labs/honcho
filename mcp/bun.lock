@@ -5,7 +5,7 @@
     "": {
       "name": "honcho-mcp-proxy",
       "dependencies": {
-        "@honcho-ai/sdk": "^2.2.0",
+        "@honcho-ai/sdk": "^2.4.0",
         "@modelcontextprotocol/sdk": "^1.26.0",
         "agents": "^0.4.0",
         "nanoid": "^5.1.7",
@@ -107,7 +107,7 @@
 
     "@esbuild/win32-x64": ["@esbuild/win32-x64@0.25.4", "", { "os": "win32", "cpu": "x64" }, "sha512-nOT2vZNw6hJ+z43oP1SPea/G/6AbN6X+bGNhNuq8NtRHy4wsMhw765IKLNmnjek7GvjWBYQ8Q5VBoYTFg9y1UQ=="],
 
-    "@honcho-ai/sdk": ["@honcho-ai/sdk@2.2.0", "", { "dependencies": { "zod": "4.0.0" } }, "sha512-SyygN+BrpUB2fRjhwcYmT+tcEhHrKmbj9nOZLVUFY7M5YBswJ+mZb/CeLpNbRh+QQTU8F8JWY3lQat95c6nwmA=="],
+    "@honcho-ai/sdk": ["@honcho-ai/sdk@2.4.0", "", { "dependencies": { "zod": "4.0.0" } }, "sha512-nZE0RJOY3/KhHZdJ9T/fan8Wr26R6Q8s+5GhFpbWwHmnR6680S0r++hoeRpHzcngiU/3cmNQW248pdWpSwU2+Q=="],
 
     "@hono/node-server": ["@hono/node-server@1.19.9", "", { "peerDependencies": { "hono": "^4" } }, "sha512-vHL6w3ecZsky+8P5MD+eFfaGTyCeOHUIFYMGpQGbrBTSmNNoxv0if69rEZ5giu36weC5saFuznL411gRX7bJDw=="],
 

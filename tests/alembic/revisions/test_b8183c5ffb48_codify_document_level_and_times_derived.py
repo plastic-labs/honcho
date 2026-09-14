@@ -225,9 +225,9 @@ def verify_codify_document_level_and_times_derived(verifier: MigrationVerifier) 
         ),
         {"pattern": "%explicit level and times_derived=3%"},
     ).scalar()
-    assert (
-        times_derived_3 == 1
-    ), f"Expected 1 document with times_derived=3, got {times_derived_3}"
+    assert times_derived_3 == 1, (
+        f"Expected 1 document with times_derived=3, got {times_derived_3}"
+    )
 
     times_derived_5 = conn.execute(
         text(
@@ -236,9 +236,9 @@ def verify_codify_document_level_and_times_derived(verifier: MigrationVerifier) 
         ),
         {"pattern": "%deductive level and times_derived=5%"},
     ).scalar()
-    assert (
-        times_derived_5 == 1
-    ), f"Expected 1 document with times_derived=5, got {times_derived_5}"
+    assert times_derived_5 == 1, (
+        f"Expected 1 document with times_derived=5, got {times_derived_5}"
+    )
 
     times_derived_7 = conn.execute(
         text(
@@ -247,17 +247,17 @@ def verify_codify_document_level_and_times_derived(verifier: MigrationVerifier) 
         ),
         {"pattern": "%only times_derived field%"},
     ).scalar()
-    assert (
-        times_derived_7 == 1
-    ), f"Expected 1 document with times_derived=7, got {times_derived_7}"
+    assert times_derived_7 == 1, (
+        f"Expected 1 document with times_derived=7, got {times_derived_7}"
+    )
 
     # Verify default times_derived=1 was applied to documents without it
     times_derived_1 = conn.execute(
         text(f'SELECT COUNT(*) FROM "{schema}"."documents" WHERE "times_derived" = 1')
     ).scalar()
-    assert (
-        times_derived_1 == 2
-    ), f"Expected 2 documents with times_derived=1, got {times_derived_1}"
+    assert times_derived_1 == 2, (
+        f"Expected 2 documents with times_derived=1, got {times_derived_1}"
+    )
 
     # Verify internal_metadata still contains the original data (NOT removed by migration)
     level_in_metadata = conn.execute(
@@ -266,9 +266,9 @@ def verify_codify_document_level_and_times_derived(verifier: MigrationVerifier) 
         )
     ).scalar()
     # 3 documents had level in metadata (scenarios 1, 2, 4)
-    assert (
-        level_in_metadata == 3
-    ), f"Expected 3 documents with level in metadata, got {level_in_metadata}"
+    assert level_in_metadata == 3, (
+        f"Expected 3 documents with level in metadata, got {level_in_metadata}"
+    )
 
     times_derived_in_metadata = conn.execute(
         text(
@@ -276,9 +276,9 @@ def verify_codify_document_level_and_times_derived(verifier: MigrationVerifier) 
         )
     ).scalar()
     # 3 documents had times_derived in metadata (scenarios 1, 2, 5)
-    assert (
-        times_derived_in_metadata == 3
-    ), f"Expected 3 documents with times_derived in metadata, got {times_derived_in_metadata}"
+    assert times_derived_in_metadata == 3, (
+        f"Expected 3 documents with times_derived in metadata, got {times_derived_in_metadata}"
+    )
 
     # Verify server defaults work for new documents
     new_doc_id = generate_nanoid()
@@ -307,9 +307,9 @@ def verify_codify_document_level_and_times_derived(verifier: MigrationVerifier) 
         ),
         {"id": new_doc_id},
     ).one()
-    assert (
-        new_doc.level == "explicit"
-    ), f"Expected new document to have level='explicit', got {new_doc.level}"
-    assert (
-        new_doc.times_derived == 1
-    ), f"Expected new document to have times_derived=1, got {new_doc.times_derived}"
+    assert new_doc.level == "explicit", (
+        f"Expected new document to have level='explicit', got {new_doc.level}"
+    )
+    assert new_doc.times_derived == 1, (
+        f"Expected new document to have times_derived=1, got {new_doc.times_derived}"
+    )

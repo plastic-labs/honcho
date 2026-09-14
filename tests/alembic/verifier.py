@@ -53,21 +53,21 @@ class MigrationVerifier:
 
             column_info = next(col for col in columns if col["name"] == column)
             actual_nullable = column_info.get("nullable", True)
-            assert (
-                actual_nullable == nullable
-            ), f"Column {table}.{column} nullability is {actual_nullable}; expected {nullable}"
+            assert actual_nullable == nullable, (
+                f"Column {table}.{column} nullability is {actual_nullable}; expected {nullable}"
+            )
 
     def assert_column_type(self, table: str, column: str, expected_type: type) -> None:
         """Assert that a column has the expected type"""
         columns = self.get_inspector().get_columns(table, schema=self.schema)
         column_info = next((col for col in columns if col["name"] == column), None)
-        assert (
-            column_info is not None
-        ), f"Column {table}.{column} not found after migration {self.revision}"
+        assert column_info is not None, (
+            f"Column {table}.{column} not found after migration {self.revision}"
+        )
         actual_type = column_info["type"]
-        assert isinstance(
-            actual_type, expected_type
-        ), f"Column {table}.{column} has type {type(actual_type).__name__}; expected {expected_type.__name__}"
+        assert isinstance(actual_type, expected_type), (
+            f"Column {table}.{column} has type {type(actual_type).__name__}; expected {expected_type.__name__}"
+        )
 
     def assert_no_nulls(self, table: str, column: str) -> None:
         """Assert that a column has no null values"""
@@ -78,9 +78,9 @@ class MigrationVerifier:
             )
         )
         count = result.scalar() or 0
-        assert (
-            count == 0
-        ), f"Found {count} NULL values in {table}.{column} after migration {self.revision}"
+        assert count == 0, (
+            f"Found {count} NULL values in {table}.{column} after migration {self.revision}"
+        )
 
     def assert_constraint_exists(
         self,
@@ -103,18 +103,18 @@ class MigrationVerifier:
         for table_name, index_name in checks:
             indexes = self.get_inspector().get_indexes(table_name, schema=self.schema)
             names = [idx["name"] for idx in indexes]
-            assert (
-                index_name in names
-            ), f"Index {index_name} not found on {table_name} after migration {self.revision}"
+            assert index_name in names, (
+                f"Index {index_name} not found on {table_name} after migration {self.revision}"
+            )
 
     def assert_indexes_not_exist(self, checks: Sequence[tuple[str, str]]) -> None:
         """Assert that indexes do not exist in the schema"""
         for table_name, index_name in checks:
             indexes = self.get_inspector().get_indexes(table_name, schema=self.schema)
             names = [idx["name"] for idx in indexes]
-            assert (
-                index_name not in names
-            ), f"Index {index_name} still present on {table_name} after migration {self.revision}"
+            assert index_name not in names, (
+                f"Index {index_name} still present on {table_name} after migration {self.revision}"
+            )
 
     def get_inspector(self) -> Inspector:
         """Get the inspector for the connection"""

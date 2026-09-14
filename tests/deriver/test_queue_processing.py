@@ -357,6 +357,38 @@ class TestQueueProcessing:
 
         assert start.await_count == 0
 
+    async def test_initialize_skips_startup_jitter_when_api_owns_scheduling(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(settings.DERIVER, "SCHEDULER", "api")
+        queue_manager = QueueManager()
+
+        with (
+            patch.object(queue_manager.reconciler_scheduler, "start", AsyncMock()),
+            patch.object(queue_manager, "_sleep_startup_jitter", AsyncMock()) as jitter,
+            patch.object(queue_manager, "polling_loop", AsyncMock()),
+            patch.object(queue_manager, "cleanup", AsyncMock()),
+        ):
+            await queue_manager.initialize()
+
+        assert jitter.await_count == 0
+
+    async def test_initialize_sleeps_startup_jitter_when_deriver_owns_scheduling(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(settings.DERIVER, "SCHEDULER", "deriver")
+        queue_manager = QueueManager()
+
+        with (
+            patch.object(queue_manager.reconciler_scheduler, "start", AsyncMock()),
+            patch.object(queue_manager, "_sleep_startup_jitter", AsyncMock()) as jitter,
+            patch.object(queue_manager, "polling_loop", AsyncMock()),
+            patch.object(queue_manager, "cleanup", AsyncMock()),
+        ):
+            await queue_manager.initialize()
+
+        assert jitter.await_count == 1
+
     async def test_polling_loop_skips_stale_cleanup_when_api_owns_scheduling(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

@@ -754,9 +754,7 @@ class TestStreamingResponseRunHandleClose:
 
         from src.llm.types import HonchoLLMCallStreamChunk
 
-        agen = cast(
-            "AsyncGenerator[HonchoLLMCallStreamChunk, None]", wrapper.__aiter__()
-        )
+        agen = cast("AsyncGenerator[HonchoLLMCallStreamChunk]", wrapper.__aiter__())
         first = await agen.__anext__()
         assert first.content == "hel"
         await agen.aclose()
