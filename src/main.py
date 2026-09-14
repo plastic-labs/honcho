@@ -49,6 +49,7 @@ from src.telemetry.client_context import (
     HEADER_AGENT_MODEL,
     HEADER_HOST,
     HEADER_PLUGIN,
+    HEADER_USER_AGENT,
     reset_client_context,
     set_client_context,
 )
@@ -274,6 +275,7 @@ async def track_request(
         host=request.headers.get(HEADER_HOST),
         plugin=request.headers.get(HEADER_PLUGIN),
         agent_model=request.headers.get(HEADER_AGENT_MODEL),
+        user_agent=request.headers.get(HEADER_USER_AGENT),
     )
 
     try:

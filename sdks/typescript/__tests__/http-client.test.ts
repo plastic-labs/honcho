@@ -13,7 +13,8 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test'
-import { HonchoHTTPClient } from '../src/http/client'
+import { HonchoHTTPClient, defaultHostHeader } from '../src/http/client'
+import { VERSION } from '../src/api-version'
 import {
   HonchoError,
   BadRequestError,
@@ -135,6 +136,20 @@ describe('HonchoHTTPClient constructor', () => {
 
     expect(client.defaultHeaders['Content-Type']).toBe('application/json')
     expect(client.defaultHeaders['X-Custom-Header']).toBe('custom-value')
+  })
+
+  test('sends X-Honcho-Host naming the SDK unless the caller overrides it', () => {
+    const client = new HonchoHTTPClient({ baseURL: 'https://api.example.com' })
+
+    expect(defaultHostHeader()).toBe(`honcho-typescript/${VERSION} (${process.platform})`)
+    expect(client.defaultHeaders['X-Honcho-Host']).toBe(defaultHostHeader())
+
+    // A harness plugin's own host identity replaces the SDK default.
+    const overridden = new HonchoHTTPClient({
+      baseURL: 'https://api.example.com',
+      defaultHeaders: { 'X-Honcho-Host': 'claude-code/2.1.3 (darwin)' },
+    })
+    expect(overridden.defaultHeaders['X-Honcho-Host']).toBe('claude-code/2.1.3 (darwin)')
   })
 
   test('custom headers can override default Content-Type', () => {
