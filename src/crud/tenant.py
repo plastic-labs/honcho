@@ -50,7 +50,9 @@ async def get_or_create_tenant(
 
     existing = await db.get(models.Tenant, tenant_id)
     if existing is not None:
-        return GetOrCreateResult(resource=_matching_or_conflict(existing), created=False)
+        return GetOrCreateResult(
+            resource=_matching_or_conflict(existing), created=False
+        )
 
     tenant = models.Tenant(
         tenant_id=tenant_id,
@@ -75,7 +77,9 @@ async def get_or_create_tenant(
             raise ConflictException(
                 f"Tenant {tenant_id} creation raced a concurrent delete; retry"
             ) from None
-        return GetOrCreateResult(resource=_matching_or_conflict(existing), created=False)
+        return GetOrCreateResult(
+            resource=_matching_or_conflict(existing), created=False
+        )
     logger.info("Created tenant %s (tier=%s)", tenant_id, tier)
     return GetOrCreateResult(resource=tenant, created=True)
 

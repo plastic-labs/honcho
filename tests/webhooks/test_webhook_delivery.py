@@ -271,7 +271,9 @@ async def test_publish_webhook_event_namespaces_key_with_explicit_tenant(
     finally:
         tenant_context.reset(clear)
 
-    assert await _webhook_keys(db_session, "ws-shared") == ["tenant-a:webhook:ws-shared"]
+    assert await _webhook_keys(db_session, "ws-shared") == [
+        "tenant-a:webhook:ws-shared"
+    ]
 
 
 @pytest.mark.asyncio

@@ -38,9 +38,7 @@ def prepare_add_tenant_id_primitive(verifier: MigrationVerifier) -> None:
     schema = verifier.schema
 
     conn.execute(
-        text(
-            f'INSERT INTO "{schema}"."workspaces" ("id", "name") VALUES (:id, :name)'
-        ),
+        text(f'INSERT INTO "{schema}"."workspaces" ("id", "name") VALUES (:id, :name)'),
         {"id": generate_nanoid(), "name": WORKSPACE_NAME},
     )
     conn.execute(
@@ -85,7 +83,7 @@ def verify_add_tenant_id_primitive(verifier: MigrationVerifier) -> None:
     verifier.assert_column_exists("tenants", "vector_correlation_id")
     verifier.assert_column_exists("tenants", "legacy_app_name", exists=False)
     default_count = conn.execute(
-        text(f"SELECT COUNT(*) FROM \"{schema}\".\"tenants\" WHERE tenant_id = 'default'")
+        text(f'SELECT COUNT(*) FROM "{schema}"."tenants" WHERE tenant_id = \'default\'')
     ).scalar()
     assert default_count == 1, f"expected the default tenant, found {default_count}"
 

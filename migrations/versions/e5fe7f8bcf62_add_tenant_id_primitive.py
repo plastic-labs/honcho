@@ -66,10 +66,16 @@ NEW_PKS: dict[str, list[str]] = {
 NEW_UNIQUES: dict[str, list[tuple[str, list[str]]]] = {
     "workspaces": [("uq_workspaces_tenant_id_name", ["tenant_id", "name"])],
     "peers": [
-        ("uq_peers_tenant_id_name_workspace_name", ["tenant_id", "name", "workspace_name"])
+        (
+            "uq_peers_tenant_id_name_workspace_name",
+            ["tenant_id", "name", "workspace_name"],
+        )
     ],
     "sessions": [
-        ("uq_sessions_tenant_id_name_workspace_name", ["tenant_id", "name", "workspace_name"])
+        (
+            "uq_sessions_tenant_id_name_workspace_name",
+            ["tenant_id", "name", "workspace_name"],
+        )
     ],
     "messages": [
         ("uq_messages_tenant_id_public_id", ["tenant_id", "public_id"]),
@@ -91,33 +97,173 @@ NEW_UNIQUES: dict[str, list[tuple[str, list[str]]]] = {
 # loop below); the composite FKs below carry the tenant_id into the natural-key refs.
 NEW_FKS: list[tuple[str, str, list[str], str, list[str], str | None]] = [
     # peers
-    ("fk_peers_ws_tenant_workspaces", "peers", ["workspace_name", "tenant_id"], "workspaces", ["name", "tenant_id"], None),
+    (
+        "fk_peers_ws_tenant_workspaces",
+        "peers",
+        ["workspace_name", "tenant_id"],
+        "workspaces",
+        ["name", "tenant_id"],
+        None,
+    ),
     # sessions
-    ("fk_sessions_ws_tenant_workspaces", "sessions", ["workspace_name", "tenant_id"], "workspaces", ["name", "tenant_id"], None),
+    (
+        "fk_sessions_ws_tenant_workspaces",
+        "sessions",
+        ["workspace_name", "tenant_id"],
+        "workspaces",
+        ["name", "tenant_id"],
+        None,
+    ),
     # messages
-    ("fk_messages_session_ws_tenant_sessions", "messages", ["session_name", "workspace_name", "tenant_id"], "sessions", ["name", "workspace_name", "tenant_id"], None),
-    ("fk_messages_peer_ws_tenant_peers", "messages", ["peer_name", "workspace_name", "tenant_id"], "peers", ["name", "workspace_name", "tenant_id"], None),
+    (
+        "fk_messages_session_ws_tenant_sessions",
+        "messages",
+        ["session_name", "workspace_name", "tenant_id"],
+        "sessions",
+        ["name", "workspace_name", "tenant_id"],
+        None,
+    ),
+    (
+        "fk_messages_peer_ws_tenant_peers",
+        "messages",
+        ["peer_name", "workspace_name", "tenant_id"],
+        "peers",
+        ["name", "workspace_name", "tenant_id"],
+        None,
+    ),
     # message_embeddings
-    ("fk_msg_emb_tenant_message_messages", "message_embeddings", ["tenant_id", "message_id"], "messages", ["tenant_id", "public_id"], "CASCADE"),
-    ("fk_msg_emb_ws_tenant_workspaces", "message_embeddings", ["workspace_name", "tenant_id"], "workspaces", ["name", "tenant_id"], None),
-    ("fk_msg_emb_session_ws_tenant_sessions", "message_embeddings", ["session_name", "workspace_name", "tenant_id"], "sessions", ["name", "workspace_name", "tenant_id"], None),
-    ("fk_msg_emb_peer_ws_tenant_peers", "message_embeddings", ["peer_name", "workspace_name", "tenant_id"], "peers", ["name", "workspace_name", "tenant_id"], None),
+    (
+        "fk_msg_emb_tenant_message_messages",
+        "message_embeddings",
+        ["tenant_id", "message_id"],
+        "messages",
+        ["tenant_id", "public_id"],
+        "CASCADE",
+    ),
+    (
+        "fk_msg_emb_ws_tenant_workspaces",
+        "message_embeddings",
+        ["workspace_name", "tenant_id"],
+        "workspaces",
+        ["name", "tenant_id"],
+        None,
+    ),
+    (
+        "fk_msg_emb_session_ws_tenant_sessions",
+        "message_embeddings",
+        ["session_name", "workspace_name", "tenant_id"],
+        "sessions",
+        ["name", "workspace_name", "tenant_id"],
+        None,
+    ),
+    (
+        "fk_msg_emb_peer_ws_tenant_peers",
+        "message_embeddings",
+        ["peer_name", "workspace_name", "tenant_id"],
+        "peers",
+        ["name", "workspace_name", "tenant_id"],
+        None,
+    ),
     # collections
-    ("fk_collections_ws_tenant_workspaces", "collections", ["workspace_name", "tenant_id"], "workspaces", ["name", "tenant_id"], None),
-    ("fk_collections_observer_ws_tenant_peers", "collections", ["observer", "workspace_name", "tenant_id"], "peers", ["name", "workspace_name", "tenant_id"], None),
-    ("fk_collections_observed_ws_tenant_peers", "collections", ["observed", "workspace_name", "tenant_id"], "peers", ["name", "workspace_name", "tenant_id"], None),
+    (
+        "fk_collections_ws_tenant_workspaces",
+        "collections",
+        ["workspace_name", "tenant_id"],
+        "workspaces",
+        ["name", "tenant_id"],
+        None,
+    ),
+    (
+        "fk_collections_observer_ws_tenant_peers",
+        "collections",
+        ["observer", "workspace_name", "tenant_id"],
+        "peers",
+        ["name", "workspace_name", "tenant_id"],
+        None,
+    ),
+    (
+        "fk_collections_observed_ws_tenant_peers",
+        "collections",
+        ["observed", "workspace_name", "tenant_id"],
+        "peers",
+        ["name", "workspace_name", "tenant_id"],
+        None,
+    ),
     # documents
-    ("fk_documents_ws_tenant_workspaces", "documents", ["workspace_name", "tenant_id"], "workspaces", ["name", "tenant_id"], None),
-    ("fk_documents_collection_tenant_collections", "documents", ["observer", "observed", "workspace_name", "tenant_id"], "collections", ["observer", "observed", "workspace_name", "tenant_id"], None),
-    ("fk_documents_observer_ws_tenant_peers", "documents", ["observer", "workspace_name", "tenant_id"], "peers", ["name", "workspace_name", "tenant_id"], None),
-    ("fk_documents_observed_ws_tenant_peers", "documents", ["observed", "workspace_name", "tenant_id"], "peers", ["name", "workspace_name", "tenant_id"], None),
-    ("fk_documents_session_ws_tenant_sessions", "documents", ["session_name", "workspace_name", "tenant_id"], "sessions", ["name", "workspace_name", "tenant_id"], None),
+    (
+        "fk_documents_ws_tenant_workspaces",
+        "documents",
+        ["workspace_name", "tenant_id"],
+        "workspaces",
+        ["name", "tenant_id"],
+        None,
+    ),
+    (
+        "fk_documents_collection_tenant_collections",
+        "documents",
+        ["observer", "observed", "workspace_name", "tenant_id"],
+        "collections",
+        ["observer", "observed", "workspace_name", "tenant_id"],
+        None,
+    ),
+    (
+        "fk_documents_observer_ws_tenant_peers",
+        "documents",
+        ["observer", "workspace_name", "tenant_id"],
+        "peers",
+        ["name", "workspace_name", "tenant_id"],
+        None,
+    ),
+    (
+        "fk_documents_observed_ws_tenant_peers",
+        "documents",
+        ["observed", "workspace_name", "tenant_id"],
+        "peers",
+        ["name", "workspace_name", "tenant_id"],
+        None,
+    ),
+    (
+        "fk_documents_session_ws_tenant_sessions",
+        "documents",
+        ["session_name", "workspace_name", "tenant_id"],
+        "sessions",
+        ["name", "workspace_name", "tenant_id"],
+        None,
+    ),
     # webhook_endpoints
-    ("fk_webhook_ws_tenant_workspaces", "webhook_endpoints", ["workspace_name", "tenant_id"], "workspaces", ["name", "tenant_id"], None),
+    (
+        "fk_webhook_ws_tenant_workspaces",
+        "webhook_endpoints",
+        ["workspace_name", "tenant_id"],
+        "workspaces",
+        ["name", "tenant_id"],
+        None,
+    ),
     # session_peers
-    ("fk_session_peers_ws_tenant_workspaces", "session_peers", ["workspace_name", "tenant_id"], "workspaces", ["name", "tenant_id"], None),
-    ("fk_session_peers_session_ws_tenant_sessions", "session_peers", ["session_name", "workspace_name", "tenant_id"], "sessions", ["name", "workspace_name", "tenant_id"], None),
-    ("fk_session_peers_peer_ws_tenant_peers", "session_peers", ["peer_name", "workspace_name", "tenant_id"], "peers", ["name", "workspace_name", "tenant_id"], None),
+    (
+        "fk_session_peers_ws_tenant_workspaces",
+        "session_peers",
+        ["workspace_name", "tenant_id"],
+        "workspaces",
+        ["name", "tenant_id"],
+        None,
+    ),
+    (
+        "fk_session_peers_session_ws_tenant_sessions",
+        "session_peers",
+        ["session_name", "workspace_name", "tenant_id"],
+        "sessions",
+        ["name", "workspace_name", "tenant_id"],
+        None,
+    ),
+    (
+        "fk_session_peers_peer_ws_tenant_peers",
+        "session_peers",
+        ["peer_name", "workspace_name", "tenant_id"],
+        "peers",
+        ["name", "workspace_name", "tenant_id"],
+        None,
+    ),
 ]
 
 
@@ -319,7 +465,12 @@ def _create_new_indexes() -> None:
         postgresql_with={"m": 16, "ef_construction": 64},
         postgresql_ops={"embedding": "vector_cosine_ops"},
     )
-    _mk("ix_documents_source_ids_gin", "documents", ["source_ids"], postgresql_using="gin")
+    _mk(
+        "ix_documents_source_ids_gin",
+        "documents",
+        ["source_ids"],
+        postgresql_using="gin",
+    )
     _mk(
         "ix_documents_sync_state_last_sync_at",
         "documents",
@@ -341,12 +492,17 @@ def downgrade() -> None:
 
     for name, src, *_ in NEW_FKS:
         insp = _inspector()
-        if any(fk.get("name") == name for fk in insp.get_foreign_keys(src, schema=schema)):
+        if any(
+            fk.get("name") == name for fk in insp.get_foreign_keys(src, schema=schema)
+        ):
             op.drop_constraint(name, src, type_="foreignkey", schema=schema)
     for tname in TENANT_SCOPED:
         insp = _inspector()
         fk_name = f"fk_{tname}_tenant_id_tenants"
-        if any(fk.get("name") == fk_name for fk in insp.get_foreign_keys(tname, schema=schema)):
+        if any(
+            fk.get("name") == fk_name
+            for fk in insp.get_foreign_keys(tname, schema=schema)
+        ):
             op.drop_constraint(fk_name, tname, type_="foreignkey", schema=schema)
 
     for tname, uniques in NEW_UNIQUES.items():

@@ -126,7 +126,7 @@ def _drop_probe_role() -> None:
 
 
 @pytest.fixture(scope="session")
-def rls_engine() -> Generator[Engine, None, None]:
+def rls_engine() -> Generator[Engine]:
     """A dedicated database with the real schema and the cloud RLS policies applied."""
     _force_drop_test_db()  # start clean (e.g. after a leaked prior run)
     create_database(_RLS_TEST_DB_URL)

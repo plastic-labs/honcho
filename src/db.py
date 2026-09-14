@@ -148,9 +148,7 @@ def _set_session_gucs_on_checkout(
                 # it with an unknown tenant.
                 # endregion
                 tenant = tenant_context.get() or ""
-                cursor.execute(
-                    "SELECT set_config('app.tenant', %s, false)", (tenant,)
-                )
+                cursor.execute("SELECT set_config('app.tenant', %s, false)", (tenant,))
             if set_tracing:
                 # region ai
                 # Observability only — best-effort, never blocks checkout. A

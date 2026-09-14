@@ -639,9 +639,7 @@ class TestDeleteWorkspaceTenantScopedQueueCleanup:
                 .values(tenant_id=tenant_id, tier="shared")
                 .on_conflict_do_nothing()
             )
-        db_session.add(
-            models.Workspace(name=workspace_name, tenant_id="tenant-a")
-        )
+        db_session.add(models.Workspace(name=workspace_name, tenant_id="tenant-a"))
         db_session.add_all(
             [
                 models.ActiveQueueSession(

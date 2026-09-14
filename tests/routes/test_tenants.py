@@ -201,9 +201,7 @@ def test_get_tenant(client: TestClient, enabled: str):
 
 def test_get_tenant_missing(client: TestClient, enabled: str):
     """GET on an unknown tenant is a 404."""
-    response = client.get(
-        f"/v3/tenants/{generate_nanoid()}", headers={HEADER: enabled}
-    )
+    response = client.get(f"/v3/tenants/{generate_nanoid()}", headers={HEADER: enabled})
     assert response.status_code == 404, response.text
 
 

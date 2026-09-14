@@ -24,12 +24,16 @@ def test_observed_key_includes_tenant_only_under_multi_tenant(
     # The API scheduler runs cross-tenant, so the "is representation work still
     # pending?" check must be keyed per tenant — otherwise one tenant's pending work
     # suppresses another tenant's due dream (both share names like default/observed).
-    from src.dreamer.dream_due import _observed_key  # pyright: ignore[reportPrivateUsage]
+    from src.dreamer.dream_due import (
+        _observed_key,  # pyright: ignore[reportPrivateUsage]
+    )
 
     monkeypatch.setattr(settings, "MULTI_TENANT", True)
     assert _observed_key("tenant-a", "ws", "obs") == ("tenant-a", "ws", "obs")
     # Same (workspace, observed), different tenants -> distinct keys, no cross-suppress.
-    assert _observed_key("tenant-a", "ws", "obs") != _observed_key("tenant-b", "ws", "obs")
+    assert _observed_key("tenant-a", "ws", "obs") != _observed_key(
+        "tenant-b", "ws", "obs"
+    )
 
     # Flag off: the tenant is dropped, so a parsed (unnamespaced -> tenant_id=None) key
     # and the collection's real tenant still line up.
