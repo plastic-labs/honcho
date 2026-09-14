@@ -134,6 +134,11 @@ async def get_or_create_peer(
     if not jwt_params.ad and jwt_params.w is not None and jwt_params.w != workspace_id:
         raise AuthenticationException("Unauthorized access to resource")
 
+    # A session-scoped key is confined to its session and has no peer of its
+    # own, so it cannot get-or-create peers (which overwrites existing ones).
+    if not jwt_params.ad and jwt_params.s is not None:
+        raise AuthenticationException("Unauthorized access to resource")
+
     if peer.name:
         if not jwt_params.ad and jwt_params.p is not None and jwt_params.p != peer.name:
             raise AuthenticationException("Unauthorized access to resource")
