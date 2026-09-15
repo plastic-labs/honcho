@@ -62,6 +62,18 @@ async def test_non_sdk_object_raises_llm_error() -> None:
         await _complete(client)
 
 
+async def test_truthy_non_indexable_choices_raises_llm_error() -> None:
+    client = _client_returning({"choices": {"0": {"message": {}}}, "usage": {}})
+    with pytest.raises(LLMError):
+        await _complete(client)
+
+
+async def test_truthy_scalar_choices_raises_llm_error() -> None:
+    client = _client_returning(SimpleNamespace(choices=5, usage=None))
+    with pytest.raises(LLMError):
+        await _complete(client)
+
+
 async def test_missing_usage_attribute_degrades_to_zero_tokens() -> None:
     message = SimpleNamespace(content="Hello", tool_calls=None)
     client = _client_returning(

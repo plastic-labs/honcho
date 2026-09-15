@@ -83,8 +83,14 @@ def _first_choice(response: Any) -> Any:
     """
     choices = getattr(response, "choices", None)
     if choices:
-        choice = choices[0]
-        if getattr(choice, "message", None) is not None:
+        try:
+            choice = choices[0]
+        except (IndexError, KeyError, TypeError):
+            # A truthy but non-list `choices` value (e.g. a mapping without key
+            # 0, or a non-subscriptable scalar) must surface as the same
+            # controlled LLMError, not as a raw indexing failure.
+            choice = None
+        if choice is not None and getattr(choice, "message", None) is not None:
             return choice
     raise LLMError(
         "malformed OpenAI-compatible response: no usable choices[0].message",
