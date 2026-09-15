@@ -6,12 +6,13 @@ a hard boot failure. Listed in check order: the first two are settings-only and 
 no connection; the last two introspect the database (with retry) and are skipped
 together when ``MULTI_TENANT_SKIP_RLS_ASSERT`` is set (migration window only).
 
-1. Flag vs auth (``ROLE=api`` only). ``MULTI_TENANT`` on with ``AUTH_USE_AUTH`` off
-   means every request authenticates as a tenant-less admin, so no tenant is ever
-   bound and every tenant-scoped session fails closed — not a leak, but a uniform
-   outage on every data route that is hard to read from the 500s. Refuse to boot
-   with one clear error instead. A deriver takes its tenant from the claimed work
-   unit's key, not a JWT, so ``ROLE=deriver`` skips this check.
+1. Flag vs auth (``INSTANCE_TYPE=api`` only). ``MULTI_TENANT`` on with
+   ``AUTH_USE_AUTH`` off means every request authenticates as a tenant-less admin,
+   so no tenant is ever bound and every tenant-scoped session fails closed — not a
+   leak, but a uniform outage on every data route that is hard to read from the
+   500s. Refuse to boot with one clear error instead. A deriver takes its tenant
+   from the claimed work unit's key, not a JWT, so ``INSTANCE_TYPE=deriver`` skips
+   this check.
 
 2. Pooler vs read-path strategy. The read-path binding is a session-scoped
    ``app.tenant`` set at checkout; it is safe under NullPool / session-mode, but a
@@ -135,7 +136,7 @@ def _assert_service_role_configured(s: AppSettings) -> None:
 
 
 def _assert_auth_enabled(s: AppSettings) -> None:
-    """API role: require JWT auth under the flag; the claim is the only tenant source."""
+    """API instances: require JWT auth under the flag; the claim is the tenant source."""
     # region ai
     # With AUTH_USE_AUTH off, auth() short-circuits every request to a tenant-less
     # admin JWTParams and never reaches the tenant gate, so nothing binds
@@ -143,9 +144,10 @@ def _assert_auth_enabled(s: AppSettings) -> None:
     # No cross-tenant read is possible in that state — operability, not a security
     # gap — but one boot error beats a storm of identical runtime errors. The
     # deriver binds its tenant from the claimed work unit's key and verifies no
-    # JWT, so it is exempt by ROLE rather than forced to carry the API's auth config.
+    # JWT, so it is exempt by INSTANCE_TYPE rather than forced to carry the API's
+    # auth config.
     # endregion
-    if s.ROLE != "api":
+    if s.INSTANCE_TYPE != "api":
         return
     if not s.AUTH.USE_AUTH:
         raise StartupValidationError(
@@ -153,7 +155,7 @@ def _assert_auth_enabled(s: AppSettings) -> None:
             + " request carries a tenant claim, so no tenant is ever bound and every"
             + " tenant-scoped request fails closed. Enable AUTH_USE_AUTH (with"
             + " AUTH_JWT_SECRET) and issue tenant-bearing tokens; if this process is"
-            + " a deriver, set ROLE=deriver instead."
+            + " a deriver, set INSTANCE_TYPE=deriver instead."
         )
 
 
