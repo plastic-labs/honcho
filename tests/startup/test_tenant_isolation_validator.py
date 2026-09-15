@@ -2,8 +2,8 @@
 
 Flag-off it must be a pure no-op — self-host never pays for it and never sees it.
 Flag-on it refuses the half-states where isolation looks enabled but cannot hold
-(unsafe pooler, RLS not enforced, no service role) or cannot serve (auth off on the
-API role; a deriver takes its tenant from the claimed work unit, not a JWT).
+(unsafe pooler, RLS not enforced, no service role) or cannot serve (auth off on an
+API instance; a deriver takes its tenant from the claimed work unit, not a JWT).
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ def _flag_on_settings() -> AppSettings:
     s = settings.model_copy(deep=True)
     s.MULTI_TENANT = True
     s.MULTI_TENANT_SKIP_RLS_ASSERT = False
-    s.ROLE = "api"
+    s.INSTANCE_TYPE = "api"
     s.AUTH.USE_AUTH = True
     s.AUTH.JWT_SECRET = "test-secret"
     s.DB.POOLER_MODE = "session"
@@ -96,12 +96,12 @@ async def test_refuses_boot_when_auth_is_off() -> None:
 
 
 @pytest.mark.asyncio
-async def test_deriver_role_skips_the_auth_check() -> None:
+async def test_deriver_instance_skips_the_auth_check() -> None:
     # A deriver binds its tenant from the claimed work unit's key and verifies no
     # JWT, so it is not forced to carry the API's auth config. Everything else it
     # would be checked for is set so the validator returns before touching the DB.
     s = _flag_on_settings()
-    s.ROLE = "deriver"
+    s.INSTANCE_TYPE = "deriver"
     s.AUTH.USE_AUTH = False
     s.MULTI_TENANT_SKIP_RLS_ASSERT = True
     await validate_tenant_isolation(_NO_ENGINE, app_settings=s)

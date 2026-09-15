@@ -25,7 +25,7 @@ NAMESPACE = "honcho"
 # MULTI_TENANT = false
 # Which process this is, "api" (default) or "deriver". Set per process — the compose
 # example sets it on the deriver service — never in a config both processes share.
-# ROLE = "api"
+# INSTANCE_TYPE = "api"
 
 # Database settings
 [db]
