@@ -21,6 +21,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from src.config import REASONING_LEVELS, settings
+from src.telemetry.tenant import TENANTLESS_CATEGORIES, current_tenant_id
 from src.utils.types import walk_subclasses
 
 disable_created_metrics()
@@ -44,6 +45,22 @@ class NamespacedHistogram(Histogram):
     def labels(self, **kwargs: str) -> NamespacedHistogram:
         kwargs["namespace"] = cast(str, settings.METRICS.NAMESPACE)
         return super().labels(**kwargs)  # type: ignore[return-value]
+
+
+class TenantScopedCounter(NamespacedCounter):
+    """A counter whose value is attributable to one tenant.
+
+    Injects ``tenant_id`` from the ambient tenant beside ``namespace``. Empty when
+    ``MULTI_TENANT`` is off or nothing is bound: Prometheus and VictoriaMetrics treat
+    an empty label value as absent, so the flag-off series set is exactly the
+    pre-tenancy one, and the startup zero-init (which runs with nothing bound)
+    materializes the same children as before. Per-tenant children appear on first
+    event; the domain is unbounded and deliberately never pre-created.
+    """
+
+    def labels(self, **kwargs: str) -> TenantScopedCounter:
+        kwargs["tenant_id"] = current_tenant_id() or ""
+        return cast(TenantScopedCounter, super().labels(**kwargs))
 
 
 class TokenTypes(Enum):
@@ -108,10 +125,10 @@ api_request_duration_seconds = NamespacedHistogram(
     buckets=(0.05, 0.1, 0.25, 0.5, 0.75, 1, 2, 5, 10, 20, 30, 60, 120),
 )
 
-messages_created_counter = NamespacedCounter(
+messages_created_counter = TenantScopedCounter(
     "messages_created",
     "Total messages created",
-    ["namespace", "workspace_name"],
+    ["namespace", "tenant_id", "workspace_name"],
 )
 
 embed_now_tasks_shed_counter = NamespacedCounter(
@@ -126,34 +143,34 @@ embed_now_tasks_in_flight_gauge = NamespacedGauge(
     ["namespace"],
 )
 
-dialectic_calls_counter = NamespacedCounter(
+dialectic_calls_counter = TenantScopedCounter(
     "dialectic_calls",
     "Total dialectic calls",
-    ["namespace", "workspace_name", "reasoning_level"],
+    ["namespace", "tenant_id", "workspace_name", "reasoning_level"],
 )
 
-deriver_queue_items_processed_counter = NamespacedCounter(
+deriver_queue_items_processed_counter = TenantScopedCounter(
     "deriver_queue_items_processed",
     "Total deriver queue items processed",
-    ["namespace", "workspace_name", "task_type"],
+    ["namespace", "tenant_id", "workspace_name", "task_type"],
 )
 
-deriver_tokens_processed_counter = NamespacedCounter(
+deriver_tokens_processed_counter = TenantScopedCounter(
     "deriver_tokens_processed",
     "Total tokens processed by the deriver",
-    ["namespace", "task_type", "token_type", "component"],
+    ["namespace", "tenant_id", "task_type", "token_type", "component"],
 )
 
-dialectic_tokens_processed_counter = NamespacedCounter(
+dialectic_tokens_processed_counter = TenantScopedCounter(
     "dialectic_tokens_processed",
     "Total tokens processed by the dialectic",
-    ["namespace", "token_type", "component", "reasoning_level"],
+    ["namespace", "tenant_id", "token_type", "component", "reasoning_level"],
 )
 
-dreamer_tokens_processed_counter = NamespacedCounter(
+dreamer_tokens_processed_counter = TenantScopedCounter(
     "dreamer_tokens_processed",
     "Total tokens processed by the dreamer",
-    ["namespace", "specialist_name", "token_type"],
+    ["namespace", "tenant_id", "specialist_name", "token_type"],
 )
 
 # CloudEvents emitter health metrics. Split intentional (sampled out) vs unintentional
@@ -174,6 +191,15 @@ telemetry_events_dropped_counter = NamespacedCounter(
     "telemetry_events_dropped",
     "CloudEvents lost unintentionally (buffer_full or send_failed)",
     ["namespace", "reason"],
+)
+
+# Emitted under MULTI_TENANT with no tenant bound, outside the categories that are
+# tenant-less by construction. Non-zero means an emit site runs outside its bind
+# scope; the event still ships, so the consumer can quarantine billable ones.
+telemetry_events_untenanted_counter = NamespacedCounter(
+    "telemetry_events_untenanted",
+    "CloudEvents emitted under MULTI_TENANT without a bound tenant",
+    ["namespace", "type"],
 )
 
 telemetry_buffer_size_gauge = NamespacedGauge(
@@ -478,6 +504,12 @@ class PrometheusMetrics:
         except Exception as e:
             self._handle_metric_error("record_telemetry_event_dropped", e)
 
+    def record_telemetry_event_untenanted(self, *, event_type: str) -> None:
+        try:
+            telemetry_events_untenanted_counter.labels(type=event_type).inc()
+        except Exception as e:
+            self._handle_metric_error("record_telemetry_event_untenanted", e)
+
     def _touch(self, counter: NamespacedCounter, **labels: str) -> None:
         """Pre-create a counter child series at 0 without incrementing it."""
         # region ai
@@ -580,6 +612,18 @@ class PrometheusMetrics:
             self._touch(telemetry_events_emitted_counter, type=event_type)
         for event_type in HIGH_VOLUME_EVENT_TYPES:
             self._touch(telemetry_events_sampled_out_counter, type=event_type)
+        # Untenanted: every type that CAN carry a tenant. The tenant-less categories
+        # are excluded on purpose — a permanently-0 series for an event that never
+        # increments it would be the fabrication the docstring above rules out.
+        from src.telemetry.events.base import BaseEvent
+
+        for event_cls in walk_subclasses(BaseEvent):
+            event_type_value = getattr(event_cls, "_event_type", None)
+            if event_type_value is None:
+                continue
+            if event_cls.category() in TENANTLESS_CATEGORIES:
+                continue
+            self._touch(telemetry_events_untenanted_counter, type=event_type_value)
         self.set_telemetry_buffer_size(size=0)
 
         if instance_type == "api":
