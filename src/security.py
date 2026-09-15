@@ -3,6 +3,7 @@ import logging
 from typing import Annotated
 
 import jwt
+import sentry_sdk
 from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
@@ -220,11 +221,19 @@ def require_auth(
             if settings.MULTI_TENANT and jwt_params.tn
             else None
         )
+        if tenant_token is not None:
+            # Errors from this request are filterable by tenant; the global
+            # `namespace` tag keeps naming the instance. The Starlette/FastAPI
+            # integration forks the isolation scope per request, so the tag lives
+            # exactly as long as the bind; removed below for the same reason the
+            # ContextVar is reset.
+            sentry_sdk.set_tag("tenant_id", jwt_params.tn)
         try:
             yield jwt_params
         finally:
             if tenant_token is not None:
                 tenant_context.reset(tenant_token)
+                sentry_sdk.get_isolation_scope().remove_tag("tenant_id")
 
     # Tag the closure so route-policy tests can introspect which routes opt into
     # member read without re-deriving it from HTTP method (an unreliable
