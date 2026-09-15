@@ -35,6 +35,8 @@ async def _emit_embedding_call(
     input_tokens_estimate: int,
     fn: Callable[[], Awaitable[_T]],
     is_final_attempt: bool = True,
+    attempt: int = 1,
+    retry_attempts: int = 1,
 ) -> _T:
     """time a single embedding-provider call, emit
     `embedding.call.completed` on both success and exception, and return the
@@ -72,6 +74,8 @@ async def _emit_embedding_call(
             outcome=outcome,
             error=error,
             is_final_attempt=is_final_attempt,
+            attempt=attempt,
+            retry_attempts=retry_attempts,
         )
 
 
@@ -85,6 +89,8 @@ def _publish_embedding_event(
     outcome: Literal["success", "error", "cancelled"],
     error: BaseException | None,
     is_final_attempt: bool,
+    attempt: int = 1,
+    retry_attempts: int = 1,
 ) -> None:
     """Build and emit the EmbeddingCallCompletedEvent. Best-effort."""
     try:
@@ -146,6 +152,14 @@ def _publish_embedding_event(
                     span_id=span_id,
                     parent_span_id=run_id,
                     session_id=get_embedding_session_id(),
+                    workspace_name=get_embedding_workspace_name(),
+                    run_id=run_id,
+                    attempt=attempt,
+                    retry_attempts=retry_attempts,
+                    is_final_attempt=is_final_attempt,
+                    duration_ms=duration_ms,
+                    outcome=outcome,
+                    error_class=type(error).__name__ if error is not None else None,
                     call_purpose=purpose_slug,
                     parent_category=get_embedding_parent_category(),
                     provider=provider,
@@ -596,6 +610,8 @@ class _EmbeddingClient:
                     input_tokens_estimate=batch_tokens_estimate,
                     fn=_call_provider,
                     is_final_attempt=(attempt >= max_retries - 1),
+                    attempt=attempt + 1,
+                    retry_attempts=max_retries,
                 )
                 return dict(result)
 
