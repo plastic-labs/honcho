@@ -13,7 +13,12 @@ from src.llm.request_builder import (
     apply_sdk_passthroughs,
     request_timeout_from_extra_params,
 )
-from src.llm.structured_output import repair_response_model_json, schema_instruction
+from src.llm.structured_output import (
+    StructuredOutputError,
+    repair_response_model_json,
+    schema_instruction,
+    validate_structured_output,
+)
 
 
 class AnthropicBackend:
@@ -270,12 +275,13 @@ class AnthropicBackend:
         if response_format is not None and not tool_calls:
             raw_content = f"{{{text_content}" if prefilled_json else text_content
             try:
-                if prefilled_json:
-                    parsed_json = json.loads(raw_content)
-                    content = response_format.model_validate(parsed_json)
-                else:
-                    content = response_format.model_validate_json(raw_content)
-            except (json.JSONDecodeError, ValidationError, ValueError):
+                content = validate_structured_output(raw_content, response_format)
+            except (
+                json.JSONDecodeError,
+                StructuredOutputError,
+                ValidationError,
+                ValueError,
+            ):
                 content = repair_response_model_json(
                     raw_content,
                     response_format,
