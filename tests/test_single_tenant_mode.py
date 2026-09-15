@@ -12,11 +12,13 @@ tenant-subordinate setting belongs in ``_SUBORDINATES``.
 from __future__ import annotations
 
 from collections.abc import Callable
+from uuid import uuid4
 
 import pytest
 from fastapi import Request
 from fastapi.security import HTTPAuthorizationCredentials
 from fastapi.testclient import TestClient
+from prometheus_client import REGISTRY
 from sqlalchemy import text
 
 from src.config import settings
@@ -28,6 +30,10 @@ from src.models import (
 )
 from src.security import JWTParams, create_jwt, require_auth
 from src.startup import validate_tenant_isolation
+from src.telemetry.emitter import TelemetryEmitter
+from src.telemetry.events.api import MessageCreatedEvent
+from src.telemetry.prometheus.metrics import prometheus_metrics
+from src.telemetry.tenant import current_tenant_id
 from src.utils.work_unit import construct_work_unit_key, parse_work_unit_key
 from tests.conftest import untouchable_engine
 
@@ -139,3 +145,52 @@ async def test_tracked_db_needs_no_tenant() -> None:
     assert tenant_context.get() is None
     async with real_tracked_db("single_tenant_probe", read_only=True) as db:
         assert (await db.execute(text("SELECT 1"))).scalar() == 1
+
+
+def test_telemetry_surfaces_ignore_a_stray_bound_tenant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A stray tenant_context bind -- e.g. left over from a differently-configured
+    # caller, or a control plane that mints tenant claims for every tenant -- must
+    # not leak into any telemetry surface flag-off: current_tenant_id() stays None,
+    # the CloudEvents envelope gains no tenantid extension, and the tenant-scoped
+    # Prometheus counters record under the empty (= absent) label, never the stray
+    # value.
+    ns = f"single_tenant_stray_{uuid4().hex[:8]}"
+    token = tenant_context.set("stray-tenant")
+    try:
+        assert current_tenant_id() is None
+
+        emitter = TelemetryEmitter(endpoint="http://test:8001/events")
+        emitter.emit(
+            MessageCreatedEvent(
+                workspace_name="ws",
+                session_name="sess",
+                message_count=1,
+                total_tokens=10,
+                last_message_id="msg_1",
+            )
+        )
+        attrs = emitter._buffer[-1].get_attributes()  # pyright: ignore[reportPrivateUsage]
+        assert "tenantid" not in attrs
+
+        monkeypatch.setattr(settings.METRICS, "ENABLED", True)
+        monkeypatch.setattr(settings.METRICS, "NAMESPACE", ns)
+        prometheus_metrics.record_messages_created(count=1, workspace_name="w")
+
+        assert (
+            REGISTRY.get_sample_value(
+                "messages_created_total",
+                {"namespace": ns, "tenant_id": "", "workspace_name": "w"},
+            )
+            == 1.0
+        )
+        assert (
+            REGISTRY.get_sample_value(
+                "messages_created_total",
+                {"namespace": ns, "tenant_id": "stray-tenant", "workspace_name": "w"},
+            )
+            is None
+        )
+    finally:
+        tenant_context.reset(token)
