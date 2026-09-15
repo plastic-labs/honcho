@@ -247,6 +247,17 @@ def append_tool_results(
     conversation_messages.extend(adapter.format_tool_results(tool_results))
 
 
+def _append_followup_instruction(
+    conversation_messages: list[dict[str, Any]], content: str
+) -> None:
+    """Use an assistant continuation prefix after OpenAI-style tool results."""
+    previous_role = (
+        conversation_messages[-1].get("role") if conversation_messages else None
+    )
+    role = "assistant" if previous_role == "tool" else "user"
+    conversation_messages.append({"role": role, "content": content})
+
+
 async def stream_final_response(
     *,
     winning_plan: AttemptPlan,
@@ -501,14 +512,10 @@ async def execute_tool_loop(
                     and iteration < max_tool_iterations - 1
                 ):
                     empty_response_retries += 1
-                    conversation_messages.append(
-                        {
-                            "role": "user",
-                            "content": (
-                                "Your last response was empty. Provide a concise answer "
-                                "to the original query using the available context."
-                            ),
-                        }
+                    _append_followup_instruction(
+                        conversation_messages,
+                        "Your last response was empty. Provide a concise answer "
+                        + "to the original query using the available context.",
                     )
                     iteration += 1
                     continue
@@ -673,7 +680,7 @@ async def execute_tool_loop(
         "Based on all the information you have gathered, provide your final response now. "
         "Do not attempt to call any more tools."
     )
-    conversation_messages.append({"role": "user", "content": synthesis_prompt})
+    _append_followup_instruction(conversation_messages, synthesis_prompt)
 
     # Truncate again — the per-iteration truncate ran before the last tool
     # call, so appending synthesis_prompt could nudge us back over the cap.
