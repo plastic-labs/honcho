@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import asyncio
 import importlib
-import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import timedelta
@@ -33,7 +32,6 @@ from alembic import command
 from alembic.config import Config
 from nanoid import generate as generate_nanoid
 from sqlalchemy import create_engine, text
-from sqlalchemy.engine.url import URL
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -56,8 +54,11 @@ from src.startup import (
     validate_tenant_isolation,
 )
 from src.utils.work_unit import parse_work_unit_key, tenant_id_for_work_unit_key
-from tests.conftest import CONNECTION_URI
-from tests.startup import untouchable_engine
+from tests.conftest import (
+    _drop_database,  # pyright: ignore[reportPrivateUsage]
+    _get_test_db_url,  # pyright: ignore[reportPrivateUsage]
+    untouchable_engine,
+)
 
 # src.deriver re-exports the enqueue *function* under the module's own name, so the
 # module has to be fetched explicitly to patch its session factories.
@@ -71,33 +72,13 @@ _MIGRATIONS_DIR = _REPO_ROOT / "migrations"
 _FIRST_WRITE_TABLES = ("workspaces", "peers", "sessions", "session_peers", "messages")
 
 
-def _throwaway_url(worker_id: str) -> URL:
-    # Namespaced like conftest's per-worker suite database, so concurrent runs and
-    # xdist workers never share (or drop) each other's fresh deploy.
-    run_id = os.environ.get("HONCHO_TEST_RUN_ID", "local")
-    suffix = "" if worker_id == "master" else f"_{worker_id}"
-    return CONNECTION_URI.set(database=f"fresh_single_tenant_{run_id}{suffix}")
-
-
-def _force_drop(url: URL) -> None:
-    # WITH (FORCE) evicts anything still connected (e.g. the migration engine).
-    maintenance = create_engine(
-        url.set(database="postgres"), isolation_level="AUTOCOMMIT"
-    )
-    try:
-        with maintenance.connect() as conn:
-            conn.exec_driver_sql(
-                f'DROP DATABASE IF EXISTS "{url.database}" WITH (FORCE)'
-            )
-    finally:
-        maintenance.dispose()
-
-
 @pytest_asyncio.fixture(scope="module")
 async def fresh_engine(worker_id: str) -> AsyncGenerator[AsyncEngine]:
     """An empty database taken to alembic head exactly the way a first boot does."""
-    url = _throwaway_url(worker_id)
-    _force_drop(url)  # a prior run that died before teardown
+    # Named like the suite database (run id + worker suffix + a tag), so a run
+    # that dies before teardown leaves something conftest's stale sweep reclaims.
+    url = _get_test_db_url(worker_id, tag="fresh")
+    _drop_database(url)  # only ever present under a pinned HONCHO_TEST_RUN_ID
     create_database(url)
 
     # str(URL) masks the password as '***', which then fails auth at migrate.
@@ -126,14 +107,14 @@ async def fresh_engine(worker_id: str) -> AsyncGenerator[AsyncEngine]:
         yield engine
     finally:
         await engine.dispose()
-        _force_drop(url)
+        _drop_database(url)
 
 
 @pytest.fixture(autouse=True)
 def _public_schema(monkeypatch: pytest.MonkeyPatch) -> None:  # pyright: ignore[reportUnusedFunction]
-    # The migration builds in `public`; pin the validators' introspection to it so a
-    # developer's local DB_SCHEMA cannot point them elsewhere. SCHEMA is not a tenant
-    # setting — the tenant settings stay exactly as shipped for this whole module.
+    # The validators introspect pg_catalog by schema name and the migration built
+    # in `public` (Base.metadata.schema is pinned there for the suite). SCHEMA is
+    # not a tenant setting — those stay exactly as shipped for this whole module.
     monkeypatch.setattr(settings.DB, "SCHEMA", "public")
 
 
@@ -250,16 +231,21 @@ async def test_first_write_and_first_claim_need_no_tenant(
 
         # ...but a lone first message sits below the representation batch's token
         # target and inside its age window, so the claim deliberately leaves it to
-        # accumulate. Self-host defaults: 512 tokens or 30 minutes, whichever first.
+        # accumulate (REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS /
+        # REPRESENTATION_BATCH_MAX_AGE_SECONDS: 512 tokens or 30 minutes by default,
+        # whichever comes first).
         assert settings.DERIVER.FLUSH_ENABLED is False
+        assert settings.DERIVER.REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS > 0
         assert settings.DERIVER.REPRESENTATION_BATCH_MAX_AGE_SECONDS > 0
         assert (await db.execute(claim_rows_query(limit=8))).all() == []
         await db.rollback()
 
-    # Let the age window elapse. created_at is immutable in real life, so the
-    # aggregate is not recomputed from it; simulating the clock means shifting both
-    # the rows and the aggregate that rolls them up. The flag-off claim — every
-    # tenant_id NULL, one partition, i.e. plain oldest-first — now returns the unit.
+    # Let the age window elapse. The update trigger recomputes the aggregate only
+    # when a row's processed flag flips (created_at never moves in production), so
+    # backdating queue.created_at alone leaves oldest_created_at stale; simulating
+    # the clock means shifting both the rows and the aggregate that rolls them up.
+    # The flag-off claim — every tenant_id NULL, one partition, i.e. plain
+    # oldest-first — now returns the unit.
     flush_age = timedelta(
         seconds=settings.DERIVER.REPRESENTATION_BATCH_MAX_AGE_SECONDS + 1
     )
