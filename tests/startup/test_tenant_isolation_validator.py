@@ -2,13 +2,15 @@
 
 Flag-off it must be a pure no-op — self-host never pays for it and never sees it.
 Flag-on it refuses the half-states where isolation looks enabled but cannot hold
-(unsafe pooler, RLS not enforced, no service role) or cannot serve (auth off).
+(unsafe pooler, RLS not enforced, no service role) or cannot serve (auth off on the
+API role; a deriver takes its tenant from the claimed work unit, not a JWT).
 """
 
 from __future__ import annotations
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from src.config import AppSettings, settings
@@ -16,7 +18,7 @@ from src.startup import StartupValidationError, validate_tenant_isolation
 from src.startup.tenant_isolation_validator import (
     _RLS_REQUIRED_TABLES,  # pyright: ignore[reportPrivateUsage]
 )
-from tests.startup import untouchable_engine
+from tests.conftest import untouchable_engine
 
 _NO_ENGINE = untouchable_engine()
 
@@ -30,6 +32,7 @@ def _flag_on_settings() -> AppSettings:
     s = settings.model_copy(deep=True)
     s.MULTI_TENANT = True
     s.MULTI_TENANT_SKIP_RLS_ASSERT = False
+    s.ROLE = "api"
     s.AUTH.USE_AUTH = True
     s.AUTH.JWT_SECRET = "test-secret"
     s.DB.POOLER_MODE = "session"
@@ -93,6 +96,18 @@ async def test_refuses_boot_when_auth_is_off() -> None:
 
 
 @pytest.mark.asyncio
+async def test_deriver_role_skips_the_auth_check() -> None:
+    # A deriver binds its tenant from the claimed work unit's key and verifies no
+    # JWT, so it is not forced to carry the API's auth config. Everything else it
+    # would be checked for is set so the validator returns before touching the DB.
+    s = _flag_on_settings()
+    s.ROLE = "deriver"
+    s.AUTH.USE_AUTH = False
+    s.MULTI_TENANT_SKIP_RLS_ASSERT = True
+    await validate_tenant_isolation(_NO_ENGINE, app_settings=s)
+
+
+@pytest.mark.asyncio
 async def test_refuses_boot_under_a_transaction_mode_pooler() -> None:
     s = _flag_on_settings()
     s.DB.POOLER_MODE = "transaction"
@@ -109,6 +124,34 @@ async def test_skip_rls_assert_warns_and_returns_before_introspection(
     with caplog.at_level("WARNING"):
         await validate_tenant_isolation(_NO_ENGINE, app_settings=s)
     assert "MULTI_TENANT_SKIP_RLS_ASSERT is set" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_fails_closed_when_introspection_keeps_failing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """After the retry budget exhausts, the validator crashes — uncertainty is not
+    a green light to serve traffic."""
+    call_count = 0
+
+    async def always_raise(
+        _engine: AsyncEngine, _schema: str
+    ) -> dict[str, tuple[bool, bool]]:
+        nonlocal call_count
+        call_count += 1
+        raise OperationalError("SELECT 1", {}, Exception("DB unreachable"))
+
+    monkeypatch.setattr(
+        "src.startup.tenant_isolation_validator._introspect_rls_once", always_raise
+    )
+    monkeypatch.setattr(
+        "src.startup.tenant_isolation_validator._RETRY_BACKOFF_SECONDS", 0.0
+    )
+
+    with pytest.raises(StartupValidationError, match="could not validate"):
+        await validate_tenant_isolation(_NO_ENGINE, app_settings=_flag_on_settings())
+
+    assert call_count == 3, "should exhaust the retry budget before failing"
 
 
 # ---------------------------------------------------------------------------
