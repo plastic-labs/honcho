@@ -37,10 +37,6 @@ Usage:
         print(p.id)
 """
 
-from importlib.metadata import PackageNotFoundError, version
-from pathlib import Path
-import re
-
 from .aio import (
     ConclusionsViewAio,
     HonchoAio,
@@ -50,6 +46,10 @@ from .aio import (
     WorkspaceConclusionsAio,
 )
 from .api_types import (
+    Evidence,
+    EvidenceMessageRef,
+    EvidenceObservation,
+    EvidenceToolCall,
     MessageCreateParams,
     ScopeBackfillJob,
     ScopeResponse,
@@ -58,6 +58,7 @@ from .api_types import (
 from .base import PeerBase, ScopeBase, SessionBase
 from .client import Honcho
 from .conclusions import Conclusion, ConclusionsView, WorkspaceConclusions
+from .http.client import __version__ as __version__
 from .http.exceptions import (
     APIError,
     AuthenticationError,
@@ -80,6 +81,7 @@ from .session import Session
 from .session_context import SessionContext, SessionSummaries, Summary
 from .types import (
     AsyncDialecticStreamResponse,
+    ChatResponse,
     DialecticStreamResponse,
 )
 
@@ -90,22 +92,6 @@ ConclusionScope = ConclusionsView
 ConclusionScopeAio = ConclusionsViewAio
 
 
-def _detect_version() -> str:
-    try:
-        return version("honcho-ai")
-    except PackageNotFoundError:
-        try:
-            pyproject_path = Path(__file__).resolve().parents[2] / "pyproject.toml"
-            pyproject_text = pyproject_path.read_text(encoding="utf-8")
-            match = re.search(r'^version\s*=\s*"([^"]+)"', pyproject_text, re.MULTILINE)
-            if match:
-                return match.group(1)
-        except OSError:
-            pass
-        return "0.0.0"
-
-
-__version__ = _detect_version()
 __author__ = "Plastic Labs"
 __email__ = "hello@plasticlabs.ai"
 
@@ -147,7 +133,12 @@ __all__ = [
     "SyncPage",
     # Streaming
     "AsyncDialecticStreamResponse",
+    "ChatResponse",
     "DialecticStreamResponse",
+    "Evidence",
+    "EvidenceMessageRef",
+    "EvidenceObservation",
+    "EvidenceToolCall",
     # Exceptions
     "APIError",
     "AuthenticationError",

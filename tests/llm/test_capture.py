@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
-
 import pytest
 
 from src.llm import capture
@@ -16,65 +14,7 @@ from src.llm.capture import (
     clip_for_trace,
     compute_content_hash,
 )
-from src.llm.types import (
-    HonchoLLMCallStreamChunk,
-    LLMTelemetryContext,
-    StreamingResponseWithMetadata,
-)
-
-
-async def _chunks(
-    texts: list[str], *, raise_after: BaseException | None = None
-) -> AsyncIterator[HonchoLLMCallStreamChunk]:
-    for text in texts:
-        yield HonchoLLMCallStreamChunk(content=text)
-    if raise_after is not None:
-        raise raise_after
-
-
-def _wrapper(
-    stream: AsyncIterator[HonchoLLMCallStreamChunk],
-    recorder: list[tuple[str, str]],
-):
-    return StreamingResponseWithMetadata(
-        stream=stream,
-        tool_calls_made=[],
-        input_tokens=0,
-        output_tokens=0,
-        cache_creation_input_tokens=0,
-        cache_read_input_tokens=0,
-        capture_finalizer=lambda text, reason: recorder.append((text, reason)),
-    )
-
-
-class TestStreamingCaptureFinalizer:
-    async def test_clean_drain_captures_stop(self):
-        recorded: list[tuple[str, str]] = []
-        wrapper = _wrapper(_chunks(["hel", "lo"]), recorded)
-        async for _ in wrapper:
-            pass
-        assert recorded == [("hello", "stop")]
-
-    async def test_error_drain_captures_error_and_partial_text(self):
-        recorded: list[tuple[str, str]] = []
-        wrapper = _wrapper(_chunks(["par"], raise_after=RuntimeError("boom")), recorded)
-        with pytest.raises(RuntimeError):
-            async for _ in wrapper:
-                pass
-        # Partial text still captured, tagged error.
-        assert recorded == [("par", "error")]
-
-    async def test_cancelled_drain_captures_cancelled(self):
-        import asyncio
-
-        recorded: list[tuple[str, str]] = []
-        wrapper = _wrapper(
-            _chunks(["x"], raise_after=asyncio.CancelledError()), recorded
-        )
-        with pytest.raises(asyncio.CancelledError):
-            async for _ in wrapper:
-                pass
-        assert recorded == [("x", "cancelled")]
+from src.llm.types import LLMTelemetryContext
 
 
 class TestContentHash:

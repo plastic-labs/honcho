@@ -1,3 +1,4 @@
+import { VERSION } from '../api-version'
 import {
   ConnectionError,
   createErrorFromResponse,
@@ -37,6 +38,22 @@ const DEFAULT_MAX_RETRIES = 2
 const RETRY_STATUS_CODES = [429, 500, 502, 503, 504]
 const INITIAL_RETRY_DELAY = 500 // 500ms
 
+export const HOST_HEADER = 'X-Honcho-Host'
+
+/**
+ * Default `X-Honcho-Host`, e.g. `honcho-typescript/2.4.0 (darwin)`. Harness plugins
+ * override it with their own host identity. The platform is dropped in browser and
+ * edge runtimes, where `process` is unavailable.
+ */
+export function defaultHostHeader(): string {
+  const product = `honcho-typescript/${VERSION}`
+  const platform =
+    typeof process !== 'undefined' && typeof process.platform === 'string'
+      ? process.platform
+      : undefined
+  return platform ? `${product} (${platform})` : product
+}
+
 /**
  * Minimal HTTP client for the Honcho API with retry logic and timeout support.
  */
@@ -56,6 +73,7 @@ export class HonchoHTTPClient {
     this.maxRetries = config.maxRetries ?? DEFAULT_MAX_RETRIES
     this.defaultHeaders = {
       'Content-Type': 'application/json',
+      [HOST_HEADER]: defaultHostHeader(),
       ...config.defaultHeaders,
     }
     this.defaultQuery = config.defaultQuery
