@@ -1,7 +1,8 @@
 """Startup validator for the multi-tenant isolation binding.
 
-Gates boot (API and deriver) when ``MULTI_TENANT`` is on, converting two silent
-half-states — where isolation looks enabled but isn't — into a hard boot failure:
+Gates boot (API and deriver) when ``MULTI_TENANT`` is on, converting three silent
+half-states — where isolation looks enabled but isn't, or cannot serve — into a hard
+boot failure:
 
 1. Pooler vs read-path strategy. The read-path binding is a session-scoped
    ``app.tenant`` set at checkout; it is safe under NullPool / session-mode, but a
@@ -14,6 +15,12 @@ half-states — where isolation looks enabled but isn't — into a hard boot fai
    enabled + forced means the binding is set but nothing enforces it — no
    isolation, no error. Refuse to boot unless ``MULTI_TENANT_SKIP_RLS_ASSERT`` is
    set (migration window only).
+
+3. Flag vs auth. ``MULTI_TENANT`` on with ``AUTH.USE_AUTH`` off means every request
+   authenticates as a tenant-less admin, so no tenant is ever bound and every
+   tenant-scoped session fails closed — not a leak, but a uniform outage on every
+   data route that is hard to read from the 500s. Refuse to boot with one clear
+   error instead.
 
 No-op when ``MULTI_TENANT`` is off: self-host runs on plain, RLS-free Postgres.
 
@@ -86,6 +93,7 @@ async def validate_tenant_isolation(
     if not s.MULTI_TENANT:
         return
 
+    _assert_auth_enabled(s)
     _assert_pooler_mode_safe(s.DB.POOLER_MODE)
 
     if s.MULTI_TENANT_SKIP_RLS_ASSERT:
@@ -116,6 +124,24 @@ def _assert_service_role_configured(s: AppSettings) -> None:
             + " unset: the cross-tenant service paths would run on the RLS-enforced"
             + " app role and read zero rows. Configure a service connection whose"
             + " role bypasses RLS."
+        )
+
+
+def _assert_auth_enabled(s: AppSettings) -> None:
+    """Require JWT auth once the flag is on: the tenant claim is the only tenant source."""
+    # region ai
+    # With USE_AUTH off, auth() short-circuits every request to a tenant-less admin
+    # JWTParams and never reaches the tenant gate, so nothing binds tenant_context
+    # and the fail-closed tracked_db guard 500s every data route. No cross-tenant
+    # read is possible in that state — this is operability, not a security gap —
+    # but one boot error beats a storm of identical runtime errors.
+    # endregion
+    if not s.AUTH.USE_AUTH:
+        raise StartupValidationError(
+            "MULTI_TENANT is on but AUTH_USE_AUTH is off: with auth disabled no"
+            + " request carries a tenant claim, so no tenant is ever bound and every"
+            + " tenant-scoped request fails closed. Enable AUTH_USE_AUTH (with"
+            + " AUTH_JWT_SECRET) and issue tenant-bearing tokens."
         )
 
 
