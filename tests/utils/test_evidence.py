@@ -9,12 +9,16 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
+from nanoid import generate as generate_nanoid
 
 from src import models
 from src.utils.evidence import EvidenceAccumulator
 
 NOW = datetime(2026, 1, 1, tzinfo=UTC)
 LEVELS = ("explicit", "deductive", "inductive", "contradiction")
+# Legacy JSONB source ids are validated against the nanoid shape when read
+# back through `Document.source_ids`, so fallback fixtures need real-looking ids.
+PREMISE_IDS = [generate_nanoid(), generate_nanoid()]
 
 
 def make_document(
@@ -105,9 +109,9 @@ class TestConclusionCollection:
     @pytest.mark.parametrize(
         ("level", "document_kwargs"),
         [
-            ("inductive", {"source_ids": ["doc-1", "doc-2"]}),
-            ("deductive", {"internal_metadata": {"premise_ids": ["doc-1", "doc-2"]}}),
-            ("inductive", {"internal_metadata": {"source_ids": ["doc-1", "doc-2"]}}),
+            ("inductive", {"source_ids": PREMISE_IDS}),
+            ("deductive", {"internal_metadata": {"premise_ids": PREMISE_IDS}}),
+            ("inductive", {"internal_metadata": {"source_ids": PREMISE_IDS}}),
         ],
         ids=["column", "metadata-premise-ids", "metadata-source-ids"],
     )
@@ -122,7 +126,7 @@ class TestConclusionCollection:
 
         (conclusion,) = accumulator.build().conclusions
         assert conclusion.level == level
-        assert conclusion.source_ids == ["doc-1", "doc-2"]
+        assert conclusion.source_ids == PREMISE_IDS
 
     def test_explicit_conclusions_have_no_source_ids(self):
         accumulator = EvidenceAccumulator()
