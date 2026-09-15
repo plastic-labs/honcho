@@ -1,4 +1,4 @@
-"""Hooks for revision a7c3e9f1b2d4 (document_sources table + backfill)."""
+"""Hooks for revision a7c3e9f1b2d4 (document_sources table, DDL only)."""
 
 from __future__ import annotations
 
@@ -11,7 +11,8 @@ from tests.alembic.verifier import MigrationVerifier
 WORKSPACE_NAME = "sources_ws"
 PEER_NAME = "sources_peer"
 
-# Documents covering every legacy linkage location plus malformed entries
+# Documents covering every legacy linkage location; the reconciler drains
+# these after deploy, so the migration must leave them untouched.
 DOC_COLUMN = generate_nanoid()  # linkage in source_ids column
 DOC_META = generate_nanoid()  # linkage in internal_metadata.source_ids
 DOC_PREMISE = generate_nanoid()  # linkage in internal_metadata.premise_ids
@@ -73,7 +74,6 @@ def prepare_document_sources(verifier: MigrationVerifier) -> None:
     seed_doc(DOC_COLUMN, f'["{SRC_A}", "{SRC_B}"]', "{}")
     seed_doc(DOC_META, None, f'{{"source_ids": ["{SRC_C}"]}}')
     seed_doc(DOC_PREMISE, None, f'{{"premise_ids": ["{SRC_D}"]}}')
-    # Malformed entries (numeric ref, timestamp) must be dropped by backfill
     seed_doc(DOC_GARBAGE, f'["{SRC_E}", "1234", "2024-01-01T00:00:00"]', "{}")
 
 
@@ -81,25 +81,31 @@ def prepare_document_sources(verifier: MigrationVerifier) -> None:
 def verify_document_sources(verifier: MigrationVerifier) -> None:
     verifier.assert_table_exists("document_sources")
     verifier.assert_indexes_exist(
-        [("document_sources", "ix_document_sources_source_id")]
+        [
+            ("document_sources", "ix_document_sources_source_id"),
+            # Kept until the drain completes; the follow-up migration drops them.
+            ("documents", "ix_documents_source_ids_gin"),
+            ("documents", "ix_documents_legacy_sources_pending"),
+        ]
     )
-    verifier.assert_indexes_not_exist([("documents", "ix_documents_source_ids_gin")])
 
     schema = verifier.schema
     connection = verifier.conn
 
-    def edges(doc_id: str) -> list[str]:
-        rows = connection.execute(
-            text(
-                f"""SELECT "source_id" FROM "{schema}"."document_sources"
-                WHERE "derived_id" = :d ORDER BY "position"
-                """
-            ),
-            {"d": doc_id},
-        ).all()
-        return [r.source_id for r in rows]
+    edge_count = connection.execute(
+        text(f'SELECT count(*) FROM "{schema}"."document_sources"')
+    ).scalar_one()
+    assert edge_count == 0  # backfill is the reconciler's job, not the migration's
 
-    assert edges(DOC_COLUMN) == [SRC_A, SRC_B]  # column backfilled, order kept
-    assert edges(DOC_META) == [SRC_C]  # legacy internal_metadata.source_ids
-    assert edges(DOC_PREMISE) == [SRC_D]  # legacy internal_metadata.premise_ids
-    assert edges(DOC_GARBAGE) == [SRC_E]  # malformed entries dropped
+    legacy = connection.execute(
+        text(
+            f"""SELECT "id", "source_ids", "internal_metadata"
+            FROM "{schema}"."documents" ORDER BY "id"
+            """
+        )
+    ).all()
+    by_id = {row.id: row for row in legacy}
+    assert by_id[DOC_COLUMN].source_ids == [SRC_A, SRC_B]
+    assert by_id[DOC_META].internal_metadata == {"source_ids": [SRC_C]}
+    assert by_id[DOC_PREMISE].internal_metadata == {"premise_ids": [SRC_D]}
+    assert by_id[DOC_GARBAGE].source_ids == [SRC_E, "1234", "2024-01-01T00:00:00"]

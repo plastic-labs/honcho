@@ -15,6 +15,9 @@ from src.deriver.scope_backfill import (
 from src.dreamer import process_dream
 from src.exceptions import ResourceNotFoundException, ValidationException
 from src.models import Message
+from src.reconciler.backfill_document_sources import (
+    run_document_sources_backfill_cycle,
+)
 from src.reconciler.queue_cleanup import cleanup_queue_items
 from src.reconciler.sync_vectors import run_vector_reconciliation_cycle
 from src.schemas import ReconcilerType, ResolvedConfiguration
@@ -382,6 +385,8 @@ async def process_reconciler(payload: ReconcilerPayload) -> None:
     - sync_vectors: Syncs pending documents/message embeddings to vector store
       and cleans up soft-deleted documents.
     - cleanup_queue: Removes old processed queue items.
+    - backfill_document_sources: Drains legacy JSONB source linkage into
+      the document_sources table.
 
     Args:
         payload: The reconciler payload containing the reconciler type
@@ -435,5 +440,9 @@ async def process_reconciler(payload: ReconcilerPayload) -> None:
                     total_duration_ms=duration_ms,
                 )
             )
+    elif reconciler_type == ReconcilerType.BACKFILL_DOCUMENT_SOURCES:
+        logger.debug("Processing backfill_document_sources task")
+        await run_document_sources_backfill_cycle()
+
     else:
         raise ValueError(f"Unsupported reconciler type: {reconciler_type}")

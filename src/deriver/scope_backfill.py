@@ -28,7 +28,8 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import exists, select, update
+from sqlalchemy import exists, or_, select, update
+from sqlalchemy.dialects.postgresql import array
 from sqlalchemy.orm import load_only
 from sqlalchemy.sql.functions import func
 
@@ -188,6 +189,8 @@ async def _run_backfill(
                     models.Document.times_derived,
                     models.Document.internal_metadata,
                     models.Document.session_name,
+                    # source_ids falls back to this column for undrained rows.
+                    models.Document.legacy_source_ids,
                     models.Document.deleted_at,
                 )
             )
@@ -535,10 +538,14 @@ async def process_scope_removal(
                         models.Document.observed == observed,
                         models.Document.level != "explicit",
                         models.Document.deleted_at.is_(None),
-                        exists().where(
-                            models.DocumentSource.derived_id == models.Document.id,
-                            models.DocumentSource.source_id.in_(frontier),
-                            models.DocumentSource.workspace_name == workspace_name,
+                        or_(
+                            exists().where(
+                                models.DocumentSource.derived_id == models.Document.id,
+                                models.DocumentSource.source_id.in_(frontier),
+                                models.DocumentSource.workspace_name == workspace_name,
+                            ),
+                            # Undrained rows still link through the legacy column.
+                            models.Document.legacy_source_ids.has_any(array(frontier)),
                         ),
                     )
                     .values(deleted_at=func.now())
