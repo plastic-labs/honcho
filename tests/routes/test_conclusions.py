@@ -4,6 +4,7 @@ from nanoid import generate as generate_nanoid
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
+from src.config import settings
 from src.models import Peer, Workspace
 
 
@@ -511,14 +512,24 @@ class TestConclusionRoutes:
         assert isinstance(data, list)
 
     @pytest.mark.asyncio
-    async def test_query_conclusions_requires_observer_observed(
+    async def test_query_conclusions_cross_peer_pgvector(
         self,
         client: TestClient,
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
     ):
-        """Test query conclusions requires observer and observed in filters"""
-        test_workspace, _test_peer = sample_data
+        """Omitting observer/observed searches across peer relationships (pgvector)"""
+        test_workspace, test_peer = sample_data
+
+        # Two more peers so two distinct (observer, observed) pairs exist
+        test_peer2 = models.Peer(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        test_peer3 = models.Peer(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add_all([test_peer2, test_peer3])
+        await db_session.flush()
 
         # Create a session
         test_session = models.Session(
@@ -527,10 +538,64 @@ class TestConclusionRoutes:
         db_session.add(test_session)
         await db_session.commit()
 
-        # Query without observer/observed filters should fail
+        # Create conclusions for two different observer/observed pairs
+        create_response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/conclusions",
+            json={
+                "conclusions": [
+                    {
+                        "content": "User loves pizza and pasta",
+                        "observer_id": test_peer.name,
+                        "observed_id": test_peer2.name,
+                        "session_id": test_session.name,
+                    },
+                    {
+                        "content": "Teammate enjoys hiking on weekends",
+                        "observer_id": test_peer3.name,
+                        "observed_id": test_peer2.name,
+                        "session_id": test_session.name,
+                    },
+                ]
+            },
+        )
+        assert create_response.status_code == 201
+
+        # Query without observer/observed filters returns both pairs' conclusions
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/conclusions/query",
+            json={"query": "food preferences", "top_k": 10},
+        )
+
+        assert response.status_code == 200
+        contents = {c["content"] for c in response.json()}
+        assert "User loves pizza and pasta" in contents
+        assert "Teammate enjoys hiking on weekends" in contents
+
+    @pytest.mark.asyncio
+    async def test_query_conclusions_cross_peer_external_store_requires_observer_observed(
+        self,
+        client: TestClient,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """External vector stores still require observer and observed (422)"""
+        test_workspace, _test_peer = sample_data
+        monkeypatch.setattr(settings.VECTOR_STORE, "MIGRATED", True)
+        monkeypatch.setattr(settings.VECTOR_STORE, "TYPE", "external")
+
+        # Query without observer/observed filters is rejected on external stores
         response = client.post(
             f"/v3/workspaces/{test_workspace.name}/conclusions/query",
             json={"query": "test"},
+        )
+
+        assert response.status_code == 422
+
+        # Providing only one of the two is rejected as well
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/conclusions/query",
+            json={"query": "test", "filters": {"observer": "some-peer"}},
         )
 
         assert response.status_code == 422
