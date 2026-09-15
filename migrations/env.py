@@ -197,6 +197,8 @@ def run_migrations_online() -> None:
         with connectable.connect() as connection:
             _run_migrations_with_connection(connection, owns_transaction=True)
     finally:
+        # Release pooled connections immediately; lingering ones block
+        # DROP DATABASE in test harnesses that invoke alembic repeatedly.
         connectable.dispose()
 
 

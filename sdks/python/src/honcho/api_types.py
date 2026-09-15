@@ -458,6 +458,8 @@ class ConclusionResponse(BaseModel):
     observed_id: str
     session_id: str | None = None
     level: ConclusionLevel = "explicit"
+    source_ids: list[str] | None = None
+    times_derived: int = 1
     created_at: datetime.datetime
 
 

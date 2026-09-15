@@ -13,6 +13,7 @@ export {
    */
   ConclusionsView as ConclusionScope,
   ConclusionsView,
+  WorkspaceConclusions,
 } from './conclusions'
 // HTTP infrastructure
 export {

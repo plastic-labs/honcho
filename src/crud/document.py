@@ -6,7 +6,7 @@ from enum import Enum
 from logging import getLogger
 from typing import Any, Literal, cast
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, literal, or_, select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import DBAPIError, IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -33,6 +33,24 @@ from src.vector_store import (
 )
 
 logger = getLogger(__name__)
+
+
+def build_source_links(
+    source_ids: list[str] | None, workspace_name: str
+) -> list[models.DocumentSource]:
+    """Convert an LLM-provided source_ids list to DocumentSource rows.
+
+    Dedupes (the PK is (derived_id, source_id)) and drops entries that are
+    not shaped like document IDs — the model occasionally emits timestamps
+    or numeric refs under schema pressure.
+    """
+    if not source_ids:
+        return []
+    return [
+        models.DocumentSource(source_id=sid, position=i, workspace_name=workspace_name)
+        for i, sid in enumerate(dict.fromkeys(source_ids))
+        if models.SOURCE_ID_RE.match(sid)
+    ]
 
 
 def get_all_documents(
@@ -112,11 +130,14 @@ def get_documents_with_filters(
     # Apply additional filters if provided
     stmt = apply_filter(stmt, models.Document, filters)
 
-    # Order by created_at (newest first by default)
+    # created_at is the transaction timestamp, so documents created in the
+    # same batch share it -- id keeps pagination deterministic.
     if reverse:
-        stmt = stmt.order_by(models.Document.created_at.asc())
+        stmt = stmt.order_by(models.Document.created_at.asc(), models.Document.id.asc())
     else:
-        stmt = stmt.order_by(models.Document.created_at.desc())
+        stmt = stmt.order_by(
+            models.Document.created_at.desc(), models.Document.id.desc()
+        )
 
     return stmt
 
@@ -1266,7 +1287,7 @@ def _document_model_from_create(
             internal_metadata=metadata_dict,
             session_name=doc.session_name,
             embedding=doc.embedding,
-            source_ids=doc.source_ids,
+            source_links=build_source_links(doc.source_ids, workspace_name),
         )
     else:
         new_doc = models.Document(
@@ -1278,7 +1299,7 @@ def _document_model_from_create(
             times_derived=doc.times_derived,
             internal_metadata=metadata_dict,
             session_name=doc.session_name,
-            source_ids=doc.source_ids,
+            source_links=build_source_links(doc.source_ids, workspace_name),
         )
     if doc.embedding:
         new_doc.sync_state = "pending"
@@ -1428,6 +1449,7 @@ async def is_rejected_duplicate(
             existing_doc.content,
         )
         doc.times_derived = max(doc.times_derived, existing_doc.times_derived + 1)
+        # Soft-delete the existing document - reconciliation will clean up vectors and hard-delete
         existing_doc.deleted_at = datetime.datetime.now(datetime.UTC)
         await db.flush()
         return result
@@ -1559,34 +1581,44 @@ async def get_documents_by_ids(
     return result.scalars().all()
 
 
-async def get_child_observations(
-    db: AsyncSession,
+def get_child_observations(
     workspace_name: str,
     parent_id: str,
     *,
     observer: str | None = None,
     observed: str | None = None,
-) -> Sequence[models.Document]:
+    reverse: bool = False,
+) -> Select[tuple[models.Document]]:
     """
     Get all observations that have this document as a source/premise.
 
-    Useful for traversing the reasoning tree upward (source -> derived observations).
-    Uses GIN index on source_ids for efficient lookups.
+    Useful for traversing the reasoning tree upward (source -> derived
+    observations). Matches through document_sources, falling back to the
+    legacy JSONB column for rows the reconciler has not drained yet.
 
     Args:
-        db: Database session
         workspace_name: Workspace identifier
         parent_id: Document ID to find children of
         observer: Optional filter by observer
         observed: Optional filter by observed
+        reverse: Whether to reverse the order (oldest first)
 
     Returns:
-        Sequence of documents that reference this document as a source
+        Select query for documents that reference this document as a source,
+        for pagination support via apaginate()
     """
-    # Find documents where source_ids contains the parent_id
+    linked = (
+        select(literal(1))
+        .where(
+            models.DocumentSource.derived_id == models.Document.id,
+            models.DocumentSource.source_id == parent_id,
+        )
+        .exists()
+    )
+    # Undrained rows still carry linkage in the legacy JSONB column.
     stmt = select(models.Document).where(
         models.Document.workspace_name == workspace_name,
-        models.Document.source_ids.contains([parent_id]),
+        or_(linked, models.Document.legacy_source_ids.contains([parent_id])),
         models.Document.deleted_at.is_(None),
     )
     if observer:
@@ -1594,5 +1626,13 @@ async def get_child_observations(
     if observed:
         stmt = stmt.where(models.Document.observed == observed)
 
-    result = await db.execute(stmt)
-    return result.scalars().all()
+    # created_at is the transaction timestamp, so documents created in the
+    # same batch share it -- id keeps pagination deterministic.
+    if reverse:
+        stmt = stmt.order_by(models.Document.created_at.asc(), models.Document.id.asc())
+    else:
+        stmt = stmt.order_by(
+            models.Document.created_at.desc(), models.Document.id.desc()
+        )
+
+    return stmt
