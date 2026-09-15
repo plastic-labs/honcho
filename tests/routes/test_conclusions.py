@@ -227,7 +227,7 @@ class TestConclusionRoutes:
 
         # Create conclusions with distinct timestamps — docs committed in one
         # transaction share created_at, which would make ordering arbitrary
-        base = datetime.datetime.now(datetime.timezone.utc)
+        base = datetime.datetime.now(datetime.UTC)
         doc1 = models.Document(
             workspace_name=test_workspace.name,
             observer=test_peer.name,
@@ -1632,7 +1632,7 @@ class TestConclusionRoutes:
         """
         # Explicit created_at values: rows created in one transaction all get
         # the same now(), which would make recency ordering unstable.
-        base = datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc)
+        base = datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC)
         premise = models.Document(
             workspace_name=workspace_name,
             observer=observer,

@@ -3821,23 +3821,35 @@
     },
     "/v3/workspaces/{workspace_id}/conclusions/{conclusion_id}": {
       "get": {
-        "tags": ["conclusions"],
+        "tags": [
+          "conclusions"
+        ],
         "summary": "Get Conclusion",
         "description": "Get a single Conclusion by ID.",
         "operationId": "get_conclusion_v3_workspaces__workspace_id__conclusions__conclusion_id__get",
-        "security": [{ "HTTPBearer": [] }],
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "workspace_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "Workspace Id" }
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
           },
           {
             "name": "conclusion_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "Conclusion Id" }
+            "schema": {
+              "type": "string",
+              "title": "Conclusion Id"
+            }
           }
         ],
         "responses": {
@@ -3845,7 +3857,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Conclusion" }
+                "schema": {
+                  "$ref": "#/components/schemas/Conclusion"
+                }
               }
             }
           },
@@ -3853,7 +3867,9 @@
             "description": "Validation Error",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
@@ -4371,8 +4387,15 @@
           },
           "source_ids": {
             "anyOf": [
-              { "items": { "type": "string" }, "type": "array" },
-              { "type": "null" }
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Source Ids",
             "description": "IDs of the conclusions this one was derived from: premises for 'deductive', supporting sources for 'inductive', conflicting conclusions for 'contradiction'. None for 'explicit' conclusions."
