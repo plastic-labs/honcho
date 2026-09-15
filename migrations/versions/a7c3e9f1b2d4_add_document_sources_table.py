@@ -6,8 +6,10 @@ internal_metadata->'source_ids' / 'premise_ids' locations is drained into the
 new table by the deriver's reconciler (backfill_document_sources), so the
 api pod's init container is not blocked on a full-table copy.
 
-The source_ids column and its GIN index stay until the drain completes; a
-follow-up migration drops both.
+A partial index over the drain's pending predicate keeps the reconciler's
+per-cycle check and each batch proportional to the rows still pending. The
+source_ids column, its GIN index, and the partial index stay until the drain
+completes; a follow-up migration drops them.
 
 Revision ID: a7c3e9f1b2d4
 Revises: e4eba9cfaa6f
@@ -20,7 +22,7 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-from migrations.utils import get_schema, table_exists
+from migrations.utils import get_schema, index_exists, table_exists
 
 # revision identifiers, used by Alembic.
 revision: str = "a7c3e9f1b2d4"
@@ -65,6 +67,18 @@ def upgrade() -> None:
             schema=schema,
         )
 
+    if not index_exists("documents", "ix_documents_legacy_sources_pending", inspector):
+        op.create_index(
+            "ix_documents_legacy_sources_pending",
+            "documents",
+            ["id"],
+            schema=schema,
+            postgresql_where=sa.text(
+                "source_ids IS NOT NULL "
+                "OR internal_metadata ?| ARRAY['source_ids', 'premise_ids']"
+            ),
+        )
+
 
 def downgrade() -> None:
     connection = op.get_bind()
@@ -82,6 +96,11 @@ def downgrade() -> None:
         ) links
         WHERE d.id = links.derived_id
     """)
+
+    if index_exists("documents", "ix_documents_legacy_sources_pending", inspector):
+        op.drop_index(
+            "ix_documents_legacy_sources_pending", table_name="documents", schema=schema
+        )
 
     if table_exists("document_sources", inspector):
         op.drop_table("document_sources", schema=schema)

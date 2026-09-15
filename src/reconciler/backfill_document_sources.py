@@ -9,8 +9,10 @@ never blocks the api pod's migration step, and the ORM fallback in
 ``Document.source_ids`` keeps undrained rows readable in the meantime.
 
 Every batch is a single server-side statement; no row content is loaded into
-Python. Once every row is drained the follow-up migration drops the column and
-this task is removed.
+Python. A partial index over the pending predicate keeps both the enqueue
+check and each batch proportional to the rows still pending rather than the
+table, so the check is free once the drain completes. The follow-up migration
+drops the column, the index, and this task.
 """
 
 import logging
@@ -29,10 +31,12 @@ BACKFILL_BATCH_SIZE = 500
 BACKFILL_TIME_BUDGET_SECONDS = 240
 
 # Any legacy location still populated. Also matches rows whose column holds a
-# non-array JSON value, which the drain clears without emitting edges.
+# non-array JSON value, which the drain clears without emitting edges. Must
+# stay textually identical to the ix_documents_legacy_sources_pending
+# predicate so the planner can use that partial index.
 _PENDING_PREDICATE = """
     source_ids IS NOT NULL
-    OR jsonb_exists_any(internal_metadata, ARRAY['source_ids', 'premise_ids'])
+    OR internal_metadata ?| ARRAY['source_ids', 'premise_ids']
 """
 
 

@@ -523,6 +523,15 @@ class Document(Base):
             "source_ids",
             postgresql_using="gin",
         ),
+        # Rows the reconciler still has to drain; empty once the drain
+        # finishes. Dropped with the column in the follow-up migration.
+        Index(
+            "ix_documents_legacy_sources_pending",
+            "id",
+            postgresql_where=text(
+                "source_ids IS NOT NULL OR internal_metadata ?| ARRAY['source_ids', 'premise_ids']"  # noqa: E501
+            ),
+        ),
     )
 
 

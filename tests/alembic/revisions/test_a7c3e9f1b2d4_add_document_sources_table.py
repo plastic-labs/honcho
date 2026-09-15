@@ -83,8 +83,9 @@ def verify_document_sources(verifier: MigrationVerifier) -> None:
     verifier.assert_indexes_exist(
         [
             ("document_sources", "ix_document_sources_source_id"),
-            # Kept until the drain completes; the follow-up migration drops it.
+            # Kept until the drain completes; the follow-up migration drops them.
             ("documents", "ix_documents_source_ids_gin"),
+            ("documents", "ix_documents_legacy_sources_pending"),
         ]
     )
 
