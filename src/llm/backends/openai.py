@@ -9,7 +9,7 @@ from typing import Any, cast
 from openai import BadRequestError, LengthFinishReasonError
 from pydantic import BaseModel, ValidationError
 
-from src.exceptions import ValidationException
+from src.exceptions import LLMError, ValidationException
 from src.llm.backend import CompletionResult, StreamChunk, ToolCallResult
 from src.llm.request_builder import (
     apply_sdk_passthroughs,
@@ -71,6 +71,31 @@ def _uses_max_completion_tokens(model: str) -> bool:
         if m == prefix or m.startswith(prefix + "-"):
             return True
     return False
+
+
+def _first_choice(response: Any) -> Any:
+    """Return the first choice with a usable message.
+
+    OpenAI-compatible gateways can return an HTTP-successful response without
+    a usable shape (empty ``choices``, ``None`` choices, or a ``None``
+    message). Callers need one controlled failure mode instead of raw
+    ``IndexError``/``AttributeError``/``TypeError``.
+    """
+    choices = getattr(response, "choices", None)
+    if choices:
+        try:
+            choice = choices[0]
+        except (IndexError, KeyError, TypeError):
+            # A truthy but non-list `choices` value (e.g. a mapping without key
+            # 0, or a non-subscriptable scalar) must surface as the same
+            # controlled LLMError, not as a raw indexing failure.
+            choice = None
+        if choice is not None and getattr(choice, "message", None) is not None:
+            return choice
+    raise LLMError(
+        "malformed OpenAI-compatible response: no usable choices[0].message",
+        response_type=type(response).__name__,
+    )
 
 
 def extract_openai_reasoning_content(response: Any) -> str | None:
@@ -200,7 +225,7 @@ class OpenAIBackend:
                 response = await self._client.chat.completions.create(**params)
                 # Tool-call turns carry no consumable content — the tool loop
                 # ignores it — and parsing their empty text would raise.
-                if getattr(response.choices[0].message, "tool_calls", None):
+                if getattr(_first_choice(response).message, "tool_calls", None):
                     return self._normalize_response(response)
                 content = self._parse_or_repair_structured_content(
                     response, response_format, model, empty_on_missing=False
@@ -247,7 +272,7 @@ class OpenAIBackend:
                 except ValidationError:
                     fallback_content = ""
                 return CompletionResult(content=fallback_content)
-            parsed = response.choices[0].message.parsed
+            parsed = getattr(_first_choice(response).message, "parsed", None)
             if parsed is not None:
                 return self._normalize_response(
                     response,
@@ -412,10 +437,11 @@ class OpenAIBackend:
         *,
         content_override: Any | None = None,
     ) -> CompletionResult:
-        usage = response.usage
-        finish_reason = response.choices[0].finish_reason
+        choice = _first_choice(response)
+        usage = getattr(response, "usage", None)
+        finish_reason = choice.finish_reason
         tool_calls: list[ToolCallResult] = []
-        message = response.choices[0].message
+        message = choice.message
         if getattr(message, "tool_calls", None):
             for tool_call in message.tool_calls:
                 tool_input: dict[str, Any] = {}
@@ -544,7 +570,7 @@ class OpenAIBackend:
         graceful empty so a loose provider can't crash the call, while json_schema
         raises so the retry/fallback chain engages on a junk response.
         """
-        message = response.choices[0].message
+        message = _first_choice(response).message
         raw_content = message.content or ""
         if raw_content:
             # Fast path: clean JSON validates directly. Only fall back to the
