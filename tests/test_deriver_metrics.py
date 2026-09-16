@@ -339,9 +339,7 @@ class TestLifespanScheduler:
             patch.object(main_module, "close_cache", AsyncMock()),
             patch.object(main_module, "shutdown_telemetry", AsyncMock()),
             patch.object(main_module, "engine", AsyncMock()),
-            patch.object(
-                main_module, "DeriverMetricsPoller", return_value=AsyncMock()
-            ),
+            patch.object(main_module, "DeriverMetricsPoller", return_value=AsyncMock()),
             patch.object(main_module, "ReconcilerScheduler", return_value=scheduler),
             patch.object(main_module, "set_reconciler_scheduler"),
             patch(

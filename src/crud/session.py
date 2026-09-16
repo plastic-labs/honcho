@@ -36,6 +36,7 @@ from src.cache.client import (
 )
 from src.config import settings
 from src.exceptions import (
+    AuthenticationException,
     ConflictException,
     ObserverException,
     ResourceNotFoundException,
@@ -209,6 +210,7 @@ async def get_or_create_session(
     session: schemas.SessionCreate,
     workspace_name: str,
     *,
+    acting_peer: str | None = None,
     _retry: bool = False,
 ) -> GetOrCreateResult[models.Session]:
     """
@@ -225,6 +227,9 @@ async def get_or_create_session(
         session: Session creation payload, including optional metadata,
             configuration, and session-peer configuration
         workspace_name: Name of the workspace
+        acting_peer: Peer a peer-scoped caller acts as. An existing session is
+            then only returned to an active member, and its metadata and
+            configuration are left untouched.
         _retry: Whether to retry after a concurrent create conflict
 
     Returns:
@@ -233,6 +238,8 @@ async def get_or_create_session(
     Raises:
         ValueError: If session.name is empty
         ResourceNotFoundException: If the named session exists but is inactive
+        AuthenticationException: If ``acting_peer`` is not a member of the
+            existing session, or tries to change its metadata or configuration
         ObserverException: If adding peers would exceed the observer limit
         ConflictException: If concurrent creation prevents fetching or creating
             the session
@@ -299,8 +306,26 @@ async def get_or_create_session(
                 raise ConflictException(
                     f"Unable to create or get session: {session.name}"
                 ) from None
-            return await get_or_create_session(db, session, workspace_name, _retry=True)
+            return await get_or_create_session(
+                db, session, workspace_name, acting_peer=acting_peer, _retry=True
+            )
     else:
+        # Checked here rather than in the handler so a session created between
+        # the handler's check and this read cannot be joined or modified.
+        if acting_peer is not None:
+            if not await is_peer_in_session(
+                db, workspace_name, session.name, acting_peer
+            ):
+                raise AuthenticationException("JWT not permissioned for this resource")
+            if session.metadata is not None or session.configuration is not None:
+                raise AuthenticationException(
+                    "Peer-scoped keys cannot modify an existing session"
+                )
+            # The caller is already a member, so the only effect of naming
+            # itself would be the upsert's rejoin (it clears ``left_at``), which
+            # would undo a removal committed since the check above. Skip it.
+            session.peer_names = None
+
         # Update existing session with metadata and feature flags if provided
         if (
             session.metadata is not None

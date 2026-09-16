@@ -1,6 +1,7 @@
 # File upload tests for session endpoints
 import io
 import json
+from datetime import UTC
 from typing import Any
 
 import pytest
@@ -462,9 +463,9 @@ async def test_file_upload_with_created_at(
     file_data = io.BytesIO(file_content.encode("utf-8"))
 
     # Prepare created_at timestamp (ISO 8601 format)
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    test_timestamp = datetime(2023, 1, 15, 10, 30, 45, tzinfo=timezone.utc)
+    test_timestamp = datetime(2023, 1, 15, 10, 30, 45, tzinfo=UTC)
     created_at_str = test_timestamp.isoformat()
 
     files = {"file": ("test_timestamp.txt", file_data, "text/plain")}
@@ -511,9 +512,9 @@ async def test_file_upload_with_all_parameters(
     # Prepare all parameters
     metadata = {"source": "comprehensive_test", "version": "1.0"}
     configuration = {"skip_deriver": False, "test_mode": True}
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    test_timestamp = datetime(2023, 6, 20, 14, 15, 30, tzinfo=timezone.utc)
+    test_timestamp = datetime(2023, 6, 20, 14, 15, 30, tzinfo=UTC)
     created_at_str = test_timestamp.isoformat()
 
     files = {"file": ("test_all_params.txt", file_data, "text/plain")}

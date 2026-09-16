@@ -174,6 +174,31 @@ export class Session {
     this._isActive = session.is_active
   }
 
+  private _updateLastMessageAtFromMessages(messages: Message[]): void {
+    if (messages.length === 0) return
+
+    let newestMessageAt = this._lastMessageAt
+    let newestTimestamp = newestMessageAt
+      ? Date.parse(newestMessageAt)
+      : Number.NEGATIVE_INFINITY
+    if (Number.isNaN(newestTimestamp)) {
+      newestTimestamp = Number.NEGATIVE_INFINITY
+    }
+
+    for (const message of messages) {
+      const messageTimestamp = Date.parse(message.createdAt)
+      if (
+        !Number.isNaN(messageTimestamp) &&
+        messageTimestamp > newestTimestamp
+      ) {
+        newestMessageAt = message.createdAt
+        newestTimestamp = messageTimestamp
+      }
+    }
+
+    this._lastMessageAt = newestMessageAt
+  }
+
   // ===========================================================================
   // Private API Methods
   // ===========================================================================
@@ -592,7 +617,9 @@ export class Session {
       created_at: msg.created_at ?? undefined,
     }))
     const response = await this._createMessages({ messages: apiMessages })
-    return response.map(Message.fromApiResponse)
+    const createdMessages = response.map(Message.fromApiResponse)
+    this._updateLastMessageAtFromMessages(createdMessages)
+    return createdMessages
   }
 
   /**
@@ -1039,7 +1066,9 @@ export class Session {
     }
 
     const response = await this._uploadFile(formData)
-    return response.map(Message.fromApiResponse)
+    const createdMessages = response.map(Message.fromApiResponse)
+    this._updateLastMessageAtFromMessages(createdMessages)
+    return createdMessages
   }
 
   /**

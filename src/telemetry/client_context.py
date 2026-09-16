@@ -11,6 +11,9 @@ reads them when it serializes an event body, as a nested ``client`` object::
         "agent_model": "claude-sonnet-4-5"
     }
 
+When ``X-Honcho-Host`` is absent the request's ``User-Agent`` is recorded as
+``host`` instead, so raw REST clients stay distinguishable from SDK traffic.
+
 Outside a request (deriver worker, tests, startup) the vars are unset and
 every member is ``null``; the ``client`` object itself is always present so
 ``data.client.host`` is a safe path for consumers.
@@ -24,6 +27,7 @@ from contextvars import ContextVar, Token
 HEADER_HOST = "X-Honcho-Host"
 HEADER_PLUGIN = "X-Honcho-Plugin"
 HEADER_AGENT_MODEL = "X-Honcho-Agent-Model"
+HEADER_USER_AGENT = "User-Agent"
 
 # Header values are client-controlled; cap them so a misbehaving client can't
 # bloat every event body.
@@ -48,11 +52,15 @@ def _clean(value: str | None) -> str | None:
 
 
 def set_client_context(
-    *, host: str | None, plugin: str | None, agent_model: str | None
+    *,
+    host: str | None,
+    plugin: str | None,
+    agent_model: str | None,
+    user_agent: str | None = None,
 ) -> ClientContextTokens:
     """Set the client ContextVars; returns tokens for ``reset_client_context``."""
     return (
-        client_host.set(_clean(host)),
+        client_host.set(_clean(host) or _clean(user_agent)),
         client_plugin.set(_clean(plugin)),
         client_agent_model.set(_clean(agent_model)),
     )

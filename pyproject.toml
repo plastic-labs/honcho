@@ -54,7 +54,7 @@ dev = [
     "coverage>=7.6.0",
     "interrogate>=1.7.0",
     "py-spy>=0.3.14",
-    "ruff>=0.11.2",
+    "ruff==0.15.12",
     "basedpyright>=1.29.4",
     "pre-commit>=4.2.0",
     "pytest-cov>=6.2.1",
@@ -93,7 +93,9 @@ select = [
     # isort
     "I",
 ]
-ignore = ["E501", "B008", "COM812"]
+# UP040/UP042/UP046/UP047: StrEnum and PEP 695 generics are behavior/signature
+# changes, not formatting; adopt deliberately rather than via autofix.
+ignore = ["E501", "B008", "COM812", "UP040", "UP042", "UP046", "UP047"]
 
 [tool.ruff.lint.flake8-bugbear]
 extend-immutable-calls = ["fastapi.Depends"]

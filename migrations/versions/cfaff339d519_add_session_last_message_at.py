@@ -1,7 +1,7 @@
 """add session last_message_at
 
 Revision ID: cfaff339d519
-Revises: e4eba9cfaa6f
+Revises: a7c3e9f1b2d4
 Create Date: 2026-08-22
 
 """
@@ -15,7 +15,7 @@ from migrations.utils import get_schema
 
 # revision identifiers, used by Alembic.
 revision: str = "cfaff339d519"
-down_revision: str | None = "e4eba9cfaa6f"
+down_revision: str | None = "a7c3e9f1b2d4"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

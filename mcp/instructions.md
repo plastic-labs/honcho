@@ -138,6 +138,10 @@ The full API for advanced use cases.
 | `get_session_messages` | Read conversation history (paginated: `page`, `size`, `reverse`; optional metadata filters) |
 | `list_scopes` | List the workspace's scopes — named session sets that act as recall boundaries |
 | `get_scope_sessions` | List the sessions a scope covers (paginated) |
+| `create_scope` | Get or create a scope, with optional metadata (label, description, example queries) |
+| `add_sessions_to_scope` | Put existing sessions inside a scope's recall boundary (max 100 per call; history backfills asynchronously) |
+| `remove_session_from_scope` | Take a session back out of a scope |
+| `get_scope_status` | Check whether a scope's backfill has caught up before trusting scoped recall |
 | `get_session_message` | Get a single message from a session by ID |
 | `get_session_context` | Get LLM-ready context (messages + summary) |
 

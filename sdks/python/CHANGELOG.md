@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- `honcho.get_scope(id)` (sync and async) fetches an existing scope by ID and raises `NotFoundError` when it does not exist. Unlike `honcho.scope()`, it never creates the scope, so lookups cannot provision a recall boundary by accident.
 - `Session.last_message_at` exposes the newest message timestamp, and sync/async `Honcho.sessions()` accept `sort_by="created_at" | "last_message_at"` while preserving `reverse` across pagination. Requires a Honcho server with the matching API support.
 - Optional per-call `timeout` on synchronous and asynchronous `Peer.chat()`. It overrides the timeout for each HTTP attempt; when omitted or set to `None`, the client-wide timeout configured on `Honcho` remains in effect.
 

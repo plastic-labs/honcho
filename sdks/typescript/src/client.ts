@@ -1,4 +1,5 @@
 import { API_VERSION } from './api-version'
+import { WorkspaceConclusions } from './conclusions'
 import { HonchoHTTPClient } from './http/client'
 import {
   createDialecticStream,
@@ -10,6 +11,7 @@ import { Peer } from './peer'
 import { Scope } from './scope'
 import { Session } from './session'
 import type {
+  ChatResponse,
   MessageResponse,
   PageResponse,
   PeerResponse,
@@ -130,6 +132,18 @@ export class Honcho {
    */
   get http(): HonchoHTTPClient {
     return this._http
+  }
+
+  /**
+   * Workspace-wide conclusions. No observer/observed pair is implied.
+   *
+   * Use this to list or look up conclusions across the workspace. Pair-
+   * scoped create/query/delete stay on `peer.conclusions`.
+   */
+  get conclusions(): WorkspaceConclusions {
+    return new WorkspaceConclusions(this._http, this.workspaceId, () =>
+      this._ensureWorkspace()
+    )
   }
 
   /**
@@ -336,6 +350,15 @@ export class Honcho {
     return this._http.post<ScopeResponse>(
       `/${API_VERSION}/workspaces/${workspaceId}/scopes`,
       { body: params }
+    )
+  }
+
+  private async _getScope(
+    workspaceId: string,
+    scopeId: string
+  ): Promise<ScopeResponse> {
+    return this._http.get<ScopeResponse>(
+      `/${API_VERSION}/workspaces/${workspaceId}/scopes/${scopeId}`
     )
   }
 
@@ -681,6 +704,32 @@ export class Honcho {
   }
 
   /**
+   * Get an existing scope by ID without creating it.
+   *
+   * Unlike {@link scope}, this never creates the scope, so it is safe for
+   * lookups where a typo must not provision a new recall boundary.
+   *
+   * @param id - Unprefixed scope name, unique within the workspace
+   * @returns Promise resolving to a Scope object for managing membership
+   * @throws {NotFoundError} if no scope with this ID exists in the workspace
+   * @throws Error if the scope ID is empty or invalid
+   */
+  async getScope(id: string): Promise<Scope> {
+    await this._ensureWorkspace()
+    const validatedId = ScopeIdSchema.parse(id)
+
+    const scopeData = await this._getScope(this.workspaceId, validatedId)
+    return new Scope(
+      validatedId,
+      this.workspaceId,
+      this._http,
+      scopeData.metadata ?? undefined,
+      () => this._ensureWorkspace(),
+      scopeData.created_at
+    )
+  }
+
+  /**
    * Get all scopes in the current workspace.
    *
    * @param options - Pagination options: `page`, `size`, and `reverse`
@@ -1010,13 +1059,33 @@ export class Honcho {
    * @param options.responseFormat - Optional JSON Schema (root type "object") the response
    *                                 must conform to. When provided, the response content is a
    *                                 JSON string matching this schema.
-   * @returns Promise resolving to the response string, or null if no relevant information
+   * @param options.includeEvidence - When true, resolves to a ChatResponse carrying the
+   *                                 answer alongside what the dialectic read to produce it.
+   *                                 Evidence is collated from the agent's own reads rather
+   *                                 than reported by the model, so it is broader than a
+   *                                 citation list.
+   * @returns Promise resolving to the response string, or null if no relevant information.
+   *          With includeEvidence, a ChatResponse wrapping that content plus its evidence.
    *
    * @example
    * ```typescript
    * const response = await honcho.chat('What are common themes across all users?')
+   *
+   * const { content, evidence } = await honcho.chat('What are common themes?', {
+   *   includeEvidence: true,
+   * })
    * ```
    */
+  async chat(
+    query: string,
+    options: {
+      session?: string | Session
+      reasoningLevel?: ReasoningLevel
+      responseFormat?: Record<string, unknown>
+      scope?: string | string[]
+      includeEvidence: true
+    }
+  ): Promise<ChatResponse<string>>
   async chat(
     query: string,
     options?: {
@@ -1024,8 +1093,19 @@ export class Honcho {
       reasoningLevel?: ReasoningLevel
       responseFormat?: Record<string, unknown>
       scope?: string | string[]
+      includeEvidence?: false
     }
-  ): Promise<string | null> {
+  ): Promise<string | null>
+  async chat(
+    query: string,
+    options?: {
+      session?: string | Session
+      reasoningLevel?: ReasoningLevel
+      responseFormat?: Record<string, unknown>
+      scope?: string | string[]
+      includeEvidence?: boolean
+    }
+  ): Promise<ChatResponse<string> | string | null> {
     const validatedQuery = SearchQuerySchema.parse(query)
     const resolvedSessionId = options?.session
       ? resolveId(options.session)
@@ -1038,11 +1118,13 @@ export class Honcho {
       reasoning_level: options?.reasoningLevel,
       response_format: options?.responseFormat,
       scope: options?.scope,
+      include_evidence: options?.includeEvidence ? true : undefined,
     })
-    if (!response.content) {
-      return null
+    const content = response.content || null
+    if (!options?.includeEvidence) {
+      return content
     }
-    return response.content
+    return { content, evidence: response.evidence ?? null }
   }
 
   /**
@@ -1060,6 +1142,10 @@ export class Honcho {
    * @param options.responseFormat - Optional JSON Schema (root type "object") the response
    *                                 must conform to. When provided, the response content is a
    *                                 JSON string matching this schema.
+   * @param options.includeEvidence - When true, the returned stream's `evidence` is
+   *                                 populated once it has been fully consumed. It cannot
+   *                                 be known before then, so the server sends it on the
+   *                                 terminal chunk.
    * @returns Promise resolving to a DialecticStreamResponse that can be iterated over
    *
    * @example
@@ -1077,6 +1163,7 @@ export class Honcho {
       reasoningLevel?: ReasoningLevel
       responseFormat?: Record<string, unknown>
       scope?: string | string[]
+      includeEvidence?: boolean
     }
   ): Promise<DialecticStreamResponse> {
     const validatedQuery = SearchQuerySchema.parse(query)
@@ -1090,6 +1177,7 @@ export class Honcho {
       reasoning_level: options?.reasoningLevel,
       response_format: options?.responseFormat,
       scope: options?.scope,
+      include_evidence: options?.includeEvidence ? true : undefined,
     })
 
     return createDialecticStream(response)

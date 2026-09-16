@@ -252,12 +252,12 @@ def verify_codify_workspace_name_and_message_id_in(verifier: MigrationVerifier) 
     ).scalar()
 
     # Should be roughly 50/50 split (we alternate in the insert)
-    assert (
-        ws1_count == 50_000
-    ), f"Expected 50k items with workspace_name_1, got {ws1_count}"
-    assert (
-        ws2_count == 50_000
-    ), f"Expected 50k items with workspace_name_2, got {ws2_count}"
+    assert ws1_count == 50_000, (
+        f"Expected 50k items with workspace_name_1, got {ws1_count}"
+    )
+    assert ws2_count == 50_000, (
+        f"Expected 50k items with workspace_name_2, got {ws2_count}"
+    )
 
     # Verify data transformation: message_id extracted from payload where it exists
     msg_id_count = conn.execute(
@@ -268,9 +268,9 @@ def verify_codify_workspace_name_and_message_id_in(verifier: MigrationVerifier) 
     ).scalar()
 
     # Should be 60k items with message_id (category 1 only)
-    assert (
-        msg_id_count == 60_000
-    ), f"Expected 60k items with message_id, got {msg_id_count}"
+    assert msg_id_count == 60_000, (
+        f"Expected 60k items with message_id, got {msg_id_count}"
+    )
 
     # Verify items without message_id in payload have NULL in column
     null_msg_id_count = conn.execute(
@@ -278,9 +278,9 @@ def verify_codify_workspace_name_and_message_id_in(verifier: MigrationVerifier) 
     ).scalar()
 
     # Should be 40k items (30k without key + 10k with NULL value)
-    assert (
-        null_msg_id_count == 40_000
-    ), f"Expected 40k items with NULL message_id, got {null_msg_id_count}"
+    assert null_msg_id_count == 40_000, (
+        f"Expected 40k items with NULL message_id, got {null_msg_id_count}"
+    )
 
     # Verify workspace_name was removed from payload
     ws_in_payload_count = conn.execute(
@@ -289,9 +289,9 @@ def verify_codify_workspace_name_and_message_id_in(verifier: MigrationVerifier) 
             + "WHERE payload ? 'workspace_name'"
         )
     ).scalar()
-    assert (
-        ws_in_payload_count == 0
-    ), f"Found {ws_in_payload_count} items still with workspace_name in payload"
+    assert ws_in_payload_count == 0, (
+        f"Found {ws_in_payload_count} items still with workspace_name in payload"
+    )
 
     # Verify message_id was removed from payload
     msg_in_payload_count = conn.execute(
@@ -299,9 +299,9 @@ def verify_codify_workspace_name_and_message_id_in(verifier: MigrationVerifier) 
             f'SELECT COUNT(*) FROM "{schema}"."queue" ' + "WHERE payload ? 'message_id'"
         )
     ).scalar()
-    assert (
-        msg_in_payload_count == 0
-    ), f"Found {msg_in_payload_count} items still with message_id in payload"
+    assert msg_in_payload_count == 0, (
+        f"Found {msg_in_payload_count} items still with message_id in payload"
+    )
 
     # Verify other_field remains in payload (data preservation)
     other_field_count = conn.execute(
@@ -310,9 +310,9 @@ def verify_codify_workspace_name_and_message_id_in(verifier: MigrationVerifier) 
             + "WHERE payload ? 'other_field'"
         )
     ).scalar()
-    assert (
-        other_field_count == 100_000
-    ), f"Expected all 100k items to retain other_field in payload, got {other_field_count}"
+    assert other_field_count == 100_000, (
+        f"Expected all 100k items to retain other_field in payload, got {other_field_count}"
+    )
 
     # Spot check: verify a specific queue item was transformed correctly
     sample_item = conn.execute(
