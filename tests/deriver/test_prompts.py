@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from unittest.mock import patch
 
 import pytest
@@ -5,8 +6,37 @@ import pytest
 from src.deriver.prompts import (
     estimate_deriver_prompt_tokens,
     estimate_minimal_deriver_prompt_tokens,
+    format_deriver_message,
     minimal_deriver_prompt,
 )
+
+
+def test_format_deriver_message_marks_target_peer() -> None:
+    created_at = datetime(2025, 6, 26, 13, 56, 0, tzinfo=UTC)
+
+    target = format_deriver_message(0, "alice", "alice", created_at, "hello")
+    other = format_deriver_message(1, "assistant", "alice", created_at, "hi alice")
+
+    assert target == (
+        '<message idx="0" peer="alice" target="true" time="2025-06-26 13:56:00">'
+        "hello</message>"
+    )
+    assert other == (
+        '<message idx="1" peer="assistant" target="false" '
+        'time="2025-06-26 13:56:00">hi alice</message>'
+    )
+
+
+def test_minimal_deriver_prompt_explains_message_tags() -> None:
+    prompt = minimal_deriver_prompt(
+        peer_id="alice",
+        messages='<message idx="0" peer="alice" target="true">hello</message>',
+        custom_instructions=None,
+    )
+
+    assert 'target="true"' in prompt
+    assert 'target="false"' in prompt
+    assert "few or no conclusions" in prompt
 
 
 def test_minimal_deriver_prompt_includes_custom_instructions_when_present() -> None:
