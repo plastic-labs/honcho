@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import weakref
 from collections.abc import Callable, Sequence
@@ -1646,14 +1647,49 @@ async def _handle_create_observations_impl(
     forced_level: str | None = None,
 ) -> "str | ToolResult":
     """Handle create_observations tool."""
-    raw_observations = tool_input.get("observations", [])
+    raw_observations: Any = tool_input.get("observations", [])
+
+    # Weaker models sometimes JSON-encode the list a second time, so the
+    # argument arrives as a string. Recover it when it decodes to a list.
+    if isinstance(raw_observations, str):
+        try:
+            raw_observations = json.loads(raw_observations)
+        except ValueError:
+            return (
+                "ERROR: 'observations' must be a list of observation objects, "
+                "got a string that is not valid JSON"
+            )
+    if not isinstance(raw_observations, list):
+        return (
+            "ERROR: 'observations' must be a list of observation objects, "
+            f"got {type(raw_observations).__name__}"
+        )
 
     if not raw_observations:
         return "ERROR: observations list is empty"
 
+    validation_failures: list[ObservationFailure] = []
+
     # Set context-specific default level before Pydantic validation
     default_level = "explicit" if ctx.current_messages else "deductive"
-    for obs in raw_observations:
+    dict_observations: list[dict[str, Any]] = []
+    for obs in cast(list[Any], raw_observations):
+        # Models occasionally emit bare strings (or other scalars) instead of
+        # observation objects. Report each one as a per-item failure so the
+        # model gets an actionable message rather than a TypeError.
+        if not isinstance(obs, dict):
+            validation_failures.append(
+                ObservationFailure(
+                    content_preview=str(obs)[:50],
+                    error=(
+                        "observation must be an object with a 'content' field, "
+                        f"got {type(obs).__name__}"
+                    ),
+                )
+            )
+            continue
+        obs = cast(dict[str, Any], obs)
+        dict_observations.append(obs)
         if forced_level is not None:
             obs["level"] = forced_level
         else:
@@ -1669,8 +1705,7 @@ async def _handle_create_observations_impl(
             obs["source_ids"] = normalized_source_ids
     # Validate observations individually so valid ones are still processed
     observations: list[schemas.ObservationInput] = []
-    validation_failures: list[ObservationFailure] = []
-    for obs in raw_observations:
+    for obs in dict_observations:
         try:
             validated = schemas.ObservationInput.model_validate(obs)
         except ValidationError as e:
