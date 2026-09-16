@@ -51,7 +51,7 @@ class TenantScopedCounter(NamespacedCounter):
     """A counter whose value is attributable to one tenant.
 
     Injects ``tenant_id`` from the ambient tenant beside ``namespace``. Empty when
-    ``MULTI_TENANT`` is off or nothing is bound: Prometheus and VictoriaMetrics treat
+    ``MULTI_TENANT`` is off or nothing is bound: Prometheus treats
     an empty label value as absent, so the flag-off series set is exactly the
     pre-tenancy one, and the startup zero-init (which runs with nothing bound)
     materializes the same children as before. Per-tenant children appear on first
@@ -60,6 +60,7 @@ class TenantScopedCounter(NamespacedCounter):
 
     def labels(self, **kwargs: str) -> TenantScopedCounter:
         kwargs["tenant_id"] = current_tenant_id() or ""
+        # ai: cast rather than `# type: ignore` — NamespacedCounter.labels is annotated with its concrete class, so Self does not propagate
         return cast(TenantScopedCounter, super().labels(**kwargs))
 
 
@@ -193,9 +194,11 @@ telemetry_events_dropped_counter = NamespacedCounter(
     ["namespace", "reason"],
 )
 
+# region ai
 # Emitted under MULTI_TENANT with no tenant bound, outside the categories that are
 # tenant-less by construction. Non-zero means an emit site runs outside its bind
 # scope; the event still ships, so the consumer can quarantine billable ones.
+# endregion
 telemetry_events_untenanted_counter = NamespacedCounter(
     "telemetry_events_untenanted",
     "CloudEvents emitted under MULTI_TENANT without a bound tenant",
@@ -603,9 +606,11 @@ class PrometheusMetrics:
             self._touch(telemetry_events_emitted_counter, type=event_type)
         for event_type in HIGH_VOLUME_EVENT_TYPES:
             self._touch(telemetry_events_sampled_out_counter, type=event_type)
+        # region ai
         # Untenanted: every type that CAN carry a tenant. The tenant-less categories
         # are excluded on purpose — a permanently-0 series for an event that never
         # increments it would be the fabrication the docstring above rules out.
+        # endregion
         from src.telemetry.events.base import BaseEvent
 
         for event_cls in walk_subclasses(BaseEvent):

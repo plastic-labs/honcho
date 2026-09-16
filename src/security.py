@@ -221,14 +221,16 @@ def require_auth(
             if settings.MULTI_TENANT and jwt_params.tn
             else None
         )
-        if tenant_token is not None:
-            # Errors from this request are filterable by tenant; the global
-            # `namespace` tag keeps naming the instance. The Starlette/FastAPI
-            # integration forks the isolation scope per request, so the tag lives
-            # exactly as long as the bind; removed below for the same reason the
-            # ContextVar is reset.
-            sentry_sdk.set_tag("tenant_id", jwt_params.tn)
         try:
+            if tenant_token is not None:
+                # region ai
+                # Errors from this request are filterable by tenant; the global
+                # `namespace` tag keeps naming the instance. The Starlette/FastAPI
+                # integration forks the isolation scope per request, so the tag lives
+                # exactly as long as the bind; removed in the finally with the
+                # ContextVar reset, inside the same try so the two cleanups pair.
+                # endregion
+                sentry_sdk.set_tag("tenant_id", jwt_params.tn)
             yield jwt_params
         finally:
             if tenant_token is not None:
