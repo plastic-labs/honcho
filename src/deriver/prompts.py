@@ -5,22 +5,31 @@ This module contains simplified prompt templates focused only on observation ext
 NO peer card instructions, NO working representation - just extract observations.
 """
 
+import re
 from datetime import datetime
 from functools import cache
 from inspect import cleandoc as c
 
 from src.utils.tokens import estimate_tokens
 
+_MESSAGE_TAG = re.compile(r"<(?=/?message\b)", re.IGNORECASE)
+
 
 def format_deriver_message(
     idx: int, peer: str, target: str, created_at: datetime, content: str
 ) -> str:
-    """Wrap one batch message in a tag carrying its index, author, and target flag."""
+    """Wrap one batch message in a tag carrying its index, author, and target flag.
+
+    Peer ids are restricted to ``[a-zA-Z0-9_-]`` upstream, so only the content
+    can carry markup; any ``<message``/``</message`` inside it is neutralized so
+    a message cannot forge its own tag boundary.
+    """
     is_target = "true" if peer == target else "false"
     time_str = created_at.strftime("%Y-%m-%d %H:%M:%S")
+    safe_content = _MESSAGE_TAG.sub("&lt;", content)
     return (
         f'<message idx="{idx}" peer="{peer}" target="{is_target}" time="{time_str}">'
-        f"{content}</message>"
+        f"{safe_content}</message>"
     )
 
 
