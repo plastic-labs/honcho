@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 ### Added
 
 - `honcho.getScope(id)` fetches an existing scope by ID and rejects with `NotFoundError` when it does not exist. Unlike `honcho.scope()`, it never creates the scope, so lookups cannot provision a recall boundary by accident.
+- `Session.lastMessageAt` exposes the newest message timestamp, and `Honcho.sessions()` accepts `sortBy: 'created_at' | 'last_message_at'` while preserving `reverse` across pagination. Requires a Honcho server with the matching API support.
 
 ## [2.4.0] - 2026-08-25
 
