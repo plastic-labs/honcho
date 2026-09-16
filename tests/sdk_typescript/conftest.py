@@ -110,6 +110,7 @@ def ts_test_server(
 
     mp = pytest.MonkeyPatch()
     mp.setattr("src.main.validate_embedding_schema", _skip_validate)
+    mp.setattr("src.main.validate_queue_item_batches", _skip_validate)
 
     # Start the server
     server = TestServer(app, port)
