@@ -371,6 +371,7 @@ async def execute_tool_loop(
     hit_input_token_cap = False
     # Track effective tool_choice — switches from "required"/"any" to "auto" after iter 1.
     effective_tool_choice = tool_choice
+    disabled_tools: dict[str, str] = {}
 
     while iteration < max_tool_iterations:
         step = start_langfuse_agent_step(
@@ -396,6 +397,7 @@ async def execute_tool_loop(
                 | dict[str, Any]
                 | None = effective_tool_choice,
                 captured_messages: list[dict[str, Any]] = conversation_messages,
+                tools_for_call: list[dict[str, Any]] = tools,
                 iteration_for_call: int = iteration + 1,
             ) -> HonchoLLMCallResponse[Any]:
                 plan = get_attempt_plan()
@@ -413,8 +415,8 @@ async def execute_tool_loop(
                     plan.thinking_budget_tokens,
                     stream=False,
                     client_override=plan.client,
-                    tools=tools,
-                    tool_choice=tool_choice_for_call,
+                    tools=tools_for_call or None,
+                    tool_choice=tool_choice_for_call if tools_for_call else None,
                     messages=captured_messages,
                     selected_config=plan.selected_config,
                     plan=plan,
@@ -564,11 +566,20 @@ async def execute_tool_loop(
                 set_last_tool_metadata({})
 
                 try:
-                    tool_result = await tool_executor(tool_name, tool_input)
+                    if tool_name in disabled_tools:
+                        tool_result = disabled_tools[tool_name]
+                        set_last_tool_metadata({"disable_tool": True})
+                    else:
+                        tool_result = await tool_executor(tool_name, tool_input)
                     # Stash ToolResult.metadata on all_tool_calls so
                     # specialist rollups can read created/deleted observation
                     # counts without round-tripping through the event store.
                     tool_result_metadata = get_last_tool_metadata()
+                    if tool_result_metadata.get("disable_tool") is True:
+                        # Rebind rather than mutate the caller's shared tool definitions.
+                        disabled_tools[tool_name] = tool_result
+                        tools = [tool for tool in tools if tool["name"] != tool_name]
+                        effective_tool_choice = "auto" if tools else None
                     tool_results.append(
                         {
                             "tool_id": tool_id,

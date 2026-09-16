@@ -44,6 +44,12 @@ logger = logging.getLogger(__name__)
 
 # Hard cap to prevent unbounded peer card growth from repeated agent updates.
 MAX_PEER_CARD_FACTS = 40
+MAX_PEER_CARD_OVER_CAP_FAILURES = 2
+PEER_CARD_UPDATES_DISABLED_MESSAGE = (
+    "Peer card updates are disabled for this run after two over-cap failures. "
+    "The update was not applied and the existing card is unchanged. "
+    "Do not retry update_peer_card; continue with your other tasks."
+)
 
 # Identity-marker prefixes allowed on the peer card. Anything else is rejected
 # structurally — see `_validate_peer_card_entry`.
@@ -544,6 +550,7 @@ TOOLS: dict[str, dict[str, Any]] = {
                         "A longer list is refused as a whole and nothing is written, so "
                         "consolidate before sending: merge entries that describe the same "
                         "thing into one, or drop the least durable ones. "
+                        "After two over-cap failures, card updates are disabled for the rest of this run. "
                         "Each entry must start with one of the allowed prefixes "
                         "(`IDENTITY: `, `ATTRIBUTE: `, `RELATIONSHIP: `, `INSTRUCTION: `) "
                         "followed by one concise identity marker. Entries without an allowed prefix are rejected."
@@ -1574,6 +1581,8 @@ class ToolContext:
     run_id: str | None = None
     agent_type: str | None = None  # "dialectic", "deriver", "dreamer"
     parent_category: str | None = None  # Parent category for CloudEvents
+    # A fresh executor owns a fresh budget, even for the same peer pair.
+    peer_card_over_cap_failures: int = 0
     # Set only when the caller asked for evidence. Read handlers append the rows
     # they loaded; `dataclasses.replace` copies of this context share the same
     # accumulator, so delegating handlers reach it without extra wiring.
@@ -1834,6 +1843,12 @@ async def _handle_update_peer_card(
             "Peer card creation is disabled for this workspace/session configuration."
         )
 
+    if ctx.peer_card_over_cap_failures >= MAX_PEER_CARD_OVER_CAP_FAILURES:
+        return ToolResult(
+            content=PEER_CARD_UPDATES_DISABLED_MESSAGE,
+            metadata={"peer_card_updated": False, "disable_tool": True},
+        )
+
     raw_peer_card_content = tool_input.get("content")
 
     # Guard against None or empty content — keep the existing peer card.
@@ -1927,6 +1942,8 @@ async def _handle_update_peer_card(
     # down to arrival order rather than durability. Refusing hands that decision
     # back to the model, which still has tool iterations left to consolidate.
     if len(normalized_peer_card) > MAX_PEER_CARD_FACTS:
+        ctx.peer_card_over_cap_failures += 1
+        disabled = ctx.peer_card_over_cap_failures >= MAX_PEER_CARD_OVER_CAP_FAILURES
         surplus = len(normalized_peer_card) - MAX_PEER_CARD_FACTS
         logger.warning(
             "Peer card update exceeded max facts (%s): %s entries sent for %s/%s/%s, keeping existing card",
@@ -1939,15 +1956,40 @@ async def _handle_update_peer_card(
         feedback = (
             f"Peer card not updated: {len(normalized_peer_card)} entries were sent "
             f"but the cap is {MAX_PEER_CARD_FACTS}. The existing card is unchanged. "
-            f"Free up at least {surplus} "
-            f"{'entry' if surplus == 1 else 'entries'} — merge entries that describe "
-            "the same thing into one, or drop the least durable ones — then call "
-            "`update_peer_card` again with the complete list."
         )
+        if disabled:
+            feedback += PEER_CARD_UPDATES_DISABLED_MESSAGE
+            logger.warning(
+                "Peer card updates disabled after %d over-cap failures for %s/%s/%s "
+                + "(run_id=%s): update not applied, existing card unchanged",
+                ctx.peer_card_over_cap_failures,
+                ctx.workspace_name,
+                ctx.observer,
+                ctx.observed,
+                ctx.run_id,
+            )
+        else:
+            feedback += (
+                f"Free up at least {surplus} "
+                f"{'entry' if surplus == 1 else 'entries'} - merge entries that describe "
+                "the same thing into one, or drop the least durable ones - then call "
+                "`update_peer_card` again with the complete list. "
+                "Only one correction attempt remains."
+            )
         if rejected_count:
             total = len(normalized_peer_card) + rejected_count
             feedback = f"{feedback} {_format_rejection_feedback(f'{rejected_count} of {total}')}"
-        return feedback
+        return ToolResult(
+            content=feedback,
+            metadata={
+                "peer_card_updated": False,
+                "over_cap": True,
+                "over_cap_failures": ctx.peer_card_over_cap_failures,
+                "surplus": surplus,
+                "rejected_count": rejected_count,
+                "disable_tool": disabled,
+            },
+        )
 
     async with ctx.db_lock, tracked_db("tool.update_peer_card") as db:
         await crud.set_peer_card(
@@ -1979,8 +2021,6 @@ async def _handle_update_peer_card(
 
     # signal a successful peer_card update so DreamSpecialistEvent
     # can set its `peer_card_updated` flag without name-counting.
-    from src.utils.types import ToolResult
-
     success_content = (
         f"Updated peer card for {ctx.observed} by {ctx.observer} "
         f"with {len(normalized_peer_card)} entries."

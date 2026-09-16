@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- `update_peer_card` rejects over-cap lists without changing the stored card instead of silently truncating them. The first rejection gives consolidation guidance; the second disables card updates for the remaining tool chain and logs that the update was not applied. Disabled tools are removed from subsequent model requests, while other tools remain available. The failure budget is local to each run; no model fallback is introduced (#1144)
+
 ## [3.1.2] - 2026-09-09
 
 ### Added
@@ -22,10 +28,6 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 ### Fixed
 
 - Workspace chat requires a tool call on the first turn instead of answering from the prefetch overview alone. `low` was the only level that left tool choice as `auto`, and those calls were skipping search. Pair chat is unchanged. The workspace prompt is also marked non-interactive so it stops offering the caller a menu (#1120)
-
-### Fixed
-
-- `update_peer_card` truncated an over-cap list down to `MAX_PEER_CARD_FACTS` and still reported the update as successful, so the model was never told that the marker it had just derived had been dropped, and which entries survived came down to arrival order rather than durability — a card sitting at the cap could never take a new entry again. An over-cap list is now refused as a whole, the stored card is left untouched, and the tool result states how many entries to free and how (merge entries that describe the same thing into one, or drop the least durable ones), so the model can consolidate inside the tool loop it is already in. The dreamer's peer-card prompt section and the `update_peer_card` tool description carry the matching rule (#1144)
 
 ## [3.1.1] - 2026-09-02
 

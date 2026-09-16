@@ -136,7 +136,7 @@ A list longer than the cap is refused as a whole — nothing is written and the 
 - Merge entries that describe the same thing into one entry. Several entries stating one mapping, tool, or rule each can often become one entry that carries the same information, as long as it stays a single concise marker within the per-entry length cap.
 - Otherwise drop the least durable entries — the ones most likely to change or already implied by another entry.
 
-If the tool reports that your list was over the cap, consolidate further and call it again with the complete list. Do not respond by dropping the new marker and re-sending the old card unchanged."""
+If the tool reports that your list was over the cap, consolidate further and retry once with the complete list. After two over-cap failures, card updates are disabled for the rest of this run and the existing card is preserved; continue with your other tasks. Do not respond by dropping the new marker and re-sending the old card unchanged."""
 
 
 class BaseSpecialist(ABC):
