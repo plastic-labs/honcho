@@ -668,13 +668,16 @@ class QueueManager:
                 if work_unit.tenant_id is not None
                 else None
             )
-            if tenant_token is not None:
-                # Errors from this work unit are filterable by tenant. Each unit runs
-                # in its own task and AsyncioIntegration forks the isolation scope per
-                # task, so the tag lives as long as the bind; removed in the finally
-                # below with the ContextVar reset.
-                sentry_sdk.set_tag("tenant_id", work_unit.tenant_id)
             try:
+                if tenant_token is not None:
+                    # region ai
+                    # Errors from this work unit are filterable by tenant. Each unit
+                    # runs in its own task and AsyncioIntegration forks the isolation
+                    # scope per task, so the tag lives as long as the bind; removed in
+                    # the finally with the ContextVar reset, inside the same try so
+                    # the two cleanups pair.
+                    # endregion
+                    sentry_sdk.set_tag("tenant_id", work_unit.tenant_id)
                 while not self.shutdown_event.is_set():
                     # Get worker ownership info for verification
                     ownership = self.worker_ownership.get(worker_id)

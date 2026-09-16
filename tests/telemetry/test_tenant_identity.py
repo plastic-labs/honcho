@@ -24,6 +24,7 @@ from src.security import JWTParams, create_jwt, require_auth
 from src.telemetry.emitter import TelemetryEmitter
 from src.telemetry.events.api import MessageCreatedEvent
 from src.telemetry.events.reconciliation import SyncVectorsCompletedEvent
+from src.telemetry.events.representation import RepresentationCompletedEvent
 from src.telemetry.prometheus.metrics import prometheus_metrics
 from src.telemetry.tenant import TENANTLESS_CATEGORIES, current_tenant_id
 
@@ -62,6 +63,30 @@ def _message_created_event(**overrides: object) -> MessageCreatedEvent:
     return MessageCreatedEvent(**fields)  # pyright: ignore[reportArgumentType]
 
 
+def _representation_completed_event(
+    **overrides: object,
+) -> RepresentationCompletedEvent:
+    """A minimal deriver-side ("representation" category) event."""
+    fields: dict[str, object] = {
+        "workspace_name": "ws",
+        "session_name": "sess",
+        "observed": "alice",
+        "queue_items_processed": 1,
+        "earliest_message_id": "msg_1",
+        "latest_message_id": "msg_1",
+        "message_count": 1,
+        "explicit_conclusion_count": 0,
+        "context_preparation_ms": 1.0,
+        "llm_call_ms": 1.0,
+        "total_duration_ms": 2.0,
+        "input_tokens": 10,
+        "total_input_tokens": 12,
+        "output_tokens": 3,
+    }
+    fields.update(overrides)
+    return RepresentationCompletedEvent(**fields)  # pyright: ignore[reportArgumentType]
+
+
 def _sync_vectors_event(**overrides: object) -> SyncVectorsCompletedEvent:
     """A tenant-less-by-construction ("reconciliation" category) event."""
     fields: dict[str, object] = {"total_duration_ms": 1.0}
@@ -96,6 +121,23 @@ class TestEmitterTenantIdentity:
         assert "tenantid" not in ce.data
         assert ce.data["workspace_name"] == "ws"
         assert ce.data["last_message_id"] == "msg_1"
+
+    @pytest.mark.usefixtures("bound_tenant")
+    def test_emit_stamps_tenantid_on_a_deriver_category_event(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The deriver's events ride the same chokepoint: a representation-category
+        event emitted inside a work unit's bind carries the unit's tenant, and
+        `source` still names the instance and category."""
+        monkeypatch.setattr(settings, "MULTI_TENANT", True)
+        monkeypatch.setattr(settings.TELEMETRY, "NAMESPACE", "test_ns")
+        emitter = TelemetryEmitter(endpoint="http://test:8001/events")
+
+        emitter.emit(_representation_completed_event())
+
+        attrs = emitter._buffer[-1].get_attributes()
+        assert attrs["tenantid"] == "acme"
+        assert attrs["source"] == "/honcho/test_ns/representation"
 
     def test_emit_records_untenanted_counter_when_flag_on_and_unbound(
         self, monkeypatch: pytest.MonkeyPatch
@@ -205,7 +247,7 @@ class TestTenantScopedCounter:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """flag-off with a (stray) bound tenant: the series carries tenant_id=""
-        (Prometheus/VictoriaMetrics treat that as absent), and no tenant_id="acme"
+        (Prometheus treats that as absent), and no tenant_id="acme"
         series is created -- the bound value never leaks into the label flag-off."""
         ns = unique_ns("counter_off")
         monkeypatch.setattr(settings.METRICS, "ENABLED", True)

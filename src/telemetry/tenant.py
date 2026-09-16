@@ -13,9 +13,11 @@ where the ``namespace`` (the instance) is the tenant.
 
 from src.config import settings
 
+# region ai
 # Event categories that have no single tenant by construction: the reconciler runs
 # across tenants on the service role, so its events carry the instance only. An
 # untenanted emit in one of these categories is normal, not a bug.
+# endregion
 TENANTLESS_CATEGORIES: frozenset[str] = frozenset({"reconciliation"})
 
 
@@ -23,7 +25,7 @@ def current_tenant_id() -> str | None:
     """The bound tenant under ``MULTI_TENANT``; ``None`` flag-off or when nothing is bound."""
     if not settings.MULTI_TENANT:
         return None
-    # Lazy: src.db imports src.telemetry.prometheus.metrics, which imports this module.
+    # ai: lazy import avoids a cycle (src.db imports src.telemetry.prometheus.metrics, which imports this module)
     from src.db import tenant_context
 
     return tenant_context.get()

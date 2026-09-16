@@ -58,7 +58,7 @@ def metrics_enabled(monkeypatch: pytest.MonkeyPatch) -> Iterator[str]:
 
 # The six TenantScopedCounter metrics (`_total` names). `TenantScopedCounter.labels()`
 # always injects `tenant_id` -- "" when MULTI_TENANT is off or nothing is bound --
-# beside `namespace`. Prometheus/VictoriaMetrics treat an empty label value as
+# beside `namespace`. Prometheus treats an empty label value as
 # equivalent to an absent one, but the prometheus_client REGISTRY does not: it keeps
 # the child series keyed on the literal empty string. An exact-match
 # `REGISTRY.get_sample_value` lookup that omits `tenant_id` therefore misses the
@@ -73,6 +73,24 @@ _TENANT_SCOPED_COUNTER_NAMES = frozenset(
         "dreamer_tokens_processed_total",
     }
 )
+
+
+def test_tenant_scoped_counter_names_match_the_declared_counters():
+    """_TENANT_SCOPED_COUNTER_NAMES must equal every TenantScopedCounter in metrics.py.
+
+    If this fails, a TenantScopedCounter was added or renamed without updating the
+    set above, and ``sample()`` would silently stop defaulting ``tenant_id=""`` for
+    it — a zero-init assertion would then read None instead of 0.0.
+    """
+    from src.telemetry.prometheus import metrics as metrics_module
+    from src.telemetry.prometheus.metrics import TenantScopedCounter
+
+    declared = {
+        f"{counter._name}_total"  # pyright: ignore[reportPrivateUsage, reportUnknownMemberType]
+        for counter in vars(metrics_module).values()
+        if isinstance(counter, TenantScopedCounter)
+    }
+    assert declared == _TENANT_SCOPED_COUNTER_NAMES
 
 
 def sample(name: str, **labels: str) -> float | None:
