@@ -30,9 +30,9 @@ def _message_response(
     }
 
 
-def _session_write_honcho() -> (
-    tuple[SimpleNamespace, datetime.datetime, datetime.datetime]
-):
+def _session_write_honcho() -> tuple[
+    SimpleNamespace, datetime.datetime, datetime.datetime
+]:
     """Build sync and async HTTP stubs for local session write tests."""
     newest_time = datetime.datetime(2026, 1, 10, 12, 0, tzinfo=_SDK_UTC)
     older_time = datetime.datetime(2026, 1, 5, 13, 0, tzinfo=_SDK_UTC)
