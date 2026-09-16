@@ -624,12 +624,13 @@ class Conclusion(BaseModel):
             "during dreaming)."
         ),
     )
-    source_ids: list[str] | None = Field(
-        default=None,
+    source_ids: list[str] = Field(
+        default_factory=list,
         description=(
             "IDs of the conclusions this one was derived from: premises for "
             "'deductive', supporting sources for 'inductive', conflicting "
-            "conclusions for 'contradiction'. None for 'explicit' conclusions."
+            "conclusions for 'contradiction'. Empty for 'explicit' conclusions, "
+            "which derive from messages rather than from other conclusions."
         ),
     )
     times_derived: int = Field(
@@ -637,6 +638,17 @@ class Conclusion(BaseModel):
         description="Number of times this conclusion has been independently derived.",
     )
     created_at: datetime.datetime
+
+    @field_validator("source_ids", mode="before")
+    @classmethod
+    def empty_when_unlinked(cls, v: list[str] | None) -> list[str]:
+        """A conclusion with no premises has an empty list, never null.
+
+        ``Document.source_ids`` is None when a row has no linkage, which is the
+        internal signal for "unlinked". Callers get one shape for "derived from
+        nothing" instead of having to treat null and [] as the same thing.
+        """
+        return v if v is not None else []
 
     model_config = ConfigDict(  # pyright: ignore
         from_attributes=True,

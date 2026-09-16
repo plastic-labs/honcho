@@ -781,7 +781,7 @@ class TestConclusionRoutes:
 
         assert response.status_code == 200
         conclusion = response.json()
-        assert conclusion["source_ids"] is None
+        assert conclusion["source_ids"] == []
 
     @pytest.mark.asyncio
     async def test_get_conclusion_not_found(
@@ -973,7 +973,7 @@ class TestConclusionRoutes:
         assert conclusion["observed_id"] == doc.observed
         assert conclusion["session_id"] == doc.session_name
         assert conclusion["level"] == "explicit"
-        assert conclusion["source_ids"] is None
+        assert conclusion["source_ids"] == []
         assert conclusion["times_derived"] == 1
         assert "created_at" in conclusion
 
