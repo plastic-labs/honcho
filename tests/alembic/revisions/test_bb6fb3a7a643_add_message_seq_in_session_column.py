@@ -153,9 +153,9 @@ def verify_add_message_seq_in_session_column(verifier: MigrationVerifier) -> Non
 
     assert len(session_1_messages) == 5, "Expected 5 messages in session 1"
     for i, (content, seq) in enumerate(session_1_messages, start=1):
-        assert (
-            seq == i
-        ), f"Expected seq_in_session={i} for message '{content}', got {seq}"
+        assert seq == i, (
+            f"Expected seq_in_session={i} for message '{content}', got {seq}"
+        )
 
     # Verify sequences start at 1 and are contiguous for session 2
     session_2_messages = conn.execute(
@@ -176,9 +176,9 @@ def verify_add_message_seq_in_session_column(verifier: MigrationVerifier) -> Non
 
     assert len(session_2_messages) == 3, "Expected 3 messages in session 2"
     for i, (content, seq) in enumerate(session_2_messages, start=1):
-        assert (
-            seq == i
-        ), f"Expected seq_in_session={i} for message '{content}', got {seq}"
+        assert seq == i, (
+            f"Expected seq_in_session={i} for message '{content}', got {seq}"
+        )
 
     # Verify uniqueness constraint: no duplicate (workspace, session, seq) tuples
     duplicate_check = conn.execute(
@@ -194,6 +194,6 @@ def verify_add_message_seq_in_session_column(verifier: MigrationVerifier) -> Non
         {"workspace_name": WORKSPACE_NAME},
     ).fetchall()
 
-    assert (
-        len(duplicate_check) == 0
-    ), f"Found duplicate seq_in_session values: {duplicate_check}"
+    assert len(duplicate_check) == 0, (
+        f"Found duplicate seq_in_session values: {duplicate_check}"
+    )

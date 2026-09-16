@@ -44,15 +44,20 @@ export function register(server: McpServer, ctx: ToolContext) {
       description: [
         "List sessions in the given workspace (paginated).",
         "Use this to discover existing conversations.",
-        "Returns session IDs with pagination metadata.",
+        "Returns session IDs with pagination metadata; pass page/size to walk past the first page.",
       ].join("\n"),
       inputSchema: {
         workspace_id: workspaceIdSchema(ctx),
+        page: z.number().int().min(1).optional().describe("Page number (1-indexed)."),
+        size: z.number().int().min(1).max(100).optional().describe("Results per page (max 100)."),
+        reverse: z.boolean().optional().describe("Newest first when true."),
       },
     },
-    async ({ workspace_id }) => {
+    async ({ workspace_id, page: pageNum, size, reverse }) => {
       try {
-        const page = await ctx.clientFor(workspace_id).sessions();
+        const page = await ctx
+          .clientFor(workspace_id)
+          .sessions({ page: pageNum, size, reverse });
         return textResult({
           sessions: page.items.map((s) => ({ id: s.id })),
           total: page.total,
@@ -335,7 +340,7 @@ export function register(server: McpServer, ctx: ToolContext) {
       description: [
         "Get messages from a session (paginated), with optional metadata filtering.",
         "Use this to read the conversation history.",
-        "Returns the first page of messages with pagination metadata.",
+        "Returns one page of messages with pagination metadata; pass page/size to walk past the first page.",
       ].join("\n"),
       inputSchema: {
         workspace_id: workspaceIdSchema(ctx),
@@ -344,12 +349,15 @@ export function register(server: McpServer, ctx: ToolContext) {
           .record(z.string(), z.unknown())
           .optional()
           .describe("Optional metadata filter criteria."),
+        page: z.number().int().min(1).optional().describe("Page number (1-indexed)."),
+        size: z.number().int().min(1).max(100).optional().describe("Results per page (max 100)."),
+        reverse: z.boolean().optional().describe("Newest first when true."),
       },
     },
-    async ({ workspace_id, session_id, filters }) => {
+    async ({ workspace_id, session_id, filters, page: pageNum, size, reverse }) => {
       try {
         const session = await ctx.clientFor(workspace_id).session(session_id);
-        const page = await session.messages(filters);
+        const page = await session.messages({ filters, page: pageNum, size, reverse });
         return textResult({
           messages: formatMessages(page.items),
           total: page.total,

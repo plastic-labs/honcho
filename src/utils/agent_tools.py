@@ -25,6 +25,7 @@ from src.telemetry.events import (
     emit,
 )
 from src.utils import summarizer
+from src.utils.evidence import EvidenceAccumulator
 from src.utils.formatting import (
     format_datetime_utc,
     format_new_turn_with_timestamp,
@@ -120,7 +121,11 @@ def _base_observation_properties() -> dict[str, Any]:
             "description": (
                 "Document IDs of source or premise observations. Required and "
                 + "must be non-empty for deductive, inductive, and contradiction "
-                + "observations."
+                + "observations. Copy the exact ID shown in [id:xxx] format from "
+                + "observation results (e.g. for '[id:abc123XYZ]' pass "
+                + "'abc123XYZ'). Message search results carry no ID and cannot "
+                + "be cited here; IDs that do not match an existing observation "
+                + "are discarded."
             ),
         },
         "premises": {
@@ -237,7 +242,7 @@ def _deductive_observation_item_schema() -> dict[str, Any]:
                 "type": "array",
                 "items": {"type": "string"},
                 "minItems": 1,
-                "description": "Required non-empty list of source observation IDs supporting the deduction",
+                "description": "Required non-empty list of source observation IDs supporting the deduction. Copy the exact ID shown in [id:xxx] format from observation results; message search results carry no ID and cannot be cited",
             },
             "premises": {
                 "type": "array",
@@ -263,7 +268,7 @@ def _inductive_observation_item_schema() -> dict[str, Any]:
                 "type": "array",
                 "items": {"type": "string"},
                 "minItems": 2,
-                "description": "Required list of at least two source observation IDs supporting the pattern",
+                "description": "Required list of at least two source observation IDs supporting the pattern. Copy the exact ID shown in [id:xxx] format from observation results; message search results carry no ID and cannot be cited",
             },
             "sources": {
                 "type": "array",
@@ -967,6 +972,88 @@ CARD_REFRESH_SPECIALIST_TOOLS: list[dict[str, Any]] = [
 ]
 
 
+# Levels whose source_ids must resolve to real documents before persistence.
+_SOURCE_GROUNDED_LEVELS: tuple[str, ...] = ("deductive", "inductive", "contradiction")
+
+
+async def _filter_ungrounded_source_ids(
+    observations: list[schemas.ObservationInput],
+    *,
+    workspace_name: str,
+    observer: str,
+    observed: str,
+) -> tuple[list[schemas.ObservationInput], list[ObservationFailure]]:
+    """Drop cited source_ids that resolve to no existing document.
+
+    Derived observations must cite the documents they are built on, but models
+    sometimes fabricate ids (or paste message text) to satisfy the tool
+    schema, and nothing downstream re-checks them: a dangling id becomes
+    permanent false provenance, breaks ``get_child_observations`` traversal,
+    and silently skews ``_latest_source_timestamp``. Resolve every cited id
+    against real documents before persistence: fabricated ids are stripped,
+    and an observation left with fewer real sources than
+    ``validate_level_fields`` requires for its level (1, or 2 for
+    contradiction) is rejected as an ``ObservationFailure`` rather than
+    stored.
+
+    Returns (grounded observations, failures for ungrounded observations).
+    """
+    cited_ids: set[str] = set()
+    for obs in observations:
+        if obs.level in _SOURCE_GROUNDED_LEVELS and obs.source_ids:
+            cited_ids.update(obs.source_ids)
+    if not cited_ids:
+        return observations, []
+
+    async with tracked_db("create_observations.ground_sources", read_only=True) as db:
+        docs = await crud.fetch_documents_by_ids(
+            db,
+            workspace_name=workspace_name,
+            observer=observer,
+            observed=observed,
+            document_ids=list(cited_ids),
+        )
+        # Collect ids inside the session scope — the ORM objects expire when
+        # it closes, and a refresh outside it has no session to run on.
+        resolved_ids = {doc.id for doc in docs}
+
+    grounded: list[schemas.ObservationInput] = []
+    failed: list[ObservationFailure] = []
+    for obs in observations:
+        if obs.level not in _SOURCE_GROUNDED_LEVELS or not obs.source_ids:
+            grounded.append(obs)
+            continue
+        real_ids = [sid for sid in obs.source_ids if sid in resolved_ids]
+        dropped = len(obs.source_ids) - len(real_ids)
+        # Mirror the per-level minimums enforced by validate_level_fields.
+        min_sources = 2 if obs.level == "contradiction" else 1
+        if len(real_ids) < min_sources:
+            failed.append(
+                ObservationFailure(
+                    content_preview=obs.content[:50],
+                    error=(
+                        f"{dropped} of {len(obs.source_ids)} source_ids do not "
+                        f"resolve to existing observations; '{obs.level}' requires "
+                        f"at least {min_sources} real source(s) "
+                        f"(cite only ids shown as [id:xxx] in observation results)"
+                    ),
+                )
+            )
+            continue
+        if dropped:
+            logger.warning(
+                "Dropped %d unresolvable source_ids from %s observation in %s/%s/%s",
+                dropped,
+                obs.level,
+                workspace_name,
+                observer,
+                observed,
+            )
+            obs = obs.model_copy(update={"source_ids": real_ids})
+        grounded.append(obs)
+    return grounded, failed
+
+
 async def create_observations(
     observations: list[schemas.ObservationInput],
     observer: str,
@@ -1013,6 +1100,21 @@ async def create_observations(
         logger.info("No non-empty observations to create")
         return ObservationsCreatedResult(created_count=0, created_levels=[], failed=[])
 
+    # Ground cited source_ids against real documents before persistence —
+    # fabricated ids are stripped and observations left without the required
+    # real sources are rejected (see _filter_ungrounded_source_ids).
+    normalized_observations, failed = await _filter_ungrounded_source_ids(
+        normalized_observations,
+        workspace_name=workspace_name,
+        observer=observer,
+        observed=observed,
+    )
+    if not normalized_observations:
+        logger.info("No observations with resolvable source_ids to create")
+        return ObservationsCreatedResult(
+            created_count=0, created_levels=[], failed=failed
+        )
+
     # Ensure collection exists (short DB scope)
     async with tracked_db("create_observations.collection") as db:
         await crud.get_or_create_collection(
@@ -1046,7 +1148,6 @@ async def create_observations(
 
     # Build document objects with pre-computed embeddings
     documents: list[schemas.DocumentCreate] = []
-    failed: list[ObservationFailure] = []
     for i, obs in enumerate(normalized_observations):
         embedding: list[float]
         if embeddings_by_index is not None:
@@ -1075,12 +1176,11 @@ async def create_observations(
                 continue
 
         # Build metadata with level-specific fields
+        # source_ids intentionally omitted from metadata: linkage lives in
+        # the document_sources table (via DocumentCreate.source_ids below).
         metadata = schemas.DocumentMetadata(
             message_ids=message_ids,
             message_created_at=message_created_at,
-            source_ids=obs.source_ids
-            if obs.level in ("deductive", "inductive", "contradiction")
-            else None,
             premises=obs.premises if obs.level == "deductive" else None,
             sources=obs.sources
             if obs.level in ("inductive", "contradiction")
@@ -1209,6 +1309,7 @@ async def search_memory(
     levels: list[str] | None = None,
     embedding: list[float] | None = None,
     session_allowlist: list[str] | None = None,
+    documents_out: list[models.Document] | None = None,
 ) -> Representation:
     """
     Search for observations in memory using semantic similarity.
@@ -1225,6 +1326,9 @@ async def search_memory(
         levels: Optional list of observation levels to filter by
                 (e.g., ["explicit"], ["deductive", "inductive", "contradiction"])
         embedding: Optional pre-computed embedding to avoid redundant API calls
+        documents_out: Optional list the matched documents are appended to, for
+                callers that need the rows and not just the representation
+                built from them
 
     Returns:
         Representation object containing relevant observations
@@ -1256,6 +1360,9 @@ async def search_memory(
         filters=filters or None,
         embedding=embedding,
     )
+
+    if documents_out is not None:
+        documents_out.extend(documents)
 
     return Representation.from_documents(documents)
 
@@ -1467,6 +1574,10 @@ class ToolContext:
     run_id: str | None = None
     agent_type: str | None = None  # "dialectic", "deriver", "dreamer"
     parent_category: str | None = None  # Parent category for CloudEvents
+    # Set only when the caller asked for evidence. Read handlers append the rows
+    # they loaded; `dataclasses.replace` copies of this context share the same
+    # accumulator, so delegating handlers reach it without extra wiring.
+    evidence: EvidenceAccumulator | None = None
 
 
 def _normalize_observation_id(obs_id: str) -> str:
@@ -1919,6 +2030,36 @@ async def _handle_get_recent_history(
     return _maybe_truncated_result(output)
 
 
+def _record_conclusion_evidence(
+    ctx: ToolContext, documents: Sequence[models.Document]
+) -> None:
+    """Record conclusions a read returned, when evidence was asked for."""
+    if ctx.evidence is not None:
+        ctx.evidence.add_documents(documents)
+
+
+def _record_message_evidence(
+    ctx: ToolContext, messages: Sequence[models.Message]
+) -> None:
+    """Record messages a read returned, when evidence was asked for."""
+    if ctx.evidence is not None:
+        ctx.evidence.add_messages(messages)
+
+
+def _record_snippet_evidence(
+    ctx: ToolContext,
+    snippets: Sequence[tuple[list[models.Message], list[models.Message]]],
+) -> None:
+    """Record every message a snippet search surfaced.
+
+    Both halves of a snippet count as read: the surrounding context reaches the
+    prompt the same way the matches do.
+    """
+    for matches, context in snippets:
+        _record_message_evidence(ctx, matches)
+        _record_message_evidence(ctx, context)
+
+
 async def _handle_search_memory(
     ctx: ToolContext, tool_input: dict[str, Any]
 ) -> "str | ToolResult":
@@ -1975,6 +2116,7 @@ async def _handle_search_memory(
             if ctx.session_allowlist is not None
             else None,
         )
+    _record_conclusion_evidence(ctx, documents)
     mem = Representation.from_documents(documents)
     total_count = mem.len()
     if total_count == 0:
@@ -1998,6 +2140,7 @@ async def _handle_search_memory(
                 observer=ctx.observer,
                 session_allowlist=ctx.session_allowlist,
             )
+            _record_snippet_evidence(ctx, snippets)
             if snippets:
                 message_output = _format_message_snippets(
                     snippets, f"for query '{query}'"
@@ -2040,6 +2183,7 @@ async def _handle_get_observation_context(
             observer=ctx.observer or None,
             session_allowlist=ctx.session_allowlist,
         )
+        _record_message_evidence(ctx, messages)
         if not messages:
             return f"No messages found for IDs {tool_input['message_ids']}"
         messages_text = "\n".join(
@@ -2083,6 +2227,7 @@ async def _handle_search_messages(
         observer=ctx.observer or None,
         session_allowlist=ctx.session_allowlist,
     )
+    _record_snippet_evidence(ctx, snippets)
     search_meta: dict[str, Any] = {
         "top_k": limit,
         "used_embedding": True,
@@ -2118,6 +2263,7 @@ async def _handle_grep_messages(
         observer=ctx.observer or None,
         session_allowlist=ctx.session_allowlist,
     )
+    _record_snippet_evidence(ctx, snippets)
     if not snippets:
         return f"No messages found containing '{text}'"
 
@@ -2183,6 +2329,7 @@ async def _handle_get_messages_by_date_range(
             observer=ctx.observer or None,
             session_allowlist=ctx.session_allowlist,
         )
+        _record_message_evidence(ctx, messages)
         msg_count = len(messages)
         messages_text = (
             "\n".join(
@@ -2258,6 +2405,7 @@ async def _handle_search_messages_temporal(
         embedding=query_embedding,
         observer=ctx.observer or None,
     )
+    _record_snippet_evidence(ctx, snippets)
     date_filter: list[str] = []
     if after_date_str:
         date_filter.append(f"after {after_date_str}")
@@ -2508,7 +2656,9 @@ def _format_message_snippets(
         )
 
     output = (
-        f"Found {total_matches} matching messages in {len(snippets)} conversation snippets {desc}:\n\n"
+        f"Found {total_matches} matching messages in {len(snippets)} conversation snippets {desc}.\n"
+        + "These are raw messages with no observation ID - do not cite them in "
+        + "source_ids; use their text in premises/sources instead:\n\n"
         + "\n\n".join(snippet_texts)
     )
     # `[0]` extracts the truncated text — telemetry signal is discarded here
@@ -2545,6 +2695,7 @@ async def _handle_get_reasoning_chain(
             return f"ERROR: Observation '{observation_id}' not found"
 
         doc: Document = docs[0]
+        _record_conclusion_evidence(ctx, [doc])
 
         output_parts: list[str] = []
 
@@ -2558,6 +2709,7 @@ async def _handle_get_reasoning_chain(
                 premises = await crud.get_documents_by_ids(
                     db, ctx.workspace_name, doc.source_ids
                 )
+                _record_conclusion_evidence(ctx, premises)
                 if premises:
                     premise_lines: list[Any] = []
                     for p in premises:
@@ -2575,6 +2727,7 @@ async def _handle_get_reasoning_chain(
                 sources = await crud.get_documents_by_ids(
                     db, ctx.workspace_name, doc.source_ids
                 )
+                _record_conclusion_evidence(ctx, sources)
                 if sources:
                     source_lines: list[Any] = []
                     for s in sources:
@@ -2596,13 +2749,15 @@ async def _handle_get_reasoning_chain(
 
         # Get conclusions if requested
         if direction in ("conclusions", "both"):
-            children = await crud.get_child_observations(
-                db,
+            stmt = crud.get_child_observations(
                 ctx.workspace_name,
                 observation_id,
                 observer=ctx.observer,
                 observed=ctx.observed,
             )
+            result = await db.execute(stmt)
+            children = result.scalars().all()
+            _record_conclusion_evidence(ctx, children)
             if children:
                 child_lines: list[Any] = []
                 for c in children:
@@ -2656,6 +2811,7 @@ async def create_tool_executor(
     parent_category: str | None = None,
     session_allowlist: list[str] | None = None,
     handler_resolver: Callable[[str], Any] | None = None,
+    evidence: EvidenceAccumulator | None = None,
 ) -> Callable[[str, dict[str, Any]], Any]:
     """
     Create a unified tool executor function for all agent operations.
@@ -2683,6 +2839,9 @@ async def create_tool_executor(
         handler_resolver: Optional callback that replaces the default
             handler-table lookup for resolving tool names to handlers.
             Returning None takes the "Unknown tool" path.
+        evidence: Optional accumulator that read handlers record the
+            conclusions and messages they load into. None means evidence was
+            not requested and nothing is collected.
 
     Returns:
         An async callable that executes tools with the captured context
@@ -2705,6 +2864,7 @@ async def create_tool_executor(
         run_id=run_id,
         agent_type=agent_type,
         parent_category=parent_category,
+        evidence=evidence,
     )
 
     async def execute_tool(tool_name: str, tool_input: dict[str, Any]) -> str:
@@ -3099,6 +3259,7 @@ async def create_workspace_tool_executor(
     run_id: str | None = None,
     agent_type: str | None = None,
     parent_category: str | None = None,
+    evidence: EvidenceAccumulator | None = None,
 ) -> Callable[[str, dict[str, Any]], Any]:
     """Tool executor for workspace-level operations (no bound peer pair).
 
@@ -3121,4 +3282,5 @@ async def create_workspace_tool_executor(
         agent_type=agent_type,
         parent_category=parent_category,
         handler_resolver=_workspace_handler_resolver,
+        evidence=evidence,
     )

@@ -431,6 +431,7 @@ DERIVER_MAX_CUSTOM_INSTRUCTIONS_TOKENS=2000
 
 # Worker settings
 DERIVER_WORKERS=1  # Increase for higher throughput
+DERIVER_SCHEDULER=deriver  # Which process runs the scheduling loops: "deriver" or "api"
 DERIVER_POLLING_SLEEP_INTERVAL_SECONDS=1.0
 # Adaptive polling: when idle/erroring, the sleep interval grows from the base
 # toward DERIVER_POLLING_SLEEP_MAX_INTERVAL_SECONDS by the multiplier each cycle,
@@ -439,7 +440,8 @@ DERIVER_POLLING_BACKOFF_ENABLED=true
 DERIVER_POLLING_SLEEP_MAX_INTERVAL_SECONDS=30.0
 DERIVER_POLLING_BACKOFF_MULTIPLIER=2.0
 # Jitter so instances that start together don't poll in lockstep. Startup: sleep
-# a random delay in [0, value] before the first poll (0.0 disables). Per-cycle:
+# a random delay in [0, value] before the first poll (0.0 disables; only applies
+# when DERIVER_SCHEDULER=deriver). Per-cycle:
 # multiply every poll sleep by a random factor in [1-ratio, 1+ratio] (0.0 disables).
 DERIVER_POLLING_STARTUP_JITTER_SECONDS=30.0
 DERIVER_POLLING_JITTER_RATIO=0.5
@@ -640,6 +642,42 @@ TELEMETRY_MAX_RETRIES=3
 TELEMETRY_MAX_BUFFER_SIZE=10000
 ```
 
+#### Trace payloads
+
+Enable content-addressed LLM traces alongside telemetry:
+
+```bash
+TELEMETRY_ENABLED=true
+TELEMETRY_TRACE_PAYLOADS_ENABLED=true
+# Optional: an empty list captures all call purposes.
+TELEMETRY_TRACE_PURPOSES='["dialectic.answer", "deriver.representation", "summary.short", "summary.long"]'
+```
+
+`llm.call.traced` and `embedding.call.traced` use schema version 2. LLM traces
+record each provider attempt, including retries, fallback calls, stream setup
+failures, and interrupted streams. Stream traces preserve the output received
+before interruption. `trace.content` remains at schema version 1.
+
+| Fields | Meaning |
+| --- | --- |
+| `workspace_name`, `session_id` | Workspace and canonical internal session ID, when the operation has a session. Session names are not used as trace identity. |
+| `run_id`, `trace_id`, `span_id`, `parent_span_id`, `iteration`, `step_seq` | Run and call correlation. Single-call operations can have a null iteration and step zero. |
+| `observers`, `observed`, `peer_name`, `agent_type`, `track_name` | LLM producer identity. `observers` lists every observer the call writes to, including single-observer agents, so batched derivation is not a special case. |
+| `source_message_ids`, `queue_item_ids` | Public message IDs and internal queue IDs associated with the LLM operation. Summary message IDs cover its current input window; these fields do not enumerate retrieved tool context or history compressed into an earlier summary. |
+| `duration_ms`, `outcome`, `error_class`, `attempt`, `retry_attempts`, `is_final_attempt` | Execution diagnostics for both LLM and embedding calls. `is_final_attempt` means the configured retry budget is exhausted, so an earlier successful attempt can have `false`. |
+| `was_stream`, `was_fallback`, `effective_max_output_tokens` | LLM execution mode, selected fallback, and effective output limit. |
+| `system_prompt_ref`, `system_prompt_refs`, `output_reasoning_ref` | References into `trace.content` for the system prompt and normalized provider reasoning details. `system_prompt_refs` lists each system message as the provider saw it; `system_prompt_ref` is a single ref for the whole system prompt — the lone message when there is one, otherwise their concatenation shipped under its own hash. |
+
+Fields remain null or empty when unavailable or inapplicable. Root spans have no
+parent; `parent_event_id` is populated only when a caller supplies an actual
+causal event ID. `raw_response_ref` remains reserved because capture stores
+normalized responses rather than provider wire payloads. Stream token counts
+include only usage exposed by the normalized backend; embedding input tokens
+remain estimates. Older trace payloads can omit the new fields.
+
+The CloudEvent ID formula is unchanged. Use the identity and correlation fields
+in `data` to group calls; content references continue to deduplicate by hash.
+
 ### Sentry
 
 ```bash
@@ -754,6 +792,8 @@ ENABLED = false
 
 [telemetry]
 ENABLED = false
+TRACE_PAYLOADS_ENABLED = false
+TRACE_PURPOSES = []
 
 [vector_store]
 TYPE = "pgvector"

@@ -121,9 +121,9 @@ def verify_rename_deriver_disabled_to_deriver(verifier: MigrationVerifier) -> No
     ).one()
     config = session_disabled_true.configuration
     assert "deriver_disabled" not in config, "deriver_disabled should be removed"
-    assert (
-        config.get("deriver_enabled") is False
-    ), "deriver_disabled: true should become deriver_enabled: false"
+    assert config.get("deriver_enabled") is False, (
+        "deriver_disabled: true should become deriver_enabled: false"
+    )
 
     session_disabled_false = conn.execute(
         text(
@@ -136,9 +136,9 @@ def verify_rename_deriver_disabled_to_deriver(verifier: MigrationVerifier) -> No
     ).one()
     config = session_disabled_false.configuration
     assert "deriver_disabled" not in config, "deriver_disabled should be removed"
-    assert (
-        config.get("deriver_enabled") is True
-    ), "deriver_disabled: false should become deriver_enabled: true"
+    assert config.get("deriver_enabled") is True, (
+        "deriver_disabled: false should become deriver_enabled: true"
+    )
 
     session_no_key = conn.execute(
         text(
@@ -151,9 +151,9 @@ def verify_rename_deriver_disabled_to_deriver(verifier: MigrationVerifier) -> No
     ).one()
     config = session_no_key.configuration
     assert "deriver_disabled" not in config, "deriver_disabled should not exist"
-    assert (
-        "deriver_enabled" not in config
-    ), "deriver_enabled should not be added when deriver_disabled was absent"
-    assert (
-        config.get("other_setting") == "value"
-    ), "Other configuration should be preserved"
+    assert "deriver_enabled" not in config, (
+        "deriver_enabled should not be added when deriver_disabled was absent"
+    )
+    assert config.get("other_setting") == "value", (
+        "Other configuration should be preserved"
+    )

@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- CLI requests carry `X-Honcho-Host: honcho-cli/<version> (<platform>)` so telemetry counts them as CLI traffic rather than direct SDK use (#1181)
+
+## [0.1.5] - 2026-09-09
+
+### Added
+
+- `honcho scope` command group: `list`, `create`, `inspect`, `sessions`, `add-sessions`, `remove-session`, `status` (Honcho v3.1.0+) (#1162)
+- `honcho workspace chat` for reasoned questions across all peers (Honcho v3.1.0+) (#1150)
+- `--scope` on `honcho workspace chat` and `honcho peer chat`, and `--sessions` on `honcho peer chat`, to confine recall (Honcho v3.1.0+) (#1151)
+
 ## [0.1.4] - 2026-08-26
 
 ### Added

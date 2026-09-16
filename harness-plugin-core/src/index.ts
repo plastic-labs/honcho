@@ -5,15 +5,16 @@ export {
   resolveConfig,
   DEFAULT_BASE_URL,
   DEFAULT_TIMEOUT_MS,
-} from './config'
+} from './config.js'
 
 export type {
   AuthConfig,
+  Env,
   FileConfig,
   HostBlock,
   ResolvedConfig,
   RootConfig,
-} from './config'
+} from './config.js'
 
 export {
   hostHeaderValue,
@@ -23,6 +24,6 @@ export {
   HEADER_AGENT_MODEL,
   HEADER_HOST,
   HEADER_PLUGIN,
-} from './telemetry'
+} from './telemetry.js'
 
-export type { TelemetryIdentity } from './telemetry'
+export type { TelemetryIdentity } from './telemetry.js'

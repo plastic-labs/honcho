@@ -25,6 +25,7 @@ from src.db import (
     request_context,
 )
 from src.exceptions import HonchoException
+from src.reconciler import ReconcilerScheduler, set_reconciler_scheduler
 from src.routers import (
     conclusions,
     deriver_metrics,
@@ -48,6 +49,7 @@ from src.telemetry.client_context import (
     HEADER_AGENT_MODEL,
     HEADER_HOST,
     HEADER_PLUGIN,
+    HEADER_USER_AGENT,
     reset_client_context,
     set_client_context,
 )
@@ -151,12 +153,23 @@ async def lifespan(_: FastAPI):
     except Exception as e:
         logger.error("Failed to start backlog metrics poller: %s", e)
 
+    reconciler_scheduler = None
+    if settings.DERIVER.SCHEDULER == "api":
+        reconciler_scheduler = ReconcilerScheduler()
+        set_reconciler_scheduler(reconciler_scheduler)
+        try:
+            await reconciler_scheduler.start()
+        except Exception as e:
+            logger.error("Failed to start reconciler scheduler: %s", e)
+
     try:
         yield
     finally:
         # Import here to avoid circular import at module load time
         from src.vector_store import close_external_vector_store
 
+        if reconciler_scheduler is not None:
+            await reconciler_scheduler.shutdown()
         await deriver_metrics_poller.shutdown()
         deriver_metrics.set_deriver_metrics_poller(None)
         await close_external_vector_store()
@@ -182,8 +195,9 @@ app = FastAPI(
         "email": "hello@plasticlabs.ai",
     },
     license_info={
+        # The 3.1 License Object treats `identifier` and `url` as mutually
+        # exclusive, and emitting both makes the schema fail validation.
         "name": "GNU Affero General Public License v3.0",
-        "identifier": "AGPL-3.0-only",
         "url": "https://github.com/plastic-labs/honcho/blob/main/LICENSE",
     },
 )
@@ -261,6 +275,7 @@ async def track_request(
         host=request.headers.get(HEADER_HOST),
         plugin=request.headers.get(HEADER_PLUGIN),
         agent_model=request.headers.get(HEADER_AGENT_MODEL),
+        user_agent=request.headers.get(HEADER_USER_AGENT),
     )
 
     try:

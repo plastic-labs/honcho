@@ -13,6 +13,7 @@ import { Page } from './pagination'
 import type { Scope } from './scope'
 import { Session } from './session'
 import type {
+  ChatResponse,
   MessageResponse,
   PageResponse,
   PeerCardResponse,
@@ -259,6 +260,7 @@ export class Peer {
     filters?: Record<string, unknown>
     reasoning_level?: string
     response_format?: Record<string, unknown>
+    include_evidence?: boolean
   }): Promise<PeerChatResponse> {
     await this._ensureWorkspace()
     return this._http.post<PeerChatResponse>(
@@ -275,6 +277,7 @@ export class Peer {
     filters?: Record<string, unknown>
     reasoning_level?: string
     response_format?: Record<string, unknown>
+    include_evidence?: boolean
   }): Promise<Response> {
     await this._ensureWorkspace()
     return this._http.stream(
@@ -422,8 +425,33 @@ export class Peer {
       sessions?: (string | Session)[]
       reasoningLevel?: string
       responseFormat: ZodType<T>
+      includeEvidence: true
+    }
+  ): Promise<ChatResponse<T>>
+  async chat<T>(
+    query: string,
+    options: {
+      target?: string | Peer
+      session?: string | Session
+      scope?: string | Scope | (string | Scope)[]
+      sessions?: (string | Session)[]
+      reasoningLevel?: string
+      responseFormat: ZodType<T>
+      includeEvidence?: false
     }
   ): Promise<T | null>
+  async chat(
+    query: string,
+    options: {
+      target?: string | Peer
+      session?: string | Session
+      scope?: string | Scope | (string | Scope)[]
+      sessions?: (string | Session)[]
+      reasoningLevel?: string
+      responseFormat?: Record<string, unknown>
+      includeEvidence: true
+    }
+  ): Promise<ChatResponse<string>>
   async chat(
     query: string,
     options?: {
@@ -433,6 +461,7 @@ export class Peer {
       sessions?: (string | Session)[]
       reasoningLevel?: string
       responseFormat?: Record<string, unknown>
+      includeEvidence?: false
     }
   ): Promise<string | null>
   async chat<T>(
@@ -444,8 +473,9 @@ export class Peer {
       sessions?: (string | Session)[]
       reasoningLevel?: string
       responseFormat?: ZodType<T> | Record<string, unknown>
+      includeEvidence?: boolean
     }
-  ): Promise<T | string | null> {
+  ): Promise<ChatResponse<T | string> | T | string | null> {
     const targetId = options?.target
       ? typeof options.target === 'string'
         ? options.target
@@ -465,6 +495,7 @@ export class Peer {
       sessions: options?.sessions,
       reasoningLevel: options?.reasoningLevel,
       responseFormat: options?.responseFormat,
+      includeEvidence: options?.includeEvidence,
     })
 
     const zodSchema =
@@ -480,14 +511,20 @@ export class Peer {
       ...scopeRecallFields(chatParams),
       reasoning_level: chatParams.reasoningLevel,
       response_format: Peer.toResponseFormatSchema(options?.responseFormat),
+      include_evidence: chatParams.includeEvidence ? true : undefined,
     })
-    if (!response.content) {
-      return null
+
+    // An empty answer stays null either way, so evidence is still available
+    // for a run that found nothing to say.
+    const content: T | string | null = response.content
+      ? zodSchema
+        ? (zodSchema.parse(JSON.parse(response.content)) as T)
+        : response.content
+      : null
+    if (!chatParams.includeEvidence) {
+      return content
     }
-    if (zodSchema) {
-      return zodSchema.parse(JSON.parse(response.content))
-    }
-    return response.content
+    return { content, evidence: response.evidence ?? null }
   }
 
   /**
@@ -511,6 +548,10 @@ export class Peer {
    *                           See {@link Peer.chat} for the depth caveat.
    * @param options.reasoningLevel - Optional reasoning level for the query: "minimal", "low", "medium",
    *                                 "high", or "max". Defaults to "low" if not provided.
+   * @param options.includeEvidence - When true, the returned stream's `evidence` is
+   *                                 populated once it has been fully consumed. Evidence
+   *                                 cannot be known before the answer is complete, so the
+   *                                 server sends it on the stream's terminal chunk.
    * @returns Promise resolving to a DialecticStreamResponse that can be iterated over
    *
    * @example
@@ -537,6 +578,7 @@ export class Peer {
       sessions?: (string | Session)[]
       reasoningLevel?: string
       responseFormat?: ZodType | Record<string, unknown>
+      includeEvidence?: boolean
     }
   ): Promise<DialecticStreamResponse> {
     const targetId = options?.target
@@ -558,6 +600,7 @@ export class Peer {
       sessions: options?.sessions,
       reasoningLevel: options?.reasoningLevel,
       responseFormat: options?.responseFormat,
+      includeEvidence: options?.includeEvidence,
     })
 
     const response = await this._chatStream({
@@ -567,6 +610,7 @@ export class Peer {
       ...scopeRecallFields(chatParams),
       reasoning_level: chatParams.reasoningLevel,
       response_format: Peer.toResponseFormatSchema(options?.responseFormat),
+      include_evidence: chatParams.includeEvidence ? true : undefined,
     })
 
     return createDialecticStream(response)

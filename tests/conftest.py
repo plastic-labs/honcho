@@ -960,6 +960,7 @@ def mock_tracked_db(request: pytest.FixtureRequest):
         "src.dependencies.tracked_db",
         "src.deriver.queue_manager.tracked_db",
         "src.deriver.consumer.tracked_db",
+        "src.deriver.deriver.tracked_db",
         "src.deriver.enqueue.tracked_db",
         "src.routers.peers.tracked_db",
         "src.routers.workspaces.tracked_db",
