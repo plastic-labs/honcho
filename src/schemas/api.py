@@ -878,6 +878,8 @@ class EvidenceObservation(BaseModel):
     session_id: str | None = Field(
         default=None, description="Session the conclusion is scoped to, if any"
     )
+    observer_id: str = Field(description="The peer who made the conclusion")
+    observed_id: str = Field(description="The peer the conclusion is about")
     source_ids: list[str] = Field(
         default_factory=list,
         description=(
