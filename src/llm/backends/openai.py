@@ -240,7 +240,7 @@ class OpenAIBackend:
                 # (PromptRepresentation -> empty, others -> raise), which differs
                 # from the parse-fallback terminal below, so it stays a direct call.
                 truncated = exc.completion
-                raw_content = _first_choice(truncated).message.content or ""
+                raw_content = getattr(_first_choice(truncated).message, "content", None) or ""
                 content = repair_response_model_json(
                     raw_content,
                     response_format,
@@ -467,11 +467,14 @@ class OpenAIBackend:
                 )
 
         cache_creation, cache_read = extract_openai_cache_tokens(usage)
-        # content_override=None means no override, not "force content to None"
+        # content_override=None means no override, not "force content to None".
+        # content itself is read via getattr: `_first_choice` guarantees a
+        # message object, not that it carries a content attribute.
+        message_content = getattr(message, "content", None)
         if content_override is not None:
             content: Any = content_override
-        elif message.content is not None:
-            content = message.content
+        elif message_content is not None:
+            content = message_content
         elif tool_calls:
             # Preserve null content on tool-call turns for history replay
             content = None
@@ -571,7 +574,7 @@ class OpenAIBackend:
         raises so the retry/fallback chain engages on a junk response.
         """
         message = _first_choice(response).message
-        raw_content = message.content or ""
+        raw_content = getattr(message, "content", None) or ""
         if raw_content:
             # Fast path: clean JSON validates directly. Only fall back to the
             # repair pipeline when validation fails — repair is comparatively

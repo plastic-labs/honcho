@@ -116,6 +116,40 @@ async def test_partial_usage_degrades_to_zero_tokens() -> None:
     assert result.output_tokens == 0
 
 
+async def test_message_without_content_attribute_is_treated_as_none() -> None:
+    """An absent content attribute must behave like content=None, not raise."""
+    client = _client_returning(
+        SimpleNamespace(
+            choices=[SimpleNamespace(finish_reason="stop", message=SimpleNamespace())],
+            usage=None,
+        )
+    )
+    result = await _complete(client)
+    assert result.content == ""
+
+
+async def test_tool_call_message_without_content_attribute_preserves_null() -> None:
+    """Tool-call turns keep null content for history replay even without the attr."""
+    tool_call = SimpleNamespace(
+        id="call_1",
+        function=SimpleNamespace(name="lookup", arguments="{}"),
+    )
+    client = _client_returning(
+        SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    finish_reason="tool_calls",
+                    message=SimpleNamespace(tool_calls=[tool_call]),
+                )
+            ],
+            usage=None,
+        )
+    )
+    result = await _complete(client)
+    assert result.content is None
+    assert result.tool_calls
+
+
 async def test_json_object_path_with_empty_choices_raises_llm_error() -> None:
     client = _client_returning(SimpleNamespace(choices=[], usage=None))
     with pytest.raises(LLMError):
