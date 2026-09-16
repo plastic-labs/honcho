@@ -269,7 +269,7 @@ src/
 ├── telemetry/           # Observability
 │   ├── emitter.py        # CloudEvents emitter
 │   ├── logging.py        # Logging helpers + route-template extraction
-│   ├── metrics_collector.py, reasoning_traces.py, sentry.py
+│   ├── client_context.py, metrics_collector.py, reasoning_traces.py, sentry.py, tenant.py
 │   ├── events/           # Event type definitions
 │   └── prometheus/       # Prometheus metric definitions
 ├── utils/               # Cross-cutting utilities
