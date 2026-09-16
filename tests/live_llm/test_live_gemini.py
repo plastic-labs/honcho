@@ -137,9 +137,9 @@ async def test_live_gemini_thinking_and_tool_replay(
         "thinking_budget": 512,
     }
     assert first.tool_calls, "Gemini should issue a tool call in the first turn"
-    assert any(
-        tool_call.thought_signature for tool_call in first.tool_calls
-    ), "Gemini tool replay should preserve thought signatures"
+    assert any(tool_call.thought_signature for tool_call in first.tool_calls), (
+        "Gemini tool replay should preserve thought signatures"
+    )
 
     tool_call = first.tool_calls[0]
     tool_result = execute_local_tool(tool_call.name, tool_call.input)

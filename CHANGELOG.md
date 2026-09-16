@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [3.2.0] - 2026-09-15
+
+### Added
+
+- Conclusion attribution on the public API: `source_ids` and `times_derived` on the Conclusions response (already stored on documents, previously stripped). `GET /v3/workspaces/{workspace_id}/conclusions/{conclusion_id}` returns a single conclusion with those fields. `source_ids` is filterable via JSONB containment (`{"source_ids": {"contains": "<id>"}}`); `id`, `level`, `source_ids`, and `times_derived` are explicit entries in the documents filter allowlist. The same `contains` fix applies to other JSONB columns, which previously generated invalid ILIKE-on-JSONB SQL. Message attribution (conclusion → source messages) and chain traversal are follow-ups (#952)
+- Opt-in `include_evidence` on pair and workspace chat (`POST /peers/{id}/chat` and `POST /workspaces/{id}/chat`). When true, the response carries the conclusions and messages the agent read plus the tools it called, so a caller can inspect what an answer was built from. Evidence is collated from what the agent accessed, never reported by the model — it over-reports (a conclusion appears because it was seen, not because the answer used it) but is deterministic and costs no model tokens. Off by default so existing callers are unchanged. Streaming puts evidence on the terminal SSE event only (#1129)
+
+### Changed
+
+- CloudEvents LLM and embedding traces (schema version 2) now carry session, workspace, observers, observed, agent type, track name, source message ids, queue item ids, duration, outcome, retry, and a full `system_prompt_ref`. Streamed calls record once at the provider boundary, including interrupted streams. New fields are nullable so v1 archives still load (#1166)
+- Request middleware falls back to `User-Agent` as the CloudEvents `client.host` when `X-Honcho-Host` is absent, so raw REST clients are distinguishable from SDKs without waiting for SDK upgrades. An explicit `X-Honcho-Host` still wins (#1182)
+
+### Fixed
+
+- Dreamer-written conclusions no longer persist fabricated `source_ids`. Unresolvable ids are stripped at the write path; an observation left below its level's minimum real sources is rejected (#945)
+- LLM provider outages (connection failures and upstream 5xx) now surface as 503 instead of an opaque 500. Exhausted retries re-raise the provider error instead of a tenacity `RetryError`. 4xx including 429 is unchanged. The streaming path is not covered (#1165)
+- Peer-scoped keys on `POST /sessions` and `POST /peers` may only name their own peer, must already be a member to get an existing session, and may not send metadata or configuration for one. Creating a fresh session for itself is unchanged. Session-scoped keys are denied on `POST /peers` (#1172)
+- `get_working_representation` reclaims unused query budget when semantic or most-derived search returns fewer unique documents than requested, filling the remainder from recent observations while preserving search priority (#1008)
+- Redis Cluster async client no longer leaks connections on topology re-init. The pin is now `redis>=8.0.1,<9.0.0` (was `<8.0.0`, which excluded the upstream fix in redis-py 8.0.0) (#1157)
+
 ## [3.1.2] - 2026-09-09
 
 ### Added

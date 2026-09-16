@@ -21,6 +21,9 @@ from src import models
 from src.config import settings
 from src.dependencies import tracked_db
 from src.models import QueueItem
+from src.reconciler.backfill_document_sources import (
+    has_pending_document_sources,
+)
 from src.reconciler.sync_vectors import (
     has_pending_work,
     record_pending_embeddings_backlog,
@@ -51,6 +54,11 @@ RECONCILER_TASKS: dict[str, ReconcilerTask] = {
         name="cleanup_queue",
         work_unit_key="reconciler:cleanup_queue",
         interval_seconds=QUEUE_CLEANUP_INTERVAL_SECONDS,
+    ),
+    "backfill_document_sources": ReconcilerTask(
+        name="backfill_document_sources",
+        work_unit_key="reconciler:backfill_document_sources",
+        interval_seconds=settings.VECTOR_STORE.RECONCILIATION_INTERVAL_SECONDS,
     ),
 }
 
@@ -258,6 +266,13 @@ class ReconcilerScheduler:
                 return False
 
             if task.name == "sync_vectors" and not await has_pending_work(db):
+                logger.debug("Task %s has nothing to do, skipping enqueue", task.name)
+                return False
+
+            if (
+                task.name == "backfill_document_sources"
+                and not await has_pending_document_sources(db)
+            ):
                 logger.debug("Task %s has nothing to do, skipping enqueue", task.name)
                 return False
 

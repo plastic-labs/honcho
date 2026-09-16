@@ -1,12 +1,12 @@
 """Tests for the shared Sentry before_send filter.
 
 default_before_send runs in every entrypoint (API + deriver). It drops known
-non-actionable exceptions and collapses DB connection-pool checkout timeouts
-into a single warning-level issue so they stop spawning a fresh error issue per
-transaction (fleet-wide saturation symptom, tracked in DEV-1852).
+non-actionable exceptions and collapses two fleet-wide symptoms -- DB
+connection-pool checkout timeouts and upstream model provider outages -- into a
+single issue each, so they stop spawning a fresh one per transaction.
 """
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, cast, final
 
 import pytest
 import sentry_sdk
@@ -14,7 +14,12 @@ from fastapi.exceptions import RequestValidationError
 from pydantic import ValidationError
 from sqlalchemy.exc import OperationalError
 
-from src.exceptions import ResourceNotFoundException
+from src.exceptions import (
+    HonchoException,
+    ResourceNotFoundException,
+    SentryPolicy,
+    UpstreamLLMError,
+)
 from src.telemetry.sentry import default_before_send, initialize_sentry
 
 if TYPE_CHECKING:
@@ -42,6 +47,62 @@ def test_unrelated_operational_error_passes_through() -> None:
     exc = OperationalError("SELECT 1", {}, Exception("some other db failure"))
     event = _event(level="error")
     assert default_before_send(event, _hint(exc)) == {"level": "error"}
+
+
+def test_upstream_llm_error_is_consolidated_at_error_level() -> None:
+    """The one HonchoException that survives the drop.
+
+    Provider outages are the deriver's only signal that the upstream is down --
+    it has no status-code metric -- so they stay in Sentry. They stay at error
+    level too: the retry budget and fallback chain are spent by the time one
+    escapes. The fingerprint, not the level, is what keeps the volume down.
+    """
+    out = default_before_send({}, _hint(UpstreamLLMError("the provider is down")))
+    assert out == {
+        "fingerprint": ["honcho-upstream-llm-unavailable"],
+        "level": "error",
+    }
+
+
+def test_policy_is_read_from_the_exception_not_matched_on_by_type() -> None:
+    """A subclass opts into visibility without being named in the filter.
+
+    This is the property that makes the blanket drop safe to keep last: the
+    filter never has to be edited, so there is no branch ordering to get wrong.
+    """
+
+    @final
+    class KeptException(HonchoException):
+        sentry_policy = SentryPolicy(fingerprint="honcho-kept", level="error")
+
+    assert default_before_send({}, _hint(KeptException("kept"))) == {
+        "fingerprint": ["honcho-kept"],
+        "level": "error",
+    }
+
+
+def test_policy_without_a_fingerprint_keeps_sentrys_own_grouping() -> None:
+    """Levelling and regrouping are independent knobs."""
+
+    @final
+    class UngroupedException(HonchoException):
+        sentry_policy = SentryPolicy(level="info")
+
+    assert default_before_send(_event(release="1.0"), _hint(UngroupedException())) == {
+        "release": "1.0",
+        "level": "info",
+    }
+
+
+def test_a_new_exception_defaults_to_being_dropped() -> None:
+    """Declaring nothing inherits the base policy: client-facing, so not a bug report."""
+
+    @final
+    class PlainException(HonchoException):
+        pass
+
+    assert PlainException.sentry_policy is None
+    assert default_before_send({}, _hint(PlainException("plain"))) is None
 
 
 def test_honcho_and_validation_errors_are_dropped() -> None:

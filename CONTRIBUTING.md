@@ -374,8 +374,15 @@ either route works — but a bare `#123` mention is only a reference and does no
 
 If a PR goes quiet, nudge us in [Discord](https://discord.gg/honcho).
 
-Please respond within 7 days - we may close any PRs that have seen no activity within a 7 day
-window. If you need more time, let us know in the PR comments.
+Once a maintainer has asked you for changes, please respond within 7 days. After that a bot
+comments to say the window has run out, and closes the PR 72 hours later if nothing has
+happened. Either of these stops it: a push to the branch, or a comment saying you need more
+time — we would much rather hold a PR open than lose the work. Closing is reversible too;
+reopen and it goes straight back into the review queue.
+
+A PR that is waiting on *us* is never closed for inactivity. If yours has gone quiet on our
+side, that is our backlog and not your problem — nudge us in
+[Discord](https://discord.gg/honcho).
 
 ## Reporting bugs and requesting features
 

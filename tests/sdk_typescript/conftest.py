@@ -58,7 +58,7 @@ def find_free_port() -> int:
 @pytest.fixture(scope="module")
 def ts_db_session(
     db_engine: AsyncEngine,
-) -> Generator[async_sessionmaker[AsyncSession], None, None]:
+) -> Generator[async_sessionmaker[AsyncSession]]:
     """Create a session factory for the TypeScript test module."""
     Session = async_sessionmaker(bind=db_engine, expire_on_commit=False)
     yield Session
@@ -71,7 +71,7 @@ _ts_session_factory: async_sessionmaker[AsyncSession] | None = None
 @pytest.fixture(scope="module")
 def ts_test_server(
     ts_db_session: async_sessionmaker[AsyncSession],
-) -> Generator[str, None, None]:
+) -> Generator[str]:
     """
     Start a real HTTP server for TypeScript SDK tests.
 

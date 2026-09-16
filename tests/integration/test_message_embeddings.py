@@ -5,7 +5,7 @@ These tests verify that message embeddings are created, stored, and can be searc
 """
 
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -58,7 +58,7 @@ def _message(session_name: str, seq_in_session: int) -> models.Message:
         public_id=generate_nanoid(),
         seq_in_session=seq_in_session,
         token_count=1,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
 
@@ -504,7 +504,7 @@ async def test_search_messages_external_lookup_happens_before_tracked_db(
         content="Relevant external search result",
         seq_in_session=1,
         token_count=5,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
     class FakeDb:
@@ -600,8 +600,8 @@ async def test_search_messages_temporal_external_lookup_happens_before_tracked_d
     monkeypatch.setattr(settings.VECTOR_STORE, "TYPE", "external")
 
     call_order: list[str] = []
-    after_date = datetime(2024, 1, 1, tzinfo=timezone.utc)
-    before_date = datetime(2024, 12, 31, tzinfo=timezone.utc)
+    after_date = datetime(2024, 1, 1, tzinfo=UTC)
+    before_date = datetime(2024, 12, 31, tzinfo=UTC)
     message = models.Message(
         workspace_name="workspace",
         session_name="session",
@@ -609,7 +609,7 @@ async def test_search_messages_temporal_external_lookup_happens_before_tracked_d
         content="Relevant temporal external search result",
         seq_in_session=1,
         token_count=5,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
     class FakeDb:

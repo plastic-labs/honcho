@@ -24,15 +24,17 @@ from .api_types import (
     WorkspaceResponse,
 )
 from .base import PeerBase, ScopeBase, SessionBase
+from .conclusions import WorkspaceConclusions
 from .http import AsyncHonchoHTTPClient, HonchoHTTPClient, routes
 from .message import Message
 from .mixins import MetadataConfigMixin
 from .pagination import SyncPage
-from .peer import Peer, serialize_response_format
+from .peer import Peer, parse_chat_response, serialize_response_format
 from .scope import Scope
 from .session import Session
-from .types import DialecticStreamResponse
+from .types import ChatResponse, DialecticStreamResponse
 from .utils import (
+    SSEStreamParser,
     normalize_peers_to_dict,
     parse_sse_stream,
     resolve_id,
@@ -584,6 +586,40 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
             created_at=scope_data.created_at,
         )
 
+    @validate_call
+    def get_scope(
+        self,
+        id: str = Field(  # noqa: A002
+            ..., min_length=1, description="Unprefixed name for the scope"
+        ),
+    ) -> Scope:
+        """
+        Get an existing scope by ID without creating it.
+
+        Unlike :meth:`scope`, this never creates the scope, so it is safe for
+        lookups where a typo must not provision a new recall boundary.
+
+        Args:
+            id: Unprefixed scope name, unique within the workspace.
+
+        Returns:
+            A Scope object for managing membership.
+
+        Raises:
+            ValueError: If the scope ID is invalid.
+            NotFoundError: If no scope with this ID exists in the workspace.
+        """
+        validate_scope_id(id)
+        self._ensure_workspace()
+        data = self._http.get(routes.scope(self.workspace_id, id))
+        scope_data = ScopeResponse.model_validate(data)
+        return Scope(
+            id,
+            self,
+            metadata=scope_data.metadata,
+            created_at=scope_data.created_at,
+        )
+
     def scopes(
         self,
         *,
@@ -702,7 +738,8 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
         | None = None,
         response_format: type[BaseModel] | dict[str, Any] | None = None,
         scope: str | list[str] | None = None,
-    ) -> BaseModel | str | None:
+        include_evidence: bool = False,
+    ) -> ChatResponse[Any] | BaseModel | str | None:
         """
         Query the entire workspace with a natural language question.
 
@@ -720,9 +757,16 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
                              JSON Schema dict (returns a JSON string).
             scope: Optional scope name(s) restricting recall to those scopes'
                    member sessions. Mutually exclusive with `session`.
+            include_evidence: When True, returns a `ChatResponse` carrying the
+                   answer alongside what the dialectic read to produce it.
+                   Evidence is collated from the agent's own reads rather than
+                   reported by the model, so it is broader than a citation
+                   list.
 
         Returns:
-            The synthesized answer, or None if no relevant information.
+            The synthesized answer, or None if no relevant information. With
+            `include_evidence=True`, a `ChatResponse` wrapping that same
+            content plus its evidence.
         """
         self._ensure_workspace()
         resolved_session_id = resolve_id(session)
@@ -736,17 +780,14 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
         response_format_schema = serialize_response_format(response_format)
         if response_format_schema is not None:
             body["response_format"] = response_format_schema
+        if include_evidence:
+            body["include_evidence"] = True
 
         data = self._http.post(
             routes.workspace_chat(self.workspace_id),
             body=body,
         )
-        content = data.get("content")
-        if not content:
-            return None
-        if isinstance(response_format, type):
-            return response_format.model_validate_json(content)
-        return content
+        return parse_chat_response(data, response_format, include_evidence)
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     def chat_stream(
@@ -758,8 +799,13 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
         | None = None,
         response_format: type[BaseModel] | dict[str, Any] | None = None,
         scope: str | list[str] | None = None,
+        include_evidence: bool = False,
     ) -> DialecticStreamResponse:
-        """Streaming variant of :meth:`chat`. See chat() for argument docs."""
+        """Streaming variant of :meth:`chat`. See chat() for argument docs.
+
+        With include_evidence, the returned stream's `evidence` is populated
+        once it has been fully consumed.
+        """
         self._ensure_workspace()
         resolved_session_id = resolve_id(session)
         body: dict[str, Any] = {"query": query, "stream": True}
@@ -772,6 +818,12 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
         response_format_schema = serialize_response_format(response_format)
         if response_format_schema is not None:
             body["response_format"] = response_format_schema
+        if include_evidence:
+            body["include_evidence"] = True
+
+        # The parser holds the evidence that arrives on the final event, so it
+        # has to outlive the generator that drains the stream.
+        parser = SSEStreamParser()
 
         def stream_response() -> Generator[str, None, None]:
             yield from parse_sse_stream(
@@ -779,10 +831,11 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
                     "POST",
                     routes.workspace_chat(self.workspace_id),
                     body=body,
-                )
+                ),
+                parser=parser,
             )
 
-        return DialecticStreamResponse(stream_response())
+        return DialecticStreamResponse(stream_response(), lambda: parser.evidence)
 
     @validate_call
     def search(
@@ -902,6 +955,23 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
                 "dream_type": "omni",
             },
         )
+
+    @property
+    def conclusions(self) -> WorkspaceConclusions:
+        """Workspace-wide conclusions. No observer/observed pair is implied.
+
+        Use this to list or look up conclusions across the workspace. Pair-
+        scoped create/query/delete stay on ``peer.conclusions``.
+
+        Example:
+            ```python
+            honcho.conclusions.list()
+            honcho.conclusions.list(filters={"observed_id": "alice"})
+            honcho.conclusions.list(filters={"session_id": session.id})
+            honcho.conclusions.get(conclusion_id)
+            ```
+        """
+        return WorkspaceConclusions(self)
 
     def __repr__(self) -> str:
         """

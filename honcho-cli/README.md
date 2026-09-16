@@ -109,6 +109,17 @@ honcho stop --wipe     # also delete volumes
 | `honcho session get-metadata <id>` / `set-metadata` | Metadata operations |
 | `honcho session delete <id>` | Destructive; requires `--yes` |
 
+### Scopes
+
+| Command | Description |
+|---------|-------------|
+| `honcho scope list` | List scopes in the workspace |
+| `honcho scope create <name>` | Create or get a scope (`--sessions id,...` to add members, `--metadata`) |
+| `honcho scope inspect <name>` | Metadata, member sessions, backfill summary. Never creates a missing scope |
+| `honcho scope sessions <name>` | Member sessions, longest-standing first |
+| `honcho scope add-sessions <name> <ids...>` / `remove-session <name> <id>` | Membership; history backfills asynchronously |
+| `honcho scope status <name>` | Per-session backfill state — recall is complete once nothing is `pending` |
+
 ### Messages
 
 | Command | Description |

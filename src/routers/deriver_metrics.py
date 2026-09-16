@@ -18,7 +18,9 @@ def set_deriver_metrics_poller(poller: DeriverMetricsPoller | None) -> None:
     _poller = poller
 
 
-@router.get("/metrics")
+# Deriver queue internals: an operational signal for scaling, not a public
+# resource.
+@router.get("/metrics", include_in_schema=False)
 async def get_deriver_metrics_response() -> dict[str, float | int]:
     """Seconds of outstanding deriver work, plus the raw counts behind it."""
     snapshot = _poller.snapshot if _poller is not None else None
