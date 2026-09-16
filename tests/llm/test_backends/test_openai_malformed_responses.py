@@ -11,6 +11,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from openai import LengthFinishReasonError
+from pydantic import BaseModel
 
 from src.exceptions import LLMError
 from src.llm.backends.openai import OpenAIBackend
@@ -95,3 +97,19 @@ async def test_json_object_path_with_empty_choices_raises_llm_error() -> None:
             response_format={"type": "json_object"},
             extra_params={"json_mode": True},
         )
+
+
+async def test_truncation_repair_with_truthy_non_indexable_choices_raises_llm_error() -> None:
+    class Answer(BaseModel):
+        answer: str
+
+    # LengthFinishReasonError carries the raw completion from the provider; a
+    # gateway that returned a truthy but non-indexable `choices` must surface
+    # as the controlled LLMError, not as a raw KeyError from the repair branch.
+    broken_completion = SimpleNamespace(choices={"0": {"message": {}}}, usage=None)
+    client = Mock()
+    client.chat.completions.parse = AsyncMock(
+        side_effect=LengthFinishReasonError(completion=broken_completion)
+    )
+    with pytest.raises(LLMError):
+        await _complete(client, response_format=Answer)

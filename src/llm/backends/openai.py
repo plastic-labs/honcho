@@ -240,7 +240,7 @@ class OpenAIBackend:
                 # (PromptRepresentation -> empty, others -> raise), which differs
                 # from the parse-fallback terminal below, so it stays a direct call.
                 truncated = exc.completion
-                raw_content = truncated.choices[0].message.content or ""
+                raw_content = _first_choice(truncated).message.content or ""
                 content = repair_response_model_json(
                     raw_content,
                     response_format,
