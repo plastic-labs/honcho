@@ -89,6 +89,33 @@ async def test_missing_usage_attribute_degrades_to_zero_tokens() -> None:
     assert result.output_tokens == 0
 
 
+async def test_partial_usage_degrades_to_zero_tokens() -> None:
+    """A truthy usage object with missing/None token fields must not raise."""
+    message = SimpleNamespace(content="Hello", tool_calls=None)
+
+    usage = SimpleNamespace(model="gpt-5-mini")  # no token fields at all
+    client = _client_returning(
+        SimpleNamespace(
+            choices=[SimpleNamespace(finish_reason="stop", message=message)],
+            usage=usage,
+        )
+    )
+    result = await _complete(client)
+    assert result.input_tokens == 0
+    assert result.output_tokens == 0
+
+    usage = SimpleNamespace(prompt_tokens=None, completion_tokens=None)
+    client = _client_returning(
+        SimpleNamespace(
+            choices=[SimpleNamespace(finish_reason="stop", message=message)],
+            usage=usage,
+        )
+    )
+    result = await _complete(client)
+    assert result.input_tokens == 0
+    assert result.output_tokens == 0
+
+
 async def test_json_object_path_with_empty_choices_raises_llm_error() -> None:
     client = _client_returning(SimpleNamespace(choices=[], usage=None))
     with pytest.raises(LLMError):

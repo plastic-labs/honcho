@@ -480,8 +480,8 @@ class OpenAIBackend:
 
         return CompletionResult(
             content=content,
-            input_tokens=usage.prompt_tokens if usage else 0,
-            output_tokens=usage.completion_tokens if usage else 0,
+            input_tokens=getattr(usage, "prompt_tokens", 0) or 0,
+            output_tokens=getattr(usage, "completion_tokens", 0) or 0,
             cache_creation_input_tokens=cache_creation,
             cache_read_input_tokens=cache_read,
             finish_reason=finish_reason or "stop",
