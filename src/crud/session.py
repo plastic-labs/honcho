@@ -633,7 +633,7 @@ async def delete_session(
 
             # Try to delete from external vector store (best effort)
             try:
-                namespace = external_vector_store.get_vector_namespace(
+                namespace = await external_vector_store.get_vector_namespace(
                     "message", workspace_name
                 )
                 await external_vector_store.delete_many(namespace, vector_ids)
@@ -676,7 +676,7 @@ async def delete_session(
             # Group document IDs by namespace (observer/observed)
             docs_by_namespace: dict[str, list[str]] = {}
             for doc in documents:
-                namespace = external_vector_store.get_vector_namespace(
+                namespace = await external_vector_store.get_vector_namespace(
                     "document",
                     workspace_name,
                     doc.observer,
