@@ -9,6 +9,36 @@ This package versions independently of the Honcho API, `@honcho-ai/sdk`, and hos
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-17
+
+### Added
+
+- Conclusion attribution (Honcho v3.2.0+). `list_conclusions` and
+  `query_conclusions` now return `level`, `source_ids` and `times_derived`
+  alongside the content the server was already sending, so a client can tell an
+  extracted fact from a dreamed one and see what a derived conclusion rests on.
+- `get_conclusions` fetches conclusions by ID from anywhere in the workspace,
+  with no observer/observed pair required, and reports which of the requested
+  IDs no longer exist. Feed it a conclusion's `source_ids` to walk a reasoning
+  chain down to the explicit facts underneath it.
+- `get_derived_conclusions` walks the same edge upward, listing what was built
+  on top of a given conclusion — worth checking before deleting or correcting
+  one.
+- `include_evidence` on `chat` and `workspace_chat` (Honcho v3.2.0+). Opting in
+  returns the answer together with the conclusions and messages the agent read
+  and the tools it called, for auditing what an answer was built from. Evidence
+  is collated from what the agent accessed rather than reported by the model, so
+  it over-reports and costs no extra model tokens. Without the flag both tools
+  return the bare answer exactly as before.
+- Paging and filtering on `list_conclusions`: `page`, `size`, `reverse`,
+  `session_id`, and a `filters` passthrough. Previously it always returned the
+  first page of 50 with no way to narrow it.
+
+### Changed
+
+- Requires `@honcho-ai/sdk` 2.5.0 (was 2.4.0), which carries the attribution
+  fields and the evidence-bearing chat response.
+
 ## [0.1.1] - 2026-09-11
 
 ### Added
