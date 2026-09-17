@@ -22,7 +22,7 @@ from src import models
 from src.config import settings
 from src.dependencies import service_db
 from src.embedding_client import embedding_client
-from src.exceptions import VectorStoreError
+from src.exceptions import VectorNamespaceUnresolved, VectorStoreError
 from src.telemetry import prometheus_metrics
 from src.telemetry.events import EmbeddingCallPurpose
 from src.utils.types import embedding_call_purpose
@@ -353,16 +353,39 @@ async def _sync_documents(
         failed_count += len(failed_to_embed)
 
     # Step 2: Build vector records and upsert to external store (all cases)
+    # region ai
+    # Resolution is contained per row, not per batch. This selection spans every tenant,
+    # so an unresolvable one — no key yet, or a failed read — would otherwise raise here,
+    # before the upsert's own error handling, and roll the transaction back before any
+    # row's attempt counter moved. The bad row would stay pending, sort to the front of
+    # the next batch and take its co-tenants down with it on every cycle, forever.
+    # Skipping it into the same backoff accounting lets it reach MAX_SYNC_ATTEMPTS like
+    # any other persistent failure.
+    # endregion
     by_namespace: dict[str, list[models.Document]] = {}
+    unresolved: list[models.Document] = []
     for doc in documents:
+        try:
+            prefix = await prefix_for_tenant(doc.tenant_id)
+        except (VectorNamespaceUnresolved, VectorStoreError):
+            logger.warning(
+                "No vector namespace for tenant %s; deferring its documents",
+                doc.tenant_id,
+            )
+            unresolved.append(doc)
+            continue
         ns = await external_vector_store.get_vector_namespace(
             "document",
             doc.workspace_name,
             doc.observer,
             doc.observed,
-            prefix=await prefix_for_tenant(doc.tenant_id),
+            prefix=prefix,
         )
         by_namespace.setdefault(ns, []).append(doc)
+
+    if unresolved:
+        await _bump_document_sync_attempts(db, unresolved)
+        failed_count += len(unresolved)
 
     for namespace, docs in by_namespace.items():
         docs_to_sync: list[models.Document] = []
@@ -533,14 +556,29 @@ async def _sync_message_embeddings(
     chunk_position = await compute_chunk_positions(db, message_ids)
 
     # Step 3: Build vector records and upsert to external store (all cases)
+    # ai: contained per row for the same reason as the document path — one unresolvable tenant must not wedge the whole cross-tenant batch
     by_namespace: dict[str, list[models.MessageEmbedding]] = {}
+    unresolved: list[models.MessageEmbedding] = []
     for emb in embeddings:
+        try:
+            prefix = await prefix_for_tenant(emb.tenant_id)
+        except (VectorNamespaceUnresolved, VectorStoreError):
+            logger.warning(
+                "No vector namespace for tenant %s; deferring its embeddings",
+                emb.tenant_id,
+            )
+            unresolved.append(emb)
+            continue
         ns = await external_vector_store.get_vector_namespace(
             "message",
             emb.workspace_name,
-            prefix=await prefix_for_tenant(emb.tenant_id),
+            prefix=prefix,
         )
         by_namespace.setdefault(ns, []).append(emb)
+
+    if unresolved:
+        await _bump_message_embedding_sync_attempts(db, unresolved)
+        failed_count += len(unresolved)
 
     for namespace, embs in by_namespace.items():
         embs_to_sync: list[models.MessageEmbedding] = []

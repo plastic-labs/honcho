@@ -23,6 +23,7 @@ from src.embedding_client import EmbeddingTokenLimitError, embedding_client
 from src.exceptions import (
     ResourceNotFoundException,
     ValidationException,
+    VectorNamespaceUnresolved,
     VectorStoreError,
 )
 from src.utils.filter import apply_filter
@@ -1489,13 +1490,22 @@ async def cleanup_soft_deleted_documents(
 
     # Group by namespace for batch vector deletion
     by_namespace: dict[str, list[str]] = {}
+    # ai: contained per row — this sweep spans tenants, and an unresolvable one must not strand the rest of the batch's soft-deleted rows
     for doc in documents:
+        try:
+            prefix = await prefix_for_tenant(doc.tenant_id)
+        except (VectorNamespaceUnresolved, VectorStoreError):
+            logger.warning(
+                "No vector namespace for tenant %s; leaving its soft-deleted documents",
+                doc.tenant_id,
+            )
+            continue
         namespace = await external_vector_store.get_vector_namespace(
             "document",
             doc.workspace_name,
             doc.observer,
             doc.observed,
-            prefix=await prefix_for_tenant(doc.tenant_id),
+            prefix=prefix,
         )
         by_namespace.setdefault(namespace, []).append(doc.id)
 

@@ -487,7 +487,7 @@ class TestBackgroundPathPerTenantNamespaces:
     """The cross-tenant background paths resolve a namespace per row, not per batch."""
 
     async def _create_tenant_scoped_document(
-        self, db_session: AsyncSession, *, vector_correlation_id: str
+        self, db_session: AsyncSession, *, vector_correlation_id: str | None
     ) -> tuple[models.Document, models.Workspace, models.Peer]:
         """Commit a fresh tenant with its own workspace, peer, collection, and one
         pending document -- everything one row of a cross-tenant batch needs."""
@@ -572,6 +572,145 @@ class TestBackgroundPathPerTenantNamespaces:
         assert {r.id for r in store.upserts_by_namespace[expected_namespace_b]} == {
             doc_b.id
         }
+
+    async def test_document_batch_with_one_unresolvable_tenant_does_not_abort_the_rest(
+        self, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A tenant with no vector_correlation_id must not roll back or block a
+        co-batched tenant's documents, and its own rows get their sync_attempts
+        bumped rather than being left untouched."""
+        monkeypatch.setattr(settings, "MULTI_TENANT", True)
+
+        good_doc, good_workspace, good_peer = await self._create_tenant_scoped_document(
+            db_session, vector_correlation_id="tenant-good-app"
+        )
+        bad_doc, _bad_workspace, _bad_peer = await self._create_tenant_scoped_document(
+            db_session, vector_correlation_id=None
+        )
+        assert bad_doc.sync_attempts == 0
+
+        store = _NamespaceRecordingVectorStore()
+        synced, failed = await _sync_documents(db_session, [good_doc, bad_doc], store)
+
+        assert synced == 1
+        assert failed == 1
+
+        expected_namespace = (
+            f"tenant-good-app.doc."
+            f"{_hash_namespace_components(good_workspace.name, good_peer.name, good_peer.name)}"
+        )
+        assert set(store.upserts_by_namespace) == {expected_namespace}
+        assert {r.id for r in store.upserts_by_namespace[expected_namespace]} == {
+            good_doc.id
+        }
+
+        await db_session.refresh(bad_doc)
+        assert bad_doc.sync_state == "pending"
+        assert bad_doc.sync_attempts == 1
+
+    async def _create_tenant_scoped_message_embedding(
+        self, db_session: AsyncSession, *, vector_correlation_id: str | None
+    ) -> tuple[models.MessageEmbedding, models.Workspace, models.Peer]:
+        """Commit a fresh tenant with its own workspace, peer, session, message,
+        and one pending message embedding -- everything one row of a cross-tenant
+        batch needs."""
+        tenant_id = str(generate_nanoid())
+        db_session.add(
+            models.Tenant(
+                tenant_id=tenant_id, vector_correlation_id=vector_correlation_id
+            )
+        )
+        workspace = models.Workspace(name=str(generate_nanoid()), tenant_id=tenant_id)
+        db_session.add(workspace)
+        await db_session.commit()
+
+        peer = models.Peer(
+            name=str(generate_nanoid()),
+            workspace_name=workspace.name,
+            tenant_id=tenant_id,
+        )
+        db_session.add(peer)
+        await db_session.commit()
+
+        session = models.Session(
+            name=str(generate_nanoid()),
+            workspace_name=workspace.name,
+            tenant_id=tenant_id,
+        )
+        db_session.add(session)
+        await db_session.commit()
+
+        message = models.Message(
+            public_id=str(generate_nanoid()),
+            session_name=session.name,
+            workspace_name=workspace.name,
+            peer_name=peer.name,
+            tenant_id=tenant_id,
+            content="hello world",
+            seq_in_session=1,
+        )
+        db_session.add(message)
+        await db_session.commit()
+
+        emb = models.MessageEmbedding(
+            content=message.content,
+            message_id=message.public_id,
+            workspace_name=workspace.name,
+            session_name=session.name,
+            peer_name=peer.name,
+            tenant_id=tenant_id,
+            sync_state="pending",
+            embedding=[1.0] * 1536,
+        )
+        db_session.add(emb)
+        await db_session.commit()
+        await db_session.refresh(emb)
+        return emb, workspace, peer
+
+    async def test_message_embedding_batch_with_one_unresolvable_tenant_does_not_abort_the_rest(
+        self, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A tenant with no vector_correlation_id must not roll back or block a
+        co-batched tenant's message embeddings, and its own rows get their
+        sync_attempts bumped rather than being left untouched."""
+        monkeypatch.setattr(settings, "MULTI_TENANT", True)
+
+        (
+            good_emb,
+            good_workspace,
+            _good_peer,
+        ) = await self._create_tenant_scoped_message_embedding(
+            db_session, vector_correlation_id="tenant-good-app"
+        )
+        (
+            bad_emb,
+            _bad_workspace,
+            _bad_peer,
+        ) = await self._create_tenant_scoped_message_embedding(
+            db_session, vector_correlation_id=None
+        )
+        assert bad_emb.sync_attempts == 0
+
+        store = _NamespaceRecordingVectorStore()
+        synced, failed = await _sync_message_embeddings(
+            db_session, [good_emb, bad_emb], store
+        )
+
+        assert synced == 1
+        assert failed == 1
+
+        expected_namespace = (
+            f"tenant-good-app.msg.{_hash_namespace_components(good_workspace.name)}"
+        )
+        assert set(store.upserts_by_namespace) == {expected_namespace}
+        assert {
+            r.metadata["message_id"]
+            for r in store.upserts_by_namespace[expected_namespace]
+        } == {good_emb.message_id}
+
+        await db_session.refresh(bad_emb)
+        assert bad_emb.sync_state == "pending"
+        assert bad_emb.sync_attempts == 1
 
 
 @pytest.mark.asyncio

@@ -598,6 +598,22 @@ async def sample_data(
 
 
 @pytest.fixture(autouse=True)
+def _reset_vector_namespace_cache():  # pyright: ignore[reportUnusedFunction]
+    """Drop every memoized tenant namespace prefix around each test.
+
+    The cache is process-global and never expires, so one test's resolved prefix
+    would otherwise satisfy or contradict another's assertion depending on run
+    order. Several modules outside tests/vector_store/ now resolve real prefixes,
+    so this belongs here rather than in any one of them.
+    """
+    from src.vector_store.tenant_namespace import reset_prefix_cache
+
+    reset_prefix_cache()
+    yield
+    reset_prefix_cache()
+
+
+@pytest.fixture(autouse=True)
 def mock_langfuse():
     """Mock Langfuse decorator and context during tests"""
     with (
