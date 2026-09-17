@@ -439,7 +439,7 @@ class OpenAIBackend:
     ) -> CompletionResult:
         choice = _first_choice(response)
         usage = getattr(response, "usage", None)
-        finish_reason = choice.finish_reason
+        finish_reason = getattr(choice, "finish_reason", None)
         tool_calls: list[ToolCallResult] = []
         message = choice.message
         if getattr(message, "tool_calls", None):

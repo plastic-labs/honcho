@@ -128,6 +128,19 @@ async def test_message_without_content_attribute_is_treated_as_none() -> None:
     assert result.content == ""
 
 
+async def test_choice_without_finish_reason_falls_back_to_stop() -> None:
+    """A choice with a valid message but no finish_reason must use the fallback."""
+    client = _client_returning(
+        SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="Hello"))],
+            usage=None,
+        )
+    )
+    result = await _complete(client)
+    assert result.content == "Hello"
+    assert result.finish_reason == "stop"
+
+
 async def test_tool_call_message_without_content_attribute_preserves_null() -> None:
     """Tool-call turns keep null content for history replay even without the attr."""
     tool_call = SimpleNamespace(
