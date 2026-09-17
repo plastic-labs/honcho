@@ -39,7 +39,7 @@ from src.config import settings
 from src.db import tenant_context
 from src.dependencies import tracked_db
 from src.embedding_client import embedding_client
-from src.exceptions import VectorStoreError
+from src.exceptions import VectorNamespaceUnresolved, VectorStoreError
 from src.reconciler.sync_vectors import (
     backoff_eligible,
     build_message_vector_record,
@@ -347,12 +347,21 @@ async def _upsert_external(
     async with tracked_db("embed_now_positions", tenant_id=tenant_id) as db:
         chunk_position = await compute_chunk_positions(db, message_ids)
 
+    # ai: contained per chunk — this claim spans tenants, and an unresolvable one must leave the rest of the batch to the reconciler rather than abort it
     by_namespace: dict[str, list[_ClaimedChunk]] = {}
     for c in claimed:
+        try:
+            prefix = await prefix_for_tenant(c.tenant_id)
+        except (VectorNamespaceUnresolved, VectorStoreError):
+            logger.warning(
+                "No vector namespace for tenant %s; leaving its chunks to the reconciler",
+                c.tenant_id,
+            )
+            continue
         ns = await external.get_vector_namespace(
             "message",
             c.workspace_name,
-            prefix=await prefix_for_tenant(c.tenant_id),
+            prefix=prefix,
         )
         by_namespace.setdefault(ns, []).append(c)
 

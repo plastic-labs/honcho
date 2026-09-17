@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import models
 from src.config import settings
 from src.db import tenant_context
-from src.exceptions import VectorStoreError
+from src.exceptions import VectorNamespaceUnresolved
 from src.vector_store import _hash_namespace_components
 from src.vector_store import tenant_namespace as tenant_namespace_module
 from src.vector_store.tenant_namespace import (
@@ -167,7 +167,7 @@ async def test_flag_on_no_tenant_bound_fails_closed(
     monkeypatch.setattr(settings, "MULTI_TENANT", True)
     token = tenant_context.set(None)
     try:
-        with pytest.raises(VectorStoreError):
+        with pytest.raises(VectorNamespaceUnresolved):
             await resolve_namespace_prefix()
     finally:
         tenant_context.reset(token)
@@ -183,7 +183,7 @@ async def test_flag_on_bound_tenant_with_no_registered_row_fails_closed(
     unregistered_tenant_id = f"unregistered-{generate_nanoid()}"
     token = tenant_context.set(unregistered_tenant_id)
     try:
-        with pytest.raises(VectorStoreError):
+        with pytest.raises(VectorNamespaceUnresolved):
             await resolve_namespace_prefix()
     finally:
         tenant_context.reset(token)
@@ -200,7 +200,7 @@ async def test_flag_on_tenant_with_unset_correlation_id_fails_closed(
 
     token = tenant_context.set(tenant_id)
     try:
-        with pytest.raises(VectorStoreError):
+        with pytest.raises(VectorNamespaceUnresolved):
             await resolve_namespace_prefix()
     finally:
         tenant_context.reset(token)
@@ -232,9 +232,9 @@ async def test_prefix_for_tenant_fails_closed_on_missing_tenant_id(
 ) -> None:
     """A background row with no tenant id (None or empty) must raise, flag on."""
     monkeypatch.setattr(settings, "MULTI_TENANT", True)
-    with pytest.raises(VectorStoreError):
+    with pytest.raises(VectorNamespaceUnresolved):
         await prefix_for_tenant(None)
-    with pytest.raises(VectorStoreError):
+    with pytest.raises(VectorNamespaceUnresolved):
         await prefix_for_tenant("")
 
 
