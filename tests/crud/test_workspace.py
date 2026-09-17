@@ -737,9 +737,9 @@ class TestDeleteWorkspaceTenantScopedQueueCleanup:
 class TestDeleteWorkspaceVectorNamespaceScoping:
     """delete_workspace's vector-store deletion must be scoped to the deleting tenant.
 
-    The read-path collision is the ticket's headline; this destructive write is the
-    one that cannot be undone (delete_namespace has no inverse), so it gets its own
-    pin independent of the namespace-resolution tests.
+    A namespace collision is a read leak in both directions, but this side is the one
+    that cannot be undone (delete_namespace has no inverse), so it gets its own pin
+    independent of the namespace-resolution tests.
     """
 
     @pytest.mark.asyncio
