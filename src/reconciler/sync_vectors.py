@@ -27,6 +27,7 @@ from src.telemetry import prometheus_metrics
 from src.telemetry.events import EmbeddingCallPurpose
 from src.utils.types import embedding_call_purpose
 from src.vector_store import VectorRecord, VectorStore, get_external_vector_store
+from src.vector_store.tenant_namespace import prefix_for_tenant
 
 logger = logging.getLogger(__name__)
 
@@ -354,8 +355,12 @@ async def _sync_documents(
     # Step 2: Build vector records and upsert to external store (all cases)
     by_namespace: dict[str, list[models.Document]] = {}
     for doc in documents:
-        ns = external_vector_store.get_vector_namespace(
-            "document", doc.workspace_name, doc.observer, doc.observed
+        ns = await external_vector_store.get_vector_namespace(
+            "document",
+            doc.workspace_name,
+            doc.observer,
+            doc.observed,
+            prefix=await prefix_for_tenant(doc.tenant_id),
         )
         by_namespace.setdefault(ns, []).append(doc)
 
@@ -530,7 +535,11 @@ async def _sync_message_embeddings(
     # Step 3: Build vector records and upsert to external store (all cases)
     by_namespace: dict[str, list[models.MessageEmbedding]] = {}
     for emb in embeddings:
-        ns = external_vector_store.get_vector_namespace("message", emb.workspace_name)
+        ns = await external_vector_store.get_vector_namespace(
+            "message",
+            emb.workspace_name,
+            prefix=await prefix_for_tenant(emb.tenant_id),
+        )
         by_namespace.setdefault(ns, []).append(emb)
 
     for namespace, embs in by_namespace.items():
