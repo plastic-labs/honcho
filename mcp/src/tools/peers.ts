@@ -300,6 +300,19 @@ export function register(server: McpServer, ctx: ToolContext) {
           .string()
           .optional()
           .describe("Optional: scope to a specific session."),
+        scope: z
+          .union([z.string(), z.array(z.string()).max(100)])
+          .optional()
+          .describe(
+            "Optional: confine the representation to a scope. A single scope name reads that scope's own reasoned view (all conclusion levels). A list of scope names is an allowlist: explicit conclusions from the union of their sessions only.",
+          ),
+        sessions: z
+          .array(z.string())
+          .max(1000)
+          .optional()
+          .describe(
+            "Optional: allowlist of session IDs to confine the representation to (explicit conclusions only). Use for an ad hoc boundary without provisioning a scope.",
+          ),
         search_query: z
           .string()
           .optional()
@@ -315,6 +328,8 @@ export function register(server: McpServer, ctx: ToolContext) {
       peer_id,
       target_peer_id,
       session_id,
+      scope,
+      sessions,
       search_query,
       max_conclusions,
     }) => {
@@ -323,6 +338,8 @@ export function register(server: McpServer, ctx: ToolContext) {
         const rep = await peer.representation({
           target: target_peer_id,
           session: session_id,
+          scope,
+          sessions,
           searchQuery: search_query,
           maxConclusions: max_conclusions,
         });
