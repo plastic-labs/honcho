@@ -194,6 +194,10 @@ class HonchoHarness:
         """
         Get environment variables for database configuration, cache configuration, and required API keys.
 
+        Every connection-shaped setting the harness owns is pinned here, so an
+        ambient value (e.g. a staging dotenv loaded into a CI job) cannot point
+        a subprocess at something other than the containers this harness runs.
+
         Returns:
             Dictionary of environment variables for database connection, cache, and API keys
         """
@@ -201,6 +205,8 @@ class HonchoHarness:
             "DB_CONNECTION_URI": self.db_connection_uri,
             "CACHE_ENABLED": "true",
             "CACHE_URL": f"redis://localhost:{self.redis_port}/0",
+            # The harness Redis is standalone; a cluster client cannot talk to it.
+            "CACHE_CLUSTER": "false",
         }
 
     def start_database(self) -> None:

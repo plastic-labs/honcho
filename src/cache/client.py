@@ -223,8 +223,8 @@ async def init_cache() -> None:
             )
 
         except Exception as setup_err:
-            logger.warning(
-                "Cache setup failed for %s: %s. Falling back to in-memory cache",
+            logger.error(
+                "Cache setup failed for %s: %s. Falling back to a process-local in-memory cache; invalidations will not reach other processes",
                 _redact_cache_url(settings.CACHE.URL),
                 setup_err,
             )
@@ -258,8 +258,8 @@ async def init_cache() -> None:
                             _redact_cache_url(settings.CACHE.URL),
                         )
         except (redis_exc.TimeoutError, redis_exc.ConnectionError, TimeoutError) as e:
-            logger.warning(
-                "Failed to connect to cache at %s: %s. Falling back to in-memory cache",
+            logger.error(
+                "Failed to connect to cache at %s: %s. Falling back to a process-local in-memory cache; invalidations will not reach other processes",
                 _redact_cache_url(settings.CACHE.URL),
                 e,
             )
@@ -269,8 +269,8 @@ async def init_cache() -> None:
             await cache.close()
             cache.setup("mem://", pickle_type=PicklerType.SQLALCHEMY)
         except Exception as e:
-            logger.warning(
-                "Unexpected cache error at %s: %s. Falling back to in-memory cache",
+            logger.error(
+                "Unexpected cache error at %s: %s. Falling back to a process-local in-memory cache; invalidations will not reach other processes",
                 _redact_cache_url(settings.CACHE.URL),
                 e,
             )
