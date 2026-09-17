@@ -45,6 +45,35 @@ honcho conclusion delete <conclusion_id>
   Skip confirmation. Short alias: `-y`.
 </ParamField>
 </Accordion>
+<Accordion title="derived">
+List the conclusions derived FROM a conclusion.
+
+Walks the reasoning tree upward (premise -> conclusion); `conclusion get`
+on a conclusion's source_ids walks it downward. Worth checking before
+deleting or correcting a fact.
+
+```bash
+honcho conclusion derived <conclusion_id>
+```
+
+<ParamField path="conclusion_id" type="string" required />
+<ParamField path="--limit" type="number" default="10">
+  Max results.
+</ParamField>
+</Accordion>
+<Accordion title="get">
+Fetch conclusions by ID, from anywhere in the workspace.
+
+Pass a conclusion's source_ids to see the premises it was derived from,
+and repeat to walk a reasoning chain down to the explicit facts it rests
+on. IDs that no longer exist are reported rather than failing the command.
+
+```bash
+honcho conclusion get <conclusion_ids>
+```
+
+<ParamField path="conclusion_ids" type="string" required />
+</Accordion>
 <Accordion title="list">
 List conclusions.
 
@@ -60,6 +89,12 @@ honcho conclusion list
 </ParamField>
 <ParamField path="--limit" type="number" default="10">
   Max results.
+</ParamField>
+<ParamField path="--level" type="string">
+  Only this reasoning level: explicit, deductive, inductive, contradiction.
+</ParamField>
+<ParamField path="--derived-from" type="string">
+  Only conclusions derived from this conclusion ID.
 </ParamField>
 </Accordion>
 <Accordion title="search">
@@ -78,6 +113,9 @@ honcho conclusion search <query>
 </ParamField>
 <ParamField path="--top-k" type="number" default="10">
   Max results.
+</ParamField>
+<ParamField path="--level" type="string">
+  Only this reasoning level: explicit, deductive, inductive, contradiction.
 </ParamField>
 </Accordion>
 </AccordionGroup>
@@ -222,6 +260,9 @@ honcho peer chat <query>
 </ParamField>
 <ParamField path="--sessions" type="string">
   Recall only from these session IDs (repeat or comma-separate); explicit conclusions only. Excludes -s and --scope.
+</ParamField>
+<ParamField path="--evidence" type="boolean">
+  Also report what the answer was built from: the conclusions and messages read and the tools called.
 </ParamField>
 </Accordion>
 <Accordion title="create">
@@ -669,6 +710,9 @@ honcho workspace chat <query>
 </ParamField>
 <ParamField path="--scope" type="string">
   Recall only from this scope. Repeat or comma-separate for several (explicit conclusions only). Excludes -s.
+</ParamField>
+<ParamField path="--evidence" type="boolean">
+  Also report what the answer was built from: the conclusions and messages read and the tools called.
 </ParamField>
 </Accordion>
 <Accordion title="create">
