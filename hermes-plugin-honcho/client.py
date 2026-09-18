@@ -14,6 +14,7 @@ import ipaddress
 import json
 import logging
 import os
+import sys
 import threading as _threading
 import time
 import weakref
@@ -43,6 +44,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 HOST = "hermes"
+PLUGIN = "hermes-plugin-honcho"
 _AUTOMATIC_SESSION_TITLE_SOURCES = frozenset({TITLE_SOURCE_DERIVED, TITLE_SOURCE_LLM})
 
 
@@ -627,6 +629,43 @@ def get_honcho_client(config: HonchoClientConfig | None = None) -> Honcho:
     return slot.get(lambda: _build_client(config))
 
 
+def _hermes_version() -> str:
+    """The running Hermes version, or "" if ``hermes_cli`` can't be imported (defensive tests)."""
+    try:
+        from hermes_cli import __version__
+        return __version__.strip()
+    except Exception:
+        return ""
+
+
+def _plugin_version() -> str:
+    """This plugin's version, from the ``plugin.yaml`` manifest Hermes installs beside this module.
+
+    Not ``importlib.metadata``: an installed plugin directory carries the manifest but no dist-info.
+    """
+    with contextlib.suppress(Exception):
+        for line in Path(__file__).with_name("plugin.yaml").read_text().splitlines():
+            if line.startswith("version:"):
+                return line.split(":", 1)[1].strip().strip("\"'") or "unknown"
+    return "unknown"
+
+
+def telemetry_headers() -> dict[str, str]:
+    """Client-identity headers for telemetry attribution, e.g.::
+
+        X-Honcho-Host: hermes/0.18.2 (darwin)
+        X-Honcho-Plugin: hermes-plugin-honcho/1.0.0
+
+    The version is omitted from the host when it can't be resolved. Values are recorded verbatim
+    by the API's telemetry middleware; nothing else reads them, so they must never raise.
+    """
+    version = _hermes_version()
+    return {
+        "X-Honcho-Host": f"{HOST}/{version} ({sys.platform})" if version else f"{HOST} ({sys.platform})",
+        "X-Honcho-Plugin": f"{PLUGIN}/{_plugin_version()}",
+    }
+
+
 def _build_client(config: HonchoClientConfig) -> "Honcho":
     """Construct the SDK client (runs inside the slot factory so racing callers share one)."""
     with contextlib.suppress(Exception):  # lazy-dep failures fall through to the canonical import error below
@@ -664,7 +703,8 @@ def _build_client(config: HonchoClientConfig) -> "Honcho":
     raw = config.raw or {}
     explicit_key = _host_block(raw, config.host).get("apiKey") or raw.get("apiKey")
     api_key = "local" if _is_local_base_url(base_url) and not explicit_key else config.api_key
-    kwargs: dict = {"workspace_id": config.workspace_id, "api_key": api_key, "environment": config.environment, "timeout": timeout}
+    kwargs: dict = {"workspace_id": config.workspace_id, "api_key": api_key, "environment": config.environment,
+                    "timeout": timeout, "default_headers": telemetry_headers()}
     if base_url:
         # The SDK's route builders already carry the version prefix ("/v3/..."), so
         # strip a trailing version segment from any base_url to avoid "/v3/v3/...".
