@@ -505,9 +505,22 @@ DREAM_INDUCTION_MODEL_CONFIG__MODEL=gpt-5.4-mini
 
 Optional subsystem for identifying unusual observations during dreaming:
 
+<Warning>
+Four of the seven tree types — `kdtree` (the default), `balltree`, `graph` and
+`prototype` — require scikit-learn, which ships behind the optional `surprisal`
+extra rather than as a base dependency (it pulls in scipy, ~200MB installed on
+Linux, for a subsystem that is disabled by default). Install it with
+`uv sync --extra surprisal`. The default Docker image does **not** include it,
+so enabling surprisal in a container requires adding the extra to the
+`uv sync` line in the Dockerfile.
+
+`rptree`, `covertree` and `lsh` need only numpy and work out of the box. With
+`DREAM_SURPRISAL__ENABLED=false` (the default) none of this applies.
+</Warning>
+
 ```bash
 DREAM_SURPRISAL__ENABLED=false
-DREAM_SURPRISAL__TREE_TYPE=kdtree
+DREAM_SURPRISAL__TREE_TYPE=kdtree  # needs the 'surprisal' extra; see warning above
 DREAM_SURPRISAL__TREE_K=5
 DREAM_SURPRISAL__SAMPLING_STRATEGY=recent
 DREAM_SURPRISAL__SAMPLE_SIZE=200

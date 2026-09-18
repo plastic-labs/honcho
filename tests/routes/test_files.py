@@ -315,9 +315,11 @@ async def test_pdf_file_processing(
     test_session = await _create_test_session(db_session, test_workspace)
     session_name = test_session.name
 
-    # Create a simple PDF file (this is a minimal PDF structure)
-    # This minimal PDF contains: catalog, pages tree, single page, and content stream with "Test PDF content" text
-    pdf_content = b"%PDF-1.4\n1 0 obj\n<<\n/Type /Catalog\n/Pages 2 0 R\n>>\nendobj\n2 0 obj\n<<\n/Type /Pages\n/Kids [3 0 R]\n/Count 1\n>>\nendobj\n3 0 obj\n<<\n/Type /Page\n/Parent 2 0 R\n/MediaBox [0 0 612 792]\n/Contents 4 0 R\n>>\nendobj\n4 0 obj\n<<\n/Length 44\n>>\nstream\nBT\n/F1 12 Tf\n72 720 Td\n(Test PDF content) Tj\nET\nendstream\nendobj\nxref\n0 5\n0000000000 65535 f \n0000000009 00000 n \n0000000058 00000 n \n0000000115 00000 n \n0000000204 00000 n \ntrailer\n<<\n/Size 5\n/Root 1 0 R\n>>\nstartxref\n297\n%%EOF"
+    # Minimal but spec-valid PDF: catalog, pages tree, one page that declares its
+    # /Resources /Font, a content stream drawing "Test PDF content", and an xref
+    # with real byte offsets. The font resource matters -- a page that draws text
+    # with /F1 but declares no font is invalid, and extractors disagree on it.
+    pdf_content = b"%PDF-1.4\n1 0 obj\n<</Type /Catalog /Pages 2 0 R>>\nendobj\n2 0 obj\n<</Type /Pages /Kids [3 0 R] /Count 1>>\nendobj\n3 0 obj\n<</Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources <</Font <</F1 5 0 R>>>> /Contents 4 0 R>>\nendobj\n4 0 obj\n<</Length 47>>\nstream\nBT /F1 12 Tf 72 720 Td (Test PDF content) Tj ET\nendstream\nendobj\n5 0 obj\n<</Type /Font /Subtype /Type1 /BaseFont /Helvetica>>\nendobj\nxref\n0 6\n0000000000 65535 f \n0000000009 00000 n \n0000000056 00000 n \n0000000111 00000 n \n0000000231 00000 n \n0000000326 00000 n \ntrailer\n<</Size 6 /Root 1 0 R>>\nstartxref\n394\n%%EOF"
     file_data = io.BytesIO(pdf_content)
 
     files = {"file": ("test.pdf", file_data, "application/pdf")}
@@ -333,6 +335,9 @@ async def test_pdf_file_processing(
     message = data[0]
     assert message["peer_id"] == test_peer.name
     assert message["session_id"] == session_name
+    # Guard the extraction itself, not just message creation: an extractor that
+    # returns "" still yields one (empty) message and would pass a count check.
+    assert "Test PDF content" in message["content"]
 
 
 @pytest.mark.asyncio
