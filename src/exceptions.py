@@ -134,6 +134,21 @@ class VectorStoreError(HonchoException):
 
 
 @final
+class VectorNamespaceUnresolved(HonchoException):
+    """Raised when a tenant's vector-store namespace cannot be determined.
+
+    Deliberately NOT a ``VectorStoreError``. That type means "the backend is
+    having trouble, try again", and callers catch it to defer work to the
+    reconciler. This one means the tenant is not provisioned for vector storage
+    at all — retrying cannot fix it, and letting it be mistaken for a transient
+    fault is exactly how a tenant ends up with a silently empty corpus.
+    """
+
+    status_code = 500
+    detail = "Vector namespace could not be resolved for this tenant"
+
+
+@final
 class RepresentationSaveError(HonchoException):
     """Raised when every observer's representation save fails in a batch."""
 

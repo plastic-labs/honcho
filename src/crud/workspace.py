@@ -480,7 +480,7 @@ async def delete_workspace(
 
         # Delete message embeddings namespace for this workspace
         if external_vector_store:
-            message_namespace = external_vector_store.get_vector_namespace(
+            message_namespace = await external_vector_store.get_vector_namespace(
                 "message", workspace_name
             )
             try:
@@ -499,7 +499,7 @@ async def delete_workspace(
 
             # Delete document embeddings namespaces for each collection
             for collection in collections:
-                doc_namespace = external_vector_store.get_vector_namespace(
+                doc_namespace = await external_vector_store.get_vector_namespace(
                     "document",
                     workspace_name,
                     collection.observer,
