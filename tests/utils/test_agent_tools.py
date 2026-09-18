@@ -30,6 +30,7 @@ from src.utils.agent_tools import (
     ToolContext,
     _bounded_int,  # pyright: ignore[reportPrivateUsage]
     _handle_create_observations,  # pyright: ignore[reportPrivateUsage]
+    _handle_create_observations_deductive,  # pyright: ignore[reportPrivateUsage]
     _handle_delete_observations,  # pyright: ignore[reportPrivateUsage]
     _handle_extract_preferences,  # pyright: ignore[reportPrivateUsage]
     _handle_finish_consolidation,  # pyright: ignore[reportPrivateUsage]
@@ -499,6 +500,153 @@ class TestCreateObservations:
 
         assert "ERROR" in result
         # Handlers may return ToolResult (); str() returns .content.
+        assert "empty" in str(result).lower()
+
+    async def test_string_items_with_forced_level_return_error_not_typeerror(
+        self, make_tool_context: Callable[..., ToolContext]
+    ):
+        """Regression for #1187: a weak model emitting `observations` as a list
+        of bare strings used to crash the forced-level pre-validation loop with
+        `TypeError: 'str' object does not support item assignment`. It must
+        instead flow through the per-item validation failure path."""
+        ctx = make_tool_context(current_messages=None)
+
+        result = await _handle_create_observations_deductive(
+            ctx, {"observations": ["User likes coffee", "User works remotely"]}
+        )
+
+        assert isinstance(result, str)
+        assert result.startswith("ERROR: All observations failed validation")
+        assert "must be an object" in result
+        assert "got str" in result
+        assert "User likes coffee" in result
+        assert "User works remotely" in result
+
+    async def test_string_items_with_default_level_return_error_not_typeerror(
+        self,
+        tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        """Same shape as the #1187 payload through the generic tool, which
+        exercises the `setdefault` branch rather than forced-level assignment."""
+        *_, messages, _ = tool_test_data
+        ctx = make_tool_context(current_messages=messages)
+
+        result = await _handle_create_observations(
+            ctx, {"observations": ["User likes coffee"]}
+        )
+
+        assert isinstance(result, str)
+        assert result.startswith("ERROR: All observations failed validation")
+        assert "must be an object" in result
+
+    async def test_mixed_batch_creates_objects_and_reports_non_objects(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        """A batch mixing a well-formed observation object with a bare string
+        persists the object and reports the string as a failure, matching how
+        partial validation failures already behave."""
+        *_, documents = tool_test_data
+        source_ids = [documents[0].id, documents[1].id]
+        ctx = make_tool_context(current_messages=None)
+
+        result = await _handle_create_observations_deductive(
+            ctx,
+            {
+                "observations": [
+                    {
+                        "content": "Well-formed deductive conclusion",
+                        "source_ids": list(source_ids),
+                        "premises": ["User works in libraries"],
+                    },
+                    "Bare string that is not an observation object",
+                    42,
+                ]
+            },
+        )
+
+        assert "Created 1 observations" in result
+        assert "1 deductive" in result
+        assert "Failed 2" in result
+        assert "got str" in result
+        assert "got int" in result
+
+        stmt = select(models.Document).where(
+            models.Document.content == "Well-formed deductive conclusion"
+        )
+        doc = (await db_session.execute(stmt)).scalar_one_or_none()
+        assert doc is not None
+        assert doc.level == "deductive"
+        assert doc.source_ids == source_ids
+
+    async def test_observations_not_a_list_returns_error(
+        self, make_tool_context: Callable[..., ToolContext]
+    ):
+        """`observations` that is neither a list nor a JSON-encoded list is
+        rejected with a clear error instead of being iterated character by
+        character."""
+        ctx = make_tool_context(current_messages=None)
+
+        for bad_payload in ("not a list", {"content": "a dict, not a list"}, 7):
+            result = await _handle_create_observations_deductive(
+                ctx, {"observations": bad_payload}
+            )
+            assert isinstance(result, str)
+            assert result.startswith("ERROR: 'observations' must be a list")
+
+        # Seen in the wild (#1187 reproduction): the list double-encoded as a
+        # string whose inner JSON is itself broken. Say so, so the model can fix it.
+        result = await _handle_create_observations_deductive(
+            ctx, {"observations": '[{"content": "truncated mid-way'}
+        )
+        assert isinstance(result, str)
+        assert "not valid JSON" in result
+
+    async def test_json_encoded_observations_list_is_recovered(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        """Models sometimes double-encode the list so `observations` arrives as
+        a JSON string. If it decodes to a list, it is processed normally."""
+        import json
+
+        *_, documents = tool_test_data
+        source_ids = [documents[0].id, documents[1].id]
+        ctx = make_tool_context(current_messages=None)
+
+        payload = json.dumps(
+            [
+                {
+                    "content": "Recovered from double-encoded list",
+                    "source_ids": list(source_ids),
+                    "premises": ["User mentioned working in libraries"],
+                }
+            ]
+        )
+        result = await _handle_create_observations_deductive(
+            ctx, {"observations": payload}
+        )
+
+        assert "Created 1 observations" in result
+        assert "1 deductive" in result
+
+        stmt = select(models.Document).where(
+            models.Document.content == "Recovered from double-encoded list"
+        )
+        doc = (await db_session.execute(stmt)).scalar_one_or_none()
+        assert doc is not None
+        assert doc.level == "deductive"
+
+        # A double-encoded *empty* list still hits the empty-list error.
+        result = await _handle_create_observations_deductive(
+            ctx, {"observations": "[]"}
+        )
+        assert "ERROR" in result
         assert "empty" in str(result).lower()
 
     async def test_batch_embedding_failure_falls_back_to_individual_embeds(
