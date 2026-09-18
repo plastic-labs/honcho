@@ -2345,12 +2345,21 @@ class TestPgvectorCandidateEquivalence:
         await db_session.commit()
         return observed_peer, session_a, session_b
 
+    @pytest.mark.parametrize("order", ["authored", "reversed"])
     @pytest.mark.asyncio
     async def test_batched_candidates_match_per_document_query(
         self,
         db_session: AsyncSession,
         sample_data: tuple[models.Workspace, models.Peer],
+        order: str,
     ):
+        """Every document's candidates must match, whatever order they arrive in.
+
+        Parametrising over batch *shape* is what earns its keep here. Splitting
+        the cases into one document per run would not: a single-document batch
+        makes the index mapping trivially correct, so a permuted or constant
+        `batch_index` could never be observed.
+        """
         from src.crud import document as document_module
 
         test_workspace, test_peer = sample_data
@@ -2362,7 +2371,7 @@ class TestPgvectorCandidateEquivalence:
             axis: int, level: DocumentLevel, session: str | None
         ) -> schemas.DocumentCreate:
             return schemas.DocumentCreate(
-                content=f"incoming axis={axis}",
+                content=f"incoming axis={axis} level={level} session={session}",
                 embedding=self._vec(axis),
                 session_name=session,
                 level=level,
@@ -2372,19 +2381,40 @@ class TestPgvectorCandidateEquivalence:
                 ),
             )
 
+        # A document with no embedding, and a session-less explicit one, are both
+        # skipped when the legs are built. They are interleaved with matches on
+        # purpose: leg position and document index only diverge after a skip, and
+        # a `batch_index` taken from the wrong one would go unnoticed without them.
+        # Both sit on axis 0, which has near neighbours, so dropping either skip
+        # surfaces a spurious candidate instead of the empty result a barren axis
+        # would return either way.
+        no_embedding = incoming(0, "explicit", session_a.name)
+        no_embedding.embedding = []
+        sessionless = incoming(0, "explicit", None)
+
         documents = [
             incoming(0, "explicit", session_a.name),
+            no_embedding,
             incoming(1, "explicit", session_a.name),
+            sessionless,
             incoming(2, "deductive", None),
             incoming(3, "explicit", session_a.name),  # nearest is out of range
             incoming(4, "explicit", session_a.name),  # nearest is soft-deleted
             incoming(5, "explicit", session_a.name),  # no neighbour at all
         ]
+        if order == "reversed":
+            documents.reverse()
 
         expected: list[list[str]] = []
-        for doc in documents:
+        skipped: list[int] = []
+        for index, doc in enumerate(documents):
             filters = document_module._semantic_dup_filters(doc)  # pyright: ignore[reportPrivateUsage]
-            assert filters is not None and doc.embedding is not None
+            if filters is None or not doc.embedding:
+                # No merge scope or no vector: the document cannot have a
+                # candidate, and contributes no leg to the batched query.
+                expected.append([])
+                skipped.append(index)
+                continue
             reference = await document_module._query_documents_pgvector(  # pyright: ignore[reportPrivateUsage]
                 db_session,
                 test_workspace.name,
@@ -2407,13 +2437,21 @@ class TestPgvectorCandidateEquivalence:
 
         assert actual == expected
 
-        # The corpus has to contain the cases that make the comparison bite,
-        # or two equally broken implementations would agree.
-        assert [len(ids) for ids in expected] == [1, 1, 1, 0, 0, 0], (
-            "corpus no longer discriminates: expected three matches then three "
-            f"misses, got {expected}"
+        # The corpus has to keep discriminating, or two equally broken
+        # implementations would agree with each other.
+        matched = [index for index, ids in enumerate(expected) if ids]
+        assert len(matched) == 3, (
+            f"expected three documents to match, got {len(matched)}: {expected}"
         )
-        assert len({ids[0] for ids in expected if ids}) == 3, (
-            "the three matches must be three distinct rows, or a mis-mapped "
+        assert len({expected[index][0] for index in matched}) == 3, (
+            "the three matches must be three distinct rows, or a permuted "
             "batch index would go unnoticed"
+        )
+        assert len(expected) - len(matched) - len(skipped) == 3, (
+            "expected three documents that resolve no candidate without being "
+            "skipped: out of range, soft-deleted, and no neighbour at all"
+        )
+        assert min(skipped) < max(matched), (
+            "a skipped document must sit before a matching one, or leg position "
+            "and document index would never diverge"
         )
