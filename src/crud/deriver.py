@@ -52,6 +52,21 @@ def batch_threshold_clause() -> ColumnElement[bool] | None:
     return or_(models.QueueItemBatch.task_type != "representation", threshold)
 
 
+def claim_excluded_tenant_ids() -> Sequence[str] | None:
+    """Tenant ids the claim must skip, or None when no exclusion applies."""
+    # region ai
+    # The suspension seam: excluding a tenant means filtering its batch rows
+    # out of the claim's eligible set before ranking, so an excluded whale
+    # contributes nothing to any round. No exclusion source exists yet, hence
+    # None; the seam returns ids rather than a clause so wiring a source in
+    # cannot reintroduce the NULL footgun — the claim composes `tenant_id IS
+    # NULL OR tenant_id NOT IN (ids)` itself, keeping the tenant-less
+    # (reconciler) lane in rotation by construction (a bare NOT IN is
+    # NULL-false and would silently starve it).
+    # endregion
+    return None
+
+
 def unclaimed_work_unit_clause(
     work_unit_key: SQLColumnExpression[str],
 ) -> ColumnElement[bool]:
@@ -118,38 +133,111 @@ def active_queue_session_match(
 
 
 def claim_rows_query(limit: int) -> Select[Any]:
-    """The claim's locked candidate SELECT: eligible units in scheduling order, skipping rows a concurrent claimer holds."""
+    """The claim's locked candidate SELECT: the tenants holding least work in flight first, skipping rows a concurrent claimer holds."""
     # region ai
-    # One statement on purpose: FOR UPDATE SKIP LOCKED locks rows in output
-    # order below the LIMIT, so a concurrent claimer's locked rows are skipped
-    # and BACKFILLED from the sorted stream — both claimers fill their batch,
-    # disjointly, with zero wasted claims. A two-step select-then-lock variant
-    # loses that backfill (the loser picks the same blind candidates, skips
-    # them all, and claims nothing for the poll). The cost of locking in
+    # Fairness = round-robin over tenant_id, weighted by the concurrency a
+    # tenant already holds. Ranks number each tenant's ELIGIBLE units
+    # oldest-first, and the tenant's LIVE claim count is ADDED to that rank, so
+    # the ordering key reads "how many units deep is this for its tenant,
+    # counting what it is already running". A tenant with two units in flight
+    # starts its next one at effective rank 3 and yields to every idle tenant's
+    # rank 1 — fairness conserves granted concurrency, not queue position,
+    # which is what stops a whale from holding every worker.
+    #
+    # Ranking over eligible rows ALONE lets a tenant already being processed
+    # re-enter at rank 1 every round (it is charged nothing for the unit it
+    # holds); moving eligibility OUTSIDE the subquery instead over-charges it,
+    # because a claimed rank-1 unit would shadow its tenant's rank-2 and sink
+    # it behind every other tenant regardless of how little that tenant holds.
+    # The offset is the middle: a tenant is charged for what it holds and
+    # nothing else. Stale claims are deliberately not counted — a crashed
+    # worker's abandoned claim would otherwise penalize its tenant until the
+    # GC reaps it.
+    #
+    # NULLs group as one partition, so the tenant-less reconciler lane is a
+    # bucket in the rotation (its offset joins NULL-safely, hence IS NOT
+    # DISTINCT FROM) and a flag-off deployment (every tenant_id NULL) adds one
+    # constant offset to every row, leaving plain oldest-first — the ordering
+    # is identical to the pre-fairness one. The window function cannot combine
+    # with FOR UPDATE, hence the rank-then-join shape.
+    #
+    # One locking statement on purpose: FOR UPDATE SKIP LOCKED locks rows in
+    # output order below the LIMIT, so a concurrent claimer's locked rows are
+    # skipped and BACKFILLED from the sorted stream — both claimers fill their
+    # batch, disjointly, with zero wasted claims. A two-step select-then-lock
+    # variant loses that backfill (the loser picks the same blind candidates,
+    # skips them all, and claims nothing for the poll). The cost of locking in
     # scheduling order is that a rare lock-order inversion against the enqueue
-    # trigger's batch upserts can deadlock; Postgres's detector breaks it and
-    # both sides retry — the enqueue in _insert_queue_records, the claim on its
-    # next poll (the polling loop's catch-all backs off and continues).
+    # trigger's batch upserts can deadlock; Postgres's detector breaks it
+    # and both sides retry — the enqueue in _insert_queue_records, the claim
+    # on its next poll (the polling loop's catch-all backs off and continues).
     # endregion
-    query = (
+    # The concurrency each tenant already holds. Sized by the fleet's live
+    # workers, not by queue depth, so it stays a small aggregate.
+    inflight = (
+        select(
+            models.ActiveQueueSession.tenant_id.label("tenant_id"),
+            func.count().label("inflight_units"),
+        )
+        .where(models.ActiveQueueSession.last_updated >= stale_claim_cutoff())
+        .group_by(models.ActiveQueueSession.tenant_id)
+        .subquery()
+    )
+
+    eligible = (
+        select(
+            models.QueueItemBatch.work_unit_key,
+            models.QueueItemBatch.oldest_created_at,
+            (
+                func.coalesce(inflight.c.inflight_units, 0)
+                + func.row_number().over(
+                    partition_by=models.QueueItemBatch.tenant_id,
+                    order_by=(
+                        models.QueueItemBatch.oldest_created_at.asc(),
+                        models.QueueItemBatch.work_unit_key.asc(),
+                    ),
+                )
+            ).label("tenant_fair_rank"),
+        )
+        .outerjoin(
+            inflight,
+            models.QueueItemBatch.tenant_id.is_not_distinct_from(inflight.c.tenant_id),
+        )
+        .where(unclaimed_work_unit_clause(models.QueueItemBatch.work_unit_key))
+    )
+
+    threshold_clause = batch_threshold_clause()
+    if threshold_clause is not None:
+        eligible = eligible.where(threshold_clause)
+    excluded_tenant_ids = claim_excluded_tenant_ids()
+    if excluded_tenant_ids:
+        eligible = eligible.where(
+            or_(
+                models.QueueItemBatch.tenant_id.is_(None),
+                models.QueueItemBatch.tenant_id.notin_(excluded_tenant_ids),
+            )
+        )
+    eligible_subq = eligible.subquery()
+
+    return (
         select(
             models.QueueItemBatch.work_unit_key,
             models.QueueItemBatch.task_type,
             models.QueueItemBatch.total_tokens,
             models.QueueItemBatch.oldest_created_at,
         )
-        .where(unclaimed_work_unit_clause(models.QueueItemBatch.work_unit_key))
+        .join(
+            eligible_subq,
+            models.QueueItemBatch.work_unit_key == eligible_subq.c.work_unit_key,
+        )
         .order_by(
-            models.QueueItemBatch.oldest_created_at.asc(),
+            eligible_subq.c.tenant_fair_rank.asc(),
+            eligible_subq.c.oldest_created_at.asc(),
             models.QueueItemBatch.work_unit_key.asc(),
         )
         .limit(limit)
-        .with_for_update(skip_locked=True)
+        .with_for_update(skip_locked=True, of=models.QueueItemBatch)
     )
-    threshold_clause = batch_threshold_clause()
-    if threshold_clause is not None:
-        query = query.where(threshold_clause)
-    return query
 
 
 def stale_claim_cutoff() -> datetime:
@@ -217,6 +305,40 @@ async def get_deriver_metrics(db: AsyncSession) -> schemas.DeriverMetrics:
     if threshold_clause is not None:
         eligible = eligible.where(threshold_clause)
 
+    # region ai
+    # An excluded tenant's rows are filtered out of the claim, so nothing will
+    # pick them up and they must not read as work waiting for a worker. Every
+    # gauge that answers "is there anything to do" therefore drops them: KEDA
+    # scales the deriver fleet off eligible_work_units, and outstanding-work
+    # falls back to the pending count and the oldest pending age when eligible
+    # and claimed are both zero — so leaving them in pending would hold the
+    # fleet up for a backlog no worker can take, one level down from the same
+    # bug. They are counted on their own gauge rather than dropped, so
+    # suspended depth stays visible.
+    #
+    # Same NULL-safe shape as the claim's filter: a bare NOT IN is NULL-false
+    # and would silently drop the tenant-less reconciler lane from both counts.
+    # endregion
+    excluded_tenant_ids = claim_excluded_tenant_ids()
+    excluded: Select[Any] | None = None
+    claimable_tenant_clause: ColumnElement[bool] | None = None
+    if excluded_tenant_ids:
+        claimable_tenant_clause = or_(
+            models.QueueItemBatch.tenant_id.is_(None),
+            models.QueueItemBatch.tenant_id.notin_(excluded_tenant_ids),
+        )
+        excluded = (
+            select(func.count())
+            .select_from(models.QueueItemBatch)
+            .where(
+                not_live_claimed_work_unit_clause(models.QueueItemBatch.work_unit_key),
+                models.QueueItemBatch.tenant_id.in_(excluded_tenant_ids),
+            )
+        )
+        if threshold_clause is not None:
+            excluded = excluded.where(threshold_clause)
+        eligible = eligible.where(claimable_tenant_clause)
+
     claimed = (
         select(func.count())
         .select_from(models.ActiveQueueSession)
@@ -233,6 +355,8 @@ async def get_deriver_metrics(db: AsyncSession) -> schemas.DeriverMetrics:
             0,
         ),
     )
+    if claimable_tenant_clause is not None:
+        pending = pending.where(claimable_tenant_clause)
 
     embeddings = select(
         func.count(),
@@ -248,12 +372,16 @@ async def get_deriver_metrics(db: AsyncSession) -> schemas.DeriverMetrics:
     ).where(models.MessageEmbedding.sync_state == "pending")
 
     eligible_count = (await db.execute(eligible)).scalar_one()
+    excluded_count = (
+        (await db.execute(excluded)).scalar_one() if excluded is not None else 0
+    )
     claimed_count = (await db.execute(claimed)).scalar_one()
     pending_count, oldest_age = (await db.execute(pending)).one()
     embeddings_pending, embeddings_due = (await db.execute(embeddings)).one()
 
     return schemas.DeriverMetrics(
         eligible_work_units=int(eligible_count),
+        excluded_work_units=int(excluded_count),
         claimed_work_units=int(claimed_count),
         pending_items=int(pending_count),
         oldest_pending_age_seconds=float(oldest_age),

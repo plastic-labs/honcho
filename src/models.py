@@ -685,6 +685,15 @@ class QueueItem(Base):
     message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
     __table_args__ = (
+        # Mirrors the queue_workspace_reconciler_check migration: NULL
+        # workspace_name means the tenant-less reconciler lane and nothing else.
+        # Named bare because the `ck` naming convention prepends `ck_%(table_name)s_`;
+        # spelling the prefix here too renders ck_queue_ck_queue_... and silently
+        # diverges the model's metadata from the constraint the migration creates.
+        CheckConstraint(
+            "(workspace_name IS NULL) = (task_type = 'reconciler')",
+            name="workspace_null_iff_reconciler",
+        ),
         Index(
             "ix_queue_message_id_not_null",
             "message_id",

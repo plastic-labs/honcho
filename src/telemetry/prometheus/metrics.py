@@ -223,6 +223,15 @@ deriver_queue_work_units_eligible_gauge = NamespacedGauge(
     ["namespace"],
 )
 
+deriver_queue_work_units_excluded_gauge = NamespacedGauge(
+    "deriver_queue_work_units_excluded",
+    "Work units a deriver would claim but for their tenant being excluded, so "
+    + "nothing will pick them up. Disjoint from deriver_queue_work_units_eligible. "
+    + "Service-wide DB count, reported independently by every API replica — "
+    + "aggregate with max() or avg(), never sum()",
+    ["namespace"],
+)
+
 deriver_queue_work_units_claimed_gauge = NamespacedGauge(
     "deriver_queue_work_units_claimed",
     "Work units held by a claim refreshed inside the stale timeout, so work is "
@@ -244,6 +253,16 @@ deriver_queue_oldest_pending_age_seconds_gauge = NamespacedGauge(
     "Age of the oldest unprocessed queue row, 0 when the queue is empty. "
     + "Service-wide DB value, reported independently by every API replica — "
     + "aggregate with max() or avg(), never sum()",
+    ["namespace"],
+)
+
+deriver_effective_worker_cap_gauge = NamespacedGauge(
+    "deriver_effective_worker_cap",
+    "Per-process worker concurrency after the DB-pool headroom derivation — "
+    + "min(DERIVER_WORKERS, max(1, floor(WORKERS_PER_POOL_CONNECTION * pool "
+    + "capacity))). Genuinely per-replica: sum() across deriver replicas is "
+    + "total fleet worker capacity; min() below DERIVER_WORKERS means some "
+    + "replica's pool, not config, is the binding cap",
     ["namespace"],
 )
 
@@ -355,6 +374,12 @@ class PrometheusMetrics:
             embed_now_tasks_in_flight_gauge.labels().set(count)
         except Exception as e:
             self._handle_metric_error("set_embed_now_tasks_in_flight", e)
+
+    def set_deriver_effective_worker_cap(self, count: int) -> None:
+        try:
+            deriver_effective_worker_cap_gauge.labels().set(count)
+        except Exception as e:
+            self._handle_metric_error("set_deriver_effective_worker_cap", e)
 
     def record_dialectic_call(
         self,
@@ -622,6 +647,7 @@ class PrometheusMetrics:
         self,
         *,
         eligible_work_units: int = 0,
+        excluded_work_units: int = 0,
         claimed_work_units: int = 0,
         pending_items: int = 0,
         oldest_pending_age_seconds: float = 0.0,
@@ -630,6 +656,7 @@ class PrometheusMetrics:
     ) -> None:
         try:
             deriver_queue_work_units_eligible_gauge.labels().set(eligible_work_units)
+            deriver_queue_work_units_excluded_gauge.labels().set(excluded_work_units)
             deriver_queue_work_units_claimed_gauge.labels().set(claimed_work_units)
             deriver_queue_items_pending_gauge.labels().set(pending_items)
             deriver_queue_oldest_pending_age_seconds_gauge.labels().set(
