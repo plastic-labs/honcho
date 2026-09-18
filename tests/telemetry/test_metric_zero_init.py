@@ -31,6 +31,7 @@ from src.telemetry.prometheus.metrics import (
     TokenTypes,
     prometheus_metrics,
 )
+from src.telemetry.tenant import TENANTLESS_CATEGORIES
 from src.utils.types import walk_subclasses
 
 
@@ -55,14 +56,55 @@ def metrics_enabled(monkeypatch: pytest.MonkeyPatch) -> Iterator[str]:
     yield ns
 
 
+# The six TenantScopedCounter metrics (`_total` names). `TenantScopedCounter.labels()`
+# always injects `tenant_id` -- "" when MULTI_TENANT is off or nothing is bound --
+# beside `namespace`. Prometheus treats an empty label value as
+# equivalent to an absent one, but the prometheus_client REGISTRY does not: it keeps
+# the child series keyed on the literal empty string. An exact-match
+# `REGISTRY.get_sample_value` lookup that omits `tenant_id` therefore misses the
+# series and reads back None even though `.labels()` created it.
+_TENANT_SCOPED_COUNTER_NAMES = frozenset(
+    {
+        "messages_created_total",
+        "dialectic_calls_total",
+        "deriver_queue_items_processed_total",
+        "deriver_tokens_processed_total",
+        "dialectic_tokens_processed_total",
+        "dreamer_tokens_processed_total",
+    }
+)
+
+
+def test_tenant_scoped_counter_names_match_the_declared_counters():
+    """_TENANT_SCOPED_COUNTER_NAMES must equal every TenantScopedCounter in metrics.py.
+
+    If this fails, a TenantScopedCounter was added or renamed without updating the
+    set above, and ``sample()`` would silently stop defaulting ``tenant_id=""`` for
+    it — a zero-init assertion would then read None instead of 0.0.
+    """
+    from src.telemetry.prometheus import metrics as metrics_module
+    from src.telemetry.prometheus.metrics import TenantScopedCounter
+
+    declared = {
+        f"{counter._name}_total"  # pyright: ignore[reportPrivateUsage, reportUnknownMemberType]
+        for counter in vars(metrics_module).values()
+        if isinstance(counter, TenantScopedCounter)
+    }
+    assert declared == _TENANT_SCOPED_COUNTER_NAMES
+
+
 def sample(name: str, **labels: str) -> float | None:
     """Value of a series if it exists, else None. Never materializes it.
 
     Resolves the namespace from settings, so it always reads the unique one the
-    active test pinned.
+    active test pinned. For the tenant-scoped counters, defaults `tenant_id` to ""
+    (see `_TENANT_SCOPED_COUNTER_NAMES` above) unless the caller already supplied one.
     """
     ns = cast(str, settings.METRICS.NAMESPACE)
-    return REGISTRY.get_sample_value(name, {"namespace": ns, **labels})
+    full_labels: dict[str, str] = {"namespace": ns, **labels}
+    if name in _TENANT_SCOPED_COUNTER_NAMES:
+        full_labels.setdefault("tenant_id", "")
+    return REGISTRY.get_sample_value(name, full_labels)
 
 
 # ---------------------------------------------------------------------------
@@ -373,3 +415,90 @@ def test_init_noop_when_metrics_disabled(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr("src.config.settings.METRICS.NAMESPACE", unique_ns("disabled"))
     prometheus_metrics.initialize_bounded_metrics(instance_type="api")
     assert sample("telemetry_events_emitted_total", type="message.created") is None
+
+
+# ---------------------------------------------------------------------------
+# telemetry_events_untenanted: drift guard against TENANTLESS_CATEGORIES
+# ---------------------------------------------------------------------------
+
+
+def _reconciliation_event_types() -> set[str]:
+    return {
+        event_type
+        for cls in walk_subclasses(BaseEvent)
+        if cls.category() in TENANTLESS_CATEGORIES
+        and (event_type := getattr(cls, "_event_type", None)) is not None
+    }
+
+
+@pytest.mark.usefixtures("metrics_enabled")
+def test_api_init_materializes_untenanted_for_every_non_reconciliation_event_type():
+    """telemetry_events_untenanted is zero-inited for every BaseEvent subclass whose
+    category is not in TENANTLESS_CATEGORIES, and NOT for the reconciliation types --
+    a permanently-0 series for an event that can never increment it would be exactly
+    the fabrication initialize_bounded_metrics's docstring rules out. Fails if a new
+    BaseEvent subclass or a TENANTLESS_CATEGORIES change falls out of sync with the
+    initializer."""
+    prometheus_metrics.initialize_bounded_metrics(instance_type="api")
+    reconciliation_types = _reconciliation_event_types()
+    assert reconciliation_types, (
+        "fixture assumption: at least one tenant-less type exists"
+    )
+    for event_type in ALL_EVENT_TYPES:
+        value = sample("telemetry_events_untenanted_total", type=event_type)
+        if event_type in reconciliation_types:
+            assert value is None, f"{event_type} is tenant-less and must stay absent"
+        else:
+            assert value is not None, f"{event_type} should be zero-inited"
+
+
+@pytest.mark.usefixtures("metrics_enabled")
+def test_deriver_init_materializes_untenanted_for_every_non_reconciliation_event_type():
+    """The same drift guard as the api-process test above, for the deriver process --
+    the untenanted zero-init runs in the "common" section of initialize_bounded_metrics,
+    shared by both instance types."""
+    prometheus_metrics.initialize_bounded_metrics(instance_type="deriver")
+    reconciliation_types = _reconciliation_event_types()
+    for event_type in ALL_EVENT_TYPES:
+        value = sample("telemetry_events_untenanted_total", type=event_type)
+        if event_type in reconciliation_types:
+            assert value is None, f"{event_type} is tenant-less and must stay absent"
+        else:
+            assert value is not None, f"{event_type} should be zero-inited"
+
+
+# ---------------------------------------------------------------------------
+# Tenant-scoped zero-init is flag-independent
+# ---------------------------------------------------------------------------
+
+
+def test_tenant_scoped_zero_init_is_identical_regardless_of_multi_tenant_flag(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """initialize_bounded_metrics always runs before any request or work unit binds
+    a tenant, so TenantScopedCounter.labels() reads current_tenant_id() with nothing
+    bound -- None -- whether MULTI_TENANT is True or False at init time. The
+    zero-init series for a tenant-scoped counter must therefore carry the same
+    tenant_id="" both ways, never a "true"/"false"-flavored label."""
+    for flag in (True, False):
+        ns = unique_ns(f"flag_parity_{flag}")
+        monkeypatch.setattr(settings.METRICS, "ENABLED", True)
+        monkeypatch.setattr(settings.METRICS, "NAMESPACE", ns)
+        monkeypatch.setattr(settings, "MULTI_TENANT", flag)
+        prometheus_metrics.initialize_bounded_metrics(instance_type="api")
+        for token_type in TokenTypes:
+            for level in REASONING_LEVELS:
+                value = REGISTRY.get_sample_value(
+                    "dialectic_tokens_processed_total",
+                    {
+                        "namespace": ns,
+                        "tenant_id": "",
+                        "token_type": token_type.value,
+                        "component": DialecticComponents.TOTAL.value,
+                        "reasoning_level": level,
+                    },
+                )
+                assert value == 0.0, (
+                    f"MULTI_TENANT={flag}: missing tenant_id='' zero-init for "
+                    f"{token_type.value}/{level}"
+                )

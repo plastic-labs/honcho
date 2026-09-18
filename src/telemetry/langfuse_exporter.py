@@ -35,6 +35,7 @@ from typing import Any
 from src.config import settings
 from src.llm.capture import CapturedLLMCall
 from src.telemetry import langfuse_session
+from src.telemetry.tenant import current_tenant_id
 
 logger = logging.getLogger(__name__)
 
@@ -285,7 +286,11 @@ class LangfuseExporter:
             return
         from langfuse import LangfuseOtelSpanAttributes as Attr
 
-        span.set_attribute(Attr.TRACE_USER_ID, str(settings.NAMESPACE))
+        # The tenant is the Langfuse user under MULTI_TENANT; flag-off the namespace
+        # (the instance) is, exactly as before tenancy.
+        span.set_attribute(
+            Attr.TRACE_USER_ID, current_tenant_id() or str(settings.NAMESPACE)
+        )
         trace_name = self._trace_name(call)
         if trace_name:
             span.set_attribute(Attr.TRACE_NAME, trace_name)
@@ -300,6 +305,8 @@ class LangfuseExporter:
         # run shares span_id == trace_id == run_id, so surfacing them here only
         # duplicates trace_id and misleads. Re-add once the source differentiates.
         md: dict[str, str] = {"namespace": str(settings.NAMESPACE)}
+        if (tenant_id := current_tenant_id()) is not None:
+            md["tenant_id"] = tenant_id
         for key, value in (
             ("workspace_name", call.workspace_name),
             ("call_purpose", call.call_purpose),
@@ -323,6 +330,8 @@ class LangfuseExporter:
         # carries only trace-level fields — not a single specialist's agent_type/
         # observer/observed/call_purpose.
         md: dict[str, str] = {"namespace": str(settings.NAMESPACE)}
+        if (tenant_id := current_tenant_id()) is not None:
+            md["tenant_id"] = tenant_id
         for key, value in (
             ("workspace_name", call.workspace_name),
             ("trace_id", call.trace_id),
