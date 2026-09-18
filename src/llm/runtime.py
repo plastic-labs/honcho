@@ -24,6 +24,7 @@ from src.config import (
     resolve_model_config,
     settings,
 )
+from src.telemetry.tenant import current_tenant_id
 
 from .registry import backend_for_provider, client_for_model_config
 from .types import LLMTelemetryContext, ProviderClient, ReasoningEffortType
@@ -73,12 +74,14 @@ def annotate_current_langfuse_trace(
             trace_metadata: dict[str, str] = dict(gen_metadata)
             if telemetry is None:
                 trace_metadata.setdefault("namespace", str(settings.NAMESPACE))
+                if (tenant_id := current_tenant_id()) is not None:
+                    trace_metadata.setdefault("tenant_id", tenant_id)
             # Empty body is intentional: propagate_attributes stamps the active
             # @observe generation (this trace root, for single-shot callers) at
             # __enter__; there are no child spans to scope here. Don't delete as
             # dead code — the enter-time side effect is the point.
             with propagate_attributes(
-                user_id=str(settings.NAMESPACE),
+                user_id=current_tenant_id() or str(settings.NAMESPACE),
                 session_id=session_id,
                 trace_name=trace_name,
                 metadata=trace_metadata,
@@ -145,6 +148,9 @@ def _base_metadata(telemetry: LLMTelemetryContext) -> dict[str, str]:
     Rebuilt per run (cheap); callers that need ``iteration`` copy and add it.
     """
     metadata: dict[str, str] = {"namespace": str(settings.NAMESPACE)}
+    # The tenant is the Langfuse user under MULTI_TENANT; flag-off the namespace is.
+    if (tenant_id := current_tenant_id()) is not None:
+        metadata["tenant_id"] = tenant_id
     for key, value in (
         ("workspace_name", telemetry.workspace_name),
         ("call_purpose", telemetry.call_purpose),
@@ -244,7 +250,7 @@ def start_langfuse_agent_run(
         )
         stack.enter_context(
             propagate_attributes(
-                user_id=str(settings.NAMESPACE),
+                user_id=current_tenant_id() or str(settings.NAMESPACE),
                 session_id=session_id,
                 trace_name=name,
                 metadata=_base_metadata(telemetry),

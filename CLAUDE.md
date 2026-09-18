@@ -206,6 +206,7 @@ The Dreamer is an orchestrated multi-specialist system that runs during schedule
 - **Prometheus metrics** (`src/telemetry/prometheus/`): every metric carries a `namespace` label and every recorder is fail-soft (a metrics error never propagates into a request or a worker loop). Counter children with a *bounded* label domain are zero-initialized per process at startup — `initialize_bounded_metrics(instance_type=...)`, called from the `src/main.py` lifespan (`api`) and `src/deriver/__main__.py` (`deriver`) — so an absent series means a broken scrape rather than "nothing happened". Two consequences worth knowing before touching telemetry:
   - **Adding a `BaseEvent` subclass requires adding its `_event_type` to `ALL_EVENT_TYPES`** in `src/telemetry/events/__init__.py` (and to `HIGH_VOLUME_EVENT_TYPES` if `_volume_class == "high_volume"`). Enforced by the drift guards in `tests/telemetry/test_metric_zero_init.py`, which assert set-equality against the discovered subclasses.
   - **A service-wide, non-additive gauge must be refreshed by every replica on its own timer**, and aggregated with `max()`/`avg()`, never `sum()`. `message_embeddings_pending` is the example: it reports a DB-global count, so it is driven from `ReconcilerScheduler._scheduler_loop` (runs on all replicas) rather than from the work-unit-deduped reconciliation cycle — otherwise, combined with the zero-init, every replica that never won the work unit would export a confident permanent `0`.
+- **Tenant identity in telemetry** (`src/telemetry/tenant.py`): under `MULTI_TENANT` the ambient `tenant_context` (bound per request in `src/security.py`, per work unit in `src/deriver/queue_manager.py`) is read at four chokepoints — the CloudEvents emitter adds a `tenantid` extension attribute to the envelope (`source` still names the instance), the six attribution counters (`messages_created`, `dialectic_calls`, `deriver_queue_items_processed`, `deriver_tokens_processed`, `dialectic_tokens_processed`, `dreamer_tokens_processed`) carry a `tenant_id` label via `TenantScopedCounter`, the Sentry isolation scope gets a `tenant_id` tag at both bind sites, and Langfuse's `user.id` is the tenant. Flag-off every surface is byte-identical to pre-tenancy output: no attribute, `tenant_id=""` (which Prometheus treats as absent, so zero-init and dashboards are unchanged), no tag, `user.id` = namespace. A flag-on emit with no tenant bound increments `telemetry_events_untenanted{type}` (reconciliation events exempt, they are tenant-less by construction) — non-zero means an emit site runs outside its bind scope. Nothing threads a tenant through event classes or emit sites; do not add one.
 
 ### Project Structure
 
@@ -268,7 +269,7 @@ src/
 ├── telemetry/           # Observability
 │   ├── emitter.py        # CloudEvents emitter
 │   ├── logging.py        # Logging helpers + route-template extraction
-│   ├── metrics_collector.py, reasoning_traces.py, sentry.py
+│   ├── client_context.py, metrics_collector.py, reasoning_traces.py, sentry.py, tenant.py
 │   ├── events/           # Event type definitions
 │   └── prometheus/       # Prometheus metric definitions
 ├── utils/               # Cross-cutting utilities
