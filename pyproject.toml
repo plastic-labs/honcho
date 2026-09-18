@@ -46,6 +46,9 @@ lancedb = [
 qdrant = [
     "qdrant-client>=1.18.0",
 ]
+chromadb = [
+    "chromadb>=1.5.2",
+]
 [dependency-groups]
 dev = [
     "pytest>=8.2.2",
@@ -62,6 +65,7 @@ dev = [
     "scipy>=1.15.3",
     "boto3>=1.42.5",
     "pytest-xdist>=3.8.0",
+    "chromadb>=1.5.2",
 ]
 
 [tool.uv]
