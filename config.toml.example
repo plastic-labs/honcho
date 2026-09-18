@@ -118,6 +118,16 @@ REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS = 512  # Min tokens a work unit acc
 REPRESENTATION_BATCH_TARGET_INPUT_TOKENS = 1024  # Max context-window tokens per deriver LLM call
 REPRESENTATION_BATCH_MAX_AGE_SECONDS = 1800
 FLUSH_ENABLED = false  # Bypass batch token threshold, process work immediately
+# An empty structured response is indistinguishable from a model that asserted
+# nothing until its finish reasons are read, so it is re-requested in-line this
+# many times (backoff EMPTY_PARSE_BACKOFF_SECONDS, doubled per attempt, jittered)
+# before the batch is either refused (degraded: length/content_filter/0 tokens ->
+# EmptyRepresentationError, requeued under MAX_RETRYABLE_ATTEMPTS) or accepted
+# (clean stop with tokens spent). Worst-case provider calls per batch is
+# (1 + EMPTY_PARSE_MAX_ATTEMPTS) * MAX_RETRYABLE_ATTEMPTS = 6. 0 keeps the
+# previous single-call behaviour.
+EMPTY_PARSE_MAX_ATTEMPTS = 1
+EMPTY_PARSE_BACKOFF_SECONDS = 1.0
 
 [deriver.model_config]
 transport = "openai"

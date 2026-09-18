@@ -282,18 +282,21 @@ async def test_background_session_identity(
         assert all(event.trace_id == event.span_id for event in traced)
         assert all(event.trace_id != session.id for event in traced)
         successes = [event for event in traced if event.finish_reason == "stop"]
-        assert len(successes) == 5
+        # 2 summary-short + 2 summary-long + 2 deriver: the synthetic deriver body
+        # is a valid-but-empty representation, which the deriver re-requests once
+        # in-line (upstream main's own expectations predate that re-request).
+        assert len(successes) == 6
         assert sum(event.call_purpose == "summary.short" for event in successes) == 2
         assert sum(event.call_purpose == "summary.long" for event in successes) == 2
         if any(event.was_fallback for event in traced):
-            assert len(traced) == 15
+            assert len(traced) == 18
             for event in successes:
                 attempts = [e for e in traced if e.trace_id == event.trace_id]
                 assert [e.attempt for e in attempts] == [1, 2, 3]
                 assert [e.was_fallback for e in attempts] == [False, False, True]
                 assert event.model == "synthetic-fallback"
         else:
-            assert len(traced) == 5
+            assert len(traced) == 6
 
         content_hashes = {
             event.content_hash
