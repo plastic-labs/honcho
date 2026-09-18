@@ -357,7 +357,7 @@ describe('Conclusions', () => {
       expect(fetched.observedId).toBe(peer.id)
       expect(fetched.level).toBe('explicit')
       // User-created conclusions are explicit: no premises, derived once
-      expect(fetched.sourceIds).toBeNull()
+      expect(fetched.sourceIds).toEqual([])
       expect(fetched.timesDerived).toBe(1)
     })
   })
