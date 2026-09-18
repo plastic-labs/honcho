@@ -51,6 +51,8 @@ OpenCode:
 ## What You Get
 
 - **Persistent Memory** — OpenCode retains durable context across sessions
+- **Hook-Driven Memory** — OpenCode hooks inject user/project memory at the start of every turn and record significant tool activity, so memory works regardless of the underlying model
+- **Honcho Memory Skill** — A `honcho-memory` skill is installed to `~/.opencode/skills/honcho-memory` so the agent knows when to pull and save memory actively
 - **Cloud or Local Deployments** — Point at Honcho Cloud or a self-hosted / local instance
 - **Workspace Mapping** — OpenCode projects map cleanly to Honcho workspaces
 - **Flexible Session Mapping** — Scope sessions per directory, repo, branch, chat instance, or globally
@@ -103,7 +105,9 @@ If OpenCode is running inside Docker or another remote environment, `localhost` 
 | --- | --- | --- |
 | `hybrid` (default) | Context injection **and** tool access | Most users — balanced memory coverage |
 | `context` | Only inject memory into system prompts | Predictable prompts, no tool calls |
-| `tools` | Only expose memory as tools | Explicit, on-demand retrieval |
+| `tools` | Memory instructions always injected; retrieval happens via tools only | Explicit, on-demand retrieval |
+
+Note that in every mode the Honcho memory instruction is added to the system prompt, so the model always knows which memory tools are available.
 
 ### Session Strategies
 
@@ -151,6 +155,12 @@ The plugin hooks into these OpenCode plugin capabilities:
 - `experimental.session.compacting`
 - `shell.env`
 - `tool`
+
+### How hooks drive memory
+
+- `experimental.chat.system.transform` always appends Honcho memory instructions. With `recallMode: "hybrid"` or `"context"` it also injects prompt-specific memory retrieved for the current user message (recovered via `chat.message` when OpenCode calls the system hook without prompt text).
+- `tool.execute.after` records significant tool activity (shell commands, file edits, delegated tasks) into the session history so future recall reflects what was actually done. Read-only and trivial calls are skipped.
+- On session start (and after `honcho_setup` succeeds), the plugin copies the packaged `honcho-memory` skill into `~/.opencode/skills/honcho-memory`.
 
 ## Building with Teammates
 
