@@ -1556,6 +1556,17 @@ class AppSettings(HonchoSettings):
     # Application-wide settings
     LOG_LEVEL: str = "INFO"
     PERFORMANCE_LOG_FORMAT: str = "compact"
+    # Which process this is: the API serves requests, the deriver claims queue
+    # work. Set per process (one value each), never in a config both share.
+    # region ai
+    # Read by the tenant-isolation startup validator: under MULTI_TENANT the API
+    # must run with AUTH_USE_AUTH on (the JWT tenant claim is its only tenant
+    # source) while the deriver takes its tenant from the claimed work unit's key
+    # and needs no auth config. Defaults to "api" so an unlabeled process gets the
+    # stricter check; INSTANCE_TYPE=deriver on an API process would skip it, and every
+    # request would then fail closed at runtime instead of the process at boot.
+    # endregion
+    INSTANCE_TYPE: Literal["api", "deriver"] = "api"
     SESSION_OBSERVERS_LIMIT: Annotated[int, Field(default=10, gt=0)] = 10
     MAX_FILE_SIZE: Annotated[int, Field(default=5_242_880, gt=0)] = 5_242_880  # 5MB
     GET_CONTEXT_MAX_TOKENS: Annotated[int, Field(default=100_000, gt=0, le=250_000)] = (
