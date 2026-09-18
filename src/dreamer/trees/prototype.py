@@ -7,7 +7,7 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
-from .base import SurprisalTree
+from .base import SurprisalTree, sklearn_import_error
 
 
 class PrototypeSurprisal(SurprisalTree):
@@ -64,7 +64,10 @@ class PrototypeSurprisal(SurprisalTree):
             self.clusters_built = True
             return
 
-        from sklearn.cluster import KMeans
+        try:
+            from sklearn.cluster import KMeans
+        except ImportError as exc:
+            raise sklearn_import_error("'prototype'", exc) from exc
 
         points_array: NDArray[np.floating[Any]] = np.array(self.points)
         n_clusters_actual = min(self.n_clusters, len(self.points))
