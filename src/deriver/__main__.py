@@ -83,8 +83,8 @@ async def run_deriver():
     await initialize_telemetry_async()
 
     try:
-        # Fail fast if the embedding schema does not match settings — same
-        # gate the API runs in its lifespan. Inside the try block so the
+        # Run the three startup validators before claiming any work — the same
+        # gates the API runs in its lifespan. Inside the try block so the
         # telemetry buffer is still flushed if validation raises.
         await validate_embedding_schema(engine)
         await validate_tenant_isolation(engine)
