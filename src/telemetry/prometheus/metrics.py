@@ -223,6 +223,15 @@ deriver_queue_work_units_eligible_gauge = NamespacedGauge(
     ["namespace"],
 )
 
+deriver_queue_work_units_excluded_gauge = NamespacedGauge(
+    "deriver_queue_work_units_excluded",
+    "Work units a deriver would claim but for their tenant being excluded, so "
+    + "nothing will pick them up. Disjoint from deriver_queue_work_units_eligible. "
+    + "Service-wide DB count, reported independently by every API replica — "
+    + "aggregate with max() or avg(), never sum()",
+    ["namespace"],
+)
+
 deriver_queue_work_units_claimed_gauge = NamespacedGauge(
     "deriver_queue_work_units_claimed",
     "Work units held by a claim refreshed inside the stale timeout, so work is "
@@ -638,6 +647,7 @@ class PrometheusMetrics:
         self,
         *,
         eligible_work_units: int = 0,
+        excluded_work_units: int = 0,
         claimed_work_units: int = 0,
         pending_items: int = 0,
         oldest_pending_age_seconds: float = 0.0,
@@ -646,6 +656,7 @@ class PrometheusMetrics:
     ) -> None:
         try:
             deriver_queue_work_units_eligible_gauge.labels().set(eligible_work_units)
+            deriver_queue_work_units_excluded_gauge.labels().set(excluded_work_units)
             deriver_queue_work_units_claimed_gauge.labels().set(claimed_work_units)
             deriver_queue_items_pending_gauge.labels().set(pending_items)
             deriver_queue_oldest_pending_age_seconds_gauge.labels().set(

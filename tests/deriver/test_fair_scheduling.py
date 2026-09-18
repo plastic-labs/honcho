@@ -1,22 +1,24 @@
 """Behavior of the deriver's fair scheduler: round-robin claiming across tenants.
 
 The claim ranks each tenant's *eligible* work units oldest-first inside a
-subquery and orders the outer claim by that rank, so a single poll takes every
-tenant's oldest unit before it takes anybody's second. These tests pin the order
+subquery, adds the number of units that tenant already holds in flight, and
+orders the outer claim by the sum — so a single poll takes the oldest unit of
+the tenants running least before it takes anything from a tenant already busy. These tests pin the order
 that produces and the properties that fall out of it: a flooding tenant cannot
 starve a quiet one, the tenant-less reconciler lane is a bucket in the rotation
 rather than an exception to it, and a deployment where every row is tenant-less
 degenerates to plain oldest-first. They also pin the seams around that ordering
-— eligibility placement (a claimed unit must not shadow its tenant's next one),
-the tenant-exclusion hook, the queue's lane CHECK, the pool-derived worker cap that
-sets the claim's limit, and the enqueue stamp that fills the column the ranking
-partitions on.
+— the in-flight offset (a tenant is charged one rank per unit it already holds,
+and nothing for a stale claim), the tenant-exclusion hook, the queue's lane CHECK,
+the pool-derived worker cap that sets the claim's limit, and the enqueue stamp that
+fills the column the ranking partitions on.
 """
 
 from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Sequence
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy.exc import IntegrityError
@@ -24,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import src.crud.deriver as crud_deriver_module
 from src import models
+from src.backlog import outstanding_work_seconds
 from src.config import settings
 from src.crud.deriver import claim_excluded_tenant_ids
 from src.deriver import queue_manager as queue_manager_module
@@ -380,29 +383,29 @@ class TestFlagOffDegeneratesToOldestFirst:
 
 
 @pytest.mark.asyncio
-class TestAClaimedUnitDoesNotShadowItsTenantsNext:
-    """Eligibility is filtered inside the ranking subquery, not after it."""
+class TestWorkInFlightChargesItsTenant:
+    """A tenant's live claims offset its rank, so fairness conserves granted concurrency."""
 
-    async def test_a_tenants_second_unit_ranks_first_once_its_oldest_is_claimed(
+    async def test_an_in_flight_unit_yields_the_next_slot_to_an_idle_tenant(
         self,
         db_session: AsyncSession,
         seed_work_unit: SeedWorkUnit,
         batch_gate_settings: Callable[..., None],
         recorded_claim_order: list[str],
     ) -> None:
-        """Ranking after the eligibility filter would demote this unit to round two.
+        """Ranking eligible rows alone would hand this tenant a rank-1 slot it is already using.
 
-        The claimed unit is the tenant's oldest. If the claim ranked every backlog
-        row and only then dropped claimed ones, this tenant's remaining unit would
-        keep rank 2 and lose the first slot to the other tenant's much younger
-        rank-1 row — the whole tenant would fall a round behind for as long as one
-        of its units was in flight.
+        The whale holds one unit in flight and has another waiting; the other
+        tenant holds nothing and its waiting unit is far younger. Charged for
+        what it holds, the whale's next unit ranks behind the idle tenant's
+        despite being the older row — which is the point: the ordering is over
+        concurrency granted, not queue position.
         """
         batch_gate_settings(
             target_tokens=512, max_age_seconds=AGE_FLUSH_SECONDS, workers=2
         )
         claimed_key = representation_key(WHALE_TENANT, "in-flight")
-        shadowed_key = representation_key(WHALE_TENANT, "behind-the-claim")
+        waiting_key = representation_key(WHALE_TENANT, "behind-the-claim")
         other_tenant_key = representation_key(LIVE_TENANT, "unrelated")
         await seed_work_unit(
             claimed_key,
@@ -411,7 +414,7 @@ class TestAClaimedUnitDoesNotShadowItsTenantsNext:
             ages_seconds=(900,),
         )
         await seed_work_unit(
-            shadowed_key,
+            waiting_key,
             tenant_id=WHALE_TENANT,
             token_counts=(1,),
             ages_seconds=(800,),
@@ -429,8 +432,115 @@ class TestAClaimedUnitDoesNotShadowItsTenantsNext:
 
         claimed_work_units = await QueueManager().get_and_claim_work_units()
 
-        assert recorded_claim_order == [shadowed_key, other_tenant_key]
-        assert set(claimed_work_units) == {shadowed_key, other_tenant_key}
+        assert recorded_claim_order == [other_tenant_key, waiting_key]
+        assert set(claimed_work_units) == {other_tenant_key, waiting_key}
+
+    async def test_the_charge_is_one_rank_per_held_unit_not_banishment(
+        self,
+        db_session: AsyncSession,
+        seed_work_unit: SeedWorkUnit,
+        batch_gate_settings: Callable[..., None],
+        recorded_claim_order: list[str],
+    ) -> None:
+        """One unit in flight costs exactly one rank, so the tenant keeps its place in round two.
+
+        The whale is charged for the single unit it holds and lands at
+        effective rank 2 — behind the idle tenant's first unit, but ahead of
+        that tenant's *second*, which it outranks on age. A tenant being
+        processed yields a round; it is not pushed to the back of the queue for
+        as long as anything of its own is running.
+        """
+        batch_gate_settings(
+            target_tokens=512, max_age_seconds=AGE_FLUSH_SECONDS, workers=3
+        )
+        claimed_key = representation_key(WHALE_TENANT, "in-flight")
+        whale_waiting_key = representation_key(WHALE_TENANT, "whale-next")
+        idle_first_key = representation_key(LIVE_TENANT, "idle-first")
+        idle_second_key = representation_key(LIVE_TENANT, "idle-second")
+        await seed_work_unit(
+            claimed_key, tenant_id=WHALE_TENANT, token_counts=(1,), ages_seconds=(900,)
+        )
+        await seed_work_unit(
+            whale_waiting_key,
+            tenant_id=WHALE_TENANT,
+            token_counts=(1,),
+            ages_seconds=(800,),
+        )
+        await seed_work_unit(
+            idle_first_key,
+            tenant_id=LIVE_TENANT,
+            token_counts=(1,),
+            ages_seconds=(500,),
+        )
+        await seed_work_unit(
+            idle_second_key,
+            tenant_id=LIVE_TENANT,
+            token_counts=(1,),
+            ages_seconds=(400,),
+        )
+        db_session.add(
+            models.ActiveQueueSession(work_unit_key=claimed_key, tenant_id=WHALE_TENANT)
+        )
+        await db_session.commit()
+
+        await QueueManager().get_and_claim_work_units()
+
+        assert recorded_claim_order == [
+            idle_first_key,
+            whale_waiting_key,
+            idle_second_key,
+        ]
+
+    async def test_a_stale_claim_does_not_charge_its_tenant(
+        self,
+        db_session: AsyncSession,
+        seed_work_unit: SeedWorkUnit,
+        batch_gate_settings: Callable[..., None],
+        recorded_claim_order: list[str],
+    ) -> None:
+        """A claim past the stale timeout is abandoned work, not concurrency the tenant holds.
+
+        Counting it would let one crashed worker penalize its tenant on every
+        poll until the stale-claim GC reaps the row. With the claim stale, the
+        whale is charged nothing and its older unit leads on age alone.
+        """
+        batch_gate_settings(
+            target_tokens=512, max_age_seconds=AGE_FLUSH_SECONDS, workers=2
+        )
+        stale_claim_key = representation_key(WHALE_TENANT, "abandoned")
+        whale_waiting_key = representation_key(WHALE_TENANT, "whale-next")
+        other_tenant_key = representation_key(LIVE_TENANT, "unrelated")
+        await seed_work_unit(
+            stale_claim_key,
+            tenant_id=WHALE_TENANT,
+            token_counts=(1,),
+            ages_seconds=(900,),
+        )
+        await seed_work_unit(
+            whale_waiting_key,
+            tenant_id=WHALE_TENANT,
+            token_counts=(1,),
+            ages_seconds=(800,),
+        )
+        await seed_work_unit(
+            other_tenant_key,
+            tenant_id=LIVE_TENANT,
+            token_counts=(1,),
+            ages_seconds=(100,),
+        )
+        stale_by = settings.DERIVER.STALE_SESSION_TIMEOUT_MINUTES + 5
+        db_session.add(
+            models.ActiveQueueSession(
+                work_unit_key=stale_claim_key,
+                tenant_id=WHALE_TENANT,
+                last_updated=datetime.now(UTC) - timedelta(minutes=stale_by),
+            )
+        )
+        await db_session.commit()
+
+        await QueueManager().get_and_claim_work_units()
+
+        assert recorded_claim_order == [whale_waiting_key, other_tenant_key]
 
 
 @pytest.mark.asyncio
@@ -531,6 +641,124 @@ class TestThePauseSeam:
             live_key,
             reconciler_key,
         }
+
+    async def test_excluded_units_leave_the_eligible_gauge_for_their_own(
+        self,
+        db_session: AsyncSession,
+        seed_work_unit: SeedWorkUnit,
+        batch_gate_settings: Callable[..., None],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """What the claim will not take must not read as backlog waiting for a worker.
+
+        ``eligible_work_units`` drives deriver autoscaling, so counting units no
+        claim can take asks for workers that would find nothing to do. They are
+        reported on their own gauge instead of disappearing — an excluded
+        tenant's depth is exactly the number worth watching while it is paused.
+        """
+        batch_gate_settings(
+            target_tokens=512, max_age_seconds=AGE_FLUSH_SECONDS, workers=10
+        )
+        monkeypatch.setattr(
+            crud_deriver_module,
+            "claim_excluded_tenant_ids",
+            lambda: [PAUSED_TENANT],
+        )
+        for index, age_seconds in enumerate((900, 800)):
+            await seed_work_unit(
+                representation_key(PAUSED_TENANT, f"paused-{index}"),
+                tenant_id=PAUSED_TENANT,
+                token_counts=(1,),
+                ages_seconds=(age_seconds,),
+            )
+        await seed_work_unit(
+            representation_key(LIVE_TENANT, "still-running"),
+            tenant_id=LIVE_TENANT,
+            token_counts=(1,),
+            ages_seconds=(200,),
+        )
+        # The tenant-less lane is never excluded, and NULL never matches IN —
+        # it has to keep counting as eligible.
+        await seed_work_unit(
+            "reconciler:sync_vectors",
+            task_type="reconciler",
+            tenant_id=None,
+            token_counts=(0,),
+            ages_seconds=(100,),
+            with_messages=False,
+        )
+
+        stats = await crud_deriver_module.get_deriver_metrics(db_session)
+
+        assert stats.eligible_work_units == 2
+        assert stats.excluded_work_units == 2
+
+    async def test_nothing_is_excluded_from_the_gauges_with_no_source_wired(
+        self,
+        db_session: AsyncSession,
+        seed_work_unit: SeedWorkUnit,
+        batch_gate_settings: Callable[..., None],
+    ) -> None:
+        """The seam is dormant today, so the eligible gauge must read exactly as it did."""
+        batch_gate_settings(
+            target_tokens=512, max_age_seconds=AGE_FLUSH_SECONDS, workers=10
+        )
+        await seed_work_unit(
+            representation_key(LIVE_TENANT, "live"),
+            tenant_id=LIVE_TENANT,
+            token_counts=(1,),
+            ages_seconds=(200,),
+        )
+        await seed_work_unit(
+            representation_key(WHALE_TENANT, "also-live"),
+            tenant_id=WHALE_TENANT,
+            token_counts=(1,),
+            ages_seconds=(100,),
+        )
+
+        stats = await crud_deriver_module.get_deriver_metrics(db_session)
+
+        assert stats.eligible_work_units == 2
+        assert stats.excluded_work_units == 0
+
+    async def test_a_wholly_excluded_backlog_reports_no_outstanding_work(
+        self,
+        db_session: AsyncSession,
+        seed_work_unit: SeedWorkUnit,
+        batch_gate_settings: Callable[..., None],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Dropping excluded units from the eligible count alone would leave the same bug one level down.
+
+        ``outstanding_work_seconds`` falls back to the pending count and the
+        oldest pending age once eligible and claimed are both zero, so a
+        backlog belonging entirely to excluded tenants would still report work
+        outstanding and hold the deriver fleet up for units no claim can take.
+        Every gauge that answers "is there anything to do" has to agree.
+        """
+        batch_gate_settings(
+            target_tokens=512, max_age_seconds=AGE_FLUSH_SECONDS, workers=10
+        )
+        monkeypatch.setattr(
+            crud_deriver_module,
+            "claim_excluded_tenant_ids",
+            lambda: [PAUSED_TENANT],
+        )
+        for index, age_seconds in enumerate((900, 800)):
+            await seed_work_unit(
+                representation_key(PAUSED_TENANT, f"paused-{index}"),
+                tenant_id=PAUSED_TENANT,
+                token_counts=(1,),
+                ages_seconds=(age_seconds,),
+            )
+
+        stats = await crud_deriver_module.get_deriver_metrics(db_session)
+
+        assert stats.eligible_work_units == 0
+        assert stats.excluded_work_units == 2
+        assert stats.pending_items == 0
+        assert stats.oldest_pending_age_seconds == 0.0
+        assert outstanding_work_seconds(stats, dreams_due=0) == 0.0
 
 
 @pytest.mark.asyncio

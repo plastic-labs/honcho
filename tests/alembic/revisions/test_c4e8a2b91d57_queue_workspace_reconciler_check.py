@@ -12,10 +12,9 @@ from tests.alembic.verifier import MigrationVerifier
 CONSTRAINT_NAME = "ck_queue_workspace_null_iff_reconciler"
 WORKSPACE_NAME = "lane-check-workspace"
 
-# The row the constraint cannot be validated against until the migration's
-# pre-flight cleans it up: a reconciler item from when workspace_name was still
-# NOT NULL, and errored rather than cleaned up, so it outlived the retention
-# window.
+# The row the migration's conformance count would reject until its pre-flight
+# cleans it up: a reconciler item from when workspace_name was still NOT NULL,
+# and errored rather than cleaned up, so it outlived the retention window.
 LEGACY_RECONCILER_UNIT = "reconciler:legacy_sync_vectors"
 
 # The two shapes the equivalence admits, seeded before the upgrade so validation
@@ -74,15 +73,21 @@ def prepare_queue_workspace_reconciler_check(verifier: MigrationVerifier) -> Non
 
 @register_after_upgrade("c4e8a2b91d57")
 def verify_queue_workspace_reconciler_check(verifier: MigrationVerifier) -> None:
-    """Assert the lane invariant is enforced, validated, and true of the rows already there."""
+    """Assert the lane invariant is enforced, ships NOT VALID, and holds of the rows already there."""
     conn = verifier.conn
     schema = verifier.schema
 
     verifier.assert_constraint_exists("queue", CONSTRAINT_NAME, "check")
 
-    # NOT VALID would install the constraint for new rows while leaving every
-    # existing row unchecked, so the split add/validate is only half done until
-    # convalidated flips.
+    # region ai
+    # The constraint is expected to be NOT VALID, and that is the fix rather
+    # than a gap: VALIDATE CONSTRAINT would full-scan the table while the
+    # migration's transaction still holds the ACCESS EXCLUSIVE that ADD
+    # CONSTRAINT took, blocking the queue for the scan. The upgrade proves
+    # conformance with a count taken before any exclusive lock instead, so this
+    # asserts BOTH halves: the catalog flag is off, and the property it would
+    # have recorded is nonetheless true of every row.
+    # endregion
     is_validated = conn.execute(
         text(
             "SELECT convalidated FROM pg_constraint constraint_row "
@@ -94,9 +99,21 @@ def verify_queue_workspace_reconciler_check(verifier: MigrationVerifier) -> None
         ),
         {"name": CONSTRAINT_NAME, "schema": schema},
     ).scalar_one()
-    assert is_validated is True, (
-        f"{CONSTRAINT_NAME} is still NOT VALID, so the rows already in the "
-        + "queue were never checked against it"
+    assert is_validated is False, (
+        f"{CONSTRAINT_NAME} is VALIDATED, so the upgrade scanned the whole "
+        + "queue while holding ACCESS EXCLUSIVE — the lock this migration is "
+        + "shaped to avoid. It is meant to ship NOT VALID."
+    )
+
+    violating_rows = conn.execute(
+        text(
+            f'SELECT count(*) FROM "{schema}"."queue" '
+            + "WHERE NOT ((workspace_name IS NULL) = (task_type = 'reconciler'))"
+        )
+    ).scalar_one()
+    assert violating_rows == 0, (
+        f"{violating_rows} row(s) violate the lane invariant the upgrade's "
+        + "pre-flight count is supposed to have proven clean"
     )
 
     def workspace_of(work_unit_key: str) -> str | None:
@@ -110,7 +127,7 @@ def verify_queue_workspace_reconciler_check(verifier: MigrationVerifier) -> None
 
     assert workspace_of(LEGACY_RECONCILER_UNIT) is None, (
         "the pre-flight has to NULL the legacy row's workspace; leaving it "
-        + "would make VALIDATE CONSTRAINT fail and the whole upgrade abort"
+        + "would trip the upgrade's conformance count and abort the migration"
     )
     assert workspace_of(VALID_REPRESENTATION_UNIT) == WORKSPACE_NAME, (
         "the pre-flight targets the reconciler lane only"

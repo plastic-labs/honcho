@@ -144,6 +144,9 @@ class DeriverMetrics(BaseModel):
     """Database-wide view of the deriver's outstanding work."""
 
     eligible_work_units: int = 0
+    # Work units the claim is skipping because their tenant is excluded. They
+    # are NOT in eligible_work_units: nothing will pick them up.
+    excluded_work_units: int = 0
     claimed_work_units: int = 0
     pending_items: int = 0
     oldest_pending_age_seconds: float = 0.0
