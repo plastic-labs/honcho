@@ -308,7 +308,9 @@ class _EmbeddingClient:
             gemini_client = cast("genai.Client", self.client)
 
             async def _call_gemini() -> list[float]:
-                response = await gemini_client.aio.models.embed_content(
+                # The SDK's contents union includes optional Pillow types, which
+                # are unresolved without Pillow; this call only sends text.
+                response = await gemini_client.aio.models.embed_content(  # pyright: ignore[reportUnknownMemberType]
                     model=self.model,
                     contents=query,
                     config={"output_dimensionality": self.vector_dimensions},
@@ -562,7 +564,9 @@ class _EmbeddingClient:
                 from google.genai import types as genai_types
 
                 gemini_client = cast("genai.Client", self.client)
-                response = await gemini_client.aio.models.embed_content(
+                # The SDK's contents union includes optional Pillow types, which
+                # are unresolved without Pillow; this call only sends text.
+                response = await gemini_client.aio.models.embed_content(  # pyright: ignore[reportUnknownMemberType]
                     model=self.model,
                     # One Content per item: a list of bare strings is folded
                     # into a single document by gemini-embedding-2*, which
