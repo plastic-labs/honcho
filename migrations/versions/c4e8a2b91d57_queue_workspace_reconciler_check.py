@@ -13,22 +13,14 @@ when ``MULTI_TENANT`` is on) is deliberately NOT a CHECK: flag-off rows
 legitimately carry NULL ``tenant_id`` for every task type and a constraint
 cannot read the deployment flag — that half is asserted at enqueue.
 
-OPERATOR NOTE — the constraint ships ``NOT VALID``. It enforces on every
-insert and update from the moment this lands; what ``NOT VALID`` withholds is
-only Postgres's own record that the rows already in the table were checked.
-This migration proves that separately, with a plain count (see ``upgrade``).
-To flip the catalog flag as well, run this by hand against the database at
-any convenient moment — it takes SHARE UPDATE EXCLUSIVE, which blocks other
-DDL but not reads or writes, and it is safe to run more than once::
-
-    ALTER TABLE <schema>.queue VALIDATE CONSTRAINT ck_queue_workspace_null_iff_reconciler;
-
-Nothing in the application depends on it having been run.
+The constraint is added ``NOT VALID`` and validated in a second step, each in
+its own autocommit block so neither holds a lock across the other. ``upgrade``
+explains why the blocks are load-bearing rather than decorative. Both steps are
+re-runnable, so a run that dies between them completes on the next one.
 """
 
 from collections.abc import Sequence
 
-import sqlalchemy as sa
 from alembic import op
 
 from migrations.utils import constraint_exists, get_schema
@@ -45,76 +37,66 @@ CONSTRAINT_NAME = "ck_queue_workspace_null_iff_reconciler"
 
 
 def upgrade() -> None:
-    if constraint_exists("queue", CONSTRAINT_NAME, "check"):
-        return
-    # region ai
-    # Legacy cleanup first: reconciler rows enqueued while workspace_name was
-    # still NOT NULL carry a real workspace and would fail validation (errored
-    # rows outlive the retention-window cleanup). NULLing the workspace matches
-    # what every current writer produces for the lane.
-    # endregion
-    op.execute(
-        f"""
-        UPDATE {schema}.queue
-        SET workspace_name = NULL
-        WHERE task_type = 'reconciler' AND workspace_name IS NOT NULL
-        """
-    )
-    # region ai
-    # Conformance is proven by an ordinary count, not by VALIDATE CONSTRAINT.
-    # VALIDATE full-scans the table, and alembic runs the whole upgrade inside
-    # one transaction (migrations/env.py), so the ACCESS EXCLUSIVE that ADD
-    # CONSTRAINT takes would be held until that transaction commits — straight
-    # through the scan, with every enqueue and claim blocked behind it. Reading
-    # the same rows BEFORE any exclusive lock is taken costs the same scan under
-    # ACCESS SHARE, concurrent with live traffic, and aborts the upgrade just as
-    # loudly if a row disagrees. The constraint then ships NOT VALID: full
-    # enforcement on new writes, no scan under an exclusive lock, and the
-    # catalog flag left for an out-of-band VALIDATE (see the module docstring).
-    #
-    # The WHERE mirrors CHECK semantics exactly — a CHECK rejects only rows the
-    # expression evaluates FALSE for, so a NULL-valued expression must not count
-    # here either.
-    # endregion
-    violating_rows = (
-        op.get_bind()
-        .execute(
-            sa.text(
+    if not constraint_exists("queue", CONSTRAINT_NAME, "check"):
+        # region ai
+        # Legacy cleanup first: reconciler rows enqueued while workspace_name was
+        # still NOT NULL carry a real workspace and would fail validation (errored
+        # rows outlive the retention-window cleanup). NULLing the workspace matches
+        # what every current writer produces for the lane.
+        # endregion
+        op.execute(
+            f"""
+            UPDATE {schema}.queue
+            SET workspace_name = NULL
+            WHERE task_type = 'reconciler' AND workspace_name IS NOT NULL
+            """
+        )
+        # region ai
+        # NOT VALID + VALIDATE, each in its OWN autocommit block — the split is
+        # worthless without them. The plain form of ADD CONSTRAINT takes ACCESS
+        # EXCLUSIVE and full-scans the table to validate, blocking every enqueue
+        # and claim for the scan; splitting it is supposed to leave only the
+        # scan-free half under that lock. But Postgres releases locks at
+        # TRANSACTION end, and alembic runs the whole upgrade in one transaction
+        # (migrations/env.py), so a plain split holds the ACCESS EXCLUSIVE taken
+        # here straight through the VALIDATE below — exactly the lock it exists
+        # to avoid. Each block commits as it finishes, so the exclusive lock is
+        # released before the scan starts and VALIDATE runs under SHARE UPDATE
+        # EXCLUSIVE, which blocks other DDL but not reads or writes.
+        #
+        # The blocks also commit whatever migrations preceded this one in the
+        # same upgrade: a failure here leaves them applied and the database on an
+        # earlier revision, to be fixed forward and re-run rather than rolled
+        # back. Both halves of this migration are re-runnable by design.
+        #
+        # lock_timeout (SET, not SET LOCAL — there is no transaction inside the
+        # block) bounds the wait for the ACCESS EXCLUSIVE: the statement itself
+        # is catalog-only and instant, but a lock request that WAITS queues every
+        # enqueue and claim behind it, so one long-running reader would stall the
+        # queue. Failing the deploy and retrying is the cheaper outcome.
+        # endregion
+        with op.get_context().autocommit_block():
+            op.execute("SET lock_timeout = '3s'")
+            op.execute(
                 f"""
-                SELECT count(*) FROM {schema}.queue
-                WHERE NOT ((workspace_name IS NULL) = (task_type = 'reconciler'))
+                ALTER TABLE {schema}.queue
+                ADD CONSTRAINT {CONSTRAINT_NAME}
+                CHECK ((workspace_name IS NULL) = (task_type = 'reconciler'))
+                NOT VALID
                 """
             )
-        )
-        .scalar_one()
-    )
-    if violating_rows:
-        raise RuntimeError(
-            f"{violating_rows} queue row(s) violate the lane invariant "
-            + "((workspace_name IS NULL) = (task_type = 'reconciler')) after the "
-            + "pre-flight cleanup. The pre-flight only repairs reconciler rows "
-            + "carrying a workspace; a row failing the other direction means a "
-            + "writer enqueued a workspace-scoped task without one. Find it "
-            + "before re-running this migration."
-        )
+            op.execute("RESET lock_timeout")
 
     # region ai
-    # ADD CONSTRAINT ... NOT VALID is catalog-only (no scan), but it still takes
-    # ACCESS EXCLUSIVE, and a lock request that WAITS queues every subsequent
-    # enqueue and claim behind it — one long-running reader would stall the
-    # queue for as long as it runs. lock_timeout bounds that: the deploy fails
-    # fast and is retried, rather than taking the service down while it waits.
+    # Unconditional, and outside the guard above: VALIDATE on an
+    # already-validated constraint is a catalog no-op (no rescan), so running it
+    # every time is what makes a run that died between the two blocks finish the
+    # job instead of silently leaving the constraint unvalidated forever. No
+    # lock_timeout here — SHARE UPDATE EXCLUSIVE does not conflict with the ROW
+    # EXCLUSIVE that writers take, so waiting for it cannot stall the queue.
     # endregion
-    op.execute("SET LOCAL lock_timeout = '3s'")
-    op.execute(
-        f"""
-        ALTER TABLE {schema}.queue
-        ADD CONSTRAINT {CONSTRAINT_NAME}
-        CHECK ((workspace_name IS NULL) = (task_type = 'reconciler'))
-        NOT VALID
-        """
-    )
-    op.execute("RESET lock_timeout")
+    with op.get_context().autocommit_block():
+        op.execute(f"ALTER TABLE {schema}.queue VALIDATE CONSTRAINT {CONSTRAINT_NAME}")
 
 
 def downgrade() -> None:
