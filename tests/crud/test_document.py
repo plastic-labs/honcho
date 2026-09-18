@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from src import crud, models, schemas
 from src.crud.document import SemanticRejectionResult, is_rejected_duplicate
 from src.exceptions import ResourceNotFoundException
+from src.utils.types import DocumentLevel
 
 
 class TestDocumentCRUD:
@@ -2252,3 +2253,167 @@ class TestPrefetchedCandidateScope:
 
         await db_session.refresh(existing)
         assert (existing.deleted_at is not None) is expect_merge
+
+
+class TestPgvectorCandidateEquivalence:
+    """The batched candidate query matches the per-document query it replaced.
+
+    `_pgvector_dup_candidates` unions N nearest-neighbour searches into one
+    statement. `_query_documents_pgvector` — still the live path for ordinary
+    semantic queries — is the reference: for the same document the two must
+    agree on scope, distance cutoff and which row comes back.
+    """
+
+    DIM: int = 1536
+
+    def _vec(self, axis: int, tilt: float = 0.0) -> list[float]:
+        """Unit vector on `axis`, optionally tilted toward a far-off axis.
+
+        Cosine distance from the untilted vector is ``1 - 1/sqrt(1 + tilt**2)``:
+        0.0 at tilt 0, ~0.005 at 0.1, ~0.001 at 0.05, ~0.106 at 0.5. That last
+        one sits outside the 0.05 dedup cutoff.
+        """
+        vector = [0.0] * self.DIM
+        vector[axis] = 1.0
+        if tilt:
+            vector[axis + 500] = tilt
+        return vector
+
+    async def _setup(
+        self,
+        db_session: AsyncSession,
+        test_workspace: models.Workspace,
+        test_peer: models.Peer,
+    ) -> tuple[models.Peer, models.Session, models.Session]:
+        observed_peer = models.Peer(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        session_a = models.Session(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        session_b = models.Session(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add_all([observed_peer, session_a, session_b])
+        await db_session.flush()
+        db_session.add(
+            models.Collection(
+                workspace_name=test_workspace.name,
+                observer=test_peer.name,
+                observed=observed_peer.name,
+            )
+        )
+
+        def existing(
+            axis: int,
+            tilt: float,
+            level: DocumentLevel,
+            session: models.Session | None,
+            *,
+            deleted: bool = False,
+        ) -> models.Document:
+            return models.Document(
+                workspace_name=test_workspace.name,
+                observer=test_peer.name,
+                observed=observed_peer.name,
+                session_name=session.name if session else None,
+                content=f"existing axis={axis} tilt={tilt} level={level}",
+                embedding=self._vec(axis, tilt),
+                level=level,
+                internal_metadata={},
+                deleted_at=datetime.datetime.now(datetime.UTC) if deleted else None,
+            )
+
+        db_session.add_all(
+            [
+                # One in-scope near neighbour per axis, so a mis-mapped batch
+                # index sends a document to the wrong row.
+                existing(0, 0.1, "explicit", session_a),
+                existing(1, 0.1, "explicit", session_a),
+                existing(2, 0.1, "deductive", None),
+                # Nearer than the axis-0 match but in another session: only the
+                # scope filter keeps it from winning.
+                existing(0, 0.05, "explicit", session_b),
+                # Nearer than the axis-1 match but a different level.
+                existing(1, 0.05, "deductive", None),
+                # Axis 3's only neighbour sits outside the distance cutoff.
+                existing(3, 0.5, "explicit", session_a),
+                # Soft-deleted, and otherwise the closest thing to axis 4.
+                existing(4, 0.1, "explicit", session_a, deleted=True),
+            ]
+        )
+        await db_session.commit()
+        return observed_peer, session_a, session_b
+
+    @pytest.mark.asyncio
+    async def test_batched_candidates_match_per_document_query(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        from src.crud import document as document_module
+
+        test_workspace, test_peer = sample_data
+        observed_peer, session_a, _session_b = await self._setup(
+            db_session, test_workspace, test_peer
+        )
+
+        def incoming(
+            axis: int, level: DocumentLevel, session: str | None
+        ) -> schemas.DocumentCreate:
+            return schemas.DocumentCreate(
+                content=f"incoming axis={axis}",
+                embedding=self._vec(axis),
+                session_name=session,
+                level=level,
+                metadata=schemas.DocumentMetadata(
+                    message_ids=[1],
+                    message_created_at="2026-01-01T00:00:00Z",
+                ),
+            )
+
+        documents = [
+            incoming(0, "explicit", session_a.name),
+            incoming(1, "explicit", session_a.name),
+            incoming(2, "deductive", None),
+            incoming(3, "explicit", session_a.name),  # nearest is out of range
+            incoming(4, "explicit", session_a.name),  # nearest is soft-deleted
+            incoming(5, "explicit", session_a.name),  # no neighbour at all
+        ]
+
+        expected: list[list[str]] = []
+        for doc in documents:
+            filters = document_module._semantic_dup_filters(doc)  # pyright: ignore[reportPrivateUsage]
+            assert filters is not None and doc.embedding is not None
+            reference = await document_module._query_documents_pgvector(  # pyright: ignore[reportPrivateUsage]
+                db_session,
+                test_workspace.name,
+                test_peer.name,
+                observed_peer.name,
+                doc.embedding,
+                filters,
+                document_module._SEMANTIC_DUP_MAX_DISTANCE,  # pyright: ignore[reportPrivateUsage]
+                document_module._SEMANTIC_DUP_TOP_K,  # pyright: ignore[reportPrivateUsage]
+            )
+            expected.append([row.id for row in reference])
+
+        actual = await document_module._pgvector_dup_candidates(  # pyright: ignore[reportPrivateUsage]
+            db_session,
+            documents,
+            test_workspace.name,
+            observer=test_peer.name,
+            observed=observed_peer.name,
+        )
+
+        assert actual == expected
+
+        # The corpus has to contain the cases that make the comparison bite,
+        # or two equally broken implementations would agree.
+        assert [len(ids) for ids in expected] == [1, 1, 1, 0, 0, 0], (
+            "corpus no longer discriminates: expected three matches then three "
+            f"misses, got {expected}"
+        )
+        assert len({ids[0] for ids in expected if ids}) == 3, (
+            "the three matches must be three distinct rows, or a mis-mapped "
+            "batch index would go unnoticed"
+        )
