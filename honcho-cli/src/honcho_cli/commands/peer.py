@@ -15,7 +15,7 @@ from honcho_cli.recall import parse_csv_repeatable, reject_incompatible_recall, 
 from honcho_cli.validation import validate_resource_id
 
 from honcho_cli._help import HonchoTyperGroup
-from honcho_cli.common import add_common_options, get_client, get_flag_overrides, get_resolved_config, handle_cmd_flags
+from honcho_cli.common import add_common_options, format_evidence, get_client, get_flag_overrides, get_resolved_config, handle_cmd_flags
 
 app = typer.Typer(cls=HonchoTyperGroup, help="List, create, chat with, search, and manage peers and their representations.")
 add_common_options(app)
@@ -141,6 +141,11 @@ def chat(
         "--sessions",
         help="Recall only from these session IDs (repeat or comma-separate); explicit conclusions only. Excludes -s and --scope.",
     ),
+    evidence: bool = typer.Option(
+        False,
+        "--evidence",
+        help="Also report what the answer was built from: the conclusions and messages read and the tools called.",
+    ),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
     peer: Optional[str] = typer.Option(None, "--peer", "-p", help="Override peer ID"),
     session: Optional[str] = typer.Option(None, "--session", "-s", help="Override session ID"),
@@ -179,8 +184,19 @@ def chat(
 
     try:
         p = client.peer(pid)
-        response = p.chat(query, **chat_kwargs)
-        print_result({"peer_id": pid, "query": query, "response": response})
+        if not evidence:
+            response = p.chat(query, **chat_kwargs)
+            print_result({"peer_id": pid, "query": query, "response": response})
+            return
+        result = p.chat(query, include_evidence=True, **chat_kwargs)
+        print_result(
+            {
+                "peer_id": pid,
+                "query": query,
+                "response": result.content,
+                "evidence": format_evidence(result.evidence),
+            }
+        )
     except Exception as e:
         _handle_chat_error(e, "peer", pid)
 
