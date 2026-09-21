@@ -70,6 +70,23 @@ here rather than being masked by client-side validation.
 * `contains` / `not_contains`: Substring matching.
 * `exact_match`: Strict equality.
 * `json_match`: specific key-value checks.
+* `evidence_contains`: assert on what a `chat` / `workspace_chat` run *read*,
+  independent of how it phrased the answer. The runner always requests
+  `include_evidence`, so this is deterministic where `llm_judge` is not. Every
+  field given must hold:
+  * `conclusions_match`: case-insensitive substring some evidence conclusion contains.
+  * `conclusions_from_peers` + `min_count` (default: all): at least `min_count`
+      of the listed peers have a conclusion *about them* (`observed_id`) in evidence.
+  * `messages_match`: substring some evidence message contains. Evidence carries
+      message ids only, so the runner fetches each one's content.
+  * `not_from_sessions`: no evidence conclusion or message belongs to these
+      sessions. Conclusions without a session id cannot be attributed and are skipped.
+
+  Evidence over-reports (prefetched rows count as read), so it proves a row was
+  reached, not that the answer used it. Pair it with an `llm_judge` on synthesis:
+  a run that retrieved but phrased badly fails only the judge, a run that never
+  retrieved fails here first. The failure message lists the tool calls made and
+  every conclusion (peer, level, session, first 80 chars) and message in evidence.
 
 ## Example
 

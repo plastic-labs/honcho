@@ -1,7 +1,7 @@
 import datetime
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from src.config import ReasoningLevel
 from src.schemas import (
@@ -142,6 +142,69 @@ class JsonMatchAssertion(Assertion):
     key_value_pairs: dict[str, Any] | None = None
 
 
+class EvidenceContainsAssertion(Assertion):
+    """Assert on what a chat run read, not on what it wrote.
+
+    Evaluated against the `evidence` a chat / workspace_chat query returns, so
+    it proves retrieval happened independently of how the answer was phrased.
+    Evidence over-reports (prefetched rows count as read), so this shows a row
+    was reached, not that the answer used it. Every field set must hold.
+    """
+
+    assertion_type: Literal["evidence_contains"] = "evidence_contains"
+    conclusions_match: str | None = Field(
+        default=None,
+        description="Case-insensitive substring some evidence conclusion must contain",
+    )
+    conclusions_from_peers: list[str] | None = Field(
+        default=None,
+        description="Peers (by `observed_id`) that must each have a conclusion in evidence",
+    )
+    min_count: int | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "How many of `conclusions_from_peers` must be present; defaults to all"
+        ),
+    )
+    messages_match: str | None = Field(
+        default=None,
+        description=(
+            "Case-insensitive substring some evidence message must contain. Evidence"
+            " carries message ids only, so the runner fetches each message's content."
+        ),
+    )
+    not_from_sessions: list[str] | None = Field(
+        default=None,
+        description=(
+            "No evidence conclusion or message may belong to these sessions."
+            " Conclusions without a session id are not attributable and are skipped."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _validate(self) -> Self:
+        if (
+            self.conclusions_match is None
+            and self.conclusions_from_peers is None
+            and self.messages_match is None
+            and self.not_from_sessions is None
+        ):
+            raise ValueError("evidence_contains needs at least one condition")
+        if self.conclusions_from_peers is not None and not self.conclusions_from_peers:
+            raise ValueError("conclusions_from_peers must not be empty")
+        if self.min_count is not None:
+            if self.conclusions_from_peers is None:
+                raise ValueError("min_count requires conclusions_from_peers")
+            if self.min_count > len(self.conclusions_from_peers):
+                raise ValueError("min_count exceeds len(conclusions_from_peers)")
+        return self
+
+    @property
+    def required_peer_count(self) -> int:
+        return self.min_count or len(self.conclusions_from_peers or [])
+
+
 # --- Query/Assertion Actions ---
 
 
@@ -183,6 +246,7 @@ class QueryAction(TestStep):
         | NotContainsAssertion
         | ExactMatchAssertion
         | JsonMatchAssertion
+        | EvidenceContainsAssertion
     ]
 
 

@@ -13,6 +13,7 @@ from typing import Any, ClassVar
 import httpx
 from anthropic import AsyncAnthropic
 from honcho.api_types import (
+    Evidence,
     MessageCreateParams,
     QueueStatusResponse,
 )
@@ -24,7 +25,8 @@ from honcho.api_types import (
 )
 from honcho.session import Session
 from honcho.session_context import SessionContext
-from pydantic import ValidationError
+from honcho.types import ChatResponse
+from pydantic import BaseModel, ValidationError
 
 # Adjust path to allow imports from tests.bench
 sys.path.insert(0, str(Path(__file__).parents[2]))
@@ -40,6 +42,7 @@ from tests.unified.schema import (
     ContainsAssertion,
     CreateScopeAction,
     CreateSessionAction,
+    EvidenceContainsAssertion,
     ExactMatchAssertion,
     JsonMatchAssertion,
     LLMJudgeAssertion,
@@ -75,6 +78,110 @@ JUDGE_MODEL: str = "claude-haiku-4-5"
 
 class TestExecutionError(Exception):
     pass
+
+
+@dataclass
+class QueryResult:
+    """A chat answer with the evidence the run collected alongside it."""
+
+    content: Any
+    evidence: Evidence | None = None
+
+
+@dataclass(frozen=True)
+class ConclusionAttribution:
+    observer: str
+    observed: str
+
+
+def _clip(text: str, width: int = 80) -> str:
+    text = " ".join(text.split())
+    return text if len(text) <= width else text[: width - 1] + "…"
+
+
+def describe_evidence(
+    evidence: Evidence,
+    attribution: dict[str, ConclusionAttribution],
+    message_contents: dict[str, str],
+) -> str:
+    """Render evidence for a failure message: tool calls, conclusions, messages."""
+    tool_names = [call.tool_name for call in evidence.tool_calls]
+    lines = [
+        f"evidence: {len(evidence.conclusions)} conclusions, "
+        + f"{len(evidence.messages)} messages, tool_calls={tool_names}"
+    ]
+    for conclusion in evidence.conclusions:
+        who = attribution.get(conclusion.id)
+        peer = f"{who.observed} (observer {who.observer})" if who else "unattributed"
+        session = f" session={conclusion.session_id}" if conclusion.session_id else ""
+        lines.append(
+            f"  conclusion {peer} {conclusion.level}{session}: {_clip(conclusion.content)}"
+        )
+    for message in evidence.messages:
+        content = message_contents.get(message.id)
+        text = f": {_clip(content)}" if content is not None else ""
+        lines.append(
+            f"  message peer={message.peer_id} session={message.session_id}{text}"
+        )
+    return "\n".join(lines)
+
+
+def evaluate_evidence(
+    assertion: EvidenceContainsAssertion,
+    evidence: Evidence,
+    attribution: dict[str, ConclusionAttribution],
+    message_contents: dict[str, str],
+) -> None:
+    """Check every condition on the assertion; raise on the first that fails.
+
+    `attribution` maps conclusion id to its peer pair and `message_contents`
+    maps message id to text; both are resolved by the caller because evidence
+    carries neither.
+    """
+    failures: list[str] = []
+
+    if assertion.conclusions_match is not None:
+        needle = assertion.conclusions_match.lower()
+        if not any(needle in c.content.lower() for c in evidence.conclusions):
+            failures.append(f"no evidence conclusion contains {needle!r}")
+
+    if assertion.conclusions_from_peers is not None:
+        present = {
+            attribution[c.id].observed
+            for c in evidence.conclusions
+            if c.id in attribution
+        }
+        hits = sorted(present & set(assertion.conclusions_from_peers))
+        needed = assertion.required_peer_count
+        if len(hits) < needed:
+            failures.append(
+                f"conclusions from {needed} of {assertion.conclusions_from_peers} "
+                + f"required, found {hits}"
+            )
+
+    if assertion.messages_match is not None:
+        needle = assertion.messages_match.lower()
+        if not any(
+            needle in message_contents.get(m.id, "").lower() for m in evidence.messages
+        ):
+            failures.append(f"no evidence message contains {needle!r}")
+
+    if assertion.not_from_sessions is not None:
+        banned = set(assertion.not_from_sessions)
+        leaked = sorted(
+            {c.session_id for c in evidence.conclusions if c.session_id in banned}
+            | {m.session_id for m in evidence.messages if m.session_id in banned}
+        )
+        if leaked:
+            failures.append(f"evidence includes rows from excluded sessions {leaked}")
+
+    if failures:
+        raise TestExecutionError(
+            "evidence_contains failed: "
+            + "; ".join(failures)
+            + "\n"
+            + describe_evidence(evidence, attribution, message_contents)
+        )
 
 
 # Discord rejects a webhook payload whose content exceeds this with a 400.
@@ -522,8 +629,42 @@ class UnifiedTestExecutor:
 
         elif isinstance(step, QueryAction):
             result = await self.perform_query(step)
+            evidence: Evidence | None = None
+            if isinstance(result, QueryResult):
+                evidence = result.evidence
+                result = result.content
             for assertion in step.assertions:
-                await self.check_assertion(result, assertion)
+                await self.check_assertion(result, assertion, evidence)
+
+    async def _check_evidence(
+        self, assertion: EvidenceContainsAssertion, evidence: Evidence
+    ) -> None:
+        """Resolve what evidence leaves out, then evaluate.
+
+        Evidence conclusions carry no peer pair and evidence messages carry no
+        content, so both are fetched here: the pair for `conclusions_from_peers`
+        and the failure listing, the content only when `messages_match` asks.
+        """
+        attribution: dict[str, ConclusionAttribution] = {}
+        if evidence.conclusions:
+            conclusions = await self.client.aio.conclusions.get_many(
+                [c.id for c in evidence.conclusions]
+            )
+            attribution = {
+                c.id: ConclusionAttribution(
+                    observer=c.observer_id, observed=c.observed_id
+                )
+                for c in conclusions
+            }
+
+        message_contents: dict[str, str] = {}
+        if assertion.messages_match is not None:
+            for ref in evidence.messages:
+                session = await self.client.aio.session(id=ref.session_id)
+                message = await session.aio.get_message(ref.id)
+                message_contents[ref.id] = message.content
+
+        evaluate_evidence(assertion, evidence, attribution, message_contents)
 
     async def wait_for_queue(self, timeout: int):
         # Poll deriver status
@@ -542,13 +683,15 @@ class UnifiedTestExecutor:
         if step.target == "workspace_chat":
             if step.input is None:
                 raise ValueError("input required for workspace_chat")
-            return await self.client.aio.chat(
+            response = await self.client.aio.chat(
                 step.input,
                 session=step.session_id,
                 reasoning_level=step.reasoning_level,
                 response_format=step.response_format,
                 scope=step.scope,
+                include_evidence=True,
             )
+            return _query_result(response)
 
         if step.scope is not None:
             return await self._perform_scoped_query(step)
@@ -567,8 +710,9 @@ class UnifiedTestExecutor:
                 target=step.observed_peer_id,
                 reasoning_level=step.reasoning_level,
                 response_format=step.response_format,
+                include_evidence=True,
             )
-            return response
+            return _query_result(response)
 
         elif step.target == "get_context":
             if not step.session_id:
@@ -611,7 +755,11 @@ class UnifiedTestExecutor:
                 raise ValueError("observer_peer_id required for chat")
             if step.input is None:
                 raise ValueError("input required for chat")
-            body: dict[str, Any] = {"query": step.input, "scope": step.scope}
+            body: dict[str, Any] = {
+                "query": step.input,
+                "scope": step.scope,
+                "include_evidence": True,
+            }
             if step.session_id:
                 body["session_id"] = step.session_id
             if step.observed_peer_id:
@@ -621,7 +769,14 @@ class UnifiedTestExecutor:
             response = await self._request(
                 "POST", f"/peers/{step.observer_peer_id}/chat", json=body
             )
-            return response.json()["content"]
+            data = response.json()
+            raw_evidence = data.get("evidence")
+            return QueryResult(
+                content=data["content"],
+                evidence=Evidence.model_validate(raw_evidence)
+                if isinstance(raw_evidence, dict)
+                else None,
+            )
 
         if step.target == "get_representation":
             if not step.observer_peer_id:
@@ -658,8 +813,18 @@ class UnifiedTestExecutor:
 
         raise ValueError(f"`scope` is not supported for target {step.target!r}")
 
-    async def check_assertion(self, result: Any, assertion: Any):
+    async def check_assertion(
+        self, result: Any, assertion: Any, evidence: Evidence | None = None
+    ):
         result_str = str(result)
+
+        if isinstance(assertion, EvidenceContainsAssertion):
+            if evidence is None:
+                raise TestExecutionError(
+                    "evidence_contains needs a chat or workspace_chat query"
+                )
+            await self._check_evidence(assertion, evidence)
+            return
 
         if isinstance(assertion, LLMJudgeAssertion):
             if not self.anthropic:
@@ -761,6 +926,15 @@ class UnifiedTestExecutor:
                         raise TestExecutionError(
                             f"Value mismatch for '{k}': expected {v}, got {result_dict[k]}"
                         )
+
+
+def _query_result(
+    response: ChatResponse[Any] | BaseModel | str | None,
+) -> QueryResult:
+    """Unwrap the SDK's `ChatResponse` into the runner's result shape."""
+    if isinstance(response, ChatResponse):
+        return QueryResult(content=response.content, evidence=response.evidence)
+    return QueryResult(content=response)
 
 
 class UnifiedTestRunner:
