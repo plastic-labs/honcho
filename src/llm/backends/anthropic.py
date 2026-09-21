@@ -4,7 +4,7 @@ import copy
 import json
 import logging
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import Any, cast
 
 from anthropic.types import TextBlock, ThinkingBlock, ToolUseBlock
 from pydantic import BaseModel, ValidationError
@@ -72,7 +72,9 @@ class AnthropicBackend:
             converted_tool_choice = self._convert_tool_choice(tool_choice)
             if converted_tool_choice is not None:
                 params["tool_choice"] = converted_tool_choice
-        self._apply_thinking(params, model, thinking_budget_tokens, extra_params)
+        thinking_budget_tokens = self._resolve_thinking(
+            params, model, thinking_budget_tokens, extra_params
+        )
         if extra_params:
             for key in ("top_p", "top_k"):
                 if key in extra_params:
@@ -153,6 +155,9 @@ class AnthropicBackend:
             converted_tool_choice = self._convert_tool_choice(tool_choice)
             if converted_tool_choice is not None:
                 params["tool_choice"] = converted_tool_choice
+        thinking_budget_tokens = self._resolve_thinking(
+            params, model, thinking_budget_tokens, extra_params
+        )
         if system_messages:
             params["system"] = [
                 {
@@ -195,7 +200,6 @@ class AnthropicBackend:
                 params["messages"],
                 schema_instruction(response_format, tools_present=bool(tools)),
             )
-        self._apply_thinking(params, model, thinking_budget_tokens, extra_params)
 
         async with self._client.messages.stream(**params) as stream:
             async for chunk in stream:
@@ -362,6 +366,78 @@ class AnthropicBackend:
             else:
                 non_system_messages.append(copy.deepcopy(message))
         return non_system_messages, system_messages
+
+    @classmethod
+    def _resolve_thinking(
+        cls,
+        params: dict[str, Any],
+        model: str,
+        thinking_budget_tokens: int | None,
+        extra_params: dict[str, Any] | None,
+    ) -> int | None:
+        """Drop unsigned thinking blocks from the history, and thinking with them.
+
+        Anthropic validates `thinking.signature` on every replayed thinking
+        block, and an assistant turn that reached us through a non-Anthropic
+        fallback behind the proxy carries none — the whole request is rejected
+        before the model sees it. Dropping those blocks is not enough on its
+        own: a thinking-enabled tool continuation must replay the thinking of
+        the turn that called the tool, which this history can no longer do, so
+        thinking goes off for this call too. Otherwise `_apply_thinking` decides
+        whether thinking survives the tool_choice conflict policy; the returned
+        budget is what actually went on the wire.
+        """
+        messages: list[dict[str, Any]] = params["messages"]
+        if cls._strip_unsigned_thinking(messages):
+            logger.warning(
+                "Dropped thinking blocks with no signature from the replayed history"
+            )
+            cls._strip_thinking_blocks(messages)
+            return None
+        cls._apply_thinking(params, model, thinking_budget_tokens, extra_params)
+        return thinking_budget_tokens if "thinking" in params else None
+
+    @staticmethod
+    def _is_unsigned_thinking(block: Any) -> bool:
+        if not isinstance(block, dict):
+            return False
+        typed = cast(dict[str, Any], block)
+        return typed.get("type") == "thinking" and not typed.get("signature")
+
+    @staticmethod
+    def _is_thinking(block: Any) -> bool:
+        if not isinstance(block, dict):
+            return False
+        typed = cast(dict[str, Any], block)
+        return typed.get("type") in {"thinking", "redacted_thinking"}
+
+    @classmethod
+    def _strip_unsigned_thinking(cls, messages: list[dict[str, Any]]) -> bool:
+        dropped = False
+        for message in messages:
+            content: Any = message.get("content")
+            if message.get("role") != "assistant" or not isinstance(content, list):
+                continue
+            blocks = cast(list[Any], content)
+            kept = [b for b in blocks if not cls._is_unsigned_thinking(b)]
+            if len(kept) != len(blocks):
+                dropped = True
+                message["content"] = kept
+        return dropped
+
+    @classmethod
+    def _strip_thinking_blocks(cls, messages: list[dict[str, Any]]) -> None:
+        for message in messages:
+            content: Any = message.get("content")
+            if message.get("role") != "assistant" or not isinstance(content, list):
+                continue
+            blocks = cast(list[Any], content)
+            message["content"] = [b for b in blocks if not cls._is_thinking(b)]
+        messages[:] = [
+            m
+            for m in messages
+            if not (m.get("role") == "assistant" and m.get("content") == [])
+        ]
 
     @staticmethod
     def _convert_tool_choice(

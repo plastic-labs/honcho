@@ -290,6 +290,199 @@ async def test_anthropic_backend_keeps_thinking_without_tools() -> None:
     assert call["thinking"] == {"type": "enabled", "budget_tokens": 2048}
 
 
+_SEARCH_TOOLS: list[dict[str, Any]] = [
+    {
+        "name": "search",
+        "description": "Search",
+        "input_schema": {"type": "object", "properties": {}},
+    }
+]
+
+
+def _text_response() -> SimpleNamespace:
+    return SimpleNamespace(
+        content=[TextBlock(type="text", text="ok")],
+        usage=SimpleNamespace(
+            input_tokens=1,
+            output_tokens=1,
+            cache_creation_input_tokens=0,
+            cache_read_input_tokens=0,
+        ),
+        stop_reason="end_turn",
+    )
+
+
+def _tool_turn(signature: str | None) -> list[dict[str, Any]]:
+    """A tool-use continuation whose assistant turn thought before calling."""
+    return [
+        {"role": "user", "content": "Hello"},
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "thinking", "thinking": "reasoning", "signature": signature},
+                {"type": "tool_use", "id": "t1", "name": "search", "input": {}},
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "t1", "content": "result"}
+            ],
+        },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_anthropic_backend_drops_unsigned_thinking_from_replayed_history() -> (
+    None
+):
+    """A thinking block with no signature fails request validation outright.
+
+    LiteLLM answers from a non-Anthropic fallback with `signature: null`, and
+    replaying that turn 400s before the model runs. The block goes, and
+    thinking goes with it: the turn can no longer satisfy the replay rule.
+    """
+    client = Mock()
+    client.messages.create = AsyncMock(return_value=_text_response())
+    backend = AnthropicBackend(client)
+
+    await backend.complete(
+        model="claude-haiku-4-5",
+        messages=_tool_turn(signature=None),
+        max_tokens=100,
+        tools=_SEARCH_TOOLS,
+        thinking_budget_tokens=2048,
+    )
+
+    await_args = client.messages.create.await_args
+    if await_args is None:
+        raise AssertionError("Expected Anthropic client call")
+    call = await_args.kwargs
+    assert "thinking" not in call
+    assert call["messages"][1]["content"] == [
+        {"type": "tool_use", "id": "t1", "name": "search", "input": {}}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_anthropic_backend_drops_unsigned_thinking_without_thinking_enabled() -> (
+    None
+):
+    """Validation rejects the unsigned block whether or not thinking is on."""
+    client = Mock()
+    client.messages.create = AsyncMock(return_value=_text_response())
+    backend = AnthropicBackend(client)
+
+    await backend.complete(
+        model="claude-haiku-4-5",
+        messages=_tool_turn(signature=None),
+        max_tokens=100,
+        tools=_SEARCH_TOOLS,
+    )
+
+    await_args = client.messages.create.await_args
+    if await_args is None:
+        raise AssertionError("Expected Anthropic client call")
+    call = await_args.kwargs
+    assert call["messages"][1]["content"] == [
+        {"type": "tool_use", "id": "t1", "name": "search", "input": {}}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_anthropic_backend_leaves_the_callers_messages_alone() -> None:
+    """The strip edits the request copy, never the caller's conversation."""
+    client = Mock()
+    client.messages.create = AsyncMock(return_value=_text_response())
+    backend = AnthropicBackend(client)
+
+    history = _tool_turn(signature=None)
+    await backend.complete(
+        model="claude-haiku-4-5",
+        messages=history,
+        max_tokens=100,
+        tools=_SEARCH_TOOLS,
+        thinking_budget_tokens=2048,
+    )
+
+    assert history[1]["content"][0]["type"] == "thinking"
+
+
+@pytest.mark.asyncio
+async def test_anthropic_backend_replays_signed_thinking_untouched() -> None:
+    """A signed block is the normal case and must survive intact."""
+    client = Mock()
+    client.messages.create = AsyncMock(return_value=_text_response())
+    backend = AnthropicBackend(client)
+
+    await backend.complete(
+        model="claude-haiku-4-5",
+        messages=_tool_turn(signature="sig_123"),
+        max_tokens=100,
+        tools=_SEARCH_TOOLS,
+        thinking_budget_tokens=2048,
+    )
+
+    await_args = client.messages.create.await_args
+    if await_args is None:
+        raise AssertionError("Expected Anthropic client call")
+    call = await_args.kwargs
+    assert call["thinking"] == {"type": "enabled", "budget_tokens": 2048}
+    assert call["messages"][1]["content"][0] == {
+        "type": "thinking",
+        "thinking": "reasoning",
+        "signature": "sig_123",
+    }
+
+
+@pytest.mark.asyncio
+async def test_anthropic_backend_stream_drops_unsigned_thinking() -> None:
+    """stream() builds its own params block, so it needs its own coverage."""
+
+    class _FakeStream:
+        async def __aenter__(self) -> "_FakeStream":
+            return self
+
+        async def __aexit__(self, *_: object) -> bool:
+            return False
+
+        def __aiter__(self) -> "_FakeStream":
+            return self
+
+        async def __anext__(self) -> object:
+            raise StopAsyncIteration
+
+        async def get_final_message(self) -> SimpleNamespace:
+            return SimpleNamespace(
+                usage=SimpleNamespace(output_tokens=5),
+                stop_reason="end_turn",
+            )
+
+    client = Mock()
+    client.messages.stream = Mock(return_value=_FakeStream())
+    backend = AnthropicBackend(client)
+
+    chunks = [
+        chunk
+        async for chunk in backend.stream(
+            model="claude-haiku-4-5",
+            messages=_tool_turn(signature=None),
+            max_tokens=100,
+            tools=_SEARCH_TOOLS,
+            thinking_budget_tokens=2048,
+        )
+    ]
+
+    assert chunks
+    call = client.messages.stream.call_args
+    if call is None:
+        raise AssertionError("Expected Anthropic stream call")
+    assert "thinking" not in call.kwargs
+    assert call.kwargs["messages"][1]["content"] == [
+        {"type": "tool_use", "id": "t1", "name": "search", "input": {}}
+    ]
+
+
 class StructuredResponse(BaseModel):
     answer: str
 
