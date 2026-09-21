@@ -725,24 +725,43 @@ class DocumentSource(Base):
 
     __tablename__: str = "document_sources"
 
-    derived_id: Mapped[str] = mapped_column(
-        ForeignKey("documents.id", ondelete="CASCADE"), primary_key=True
+    tenant_id: Mapped[str] = mapped_column(
+        TEXT,
+        ForeignKey("tenants.tenant_id"),
+        nullable=False,
+        default=_default_tenant_id,
     )
+    derived_id: Mapped[str] = mapped_column(TEXT, nullable=False)
     # Deliberately not an FK: the dreamer can emit IDs that never resolve,
     # and sources may be deleted independently of their children.
-    source_id: Mapped[str] = mapped_column(TEXT, primary_key=True)
+    source_id: Mapped[str] = mapped_column(TEXT, nullable=False)
     position: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("0")
     )
-    workspace_name: Mapped[str] = mapped_column(
-        ForeignKey("workspaces.name"), nullable=False
-    )
+    # Note: Foreign key relationships established via composite ForeignKeyConstraint below
+    workspace_name: Mapped[str] = mapped_column(TEXT, nullable=False)
 
     __table_args__ = (
+        # ai: tenant_id leads the all-natural-key PK and is the HASH partition key.
+        PrimaryKeyConstraint("tenant_id", "derived_id", "source_id"),
+        # Composite foreign key constraint for the derived document. A partitioned
+        # parent cannot be referenced by `id` alone: every unique key on it must
+        # include the partition key.
+        ForeignKeyConstraint(
+            ["derived_id", "tenant_id"],
+            ["documents.id", "documents.tenant_id"],
+            ondelete="CASCADE",
+        ),
+        # Composite foreign key constraint for workspaces
+        ForeignKeyConstraint(
+            ["workspace_name", "tenant_id"],
+            ["workspaces.name", "workspaces.tenant_id"],
+        ),
         # Reverse traversal ("who derived from me?") — replaces the old GIN index
         Index("ix_document_sources_source_id", "source_id", "workspace_name"),
         CheckConstraint("length(source_id) = 21", name="source_id_length"),
         CheckConstraint("source_id ~ '^[A-Za-z0-9_-]+$'", name="source_id_format"),
+        {"postgresql_partition_by": "HASH (tenant_id)"},
     )
 
 

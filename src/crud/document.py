@@ -1610,6 +1610,7 @@ def get_child_observations(
     linked = (
         select(literal(1))
         .where(
+            models.DocumentSource.tenant_id == models.Document.tenant_id,
             models.DocumentSource.derived_id == models.Document.id,
             models.DocumentSource.source_id == parent_id,
         )

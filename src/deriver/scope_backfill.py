@@ -540,6 +540,8 @@ async def process_scope_removal(
                         models.Document.deleted_at.is_(None),
                         or_(
                             exists().where(
+                                models.DocumentSource.tenant_id
+                                == models.Document.tenant_id,
                                 models.DocumentSource.derived_id == models.Document.id,
                                 models.DocumentSource.source_id.in_(frontier),
                                 models.DocumentSource.workspace_name == workspace_name,

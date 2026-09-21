@@ -23,7 +23,7 @@ from sqlalchemy import CursorResult, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.db import Base
-from src.dependencies import tracked_db
+from src.dependencies import service_db
 
 logger = logging.getLogger(__name__)
 
@@ -48,26 +48,28 @@ def _qualified(table: str) -> str:
 def _drain_batch_sql() -> str:
     documents = _qualified("documents")
     document_sources = _qualified("document_sources")
-    # Locking the batch in id order first (SKIP LOCKED, so never waiting)
-    # keeps the UPDATE from cycling with id-ordered document writers.
+    # Locking the batch in (tenant_id, id) order first (SKIP LOCKED, so never
+    # waiting) keeps the UPDATE from cycling with id-ordered document writers.
+    # Every join and the INSERT carry tenant_id: documents' key is
+    # (tenant_id, id) and document_sources partitions on tenant_id.
     # Interpolates only the schema-qualified table names and a constant
     # predicate; batch_size is a bound parameter.
     return f"""
         WITH batch AS (
-            SELECT id
+            SELECT tenant_id, id
             FROM {documents}
             WHERE {_PENDING_PREDICATE}
-            ORDER BY id
+            ORDER BY tenant_id, id
             LIMIT :batch_size
             FOR UPDATE SKIP LOCKED
         ),
         copied AS (
             INSERT INTO {document_sources}
-                (derived_id, source_id, position, workspace_name)
-            SELECT DISTINCT ON (d.id, s.value)
-                d.id, s.value, s.ord - 1, d.workspace_name
+                (tenant_id, derived_id, source_id, position, workspace_name)
+            SELECT DISTINCT ON (d.tenant_id, d.id, s.value)
+                d.tenant_id, d.id, s.value, s.ord - 1, d.workspace_name
             FROM {documents} d
-            JOIN batch b ON b.id = d.id
+            JOIN batch b ON b.tenant_id = d.tenant_id AND b.id = d.id
             CROSS JOIN LATERAL jsonb_array_elements_text(
                 CASE
                     WHEN jsonb_typeof(d.source_ids) = 'array'
@@ -80,14 +82,14 @@ def _drain_batch_sql() -> str:
                 END
             ) WITH ORDINALITY AS s(value, ord)
             WHERE s.value ~ '^[A-Za-z0-9_-]{{21}}$'
-            ORDER BY d.id, s.value, s.ord
+            ORDER BY d.tenant_id, d.id, s.value, s.ord
             ON CONFLICT DO NOTHING
         )
         UPDATE {documents} d
         SET source_ids = NULL,
             internal_metadata = d.internal_metadata - 'source_ids' - 'premise_ids'
         FROM batch b
-        WHERE d.id = b.id
+        WHERE d.tenant_id = b.tenant_id AND d.id = b.id
     """  # nosec B608
 
 
@@ -121,7 +123,10 @@ async def run_document_sources_backfill_cycle() -> int:
     deadline = time.monotonic() + BACKFILL_TIME_BUDGET_SECONDS
     drained = 0
     while time.monotonic() < deadline:
-        async with tracked_db("reconciliation_document_sources") as db:
+        # ai: cross-tenant drain — a reconciler path, so it runs on the RLS-bypass
+        # service session like sync_vectors; tracked_db would fail closed here
+        # with no tenant in scope under MULTI_TENANT.
+        async with service_db("reconciliation_document_sources") as db:
             count = await drain_document_sources_batch(db)
             await db.commit()
         if count == 0:

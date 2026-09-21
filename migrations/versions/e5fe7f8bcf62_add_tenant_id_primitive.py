@@ -1,7 +1,7 @@
 """add tenant id primitive
 
 Revision ID: e5fe7f8bcf62
-Revises: e4eba9cfaa6f
+Revises: a7c3e9f1b2d4
 Create Date: 2026-09-03
 
 Adds ``tenant_id`` as a first-class primitive to the data model: a new
@@ -25,7 +25,7 @@ from migrations.utils import (
 
 # revision identifiers, used by Alembic.
 revision: str = "e5fe7f8bcf62"
-down_revision: str | None = "e4eba9cfaa6f"
+down_revision: str | None = "a7c3e9f1b2d4"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -44,6 +44,7 @@ TENANT_SCOPED: tuple[str, ...] = (
     "message_embeddings",
     "collections",
     "documents",
+    "document_sources",
     "webhook_endpoints",
     "session_peers",
 )
@@ -58,6 +59,7 @@ NEW_PKS: dict[str, list[str]] = {
     "message_embeddings": ["tenant_id", "id"],
     "collections": ["tenant_id", "id"],
     "documents": ["tenant_id", "id"],
+    "document_sources": ["tenant_id", "derived_id", "source_id"],
     "webhook_endpoints": ["tenant_id", "id"],
     "session_peers": ["tenant_id", "workspace_name", "session_name", "peer_name"],
 }
@@ -228,6 +230,25 @@ NEW_FKS: list[tuple[str, str, list[str], str, list[str], str | None]] = [
         ["session_name", "workspace_name", "tenant_id"],
         "sessions",
         ["name", "workspace_name", "tenant_id"],
+        None,
+    ),
+    # document_sources (created by a7c3e9f1b2d4 keyed on documents.id alone; the
+    # composite PK above means the edge must now carry tenant_id to reach its
+    # document)
+    (
+        "fk_document_sources_derived_tenant_documents",
+        "document_sources",
+        ["derived_id", "tenant_id"],
+        "documents",
+        ["id", "tenant_id"],
+        "CASCADE",
+    ),
+    (
+        "fk_document_sources_ws_tenant_workspaces",
+        "document_sources",
+        ["workspace_name", "tenant_id"],
+        "workspaces",
+        ["name", "tenant_id"],
         None,
     ),
     # webhook_endpoints
@@ -517,6 +538,7 @@ def downgrade() -> None:
     # Restore sole-id / natural PKs, then drop tenant_id (with any index on it).
     old_pks = {
         "session_peers": ["workspace_name", "session_name", "peer_name"],
+        "document_sources": ["derived_id", "source_id"],
     }
     for tname in TENANT_SCOPED:
         _drop_pk(tname)

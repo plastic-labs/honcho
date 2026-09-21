@@ -40,7 +40,7 @@ _MIGRATIONS_DIR = _REPO_ROOT / "migrations"
 
 _RLS_TEST_DB_URL: URL = CONNECTION_URI.set(database="rls_isolation_tests")
 
-# The nine tenant-scoped data tables that carry RLS in the cloud deploy.
+# The ten tenant-scoped data tables that carry RLS in the cloud deploy.
 # The tenants registry and the queue/active_queue_sessions service tables are
 # excluded by design — service paths read them across tenants.
 _RLS_TABLES: tuple[str, ...] = (
@@ -51,6 +51,7 @@ _RLS_TABLES: tuple[str, ...] = (
     "message_embeddings",
     "collections",
     "documents",
+    "document_sources",
     "session_peers",
     "webhook_endpoints",
 )
@@ -66,7 +67,7 @@ def _new_id() -> str:
 
 
 def _apply_rls_and_role(engine: Engine) -> None:
-    """Apply the tenant-isolation policies to the nine data tables, then create the probe role.
+    """Apply the tenant-isolation policies to the ten data tables, then create the probe role.
 
     Runs after the schema exists so ``GRANT ... ON ALL TABLES`` covers every table.
     """
