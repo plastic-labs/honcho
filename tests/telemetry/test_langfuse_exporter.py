@@ -11,6 +11,7 @@ from __future__ import annotations
 import pytest
 
 from src.config import settings
+from src.db import tenant_context
 from src.llm.backend import CompletionResult, ToolCallResult
 from src.llm.capture import build_captured_call
 from src.llm.types import LLMTelemetryContext
@@ -145,6 +146,27 @@ def test_single_shot_generation_is_trace_root(_exporter_env: FakeClient):
     # Trace attrs stamped on the root generation; no session (session_id None).
     assert gen._otel_span.attributes.get("user.id") == "tenant1"
     assert "session.id" not in gen._otel_span.attributes
+
+
+def test_single_shot_generation_uses_bound_tenant_as_user_id(
+    _exporter_env: FakeClient, monkeypatch: pytest.MonkeyPatch
+):
+    """Under MULTI_TENANT with a tenant bound, the Langfuse user is the tenant --
+    not the namespace pinned by `_exporter_env` -- and metadata carries tenant_id
+    beside it. The flag-off "tenant1" case above is the conflation this breaks."""
+    monkeypatch.setattr(settings, "MULTI_TENANT", True)
+    client = _exporter_env
+    token = tenant_context.set("acme")
+    try:
+        LangfuseExporter().export(
+            _call(run_id=None, trace_id="t1b", track_name="Minimal Deriver")
+        )
+    finally:
+        tenant_context.reset(token)
+
+    gen = client.observations[0]
+    assert gen._otel_span.attributes.get("user.id") == "acme"
+    assert gen.kwargs["metadata"]["tenant_id"] == "acme"
 
 
 def test_agentic_run_builds_run_step_generation(_exporter_env: FakeClient):
