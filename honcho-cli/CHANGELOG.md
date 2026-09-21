@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-21
+
 ### Added
 
 - CLI requests carry `X-Honcho-Host: honcho-cli/<version> (<platform>)` so telemetry counts them as CLI traffic rather than direct SDK use (#1181)
