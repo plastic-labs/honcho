@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 from nanoid import generate as generate_nanoid
+from sqlalchemy.orm import Session, make_transient_to_detached
 
 from src import models
 from src.utils.evidence import EvidenceAccumulator
@@ -68,6 +69,22 @@ def make_message(
         workspace_name="workspace",
         seq_in_session=1,
     )
+
+
+def expire_and_detach(row: models.Document | models.Message) -> None:
+    """Leave a row the way `tracked_db` leaves it once its block exits.
+
+    The context manager's `finally` rolls back, which expires every loaded
+    attribute, then closes, which detaches the row from its session. A row
+    kept past that point raises `DetachedInstanceError` on its next attribute
+    read. Rows here are never persisted, so this stages the same end state
+    by hand.
+    """
+    make_transient_to_detached(row)
+    session = Session()
+    session.add(row)
+    session.expire(row)
+    session.expunge(row)
 
 
 class TestConclusionCollection:
@@ -242,6 +259,46 @@ class TestMessageCollection:
             "msg-early",
             "msg-late",
         ]
+
+
+class TestRowsOutliveTheirSession:
+    """Every read path hands the accumulator rows from a `tracked_db` block
+    that closes before the response is built, so evidence must copy what it
+    needs while the row is still attached (see DEV-2881).
+    """
+
+    def test_messages_are_readable_after_their_session_closes(self):
+        accumulator = EvidenceAccumulator()
+        message = make_message("msg-1", peer_name="bob")
+        accumulator.add_messages([message])
+        expire_and_detach(message)
+
+        (ref,) = accumulator.build().messages
+        assert ref.id == "msg-1"
+        assert ref.peer_id == "bob"
+        assert ref.session_id == "session-1"
+        assert ref.created_at == NOW
+
+    def test_conclusions_are_readable_after_their_session_closes(self):
+        accumulator = EvidenceAccumulator()
+        document = make_document("doc-1", level="inductive", source_ids=PREMISE_IDS)
+        accumulator.add_documents([document])
+        expire_and_detach(document)
+
+        (conclusion,) = accumulator.build().conclusions
+        assert conclusion.id == "doc-1"
+        assert conclusion.level == "inductive"
+        assert conclusion.content == "User likes coffee"
+        assert conclusion.source_ids == PREMISE_IDS
+
+    def test_deduplication_does_not_touch_the_stale_row(self):
+        accumulator = EvidenceAccumulator()
+        first = make_message("msg-1")
+        accumulator.add_messages([first])
+        expire_and_detach(first)
+        accumulator.add_messages([make_message("msg-1"), make_message("msg-2")])
+
+        assert [m.id for m in accumulator.build().messages] == ["msg-1", "msg-2"]
 
 
 class TestToolCallCollection:
