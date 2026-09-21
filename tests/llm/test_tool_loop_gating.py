@@ -177,3 +177,10 @@ async def test_no_tool_response_without_a_gate_returns_immediately() -> None:
     model = _ScriptedModel([[]])
     await _run(model)
     assert model.choices == ["required"]
+
+
+@pytest.mark.asyncio
+async def test_empty_gate_behaves_like_no_gate() -> None:
+    model = _ScriptedModel([["orient"], []])
+    await _run(model, force_tools_until=set())
+    assert model.choices == ["required", "auto"]

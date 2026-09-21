@@ -384,7 +384,8 @@ async def execute_tool_loop(
     # model that keeps dodging still gets to answer. With no gate, the first
     # successful round is enough.
     effective_tool_choice = tool_choice
-    gate = frozenset(force_tools_until) if force_tools_until is not None else None
+    # An empty gate would be unsatisfiable, so it means no gate.
+    gate = frozenset(force_tools_until or ()) or None
     forced_rounds = 0
 
     while iteration < max_tool_iterations:
