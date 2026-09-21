@@ -29,10 +29,12 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from src.config import ModelTransport
 from src.exceptions import ValidationException
 from src.utils.types import (
+    get_last_tool_error,
     get_last_tool_metadata,
     iteration_scope,
     set_current_iteration,
     set_current_tool_call_seq,
+    set_last_tool_error,
     set_last_tool_metadata,
 )
 
@@ -576,6 +578,7 @@ async def execute_tool_loop(
                 # observe stale state from a prior call.
                 set_current_tool_call_seq(seq, tool_id or None)
                 set_last_tool_metadata({})
+                set_last_tool_error(False)
 
                 try:
                     tool_result = await tool_executor(tool_name, tool_input)
@@ -583,7 +586,10 @@ async def execute_tool_loop(
                     # specialist rollups can read created/deleted observation
                     # counts without round-tripping through the event store.
                     tool_result_metadata = get_last_tool_metadata()
-                    succeeded_tools.add(tool_name)
+                    # The executor reports handler failures as returned
+                    # strings, so a normal return is not proof of success.
+                    if not get_last_tool_error():
+                        succeeded_tools.add(tool_name)
                     tool_results.append(
                         {
                             "tool_id": tool_id,

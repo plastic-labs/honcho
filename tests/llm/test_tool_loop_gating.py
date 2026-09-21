@@ -134,3 +134,24 @@ async def test_failed_recall_call_does_not_satisfy_the_gate() -> None:
     model = _ScriptedModel([["recall"], ["recall"], []])
     await _run(model, force_tools_until={"recall"}, tool_executor=flaky_executor)
     assert model.choices == ["required", "required", "auto"]
+
+
+@pytest.mark.asyncio
+async def test_executor_reported_error_does_not_satisfy_the_gate() -> None:
+    """The real executor returns handler failures as strings, not exceptions."""
+    from src.utils.agent_tools import create_tool_executor
+
+    outcomes = iter(["ERROR: Query exceeds maximum token limit", "1 result"])
+
+    async def recall_handler(_ctx: Any, _input: dict[str, Any]) -> str:
+        return next(outcomes)
+
+    executor = await create_tool_executor(
+        workspace_name="w",
+        observer="a",
+        observed="a",
+        handler_resolver=lambda name: recall_handler if name == "recall" else None,
+    )
+    model = _ScriptedModel([["recall"], ["recall"], []])
+    await _run(model, force_tools_until={"recall"}, tool_executor=executor)
+    assert model.choices == ["required", "required", "auto"]

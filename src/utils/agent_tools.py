@@ -2866,6 +2866,7 @@ async def create_tool_executor(
             get_current_iteration,
             get_current_provider_tool_call_id,
             get_current_tool_call_seq,
+            set_last_tool_error,
             set_last_tool_metadata,
         )
 
@@ -2898,6 +2899,9 @@ async def create_tool_executor(
                     metadata = handler_result.metadata
                 else:
                     result_str = handler_result
+                # Handlers report recoverable failures to the model as
+                # "ERROR: ..." strings rather than raising.
+                is_error = result_str.startswith("ERROR:")
                 # Log shape, not contents — `result_str` can carry retrieved
                 # observations, message snippets, peer-card text, etc. The
                 # AgentToolCallCompletedEvent telemetry captures the
@@ -2951,6 +2955,7 @@ async def create_tool_executor(
             # Reset to {} (rather than leaving stale metadata) so a non-ToolResult
             # handler doesn't appear to have leaked metadata from a prior call.
             set_last_tool_metadata(metadata)
+            set_last_tool_error(is_error)
 
             _emit_agent_tool_call_completed(
                 ctx=ctx,
