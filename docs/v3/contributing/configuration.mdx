@@ -446,6 +446,10 @@ DERIVER_POLLING_BACKOFF_MULTIPLIER=2.0
 DERIVER_POLLING_STARTUP_JITTER_SECONDS=30.0
 DERIVER_POLLING_JITTER_RATIO=0.5
 DERIVER_STALE_SESSION_TIMEOUT_MINUTES=5
+# Multi-tenant only: how often a claiming process re-reads which tenants have
+# derivation paused (bounds pause-to-effect and resume-to-effect). No effect
+# when MULTI_TENANT is off.
+DERIVER_PAUSED_TENANTS_REFRESH_SECONDS=30
 
 # Queue management
 DERIVER_QUEUE_ERROR_RETENTION_SECONDS=2592000  # 30 days

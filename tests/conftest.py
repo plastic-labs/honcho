@@ -337,20 +337,28 @@ async def _clear_all_tables(engine: AsyncEngine) -> None:
     """
 
     table_names: list[str] = []
+    tenants_name: str | None = None
     for table in reversed(Base.metadata.sorted_tables):
+        quoted = (
+            f'"{table.schema}"."{table.name}"' if table.schema else f'"{table.name}"'
+        )
         # Preserve the tenants table: the migration seeds the DEFAULT_TENANT_ID row
         # that every tenant-scoped row FKs to, and it must survive between tests.
         if table.name == "tenants":
+            tenants_name = quoted
             continue
-        if table.schema:
-            table_names.append(f'"{table.schema}"."{table.name}"')
-        else:
-            table_names.append(f'"{table.name}"')
+        table_names.append(quoted)
 
     if not table_names:
         return
 
     statement = "; ".join(f"DELETE FROM {name}" for name in table_names)
+    if tenants_name is not None:
+        # region ai
+        # The preserved tenants rows still carry per-test mutable state: a pause
+        # one test set must not exclude that tenant from another test's claim.
+        # endregion
+        statement += f"; UPDATE {tenants_name} SET derivation_paused = false"
     async with engine.begin() as conn:
         await conn.exec_driver_sql(statement)
 
@@ -981,8 +989,19 @@ def mock_tracked_db(request: pytest.FixtureRequest):
         # read_only and tenant_id are accepted (and ignored): in tests both engines
         # resolve to the same per-test database session, and RLS isn't applied.
         del read_only, tenant_id
+        # region ai
+        # Mirrors the real tracked_db/service_db teardown (rollback, then close).
+        # The rollback expires every loaded instance and the close detaches it,
+        # so a route that returns an ORM row from inside the block fails here
+        # exactly as it does in production, instead of passing on a stand-in
+        # that merely closed.
+        # endregion
         async with session_factory() as session:
-            yield session
+            try:
+                yield session
+            finally:
+                await session.rollback()
+                await session.close()
 
     # Each module imports tracked_db by name, so patch every import site.
     # Use ExitStack (not a parenthesized `with`) to stay under CPython's
@@ -1010,6 +1029,7 @@ def mock_tracked_db(request: pytest.FixtureRequest):
         "src.reconciler.sync_vectors.service_db",
         "src.reconciler.embed_now.service_db",
         "src.routers.tenants.service_db",
+        "src.derivation_pause.service_db",
         "src.dialectic.core.tracked_db",
         "src.dreamer.specialists.tracked_db",
         "src.dreamer.surprisal.tracked_db",
@@ -1067,3 +1087,16 @@ def mock_crud_collection_operations(request: pytest.FixtureRequest):
         mock_get_or_create_collection,
     ):
         yield
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def reset_derivation_pause_state() -> AsyncGenerator[None]:
+    """The paused-tenant set is process-global; no test may inherit another's,
+    and a refresher a test started must not outlive it."""
+    from src import derivation_pause
+    from src.derivation_pause import derivation_pause_refresher
+
+    derivation_pause.reset()
+    yield
+    await derivation_pause_refresher.shutdown()
+    derivation_pause.reset()

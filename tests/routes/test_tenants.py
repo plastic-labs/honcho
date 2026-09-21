@@ -264,3 +264,129 @@ async def test_delete_non_empty_tenant_conflict(
     # The tenant survived the refused delete.
     still_there = client.get(f"/v3/tenants/{tenant_id}", headers={HEADER: enabled})
     assert still_there.status_code == 200, still_there.text
+
+
+# ---------------------------------------------------------------------------
+# PATCH: the registry's one mutation door, and its allowlist
+# ---------------------------------------------------------------------------
+
+
+def _created(client: TestClient, enabled: str, tenant_id: str) -> dict[str, Any]:
+    response = client.post(
+        "/v3/tenants", json=_create_body(tenant_id), headers={HEADER: enabled}
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+def test_create_echoes_derivation_paused_false(client: TestClient, enabled: str):
+    assert _created(client, enabled, generate_nanoid())["derivation_paused"] is False
+
+
+def test_create_rejects_a_mutable_field_instead_of_dropping_it(
+    client: TestClient, enabled: str
+):
+    """Seeding a pause is create -> PATCH; a pause passed to create must not vanish."""
+    body = _create_body(generate_nanoid()) | {"derivation_paused": True}
+    response = client.post("/v3/tenants", json=body, headers={HEADER: enabled})
+    assert response.status_code == 422, response.text
+
+
+def test_patch_pauses_resumes_and_is_idempotent(client: TestClient, enabled: str):
+    tenant_id = generate_nanoid()
+    _created(client, enabled, tenant_id)
+
+    paused = client.patch(
+        f"/v3/tenants/{tenant_id}",
+        json={"derivation_paused": True},
+        headers={HEADER: enabled},
+    )
+    assert paused.status_code == 200, paused.text
+    assert paused.json()["derivation_paused"] is True
+    assert paused.json()["tenant_id"] == tenant_id
+
+    # Retrying callers re-assert: the held value is a 200, not a 409.
+    again = client.patch(
+        f"/v3/tenants/{tenant_id}",
+        json={"derivation_paused": True},
+        headers={HEADER: enabled},
+    )
+    assert again.status_code == 200, again.text
+    assert again.json() == paused.json()
+
+    # The read path sees it, and the create contract still holds.
+    assert (
+        client.get(f"/v3/tenants/{tenant_id}", headers={HEADER: enabled}).json()[
+            "derivation_paused"
+        ]
+        is True
+    )
+    retry_create = client.post(
+        "/v3/tenants", json=_create_body(tenant_id), headers={HEADER: enabled}
+    )
+    assert retry_create.status_code == 200, retry_create.text
+
+    resumed = client.patch(
+        f"/v3/tenants/{tenant_id}",
+        json={"derivation_paused": False},
+        headers={HEADER: enabled},
+    )
+    assert resumed.status_code == 200, resumed.text
+    assert resumed.json()["derivation_paused"] is False
+
+
+def test_patch_unknown_tenant_is_404(client: TestClient, enabled: str):
+    response = client.patch(
+        f"/v3/tenants/{generate_nanoid()}",
+        json={"derivation_paused": True},
+        headers={HEADER: enabled},
+    )
+    assert response.status_code == 404, response.text
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"tier": "enterprise"},
+        {"vector_correlation_id": "moved"},
+        {"tenant_id": "someone-else"},
+        {"created_at": "2026-01-01T00:00:00Z"},
+        {"derivation_paused": True, "tier": "enterprise"},
+        {},
+        {"derivation_paused": None},
+    ],
+    ids=[
+        "tier",
+        "vector_correlation_id",
+        "tenant_id",
+        "created_at",
+        "mixed",
+        "empty",
+        "null",
+    ],
+)
+def test_patch_rejects_everything_outside_the_allowlist(
+    client: TestClient, enabled: str, body: dict[str, Any]
+):
+    """The allowlist is the whole contract: one field today, a 422 for anything else.
+
+    A mixed body is refused whole rather than partially applied — otherwise a
+    client could learn that a pause "worked" while its tier change was dropped.
+    """
+    tenant_id = generate_nanoid()
+    before = _created(client, enabled, tenant_id)
+
+    response = client.patch(
+        f"/v3/tenants/{tenant_id}", json=body, headers={HEADER: enabled}
+    )
+    assert response.status_code == 422, response.text
+
+    after = client.get(f"/v3/tenants/{tenant_id}", headers={HEADER: enabled}).json()
+    assert after == before
+
+
+def test_patch_requires_the_service_secret(client: TestClient, enabled: str):
+    response = client.patch(
+        f"/v3/tenants/{generate_nanoid()}", json={"derivation_paused": True}
+    )
+    assert response.status_code == 401, response.text

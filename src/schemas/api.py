@@ -138,11 +138,41 @@ class TenantCreate(BaseModel):
     vector_correlation_id: str | None = None
     tier: Annotated[str, Field(min_length=1, max_length=64)]
 
+    # region ai
+    # Create carries identity only. The mutable facts (TenantUpdate) are not
+    # accepted here on purpose: a retry of the create must keep matching the
+    # row, and a row that has since been paused would otherwise 409 it. So a
+    # caller seeding a pause does create -> PATCH — and an unknown field is a
+    # 422 rather than silently dropped, or that seed could be lost unnoticed.
+    # endregion
+    model_config = ConfigDict(extra="forbid")  # pyright: ignore
+
+
+class TenantUpdate(BaseModel):
+    """The registry's mutable-field allowlist — everything else on the row is fixed.
+
+    ``extra="forbid"`` IS the allowlist: a field not declared here is a 422, so
+    the identity fields (``tenant_id``, ``created_at``) and the ones another
+    concern owns (``tier``, ``vector_correlation_id``) cannot be changed through
+    this verb without a deliberate edit here.
+    """
+
+    # region ai
+    # vector_correlation_id is deliberately absent: the registry's contract is
+    # that it never changes after create, so consumers may cache anything
+    # derived from it for the process lifetime. Making it mutable is an
+    # every-process invalidation problem, not a line here.
+    # endregion
+    derivation_paused: bool | None = None
+
+    model_config = ConfigDict(extra="forbid")  # pyright: ignore
+
 
 class Tenant(BaseModel):
     tenant_id: str
     vector_correlation_id: str | None = None
     tier: str
+    derivation_paused: bool
     created_at: datetime.datetime
 
     model_config = ConfigDict(from_attributes=True)  # pyright: ignore

@@ -25,6 +25,7 @@ from src.routers.tenants import require_tenant_api
 EXPECTED_TENANT_API_ROUTES = {
     ("POST", "/v3/tenants"),
     ("GET", "/v3/tenants/{tenant_id}"),
+    ("PATCH", "/v3/tenants/{tenant_id}"),
     ("DELETE", "/v3/tenants/{tenant_id}"),
 }
 

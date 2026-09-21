@@ -148,6 +148,9 @@ class DeriverMetrics(BaseModel):
     # Work units the claim is skipping because their tenant is excluded. They
     # are NOT in eligible_work_units: nothing will pick them up.
     excluded_work_units: int = 0
+    # The same units broken down by tenant — the number worth watching while a
+    # tenant is paused. Sums to excluded_work_units.
+    excluded_work_units_by_tenant: dict[str, int] = Field(default_factory=dict)
     claimed_work_units: int = 0
     pending_items: int = 0
     oldest_pending_age_seconds: float = 0.0

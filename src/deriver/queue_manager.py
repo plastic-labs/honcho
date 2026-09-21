@@ -30,6 +30,7 @@ from src.crud.deriver import (
 )
 from src.db import tenant_context
 from src.dependencies import service_db
+from src.derivation_pause import derivation_pause_refresher
 from src.deriver.consumer import (
     process_item,
     process_representation_batch,
@@ -258,6 +259,14 @@ class QueueManager:
             )
         logger.debug("Signal handlers registered")
 
+        # region ai
+        # Deliberately NOT wrapped like the scheduler start below: a process that
+        # cannot read which tenants are paused must not begin claiming, or every
+        # paused tenant derives. No-op flag-off. Later refreshes fail open inside
+        # the refresher itself.
+        # endregion
+        await derivation_pause_refresher.start()
+
         if settings.DERIVER.SCHEDULER == "deriver":
             try:
                 await self.reconciler_scheduler.start()
@@ -292,6 +301,12 @@ class QueueManager:
 
     async def cleanup(self) -> None:
         """Clean up owned work units"""
+        # ai: stopped here (not in shutdown(sig)) so non-signal exits cover it too;
+        # guarded so a failing stop cannot skip the claim release below.
+        try:
+            await derivation_pause_refresher.shutdown()
+        except Exception as e:
+            logger.warning("Error stopping the paused-tenant refresher: %s", e)
         total_work_units = self.get_total_owned_work_units()
         if total_work_units > 0:
             logger.debug(f"Cleaning up {total_work_units} owned work units...")
@@ -1314,8 +1329,10 @@ async def main():
     try:
         await manager.initialize()
     except Exception as e:
-        logger.error(f"Error in main: {str(e)}")
+        # ai: re-raised so a refused boot (validators, the paused-set first load) exits non-zero
+        logger.exception("Error in main")
         sentry_sdk.capture_exception(e)
+        raise
     finally:
         await close_cache()
         logger.debug("Main function exiting")
