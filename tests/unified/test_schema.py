@@ -51,8 +51,22 @@ def test_evidence_contains_min_count_defaults_to_all_peers() -> None:
         {"conclusions_from_peers": []},
         {"conclusions_from_peers": ["a"], "min_count": 2},
         {"conclusions_from_peers": ["a"], "min_count": 0},
+        {"conclusions_from_peers": ["a", "a"]},
+        {"conclusions_match": "  "},
+        {"messages_match": ""},
+        {"not_from_sessions": []},
     ],
-    ids=["empty", "min_count_alone", "no_peers", "min_count_too_high", "zero"],
+    ids=[
+        "empty",
+        "min_count_alone",
+        "no_peers",
+        "min_count_too_high",
+        "zero",
+        "duplicate_peers",
+        "blank_conclusions_match",
+        "blank_messages_match",
+        "empty_not_from_sessions",
+    ],
 )
 def test_evidence_contains_rejects_incoherent_fields(fields: dict[str, object]) -> None:
     from tests.unified.schema import EvidenceContainsAssertion

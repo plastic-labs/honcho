@@ -191,8 +191,19 @@ class EvidenceContainsAssertion(Assertion):
             and self.not_from_sessions is None
         ):
             raise ValueError("evidence_contains needs at least one condition")
-        if self.conclusions_from_peers is not None and not self.conclusions_from_peers:
-            raise ValueError("conclusions_from_peers must not be empty")
+        for name in ("conclusions_match", "messages_match"):
+            value = getattr(self, name)
+            if value is not None and not value.strip():
+                raise ValueError(f"{name} must not be blank")
+        if self.not_from_sessions is not None and not self.not_from_sessions:
+            raise ValueError("not_from_sessions must not be empty")
+        if self.conclusions_from_peers is not None:
+            if not self.conclusions_from_peers:
+                raise ValueError("conclusions_from_peers must not be empty")
+            if len(set(self.conclusions_from_peers)) != len(
+                self.conclusions_from_peers
+            ):
+                raise ValueError("conclusions_from_peers must not contain duplicates")
         if self.min_count is not None:
             if self.conclusions_from_peers is None:
                 raise ValueError("min_count requires conclusions_from_peers")
