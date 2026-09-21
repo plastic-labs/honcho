@@ -54,6 +54,7 @@ from src.telemetry.client_context import (
     HEADER_AGENT_MODEL,
     HEADER_HOST,
     HEADER_PLUGIN,
+    HEADER_USER_AGENT,
     reset_client_context,
     set_client_context,
 )
@@ -207,8 +208,9 @@ app = FastAPI(
         "email": "hello@plasticlabs.ai",
     },
     license_info={
+        # The 3.1 License Object treats `identifier` and `url` as mutually
+        # exclusive, and emitting both makes the schema fail validation.
         "name": "GNU Affero General Public License v3.0",
-        "identifier": "AGPL-3.0-only",
         "url": "https://github.com/plastic-labs/honcho/blob/main/LICENSE",
     },
 )
@@ -287,6 +289,7 @@ async def track_request(
         host=request.headers.get(HEADER_HOST),
         plugin=request.headers.get(HEADER_PLUGIN),
         agent_model=request.headers.get(HEADER_AGENT_MODEL),
+        user_agent=request.headers.get(HEADER_USER_AGENT),
     )
 
     try:

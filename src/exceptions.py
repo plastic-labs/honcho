@@ -3,9 +3,36 @@ Custom exceptions for the Honcho application.
 """
 
 import json
-from typing import Any, final
+from dataclasses import dataclass
+from typing import Any, ClassVar, Literal, final
 
 from src.config import settings
+
+# Mirrors sentry_sdk's LogLevelStr. Redeclared rather than imported so this
+# module stays free of telemetry imports -- src.telemetry.sentry imports from
+# here, and the reverse direction would be a cycle.
+SentryLevel = Literal["fatal", "critical", "error", "warning", "info", "debug"]
+
+
+@final
+@dataclass(frozen=True, slots=True)
+class SentryPolicy:
+    """How ``src.telemetry.sentry.default_before_send`` should treat an exception.
+
+    Attached to an exception class rather than matched on in the filter, so the
+    decision lives next to the error it describes and adding a new exception
+    never means editing the filter.
+
+    Args:
+        level: Event level to report at. Deliberately has no default: whether a
+            kept exception is a page or a line on a graph is the whole decision,
+            so each policy states it outright.
+        fingerprint: Collapse every occurrence into this one Sentry issue.
+            ``None`` leaves Sentry's default grouping alone.
+    """
+
+    level: SentryLevel
+    fingerprint: str | None = None
 
 
 class HonchoException(Exception):
@@ -13,6 +40,11 @@ class HonchoException(Exception):
 
     status_code: int = 500
     detail: str = "An unexpected error occurred"
+
+    # Honcho exceptions are client-facing by default: the caller already sees
+    # them in the HTTP response, so Sentry drops them (``None``). Override with
+    # a SentryPolicy on subclasses that describe a symptom worth watching.
+    sentry_policy: ClassVar[SentryPolicy | None] = None
 
     def __init__(self, detail: str | None = None, status_code: int | None = None):
         self.detail = detail or self.detail
@@ -139,6 +171,31 @@ class RepresentationSaveError(HonchoException):
 
     status_code: int = 500
     detail: str = "Representation save failed for all observers"
+
+
+@final
+class UpstreamLLMError(HonchoException):
+    """Raised when the upstream model provider is unreachable or failing.
+
+    Distinct from a bug in our own request: the provider (or the proxy in front
+    of it) returned 5xx or refused the connection, so the caller should retry
+    rather than treat the request as malformed.
+    """
+
+    status_code = 503
+    detail = "Upstream language model provider is unavailable"
+
+    # The one HonchoException Sentry keeps. Every other Honcho error is the
+    # caller's to see in the response; an outage is ours to notice, and the
+    # deriver has no status-code metric to notice it in the way the API does.
+    # Reported at error level because the retry budget and the fallback chain
+    # have both been spent by the time this escapes, so it is a sustained
+    # outage rather than a blip -- and the fingerprint already keeps that to a
+    # single issue rather than one per call site.
+    sentry_policy: ClassVar[SentryPolicy | None] = SentryPolicy(
+        level="error",
+        fingerprint="honcho-upstream-llm-unavailable",
+    )
 
 
 class LLMError(Exception):

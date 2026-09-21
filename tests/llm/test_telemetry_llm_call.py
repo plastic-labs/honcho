@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from src.llm.backend import CompletionResult as BackendCompletionResult
+from src.llm.backend import StreamChunk
 from src.llm.executor import _emit_llm_call_completed
 from src.llm.runtime import AttemptPlan
 from src.llm.types import LLMTelemetryContext
@@ -370,7 +371,7 @@ class TestExecutorEndToEnd:
 
         async def _cancelling_stream() -> AsyncIterator[Any]:
             # one chunk then cancel — simulates a client disconnect mid-stream.
-            yield object()  # caller's `async for` consumes this
+            yield StreamChunk(content="partial")
             raise asyncio.CancelledError()
 
         async def _setup_stream(*_args: Any, **_kwargs: Any) -> AsyncIterator[Any]:

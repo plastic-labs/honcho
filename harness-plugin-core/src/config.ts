@@ -2,6 +2,9 @@ import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
+/** Environment map shape; structurally identical to `process.env`, without depending on `@types/node` in consumers. */
+export type Env = Record<string, string | undefined>
+
 export interface AuthConfig {
   apiKey?: string
   oauth?: { accessToken?: string; refreshToken?: string; expiresAt?: string }
@@ -114,7 +117,7 @@ export function normalizeBaseUrl(input: string): string {
   }
 }
 
-function interpolate(value: string, env: NodeJS.Dict<string>, warnings: string[]): string {
+function interpolate(value: string, env: Env, warnings: string[]): string {
   return value.replace(/\$\{([^}]+)\}/g, (m, name: string) => {
     const v = env[name]
     if (!v) {
@@ -160,7 +163,7 @@ function pickHost(hosts: Record<string, unknown> | undefined, name: string): Roo
  */
 export function resolveConfig(
   file: unknown,
-  opts: { host: string; env?: NodeJS.Dict<string>; overlay?: RootConfig }
+  opts: { host: string; env?: Env; overlay?: RootConfig }
 ): ResolvedConfig {
   const warnings: string[] = []
   const env = opts.env ?? process.env
@@ -224,7 +227,7 @@ export function resolveConfig(
  * in-process changes to `process.env.HOME`, so tests that redirect HOME would
  * otherwise read and write the real config file.
  */
-export function configPath(env: NodeJS.Dict<string> = process.env): string {
+export function configPath(env: Env = process.env): string {
   if (env.HONCHO_CONFIG_PATH) return env.HONCHO_CONFIG_PATH
   const home = env.HOME || env.USERPROFILE || homedir()
   return join(home, '.honcho', 'config.json')
@@ -232,7 +235,7 @@ export function configPath(env: NodeJS.Dict<string> = process.env): string {
 
 export function loadConfig(opts: {
   host: string
-  env?: NodeJS.Dict<string>
+  env?: Env
   overlay?: RootConfig
 }): ResolvedConfig {
   const env = opts.env ?? process.env

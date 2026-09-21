@@ -5,11 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
-## [Unreleased]
+## [2.5.0] - 2026-09-15
 
 ### Added
 
-- Optional per-call `timeout` on synchronous and asynchronous `Peer.chat()`. It overrides the timeout for each HTTP attempt; when omitted or set to `None`, the client-wide timeout configured on `Honcho` remains in effect.
+- `honcho.get_scope(id)` (sync and async) fetches an existing scope by ID and raises `NotFoundError` when it does not exist. Unlike `honcho.scope()`, it never creates the scope, so lookups cannot provision a recall boundary by accident (#1163)
+- Optional per-call `timeout` on synchronous and asynchronous `Peer.chat()`. It overrides the timeout for each HTTP attempt; when omitted or set to `None`, the client-wide timeout configured on `Honcho` remains in effect (#1098)
+- `include_evidence` on peer and workspace chat (sync, async, and streaming). Opting in returns a `ChatResponse` carrying the answer plus the conclusions, messages, and tool calls the dialectic read; leaving it out returns the answer on its own, so existing callers are unaffected. Streaming exposes `.evidence` once the stream is drained. Requires a Honcho server with the matching API support (Honcho v3.2.0+) (#1130)
+- `source_ids` and `times_derived` on `Conclusion`. `ConclusionsView.get(id)` / `get_many(ids)` / `derived(id)` and the workspace-level `honcho.conclusions.get` / `get_many` fetch a conclusion with attribution or walk the reasoning tree upward (source → derived). Requires a Honcho server with the matching API support (Honcho v3.2.0+) (#952)
+- SDK requests send `X-Honcho-Host: honcho-python/<version> (platform)` so CloudEvents can split harness vs direct SDK vs raw REST traffic. A caller-supplied `X-Honcho-Host` still wins (#1182)
 
 ## [2.4.0] - 2026-08-25
 

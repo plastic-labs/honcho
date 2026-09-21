@@ -8,6 +8,7 @@ from typing import Any, cast
 
 import httpx
 
+from .client import HOST_HEADER, default_host_header
 from .exceptions import (
     ConnectionError,
     RateLimitError,
@@ -52,6 +53,7 @@ class AsyncHonchoHTTPClient:
         self.max_retries = max_retries
         self.default_headers = {
             "Content-Type": "application/json",
+            HOST_HEADER: default_host_header(),
             **(default_headers or {}),
         }
         self.default_query = default_query

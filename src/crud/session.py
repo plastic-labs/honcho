@@ -37,6 +37,7 @@ from src.cache.client import (
 from src.config import settings
 from src.crud.deriver import active_queue_session_match
 from src.exceptions import (
+    AuthenticationException,
     ConflictException,
     ObserverException,
     ResourceNotFoundException,
@@ -199,6 +200,7 @@ async def get_or_create_session(
     session: schemas.SessionCreate,
     workspace_name: str,
     *,
+    acting_peer: str | None = None,
     _retry: bool = False,
 ) -> GetOrCreateResult[models.Session]:
     """
@@ -215,6 +217,9 @@ async def get_or_create_session(
         session: Session creation payload, including optional metadata,
             configuration, and session-peer configuration
         workspace_name: Name of the workspace
+        acting_peer: Peer a peer-scoped caller acts as. An existing session is
+            then only returned to an active member, and its metadata and
+            configuration are left untouched.
         _retry: Whether to retry after a concurrent create conflict
 
     Returns:
@@ -223,6 +228,8 @@ async def get_or_create_session(
     Raises:
         ValueError: If session.name is empty
         ResourceNotFoundException: If the named session exists but is inactive
+        AuthenticationException: If ``acting_peer`` is not a member of the
+            existing session, or tries to change its metadata or configuration
         ObserverException: If adding peers would exceed the observer limit
         ConflictException: If concurrent creation prevents fetching or creating
             the session
@@ -289,8 +296,26 @@ async def get_or_create_session(
                 raise ConflictException(
                     f"Unable to create or get session: {session.name}"
                 ) from None
-            return await get_or_create_session(db, session, workspace_name, _retry=True)
+            return await get_or_create_session(
+                db, session, workspace_name, acting_peer=acting_peer, _retry=True
+            )
     else:
+        # Checked here rather than in the handler so a session created between
+        # the handler's check and this read cannot be joined or modified.
+        if acting_peer is not None:
+            if not await is_peer_in_session(
+                db, workspace_name, session.name, acting_peer
+            ):
+                raise AuthenticationException("JWT not permissioned for this resource")
+            if session.metadata is not None or session.configuration is not None:
+                raise AuthenticationException(
+                    "Peer-scoped keys cannot modify an existing session"
+                )
+            # The caller is already a member, so the only effect of naming
+            # itself would be the upsert's rejoin (it clears ``left_at``), which
+            # would undo a removal committed since the check above. Skip it.
+            session.peer_names = None
+
         # Update existing session with metadata and feature flags if provided
         if (
             session.metadata is not None
@@ -607,29 +632,30 @@ async def delete_session(
         )
 
         # Delete message vectors from vector store before deleting DB records
-        # Fetch all MessageEmbedding records to build vector IDs with {message_id}_{chunk_index}
+        # Vector IDs are {message_id}_{chunk_index}, where chunk_index is the 0-based
+        # position of the chunk within its message. Only the message id and the chunk
+        # count are needed to rebuild the IDs we delete from the external store
         embedding_result = await db.execute(
-            select(models.MessageEmbedding).where(
+            select(
+                models.MessageEmbedding.message_id,
+                func.count().label("chunk_count"),
+            )
+            .where(
                 models.MessageEmbedding.session_name == session_name,
                 models.MessageEmbedding.workspace_name == workspace_name,
             )
+            .group_by(models.MessageEmbedding.message_id)
         )
-        embeddings = list(embedding_result.scalars().all())
+        message_chunk_counts = embedding_result.all()
         external_vector_store = get_external_vector_store()
 
         # Only delete from external vector store if one exists
-        if external_vector_store is not None and embeddings:
-            # Compute chunk_index for each embedding based on message_id ordering
-            message_chunks: dict[str, list[models.MessageEmbedding]] = {}
-            for emb in embeddings:
-                message_chunks.setdefault(emb.message_id, []).append(emb)
-
-            # Sort each message's chunks by id and build vector IDs
-            vector_ids: list[str] = []
-            for chunks in message_chunks.values():
-                chunks.sort(key=lambda e: e.id)
-                for chunk_idx, chunk in enumerate(chunks):
-                    vector_ids.append(f"{chunk.message_id}_{chunk_idx}")
+        if external_vector_store is not None and message_chunk_counts:
+            vector_ids: list[str] = [
+                f"{message_id}_{chunk_idx}"
+                for message_id, chunk_count in message_chunk_counts
+                for chunk_idx in range(chunk_count)
+            ]
 
             # Try to delete from external vector store (best effort)
             try:

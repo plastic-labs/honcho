@@ -8,6 +8,10 @@ import logging
 from collections.abc import AsyncGenerator, AsyncIterable, Generator, Iterable
 from typing import Any, cast
 
+from pydantic import ValidationError
+
+from honcho.api_types import Evidence
+
 logger = logging.getLogger(__name__)
 
 
@@ -26,6 +30,7 @@ class SSEStreamParser:
 
     - `done: true` to indicate stream completion.
     - `delta.content` containing incremental text.
+    - `evidence` on the terminal message, when the request asked for it.
 
     Any JSON decoding failures are logged with the same warning format as the legacy
     parser, including a preview of the data payload.
@@ -37,11 +42,22 @@ class SSEStreamParser:
         )(errors="replace")
         self._text_buffer: str = ""
         self._done: bool = False
+        self._evidence: Evidence | None = None
 
     @property
     def done(self) -> bool:
         """Whether the stream has emitted a `done: true` message."""
         return self._done
+
+    @property
+    def evidence(self) -> Evidence | None:
+        """What the answer was built from, once the stream has finished.
+
+        Evidence can only be known after the answer is complete, so the server
+        sends it on the terminal message. It stays None until then, and stays
+        None throughout unless the request asked for it.
+        """
+        return self._evidence
 
     def feed(self, chunk: bytes) -> Generator[str, None, None]:
         """
@@ -145,6 +161,12 @@ class SSEStreamParser:
             chunk_data = cast(dict[str, Any], parsed)
             if chunk_data.get("done"):
                 self._done = True
+                evidence = chunk_data.get("evidence")
+                if isinstance(evidence, dict):
+                    try:
+                        self._evidence = Evidence.model_validate(evidence)
+                    except ValidationError as e:
+                        logger.warning("Failed to decode streamed evidence: %s", e)
                 return
 
             delta_obj = chunk_data.get("delta", {})
@@ -190,17 +212,21 @@ def parse_sse_chunk(
     yield from parser.feed(chunk)
 
 
-def parse_sse_stream(chunks: Iterable[bytes]) -> Generator[str, None, None]:
+def parse_sse_stream(
+    chunks: Iterable[bytes], *, parser: SSEStreamParser | None = None
+) -> Generator[str, None, None]:
     """
     Parse an SSE byte stream and yield content strings.
 
     Args:
         chunks: An iterable of raw byte chunks from an SSE stream.
+        parser: Optional parser to use, for callers that need to read state off
+            it once the stream finishes -- `evidence`, say.
 
     Yields:
         Content strings extracted from delta objects, in order.
     """
-    parser = SSEStreamParser()
+    parser = parser or SSEStreamParser()
     for chunk in chunks:
         yield from parser.feed(chunk)
         if parser.done:
@@ -208,17 +234,21 @@ def parse_sse_stream(chunks: Iterable[bytes]) -> Generator[str, None, None]:
     yield from parser.finalize()
 
 
-async def parse_sse_astream(chunks: AsyncIterable[bytes]) -> AsyncGenerator[str, None]:
+async def parse_sse_astream(
+    chunks: AsyncIterable[bytes], *, parser: SSEStreamParser | None = None
+) -> AsyncGenerator[str, None]:
     """
     Parse an async SSE byte stream and yield content strings.
 
     Args:
         chunks: An async iterable of raw byte chunks from an SSE stream.
+        parser: Optional parser to use, for callers that need to read state off
+            it once the stream finishes -- `evidence`, say.
 
     Yields:
         Content strings extracted from delta objects, in order.
     """
-    parser = SSEStreamParser()
+    parser = parser or SSEStreamParser()
     async for chunk in chunks:
         for content in parser.feed(chunk):
             yield content
