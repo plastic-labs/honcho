@@ -25,11 +25,9 @@ from src.utils.agent_tools import (
     _handle_get_observation_context,  # pyright: ignore[reportPrivateUsage]
     _handle_get_peer_card_by_name,  # pyright: ignore[reportPrivateUsage]
     _handle_get_reasoning_chain,  # pyright: ignore[reportPrivateUsage]
-    _handle_get_workspace_stats,  # pyright: ignore[reportPrivateUsage]
     _handle_search_memory_workspace,  # pyright: ignore[reportPrivateUsage]
     create_workspace_tool_executor,
 )
-from src.utils.scopes import SCOPE_KIND, scope_peer_name
 
 # =============================================================================
 # Fixtures
@@ -650,106 +648,6 @@ class TestSearchMemoryWorkspace:
 
 
 @pytest.mark.asyncio
-class TestGetWorkspaceStats:
-    """Tests for _handle_get_workspace_stats."""
-
-    async def test_returns_stats(
-        self,
-        make_workspace_ctx: Callable[..., ToolContext],
-        workspace_test_data: Any,
-    ):
-        """Returns workspace statistics."""
-        _ = workspace_test_data
-        ctx = make_workspace_ctx()
-
-        result = await _handle_get_workspace_stats(ctx, {})
-
-        assert "Workspace stats" in result
-        assert "Peers: 3" in result
-        assert "Sessions: 1" in result
-        assert "Messages: 6" in result
-        assert "Date range" in result
-
-    async def test_lists_most_active_peers(
-        self,
-        make_workspace_ctx: Callable[..., ToolContext],
-        workspace_test_data: Any,
-    ):
-        """Includes the most active peers with message counts."""
-        _, peer1, peer2, peer3, *_ = workspace_test_data
-        ctx = make_workspace_ctx()
-
-        result = await _handle_get_workspace_stats(ctx, {})
-
-        assert "Most active peers" in result
-        assert peer1.name in result
-        assert peer2.name in result
-        assert peer3.name in result
-        assert "messages" in result
-
-    async def test_empty_workspace(
-        self,
-        db_session: AsyncSession,
-    ):
-        """Returns zero counts for an empty workspace."""
-        workspace = models.Workspace(name=str(generate_nanoid()))
-        db_session.add(workspace)
-        await db_session.flush()
-
-        ctx = ToolContext(
-            observer="",
-            observed="",
-            current_messages=None,
-            workspace_name=workspace.name,
-            session_name=None,
-            include_observation_ids=False,
-            history_token_limit=8192,
-            db_lock=asyncio.Lock(),
-        )
-
-        result = await _handle_get_workspace_stats(ctx, {})
-
-        assert "Peers: 0" in result
-        assert "Messages: 0" in result
-
-    async def test_excludes_scope_peers(
-        self,
-        db_session: AsyncSession,
-        make_workspace_ctx: Callable[..., ToolContext],
-        workspace_test_data: Any,
-    ):
-        workspace, *_ = workspace_test_data
-        db_session.add(
-            models.Peer(
-                name=scope_peer_name("therapy"),
-                workspace_name=workspace.name,
-                internal_metadata={"kind": SCOPE_KIND},
-                configuration={"observe_me": False},
-            )
-        )
-        await db_session.commit()
-
-        result = await _handle_get_workspace_stats(make_workspace_ctx(), {})
-
-        assert "Peers: 3" in result
-        assert "scope.therapy" not in result
-
-    async def test_empty_session_allowlist_is_zero(
-        self,
-        make_workspace_ctx: Callable[..., ToolContext],
-        workspace_test_data: Any,
-    ):
-        _ = workspace_test_data
-        result = await _handle_get_workspace_stats(
-            make_workspace_ctx(session_allowlist=[]), {}
-        )
-
-        assert "Peers: 0" in result
-        assert "Sessions: 0" in result
-        assert "Messages: 0" in result
-
-
-@pytest.mark.asyncio
 class TestGetPeerCardByName:
     """Tests for _handle_get_peer_card_by_name."""
 
@@ -1054,16 +952,17 @@ class TestWorkspaceToolExecutor:
         workspace_test_data: Any,
     ):
         """Workspace-specific tools are routed to workspace handlers."""
-        workspace, *_ = workspace_test_data
+        workspace, peer1, peer2, *_ = workspace_test_data
 
         executor = await create_workspace_tool_executor(
             workspace_name=workspace.name,
         )
 
-        stats_result = await executor("get_workspace_stats", {})
-        assert isinstance(stats_result, str)
-        assert "Workspace stats" in stats_result
-        assert "Most active peers" in stats_result
+        card_result = await executor(
+            "get_peer_card", {"observer": peer1.name, "observed": peer2.name}
+        )
+        assert isinstance(card_result, str)
+        assert "peer card" in card_result.lower()
 
     async def test_falls_through_to_standard_handlers(
         self,
@@ -1313,3 +1212,32 @@ class TestWorkspaceToolChoice:
             TOOL_CHOICE="none",
         )
         assert agent._tool_choice(pinned) == "none"  # pyright: ignore[reportPrivateUsage]
+
+    def test_forced_turn_is_satisfied_only_by_recall_tools(self) -> None:
+        from src.dialectic.core import DialecticAgent
+        from src.dialectic.workspace import WorkspaceDialecticAgent
+        from src.utils.agent_tools import (
+            WORKSPACE_DIALECTIC_TOOLS,
+            WORKSPACE_RECALL_TOOLS,
+        )
+
+        gate = WorkspaceDialecticAgent(workspace_name="w")._force_tools_until()  # pyright: ignore[reportPrivateUsage]
+        assert gate is not None and gate == WORKSPACE_RECALL_TOOLS
+        loadout = {t["name"] for t in WORKSPACE_DIALECTIC_TOOLS}
+        assert gate <= loadout
+        assert {"get_peer_card", "get_reasoning_chain"}.isdisjoint(gate)
+        pair = DialecticAgent(
+            workspace_name="w", session_name=None, observer="a", observed="a"
+        )
+        assert pair._force_tools_until() is None  # pyright: ignore[reportPrivateUsage]
+
+    def test_workspace_loadouts_carry_no_orientation_stats_tool(self) -> None:
+        from src.utils.agent_tools import (
+            TOOLS,
+            WORKSPACE_DIALECTIC_TOOLS,
+            WORKSPACE_TOOLS_MINIMAL,
+        )
+
+        assert "get_workspace_stats" not in TOOLS
+        for loadout in (WORKSPACE_DIALECTIC_TOOLS, WORKSPACE_TOOLS_MINIMAL):
+            assert all(t["name"] != "get_workspace_stats" for t in loadout)

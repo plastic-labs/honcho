@@ -27,6 +27,7 @@ from src.dialectic.core import DialecticAgent
 from src.llm.types import LLMTelemetryContext
 from src.utils.agent_tools import (
     WORKSPACE_DIALECTIC_TOOLS,
+    WORKSPACE_RECALL_TOOLS,
     WORKSPACE_TOOLS_MINIMAL,
     create_workspace_tool_executor,
     format_workspace_stats,
@@ -143,8 +144,7 @@ class WorkspaceDialecticAgent(DialecticAgent):
             "biographical facts about them. Use this to decide who is "
             "relevant, then search that peer's own representation with "
             "search_memory (observer and observed both set to their name), "
-            "or search_messages / get_workspace_stats to find peers not "
-            "listed here."
+            "or search_messages to find peers not listed here."
         )
 
     def _select_tools(self) -> list[dict[str, Any]]:
@@ -179,14 +179,23 @@ class WorkspaceDialecticAgent(DialecticAgent):
         response is dead on arrival.
 
         Recall is the job, so make the first search mandatory and let the loop
-        relax to "auto" afterwards. Any other value a level configures is passed
-        through untouched, so this only overrides the two cases that let the
-        model opt out entirely.
+        relax to "auto" once a recall tool has run (see `_force_tools_until`).
+        Any other value a level configures is passed through untouched, so this
+        only overrides the two cases that let the model opt out entirely.
         """
         choice = level_settings.TOOL_CHOICE
         if choice is None or choice == "auto":
             return "required"
         return choice
+
+    def _force_tools_until(self) -> frozenset[str] | None:
+        """Only a recall tool satisfies the forced turn.
+
+        "required" alone is met by any tool, and an orientation call such as
+        `get_peer_card` returns what the prefetch already supplied. Gating on
+        recall keeps the model searching until it has read the corpus.
+        """
+        return WORKSPACE_RECALL_TOOLS
 
     async def _create_tool_executor(self) -> Callable[[str, dict[str, Any]], Any]:
         return await create_workspace_tool_executor(

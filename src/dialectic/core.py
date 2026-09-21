@@ -164,6 +164,10 @@ class DialecticAgent:
         """
         return level_settings.TOOL_CHOICE
 
+    def _force_tools_until(self) -> frozenset[str] | None:
+        """Tools that satisfy a forced tool_choice; None means any tool does."""
+        return None
+
     async def _initialize_session_history(self) -> None:
         """Fetch and inject session history into the system prompt if configured."""
         if self._session_history_initialized:
@@ -550,6 +554,7 @@ class DialecticAgent:
                 max_tokens=max_tokens,
                 tools=tools,
                 tool_choice=self._tool_choice(level_settings),
+                force_tools_until=self._force_tools_until(),
                 tool_executor=tool_executor,
                 max_tool_iterations=level_settings.MAX_TOOL_ITERATIONS,
                 messages=self.messages,
@@ -629,6 +634,7 @@ class DialecticAgent:
                 stream_final_only=True,
                 tools=tools,
                 tool_choice=self._tool_choice(level_settings),
+                force_tools_until=self._force_tools_until(),
                 tool_executor=tool_executor,
                 max_tool_iterations=level_settings.MAX_TOOL_ITERATIONS,
                 messages=self.messages,

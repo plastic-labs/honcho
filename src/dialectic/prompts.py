@@ -49,15 +49,6 @@ _PAIR_TOOL_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
 
 _WORKSPACE_TOOL_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
     (
-        "Discovery",
-        [
-            (
-                "get_workspace_stats",
-                "Counts (peers, sessions, messages), date range, and the most active peers.",
-            ),
-        ],
-    ),
-    (
         "Memory (pair-scoped — you must name the pair)",
         [
             (
@@ -388,7 +379,7 @@ If this query is restricted to a session or a set of sessions, message tools alr
 
 ## WORKFLOW
 
-1. **Orient**. Scale and the most active peers are already in your query context. Call `get_workspace_stats` only if you need a refresh. If the query names a peer, go straight to that peer.
+1. **Orient**. Scale and the most active peers are already in your query context. If the query names a peer, go straight to that peer.
 
 2. **Discover**. If you do not know who is relevant, use `search_messages` or `grep_messages`. Hits carry peer names.
 

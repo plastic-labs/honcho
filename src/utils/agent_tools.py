@@ -836,14 +836,6 @@ TOOLS: dict[str, dict[str, Any]] = {
             "required": ["observer", "observed", "query"],
         },
     },
-    "get_workspace_stats": {
-        "name": "get_workspace_stats",
-        "description": "Get workspace-level statistics — peer count, session count, message count, date range of messages — plus the most recently active peers with their message counts and last-active timestamps. Use this to orient yourself and discover which peers are most relevant.",
-        "input_schema": {
-            "type": "object",
-            "properties": {},
-        },
-    },
     "get_peer_card_by_name": {
         "name": "get_peer_card",
         "description": "Get the peer card for a specific peer relationship. Specify the observer and observed peer names.",
@@ -889,7 +881,6 @@ DIALECTIC_TOOLS_MINIMAL: list[dict[str, Any]] = [
 # ownership and the per-pair vector-store namespaces. Message tools are
 # workspace-flat and double as the routing signal (results carry peer_name).
 WORKSPACE_DIALECTIC_TOOLS: list[dict[str, Any]] = [
-    TOOLS["get_workspace_stats"],
     TOOLS["search_memory_workspace"],
     TOOLS["search_messages"],
     TOOLS["get_observation_context"],
@@ -903,10 +894,22 @@ WORKSPACE_DIALECTIC_TOOLS: list[dict[str, Any]] = [
 # Reduced workspace loadout for reasoning_level="minimal" (token cost of the
 # tool definitions themselves), mirroring DIALECTIC_TOOLS_MINIMAL.
 WORKSPACE_TOOLS_MINIMAL: list[dict[str, Any]] = [
-    TOOLS["get_workspace_stats"],
     TOOLS["search_memory_workspace"],
     TOOLS["search_messages"],
 ]
+
+# Workspace tools that read the corpus. The workspace agent's forced first
+# turn is satisfied only by one of these, not by an orientation tool.
+WORKSPACE_RECALL_TOOLS: frozenset[str] = frozenset(
+    {
+        "search_memory",
+        "search_messages",
+        "grep_messages",
+        "get_observation_context",
+        "get_messages_by_date_range",
+        "search_messages_temporal",
+    }
+)
 
 # Tools for the dreamer agent (consolidation + peer card + deduplication)
 DREAMER_TOOLS: list[dict[str, Any]] = [
@@ -3136,12 +3139,6 @@ async def _handle_get_peer_card_by_name(
         return f"No peer named '{observer}' exists in this workspace"
 
 
-# Peers listed by get_workspace_stats. Fixed rather than a tool argument:
-# folding active peers into stats keeps the tool zero-arg (one discovery
-# round instead of two); deeper discovery goes through search_messages.
-_STATS_ACTIVE_PEERS = 10
-
-
 # Peer-card facts listed per peer when cards are supplied.
 _STATS_CARD_FACTS = 8
 
@@ -3153,9 +3150,8 @@ def format_workspace_stats(
 ) -> str:
     """Render workspace counts and most-active peers as prompt-ready lines.
 
-    Shared by the get_workspace_stats tool and WorkspaceDialecticAgent's
-    routing prefetch; the prefetch passes ``cards`` to nest each peer's
-    known biographical facts under it.
+    Used by WorkspaceDialecticAgent's routing prefetch; ``cards`` nests each
+    peer's known biographical facts under it.
     """
     lines = [
         f"Peers: {stats.peer_count}",
@@ -3181,28 +3177,9 @@ def format_workspace_stats(
     return "\n".join(lines)
 
 
-async def _handle_get_workspace_stats(
-    ctx: ToolContext, tool_input: dict[str, Any]
-) -> str:
-    """Workspace-level counts, message date range, and most active peers."""
-    _ = tool_input
-    async with tracked_db("workspace_tool.get_workspace_stats", read_only=True) as db:
-        stats = await crud.get_workspace_stats(
-            db, ctx.workspace_name, session_names=ctx.session_allowlist
-        )
-        peers = await crud.get_active_peers(
-            db,
-            ctx.workspace_name,
-            limit=_STATS_ACTIVE_PEERS,
-            session_names=ctx.session_allowlist,
-        )
-    return "Workspace stats:\n" + format_workspace_stats(stats, peers)
-
-
 # Dispatch table consulted before _TOOL_HANDLERS by the workspace executor.
 _WORKSPACE_TOOL_HANDLERS: dict[str, Callable[[ToolContext, dict[str, Any]], Any]] = {
     "search_memory": _handle_search_memory_workspace,
-    "get_workspace_stats": _handle_get_workspace_stats,
     "get_peer_card": _handle_get_peer_card_by_name,
     "get_reasoning_chain": _handle_get_reasoning_chain,  # already workspace-scoped
 }
