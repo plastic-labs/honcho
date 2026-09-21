@@ -145,8 +145,28 @@ class Tenant(Base):
         TEXT, nullable=True, index=True
     )
     tier: Mapped[str] = mapped_column(TEXT, nullable=False, server_default="dedicated")
+    # region ai
+    # The effect, not the reason: "do not claim this tenant's work". The control
+    # plane decides WHY (billing, a noisy-neighbour kill switch, a cutover freeze)
+    # and mirrors the result here through the registry's PATCH; the deriver's
+    # claim reads it via derivation_pause. Never consulted to decide whether to
+    # pause — only whether to claim.
+    # endregion
+    derivation_paused: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
+    )
+
+    __table_args__ = (
+        # The paused subset is a few percent of the fleet; the claim-side refresh
+        # reads exactly that subset every interval.
+        Index(
+            "ix_tenants_derivation_paused",
+            "tenant_id",
+            postgresql_where=text("derivation_paused"),
+        ),
     )
 
 

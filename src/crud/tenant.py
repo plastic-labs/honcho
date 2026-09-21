@@ -3,6 +3,10 @@
 Callers hold a service session (``service_db``): the registry sits above
 row-level security by design, and ``tracked_db`` would fail closed because no
 tenant is bound while the tenant is being created.
+
+Create never mutates (same id + different fields is a conflict); the only
+mutation door is ``update_tenant``, and what it may touch is the allowlist on
+``schemas.TenantUpdate``.
 """
 
 import logging
@@ -82,6 +86,30 @@ async def get_or_create_tenant(
         )
     logger.info("Created tenant %s (tier=%s)", tenant_id, tier)
     return GetOrCreateResult(resource=tenant, created=True)
+
+
+async def update_tenant(
+    db: AsyncSession, tenant_id: str, *, derivation_paused: bool | None
+) -> models.Tenant:
+    """Apply the allowlisted mutable fields to an existing tenant; 404 if unknown.
+
+    Additive to the create contract: ``get_or_create_tenant`` still never
+    mutates, so a provisioning retry keeps its same-fields-or-409 guarantee.
+    Idempotent — re-asserting the value a row already holds is a 200, because
+    the callers are webhook-driven and retry.
+    """
+    tenant = await get_tenant(db, tenant_id)
+    if derivation_paused is not None and tenant.derivation_paused != derivation_paused:
+        logger.info(
+            "Tenant %s derivation_paused %s -> %s",
+            tenant_id,
+            tenant.derivation_paused,
+            derivation_paused,
+        )
+        tenant.derivation_paused = derivation_paused
+        await db.commit()
+        await db.refresh(tenant)
+    return tenant
 
 
 async def delete_tenant(db: AsyncSession, tenant_id: str) -> None:

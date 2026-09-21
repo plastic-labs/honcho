@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from enum import Enum
 from typing import cast, final
 
@@ -229,6 +229,31 @@ deriver_queue_work_units_excluded_gauge = NamespacedGauge(
     + "nothing will pick them up. Disjoint from deriver_queue_work_units_eligible. "
     + "Service-wide DB count, reported independently by every API replica — "
     + "aggregate with max() or avg(), never sum()",
+    ["namespace"],
+)
+
+deriver_queue_work_units_excluded_by_tenant_gauge = NamespacedGauge(
+    "deriver_queue_work_units_excluded_by_tenant",
+    "Work units no deriver will claim because this tenant's derivation is paused. "
+    + "A series exists only while the tenant is paused and has backlog; it is the "
+    + "per-tenant breakdown of deriver_queue_work_units_excluded. Service-wide DB "
+    + "count, reported independently by every API replica — aggregate with max() "
+    + "or avg(), never sum()",
+    ["namespace", "tenant_id"],
+)
+
+deriver_paused_tenants_gauge = NamespacedGauge(
+    "deriver_paused_tenants",
+    "Tenants whose derivation is paused, as this process last read the registry. "
+    + "Every process reports the whole set — aggregate with max(), never sum()",
+    ["namespace"],
+)
+
+derivation_pause_refresh_failures_counter = NamespacedCounter(
+    "derivation_pause_refresh_failures",
+    "Refreshes of the paused-tenant set that failed; the process kept claiming "
+    + "against its last good set, so a paused tenant may derive until the next "
+    + "successful refresh",
     ["namespace"],
 )
 
@@ -599,6 +624,8 @@ class PrometheusMetrics:
             self.set_deriver_metrics()
             self.set_deriver_outstanding_work(seconds=0)
             self.set_dreams_due(count=0)
+            # ai: refreshed on the backlog-metrics poll under MULTI_TENANT; 0 flag-off
+            self.set_paused_tenants(count=0)
 
             if settings.DERIVER.SCHEDULER == "api":
                 self.set_message_embeddings_pending(count=0)
@@ -630,6 +657,10 @@ class PrometheusMetrics:
                     )
             # ai: init at 0 so the gauge is visible before its first per-replica refresh
             self.set_message_embeddings_pending(count=0)
+            # ai: the deriver runs the paused-set refresher; the API refreshes on its
+            # metrics poll and reports failures through that poller's own logging.
+            self.set_paused_tenants(count=0)
+            self._touch(derivation_pause_refresh_failures_counter)
 
     def set_telemetry_buffer_size(self, *, size: int) -> None:
         try:
@@ -648,6 +679,7 @@ class PrometheusMetrics:
         *,
         eligible_work_units: int = 0,
         excluded_work_units: int = 0,
+        excluded_work_units_by_tenant: Mapping[str, int] | None = None,
         claimed_work_units: int = 0,
         pending_items: int = 0,
         oldest_pending_age_seconds: float = 0.0,
@@ -657,6 +689,16 @@ class PrometheusMetrics:
         try:
             deriver_queue_work_units_eligible_gauge.labels().set(eligible_work_units)
             deriver_queue_work_units_excluded_gauge.labels().set(excluded_work_units)
+            # region ai
+            # Rebuilt from scratch each pass: a tenant that resumed (or drained)
+            # must lose its series, or the dashboard shows a pause that ended.
+            # Gauge.clear() drops every child, so the set is exactly this pass's.
+            # endregion
+            deriver_queue_work_units_excluded_by_tenant_gauge.clear()
+            for tenant_id, count in (excluded_work_units_by_tenant or {}).items():
+                deriver_queue_work_units_excluded_by_tenant_gauge.labels(
+                    tenant_id=tenant_id
+                ).set(count)
             deriver_queue_work_units_claimed_gauge.labels().set(claimed_work_units)
             deriver_queue_items_pending_gauge.labels().set(pending_items)
             deriver_queue_oldest_pending_age_seconds_gauge.labels().set(
@@ -666,6 +708,18 @@ class PrometheusMetrics:
             message_embeddings_pending_due_gauge.labels().set(embeddings_pending_due)
         except Exception as e:
             self._handle_metric_error("set_deriver_metrics", e)
+
+    def set_paused_tenants(self, *, count: int) -> None:
+        try:
+            deriver_paused_tenants_gauge.labels().set(count)
+        except Exception as e:
+            self._handle_metric_error("set_paused_tenants", e)
+
+    def record_derivation_pause_refresh_failure(self) -> None:
+        try:
+            derivation_pause_refresh_failures_counter.labels().inc()
+        except Exception as e:
+            self._handle_metric_error("record_derivation_pause_refresh_failure", e)
 
     def set_deriver_outstanding_work(self, *, seconds: float) -> None:
         try:

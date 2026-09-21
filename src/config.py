@@ -1025,6 +1025,9 @@ class DeriverSettings(HonchoSettings):
     FLUSH_ENABLED: bool = False
 
     BACKLOG_METRICS_POLL_INTERVAL_SECONDS: Annotated[int, Field(default=30, ge=1)] = 30
+    # How often a claiming process re-reads which tenants are paused
+    # (tenants.derivation_paused). Bounds pause-to-effect and resume-to-effect.
+    PAUSED_TENANTS_REFRESH_SECONDS: Annotated[int, Field(default=30, ge=1)] = 30
 
     SCHEDULER: Literal["api", "deriver"] = "deriver"
 

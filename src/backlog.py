@@ -151,6 +151,7 @@ class DeriverMetricsPoller:
         metrics.set_deriver_metrics(
             eligible_work_units=stats.eligible_work_units,
             excluded_work_units=stats.excluded_work_units,
+            excluded_work_units_by_tenant=stats.excluded_work_units_by_tenant,
             claimed_work_units=stats.claimed_work_units,
             pending_items=stats.pending_items,
             oldest_pending_age_seconds=stats.oldest_pending_age_seconds,

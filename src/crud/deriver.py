@@ -17,7 +17,7 @@ from sqlalchemy import (
 from sqlalchemy.engine import Row
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src import models, schemas
+from src import derivation_pause, models, schemas
 from src.config import settings
 from src.db import tenant_context
 
@@ -57,14 +57,16 @@ def claim_excluded_tenant_ids() -> Sequence[str] | None:
     # region ai
     # The suspension seam: excluding a tenant means filtering its batch rows
     # out of the claim's eligible set before ranking, so an excluded whale
-    # contributes nothing to any round. No exclusion source exists yet, hence
-    # None; the seam returns ids rather than a clause so wiring a source in
-    # cannot reintroduce the NULL footgun — the claim composes `tenant_id IS
-    # NULL OR tenant_id NOT IN (ids)` itself, keeping the tenant-less
-    # (reconciler) lane in rotation by construction (a bare NOT IN is
-    # NULL-false and would silently starve it).
+    # contributes nothing to any round. The source is derivation_pause's
+    # in-process mirror of tenants.derivation_paused (refreshed on a timer in
+    # the deriver, and on the metrics poll in the API); the seam returns ids
+    # rather than a clause so no source can reintroduce the NULL footgun — the
+    # claim composes `tenant_id IS NULL OR tenant_id NOT IN (ids)` itself,
+    # keeping the tenant-less (reconciler) lane in rotation by construction
+    # (a bare NOT IN is NULL-false and would silently starve it). None both
+    # flag-off and when nobody is paused, so the claim SQL is unchanged then.
     # endregion
-    return None
+    return derivation_pause.excluded_tenant_ids()
 
 
 def unclaimed_work_unit_clause(
@@ -289,6 +291,16 @@ async def get_deriver_metrics(db: AsyncSession) -> schemas.DeriverMetrics:
     from src.reconciler.sync_vectors import backoff_eligible  # noqa: PLC0415
 
     # region ai
+    # The API process runs no paused-set refresher; this poll is its cadence.
+    # Refreshing here, on the same read-only service session, keeps the gauges
+    # KEDA scales on and the deriver's claim reading the same bit — otherwise a
+    # paused tenant's backlog would count as eligible and scale up workers that
+    # find nothing to claim. Flag-off the set is never loaded and stays None.
+    # endregion
+    if settings.MULTI_TENANT:
+        await derivation_pause.refresh(db)
+
+    # region ai
     # Reads the trigger-maintained queue_item_batches, not the queue: this poller
     # ran the same two GROUP BYs as the old claim path on every backlog-metrics
     # poll, the identical ~O(depth²) cost. sum(pending_count) equals the old
@@ -327,13 +339,16 @@ async def get_deriver_metrics(db: AsyncSession) -> schemas.DeriverMetrics:
             models.QueueItemBatch.tenant_id.is_(None),
             models.QueueItemBatch.tenant_id.notin_(excluded_tenant_ids),
         )
+        # Grouped by tenant: the total is the sum, and the per-tenant depth is
+        # what an operator watches while a tenant is paused.
         excluded = (
-            select(func.count())
+            select(models.QueueItemBatch.tenant_id, func.count())
             .select_from(models.QueueItemBatch)
             .where(
                 not_live_claimed_work_unit_clause(models.QueueItemBatch.work_unit_key),
                 models.QueueItemBatch.tenant_id.in_(excluded_tenant_ids),
             )
+            .group_by(models.QueueItemBatch.tenant_id)
         )
         if threshold_clause is not None:
             excluded = excluded.where(threshold_clause)
@@ -372,9 +387,12 @@ async def get_deriver_metrics(db: AsyncSession) -> schemas.DeriverMetrics:
     ).where(models.MessageEmbedding.sync_state == "pending")
 
     eligible_count = (await db.execute(eligible)).scalar_one()
-    excluded_count = (
-        (await db.execute(excluded)).scalar_one() if excluded is not None else 0
+    excluded_by_tenant: dict[str, int] = (
+        {str(tenant_id): int(count) for tenant_id, count in await db.execute(excluded)}
+        if excluded is not None
+        else {}
     )
+    excluded_count = sum(excluded_by_tenant.values())
     claimed_count = (await db.execute(claimed)).scalar_one()
     pending_count, oldest_age = (await db.execute(pending)).one()
     embeddings_pending, embeddings_due = (await db.execute(embeddings)).one()
@@ -382,6 +400,7 @@ async def get_deriver_metrics(db: AsyncSession) -> schemas.DeriverMetrics:
     return schemas.DeriverMetrics(
         eligible_work_units=int(eligible_count),
         excluded_work_units=int(excluded_count),
+        excluded_work_units_by_tenant=excluded_by_tenant,
         claimed_work_units=int(claimed_count),
         pending_items=int(pending_count),
         oldest_pending_age_seconds=float(oldest_age),

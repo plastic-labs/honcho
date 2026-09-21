@@ -1,8 +1,9 @@
 """Tenant registry API — the above-tenant provisioning surface.
 
 The control plane creates a tenant here before any tenant-scoped credential
-or write can exist. Authentication is a service secret, not a JWT — see
-``require_tenant_api``.
+or write can exist, and flips the few per-tenant facts honcho mirrors for it
+(``PATCH``, allowlisted in ``schemas.TenantUpdate``). Authentication is a
+service secret, not a JWT — see ``require_tenant_api``.
 """
 
 import hmac
@@ -77,6 +78,18 @@ async def get_tenant(tenant_id: Annotated[str, Path()]):
     """Fetch a tenant row (the control plane's reconciliation read)."""
     async with service_db("tenants.get", read_only=True) as db:
         return await tenant_crud.get_tenant(db, tenant_id)
+
+
+@router.patch("/{tenant_id}", response_model=schemas.Tenant)
+async def update_tenant(tenant_id: Annotated[str, Path()], body: schemas.TenantUpdate):
+    """Set an allowlisted mutable field: 200 (idempotent), 404 unknown tenant,
+    422 for any field outside the allowlist or an empty body."""
+    if body.model_fields_set == set():
+        raise ValidationException("PATCH body names no mutable field")
+    async with service_db("tenants.update") as db:
+        return await tenant_crud.update_tenant(
+            db, tenant_id, derivation_paused=body.derivation_paused
+        )
 
 
 @router.delete("/{tenant_id}", status_code=204)
