@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- `Conclusion.sourceMessageIds`: the messages the deriver cited as evidence for an explicit conclusion (Honcho v3.3.0+). Null for derived levels and for conclusions recorded before citations existed. Filter with `{ source_message_ids: { contains: '<message id>' } }` to find the conclusions a message produced
+
 ## [2.5.0] - 2026-09-15
 
 ### Added

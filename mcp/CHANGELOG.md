@@ -9,6 +9,10 @@ This package versions independently of the Honcho API, `@honcho-ai/sdk`, and hos
 
 ## [Unreleased]
 
+### Added
+
+- `source_message_ids` on every conclusion the tools return: the messages an explicit conclusion cites as evidence (Honcho v3.3.0+, null for derived levels and on older servers). `list_conclusions` filters accept `{"source_message_ids": {"contains": "<message id>"}}` to find the conclusions a message produced. Surfaces once `@honcho-ai/sdk` carries the field; earlier SDKs report null
+
 ## [0.2.0] - 2026-09-17
 
 ### Added

@@ -149,7 +149,7 @@ The full API for advanced use cases.
 
 | Tool | When to use |
 | --- | --- |
-| `list_conclusions` | See what Honcho has derived about a peer. Paginate with `page` / `size`, narrow with `session_id` or `filters` (e.g. `{"level": "inductive"}`) |
+| `list_conclusions` | See what Honcho has derived about a peer. Paginate with `page` / `size`, narrow with `session_id` or `filters` (e.g. `{"level": "inductive"}`, or `{"source_message_ids": {"contains": "<message id>"}}` for what a message produced) |
 | `query_conclusions` | Semantic search across derived facts |
 | `get_conclusions` | Fetch conclusions by ID from anywhere in the workspace. Pass a conclusion's `source_ids` to see its premises |
 | `get_derived_conclusions` | List what was built on top of a conclusion — the other direction of the same edge |
@@ -179,7 +179,7 @@ A **session** is a conversation context. Sessions track message history, manage 
 
 **Conclusions** are facts and observations that Honcho derives from conversations. They power the representation — Honcho's understanding of a peer.
 
-Every conclusion carries its own attribution. `level` says how it was reached: `explicit` conclusions are extracted straight from messages, while `deductive`, `inductive` and `contradiction` conclusions are derived while dreaming. `source_ids` names the conclusions a derived one was built from, and is null for explicit ones. `times_derived` counts how many times Honcho independently reached the same conclusion — a rough confidence signal.
+Every conclusion carries its own attribution. `level` says how it was reached: `explicit` conclusions are extracted straight from messages, while `deductive`, `inductive` and `contradiction` conclusions are derived while dreaming. `source_ids` names the conclusions a derived one was built from, and is null for explicit ones. `source_message_ids` is the other end of the chain: the messages an explicit conclusion cites as evidence, null for derived ones and for conclusions recorded before Honcho v3.3.0. `times_derived` counts how many times Honcho independently reached the same conclusion — a rough confidence signal.
 
 Those fields make the reasoning tree walkable in both directions: `get_conclusions` on a conclusion's `source_ids` steps down toward the explicit facts it rests on, and `get_derived_conclusions` steps up to whatever was built on top of it. Walk down before correcting a fact, and up before deleting one.
 

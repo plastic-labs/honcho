@@ -441,8 +441,10 @@ async def test_observation_get_by_id(
         assert fetched.observer_id == observer.id
         assert fetched.observed_id == target.id
         assert fetched.level == "explicit"
-        # User-created conclusions are explicit: no premises, derived once
+        # User-created conclusions are explicit: no premises, no cited
+        # messages, derived once
         assert fetched.source_ids is None
+        assert fetched.source_message_ids is None
         assert fetched.times_derived == 1
     else:
         observer = honcho_client.peer(id="test-obs-get-by-id-observer")
@@ -470,8 +472,10 @@ async def test_observation_get_by_id(
         assert fetched.observer_id == observer.id
         assert fetched.observed_id == target.id
         assert fetched.level == "explicit"
-        # User-created conclusions are explicit: no premises, derived once
+        # User-created conclusions are explicit: no premises, no cited
+        # messages, derived once
         assert fetched.source_ids is None
+        assert fetched.source_message_ids is None
         assert fetched.times_derived == 1
 
 

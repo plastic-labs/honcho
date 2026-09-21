@@ -784,6 +784,41 @@ bob_explicit = peer.conclusions_of("bob").list(filters={"level": "explicit"})
 ```
 </CodeGroup>
 
+Two fields link conclusions to what they came from. `source_ids` holds the
+conclusions a derived one was reasoned from; `source_message_ids` holds the
+messages an explicit one cites as evidence. Both take `contains` for a single
+id, `in` for any of several, and a bare list to require every id listed:
+
+<CodeGroup>
+```python Python
+# Conclusions reasoned from a given conclusion
+built_on = peer.conclusions.list(filters={"source_ids": {"contains": conclusion_id}})
+
+# Conclusions that cite a given message as evidence
+from_message = peer.conclusions.list(
+    filters={"source_message_ids": {"contains": message_id}}
+)
+```
+
+```typescript TypeScript
+(async () => {
+    // Conclusions reasoned from a given conclusion
+    const builtOn = await peer.conclusions.list({
+      filters: { source_ids: { contains: conclusionId } }
+    });
+
+    // Conclusions that cite a given message as evidence
+    const fromMessage = await peer.conclusions.list({
+      filters: { source_message_ids: { contains: messageId } }
+    });
+})();
+```
+</CodeGroup>
+
+`source_message_ids` is recorded only for conclusions the deriver wrote on
+Honcho v3.3.0 or later; older explicit conclusions and every derived level
+return it as null.
+
 ## Value Types
 
 A filter value has to be usable against the field it targets. Honcho validates

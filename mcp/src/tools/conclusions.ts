@@ -10,7 +10,7 @@ import {
 
 /** Shared wording: what the attribution fields on a conclusion mean. */
 const ATTRIBUTION_NOTE =
-  "Each conclusion carries `level` (explicit = extracted from messages; deductive/inductive/contradiction = derived while dreaming), `source_ids` (the conclusions it was derived from, null for explicit), and `times_derived` (how many times it was independently reached).";
+  "Each conclusion carries `level` (explicit = extracted from messages; deductive/inductive/contradiction = derived while dreaming), `source_ids` (the conclusions it was derived from, null for explicit), `source_message_ids` (the messages an explicit conclusion cites as evidence, null for derived), and `times_derived` (how many times it was independently reached).";
 
 export function register(server: McpServer, ctx: ToolContext) {
   // ── list_conclusions ────────────────────────────────────────────────
@@ -40,7 +40,7 @@ export function register(server: McpServer, ctx: ToolContext) {
           .record(z.string(), z.unknown())
           .optional()
           .describe(
-            'Optional: filter criteria, e.g. {"level": "inductive"} for pattern conclusions only, or {"source_ids": {"contains": "<id>"}} for conclusions derived from a given one. See https://honcho.dev/docs/v3/documentation/features/advanced/using-filters',
+            'Optional: filter criteria, e.g. {"level": "inductive"} for pattern conclusions only, {"source_ids": {"contains": "<id>"}} for conclusions derived from a given one, or {"source_message_ids": {"contains": "<message id>"}} for conclusions that cite a given message. See https://honcho.dev/docs/v3/documentation/features/advanced/using-filters',
           ),
         page: z.number().int().min(1).optional().describe("Page number (1-indexed)."),
         size: z

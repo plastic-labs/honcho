@@ -21,23 +21,26 @@ add_common_options(app)
 _LEVELS = ("explicit", "deductive", "inductive", "contradiction")
 
 #: Columns carrying a conclusion's attribution, shown alongside the content.
-_ATTRIBUTION_COLUMNS = ["id", "level", "source_ids", "times_derived", "content"]
+_ATTRIBUTION_COLUMNS = ["id", "level", "source_ids", "source_message_ids", "times_derived", "content"]
 
 
 def _format_conclusion(c, workspace_id: str | None) -> dict:
     """Shape a Conclusion for output.
 
     ``level``, ``source_ids`` and ``times_derived`` are the attribution the
-    server started returning in Honcho v3.2.0. In table mode ``source_ids``
-    collapses to a count, since the ids are nanoids and a list of them makes
-    the row unreadable; JSON mode keeps the full list so it can be piped back
-    into ``honcho conclusion get``.
+    server started returning in Honcho v3.2.0; ``source_message_ids`` (the
+    messages an explicit conclusion cites) arrived in v3.3.0 and is read
+    leniently so older SDKs still work. In table mode the id lists collapse
+    to counts, since nanoids make the row unreadable; JSON mode keeps them so
+    they can be piped back into ``honcho conclusion get`` or ``message get``.
     """
     source_ids = c.source_ids or []
+    source_message_ids = getattr(c, "source_message_ids", None) or []
     return {
         "id": c.id,
         "level": c.level,
         "source_ids": source_ids if use_json() else len(source_ids),
+        "source_message_ids": source_message_ids if use_json() else len(source_message_ids),
         "times_derived": c.times_derived,
         "content": c.content if use_json() else c.content[:160],
         "workspace_id": workspace_id,
@@ -86,6 +89,11 @@ def list_conclusions(
         "--derived-from",
         help="Only conclusions derived from this conclusion ID",
     ),
+    cites: Optional[str] = typer.Option(
+        None,
+        "--cites",
+        help="Only explicit conclusions that cite this message ID as evidence",
+    ),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
     peer: Optional[str] = typer.Option(None, "--peer", "-p", help="Override peer ID"),
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
@@ -104,6 +112,8 @@ def list_conclusions(
         filters["level"] = level
     if derived_from:
         filters["source_ids"] = {"contains": derived_from}
+    if cites:
+        filters["source_message_ids"] = {"contains": cites}
 
     try:
         if observed:

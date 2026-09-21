@@ -160,6 +160,9 @@ class Conclusion:
         source_ids: IDs of the conclusions this one was derived from (premises
             for "deductive", supporting sources for "inductive", conflicting
             conclusions for "contradiction"). None for "explicit" conclusions.
+        source_message_ids: IDs of the messages the deriver cited as evidence
+            for an "explicit" conclusion, in citation order. None for derived
+            levels and for conclusions recorded before citations existed.
         times_derived: Number of times this conclusion has been independently
             derived.
         created_at: Timestamp for when the conclusion was created
@@ -172,6 +175,7 @@ class Conclusion:
     session_id: str | None = None
     level: ConclusionLevel = "explicit"
     source_ids: list[str] | None = None
+    source_message_ids: list[str] | None = None
     times_derived: int = 1
     created_at: datetime.datetime
 
@@ -186,6 +190,7 @@ class Conclusion:
         level: ConclusionLevel = "explicit",
         source_ids: list[str] | None = None,
         times_derived: int = 1,
+        source_message_ids: list[str] | None = None,
     ) -> None:
         self.id = id
         self.content = content
@@ -194,6 +199,7 @@ class Conclusion:
         self.session_id = session_id
         self.level = level
         self.source_ids = source_ids
+        self.source_message_ids = source_message_ids
         self.times_derived = times_derived
         self.created_at = created_at
 
@@ -209,6 +215,7 @@ class Conclusion:
             level=data.level,
             source_ids=data.source_ids,
             times_derived=data.times_derived,
+            source_message_ids=data.source_message_ids,
             created_at=data.created_at,
         )
 
@@ -455,7 +462,7 @@ class ConclusionsView:
 
         Returns:
             The Conclusion object, including its attribution fields
-            (`source_ids`, `times_derived`)
+            (`source_ids`, `source_message_ids`, `times_derived`)
 
         Raises:
             NotFoundError: If no conclusion with the given ID exists in this

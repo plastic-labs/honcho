@@ -2022,7 +2022,7 @@ class ConclusionsViewAio:
 
         Returns:
             The Conclusion object, including its attribution fields
-            (`source_ids`, `times_derived`)
+            (`source_ids`, `source_message_ids`, `times_derived`)
 
         Raises:
             NotFoundError: If no conclusion with the given ID exists in this
