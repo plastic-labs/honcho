@@ -24,21 +24,37 @@ the claim SQL is byte-identical to a single-tenant deployment's.
 import asyncio
 import contextlib
 import logging
+import time
 from collections.abc import Sequence
 
 import sentry_sdk
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
+from tenacity import (
+    AsyncRetrying,
+    RetryError,
+    before_sleep_log,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_fixed,
+)
 
 from src import models
 from src.config import settings
 from src.dependencies import service_db
+from src.startup.embedding_validator import StartupValidationError
 from src.telemetry import prometheus_metrics
 
 logger = logging.getLogger(__name__)
 
-# None until the first successful load; a sorted tuple afterwards, so the
-# claim's bound parameters are stable across polls.
+# Same shape as the startup validators: a pooler still warming up must not
+# read as a misconfiguration.
+_FIRST_LOAD_ATTEMPTS = 3
+_FIRST_LOAD_BACKOFF_SECONDS = 1.0
+
+# None until the first successful load; a sorted tuple afterwards.
+# ai: sorted so the change-detection log in refresh() compares sets, not read order.
 _paused: tuple[str, ...] | None = None
 
 
@@ -61,7 +77,8 @@ async def load_paused_tenant_ids(db: AsyncSession) -> tuple[str, ...]:
     """Read the paused set from the registry table on the given session."""
     result = await db.execute(
         select(models.Tenant.tenant_id)
-        .where(models.Tenant.derivation_paused.is_(True))
+        # ai: bare column, not IS TRUE — matches the partial index predicate exactly.
+        .where(models.Tenant.derivation_paused)
         .order_by(models.Tenant.tenant_id)
     )
     return tuple(result.scalars().all())
@@ -84,6 +101,7 @@ async def refresh(db: AsyncSession) -> tuple[str, ...]:
         )
     _paused = paused
     prometheus_metrics.set_paused_tenants(count=len(paused))
+    prometheus_metrics.set_paused_tenants_last_success(timestamp=time.time())
     return paused
 
 
@@ -111,8 +129,7 @@ class DerivationPauseRefresher:
         if self._task is not None:
             logger.warning("DerivationPauseRefresher already running")
             return
-        # ai: fails closed on purpose — see the module docstring for the split.
-        await refresh_from_service_db()
+        await self._first_load()
         self._shutdown_event.clear()
         self._task = asyncio.create_task(self._loop())
         logger.info(
@@ -120,9 +137,41 @@ class DerivationPauseRefresher:
             settings.DERIVER.PAUSED_TENANTS_REFRESH_SECONDS,
         )
 
+    async def _first_load(self) -> None:
+        """The boot gate: retry a transient database error, then fail closed.
+
+        Mirrors the startup validators — same retry shape, same error type — so
+        a process that cannot read the paused set refuses to claim with the same
+        wording an operator already knows, and a pooler still warming up is not
+        mistaken for a misconfiguration.
+        """
+        try:
+            async for attempt in AsyncRetrying(
+                stop=stop_after_attempt(_FIRST_LOAD_ATTEMPTS),
+                wait=wait_fixed(_FIRST_LOAD_BACKOFF_SECONDS),
+                retry=retry_if_exception_type(SQLAlchemyError),
+                before_sleep=before_sleep_log(logger, logging.WARNING),
+                reraise=False,
+            ):
+                with attempt:
+                    await refresh_from_service_db()
+                    return
+        except RetryError as e:
+            underlying = e.last_attempt.exception()
+            raise StartupValidationError(
+                "derivation_pause: cannot read tenants.derivation_paused, refusing "
+                + f"to claim work until the paused set is readable: {underlying}"
+            ) from underlying
+        except Exception as e:
+            raise StartupValidationError(
+                "derivation_pause: cannot read tenants.derivation_paused, refusing "
+                + f"to claim work until the paused set is readable: {e}"
+            ) from e
+
     async def shutdown(self) -> None:
         if self._task is None:
             return
+        logger.info("Shutting down DerivationPauseRefresher...")
         self._shutdown_event.set()
         try:
             await asyncio.wait_for(self._task, timeout=5.0)
@@ -132,6 +181,7 @@ class DerivationPauseRefresher:
             with contextlib.suppress(asyncio.CancelledError):
                 await self._task
         self._task = None
+        logger.info("DerivationPauseRefresher stopped")
 
     async def _loop(self) -> None:
         interval = settings.DERIVER.PAUSED_TENANTS_REFRESH_SECONDS
@@ -149,13 +199,13 @@ class DerivationPauseRefresher:
             await refresh_from_service_db()
         except Exception as e:
             # region ai
-            # Fail OPEN on the last known good set — the one place this
-            # project's fail-closed reflex is wrong. An empty set here
-            # would resume derivation for every paused tenant at once; a
-            # stale set over-derives for the paused ones for one interval.
+            # Fail OPEN on the last known good set — the one refresh here where
+            # failing closed (as the first load does) is the worse outcome. An
+            # empty set would resume derivation for every paused tenant at once;
+            # a stale set over-derives for the paused ones for one interval.
             # Counted so "paused tenant still deriving" has a signal.
             # endregion
-            prometheus_metrics.record_derivation_pause_refresh_failure()
+            prometheus_metrics.record_paused_tenants_refresh_failure()
             logger.error(
                 "Paused-tenant refresh failed; keeping the last known set of %d: %s",
                 paused_tenant_count(),

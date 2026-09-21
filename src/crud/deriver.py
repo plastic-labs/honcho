@@ -339,8 +339,7 @@ async def get_deriver_metrics(db: AsyncSession) -> schemas.DeriverMetrics:
             models.QueueItemBatch.tenant_id.is_(None),
             models.QueueItemBatch.tenant_id.notin_(excluded_tenant_ids),
         )
-        # Grouped by tenant: the total is the sum, and the per-tenant depth is
-        # what an operator watches while a tenant is paused.
+        # ai: grouped by tenant — the total is the sum; per-tenant depth is what an operator watches while a tenant is paused
         excluded = (
             select(models.QueueItemBatch.tenant_id, func.count())
             .select_from(models.QueueItemBatch)

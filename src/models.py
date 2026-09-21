@@ -147,7 +147,8 @@ class Tenant(Base):
     tier: Mapped[str] = mapped_column(TEXT, nullable=False, server_default="dedicated")
     # region ai
     # The effect, not the reason: "do not claim this tenant's work". The control
-    # plane decides WHY (billing, a noisy-neighbour kill switch, a cutover freeze)
+    # plane decides WHY (billing, a noisy-neighbour kill switch, a maintenance
+    # freeze)
     # and mirrors the result here through the registry's PATCH; the deriver's
     # claim reads it via derivation_pause. Never consulted to decide whether to
     # pause — only whether to claim.
@@ -160,8 +161,9 @@ class Tenant(Base):
     )
 
     __table_args__ = (
-        # The paused subset is a few percent of the fleet; the claim-side refresh
-        # reads exactly that subset every interval.
+        # ai: the claim-side refresh reads only the paused subset, on a timer, from
+        # every claiming process; the partial index keeps that scan small however
+        # large tenants grows.
         Index(
             "ix_tenants_derivation_paused",
             "tenant_id",

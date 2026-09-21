@@ -1,4 +1,4 @@
-"""Hooks for revision 43d77d0c5846 (add tenants.derivation_paused)."""
+"""Hooks for revision 43d77d0c5846 (add_tenant_derivation_paused)."""
 
 from __future__ import annotations
 

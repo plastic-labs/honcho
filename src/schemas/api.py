@@ -158,10 +158,10 @@ class TenantUpdate(BaseModel):
     """
 
     # region ai
-    # vector_correlation_id must NOT be added here casually: the vector-namespace
-    # prefix is cached per process for the process's lifetime on the strength of
-    # the registry never changing it. Making it mutable owns fleet-wide cache
-    # invalidation, not just a line in this model.
+    # vector_correlation_id is deliberately absent: the registry's contract is
+    # that it never changes after create, so consumers may cache anything
+    # derived from it for the process lifetime. Making it mutable is an
+    # every-process invalidation problem, not a line here.
     # endregion
     derivation_paused: bool | None = None
 
@@ -172,7 +172,7 @@ class Tenant(BaseModel):
     tenant_id: str
     vector_correlation_id: str | None = None
     tier: str
-    derivation_paused: bool = False
+    derivation_paused: bool
     created_at: datetime.datetime
 
     model_config = ConfigDict(from_attributes=True)  # pyright: ignore

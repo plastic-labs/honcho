@@ -305,7 +305,7 @@ def test_patch_pauses_resumes_and_is_idempotent(client: TestClient, enabled: str
     assert paused.json()["derivation_paused"] is True
     assert paused.json()["tenant_id"] == tenant_id
 
-    # Webhook-driven callers retry: re-asserting the held value is a 200, not a 409.
+    # Retrying callers re-assert: the held value is a 200, not a 409.
     again = client.patch(
         f"/v3/tenants/{tenant_id}",
         json={"derivation_paused": True},
@@ -353,8 +353,17 @@ def test_patch_unknown_tenant_is_404(client: TestClient, enabled: str):
         {"created_at": "2026-01-01T00:00:00Z"},
         {"derivation_paused": True, "tier": "enterprise"},
         {},
+        {"derivation_paused": None},
     ],
-    ids=["tier", "vector_correlation_id", "tenant_id", "created_at", "mixed", "empty"],
+    ids=[
+        "tier",
+        "vector_correlation_id",
+        "tenant_id",
+        "created_at",
+        "mixed",
+        "empty",
+        "null",
+    ],
 )
 def test_patch_rejects_everything_outside_the_allowlist(
     client: TestClient, enabled: str, body: dict[str, Any]

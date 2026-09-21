@@ -58,6 +58,17 @@ router = APIRouter(
 )
 
 
+# region ai
+# Every route that returns a row validates it into the response schema INSIDE
+# the session block. service_db's teardown rolls back and closes: the rollback
+# expires the ORM instance and the close detaches it, and FastAPI serializes
+# only after the block has exited — so returning the ORM object raised
+# DetachedInstanceError as a 500 on every path that had a transaction open at
+# exit (get, the create retry, update). The test harness's session stand-in
+# mirrors that teardown so this stays pinned.
+# endregion
+
+
 @router.post("", response_model=schemas.Tenant)
 async def create_tenant(body: schemas.TenantCreate, response: Response):
     """Idempotently create a tenant: 201 created, 200 already-exists-identical,
@@ -70,25 +81,30 @@ async def create_tenant(body: schemas.TenantCreate, response: Response):
             tier=body.tier,
         )
         response.status_code = 201 if result.created else 200
-        return result.resource
+        return schemas.Tenant.model_validate(result.resource)
 
 
 @router.get("/{tenant_id}", response_model=schemas.Tenant)
 async def get_tenant(tenant_id: Annotated[str, Path()]):
     """Fetch a tenant row (the control plane's reconciliation read)."""
     async with service_db("tenants.get", read_only=True) as db:
-        return await tenant_crud.get_tenant(db, tenant_id)
+        return schemas.Tenant.model_validate(
+            await tenant_crud.get_tenant(db, tenant_id)
+        )
 
 
 @router.patch("/{tenant_id}", response_model=schemas.Tenant)
 async def update_tenant(tenant_id: Annotated[str, Path()], body: schemas.TenantUpdate):
     """Set an allowlisted mutable field: 200 (idempotent), 404 unknown tenant,
-    422 for any field outside the allowlist or an empty body."""
-    if body.model_fields_set == set():
+    422 for any field outside the allowlist, an empty body, or a null value."""
+    # ai: exclude_none too — `{"derivation_paused": null}` names the field but sets nothing.
+    if not body.model_dump(exclude_unset=True, exclude_none=True):
         raise ValidationException("PATCH body names no mutable field")
     async with service_db("tenants.update") as db:
-        return await tenant_crud.update_tenant(
-            db, tenant_id, derivation_paused=body.derivation_paused
+        return schemas.Tenant.model_validate(
+            await tenant_crud.update_tenant(
+                db, tenant_id, derivation_paused=body.derivation_paused
+            )
         )
 
 

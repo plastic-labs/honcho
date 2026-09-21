@@ -301,7 +301,12 @@ class QueueManager:
 
     async def cleanup(self) -> None:
         """Clean up owned work units"""
-        await derivation_pause_refresher.shutdown()
+        # ai: stopped here (not in shutdown(sig)) so non-signal exits cover it too;
+        # guarded so a failing stop cannot skip the claim release below.
+        try:
+            await derivation_pause_refresher.shutdown()
+        except Exception as e:
+            logger.warning("Error stopping the paused-tenant refresher: %s", e)
         total_work_units = self.get_total_owned_work_units()
         if total_work_units > 0:
             logger.debug(f"Cleaning up {total_work_units} owned work units...")
@@ -1324,8 +1329,10 @@ async def main():
     try:
         await manager.initialize()
     except Exception as e:
-        logger.error(f"Error in main: {str(e)}")
+        # ai: re-raised so a refused boot (validators, the paused-set first load) exits non-zero
+        logger.exception("Error in main")
         sentry_sdk.capture_exception(e)
+        raise
     finally:
         await close_cache()
         logger.debug("Main function exiting")

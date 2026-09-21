@@ -18,6 +18,7 @@ from src import derivation_pause, models
 from src.config import settings
 from src.crud.deriver import claim_excluded_tenant_ids
 from src.derivation_pause import DerivationPauseRefresher
+from src.startup import StartupValidationError
 from src.telemetry import prometheus_metrics
 
 
@@ -130,7 +131,8 @@ async def test_start_is_a_noop_flag_off_and_never_touches_the_database(
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("multi_tenant")
 async def test_first_load_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A process that cannot read the paused set refuses to start claiming."""
+    """A process that cannot read the paused set refuses to start claiming, with
+    the startup validators' error type so the boot refusal reads the same."""
 
     async def _unreadable() -> tuple[str, ...]:
         raise RuntimeError("registry unreadable")
@@ -138,7 +140,7 @@ async def test_first_load_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(derivation_pause, "refresh_from_service_db", _unreadable)
     refresher = DerivationPauseRefresher()
 
-    with pytest.raises(RuntimeError, match="registry unreadable"):
+    with pytest.raises(StartupValidationError, match="registry unreadable"):
         await refresher.start()
 
     assert refresher._task is None  # pyright: ignore[reportPrivateUsage]
@@ -165,7 +167,7 @@ async def test_a_later_failure_keeps_the_last_known_good_set_and_counts(
     failures: list[None] = []
     monkeypatch.setattr(
         prometheus_metrics,
-        "record_derivation_pause_refresh_failure",
+        "record_paused_tenants_refresh_failure",
         lambda: failures.append(None),
     )
 

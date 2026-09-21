@@ -21,6 +21,7 @@ from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from nanoid import generate as generate_nanoid
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -656,29 +657,33 @@ class TestThePauseSeam:
         batch_gate_settings(
             target_tokens=512, max_age_seconds=AGE_FLUSH_SECONDS, workers=10
         )
+        # Real tenants rows outlive the per-test table clear, so their ids are unique.
+        suffix = generate_nanoid(size=6)
+        paused_tenant = f"{PAUSED_TENANT}-{suffix}"
+        live_tenant = f"{LIVE_TENANT}-{suffix}"
         db_session.add_all(
             [
                 models.Tenant(
-                    tenant_id=PAUSED_TENANT, tier="shared", derivation_paused=True
+                    tenant_id=paused_tenant, tier="shared", derivation_paused=True
                 ),
-                models.Tenant(tenant_id=LIVE_TENANT, tier="shared"),
+                models.Tenant(tenant_id=live_tenant, tier="shared"),
             ]
         )
         await db_session.commit()
         paused_keys = [
-            representation_key(PAUSED_TENANT, f"paused-{index}") for index in range(2)
+            representation_key(paused_tenant, f"paused-{index}") for index in range(2)
         ]
-        live_key = representation_key(LIVE_TENANT, "still-running")
+        live_key = representation_key(live_tenant, "still-running")
         reconciler_key = "reconciler:sync_vectors"
         for work_unit_key, age_seconds in zip(paused_keys, (900, 800), strict=True):
             await seed_work_unit(
                 work_unit_key,
-                tenant_id=PAUSED_TENANT,
+                tenant_id=paused_tenant,
                 token_counts=(1,),
                 ages_seconds=(age_seconds,),
             )
         await seed_work_unit(
-            live_key, tenant_id=LIVE_TENANT, token_counts=(1,), ages_seconds=(200,)
+            live_key, tenant_id=live_tenant, token_counts=(1,), ages_seconds=(200,)
         )
         await seed_work_unit(
             reconciler_key,
@@ -691,14 +696,14 @@ class TestThePauseSeam:
 
         # What the deriver's refresher does on its timer.
         await derivation_pause.refresh(db_session)
-        assert claim_excluded_tenant_ids() == (PAUSED_TENANT,)
+        assert claim_excluded_tenant_ids() == (paused_tenant,)
 
         # The metrics poll (the API's refresh path) splits the backlog the same way,
         # and names the paused tenant's depth.
         stats = await crud_deriver_module.get_deriver_metrics(db_session)
         assert stats.eligible_work_units == 2
         assert stats.excluded_work_units == 2
-        assert stats.excluded_work_units_by_tenant == {PAUSED_TENANT: 2}
+        assert stats.excluded_work_units_by_tenant == {paused_tenant: 2}
 
         first_claim = await QueueManager().get_and_claim_work_units()
         assert set(first_claim) == {live_key, reconciler_key}
@@ -709,7 +714,7 @@ class TestThePauseSeam:
             reconciler_key,
         }
 
-        tenant = await db_session.get(models.Tenant, PAUSED_TENANT)
+        tenant = await db_session.get(models.Tenant, paused_tenant)
         assert tenant is not None
         tenant.derivation_paused = False
         await db_session.commit()
@@ -779,7 +784,7 @@ class TestThePauseSeam:
         seed_work_unit: SeedWorkUnit,
         batch_gate_settings: Callable[..., None],
     ) -> None:
-        """The seam is dormant today, so the eligible gauge must read exactly as it did."""
+        """With nothing paused the seam reads None, so the eligible gauge reads as it always did."""
         batch_gate_settings(
             target_tokens=512, max_age_seconds=AGE_FLUSH_SECONDS, workers=10
         )

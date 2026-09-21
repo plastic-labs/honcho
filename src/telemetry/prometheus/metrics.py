@@ -249,11 +249,19 @@ deriver_paused_tenants_gauge = NamespacedGauge(
     ["namespace"],
 )
 
-derivation_pause_refresh_failures_counter = NamespacedCounter(
-    "derivation_pause_refresh_failures",
+deriver_paused_tenants_refresh_failures_counter = NamespacedCounter(
+    "deriver_paused_tenants_refresh_failures",
     "Refreshes of the paused-tenant set that failed; the process kept claiming "
     + "against its last good set, so a paused tenant may derive until the next "
     + "successful refresh",
+    ["namespace"],
+)
+
+deriver_paused_tenants_last_success_timestamp_gauge = NamespacedGauge(
+    "deriver_paused_tenants_last_success_timestamp_seconds",
+    "Unix time this process last read the paused-tenant set successfully. A "
+    + "frozen value means the refresher stopped and the process is claiming "
+    + "against a stale set",
     ["namespace"],
 )
 
@@ -624,8 +632,9 @@ class PrometheusMetrics:
             self.set_deriver_metrics()
             self.set_deriver_outstanding_work(seconds=0)
             self.set_dreams_due(count=0)
-            # ai: refreshed on the backlog-metrics poll under MULTI_TENANT; 0 flag-off
-            self.set_paused_tenants(count=0)
+            # ai: flag-off this process never emits it, so no series is fabricated
+            if settings.MULTI_TENANT:
+                self.set_paused_tenants(count=0)
 
             if settings.DERIVER.SCHEDULER == "api":
                 self.set_message_embeddings_pending(count=0)
@@ -657,10 +666,10 @@ class PrometheusMetrics:
                     )
             # ai: init at 0 so the gauge is visible before its first per-replica refresh
             self.set_message_embeddings_pending(count=0)
-            # ai: the deriver runs the paused-set refresher; the API refreshes on its
-            # metrics poll and reports failures through that poller's own logging.
-            self.set_paused_tenants(count=0)
-            self._touch(derivation_pause_refresh_failures_counter)
+            # ai: failures counter is deriver-only; the API's refresh fails through its metrics poller's own logging
+            if settings.MULTI_TENANT:
+                self.set_paused_tenants(count=0)
+                self._touch(deriver_paused_tenants_refresh_failures_counter)
 
     def set_telemetry_buffer_size(self, *, size: int) -> None:
         try:
@@ -715,11 +724,17 @@ class PrometheusMetrics:
         except Exception as e:
             self._handle_metric_error("set_paused_tenants", e)
 
-    def record_derivation_pause_refresh_failure(self) -> None:
+    def record_paused_tenants_refresh_failure(self) -> None:
         try:
-            derivation_pause_refresh_failures_counter.labels().inc()
+            deriver_paused_tenants_refresh_failures_counter.labels().inc()
         except Exception as e:
-            self._handle_metric_error("record_derivation_pause_refresh_failure", e)
+            self._handle_metric_error("record_paused_tenants_refresh_failure", e)
+
+    def set_paused_tenants_last_success(self, *, timestamp: float) -> None:
+        try:
+            deriver_paused_tenants_last_success_timestamp_gauge.labels().set(timestamp)
+        except Exception as e:
+            self._handle_metric_error("set_paused_tenants_last_success", e)
 
     def set_deriver_outstanding_work(self, *, seconds: float) -> None:
         try:

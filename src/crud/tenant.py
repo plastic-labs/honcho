@@ -95,8 +95,8 @@ async def update_tenant(
 
     Additive to the create contract: ``get_or_create_tenant`` still never
     mutates, so a provisioning retry keeps its same-fields-or-409 guarantee.
-    Idempotent — re-asserting the value a row already holds is a 200, because
-    the callers are webhook-driven and retry.
+    Idempotent — re-asserting the value a row already holds is a 200, so a
+    control plane that retries never trips a conflict.
     """
     tenant = await get_tenant(db, tenant_id)
     if derivation_paused is not None and tenant.derivation_paused != derivation_paused:
@@ -108,7 +108,6 @@ async def update_tenant(
         )
         tenant.derivation_paused = derivation_paused
         await db.commit()
-        await db.refresh(tenant)
     return tenant
 
 
