@@ -2,18 +2,26 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
 from collections.abc import AsyncIterator
 from typing import Any
 
 from anthropic.types import TextBlock, ThinkingBlock, ToolUseBlock
 from pydantic import BaseModel, ValidationError
 
+from src.exceptions import ValidationException
 from src.llm.backend import CompletionResult, StreamChunk, ToolCallResult
 from src.llm.request_builder import (
     apply_sdk_passthroughs,
     request_timeout_from_extra_params,
 )
 from src.llm.structured_output import repair_response_model_json, schema_instruction
+
+logger = logging.getLogger(__name__)
+
+THINKING_TOOL_CHOICE_CONFLICT_MODES = frozenset(
+    {"throw", "override_thinking", "override_tool"}
+)
 
 
 class AnthropicBackend:
@@ -64,11 +72,7 @@ class AnthropicBackend:
             converted_tool_choice = self._convert_tool_choice(tool_choice)
             if converted_tool_choice is not None:
                 params["tool_choice"] = converted_tool_choice
-        if thinking_budget_tokens:
-            params["thinking"] = {
-                "type": "enabled",
-                "budget_tokens": thinking_budget_tokens,
-            }
+        self._apply_thinking(params, model, thinking_budget_tokens, extra_params)
         if extra_params:
             for key in ("top_p", "top_k"):
                 if key in extra_params:
@@ -191,11 +195,7 @@ class AnthropicBackend:
                 params["messages"],
                 schema_instruction(response_format, tools_present=bool(tools)),
             )
-        if thinking_budget_tokens:
-            params["thinking"] = {
-                "type": "enabled",
-                "budget_tokens": thinking_budget_tokens,
-            }
+        self._apply_thinking(params, model, thinking_budget_tokens, extra_params)
 
         async with self._client.messages.stream(**params) as stream:
             async for chunk in stream:
@@ -294,6 +294,46 @@ class AnthropicBackend:
             thinking_blocks=thinking_full_blocks,
             raw_response=response,
         )
+
+    @staticmethod
+    def _apply_thinking(
+        params: dict[str, Any],
+        model: str,
+        thinking_budget_tokens: int | None,
+        extra_params: dict[str, Any] | None,
+    ) -> None:
+        """First message to certain models can't force thinking and ask for tool, so we leave
+        the resolution up to the caller.
+
+        https://platform.claude.com/docs/en/build-with-claude/thinking#thinking-with-tool-use
+        """
+
+        if not thinking_budget_tokens:
+            return
+        tool_choice = params.get("tool_choice")
+        if tool_choice is not None and tool_choice.get("type") in {"any", "tool"}:
+            mode = (extra_params or {}).get(
+                "thinking_tool_choice_conflict", "override_thinking"
+            )
+            if mode not in THINKING_TOOL_CHOICE_CONFLICT_MODES:
+                expected = sorted(THINKING_TOOL_CHOICE_CONFLICT_MODES)
+                raise ValidationException(
+                    f"Unknown thinking_tool_choice_conflict mode {mode!r}; expected one of {expected}"
+                )
+            conflict = f"model {model}: tool_choice {tool_choice} forces tool use, "
+            conflict += "which Anthropic does not allow alongside extended thinking"
+            if mode == "throw":
+                raise ValidationException(f"Cannot send request to {conflict}")
+            if mode == "override_tool":
+                logger.warning("Relaxing tool_choice to auto for %s", conflict)
+                params["tool_choice"] = {"type": "auto"}
+            else:
+                logger.warning("Dropping extended thinking for %s", conflict)
+                return
+        params["thinking"] = {
+            "type": "enabled",
+            "budget_tokens": thinking_budget_tokens,
+        }
 
     @staticmethod
     def _supports_assistant_prefill(model: str) -> bool:
