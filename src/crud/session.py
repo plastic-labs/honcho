@@ -630,29 +630,30 @@ async def delete_session(
         )
 
         # Delete message vectors from vector store before deleting DB records
-        # Fetch all MessageEmbedding records to build vector IDs with {message_id}_{chunk_index}
+        # Vector IDs are {message_id}_{chunk_index}, where chunk_index is the 0-based
+        # position of the chunk within its message. Only the message id and the chunk
+        # count are needed to rebuild the IDs we delete from the external store
         embedding_result = await db.execute(
-            select(models.MessageEmbedding).where(
+            select(
+                models.MessageEmbedding.message_id,
+                func.count().label("chunk_count"),
+            )
+            .where(
                 models.MessageEmbedding.session_name == session_name,
                 models.MessageEmbedding.workspace_name == workspace_name,
             )
+            .group_by(models.MessageEmbedding.message_id)
         )
-        embeddings = list(embedding_result.scalars().all())
+        message_chunk_counts = embedding_result.all()
         external_vector_store = get_external_vector_store()
 
         # Only delete from external vector store if one exists
-        if external_vector_store is not None and embeddings:
-            # Compute chunk_index for each embedding based on message_id ordering
-            message_chunks: dict[str, list[models.MessageEmbedding]] = {}
-            for emb in embeddings:
-                message_chunks.setdefault(emb.message_id, []).append(emb)
-
-            # Sort each message's chunks by id and build vector IDs
-            vector_ids: list[str] = []
-            for chunks in message_chunks.values():
-                chunks.sort(key=lambda e: e.id)
-                for chunk_idx, chunk in enumerate(chunks):
-                    vector_ids.append(f"{chunk.message_id}_{chunk_idx}")
+        if external_vector_store is not None and message_chunk_counts:
+            vector_ids: list[str] = [
+                f"{message_id}_{chunk_idx}"
+                for message_id, chunk_count in message_chunk_counts
+                for chunk_idx in range(chunk_count)
+            ]
 
             # Try to delete from external vector store (best effort)
             try:
