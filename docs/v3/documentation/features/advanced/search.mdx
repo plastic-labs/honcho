@@ -10,6 +10,8 @@ Honcho's search functionality allows you to find relevant messages and conversat
 Search is hybrid: it combines full-text (keyword) matching with semantic (vector) similarity. Keyword matches are available the instant a message is created. Semantic matches depend on the message's embedding, which is generated in the background, so a freshly created message may take a few seconds to surface in semantic results. If you need to assert on semantic results immediately after writing (for example in tests), wait briefly or poll.
 </Note>
 
+Search returns the messages themselves. When you want a synthesized answer across the workspace rather than a result list, use [workspace chat](/v3/documentation/features/chat#workspace-chat).
+
 ## Search Scopes
 
 ### Workspace Search
@@ -46,6 +48,20 @@ import { Honcho } from "@honcho-ai/sdk";
       console.log(`Found: ${result}`);
     }
 })();
+```
+</CodeGroup>
+
+Pass `scope` on workspace search to restrict matches to that
+[scope](/v3/documentation/features/advanced/scopes)'s member sessions. A scope
+with no members returns nothing.
+
+<CodeGroup>
+```python Python
+results = honcho.search("budget planning", scope="therapy")
+```
+
+```typescript TypeScript
+const results = await honcho.search("budget planning", { scope: "therapy" });
 ```
 </CodeGroup>
 

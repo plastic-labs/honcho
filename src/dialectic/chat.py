@@ -10,13 +10,41 @@ from collections.abc import AsyncIterator
 
 from pydantic import BaseModel
 
-from src import crud, schemas
+from src import crud, models
 from src.config import ReasoningLevel
 from src.dependencies import tracked_db
 from src.dialectic.core import DialecticAgent
+from src.dialectic.workspace import WorkspaceDialecticAgent
+from src.exceptions import ValidationException
 from src.utils.config_helpers import get_configuration
+from src.utils.evidence import EvidenceAccumulator
+from src.utils.scopes import is_scope_peer
 
 logger = logging.getLogger(__name__)
+
+
+def _reject_scope_observed(peer: models.Peer) -> None:
+    """Refuse a dialectic run whose *observed* peer is a scope.
+
+    A scope is a silent observer with ``observe_me=false``: no representation of
+    one exists to query, so it can never be the subject.
+
+    The observer position is deliberately NOT checked here. A single `scope` on
+    chat swaps the observer to the scope peer — answering from a scope's
+    perspective is the entire point of that option — so a guard here would reject
+    every scoped chat. The raw path peer is still refused as an observer, by the
+    route (``routers/peers.py``), where the distinction between "the caller named
+    a scope" and "the `scope` option resolved to one" is still visible.
+
+    Raises:
+        ValidationException: If the observed peer is a scope.
+    """
+    if is_scope_peer(peer.name, peer.internal_metadata):
+        raise ValidationException(
+            f"Peer name '{peer.name}' is a scope."
+            + " No representation is formed of a scope, so a scope cannot be a"
+            + " dialectic target."
+        )
 
 
 async def agentic_chat(
@@ -28,6 +56,7 @@ async def agentic_chat(
     reasoning_level: ReasoningLevel = "low",
     session_allowlist: list[str] | None = None,
     response_model: type[BaseModel] | None = None,
+    evidence: EvidenceAccumulator | None = None,
 ) -> str:
     """
     Answer a query about a peer using the agentic dialectic.
@@ -48,9 +77,18 @@ async def agentic_chat(
     """
     # Short-lived DB session for validation + config
     async with tracked_db("dialectic.preflight", read_only=True) as db:
-        await crud.get_peer(db, workspace_name, schemas.PeerCreate(name=observer))
+        observer_peer = await crud.get_peer(db, workspace_name, observer)
+        observed_peer = observer_peer
         if observer != observed:
-            await crud.get_peer(db, workspace_name, schemas.PeerCreate(name=observed))
+            observed_peer = await crud.get_peer(db, workspace_name, observed)
+
+        # Resolved-row scope check, not a name check. The routes reject a scope
+        # target up front for a clear error, but that runs before resolution: a
+        # scope created in between would otherwise be answered about here.
+        # Checking the row we just resolved closes that window — an absent name
+        # already failed above, and an existing unflagged squatter cannot
+        # retroactively become a scope.
+        _reject_scope_observed(observed_peer)
 
         session = None
         if session_name:
@@ -85,6 +123,7 @@ async def agentic_chat(
         observed_peer_card=observed_peer_card,
         reasoning_level=reasoning_level,
         session_allowlist=session_allowlist,
+        evidence=evidence,
     )
 
     return await agent.answer(query, response_model=response_model)
@@ -99,6 +138,7 @@ async def agentic_chat_stream(
     reasoning_level: ReasoningLevel = "low",
     session_allowlist: list[str] | None = None,
     response_model: type[BaseModel] | None = None,
+    evidence: EvidenceAccumulator | None = None,
 ) -> AsyncIterator[str]:
     """
     Stream an answer to a query about a peer using the agentic dialectic.
@@ -120,9 +160,18 @@ async def agentic_chat_stream(
     """
     # Short-lived DB session for validation + config
     async with tracked_db("dialectic.preflight", read_only=True) as db:
-        await crud.get_peer(db, workspace_name, schemas.PeerCreate(name=observer))
+        observer_peer = await crud.get_peer(db, workspace_name, observer)
+        observed_peer = observer_peer
         if observer != observed:
-            await crud.get_peer(db, workspace_name, schemas.PeerCreate(name=observed))
+            observed_peer = await crud.get_peer(db, workspace_name, observed)
+
+        # Resolved-row scope check, not a name check. The routes reject a scope
+        # target up front for a clear error, but that runs before resolution: a
+        # scope created in between would otherwise be answered about here.
+        # Checking the row we just resolved closes that window — an absent name
+        # already failed above, and an existing unflagged squatter cannot
+        # retroactively become a scope.
+        _reject_scope_observed(observed_peer)
 
         session = None
         if session_name:
@@ -157,7 +206,70 @@ async def agentic_chat_stream(
         observed_peer_card=observed_peer_card,
         reasoning_level=reasoning_level,
         session_allowlist=session_allowlist,
+        evidence=evidence,
     )
 
+    async for chunk in agent.answer_stream(query, response_model=response_model):
+        yield chunk
+
+
+async def workspace_chat(
+    workspace_name: str,
+    session_name: str | None,
+    query: str,
+    reasoning_level: ReasoningLevel = "low",
+    response_model: type[BaseModel] | None = None,
+    evidence: EvidenceAccumulator | None = None,
+    session_allowlist: list[str] | None = None,
+) -> str:
+    """Answer a query across all peers in a workspace."""
+    async with tracked_db("dialectic.workspace_preflight", read_only=True) as db:
+        await crud.get_workspace(db, workspace_name=workspace_name)
+        session = None
+        if session_name:
+            session = await crud.get_session(
+                db, workspace_name=workspace_name, session_name=session_name
+            )
+        session_id = session.id if session else None
+    # DB session closed -- agent runs without holding a connection
+
+    agent = WorkspaceDialecticAgent(
+        workspace_name=workspace_name,
+        session_name=session_name,
+        session_id=session_id,
+        reasoning_level=reasoning_level,
+        session_allowlist=session_allowlist,
+        evidence=evidence,
+    )
+    return await agent.answer(query, response_model=response_model)
+
+
+async def workspace_chat_stream(
+    workspace_name: str,
+    session_name: str | None,
+    query: str,
+    reasoning_level: ReasoningLevel = "low",
+    response_model: type[BaseModel] | None = None,
+    evidence: EvidenceAccumulator | None = None,
+    session_allowlist: list[str] | None = None,
+) -> AsyncIterator[str]:
+    """Streaming variant of :func:`workspace_chat`."""
+    async with tracked_db("dialectic.workspace_preflight", read_only=True) as db:
+        await crud.get_workspace(db, workspace_name=workspace_name)
+        session = None
+        if session_name:
+            session = await crud.get_session(
+                db, workspace_name=workspace_name, session_name=session_name
+            )
+        session_id = session.id if session else None
+
+    agent = WorkspaceDialecticAgent(
+        workspace_name=workspace_name,
+        session_name=session_name,
+        session_id=session_id,
+        reasoning_level=reasoning_level,
+        session_allowlist=session_allowlist,
+        evidence=evidence,
+    )
     async for chunk in agent.answer_stream(query, response_model=response_model):
         yield chunk

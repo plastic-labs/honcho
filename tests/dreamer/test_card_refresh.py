@@ -1,4 +1,4 @@
-"""Tests for the card_refresh dream type (DEV-2000, Scopes RFC prerequisite).
+"""Tests for the card_refresh dream type.
 
 Covers:
 - queue plumbing: payload roundtrip, work-unit key isolation from omni,

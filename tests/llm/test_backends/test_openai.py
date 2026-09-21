@@ -510,6 +510,7 @@ async def test_openai_backend_converts_anthropic_style_tools() -> None:
     assert call["tool_choice"] == "required"
 
 
+@pytest.mark.asyncio
 async def test_openai_backend_translates_canonical_any_tool_choice_to_required() -> (
     None
 ):
@@ -569,6 +570,78 @@ async def test_openai_backend_translates_canonical_any_tool_choice_to_required()
 )
 def test_openai_convert_tool_choice(canonical: Any, expected: Any) -> None:
     assert OpenAIBackend._convert_tool_choice(canonical) == expected  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.asyncio
+async def test_openai_backend_passes_timeout_to_completion_request() -> None:
+    """OpenAI completion requests receive per-request provider timeout."""
+    client = Mock()
+    client.chat.completions.create = AsyncMock(
+        return_value=SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop",
+                    message=SimpleNamespace(
+                        content="ok",
+                        tool_calls=[],
+                        reasoning_details=[],
+                    ),
+                )
+            ],
+            usage=SimpleNamespace(
+                prompt_tokens=10,
+                completion_tokens=5,
+                prompt_tokens_details=None,
+            ),
+        )
+    )
+
+    backend = OpenAIBackend(client)
+    await backend.complete(
+        model="gpt-4.1",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        extra_params={"timeout": 12.5},
+    )
+
+    assert _await_kwargs(client.chat.completions.create)["timeout"] == 12.5
+
+
+@pytest.mark.asyncio
+async def test_openai_backend_passes_timeout_to_structured_parse_request() -> None:
+    """OpenAI structured parse requests receive per-request provider timeout."""
+    client = Mock()
+    client.chat.completions.parse = AsyncMock(
+        return_value=SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop",
+                    message=SimpleNamespace(
+                        parsed=_StructuredResponse(answer="ok"),
+                        content='{"answer":"ok"}',
+                        tool_calls=[],
+                        refusal=None,
+                    ),
+                )
+            ],
+            usage=SimpleNamespace(
+                prompt_tokens=10,
+                completion_tokens=5,
+                prompt_tokens_details=None,
+            ),
+        )
+    )
+
+    backend = OpenAIBackend(client)
+    await backend.complete(
+        model="gpt-4.1",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        response_format=_StructuredResponse,
+        extra_params={"timeout": "30"},
+    )
+
+    assert _await_kwargs(client.chat.completions.parse)["timeout"] == 30.0
 
 
 @pytest.mark.parametrize(
@@ -1065,12 +1138,114 @@ async def test_openai_backend_structured_with_tools_uses_create_not_parse() -> N
     assert "strict" not in call["tools"][0]["function"]
 
 
+def _tool_call_message(
+    *,
+    content: str | None,
+    reasoning_details: list[Any] | None = None,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        content=content,
+        tool_calls=[
+            SimpleNamespace(
+                id="call_probe",
+                function=SimpleNamespace(
+                    name="search",
+                    arguments='{"query":"honcho"}',
+                ),
+            )
+        ],
+        reasoning_details=reasoning_details or [],
+        reasoning_content=None,
+    )
+
+
+def _completion_response(
+    message: SimpleNamespace, finish_reason: str
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        choices=[SimpleNamespace(finish_reason=finish_reason, message=message)],
+        usage=SimpleNamespace(
+            prompt_tokens=10,
+            completion_tokens=5,
+            prompt_tokens_details=None,
+        ),
+    )
+
+
+def test_openai_normalize_preserves_null_content_on_tool_call_turns() -> None:
+    reasoning_details = [
+        {
+            "type": "reasoning.encrypted",
+            "data": "opaque",
+            "format": "openai-responses-v1",
+            "id": "binding",
+            "index": 0,
+        }
+    ]
+    response = _completion_response(
+        _tool_call_message(content=None, reasoning_details=reasoning_details),
+        "tool_calls",
+    )
+
+    result = OpenAIBackend(Mock())._normalize_response(  # pyright: ignore[reportPrivateUsage]
+        response
+    )
+
+    assert result.content is None
+    assert result.tool_calls[0].id == "call_probe"
+    assert result.tool_calls[0].name == "search"
+    assert result.tool_calls[0].input == {"query": "honcho"}
+    assert result.reasoning_details == reasoning_details
+
+
+def test_openai_normalize_coerces_null_content_without_tool_calls() -> None:
+    message = SimpleNamespace(
+        content=None,
+        tool_calls=[],
+        reasoning_details=[],
+        reasoning_content=None,
+    )
+    response = _completion_response(message, "stop")
+
+    result = OpenAIBackend(Mock())._normalize_response(  # pyright: ignore[reportPrivateUsage]
+        response
+    )
+
+    assert result.content == ""
+
+
+def test_openai_normalize_keeps_empty_string_content_on_tool_call_turns() -> None:
+    response = _completion_response(
+        _tool_call_message(content=""),
+        "tool_calls",
+    )
+
+    result = OpenAIBackend(Mock())._normalize_response(  # pyright: ignore[reportPrivateUsage]
+        response
+    )
+
+    assert result.content == ""
+
+
+def test_openai_normalize_content_override_is_authoritative() -> None:
+    response = _completion_response(
+        _tool_call_message(content=None),
+        "tool_calls",
+    )
+
+    result = OpenAIBackend(Mock())._normalize_response(  # pyright: ignore[reportPrivateUsage]
+        response, content_override="override"
+    )
+
+    assert result.content == "override"
+
+
 @pytest.mark.asyncio
 async def test_openai_backend_structured_with_tools_skips_parsing_tool_call_turn() -> (
     None
 ):
     """A tool-call turn under tools + response_format must not attempt JSON
-    parsing (its content is empty and _parse_or_repair raises on that)."""
+    parsing (provider content is null and _parse_or_repair raises on that)."""
     client = Mock()
     client.chat.completions.create = AsyncMock(
         return_value=SimpleNamespace(
@@ -1110,7 +1285,7 @@ async def test_openai_backend_structured_with_tools_skips_parsing_tool_call_turn
         response_format=_StructuredResponse,
     )
 
-    assert result.content == ""  # raw empty text, not a parsed model
+    assert result.content is None  # provider null, not a parsed model
     assert result.tool_calls[0].name == "search"
     assert result.tool_calls[0].input == {"query": "honcho"}
 

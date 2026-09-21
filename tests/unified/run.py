@@ -57,7 +57,9 @@ async def main():
             tests_dir=test_dir, honcho_port=args.port, api_port=args.api_port
         )
 
-    await runner.run()
+    # Non-zero on any failed or unrunnable test, so CI fails on results.
+    if await runner.run():
+        sys.exit(1)
 
 
 if __name__ == "__main__":

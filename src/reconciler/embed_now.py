@@ -33,7 +33,7 @@ from src.dependencies import tracked_db
 from src.embedding_client import embedding_client
 from src.exceptions import VectorStoreError
 from src.reconciler.sync_vectors import (
-    _backoff_eligible,  # pyright: ignore[reportPrivateUsage]
+    backoff_eligible,
     build_message_vector_record,
     compute_chunk_positions,
 )
@@ -177,7 +177,7 @@ async def _claim_and_lease(message_ids: list[str]) -> list[_ClaimedChunk]:
                 and_(
                     models.MessageEmbedding.message_id.in_(message_ids),
                     models.MessageEmbedding.sync_state == "pending",
-                    _backoff_eligible(models.MessageEmbedding.last_sync_at),
+                    backoff_eligible(models.MessageEmbedding.last_sync_at),
                 )
             )
             .order_by(models.MessageEmbedding.message_id, models.MessageEmbedding.id)

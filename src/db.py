@@ -12,7 +12,11 @@ from sqlalchemy.orm import declarative_base
 from sqlalchemy.pool import NullPool, QueuePool
 
 from src.config import settings
-from src.telemetry.prometheus.metrics import db_queries_in_flight_gauge
+from src.telemetry.prometheus.metrics import (
+    db_connections_established_counter,
+    db_connections_open_gauge,
+    db_queries_in_flight_gauge,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -218,6 +222,81 @@ def register_db_query_instrumentation(instance_type: str) -> None:
     event.listen(sync_engine, "after_cursor_execute", _inflight_tracker.on_after)
     event.listen(sync_engine, "handle_error", _inflight_tracker.on_error)
     _db_query_instrumentation_registered = True
+
+
+class DBConnectionTracker:
+    """Tracks physical DB connections open on this engine via pool lifecycle events.
+
+    Drift-proof, mirroring ``DBQueryInflightTracker``: marks the ``ConnectionRecord``
+    on ``connect`` and decrements only if that mark is still present on
+    ``close``/``invalidate``, so each physical connection increments the gauge
+    exactly once and decrements at most once — it can't leak upward or go negative
+    when both events fire during invalidation cleanup. Works for every pool class,
+    including ``NullPool`` (whose pool keeps no records, so the scrape-time
+    ``db_pool_connections`` collector reads zero).
+    """
+
+    # Marker on ConnectionRecord.info recording that we incremented for this
+    # connection, so we decrement exactly once across close/invalidate.
+    OPEN_KEY: str = "_honcho_conn_open"
+
+    def __init__(self, open_child: Any, established_child: Any) -> None:
+        self._open: Any = open_child
+        self._established: Any = established_child
+
+    def on_connect(self, _dbapi_connection: Any, connection_record: Any) -> None:
+        try:
+            connection_record.info[self.OPEN_KEY] = True
+            self._established.inc()
+            self._open.inc()
+        except Exception:
+            logger.debug("db-connection gauge inc failed", exc_info=True)
+
+    def on_close(self, _dbapi_connection: Any, connection_record: Any, *_: Any) -> None:
+        try:
+            if connection_record is not None and connection_record.info.pop(
+                self.OPEN_KEY, False
+            ):
+                self._open.dec()
+        except Exception:
+            logger.debug("db-connection gauge dec failed", exc_info=True)
+
+
+# Process-wide tracker, created at registration (None until then / if metrics off).
+_connection_tracker: DBConnectionTracker | None = None
+
+
+_db_connection_instrumentation_registered = False
+
+
+def register_db_connection_instrumentation(instance_type: str) -> None:
+    """Attach physical-connection tracking to the engine (no-op if metrics off).
+
+    Counts connections via pool lifecycle events, so it reports real numbers under
+    any pool class — unlike the pool-object collector, which reads zero under
+    ``NullPool``. Pre-resolving the labeled children materializes both series at 0,
+    so an absent series signals a broken scrape rather than "no connections" (the
+    zero-init convention). Idempotent: repeated calls won't attach duplicate
+    listeners, which would double-count connections.
+    """
+    global _connection_tracker, _db_connection_instrumentation_registered
+    if not settings.METRICS.ENABLED or _db_connection_instrumentation_registered:
+        return
+    open_child = db_connections_open_gauge.labels(instance_type=instance_type)
+    established_child = db_connections_established_counter.labels(
+        instance_type=instance_type
+    )
+    _connection_tracker = DBConnectionTracker(open_child, established_child)
+    sync_engine = engine.sync_engine
+    event.listen(sync_engine, "connect", _connection_tracker.on_connect)
+    # A connection is torn down by close (normal return / recycle discard),
+    # invalidate (broken connection), or detach — the last fires on GC-cleanup of an
+    # abandoned async connection, where NullPool's close is a no-op so `close` never
+    # fires. All three carry the ConnectionRecord; the marker dedupes if more than
+    # one fires for the same connection.
+    for teardown_event in ("close", "invalidate", "detach"):
+        event.listen(sync_engine, teardown_event, _connection_tracker.on_close)
+    _db_connection_instrumentation_registered = True
 
 
 # Define your naming convention

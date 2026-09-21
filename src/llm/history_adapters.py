@@ -121,6 +121,8 @@ class OpenAIHistoryAdapter:
         }
         if result.reasoning_details:
             message["reasoning_details"] = result.reasoning_details
+        elif result.thinking_content:
+            message["reasoning_content"] = result.thinking_content
         return message
 
     def format_tool_results(

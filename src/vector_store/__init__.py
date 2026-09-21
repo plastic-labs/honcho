@@ -207,13 +207,25 @@ def _create_store_by_type(store_type: str) -> VectorStore:
         except ImportError as exc:
             raise RuntimeError(
                 "VECTOR_STORE.TYPE is set to 'lancedb', but the 'lancedb' package "
-                "is not installed (for example on macOS Intel, where it is omitted "
-                "from dependencies because PyPI has no wheel). "
-                "Use TYPE 'pgvector' or 'turbopuffer', or install lancedb manually. "
-                f"Original import error: {exc}"
+                + "could not be imported. Install Honcho's 'lancedb' extra "
+                + "(for example, `uv sync --extra lancedb`; unavailable on Intel "
+                + "macOS), or use TYPE 'pgvector' or 'turbopuffer'. "
+                + f"Original import error: {exc}"
             ) from exc
 
         return LanceDBVectorStore()
+    elif store_type == "qdrant":
+        try:
+            from src.vector_store.qdrant import QdrantVectorStore
+        except ImportError as exc:
+            raise RuntimeError(
+                "VECTOR_STORE.TYPE is set to 'qdrant', but the 'qdrant-client' "
+                + "package could not be imported. Install Honcho's 'qdrant' extra "
+                + "(for example, `uv sync --extra qdrant`). "
+                + f"Original import error: {exc}"
+            ) from exc
+
+        return QdrantVectorStore()
     else:
         raise ValueError(f"Unknown vector store type: {store_type}")
 

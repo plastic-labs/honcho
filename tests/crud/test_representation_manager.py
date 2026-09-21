@@ -1,5 +1,5 @@
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -136,6 +136,44 @@ class TestRepresentationManagerSoftDelete:
         assert doc_deleted.id not in result_ids
 
     @pytest.mark.asyncio
+    async def test_query_documents_recent_excludes_selected_documents(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """An excluded recent document must not consume the query limit."""
+        test_workspace, test_peer = sample_data
+        test_peer2, test_session, _, manager = await self._setup(
+            db_session, test_workspace, test_peer
+        )
+        older_doc = models.Document(
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+            content="Older observation",
+            session_name=test_session.name,
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        selected_doc = models.Document(
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+            content="Already selected observation",
+            session_name=test_session.name,
+            created_at=datetime(2026, 1, 2, tzinfo=UTC),
+        )
+        db_session.add_all([older_doc, selected_doc])
+        await db_session.commit()
+
+        results = await manager._query_documents_recent(  # pyright: ignore[reportPrivateUsage]
+            db_session,
+            top_k=1,
+            excluded_document_ids={selected_doc.id},
+        )
+
+        assert [document.id for document in results] == [older_doc.id]
+
+    @pytest.mark.asyncio
     async def test_query_documents_most_derived_excludes_soft_deleted(
         self,
         db_session: AsyncSession,
@@ -196,7 +234,7 @@ class TestRepresentationManagerSoftDelete:
             db_session, test_workspace, test_peer
         )
 
-        base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        base = datetime(2026, 1, 1, tzinfo=UTC)
         # Three conclusions, all reinforced once, inserted oldest-first.
         for i in range(3):
             db_session.add(
@@ -236,7 +274,7 @@ class TestRepresentationManagerSoftDelete:
 class TestRepresentationManagerSessionScoping:
     """Tests that the session allowlist is applied uniformly to every query path.
 
-    Regression for DEV-1994: session_name used to be applied only to the
+    Regression: session_name used to be applied only to the
     recent-documents query; the semantic and most-derived paths ignored it,
     so limit_to_session leaked cross-session conclusions.
     """
@@ -368,7 +406,7 @@ class TestRepresentationManagerSessionScoping:
         assert mock_query.await_args.kwargs["filters"] == {
             "session_name": {"in": [session_a.name]},
             # Scoped recall serves only levels with a trustworthy session
-            # stamp (ALLOWLIST_SAFE_LEVELS / DEV-2201).
+            # stamp (ALLOWLIST_SAFE_LEVELS).
             "level": {"in": ["explicit"]},
         }
 
@@ -445,7 +483,7 @@ class TestRepresentationManagerSessionScoping:
         )
 
         # Scoping also narrows to levels whose session stamp is trustworthy
-        # (see ALLOWLIST_SAFE_LEVELS / DEV-2201).
+        # (see ALLOWLIST_SAFE_LEVELS).
         assert manager._build_filter_conditions(session_allowlist=[]) == {  # pyright: ignore[reportPrivateUsage]
             "session_name": {"in": []},
             "level": {"in": ["explicit"]},
@@ -481,7 +519,7 @@ class TestRepresentationManagerSave:
         observation = ExplicitObservation(
             content="Alice chose the first option",
             source_indices=[0, 1],
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
             message_ids=[20],
             source_message_ids=[10, 20],
             session_name="session",
@@ -503,7 +541,7 @@ class TestRepresentationManagerSave:
                 [[0.1]],
                 message_ids=[20],
                 session_name="session",
-                message_created_at=datetime.now(timezone.utc),
+                message_created_at=datetime.now(UTC),
                 message_level_configuration=_resolved_config(),
             )
 
@@ -533,13 +571,13 @@ class TestRepresentationManagerSave:
             explicit=[
                 ExplicitObservation(
                     content="   ",
-                    created_at=datetime.now(timezone.utc),
+                    created_at=datetime.now(UTC),
                     message_ids=[1],
                     session_name="session",
                 ),
                 ExplicitObservation(
                     content=" useful observation ",
-                    created_at=datetime.now(timezone.utc),
+                    created_at=datetime.now(UTC),
                     message_ids=[1],
                     session_name="session",
                 ),
@@ -564,12 +602,14 @@ class TestRepresentationManagerSave:
                 representation,
                 message_ids=[1],
                 session_name="session",
-                message_created_at=datetime.now(timezone.utc),
+                message_created_at=datetime.now(UTC),
                 message_level_configuration=_resolved_config(),
             )
 
         assert len(saved.created_documents) == 1
-        mock_embed.assert_awaited_once_with(["useful observation"])
+        mock_embed.assert_awaited_once_with(
+            ["useful observation"], on_oversize="truncate"
+        )
         saved_observations = _saved_observations(mock_save)
         assert len(saved_observations) == 1
         assert saved_observations[0].content == "useful observation"
@@ -587,7 +627,7 @@ class TestRepresentationManagerSave:
                     conclusion="   ",
                     premises=["premise a"],
                     source_ids=["doc-a"],
-                    created_at=datetime.now(timezone.utc),
+                    created_at=datetime.now(UTC),
                     message_ids=[1],
                     session_name="session",
                 ),
@@ -595,7 +635,7 @@ class TestRepresentationManagerSave:
                     conclusion=" inferred conclusion ",
                     premises=["premise b"],
                     source_ids=["doc-b"],
-                    created_at=datetime.now(timezone.utc),
+                    created_at=datetime.now(UTC),
                     message_ids=[1],
                     session_name="session",
                 ),
@@ -620,12 +660,14 @@ class TestRepresentationManagerSave:
                 representation,
                 message_ids=[1],
                 session_name="session",
-                message_created_at=datetime.now(timezone.utc),
+                message_created_at=datetime.now(UTC),
                 message_level_configuration=_resolved_config(),
             )
 
         assert len(saved.created_documents) == 1
-        mock_embed.assert_awaited_once_with(["inferred conclusion"])
+        mock_embed.assert_awaited_once_with(
+            ["inferred conclusion"], on_oversize="truncate"
+        )
         saved_observations = _saved_observations(mock_save)
         assert len(saved_observations) == 1
         assert isinstance(saved_observations[0], DeductiveObservation)
@@ -642,13 +684,13 @@ class TestRepresentationManagerSave:
             explicit=[
                 ExplicitObservation(
                     content="",
-                    created_at=datetime.now(timezone.utc),
+                    created_at=datetime.now(UTC),
                     message_ids=[1],
                     session_name="session",
                 ),
                 ExplicitObservation(
                     content="\n\t ",
-                    created_at=datetime.now(timezone.utc),
+                    created_at=datetime.now(UTC),
                     message_ids=[1],
                     session_name="session",
                 ),
@@ -671,10 +713,459 @@ class TestRepresentationManagerSave:
                 representation,
                 message_ids=[1],
                 session_name="session",
-                message_created_at=datetime.now(timezone.utc),
+                message_created_at=datetime.now(UTC),
                 message_level_configuration=_resolved_config(),
             )
 
         assert len(saved.created_documents) == 0
         mock_embed.assert_not_awaited()
         mock_save.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_save_representation_strips_nul_bytes(self):
+        """Models emit \\u0000 escapes when transcribing shell output or Windows
+        paths, and Postgres rejects NUL in text columns. The stripped text must
+        be what gets embedded as well as what gets stored."""
+        manager = RepresentationManager(
+            "workspace",
+            observer="observer",
+            observed="observed",
+        )
+        representation = Representation(
+            explicit=[
+                ExplicitObservation(
+                    content="ran 'cat /proc/1/environ | tr '\x00' '\\n''",
+                    created_at=datetime.now(UTC),
+                    message_ids=[1],
+                    session_name="session",
+                ),
+            ],
+            deductive=[
+                DeductiveObservation(
+                    conclusion="the key is at c:\\\x00users\\amal",
+                    premises=["saw c:\\\x00users in the prompt"],
+                    created_at=datetime.now(UTC),
+                    message_ids=[1],
+                    session_name="session",
+                ),
+            ],
+        )
+
+        with (
+            patch("src.crud.representation.tracked_db", _fake_tracked_db),
+            patch(
+                "src.crud.representation.embedding_client.simple_batch_embed",
+                new=AsyncMock(return_value=[[0.1], [0.2]]),
+            ) as mock_embed,
+            patch.object(
+                manager,
+                "_save_representation_internal",
+                new=AsyncMock(
+                    return_value=CreateDocumentsResult(created_documents=[MagicMock()])
+                ),
+            ) as mock_save,
+        ):
+            await manager.save_representation(
+                representation,
+                message_ids=[1],
+                session_name="session",
+                message_created_at=datetime.now(UTC),
+                message_level_configuration=_resolved_config(),
+            )
+
+        # Deductive observations are embedded ahead of explicit ones.
+        mock_embed.assert_awaited_once_with(
+            [
+                "the key is at c:\\users\\amal",
+                "ran 'cat /proc/1/environ | tr '' '\\n''",
+            ],
+            on_oversize="truncate",
+        )
+
+        saved_observations = _saved_observations(mock_save)
+        deductive = next(
+            obs for obs in saved_observations if isinstance(obs, DeductiveObservation)
+        )
+        explicit = next(
+            obs for obs in saved_observations if isinstance(obs, ExplicitObservation)
+        )
+        assert explicit.content == "ran 'cat /proc/1/environ | tr '' '\\n''"
+        assert deductive.conclusion == "the key is at c:\\users\\amal"
+        # premises land in internal_metadata, and jsonb rejects NUL too
+        assert deductive.premises == ["saw c:\\users in the prompt"]
+
+    @pytest.mark.asyncio
+    async def test_save_representation_skips_observations_that_are_only_nul(self):
+        """str.strip() does not remove NUL, so the emptiness check has to run
+        after normalization or an empty document gets written."""
+        manager = RepresentationManager(
+            "workspace",
+            observer="observer",
+            observed="observed",
+        )
+        representation = Representation(
+            explicit=[
+                ExplicitObservation(
+                    content="\x00\x00",
+                    created_at=datetime.now(UTC),
+                    message_ids=[1],
+                    session_name="session",
+                ),
+            ]
+        )
+
+        with (
+            patch("src.crud.representation.tracked_db", _fake_tracked_db),
+            patch(
+                "src.crud.representation.embedding_client.simple_batch_embed",
+                new=AsyncMock(),
+            ) as mock_embed,
+            patch.object(
+                manager,
+                "_save_representation_internal",
+                new=AsyncMock(),
+            ) as mock_save,
+        ):
+            saved = await manager.save_representation(
+                representation,
+                message_ids=[1],
+                session_name="session",
+                message_created_at=datetime.now(UTC),
+                message_level_configuration=_resolved_config(),
+            )
+
+        assert len(saved.created_documents) == 0
+        mock_embed.assert_not_awaited()
+        mock_save.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_save_representation_embeds_with_truncate_on_oversize(self):
+        """One oversize observation must not drop the rest of the batch."""
+        manager = RepresentationManager(
+            "workspace",
+            observer="observer",
+            observed="observed",
+        )
+        representation = Representation(
+            explicit=[
+                ExplicitObservation(
+                    content="short fact",
+                    created_at=datetime.now(UTC),
+                    message_ids=[1],
+                    session_name="session",
+                )
+            ],
+            deductive=[
+                DeductiveObservation(
+                    conclusion="inferred fact",
+                    premises=["premise"],
+                    source_ids=["doc-a"],
+                    created_at=datetime.now(UTC),
+                    message_ids=[1],
+                    session_name="session",
+                )
+            ],
+        )
+
+        with (
+            patch("src.crud.representation.tracked_db", _fake_tracked_db),
+            patch(
+                "src.crud.representation.embedding_client.simple_batch_embed",
+                new=AsyncMock(return_value=[[0.1], [0.2]]),
+            ) as mock_embed,
+            patch.object(
+                manager,
+                "_save_representation_internal",
+                new=AsyncMock(
+                    return_value=CreateDocumentsResult(created_documents=[MagicMock()])
+                ),
+            ),
+        ):
+            await manager.save_representation(
+                representation,
+                message_ids=[1],
+                session_name="session",
+                message_created_at=datetime.now(UTC),
+                message_level_configuration=_resolved_config(),
+            )
+
+        mock_embed.assert_awaited_once_with(
+            ["inferred fact", "short fact"], on_oversize="truncate"
+        )
+
+
+class TestVectorQueryTopKFloor:
+    """Regression for HONCHO-19Q / HONCHO-4Q4.
+
+    A top_k of 0 reached Turbopuffer, which rejects it with a 400
+    ('top_k must be between 1 and 10000'). Two independent paths produced it:
+    the working-representation budget split (``total // 3`` rounds to 0 for
+    max_conclusions < 3) and the dialectic ``search_memory`` tool, whose
+    LLM-supplied top_k has an upper clamp but no floor.
+    """
+
+    @pytest.mark.asyncio
+    async def test_query_documents_returns_empty_without_querying_on_zero_top_k(self):
+        """The choke point every semantic document query routes through."""
+        from src.crud.document import query_documents
+
+        with (
+            patch(
+                "src.crud.document.embedding_client.embed", new=AsyncMock()
+            ) as mock_embed,
+            patch(
+                "src.crud.document.query_external_vector_document_ids",
+                new=AsyncMock(),
+            ) as mock_vector,
+        ):
+            for top_k in (0, -1):
+                assert (
+                    await query_documents(
+                        None,
+                        "workspace",
+                        "query",
+                        observer="observer",
+                        observed="observed",
+                        top_k=top_k,
+                    )
+                    == []
+                )
+
+        mock_embed.assert_not_awaited()
+        mock_vector.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_requested_semantic_search_always_gets_budget(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """max_conclusions < 3 must not allocate 0 to an explicitly requested search."""
+        test_workspace, test_peer = sample_data
+        manager = RepresentationManager(
+            test_workspace.name, observer=test_peer.name, observed=test_peer.name
+        )
+
+        for max_observations in (1, 2, 100):
+            with patch(
+                "src.crud.query_documents", new=AsyncMock(return_value=[])
+            ) as mock_query:
+                await manager._get_working_representation_internal(  # pyright: ignore[reportPrivateUsage]
+                    db_session,
+                    include_semantic_query="what do they like?",
+                    embedding=[0.1],
+                    max_observations=max_observations,
+                )
+
+            assert mock_query.await_args is not None
+            top_k = mock_query.await_args.kwargs["top_k"]
+            assert top_k >= 1, f"max_observations={max_observations} gave top_k={top_k}"
+            assert top_k <= max_observations
+
+    @pytest.mark.asyncio
+    async def test_reclaims_unused_semantic_budget_for_recent_observations(
+        self,
+    ):
+        """A short semantic result must leave its unused capacity to recency."""
+        db_session = MagicMock(spec=AsyncSession)
+        manager = RepresentationManager("workspace", observer="peer", observed="peer")
+        semantic_doc = models.Document(
+            id=generate_nanoid(),
+            workspace_name="workspace",
+            observer="peer",
+            observed="peer",
+            content="semantic result",
+            level="explicit",
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+            internal_metadata={},
+        )
+        recent_doc = models.Document(
+            id=generate_nanoid(),
+            workspace_name="workspace",
+            observer="peer",
+            observed="peer",
+            content="recent result",
+            level="explicit",
+            created_at=datetime(2026, 1, 2, tzinfo=UTC),
+            internal_metadata={},
+        )
+
+        with (
+            patch.object(
+                manager,
+                "_query_documents_semantic",
+                new=AsyncMock(return_value=[semantic_doc]),
+            ),
+            patch.object(
+                manager,
+                "_query_documents_recent",
+                new=AsyncMock(return_value=[recent_doc]),
+            ) as mock_recent,
+        ):
+            representation = await manager._get_working_representation_internal(  # pyright: ignore[reportPrivateUsage]
+                db_session,
+                include_semantic_query="what do they like?",
+                embedding=[0.1],
+                semantic_search_top_k=5,
+                max_observations=5,
+            )
+
+        assert mock_recent.await_args is not None
+        assert mock_recent.await_args.kwargs["top_k"] == 4
+        assert [obs.content for obs in representation.explicit] == [
+            "semantic result",
+            "recent result",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_reclaims_unused_derived_budget_for_recent_observations(
+        self,
+    ):
+        """A short most-derived result must also leave capacity to recency."""
+        db_session = MagicMock(spec=AsyncSession)
+        manager = RepresentationManager("workspace", observer="peer", observed="peer")
+        derived_doc = models.Document(
+            id=generate_nanoid(),
+            workspace_name="workspace",
+            observer="peer",
+            observed="peer",
+            content="derived result",
+            level="explicit",
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+            internal_metadata={},
+        )
+        recent_doc = models.Document(
+            id=generate_nanoid(),
+            workspace_name="workspace",
+            observer="peer",
+            observed="peer",
+            content="recent result",
+            level="explicit",
+            created_at=datetime(2026, 1, 2, tzinfo=UTC),
+            internal_metadata={},
+        )
+
+        with (
+            patch.object(
+                manager,
+                "_query_documents_most_derived",
+                new=AsyncMock(return_value=[derived_doc]),
+            ) as mock_derived,
+            patch.object(
+                manager,
+                "_query_documents_recent",
+                new=AsyncMock(return_value=[recent_doc]),
+            ) as mock_recent,
+        ):
+            representation = await manager._get_working_representation_internal(  # pyright: ignore[reportPrivateUsage]
+                db_session,
+                include_most_derived=True,
+                max_observations=6,
+            )
+
+        assert mock_derived.await_args is not None
+        assert mock_derived.await_args.kwargs["top_k"] == 3
+        assert mock_recent.await_args is not None
+        assert mock_recent.await_args.kwargs["top_k"] == 5
+        assert [obs.content for obs in representation.explicit] == [
+            "derived result",
+            "recent result",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_recent_results_fill_capacity_after_semantic_overlap(self) -> None:
+        """Recent retrieval must skip selected documents before applying its limit."""
+        db_session = MagicMock(spec=AsyncSession)
+        manager = RepresentationManager("workspace", observer="peer", observed="peer")
+        documents = [
+            models.Document(
+                id=generate_nanoid(),
+                workspace_name="workspace",
+                observer="peer",
+                observed="peer",
+                content=f"observation {index}",
+                level="explicit",
+                created_at=datetime(2026, 1, index, tzinfo=UTC),
+                internal_metadata={},
+            )
+            for index in range(1, 6)
+        ]
+
+        async def recent_documents(
+            _db: AsyncSession,
+            top_k: int,
+            session_allowlist: list[str] | None = None,
+            excluded_document_ids: set[str] | None = None,
+        ) -> list[models.Document]:
+            del session_allowlist
+            excluded_document_ids = excluded_document_ids or set()
+            return [
+                document
+                for document in documents
+                if document.id not in excluded_document_ids
+            ][:top_k]
+
+        with (
+            patch.object(
+                manager,
+                "_query_documents_semantic",
+                new=AsyncMock(return_value=[documents[0]]),
+            ),
+            patch.object(manager, "_query_documents_recent", new=recent_documents),
+        ):
+            representation = await manager._get_working_representation_internal(  # pyright: ignore[reportPrivateUsage]
+                db_session,
+                include_semantic_query="what do they like?",
+                embedding=[0.1],
+                semantic_search_top_k=1,
+                max_observations=5,
+            )
+
+        assert representation.len() == 5
+        assert [observation.id for observation in representation.explicit] == [
+            document.id for document in documents
+        ]
+
+    async def test_search_messages_external_returns_empty_without_querying_on_zero_limit(
+        self,
+    ):
+        """Message vector search is the remaining path that still hit Turbopuffer."""
+        from src.crud import message as message_crud
+
+        with patch(
+            "src.crud.message.get_external_vector_store",
+            return_value=AsyncMock(),
+        ) as mock_get_store:
+            for limit in (0, -1):
+                assert (
+                    await message_crud._search_messages_external(  # pyright: ignore[reportPrivateUsage]
+                        "workspace",
+                        [0.1, 0.2, 0.3],
+                        limit,
+                    )
+                    == []
+                )
+
+        mock_get_store.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_query_external_vector_message_ids_skips_store_on_zero_limit(
+        self,
+    ):
+        from src.utils import search as search_utils
+
+        with patch(
+            "src.utils.search.get_external_vector_store",
+            return_value=AsyncMock(),
+        ) as mock_get_store:
+            for limit in (0, -1):
+                assert (
+                    await search_utils.query_external_vector_message_ids(
+                        "workspace",
+                        [0.1, 0.2, 0.3],
+                        limit,
+                    )
+                    == []
+                )
+
+        mock_get_store.assert_not_called()

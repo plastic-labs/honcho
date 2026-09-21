@@ -5,7 +5,7 @@ This test suite covers edge cases for timezone handling, format validation,
 security considerations, and integration with the filtering system.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
 import pytest
@@ -35,7 +35,7 @@ class TestParseDatetimeISO:
 
         for iso_string in test_cases:
             result = parse_datetime_iso(iso_string)
-            assert result.tzinfo == timezone.utc
+            assert result.tzinfo == UTC
             assert isinstance(result, datetime)
 
     def test_parse_plus_zero_format(self):
@@ -48,7 +48,7 @@ class TestParseDatetimeISO:
 
         for iso_string in test_cases:
             result = parse_datetime_iso(iso_string)
-            assert result.tzinfo == timezone.utc
+            assert result.tzinfo == UTC
             assert isinstance(result, datetime)
 
     def test_parse_without_timezone(self):
@@ -60,7 +60,7 @@ class TestParseDatetimeISO:
 
         for iso_string in test_cases:
             result = parse_datetime_iso(iso_string)
-            assert result.tzinfo == timezone.utc
+            assert result.tzinfo == UTC
             assert isinstance(result, datetime)
 
     def test_equivalency_between_formats(self):
@@ -72,9 +72,7 @@ class TestParseDatetimeISO:
         result_none = parse_datetime_iso(base_time)
 
         assert result_z == result_plus == result_none
-        assert all(
-            r.tzinfo == timezone.utc for r in [result_z, result_plus, result_none]
-        )
+        assert all(r.tzinfo == UTC for r in [result_z, result_plus, result_none])
 
     def test_microseconds_precision(self):
         """Test handling of microseconds precision."""
@@ -101,7 +99,7 @@ class TestParseDatetimeISO:
 
         for iso_string in edge_cases:
             result = parse_datetime_iso(iso_string)
-            assert result.tzinfo == timezone.utc
+            assert result.tzinfo == UTC
             assert isinstance(result, datetime)
 
     def test_invalid_formats_raise_errors(self):
@@ -139,7 +137,7 @@ class TestParseDatetimeISO:
         for permissive_input in permissive_cases:
             result = parse_datetime_iso(permissive_input)
             assert isinstance(result, datetime)
-            assert result.tzinfo == timezone.utc
+            assert result.tzinfo == UTC
 
     def test_malicious_injection_attempts(self):
         """Test that potential SQL injection attempts in datetime strings fail safely."""
@@ -184,7 +182,7 @@ class TestParseDatetimeISO:
         for whitespace_input in whitespace_cases:
             result = parse_datetime_iso(whitespace_input)
             assert isinstance(result, datetime)
-            assert result.tzinfo == timezone.utc
+            assert result.tzinfo == UTC
 
         # Invalid whitespace with newlines should be rejected
         invalid_whitespace_cases = [
@@ -218,7 +216,7 @@ class TestFormatDatetimeUTC:
 
     def test_format_utc_datetime(self):
         """Test formatting UTC datetime objects."""
-        dt = datetime(2023, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        dt = datetime(2023, 1, 1, 12, 0, 0, tzinfo=UTC)
         result = format_datetime_utc(dt)
         assert result == "2023-01-01T12:00:00Z"
 
@@ -238,13 +236,13 @@ class TestFormatDatetimeUTC:
 
     def test_format_with_microseconds(self):
         """Test formatting datetimes with microseconds. They should be removed."""
-        dt = datetime(2023, 1, 1, 12, 0, 0, 123456, tzinfo=timezone.utc)
+        dt = datetime(2023, 1, 1, 12, 0, 0, 123456, tzinfo=UTC)
         result = format_datetime_utc(dt)
         assert result == "2023-01-01T12:00:00Z"
 
     def test_roundtrip_consistency(self):
         """Test that format -> parse -> format is consistent."""
-        original_dt = datetime(2023, 1, 1, 12, 30, 45, 0, tzinfo=timezone.utc)
+        original_dt = datetime(2023, 1, 1, 12, 30, 45, 0, tzinfo=UTC)
 
         # Format to string
         formatted = format_datetime_utc(original_dt)
@@ -269,7 +267,7 @@ class TestUTCNowISO:
         # Should be parseable
         parsed = parse_datetime_iso(result)
         assert isinstance(parsed, datetime)
-        assert parsed.tzinfo == timezone.utc
+        assert parsed.tzinfo == UTC
 
     def test_format_consistency(self):
         """Test that utc_now_iso uses consistent Z format."""
@@ -294,13 +292,13 @@ class TestFilterDatetimeValidation:
             result = _validate_datetime_string(valid_input)
             assert result is not None
             assert isinstance(result, datetime)
-            assert result.tzinfo == timezone.utc  # Should have UTC timezone
+            assert result.tzinfo == UTC  # Should have UTC timezone
 
         # Date-only format should also be timezone-aware
         date_only_result = _validate_datetime_string("2023-01-01")
         assert date_only_result is not None
         assert isinstance(date_only_result, datetime)
-        assert date_only_result.tzinfo == timezone.utc  # Should assume UTC
+        assert date_only_result.tzinfo == UTC  # Should assume UTC
 
     def test_validate_invalid_formats_return_none(self):
         """Test that invalid formats return None rather than raising exceptions."""
@@ -369,7 +367,7 @@ class TestDatetimeEdgeCasesIntegration:
 
         for transition_time in [spring_forward, fall_back]:
             result = parse_datetime_iso(transition_time)
-            assert result.tzinfo == timezone.utc
+            assert result.tzinfo == UTC
 
     def test_year_boundary_handling(self):
         """Test handling of year boundary dates."""
@@ -383,7 +381,7 @@ class TestDatetimeEdgeCasesIntegration:
         for boundary_case in boundary_cases:
             result = parse_datetime_iso(boundary_case)
             assert isinstance(result, datetime)
-            assert result.tzinfo == timezone.utc
+            assert result.tzinfo == UTC
 
     def test_extreme_date_values(self):
         """Test handling of extreme date values within reasonable bounds."""
@@ -398,7 +396,7 @@ class TestDatetimeEdgeCasesIntegration:
         for extreme_case in extreme_cases:
             result = parse_datetime_iso(extreme_case)
             assert isinstance(result, datetime)
-            assert result.tzinfo == timezone.utc
+            assert result.tzinfo == UTC
 
     def test_consistency_across_functions(self):
         """Test that all datetime functions work consistently together."""
@@ -415,7 +413,7 @@ class TestDatetimeEdgeCasesIntegration:
         validated = _validate_datetime_string(reformatted)
 
         assert validated is not None
-        assert validated.tzinfo == timezone.utc
+        assert validated.tzinfo == UTC
         assert abs((validated - now_dt).total_seconds()) < 1  # Should be very close
 
 
@@ -425,7 +423,7 @@ class TestTimezoneHandlingEdgeCases:
     def test_timezone_info_preservation(self):
         """Test that timezone information is correctly handled and converted."""
         # Test various timezone inputs
-        utc_dt = datetime(2023, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        utc_dt = datetime(2023, 1, 1, 12, 0, 0, tzinfo=UTC)
         naive_dt = datetime(2023, 1, 1, 12, 0, 0)  # No timezone
 
         # Both should format to the same UTC string when naive assumes UTC
@@ -446,7 +444,7 @@ class TestTimezoneHandlingEdgeCases:
 
         # When parsed back, should be equivalent UTC time
         parsed_utc = parse_datetime_iso(utc_formatted)
-        assert parsed_utc.tzinfo == timezone.utc
+        assert parsed_utc.tzinfo == UTC
         assert parsed_utc.hour == 12  # 7 AM EST = 12 PM UTC
 
     def test_timezone_edge_cases_around_midnight(self):
@@ -477,12 +475,12 @@ class TestErrorHandlingAndRecovery:
         for partial_case in time_cases:
             result = _validate_datetime_string(partial_case)
             assert result is not None
-            assert result.tzinfo == timezone.utc  # Should assume UTC
+            assert result.tzinfo == UTC  # Should assume UTC
 
         # Date-only should also be timezone-aware with UTC assumption
         date_result = _validate_datetime_string("2023-01-01")
         assert date_result is not None
-        assert date_result.tzinfo == timezone.utc  # Should assume UTC
+        assert date_result.tzinfo == UTC  # Should assume UTC
 
     def test_graceful_degradation_on_errors(self):
         """Test that datetime parsing fails gracefully without crashing."""

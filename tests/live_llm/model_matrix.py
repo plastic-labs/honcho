@@ -58,6 +58,7 @@ MODEL_FAMILIES: tuple[LiveModelFamily, ...] = (
         default_models=("gpt-4.1",),
         supports_structured_output=True,
         supports_caching=True,
+        supports_tool_replay=True,
         docs_url="https://platform.openai.com/docs/models/gpt-4.1",
     ),
     LiveModelFamily(
@@ -68,6 +69,7 @@ MODEL_FAMILIES: tuple[LiveModelFamily, ...] = (
         supports_structured_output=True,
         supports_caching=True,
         supports_reasoning=True,
+        supports_tool_replay=True,
         docs_url="https://platform.openai.com/docs/models/gpt-5",
     ),
     # OpenAI-compatible transport → OpenRouter-served non-reasoning models.

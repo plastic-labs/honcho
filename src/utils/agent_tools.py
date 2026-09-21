@@ -2,7 +2,7 @@ import asyncio
 import logging
 import weakref
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any, cast
 
@@ -13,7 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import crud, models, schemas
 from src.config import settings
 from src.dependencies import tracked_db
-from src.embedding_client import embedding_client
+from src.embedding_client import EmbeddingTokenLimitError, embedding_client
+from src.exceptions import ResourceNotFoundException
 from src.models import Document
 from src.schemas import ResolvedConfiguration
 from src.telemetry.events import (
@@ -24,6 +25,7 @@ from src.telemetry.events import (
     emit,
 )
 from src.utils import summarizer
+from src.utils.evidence import EvidenceAccumulator
 from src.utils.formatting import (
     format_datetime_utc,
     format_new_turn_with_timestamp,
@@ -35,6 +37,7 @@ from src.utils.representation import (
     Representation,
     allowlist_safe_levels,
 )
+from src.utils.sanitization import strip_nul
 from src.utils.types import ToolResult, embedding_call_purpose, get_current_iteration
 
 logger = logging.getLogger(__name__)
@@ -76,8 +79,20 @@ def _validate_peer_card_entry(line: str) -> bool:
 def _normalized_observation_input(
     obs: schemas.ObservationInput,
 ) -> schemas.ObservationInput:
-    """Return an observation input with content normalized for persistence/embedding."""
-    return obs.model_copy(update={"content": obs.content.strip()})
+    """Return an observation input with content normalized for persistence/embedding.
+
+    NUL bytes are removed here rather than closer to the database so that the
+    text that gets embedded is the same text that gets stored. `premises` and
+    `sources` ride along in internal_metadata, and jsonb rejects NUL in strings
+    just as text columns do.
+    """
+    return obs.model_copy(
+        update={
+            "content": strip_nul(obs.content).strip(),
+            "premises": strip_nul(obs.premises),
+            "sources": strip_nul(obs.sources),
+        }
+    )
 
 
 def _base_observation_properties() -> dict[str, Any]:
@@ -106,7 +121,11 @@ def _base_observation_properties() -> dict[str, Any]:
             "description": (
                 "Document IDs of source or premise observations. Required and "
                 + "must be non-empty for deductive, inductive, and contradiction "
-                + "observations."
+                + "observations. Copy the exact ID shown in [id:xxx] format from "
+                + "observation results (e.g. for '[id:abc123XYZ]' pass "
+                + "'abc123XYZ'). Message search results carry no ID and cannot "
+                + "be cited here; IDs that do not match an existing observation "
+                + "are discarded."
             ),
         },
         "premises": {
@@ -223,7 +242,7 @@ def _deductive_observation_item_schema() -> dict[str, Any]:
                 "type": "array",
                 "items": {"type": "string"},
                 "minItems": 1,
-                "description": "Required non-empty list of source observation IDs supporting the deduction",
+                "description": "Required non-empty list of source observation IDs supporting the deduction. Copy the exact ID shown in [id:xxx] format from observation results; message search results carry no ID and cannot be cited",
             },
             "premises": {
                 "type": "array",
@@ -249,7 +268,7 @@ def _inductive_observation_item_schema() -> dict[str, Any]:
                 "type": "array",
                 "items": {"type": "string"},
                 "minItems": 2,
-                "description": "Required list of at least two source observation IDs supporting the pattern",
+                "description": "Required list of at least two source observation IDs supporting the pattern. Copy the exact ID shown in [id:xxx] format from observation results; message search results carry no ID and cannot be cited",
             },
             "sources": {
                 "type": "array",
@@ -289,6 +308,11 @@ def _safe_int(value: Any, default: int) -> int:
         return int(value)
     except (TypeError, ValueError, OverflowError):
         return default
+
+
+def _bounded_int(value: Any, default: int, *, lo: int = 1, hi: int) -> int:
+    """Coerce a tool int into ``[lo, hi]``, falling back to ``default`` on bad input."""
+    return max(lo, min(_safe_int(value, default), hi))
 
 
 # Module-level lock registry for thread-safe observation creation.
@@ -785,6 +809,59 @@ TOOLS: dict[str, dict[str, Any]] = {
             "required": ["observation_id"],
         },
     },
+    "search_memory_workspace": {
+        "name": "search_memory",
+        "description": "Search within a specific peer representation's memory using semantic similarity. You MUST specify observer and observed. To get a peer's global representation, set observer AND observed to the SAME peer name (this is where most information lives). Only use different observer/observed when seeking one peer's specific understanding of another.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "observer": {
+                    "type": "string",
+                    "description": "Name of the observer peer",
+                },
+                "observed": {
+                    "type": "string",
+                    "description": "Name of the observed peer",
+                },
+                "query": {
+                    "type": "string",
+                    "description": "Search query text",
+                },
+                "top_k": {
+                    "type": "integer",
+                    "description": "(Optional) number of results to return (default: 20, max: 40)",
+                    "default": 20,
+                },
+            },
+            "required": ["observer", "observed", "query"],
+        },
+    },
+    "get_workspace_stats": {
+        "name": "get_workspace_stats",
+        "description": "Get workspace-level statistics — peer count, session count, message count, date range of messages — plus the most recently active peers with their message counts and last-active timestamps. Use this to orient yourself and discover which peers are most relevant.",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+    "get_peer_card_by_name": {
+        "name": "get_peer_card",
+        "description": "Get the peer card for a specific peer relationship. Specify the observer and observed peer names.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "observer": {
+                    "type": "string",
+                    "description": "Name of the observer peer",
+                },
+                "observed": {
+                    "type": "string",
+                    "description": "Name of the observed peer",
+                },
+            },
+            "required": ["observer", "observed"],
+        },
+    },
 }
 
 # Tools for the dialectic agent (analysis)
@@ -803,6 +880,31 @@ DIALECTIC_TOOLS: list[dict[str, Any]] = [
 # Reduces cost by limiting tool definitions in context
 DIALECTIC_TOOLS_MINIMAL: list[dict[str, Any]] = [
     TOOLS["search_memory"],
+    TOOLS["search_messages"],
+]
+
+# Tools for the workspace-level dialectic agent. Observation search stays
+# pair-scoped (observer/observed are TOOL ARGUMENTS the agent must supply
+# after routing) -- matching both the (observer, observed) collection
+# ownership and the per-pair vector-store namespaces. Message tools are
+# workspace-flat and double as the routing signal (results carry peer_name).
+WORKSPACE_DIALECTIC_TOOLS: list[dict[str, Any]] = [
+    TOOLS["get_workspace_stats"],
+    TOOLS["search_memory_workspace"],
+    TOOLS["search_messages"],
+    TOOLS["get_observation_context"],
+    TOOLS["grep_messages"],
+    TOOLS["get_peer_card_by_name"],
+    TOOLS["get_messages_by_date_range"],
+    TOOLS["search_messages_temporal"],
+    TOOLS["get_reasoning_chain"],
+]
+
+# Reduced workspace loadout for reasoning_level="minimal" (token cost of the
+# tool definitions themselves), mirroring DIALECTIC_TOOLS_MINIMAL.
+WORKSPACE_TOOLS_MINIMAL: list[dict[str, Any]] = [
+    TOOLS["get_workspace_stats"],
+    TOOLS["search_memory_workspace"],
     TOOLS["search_messages"],
 ]
 
@@ -867,6 +969,88 @@ CARD_REFRESH_SPECIALIST_TOOLS: list[dict[str, Any]] = [
 ]
 
 
+# Levels whose source_ids must resolve to real documents before persistence.
+_SOURCE_GROUNDED_LEVELS: tuple[str, ...] = ("deductive", "inductive", "contradiction")
+
+
+async def _filter_ungrounded_source_ids(
+    observations: list[schemas.ObservationInput],
+    *,
+    workspace_name: str,
+    observer: str,
+    observed: str,
+) -> tuple[list[schemas.ObservationInput], list[ObservationFailure]]:
+    """Drop cited source_ids that resolve to no existing document.
+
+    Derived observations must cite the documents they are built on, but models
+    sometimes fabricate ids (or paste message text) to satisfy the tool
+    schema, and nothing downstream re-checks them: a dangling id becomes
+    permanent false provenance, breaks ``get_child_observations`` traversal,
+    and silently skews ``_latest_source_timestamp``. Resolve every cited id
+    against real documents before persistence: fabricated ids are stripped,
+    and an observation left with fewer real sources than
+    ``validate_level_fields`` requires for its level (1, or 2 for
+    contradiction) is rejected as an ``ObservationFailure`` rather than
+    stored.
+
+    Returns (grounded observations, failures for ungrounded observations).
+    """
+    cited_ids: set[str] = set()
+    for obs in observations:
+        if obs.level in _SOURCE_GROUNDED_LEVELS and obs.source_ids:
+            cited_ids.update(obs.source_ids)
+    if not cited_ids:
+        return observations, []
+
+    async with tracked_db("create_observations.ground_sources", read_only=True) as db:
+        docs = await crud.fetch_documents_by_ids(
+            db,
+            workspace_name=workspace_name,
+            observer=observer,
+            observed=observed,
+            document_ids=list(cited_ids),
+        )
+        # Collect ids inside the session scope — the ORM objects expire when
+        # it closes, and a refresh outside it has no session to run on.
+        resolved_ids = {doc.id for doc in docs}
+
+    grounded: list[schemas.ObservationInput] = []
+    failed: list[ObservationFailure] = []
+    for obs in observations:
+        if obs.level not in _SOURCE_GROUNDED_LEVELS or not obs.source_ids:
+            grounded.append(obs)
+            continue
+        real_ids = [sid for sid in obs.source_ids if sid in resolved_ids]
+        dropped = len(obs.source_ids) - len(real_ids)
+        # Mirror the per-level minimums enforced by validate_level_fields.
+        min_sources = 2 if obs.level == "contradiction" else 1
+        if len(real_ids) < min_sources:
+            failed.append(
+                ObservationFailure(
+                    content_preview=obs.content[:50],
+                    error=(
+                        f"{dropped} of {len(obs.source_ids)} source_ids do not "
+                        f"resolve to existing observations; '{obs.level}' requires "
+                        f"at least {min_sources} real source(s) "
+                        f"(cite only ids shown as [id:xxx] in observation results)"
+                    ),
+                )
+            )
+            continue
+        if dropped:
+            logger.warning(
+                "Dropped %d unresolvable source_ids from %s observation in %s/%s/%s",
+                dropped,
+                obs.level,
+                workspace_name,
+                observer,
+                observed,
+            )
+            obs = obs.model_copy(update={"source_ids": real_ids})
+        grounded.append(obs)
+    return grounded, failed
+
+
 async def create_observations(
     observations: list[schemas.ObservationInput],
     observer: str,
@@ -902,14 +1086,31 @@ async def create_observations(
         logger.warning("create_observations called with empty list")
         return ObservationsCreatedResult(created_count=0, created_levels=[], failed=[])
 
+    # Normalize before the emptiness check: str.strip() does not remove NUL,
+    # so content that normalizes away has to be dropped afterwards.
     normalized_observations = [
-        _normalized_observation_input(obs)
-        for obs in observations
-        if obs.content.strip()
+        normalized
+        for normalized in (_normalized_observation_input(obs) for obs in observations)
+        if normalized.content
     ]
     if not normalized_observations:
         logger.info("No non-empty observations to create")
         return ObservationsCreatedResult(created_count=0, created_levels=[], failed=[])
+
+    # Ground cited source_ids against real documents before persistence —
+    # fabricated ids are stripped and observations left without the required
+    # real sources are rejected (see _filter_ungrounded_source_ids).
+    normalized_observations, failed = await _filter_ungrounded_source_ids(
+        normalized_observations,
+        workspace_name=workspace_name,
+        observer=observer,
+        observed=observed,
+    )
+    if not normalized_observations:
+        logger.info("No observations with resolvable source_ids to create")
+        return ObservationsCreatedResult(
+            created_count=0, created_levels=[], failed=failed
+        )
 
     # Ensure collection exists (short DB scope)
     async with tracked_db("create_observations.collection") as db:
@@ -930,7 +1131,9 @@ async def create_observations(
             run_id=run_id,
             parent_category=parent_category,
         ):
-            embeddings = await embedding_client.simple_batch_embed(contents)
+            embeddings = await embedding_client.simple_batch_embed(
+                contents, on_oversize="truncate"
+            )
         embeddings_by_index = dict(
             zip(range(len(normalized_observations)), embeddings, strict=True)
         )
@@ -942,7 +1145,6 @@ async def create_observations(
 
     # Build document objects with pre-computed embeddings
     documents: list[schemas.DocumentCreate] = []
-    failed: list[ObservationFailure] = []
     for i, obs in enumerate(normalized_observations):
         embedding: list[float]
         if embeddings_by_index is not None:
@@ -971,12 +1173,11 @@ async def create_observations(
                 continue
 
         # Build metadata with level-specific fields
+        # source_ids intentionally omitted from metadata: linkage lives in
+        # the document_sources table (via DocumentCreate.source_ids below).
         metadata = schemas.DocumentMetadata(
             message_ids=message_ids,
             message_created_at=message_created_at,
-            source_ids=obs.source_ids
-            if obs.level in ("deductive", "inductive", "contradiction")
-            else None,
             premises=obs.premises if obs.level == "deductive" else None,
             sources=obs.sources
             if obs.level in ("inductive", "contradiction")
@@ -1010,7 +1211,7 @@ async def create_observations(
                     workspace_name=workspace_name,
                     observer=observer,
                     observed=observed,
-                    deduplicate=True,
+                    deduplicate=settings.DERIVER.DEDUPLICATE,
                 )
             ).created_documents
         logger.info(
@@ -1105,6 +1306,7 @@ async def search_memory(
     levels: list[str] | None = None,
     embedding: list[float] | None = None,
     session_allowlist: list[str] | None = None,
+    documents_out: list[models.Document] | None = None,
 ) -> Representation:
     """
     Search for observations in memory using semantic similarity.
@@ -1121,6 +1323,9 @@ async def search_memory(
         levels: Optional list of observation levels to filter by
                 (e.g., ["explicit"], ["deductive", "inductive", "contradiction"])
         embedding: Optional pre-computed embedding to avoid redundant API calls
+        documents_out: Optional list the matched documents are appended to, for
+                callers that need the rows and not just the representation
+                built from them
 
     Returns:
         Representation object containing relevant observations
@@ -1152,6 +1357,9 @@ async def search_memory(
         filters=filters or None,
         embedding=embedding,
     )
+
+    if documents_out is not None:
+        documents_out.extend(documents)
 
     return Representation.from_documents(documents)
 
@@ -1192,10 +1400,19 @@ async def get_observation_context(
     if not message_ids:
         return []
 
-    from src.crud.message import resolve_session_scope
+    from src.crud.message import resolve_session_scope_clauses
 
-    allowed_session_names, deny = await resolve_session_scope(
-        db, workspace_name, session_name, session_allowlist, observer
+    # Scope as SQL rather than as a fetched name list. The scope is applied to
+    # both the CTE and the outer select, so a materialized list would spend two
+    # bind parameters per session the observer belongs to — enough sessions and
+    # the statement exceeds the driver's 65535-parameter ceiling and cannot be
+    # sent at all.
+    scope_clauses, deny = resolve_session_scope_clauses(
+        workspace_name,
+        session_name,
+        session_allowlist,
+        observer,
+        models.Message.session_name,
     )
     if deny:
         return []
@@ -1209,8 +1426,8 @@ async def get_observation_context(
 
     if session_name:
         stmt = stmt.where(models.Message.session_name == session_name)
-    elif allowed_session_names is not None:
-        stmt = stmt.where(models.Message.session_name.in_(allowed_session_names))
+    for clause in scope_clauses:
+        stmt = stmt.where(clause)
 
     target_seqs_cte = stmt.cte("target_seqs")
 
@@ -1233,8 +1450,8 @@ async def get_observation_context(
 
     if session_name:
         stmt = stmt.where(models.Message.session_name == session_name)
-    elif allowed_session_names is not None:
-        stmt = stmt.where(models.Message.session_name.in_(allowed_session_names))
+    for clause in scope_clauses:
+        stmt = stmt.where(clause)
 
     result = await db.execute(stmt)
     messages = list(result.scalars().all())
@@ -1354,6 +1571,10 @@ class ToolContext:
     run_id: str | None = None
     agent_type: str | None = None  # "dialectic", "deriver", "dreamer"
     parent_category: str | None = None  # Parent category for CloudEvents
+    # Set only when the caller asked for evidence. Read handlers append the rows
+    # they loaded; `dataclasses.replace` copies of this context share the same
+    # accumulator, so delegating handlers reach it without extra wiring.
+    evidence: EvidenceAccumulator | None = None
 
 
 def _normalize_observation_id(obs_id: str) -> str:
@@ -1787,13 +2008,43 @@ async def _handle_get_recent_history(
     return _maybe_truncated_result(output)
 
 
+def _record_conclusion_evidence(
+    ctx: ToolContext, documents: Sequence[models.Document]
+) -> None:
+    """Record conclusions a read returned, when evidence was asked for."""
+    if ctx.evidence is not None:
+        ctx.evidence.add_documents(documents)
+
+
+def _record_message_evidence(
+    ctx: ToolContext, messages: Sequence[models.Message]
+) -> None:
+    """Record messages a read returned, when evidence was asked for."""
+    if ctx.evidence is not None:
+        ctx.evidence.add_messages(messages)
+
+
+def _record_snippet_evidence(
+    ctx: ToolContext,
+    snippets: Sequence[tuple[list[models.Message], list[models.Message]]],
+) -> None:
+    """Record every message a snippet search surfaced.
+
+    Both halves of a snippet count as read: the surrounding context reaches the
+    prompt the same way the matches do.
+    """
+    for matches, context in snippets:
+        _record_message_evidence(ctx, matches)
+        _record_message_evidence(ctx, context)
+
+
 async def _handle_search_memory(
     ctx: ToolContext, tool_input: dict[str, Any]
 ) -> "str | ToolResult":
     """Handle search_memory tool."""
     from src.utils.types import ToolResult
 
-    top_k = min(_safe_int(tool_input.get("top_k"), 20), 40)
+    top_k = _bounded_int(tool_input.get("top_k"), 20, hi=40)
     query = tool_input["query"]
     try:
         with embedding_call_purpose(
@@ -1803,11 +2054,15 @@ async def _handle_search_memory(
             parent_category=ctx.parent_category,
         ):
             query_embedding = await embedding_client.embed(query)
-    except ValueError:
+    except EmbeddingTokenLimitError:
         return (
             "ERROR: Query exceeds maximum token limit of "
             + f"{settings.EMBEDDING.MAX_INPUT_TOKENS}. Please use a shorter query."
         )
+    except ValueError as e:
+        # Provider/config failure, not an oversized query. Keep returning a
+        # string so the tool loop can continue, but don't blame the query.
+        return f"ERROR: Embedding the query failed: {e}"
 
     # Base telemetry metadata; results_count gets filled in below.
     search_meta: dict[str, Any] = {
@@ -1839,6 +2094,7 @@ async def _handle_search_memory(
             if ctx.session_allowlist is not None
             else None,
         )
+    _record_conclusion_evidence(ctx, documents)
     mem = Representation.from_documents(documents)
     total_count = mem.len()
     if total_count == 0:
@@ -1849,8 +2105,8 @@ async def _handle_search_memory(
         # here, we automatically search the message history for relevant
         # information.
         zero_hit_meta = {**search_meta, "results_count": 0}
-        if ctx.agent_type == "dialectic":
-            limit = min(_safe_int(tool_input.get("top_k"), 20), 20)
+        if ctx.agent_type in ("dialectic", "workspace_dialectic"):
+            limit = _bounded_int(tool_input.get("top_k"), 20, hi=20)
             message_output = None
             snippets = await crud.search_messages(
                 workspace_name=ctx.workspace_name,
@@ -1862,6 +2118,7 @@ async def _handle_search_memory(
                 observer=ctx.observer,
                 session_allowlist=ctx.session_allowlist,
             )
+            _record_snippet_evidence(ctx, snippets)
             if snippets:
                 message_output = _format_message_snippets(
                     snippets, f"for query '{query}'"
@@ -1901,9 +2158,10 @@ async def _handle_get_observation_context(
             workspace_name=ctx.workspace_name,
             session_name=ctx.session_name,
             message_ids=tool_input["message_ids"],
-            observer=ctx.observer,
+            observer=ctx.observer or None,
             session_allowlist=ctx.session_allowlist,
         )
+        _record_message_evidence(ctx, messages)
         if not messages:
             return f"No messages found for IDs {tool_input['message_ids']}"
         messages_text = "\n".join(
@@ -1927,7 +2185,7 @@ async def _handle_search_messages(
     from src.utils.types import ToolResult
 
     query = tool_input["query"]
-    limit = min(_safe_int(tool_input.get("limit"), 10), 20)  # Cap at 20
+    limit = _bounded_int(tool_input.get("limit"), 10, hi=20)
     # Pre-compute embedding outside DB session to avoid holding a connection
     # during the external API call (same pattern as _handle_search_memory).
     with embedding_call_purpose(
@@ -1944,9 +2202,10 @@ async def _handle_search_messages(
         limit=limit,
         context_window=2,
         embedding=query_embedding,
-        observer=ctx.observer,
+        observer=ctx.observer or None,
         session_allowlist=ctx.session_allowlist,
     )
+    _record_snippet_evidence(ctx, snippets)
     search_meta: dict[str, Any] = {
         "top_k": limit,
         "used_embedding": True,
@@ -1970,10 +2229,8 @@ async def _handle_grep_messages(
     text = tool_input.get("text", "")
     if not text:
         return "ERROR: 'text' parameter is required"
-    limit = min(_safe_int(tool_input.get("limit"), 10), 30)  # Cap at 30
-    context_window = min(
-        _safe_int(tool_input.get("context_window"), 2), 2
-    )  # Cap context
+    limit = _bounded_int(tool_input.get("limit"), 10, hi=30)
+    context_window = _bounded_int(tool_input.get("context_window"), 2, lo=0, hi=2)
 
     snippets = await crud.grep_messages(
         workspace_name=ctx.workspace_name,
@@ -1981,9 +2238,10 @@ async def _handle_grep_messages(
         text=text,
         limit=limit,
         context_window=context_window,
-        observer=ctx.observer,
+        observer=ctx.observer or None,
         session_allowlist=ctx.session_allowlist,
     )
+    _record_snippet_evidence(ctx, snippets)
     if not snippets:
         return f"No messages found containing '{text}'"
 
@@ -2026,7 +2284,7 @@ async def _handle_get_messages_by_date_range(
     """Handle get_messages_by_date_range tool."""
     after_date_str = tool_input.get("after_date")
     before_date_str = tool_input.get("before_date")
-    limit = min(_safe_int(tool_input.get("limit"), 20), 20)
+    limit = _bounded_int(tool_input.get("limit"), 20, hi=20)
     order = tool_input.get("order", "desc")
 
     after_date = _parse_date(after_date_str, "after_date")
@@ -2046,9 +2304,10 @@ async def _handle_get_messages_by_date_range(
             before_date=before_date,
             limit=limit,
             order=order,
-            observer=ctx.observer,
+            observer=ctx.observer or None,
             session_allowlist=ctx.session_allowlist,
         )
+        _record_message_evidence(ctx, messages)
         msg_count = len(messages)
         messages_text = (
             "\n".join(
@@ -2092,8 +2351,8 @@ async def _handle_search_messages_temporal(
 
     after_date_str = tool_input.get("after_date")
     before_date_str = tool_input.get("before_date")
-    limit = min(_safe_int(tool_input.get("limit"), 10), 10)
-    context_window = min(_safe_int(tool_input.get("context_window"), 2), 2)
+    limit = _bounded_int(tool_input.get("limit"), 10, hi=10)
+    context_window = _bounded_int(tool_input.get("context_window"), 2, lo=0, hi=2)
 
     after_date = _parse_date(after_date_str, "after_date")
     if isinstance(after_date, str):
@@ -2122,8 +2381,9 @@ async def _handle_search_messages_temporal(
         context_window=context_window,
         session_allowlist=ctx.session_allowlist,
         embedding=query_embedding,
-        observer=ctx.observer,
+        observer=ctx.observer or None,
     )
+    _record_snippet_evidence(ctx, snippets)
     date_filter: list[str] = []
     if after_date_str:
         date_filter.append(f"after {after_date_str}")
@@ -2163,7 +2423,7 @@ async def _handle_get_recent_observations(
             workspace_name=ctx.workspace_name,
             observer=ctx.observer,
             observed=ctx.observed,
-            limit=min(_safe_int(tool_input.get("limit"), 10), 100),
+            limit=_bounded_int(tool_input.get("limit"), 10, hi=100),
             session_name=ctx.session_name if session_only else None,
         )
         representation = Representation.from_documents(documents)
@@ -2189,7 +2449,7 @@ async def _handle_get_most_derived_observations(
             workspace_name=ctx.workspace_name,
             observer=ctx.observer,
             observed=ctx.observed,
-            limit=min(_safe_int(tool_input.get("limit"), 10), 100),
+            limit=_bounded_int(tool_input.get("limit"), 10, hi=100),
         )
         representation = Representation.from_documents(documents)
     total_count = representation.len()
@@ -2227,6 +2487,16 @@ async def _handle_get_session_summary(
 async def _handle_get_peer_card(ctx: ToolContext, tool_input: dict[str, Any]) -> str:
     """Handle get_peer_card tool."""
     _ = tool_input
+    # A peer card lives in Peer.internal_metadata as a single cross-session
+    # aggregate, so it carries no session attribution and cannot be filtered
+    # to an allowlist. Fail closed rather than leak facts derived from
+    # out-of-scope sessions, the same rule get_reasoning_chain follows.
+    # No-op for agents that never set an allowlist (dreamer, pair dialectic).
+    if ctx.session_allowlist is not None:
+        return (
+            "Peer cards are unavailable for session-scoped queries. "
+            "Use search_memory instead."
+        )
     async with tracked_db("tool.get_peer_card", read_only=True) as db:
         peer_card = await crud.get_peer_card(
             db,
@@ -2364,7 +2634,9 @@ def _format_message_snippets(
         )
 
     output = (
-        f"Found {total_matches} matching messages in {len(snippets)} conversation snippets {desc}:\n\n"
+        f"Found {total_matches} matching messages in {len(snippets)} conversation snippets {desc}.\n"
+        + "These are raw messages with no observation ID - do not cite them in "
+        + "source_ids; use their text in premises/sources instead:\n\n"
         + "\n\n".join(snippet_texts)
     )
     # `[0]` extracts the truncated text — telemetry signal is discarded here
@@ -2401,6 +2673,7 @@ async def _handle_get_reasoning_chain(
             return f"ERROR: Observation '{observation_id}' not found"
 
         doc: Document = docs[0]
+        _record_conclusion_evidence(ctx, [doc])
 
         output_parts: list[str] = []
 
@@ -2414,6 +2687,7 @@ async def _handle_get_reasoning_chain(
                 premises = await crud.get_documents_by_ids(
                     db, ctx.workspace_name, doc.source_ids
                 )
+                _record_conclusion_evidence(ctx, premises)
                 if premises:
                     premise_lines: list[Any] = []
                     for p in premises:
@@ -2431,6 +2705,7 @@ async def _handle_get_reasoning_chain(
                 sources = await crud.get_documents_by_ids(
                     db, ctx.workspace_name, doc.source_ids
                 )
+                _record_conclusion_evidence(ctx, sources)
                 if sources:
                     source_lines: list[Any] = []
                     for s in sources:
@@ -2452,13 +2727,15 @@ async def _handle_get_reasoning_chain(
 
         # Get conclusions if requested
         if direction in ("conclusions", "both"):
-            children = await crud.get_child_observations(
-                db,
+            stmt = crud.get_child_observations(
                 ctx.workspace_name,
                 observation_id,
                 observer=ctx.observer,
                 observed=ctx.observed,
             )
+            result = await db.execute(stmt)
+            children = result.scalars().all()
+            _record_conclusion_evidence(ctx, children)
             if children:
                 child_lines: list[Any] = []
                 for c in children:
@@ -2511,6 +2788,8 @@ async def create_tool_executor(
     agent_type: str | None = None,
     parent_category: str | None = None,
     session_allowlist: list[str] | None = None,
+    handler_resolver: Callable[[str], Any] | None = None,
+    evidence: EvidenceAccumulator | None = None,
 ) -> Callable[[str, dict[str, Any]], Any]:
     """
     Create a unified tool executor function for all agent operations.
@@ -2533,6 +2812,14 @@ async def create_tool_executor(
         run_id: Optional run ID for telemetry correlation
         agent_type: Optional agent type for telemetry (dialectic, deriver, dreamer)
         parent_category: Optional parent category for CloudEvents
+        session_allowlist: Optional list of session names message tools are
+            restricted to (None means no restriction)
+        handler_resolver: Optional callback that replaces the default
+            handler-table lookup for resolving tool names to handlers.
+            Returning None takes the "Unknown tool" path.
+        evidence: Optional accumulator that read handlers record the
+            conclusions and messages they load into. None means evidence was
+            not requested and nothing is collected.
 
     Returns:
         An async callable that executes tools with the captured context
@@ -2555,6 +2842,7 @@ async def create_tool_executor(
         run_id=run_id,
         agent_type=agent_type,
         parent_category=parent_category,
+        evidence=evidence,
     )
 
     async def execute_tool(tool_name: str, tool_input: dict[str, Any]) -> str:
@@ -2596,7 +2884,7 @@ async def create_tool_executor(
         tool_obs = _begin_tool_observation(tool_name, tool_input)
 
         try:
-            handler = _TOOL_HANDLERS.get(tool_name)
+            handler = (handler_resolver or _TOOL_HANDLERS.get)(tool_name)
             if handler:
                 handler_result = await handler(ctx, tool_input)
                 # Handlers return either a plain str (existing contract) or a
@@ -2794,3 +3082,183 @@ def _estimate_tokens_safe(text: str | None) -> int | None:
     if not text:
         return None
     return _estimate_tokens(text)
+
+
+# ---------------------------------------------------------------------------
+# Workspace-level tool handlers (workspace chat)
+#
+# The workspace agent is not bound to an (observer, observed) pair. Handlers
+# that need a pair take it from tool_input (the agent routes first, then
+# supplies the pair); the rest are workspace-scoped reads. Message-search
+# fallthrough handlers run with observer="" and normalize it to None at the
+# crud boundary (`ctx.observer or None`) -- None means "no perspective
+# scoping", which is correct for a workspace-level read. The empty string
+# must never reach resolve_session_scope: it would be looked up as a real
+# peer with no session memberships and deny all results.
+# ---------------------------------------------------------------------------
+
+
+async def _handle_search_memory_workspace(
+    ctx: ToolContext, tool_input: dict[str, Any]
+) -> "str | ToolResult":
+    """Pair-scoped observation search; the pair comes from tool arguments."""
+    observer = tool_input.get("observer", "")
+    observed = tool_input.get("observed", "")
+    if not observer or not observed:
+        return (
+            "ERROR: 'observer' and 'observed' are required. For a peer's "
+            "global representation set both to the SAME peer name."
+        )
+    pair_ctx = replace(ctx, observer=observer, observed=observed)
+    result = await _handle_search_memory(pair_ctx, tool_input)
+    # Attribute the pair in the output — the workspace agent may query
+    # several pairs in one turn and must not conflate their results.
+    if isinstance(result, ToolResult):
+        return replace(result, content=f"[{observer}->{observed}]\n{result.content}")
+    return f"[{observer}->{observed}]\n{result}"
+
+
+async def _handle_get_peer_card_by_name(
+    ctx: ToolContext, tool_input: dict[str, Any]
+) -> str:
+    """get_peer_card with the pair taken from tool arguments."""
+    observer = tool_input.get("observer", "")
+    observed = tool_input.get("observed", "")
+    if not observer or not observed:
+        return "ERROR: 'observer' and 'observed' are required parameters"
+    pair_ctx = replace(ctx, observer=observer, observed=observed)
+    try:
+        return await _handle_get_peer_card(pair_ctx, tool_input)
+    except ResourceNotFoundException:
+        # The workspace agent names peers from its own routing, so guessing a
+        # peer that doesn't exist is an expected turn, not a fault. Answer the
+        # model instead of letting the executor log it as an unexpected error.
+        return f"No peer named '{observer}' exists in this workspace"
+
+
+# Peers listed by get_workspace_stats. Fixed rather than a tool argument:
+# folding active peers into stats keeps the tool zero-arg (one discovery
+# round instead of two); deeper discovery goes through search_messages.
+_STATS_ACTIVE_PEERS = 10
+
+
+# Peer-card facts listed per peer when cards are supplied.
+_STATS_CARD_FACTS = 8
+
+
+def format_workspace_stats(
+    stats: "crud.WorkspaceStats",
+    peers: "Sequence[crud.ActivePeer]",
+    cards: dict[str, list[str]] | None = None,
+) -> str:
+    """Render workspace counts and most-active peers as prompt-ready lines.
+
+    Shared by the get_workspace_stats tool and WorkspaceDialecticAgent's
+    routing prefetch; the prefetch passes ``cards`` to nest each peer's
+    known biographical facts under it.
+    """
+    lines = [
+        f"Peers: {stats.peer_count}",
+        f"Sessions: {stats.session_count}",
+        f"Messages: {stats.message_count}",
+    ]
+    if stats.oldest_message_at and stats.newest_message_at:
+        lines.append(
+            f"Date range: {stats.oldest_message_at:%Y-%m-%d} to {stats.newest_message_at:%Y-%m-%d}"
+        )
+    if peers:
+        lines.append("")
+        lines.append(f"Most active peers (top {len(peers)}):")
+        for peer in peers:
+            last_active = (
+                f", last active {peer.last_message_at:%Y-%m-%d}"
+                if peer.last_message_at
+                else ""
+            )
+            lines.append(f"- {peer.name} ({peer.message_count} messages{last_active})")
+            for fact in (cards or {}).get(peer.name, [])[:_STATS_CARD_FACTS]:
+                lines.append(f"    - {fact}")
+    return "\n".join(lines)
+
+
+async def _handle_get_workspace_stats(
+    ctx: ToolContext, tool_input: dict[str, Any]
+) -> str:
+    """Workspace-level counts, message date range, and most active peers."""
+    _ = tool_input
+    async with tracked_db("workspace_tool.get_workspace_stats", read_only=True) as db:
+        stats = await crud.get_workspace_stats(
+            db, ctx.workspace_name, session_names=ctx.session_allowlist
+        )
+        peers = await crud.get_active_peers(
+            db,
+            ctx.workspace_name,
+            limit=_STATS_ACTIVE_PEERS,
+            session_names=ctx.session_allowlist,
+        )
+    return "Workspace stats:\n" + format_workspace_stats(stats, peers)
+
+
+# Dispatch table consulted before _TOOL_HANDLERS by the workspace executor.
+_WORKSPACE_TOOL_HANDLERS: dict[str, Callable[[ToolContext, dict[str, Any]], Any]] = {
+    "search_memory": _handle_search_memory_workspace,
+    "get_workspace_stats": _handle_get_workspace_stats,
+    "get_peer_card": _handle_get_peer_card_by_name,
+    "get_reasoning_chain": _handle_get_reasoning_chain,  # already workspace-scoped
+}
+
+# Standard handlers that are safe with an empty observer/observed sentinel
+# (they only read messages, treating observer="" as unscoped visibility).
+_WORKSPACE_SAFE_FALLTHROUGH_TOOLS: frozenset[str] = frozenset(
+    {
+        "get_observation_context",
+        "search_messages",
+        "grep_messages",
+        "get_messages_by_date_range",
+        "search_messages_temporal",
+    }
+)
+
+
+def _workspace_handler_resolver(tool_name: str) -> Any:
+    handler = _WORKSPACE_TOOL_HANDLERS.get(tool_name)
+    if handler is not None:
+        return handler
+    if tool_name in _WORKSPACE_SAFE_FALLTHROUGH_TOOLS:
+        return _TOOL_HANDLERS.get(tool_name)
+    return None
+
+
+async def create_workspace_tool_executor(
+    workspace_name: str,
+    session_name: str | None = None,
+    session_allowlist: list[str] | None = None,
+    history_token_limit: int = 8192,
+    run_id: str | None = None,
+    agent_type: str | None = None,
+    parent_category: str | None = None,
+    evidence: EvidenceAccumulator | None = None,
+) -> Callable[[str, dict[str, Any]], Any]:
+    """Tool executor for workspace-level operations (no bound peer pair).
+
+    Reuses create_tool_executor's telemetry/error plumbing via the
+    handler_resolver seam. observer/observed are empty-string sentinels only
+    ever seen by handlers in _WORKSPACE_SAFE_FALLTHROUGH_TOOLS, which
+    normalize them to None before hitting crud (None means "no perspective
+    scoping"; an empty string would read as a real peer with no sessions and
+    deny everything).
+    """
+    return await create_tool_executor(
+        workspace_name=workspace_name,
+        observer="",
+        observed="",
+        session_name=session_name,
+        session_allowlist=session_allowlist,
+        include_observation_ids=True,
+        history_token_limit=history_token_limit,
+        run_id=run_id,
+        agent_type=agent_type,
+        parent_category=parent_category,
+        handler_resolver=_workspace_handler_resolver,
+        evidence=evidence,
+    )

@@ -276,6 +276,7 @@ class SessionCreateParams(BaseModel):
     metadata: dict[str, Any] | None = None
     peers: dict[str, SessionPeerConfig] | None = None
     configuration: SessionConfiguration | None = None
+    scopes: list[str] | None = None
 
 
 class SessionUpdateParams(BaseModel):
@@ -293,6 +294,44 @@ class SessionListParams(BaseModel):
     model_config = ConfigDict(extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
 
     filters: dict[str, Any] | None = None
+
+
+# ==============================================================================
+# Scope Types
+# ==============================================================================
+
+
+class ScopeResponse(BaseModel):
+    """Scope API response."""
+
+    model_config = ConfigDict(populate_by_name=True)  # pyright: ignore[reportUnannotatedClassAttribute]
+
+    id: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime.datetime
+
+
+class ScopeBackfillJob(BaseModel):
+    """Backfill job state for one session in a scope.
+
+    ``docs_copied`` is present only once the backfill for that session completes.
+    """
+
+    model_config = ConfigDict(extra="ignore")  # pyright: ignore[reportUnannotatedClassAttribute]
+
+    state: Literal["pending", "completed", "failed"]
+    updated_at: datetime.datetime
+    docs_copied: int | None = None
+
+
+class ScopeStatusResponse(BaseModel):
+    """Scope backfill/reconciliation status API response.
+
+    ``backfill_status`` is keyed by session ID and only contains sessions that
+    have had a backfill enqueued.
+    """
+
+    backfill_status: dict[str, ScopeBackfillJob] = Field(default_factory=dict)
 
 
 # ==============================================================================
@@ -419,6 +458,8 @@ class ConclusionResponse(BaseModel):
     observed_id: str
     session_id: str | None = None
     level: ConclusionLevel = "explicit"
+    source_ids: list[str] | None = None
+    times_derived: int = 1
     created_at: datetime.datetime
 
 
@@ -504,12 +545,60 @@ class DialecticParams(BaseModel):
     stream: bool = False
     reasoning_level: ReasoningLevel = "low"
     response_format: dict[str, Any] | None = None
+    include_evidence: bool = False
+
+
+class EvidenceObservation(BaseModel):
+    """A conclusion the dialectic read while answering."""
+
+    id: str
+    level: ConclusionLevel
+    content: str
+    created_at: datetime.datetime
+    session_id: str | None = None
+    source_ids: list[str] = Field(default_factory=list)
+
+
+class EvidenceMessageRef(BaseModel):
+    """A message the dialectic read while answering.
+
+    Identity and provenance only -- no content. Fetch the message by `id` when
+    you need its text; evidence is for auditing what was read, not for reading
+    messages in bulk.
+    """
+
+    id: str
+    session_id: str
+    peer_id: str
+    created_at: datetime.datetime
+
+
+class EvidenceToolCall(BaseModel):
+    """A tool the dialectic invoked while answering."""
+
+    tool_name: str
+    tool_input: dict[str, Any] = Field(default_factory=dict)
+
+
+class Evidence(BaseModel):
+    """What the dialectic read and did while answering.
+
+    Collated from what the agent accessed rather than reported by the model, so
+    it over-reports: a listed conclusion was read, which is not proof the
+    answer leaned on it. `tool_calls` omits results and failed calls.
+    """
+
+    conclusions: list[EvidenceObservation] = Field(default_factory=list)
+    messages: list[EvidenceMessageRef] = Field(default_factory=list)
+    tool_calls: list[EvidenceToolCall] = Field(default_factory=list)
+    reasoning_trace_id: str | None = None
 
 
 class DialecticResponse(BaseModel):
     """Dialectic chat API response."""
 
     content: str | None
+    evidence: Evidence | None = None
 
 
 class DialecticStreamDelta(BaseModel):
@@ -523,6 +612,7 @@ class DialecticStreamChunk(BaseModel):
 
     delta: DialecticStreamDelta
     done: bool = False
+    evidence: Evidence | None = None
 
 
 # ==============================================================================

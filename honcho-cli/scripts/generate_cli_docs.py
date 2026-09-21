@@ -230,7 +230,7 @@ def build() -> str:
     body: list[str] = []
     for name in sorted(root.commands):
         body.extend(_render_top(root.commands[name], ["honcho", name]))
-    return HEADER + "\n".join(body) + "\n"
+    return HEADER + "\n".join(body).rstrip("\n") + "\n"
 
 
 def main() -> int:

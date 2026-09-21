@@ -3,17 +3,27 @@
 import logging
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Response
+from fastapi.responses import StreamingResponse
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import apaginate
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src import crud, schemas
+from src import crud, models, schemas
 from src.config import settings
-from src.dependencies import db, read_db
+from src.crud.message import get_peer_session_names
+from src.dependencies import db, read_db, tracked_db
 from src.deriver.enqueue import enqueue_deletion, enqueue_dream
-from src.exceptions import AuthenticationException
+from src.dialectic.chat import workspace_chat, workspace_chat_stream
+from src.exceptions import AuthenticationException, ValidationException
 from src.security import JWTParams, require_auth
+from src.telemetry import prometheus_metrics
+from src.utils.evidence import EvidenceAccumulator
+from src.utils.filter import MAX_SESSION_ALLOWLIST_ENTRIES
+from src.utils.schema_conversion import json_response_schema_to_pydantic
+from src.utils.scopes import validate_scope_read_option
 from src.utils.search import search
+from src.utils.sse import format_dialectic_sse_stream
 
 logger = logging.getLogger(__name__)
 
@@ -141,16 +151,38 @@ async def delete_workspace(
 )
 async def search_workspace(
     workspace_id: str = Path(...),
-    body: schemas.MessageSearchOptions = Body(
+    body: schemas.WorkspaceMessageSearchOptions = Body(
         ..., description="Message search parameters"
     ),
 ):
     """
     Search messages in a Workspace using optional filters. Use `limit` to control the number of
     results returned.
+
+    Pass `scope` to restrict the search to a scope's member sessions. A scope
+    with no member sessions returns no results (fail-closed).
     """
     # take user-provided filter and add workspace_id to it
     filters = body.filters or {}
+    if body.scope is not None:
+        if "session_id" in filters:
+            raise ValidationException(
+                "`scope` and a 'session_id' filter are mutually exclusive"
+            )
+        async with tracked_db(
+            "workspaces.search.resolve_scope", read_only=True
+        ) as scope_db:
+            [scope_peer] = await crud.resolve_scope_peers(
+                scope_db, workspace_id, [body.scope]
+            )
+            scope_sessions = await get_peer_session_names(
+                scope_db, workspace_id, scope_peer
+            )
+        if not scope_sessions:
+            # A scope with no member sessions matches nothing, not everything.
+            no_results: list[models.Message] = []
+            return no_results
+        filters["session_id"] = {"in": scope_sessions}
     filters["workspace_id"] = workspace_id
     return await search(body.query, filters=filters, limit=body.limit)
 
@@ -225,6 +257,10 @@ async def schedule_dream(
     observed = request.observed if request.observed is not None else request.observer
     dream_type = request.dream_type
 
+    # The authoritative observed-position check lives in enqueue_dream, in the same
+    # transaction as the queue insert. Nothing expensive happens before it here, so
+    # no early duplicate is needed.
+
     await enqueue_dream(
         workspace_id,
         observer=observer,
@@ -248,4 +284,96 @@ async def schedule_dream(
         observer,
         observed,
         request.session_id,
+    )
+
+
+@router.post(
+    "/{workspace_id}/chat",
+    summary="Workspace Chat",
+    responses={
+        200: {
+            "content": {
+                "application/json": {
+                    "schema": schemas.DialecticResponse.model_json_schema()
+                },
+                "text/event-stream": {},
+            },
+        },
+    },
+)
+async def chat(
+    workspace_id: str = Path(...),
+    options: schemas.WorkspaceChatOptions = Body(...),
+    jwt_params: JWTParams = Depends(require_auth(workspace_name="workspace_id")),
+):
+    """Query the entire workspace using natural language. Runs the Dialectic agent over every peer in the workspace rather than a single (observer, observed) pair: there is no anchor peer and no `target`.
+
+    Pass `session_id` to narrow message tools to one session, or `scope` to restrict recall to the union of the named scopes' member sessions (always an allowlist, even for a single name; a scope with no member sessions recalls nothing). `session_id` and `scope` are mutually exclusive.
+
+    Set `stream: true` to receive the answer as a `text/event-stream` of `{"delta": {"content": ...}, "done": false}` chunks terminated by `{"done": true}`. Requires a workspace- or admin-level key.
+    """
+    session_allowlist: list[str] | None = None
+    if options.scope is not None:
+        validate_scope_read_option(
+            filters=None,
+            session_id=options.session_id,
+            jwt_params=jwt_params,
+        )
+        names = [options.scope] if isinstance(options.scope, str) else options.scope
+        async with tracked_db(
+            "workspaces.chat.resolve_scope", read_only=True
+        ) as scope_db:
+            session_allowlist = await crud.resolve_scope_session_union(
+                scope_db, workspace_id, names
+            )
+        if len(session_allowlist) > MAX_SESSION_ALLOWLIST_ENTRIES:
+            raise ValidationException(
+                "The scopes' combined membership exceeds the maximum of "
+                + f"{MAX_SESSION_ALLOWLIST_ENTRIES} sessions per request"
+            )
+
+    response_model: type[BaseModel] | None = None
+    if options.response_format is not None:
+        try:
+            response_model = json_response_schema_to_pydantic(options.response_format)
+        except ValueError as e:
+            raise ValidationException(f"Invalid response_format: {e}") from None
+
+    if settings.METRICS.ENABLED:
+        prometheus_metrics.record_dialectic_call(
+            workspace_name=workspace_id,
+            reasoning_level=options.reasoning_level,
+        )
+
+    evidence = EvidenceAccumulator() if options.include_evidence else None
+
+    if options.stream:
+        return StreamingResponse(
+            format_dialectic_sse_stream(
+                workspace_chat_stream(
+                    workspace_name=workspace_id,
+                    session_name=options.session_id,
+                    query=options.query,
+                    reasoning_level=options.reasoning_level,
+                    response_model=response_model,
+                    session_allowlist=session_allowlist,
+                    evidence=evidence,
+                ),
+                evidence,
+            ),
+            media_type="text/event-stream",
+        )
+
+    response = await workspace_chat(
+        workspace_name=workspace_id,
+        session_name=options.session_id,
+        query=options.query,
+        reasoning_level=options.reasoning_level,
+        response_model=response_model,
+        session_allowlist=session_allowlist,
+        evidence=evidence,
+    )
+    return schemas.DialecticResponse(
+        content=response if response else None,
+        evidence=evidence.build() if evidence is not None else None,
     )

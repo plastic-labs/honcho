@@ -5,10 +5,32 @@ This module contains simplified prompt templates focused only on observation ext
 NO peer card instructions, NO working representation - just extract observations.
 """
 
+import re
+from datetime import datetime
 from functools import cache
 from inspect import cleandoc as c
 
 from src.utils.tokens import estimate_tokens
+
+_MESSAGE_TAG = re.compile(r"<(?=/?message\b)", re.IGNORECASE)
+
+
+def format_deriver_message(
+    idx: int, peer: str, target: str, created_at: datetime, content: str
+) -> str:
+    """Wrap one batch message in a tag carrying its index, author, and target flag.
+
+    Peer ids are restricted to ``[a-zA-Z0-9_-]`` upstream, so only the content
+    can carry markup; any ``<message``/``</message`` inside it is neutralized so
+    a message cannot forge its own tag boundary.
+    """
+    is_target = "true" if peer == target else "false"
+    time_str = created_at.strftime("%Y-%m-%d %H:%M:%S")
+    safe_content = _MESSAGE_TAG.sub("&lt;", content)
+    return (
+        f'<message idx="{idx}" peer="{peer}" target="{is_target}" time="{time_str}">'
+        f"{safe_content}</message>"
+    )
 
 
 def _normalized_custom_instructions(custom_instructions: str | None) -> str | None:
@@ -47,7 +69,7 @@ def minimal_deriver_prompt(
 
     Args:
         peer_id: The ID of the user being analyzed.
-        messages: All messages in the range (interleaving messages and new turns combined).
+        messages: Batch messages, each wrapped by ``format_deriver_message``.
 
     Returns:
         Formatted prompt string for observation extraction.
@@ -55,41 +77,33 @@ def minimal_deriver_prompt(
     custom_instructions_section = _custom_instructions_section(custom_instructions)
     return c(
         f"""
-Analyze messages from {peer_id} to extract **explicit molecular facts** about them.
+Analyze messages to extract **explicit atomic facts** about the target peer.
 
 [EXPLICIT] DEFINITION: Facts about the target peer that can be derived directly from their messages.
    - Transform statements into one or multiple conclusions
    - Each conclusion must be self-contained with enough context
    - Use absolute dates/times when possible (e.g. "June 26, 2025" not "yesterday")
 
-DECONTEXTUALITY (stranger test): Each observation must be interpretable by a stranger with no access to the conversation.
-   - Add enduring descriptors (role, relationship, title) that identify who or what is being discussed.
-   - Do NOT add incidental descriptors (time of mention, message number, turn order).
-   - "He is nervous" fails the stranger test. "Ann is nervous about the pharmacy job interview" passes.
-   - Use absolute dates, not relative ones ("June 26, 2025" not "yesterday").
-
-MINIMALITY: Add only enough context to make the claim interpretable by a stranger.
-   - Do not add biographical background, explanatory additions, or redundant qualifiers.
-   - "Ann is nervous about the job interview at the pharmacy" is minimal.
-   - "Ann, who grew up in Boston and studied chemistry, is nervous about the job interview at the pharmacy" is over-specified.
-
 RULES:
-- The target peer is {peer_id}, identified below under `Target peer:`.
+- The target peer is the peer identified below under `Target peer:`.
 - A peer can be a human user, AI agent, bot, service, or other actor.
+- Each message is wrapped as `<message idx="N" peer="..." target="true|false" time="...">`. `target="true"` marks messages authored by the target peer; `target="false"` marks everyone else.
+- Extract ALL observations from `target="true"` messages. Use `target="false"` messages only as context to interpret them; never derive a fact about the target peer from what another peer said, did, or reported.
+- A batch may contain few or no `target="true"` messages, even when it holds many long messages from other peers (agent turns, tool output, system notices). In that case produce few or no conclusions.
 - Use the exact peer id from `Target peer:` in final observations, not the phrase "the target peer".
-- Properly attribute observations to the correct subject: if it is about {peer_id}, say so. If {peer_id} is referencing someone or something else, make that clear.
-- Observations should make sense on their own. Each observation will be used in the future to better understand {peer_id}.
-- Extract ALL observations from {peer_id} messages, using others as context.
+- Properly attribute observations to the correct subject: if it is about the target peer, use the exact peer id as the subject. If the target peer is referencing someone or something else, make that clear.
+- Observations should make sense on their own. Each observation will be used in the future to better understand the target peer.
 - Contextualize each observation sufficiently (e.g. "Ann is nervous about the job interview at the pharmacy" not just "Ann is nervous")
-- source_indices: Each message in the <messages> block is prefixed with a 0-based index like [0], [1], [2]. For each observation, set source_indices to the indices of the messages that directly support it. Source messages can be from ANY speaker — the user, an assistant, or another participant. What matters is which messages contain the evidence for the conclusion, not who said them. For example, if the assistant proposes a plan and the user confirms it, both messages are source material. Include the message containing any context needed to interpret the conclusion (e.g., the question being answered by "the first one"). Only include messages that directly support the observation — not the entire conversation.
 
-EXAMPLES (using `{peer_id}` as the target peer id):
-- EXPLICIT: "I just had my 25th birthday last Saturday" → "{peer_id} is 25 years old", "{peer_id}'s birthday is June 21st"
-- EXPLICIT: "I took my dog for a walk in NYC" → "{peer_id} has a dog", "{peer_id} lives in NYC"
-- EXPLICIT: "I went to college and then started working at the pharmacy" → "{peer_id} attended college", "{peer_id} works at the pharmacy"
-- EXPLICIT: "{peer_id} attended college" + general knowledge → "{peer_id} completed high school or equivalent"
-- EXPLICIT (assistant-sourced): Assistant says "Let's set up a Flask project with SQLite" and {peer_id} replies "Sounds good, let's do that" → source_indices: [1, 2], content: "{peer_id} is building a project with Flask and SQLite" (the assistant's proposal and the user's confirmation both support this)
-- EXPLICIT (multi-message): {peer_id} asks "Should I use Postgres or SQLite?" and assistant says "SQLite is simpler for a project like yours" and {peer_id} says "OK, SQLite it is" → source_indices: [0, 1, 2], content: "{peer_id} chose SQLite for their project" (the question provides context, the recommendation explains the reasoning, and the confirmation establishes the decision)
+<examples>
+These examples are fabricated illustrations of the output format. Never emit a conclusion for which content comes from these examples. Every conclusion must be supported by the <messages> block only.
+
+EXAMPLES (using `alice` as the target peer id):
+- EXPLICIT: <message idx="0" peer="alice" target="true">I just turned 25</message> → "alice is 25 years old"
+- EXPLICIT: <message idx="1" peer="alice" target="true">I took my dog for a walk in NYC</message> → "alice has a dog", "alice walked her dog in NYC"
+- EXPLICIT: <message idx="2" peer="alice" target="true">I've lived in NYC for six years</message> → "alice lives in NYC", "alice has lived in NYC for six years"
+- NO CONCLUSION: <message idx="3" peer="assistant" target="false">I read the config file and found the port is 8080</message> → nothing; the assistant acted, not alice
+</examples>
 
 {custom_instructions_section}
 

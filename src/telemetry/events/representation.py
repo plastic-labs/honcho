@@ -154,6 +154,10 @@ class RepresentationCompletedEvent(BaseEvent):
         default=0,
         description="Number of observers this representation was saved against",
     )
+    failed_observer_count: int = Field(
+        default=0,
+        description="Number of observers whose save_representation failed (partial or total)",
+    )
 
     def get_resource_id(self) -> str:
         """Resource ID includes workspace, session, and latest message for uniqueness."""

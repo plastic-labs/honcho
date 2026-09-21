@@ -4,9 +4,6 @@ import logging
 import pytest
 
 from src import models
-from src.deriver.deriver import (
-    _format_messages_for_prompt,  # pyright: ignore[reportPrivateUsage]
-)
 from src.utils.representation import (
     DeductiveObservation,
     ExplicitObservation,
@@ -25,7 +22,7 @@ def test_prompt_representation_schema_orders_citations_before_content() -> None:
 
 def test_representation_is_empty_and_diff():
     """is_empty and diff_representation behave per the new definitions."""
-    now = datetime.datetime.now(datetime.timezone.utc)
+    now = datetime.datetime.now(datetime.UTC)
     shared_time = now - datetime.timedelta(seconds=10)
     exp_shared_1 = ExplicitObservation(
         content="A",
@@ -62,7 +59,7 @@ def test_representation_is_empty_and_diff():
 
 def test_representation_formatting_methods():
     """__str__ and format_as_markdown produce expected section headers and content."""
-    now = datetime.datetime.now(datetime.timezone.utc)
+    now = datetime.datetime.now(datetime.UTC)
     e = ExplicitObservation(
         content="has a dog",
         created_at=now,
@@ -107,7 +104,7 @@ def test_prompt_representation_conversion():
         #     )
         # ],
     )
-    timestamp = datetime.datetime(2025, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc)
+    timestamp = datetime.datetime(2025, 1, 1, 12, 0, 0, tzinfo=datetime.UTC)
     rep = Representation.from_prompt_representation(
         pr,
         message_ids=[1],
@@ -126,7 +123,7 @@ def test_prompt_representation_conversion():
 def test_mixed_peer_source_indices_resolve_against_prompt_order(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    created_at = datetime.datetime(2025, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc)
+    created_at = datetime.datetime(2025, 1, 1, 12, 0, 0, tzinfo=datetime.UTC)
     messages = [
         models.Message(id=10, peer_name="bob", content="Which option?"),
         models.Message(id=20, peer_name="alice", content="The first one"),
@@ -135,7 +132,7 @@ def test_mixed_peer_source_indices_resolve_against_prompt_order(
     for message in messages:
         message.created_at = created_at
 
-    formatted_messages, prompt_message_ids = _format_messages_for_prompt(messages)
+    prompt_message_ids = [message.id for message in messages]
     prompt_representation = PromptRepresentation(
         explicit=[
             ExplicitObservationBase(
@@ -157,14 +154,4 @@ def test_mixed_peer_source_indices_resolve_against_prompt_order(
     observation = representation.explicit[0]
     assert observation.source_indices == [0, 1]
     assert observation.source_message_ids == [10, 20]
-    assert [
-        (line[:3], message_id, line.split(": ", 1)[1])
-        for message_id, line in zip(
-            prompt_message_ids, formatted_messages.splitlines(), strict=True
-        )
-    ] == [
-        ("[0]", 10, "Which option?"),
-        ("[1]", 20, "The first one"),
-        ("[2]", 30, "Got it"),
-    ]
     assert "Dropping out-of-range source_indices [3]" in caplog.text

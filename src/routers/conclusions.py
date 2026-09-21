@@ -110,7 +110,10 @@ async def query_conclusions(
 
     if not observer or not observed:
         raise ValidationException(
-            "observer and observed must be specified for semantic search"
+            "observer and observed must be specified for semantic search. "
+            + "Pass them inside the 'filters' object, e.g. "
+            + '{"query": "...", "filters": {"observer": "alice", "observed": "bob"}}. '
+            + "Both 'observer'/'observer_id' and 'observed'/'observed_id' are accepted."
         )
 
     with embedding_call_purpose(
@@ -129,6 +132,26 @@ async def query_conclusions(
             top_k=body.top_k,
         )
     return [schemas.Conclusion.model_validate(doc) for doc in documents]
+
+
+@router.get(
+    "/{conclusion_id}",
+    response_model=schemas.Conclusion,
+)
+async def get_conclusion(
+    workspace_id: str = Path(...),
+    conclusion_id: str = Path(...),
+    db: AsyncSession = read_db,
+) -> schemas.Conclusion:
+    """Get a single Conclusion by ID."""
+    documents = await crud.get_documents_by_ids(
+        db,
+        workspace_name=workspace_id,
+        document_ids=[conclusion_id],
+    )
+    if not documents:
+        raise ResourceNotFoundException("Conclusion not found")
+    return schemas.Conclusion.model_validate(documents[0])
 
 
 @router.delete(

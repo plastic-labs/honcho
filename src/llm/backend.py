@@ -27,7 +27,7 @@ class CompletionResult:
     output_tokens: int = 0
     cache_creation_input_tokens: int = 0
     cache_read_input_tokens: int = 0
-    finish_reason: str = "stop"
+    finish_reason: str | None = "stop"
     tool_calls: list[ToolCallResult] = field(default_factory=list)
     thinking_content: str | None = None
     thinking_blocks: list[dict[str, Any]] = field(default_factory=list)

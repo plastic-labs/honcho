@@ -81,3 +81,50 @@ def test_representation_batch_target_input_cannot_exceed_max_input_tokens() -> N
             MAX_INPUT_TOKENS=1000,
             REPRESENTATION_BATCH_TARGET_INPUT_TOKENS=2048,
         )
+
+
+def _configured_with_timeout(timeout: object) -> ConfiguredModelSettings:
+    return ConfiguredModelSettings.model_validate(
+        {
+            "model": "gpt-5.4-mini",
+            "transport": "openai",
+            "overrides": {"provider_params": {"timeout": timeout}},
+        }
+    )
+
+
+@pytest.mark.parametrize("timeout", [30, 42.5, "42.5", " 60 "])
+def test_provider_timeout_is_normalized_at_config_load(timeout: object) -> None:
+    settings = _configured_with_timeout(timeout)
+
+    normalized = settings.overrides.provider_params["timeout"]
+    assert isinstance(normalized, float)
+    assert normalized == float(str(timeout).strip())
+
+
+@pytest.mark.parametrize(
+    "timeout",
+    ["slow", "", 0, -1, True, float("nan"), float("inf"), "nan", "inf", None, [30]],
+)
+def test_provider_timeout_is_rejected_at_config_load(timeout: object) -> None:
+    with pytest.raises(
+        ValueError, match=r"provider_params\.timeout must be a positive number"
+    ):
+        _configured_with_timeout(timeout)
+
+
+def test_provider_timeout_on_fallback_overrides_is_validated_at_config_load() -> None:
+    with pytest.raises(
+        ValueError, match=r"provider_params\.timeout must be a positive number"
+    ):
+        ConfiguredModelSettings.model_validate(
+            {
+                "model": "gpt-5.4-mini",
+                "transport": "openai",
+                "fallback": {
+                    "model": "gpt-4.1",
+                    "transport": "openai",
+                    "overrides": {"provider_params": {"timeout": "slow"}},
+                },
+            }
+        )

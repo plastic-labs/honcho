@@ -6,11 +6,13 @@ API contract.
 
 import datetime
 import ipaddress
-from typing import Annotated, Any, Self, cast
+import re
+from typing import Annotated, Any, Literal, Self, cast
 from urllib.parse import urlparse
 
 import tiktoken
 from pydantic import (
+    AfterValidator,
     AliasChoices,
     BaseModel,
     BeforeValidator,
@@ -29,6 +31,12 @@ from src.schemas.configuration import (
     SessionPeerConfig,
     WorkspaceConfiguration,
 )
+from src.utils.sanitization import NulStripped, strip_nul
+from src.utils.scopes import (
+    SCOPE_PEER_PREFIX,
+    is_scope_peer_name,
+    scope_name_from_peer,
+)
 from src.utils.types import DocumentLevel
 
 # ---------------------------------------------------------------------------
@@ -39,19 +47,6 @@ RESOURCE_NAME_PATTERN = r"^[a-zA-Z0-9_-]+$"
 
 _METADATA_MAX_KEYS = 100
 _METADATA_MAX_DEPTH = 5
-
-
-def _sanitize_value(v: Any) -> Any:
-    """Recursively strip NUL bytes from strings in nested data structures."""
-    if isinstance(v, str):
-        return v.replace("\x00", "")
-    if isinstance(v, dict):
-        d = cast(dict[str, Any], v)
-        return {_sanitize_value(k): _sanitize_value(val) for k, val in d.items()}
-    if isinstance(v, list):
-        lst = cast(list[Any], v)
-        return [_sanitize_value(item) for item in lst]
-    return v
 
 
 def _check_metadata_limits(
@@ -81,10 +76,48 @@ def _validate_metadata(v: Any) -> Any:
         return v
     data = cast(dict[str, Any], v)
     _check_metadata_limits(data)
-    return _sanitize_value(data)
+    return strip_nul(data)
 
 
 _SanitizedMetadata = Annotated[dict[str, Any], BeforeValidator(_validate_metadata)]
+
+# Scope names are stored as peer names with the reserved prefix prepended, so
+# they must leave room for the prefix within the 512-character peer name limit.
+_SCOPE_NAME_MAX_LENGTH = 512 - len(SCOPE_PEER_PREFIX)
+
+
+def _validate_scope_name(name: str) -> str:
+    """Validate an unprefixed scope name."""
+    if not 1 <= len(name) <= _SCOPE_NAME_MAX_LENGTH:
+        raise ValueError(
+            f"Scope name must be between 1 and {_SCOPE_NAME_MAX_LENGTH} characters"
+        )
+    # Checked before the charset pattern: the reserved prefix is itself outside
+    # RESOURCE_NAME_PATTERN, so the pattern would otherwise reject a
+    # double-prefixed name first and report the charset instead of the real
+    # mistake.
+    if name.startswith(SCOPE_PEER_PREFIX):
+        raise ValueError(
+            "Scope name must not start with the reserved prefix "
+            + f"'{SCOPE_PEER_PREFIX}' (scope names are unprefixed)"
+        )
+    if not re.fullmatch(RESOURCE_NAME_PATTERN, name):
+        raise ValueError(f"Scope name must match pattern {RESOURCE_NAME_PATTERN}")
+    return name
+
+
+_ScopeName = Annotated[str, AfterValidator(_validate_scope_name)]
+
+# The `scope` read option (chat / representation): one scope name, or a bounded
+# list of them. The length cap sits on the list member so it bounds the *list* —
+# a single name is already bounded by `_validate_scope_name`, and a union-level
+# `max_length` would cap that name's characters instead. The upper bound matches
+# `SessionCreate.scopes`; the lower one rejects `[]`, which would otherwise
+# resolve to an empty allowlist and silently recall nothing.
+_ScopeOption = (
+    _ScopeName | Annotated[list[_ScopeName], Field(min_length=1, max_length=100)]
+)
+
 
 # ---------------------------------------------------------------------------
 # Workspace schemas
@@ -139,19 +172,47 @@ class PeerBase(BaseModel):
     pass
 
 
-class PeerCreate(PeerBase):
+class PeerSpec(PeerBase):
+    """Peer identity plus optional updates, for callers that already have a name.
+
+    ``PeerCreate`` narrows ``name`` with ``pattern=RESOURCE_NAME_PATTERN`` because it
+    validates a *new, user-supplied* peer id at the API boundary. crud paths reach
+    ``get_or_create_peers`` with names that already exist — a path param, a message
+    author, an existing row — including pre-``d429de0e5338`` legacy names containing
+    '.' and every ``scope.``-prefixed peer name. Re-validating those turns a lookup
+    into a raw pydantic ValidationError, i.e. an HTTP 500.
+
+    Carries **no** constraints at all, deliberately. Length limits here were the
+    same trap as the charset pattern: request-bound peer names (message authors,
+    session peer-map keys) have no length bound of their own, so an empty or
+    over-long name reached ``PeerSpec(...)`` and raised internally — again a 500.
+    Every rule for a *new* name lives in ``crud.peer._validate_new_peer_names``,
+    which runs on the insert path only.
+    """
+
+    name: str
+    metadata: _SanitizedMetadata | None = None
+    configuration: dict[str, Any] | None = None
+
+
+class PeerCreate(PeerSpec):
     name: Annotated[
         str,
         Field(alias="id", min_length=1, max_length=512, pattern=RESOURCE_NAME_PATTERN),
     ]
-    metadata: _SanitizedMetadata | None = None
-    configuration: dict[str, Any] | None = None
 
     model_config = ConfigDict(populate_by_name=True)  # pyright: ignore
 
 
 class PeerGet(PeerBase):
     filters: dict[str, Any] | None = None
+    kind: Literal["scope", "all"] | None = Field(
+        default=None,
+        description=(
+            "Which kinds of peers to list. Omitted (default): regular peers only "
+            "(scope peers are excluded). 'scope': scope peers only. 'all': every peer."
+        ),
+    )
 
 
 class PeerUpdate(PeerBase):
@@ -184,6 +245,19 @@ class PeerRepresentationGet(BaseModel):
             "supports only the 'session_id' key: a session id, a list of "
             'session ids, or {"in": [...]}. When session_id is also set, it '
             "must be included in the allowlist."
+        ),
+    )
+    scope: _ScopeOption | None = Field(
+        None,
+        description=(
+            "Optional (unprefixed) scope name(s) to confine the representation. "
+            "A single scope reads the scope's own representation of the target "
+            "peer, formed only from the scope's member sessions. A list of "
+            "scopes restricts the representation to conclusions from the union "
+            "of the scopes' member sessions (explicit allowlist, fail-closed: "
+            "an empty union yields an empty representation). Mutually "
+            "exclusive with `filters` and `session_id`. Requires a workspace- "
+            "or admin-level key."
         ),
     )
     target: str | None = Field(
@@ -236,7 +310,7 @@ class PeerCardSet(BaseModel):
     def sanitize_peer_card(cls, v: Any) -> Any:
         if isinstance(v, list):
             return [
-                item.replace("\x00", "") if isinstance(item, str) else item
+                strip_nul(item) if isinstance(item, str) else item
                 for item in cast(list[Any], v)
             ]
         return v
@@ -263,7 +337,7 @@ class MessageCreate(MessageBase):
     @field_validator("content", mode="after")
     @classmethod
     def sanitize_content(cls, v: str) -> str:
-        return v.replace("\x00", "")
+        return strip_nul(v)
 
     @property
     def encoded_message(self) -> list[int]:
@@ -337,6 +411,25 @@ class SessionCreate(SessionBase):
     metadata: _SanitizedMetadata | None = None
     peer_names: dict[str, SessionPeerConfig] | None = Field(default=None, alias="peers")
     configuration: SessionConfiguration | None = None
+    scopes: list[str] | None = Field(
+        default=None,
+        max_length=100,
+        description=(
+            "Optional list of (unprefixed) scope names to add this session to. "
+            "Each scope is created if it does not exist yet. If the session "
+            "already has messages, its existing documents are backfilled into "
+            "the scope asynchronously."
+        ),
+    )
+
+    @field_validator("scopes")
+    @classmethod
+    def validate_scopes(cls, v: list[str] | None) -> list[str] | None:
+        if v is None:
+            return v
+        for scope_name in v:
+            _validate_scope_name(scope_name)
+        return v
 
     model_config = ConfigDict(populate_by_name=True)  # pyright: ignore
 
@@ -432,6 +525,73 @@ class SessionSummaries(SessionBase):
 
 
 # ---------------------------------------------------------------------------
+# Scope schemas
+# ---------------------------------------------------------------------------
+
+
+class ScopeCreate(BaseModel):
+    """Schema for creating (or getting) a scope by its unprefixed name."""
+
+    name: Annotated[str, Field(alias="id", min_length=1)]
+    metadata: _SanitizedMetadata | None = None
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        return _validate_scope_name(v)
+
+    model_config = ConfigDict(populate_by_name=True)  # pyright: ignore
+
+
+class Scope(BaseModel):
+    """Scope response — external view of the peer backing a scope.
+
+    The ``id`` is the unprefixed scope name; the reserved peer-name prefix is
+    an internal implementation detail and never surfaces here.
+    """
+
+    name: str = Field(serialization_alias="id")
+    h_metadata: dict[str, Any] = Field(
+        default_factory=dict, serialization_alias="metadata"
+    )
+    created_at: datetime.datetime
+
+    @field_validator("name", mode="after")
+    @classmethod
+    def strip_scope_prefix(cls, v: str) -> str:
+        # Constructed from Peer ORM rows whose names carry the prefix; accept
+        # already-unprefixed names too so manual construction works.
+        return scope_name_from_peer(v) if is_scope_peer_name(v) else v
+
+    model_config = ConfigDict(  # pyright: ignore
+        from_attributes=True, populate_by_name=True
+    )
+
+
+class ScopeSessionsAdd(BaseModel):
+    """Schema for adding sessions to a scope."""
+
+    session_ids: list[str] = Field(
+        ...,
+        min_length=1,
+        max_length=100,
+        description="IDs of existing sessions to add to the scope",
+    )
+
+
+class ScopeStatus(BaseModel):
+    """Per-session backfill/reconciliation job status for a scope.
+
+    ``backfill_status`` maps each session that has had a backfill enqueued to
+    its current job state: ``{state, updated_at[, docs_copied]}`` where
+    ``state`` is ``pending``/``completed``/``failed`` and ``docs_copied`` is
+    present once a backfill completes.
+    """
+
+    backfill_status: dict[str, dict[str, Any]] = Field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
 # Conclusion schemas
 # ---------------------------------------------------------------------------
 
@@ -463,6 +623,18 @@ class Conclusion(BaseModel):
             "from messages) or 'deductive'/'inductive'/'contradiction' (derived "
             "during dreaming)."
         ),
+    )
+    source_ids: list[str] | None = Field(
+        default=None,
+        description=(
+            "IDs of the conclusions this one was derived from: premises for "
+            "'deductive', supporting sources for 'inductive', conflicting "
+            "conclusions for 'contradiction'. None for 'explicit' conclusions."
+        ),
+    )
+    times_derived: int = Field(
+        default=1,
+        description="Number of times this conclusion has been independently derived.",
     )
     created_at: datetime.datetime
 
@@ -510,7 +682,7 @@ class ConclusionCreate(BaseModel):
     @field_validator("content", mode="after")
     @classmethod
     def sanitize_content(cls, v: str) -> str:
-        return v.replace("\x00", "")
+        return strip_nul(v)
 
     @model_validator(mode="after")
     def validate_token_count(self) -> Self:
@@ -545,7 +717,7 @@ class ConclusionBatchCreate(BaseModel):
 
 
 class MessageSearchOptions(BaseModel):
-    query: Annotated[str, Field(..., description="Search query")]
+    query: Annotated[str, Field(..., description="Search query"), NulStripped]
     filters: dict[str, Any] | None = Field(
         default=None, description="Filters to scope the search"
     )
@@ -556,15 +728,33 @@ class MessageSearchOptions(BaseModel):
         description="Number of results to return",
     )
 
-    @field_validator("query", mode="after")
-    @classmethod
-    def sanitize_query(cls, v: str) -> str:
-        return v.replace("\x00", "")
+
+class WorkspaceMessageSearchOptions(MessageSearchOptions):
+    """Workspace-level message search options, extended with `scope`."""
+
+    scope: str | None = Field(
+        default=None,
+        description=(
+            "Optional (unprefixed) scope name restricting search to the "
+            "scope's member sessions. A scope with no member sessions returns "
+            "no results. Mutually exclusive with a 'session_id' key in "
+            "`filters`."
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
 # Dialectic schemas
 # ---------------------------------------------------------------------------
+
+
+_INCLUDE_EVIDENCE_DESCRIPTION = (
+    "When true, the response includes an `evidence` object listing the"
+    " conclusions and messages the agent read while answering, plus the tool"
+    " calls it made. Evidence is collated from what the agent accessed; the"
+    " model is never asked to cite anything, so evidence may over-report"
+    " (accessed is not the same as used)."
+)
 
 
 class DialecticOptions(BaseModel):
@@ -581,12 +771,27 @@ class DialecticOptions(BaseModel):
             "also set, it must be included in the allowlist."
         ),
     )
+    scope: _ScopeOption | None = Field(
+        None,
+        description=(
+            "Optional (unprefixed) scope name(s) to confine recall. A single "
+            "scope answers from the scope's own representation of the target "
+            "peer: conclusion recall is confined to what the scope observed "
+            "and message recall to the scope's member sessions. A list of "
+            "scopes restricts recall to the union of the scopes' member "
+            "sessions (explicit allowlist, fail-closed: an empty union "
+            "recalls nothing). Mutually exclusive with `filters` and "
+            "`session_id`. Requires a workspace- or admin-level key."
+        ),
+    )
     target: str | None = Field(
         None,
         description="Optional peer to get the representation for, from the perspective of this peer",
     )
     query: Annotated[
-        str, Field(min_length=1, max_length=10000, description="Dialectic API Prompt")
+        str,
+        Field(min_length=1, max_length=10000, description="Dialectic API Prompt"),
+        NulStripped,
     ]
     stream: bool = False
     reasoning_level: ReasoningLevel = Field(
@@ -603,15 +808,145 @@ class DialecticOptions(BaseModel):
             " maxLength, ...) are hints to the model, not enforced server-side."
         ),
     )
+    include_evidence: bool = Field(
+        default=False, description=_INCLUDE_EVIDENCE_DESCRIPTION
+    )
 
-    @field_validator("query", mode="after")
-    @classmethod
-    def sanitize_query(cls, v: str) -> str:
-        return v.replace("\x00", "")
+
+class WorkspaceChatOptions(BaseModel):
+    """Options for workspace-level chat (no anchor peer; see DialecticOptions)."""
+
+    session_id: str | None = Field(
+        None, description="Optional session to scope message tools to"
+    )
+    query: Annotated[
+        str,
+        Field(min_length=1, max_length=10000, description="Workspace chat prompt"),
+        NulStripped,
+    ]
+    stream: bool = False
+    reasoning_level: ReasoningLevel = Field(
+        default="low",
+        description="Level of reasoning to apply: minimal, low, medium, high, or max",
+    )
+    response_format: dict[str, Any] | None = Field(
+        None,
+        description=(
+            "Optional JSON Schema (root type 'object') the response must conform"
+            " to. When provided, `content` is a JSON string matching this schema."
+        ),
+    )
+    scope: _ScopeOption | None = Field(
+        None,
+        description=(
+            "Optional (unprefixed) scope name(s) restricting recall to the "
+            "union of the scopes' member sessions (explicit allowlist, "
+            "fail-closed: an empty union recalls nothing). Mutually exclusive "
+            "with `session_id`. Requires a workspace- or admin-level key."
+        ),
+    )
+    include_evidence: bool = Field(
+        default=False, description=_INCLUDE_EVIDENCE_DESCRIPTION
+    )
+
+
+class EvidenceObservation(BaseModel):
+    """A conclusion the dialectic agent read while answering."""
+
+    id: str = Field(description="Conclusion (document) ID")
+    level: DocumentLevel = Field(
+        description="Conclusion level: explicit, deductive, inductive, or contradiction"
+    )
+    content: str = Field(
+        description="The conclusion text (the derived conclusion, for non-explicit levels)"
+    )
+    created_at: datetime.datetime = Field(
+        description="When the conclusion was derived, from its source messages when known"
+    )
+    session_id: str | None = Field(
+        default=None, description="Session the conclusion is scoped to, if any"
+    )
+    source_ids: list[str] = Field(
+        default_factory=list,
+        description=(
+            "IDs of the conclusions this one was derived from. Empty for explicit"
+            " conclusions, which derive from messages rather than from other"
+            " conclusions."
+        ),
+    )
+
+
+class EvidenceMessageRef(BaseModel):
+    """A message the dialectic agent read while answering.
+
+    Identity and provenance only -- no content. Message content is
+    caller-supplied and unbounded, so carrying it would let one answer drag
+    megabytes behind it, and would invite callers to read messages out of
+    evidence in bulk rather than asking for the ones they want. Fetch the
+    message by `id` when the text is needed.
+    """
+
+    id: str = Field(description="Message ID")
+    session_id: str = Field(description="Session the message belongs to")
+    peer_id: str = Field(description="Peer who sent the message")
+    created_at: datetime.datetime = Field(description="When the message was sent")
+
+
+class EvidenceToolCall(BaseModel):
+    """A tool the dialectic agent invoked while answering."""
+
+    tool_name: str = Field(description="Name of the tool")
+    tool_input: dict[str, Any] = Field(
+        default_factory=dict, description="Arguments the agent passed to the tool"
+    )
+
+
+class Evidence(BaseModel):
+    """What the dialectic agent read and did while answering.
+
+    Collated from the agent's own reads rather than reported by the model, so
+    it is deterministic but over-reports: it lists what the agent accessed,
+    which is not necessarily what the answer relied on.
+
+    Meant for auditing and analytics -- inspecting why an answer looks the way
+    it does, or measuring what recall actually reaches the agent. It is not a
+    read API: conclusions carry their text because that text is the thing being
+    audited and the deriver keeps it short, while messages carry identity alone
+    (see `EvidenceMessageRef`).
+    """
+
+    conclusions: list[EvidenceObservation] = Field(
+        default_factory=list,
+        description="Conclusions the agent read, whether prefetched or found via its tools",
+    )
+    messages: list[EvidenceMessageRef] = Field(
+        default_factory=list,
+        description=(
+            "Messages the agent read via its search and grep tools, by ID and"
+            " provenance only. Fetch a message to read its content."
+        ),
+    )
+    tool_calls: list[EvidenceToolCall] = Field(
+        default_factory=list,
+        description=(
+            "Tools the agent invoked, in order, with their arguments. Results are"
+            " omitted (they are reflected in `conclusions` and `messages`), and so"
+            " are calls that failed, so this is a record of successful invocations"
+            " rather than a complete reasoning trace."
+        ),
+    )
+    reasoning_trace_id: str | None = Field(
+        default=None,
+        description="ID of the stored reasoning trace for this call, when trace storage is enabled",
+    )
 
 
 class DialecticResponse(BaseModel):
     content: str | None
+    evidence: Evidence | None = Field(
+        default=None,
+        description="What the answer was built from. Present only when `include_evidence` is true.",
+    )
 
 
 class DialecticStreamDelta(BaseModel):
@@ -629,6 +964,13 @@ class DialecticStreamChunk(BaseModel):
 
     delta: DialecticStreamDelta
     done: bool = False
+    evidence: Evidence | None = Field(
+        default=None,
+        description=(
+            "What the answer was built from. Set only on the final chunk"
+            " (`done` is true) and only when `include_evidence` is true."
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -649,6 +991,18 @@ class SessionQueueStatus(BaseModel):
         description="Work units currently being processed"
     )
     pending_work_units: int = Field(description="Work units waiting to be processed")
+
+
+class ErrorResponse(BaseModel):
+    """The body returned for every raised HonchoException.
+
+    `HTTPValidationError` is FastAPI's own 422 shape, whose `detail` is an array
+    of per-field errors. Honcho's handler returns a single message string
+    instead (see `honcho_exception_handler` in `src/main.py`), so error codes
+    raised from application code document this schema rather than that one.
+    """
+
+    detail: str = Field(description="What went wrong")
 
 
 class QueueStatus(BaseModel):
