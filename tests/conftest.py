@@ -4,7 +4,7 @@ import os
 import re
 import time
 import uuid
-from collections.abc import AsyncGenerator, Callable
+from collections.abc import AsyncGenerator, Callable, Generator
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -351,6 +351,13 @@ async def _clear_all_tables(engine: AsyncEngine) -> None:
         return
 
     statement = "; ".join(f"DELETE FROM {name}" for name in table_names)
+    # The preserved tenants rows still carry per-test mutable state: a pause one
+    # test set must not exclude that tenant from another test's claim.
+    tenants_table = next(t for t in Base.metadata.sorted_tables if t.name == "tenants")
+    tenants_name = (
+        f'"{tenants_table.schema}"."tenants"' if tenants_table.schema else '"tenants"'
+    )
+    statement += f"; UPDATE {tenants_name} SET derivation_paused = false"
     async with engine.begin() as conn:
         await conn.exec_driver_sql(statement)
 
@@ -1010,6 +1017,7 @@ def mock_tracked_db(request: pytest.FixtureRequest):
         "src.reconciler.sync_vectors.service_db",
         "src.reconciler.embed_now.service_db",
         "src.routers.tenants.service_db",
+        "src.derivation_pause.service_db",
         "src.dialectic.core.tracked_db",
         "src.dreamer.specialists.tracked_db",
         "src.dreamer.surprisal.tracked_db",
@@ -1067,3 +1075,13 @@ def mock_crud_collection_operations(request: pytest.FixtureRequest):
         mock_get_or_create_collection,
     ):
         yield
+
+
+@pytest.fixture(autouse=True)
+def reset_derivation_pause_state() -> Generator[None]:
+    """The paused-tenant set is process-global; no test may inherit another's."""
+    from src import derivation_pause
+
+    derivation_pause.reset()
+    yield
+    derivation_pause.reset()

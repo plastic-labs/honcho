@@ -25,7 +25,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import src.crud.deriver as crud_deriver_module
-from src import models
+from src import derivation_pause, models
 from src.backlog import outstanding_work_seconds
 from src.config import settings
 from src.crud.deriver import claim_excluded_tenant_ids
@@ -641,6 +641,86 @@ class TestThePauseSeam:
             live_key,
             reconciler_key,
         }
+
+    async def test_the_registrys_paused_bit_is_the_seams_source(
+        self,
+        db_session: AsyncSession,
+        seed_work_unit: SeedWorkUnit,
+        batch_gate_settings: Callable[..., None],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """End to end, no patching: a paused tenants row keeps its units unclaimed,
+        its neighbour and the reconciler lane claim as usual, and flipping the
+        row back releases the backlog on the next refresh."""
+        monkeypatch.setattr(settings, "MULTI_TENANT", True)
+        batch_gate_settings(
+            target_tokens=512, max_age_seconds=AGE_FLUSH_SECONDS, workers=10
+        )
+        db_session.add_all(
+            [
+                models.Tenant(
+                    tenant_id=PAUSED_TENANT, tier="shared", derivation_paused=True
+                ),
+                models.Tenant(tenant_id=LIVE_TENANT, tier="shared"),
+            ]
+        )
+        await db_session.commit()
+        paused_keys = [
+            representation_key(PAUSED_TENANT, f"paused-{index}") for index in range(2)
+        ]
+        live_key = representation_key(LIVE_TENANT, "still-running")
+        reconciler_key = "reconciler:sync_vectors"
+        for work_unit_key, age_seconds in zip(paused_keys, (900, 800), strict=True):
+            await seed_work_unit(
+                work_unit_key,
+                tenant_id=PAUSED_TENANT,
+                token_counts=(1,),
+                ages_seconds=(age_seconds,),
+            )
+        await seed_work_unit(
+            live_key, tenant_id=LIVE_TENANT, token_counts=(1,), ages_seconds=(200,)
+        )
+        await seed_work_unit(
+            reconciler_key,
+            task_type="reconciler",
+            tenant_id=None,
+            token_counts=(0,),
+            ages_seconds=(100,),
+            with_messages=False,
+        )
+
+        # What the deriver's refresher does on its timer.
+        await derivation_pause.refresh(db_session)
+        assert claim_excluded_tenant_ids() == (PAUSED_TENANT,)
+
+        # The metrics poll (the API's refresh path) splits the backlog the same way,
+        # and names the paused tenant's depth.
+        stats = await crud_deriver_module.get_deriver_metrics(db_session)
+        assert stats.eligible_work_units == 2
+        assert stats.excluded_work_units == 2
+        assert stats.excluded_work_units_by_tenant == {PAUSED_TENANT: 2}
+
+        first_claim = await QueueManager().get_and_claim_work_units()
+        assert set(first_claim) == {live_key, reconciler_key}
+        # Skipped, not drained.
+        assert await _read_batch_keys(db_session) == {
+            *paused_keys,
+            live_key,
+            reconciler_key,
+        }
+
+        tenant = await db_session.get(models.Tenant, PAUSED_TENANT)
+        assert tenant is not None
+        tenant.derivation_paused = False
+        await db_session.commit()
+        await derivation_pause.refresh(db_session)
+        assert claim_excluded_tenant_ids() is None
+
+        second_claim = await QueueManager().get_and_claim_work_units()
+        assert set(second_claim) == set(paused_keys)
+        stats = await crud_deriver_module.get_deriver_metrics(db_session)
+        assert stats.excluded_work_units == 0
+        assert stats.excluded_work_units_by_tenant == {}
 
     async def test_excluded_units_leave_the_eligible_gauge_for_their_own(
         self,
