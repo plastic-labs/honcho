@@ -23,6 +23,7 @@ from src.embedding_client import EmbeddingTokenLimitError, embedding_client
 from src.exceptions import (
     ResourceNotFoundException,
     ValidationException,
+    VectorNamespaceUnresolved,
     VectorStoreError,
 )
 from src.utils.filter import apply_filter
@@ -31,6 +32,7 @@ from src.vector_store import (
     VectorStore,
     get_external_vector_store,
 )
+from src.vector_store.tenant_namespace import prefix_for_tenant
 
 logger = getLogger(__name__)
 
@@ -257,7 +259,7 @@ async def query_external_vector_document_ids(
     if external_vector_store is None:
         return []
 
-    namespace = external_vector_store.get_vector_namespace(
+    namespace = await external_vector_store.get_vector_namespace(
         "document", workspace_name, observer, observed
     )
 
@@ -793,7 +795,7 @@ async def create_documents(
                 await db.commit()
             else:
                 # External vector store - upsert and track sync state
-                namespace = external_vector_store.get_vector_namespace(
+                namespace = await external_vector_store.get_vector_namespace(
                     "document",
                     workspace_name,
                     observer,
@@ -1160,7 +1162,7 @@ async def create_observations(
                 observer,
                 observed,
             ), docs_with_embeddings in collection_embeddings.items():
-                namespace = external_vector_store.get_vector_namespace(
+                namespace = await external_vector_store.get_vector_namespace(
                     "document",
                     workspace_name,
                     observer,
@@ -1488,12 +1490,22 @@ async def cleanup_soft_deleted_documents(
 
     # Group by namespace for batch vector deletion
     by_namespace: dict[str, list[str]] = {}
+    # ai: contained per row — this sweep spans tenants, and an unresolvable one must not strand the rest of the batch's soft-deleted rows
     for doc in documents:
-        namespace = external_vector_store.get_vector_namespace(
+        try:
+            prefix = await prefix_for_tenant(doc.tenant_id)
+        except (VectorNamespaceUnresolved, VectorStoreError):
+            logger.warning(
+                "No vector namespace for tenant %s; leaving its soft-deleted documents",
+                doc.tenant_id,
+            )
+            continue
+        namespace = await external_vector_store.get_vector_namespace(
             "document",
             doc.workspace_name,
             doc.observer,
             doc.observed,
+            prefix=prefix,
         )
         by_namespace.setdefault(namespace, []).append(doc.id)
 

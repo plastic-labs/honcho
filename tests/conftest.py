@@ -598,6 +598,22 @@ async def sample_data(
 
 
 @pytest.fixture(autouse=True)
+def _reset_vector_namespace_cache():  # pyright: ignore[reportUnusedFunction]
+    """Drop every memoized tenant namespace prefix around each test.
+
+    The cache is process-global and never expires, so one test's resolved prefix
+    would otherwise satisfy or contradict another's assertion depending on run
+    order. Several modules outside tests/vector_store/ now resolve real prefixes,
+    so this belongs here rather than in any one of them.
+    """
+    from src.vector_store.tenant_namespace import reset_prefix_cache
+
+    reset_prefix_cache()
+    yield
+    reset_prefix_cache()
+
+
+@pytest.fixture(autouse=True)
 def mock_langfuse():
     """Mock Langfuse decorator and context during tests"""
     with (
@@ -764,13 +780,20 @@ def mock_vector_store(request: pytest.FixtureRequest):
     mock_vs.delete_many = AsyncMock(side_effect=mock_delete_many)
     mock_vs.delete_namespace = AsyncMock(side_effect=mock_delete_namespace)
 
-    def mock_get_vector_namespace(
+    async def mock_get_vector_namespace(
         namespace_type: str,
         workspace_name: str,
         observer: str | None = None,
         observed: str | None = None,
+        *,
+        prefix: str | None = None,
     ) -> str:
-        # Uses real hash function for consistency with production
+        # Uses real hash function for consistency with production. `prefix` is
+        # accepted (and ignored) because production call sites now pass it -- the
+        # cross-tenant background paths resolve it via prefix_for_tenant -- but this
+        # fixture keeps every test's namespace deterministically "honcho2345",
+        # independent of tenancy.
+        del prefix
         if namespace_type == "document":
             if observer is None or observed is None:
                 raise ValueError(
@@ -1016,6 +1039,12 @@ def mock_tracked_db(request: pytest.FixtureRequest):
     # 20-statically-nested-block limit as this list grows.
     tracked_db_targets = [
         "src.dependencies.tracked_db",
+        # `src.vector_store.tenant_namespace` does `from src.dependencies import
+        # service_db` lazily inside its loader (see its module docstring), the same
+        # deferred-import shape `src.security.auth()` uses for `tracked_db` above --
+        # so patching the definition site here is what reaches it, not a per-module
+        # import-site entry.
+        "src.dependencies.service_db",
         "src.deriver.queue_manager.service_db",
         "src.deriver.consumer.tracked_db",
         "src.deriver.enqueue.service_db",

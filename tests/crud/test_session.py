@@ -8,6 +8,42 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import crud, models, schemas
 from src.config import settings
 from src.exceptions import ObserverException, ResourceNotFoundException
+from src.vector_store import VectorQueryResult, VectorRecord, VectorStore
+
+
+class _RecordingVectorStore(VectorStore):
+    """A real VectorStore -- get_vector_namespace runs unmodified -- that only
+    records the namespaces passed to delete_many, for pinning deletion scope."""
+
+    def __init__(self) -> None:
+        self.deleted_many_namespaces: list[str] = []
+
+    async def upsert_many(self, namespace: str, vectors: list[VectorRecord]) -> None:
+        return None
+
+    async def query(
+        self,
+        namespace: str,
+        embedding: list[float],
+        *,
+        top_k: int = 10,
+        filters: dict[str, object] | None = None,
+        max_distance: float | None = None,
+        include_attributes: bool | list[str] = True,
+    ) -> list[VectorQueryResult]:
+        return []
+
+    async def delete_many(self, namespace: str, ids: list[str]) -> None:
+        self.deleted_many_namespaces.append(namespace)
+
+    async def delete_namespace(self, namespace: str) -> None:
+        return None
+
+    async def close(self) -> None:
+        return None
+
+    async def probe_namespace_dim(self, namespace: str) -> int | None:
+        return None
 
 
 class TestSessionCRUD:
@@ -458,3 +494,152 @@ class TestSessionCRUD:
             await crud.clone_session(
                 db_session, test_workspace.name, test_session.name, "invalid_message_id"
             )
+
+
+class TestDeleteSessionVectorNamespaceScoping:
+    """delete_session's vector-store deletions must be scoped to the deleting tenant.
+
+    A namespace collision is a read leak in both directions, but this side is the one
+    that cannot be undone (a delete_many call has no inverse), so it gets its own pin
+    independent of the namespace-resolution tests.
+    """
+
+    @pytest.mark.asyncio
+    async def test_delete_session_targets_only_the_deleting_tenants_namespace(
+        self, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+    ):
+        from unittest.mock import patch
+
+        from src.db import tenant_context
+
+        monkeypatch.setattr(settings, "MULTI_TENANT", True)
+
+        tenant_a = str(generate_nanoid())
+        tenant_b = str(generate_nanoid())
+        db_session.add_all(
+            [
+                models.Tenant(tenant_id=tenant_a, vector_correlation_id="tenant-a-app"),
+                models.Tenant(tenant_id=tenant_b, vector_correlation_id="tenant-b-app"),
+            ]
+        )
+        workspace_name = str(generate_nanoid())
+        db_session.add(models.Workspace(name=workspace_name, tenant_id=tenant_a))
+        await db_session.commit()
+
+        peer = models.Peer(
+            name=str(generate_nanoid()),
+            workspace_name=workspace_name,
+            tenant_id=tenant_a,
+        )
+        db_session.add(peer)
+        await db_session.commit()
+
+        db_session.add(
+            models.Collection(
+                workspace_name=workspace_name,
+                observer=peer.name,
+                observed=peer.name,
+                tenant_id=tenant_a,
+            )
+        )
+        await db_session.commit()
+
+        session_name = str(generate_nanoid())
+        db_session.add(
+            models.Session(
+                name=session_name, workspace_name=workspace_name, tenant_id=tenant_a
+            )
+        )
+        await db_session.commit()
+
+        message = models.Message(
+            public_id=str(generate_nanoid()),
+            session_name=session_name,
+            workspace_name=workspace_name,
+            peer_name=peer.name,
+            tenant_id=tenant_a,
+            content="hello world",
+            seq_in_session=1,
+        )
+        db_session.add(message)
+        await db_session.commit()
+
+        db_session.add(
+            models.MessageEmbedding(
+                content=message.content,
+                message_id=message.public_id,
+                workspace_name=workspace_name,
+                session_name=session_name,
+                peer_name=peer.name,
+                tenant_id=tenant_a,
+                sync_state="pending",
+                embedding=[1.0] * 1536,
+            )
+        )
+        db_session.add(
+            models.Document(
+                content="a document in this session",
+                workspace_name=workspace_name,
+                observer=peer.name,
+                observed=peer.name,
+                session_name=session_name,
+                tenant_id=tenant_a,
+                sync_state="pending",
+                embedding=[1.0] * 1536,
+            )
+        )
+        await db_session.commit()
+
+        recording_store = _RecordingVectorStore()
+
+        # The namespaces each tenant would resolve to for this same workspace/peer
+        # pair -- computed independently, before the delete, so the assertion below
+        # doesn't just compare the deletion calls against themselves.
+        token = tenant_context.set(tenant_a)
+        try:
+            message_namespace_for_tenant_a = await recording_store.get_vector_namespace(
+                "message", workspace_name
+            )
+            document_namespace_for_tenant_a = (
+                await recording_store.get_vector_namespace(
+                    "document", workspace_name, peer.name, peer.name
+                )
+            )
+        finally:
+            tenant_context.reset(token)
+
+        token = tenant_context.set(tenant_b)
+        try:
+            message_namespace_if_tenant_b = await recording_store.get_vector_namespace(
+                "message", workspace_name
+            )
+            document_namespace_if_tenant_b = await recording_store.get_vector_namespace(
+                "document", workspace_name, peer.name, peer.name
+            )
+        finally:
+            tenant_context.reset(token)
+
+        assert message_namespace_for_tenant_a != message_namespace_if_tenant_b
+        assert document_namespace_for_tenant_a != document_namespace_if_tenant_b
+
+        token = tenant_context.set(tenant_a)
+        try:
+            with patch(
+                "src.crud.session.get_external_vector_store",
+                return_value=recording_store,
+            ):
+                await crud.delete_session(db_session, workspace_name, session_name)
+        finally:
+            tenant_context.reset(token)
+
+        assert message_namespace_for_tenant_a in recording_store.deleted_many_namespaces
+        assert (
+            message_namespace_if_tenant_b not in recording_store.deleted_many_namespaces
+        )
+        assert (
+            document_namespace_for_tenant_a in recording_store.deleted_many_namespaces
+        )
+        assert (
+            document_namespace_if_tenant_b
+            not in recording_store.deleted_many_namespaces
+        )

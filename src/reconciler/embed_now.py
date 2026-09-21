@@ -31,7 +31,7 @@ from src import models
 from src.config import settings
 from src.dependencies import service_db
 from src.embedding_client import embedding_client
-from src.exceptions import VectorStoreError
+from src.exceptions import VectorNamespaceUnresolved, VectorStoreError
 from src.reconciler.sync_vectors import (
     backoff_eligible,
     build_message_vector_record,
@@ -41,6 +41,7 @@ from src.telemetry import prometheus_metrics
 from src.telemetry.events import EmbeddingCallPurpose
 from src.utils.types import embedding_call_purpose
 from src.vector_store import VectorRecord, VectorStore, get_external_vector_store
+from src.vector_store.tenant_namespace import prefix_for_tenant
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +124,8 @@ class _ClaimedChunk:
     id: int
     message_id: str
     content: str
+    # ai: the claim is cross-tenant, so each chunk carries its own tenant — it is what resolves the row's vector namespace
+    tenant_id: str
     workspace_name: str
     session_name: str | None
     peer_name: str | None
@@ -192,6 +195,7 @@ async def _claim_and_lease(message_ids: list[str]) -> list[_ClaimedChunk]:
                 id=row.id,
                 message_id=row.message_id,
                 content=row.content,
+                tenant_id=row.tenant_id,
                 workspace_name=row.workspace_name,
                 session_name=row.session_name,
                 peer_name=row.peer_name,
@@ -314,9 +318,22 @@ async def _upsert_external(
     async with service_db("embed_now_positions") as db:
         chunk_position = await compute_chunk_positions(db, message_ids)
 
+    # ai: contained per chunk — this claim spans tenants, and an unresolvable one must leave the rest of the batch to the reconciler rather than abort it
     by_namespace: dict[str, list[_ClaimedChunk]] = {}
     for c in claimed:
-        ns = external.get_vector_namespace("message", c.workspace_name)
+        try:
+            prefix = await prefix_for_tenant(c.tenant_id)
+        except (VectorNamespaceUnresolved, VectorStoreError):
+            logger.warning(
+                "No vector namespace for tenant %s; leaving its chunks to the reconciler",
+                c.tenant_id,
+            )
+            continue
+        ns = await external.get_vector_namespace(
+            "message",
+            c.workspace_name,
+            prefix=prefix,
+        )
         by_namespace.setdefault(ns, []).append(c)
 
     synced: list[_ClaimedChunk] = []
