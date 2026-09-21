@@ -477,6 +477,29 @@ async def execute_tool_loop(
             if not response.tool_calls_made:
                 logger.debug("No tool calls in response, finishing")
 
+                # A provider can ignore a forced tool_choice and answer
+                # outright. While the gate is unmet, spend a forced round on a
+                # nudge instead of returning that answer; at the cap, keep it.
+                if (
+                    gate is not None
+                    and effective_tool_choice in ("required", "any")
+                    and forced_rounds + 1 < max_forced_iterations
+                    and iteration < max_tool_iterations - 1
+                ):
+                    forced_rounds += 1
+                    conversation_messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                "Your last response called no tool. Call one of "
+                                + ", ".join(sorted(gate))
+                                + " to read the relevant memory before answering."
+                            ),
+                        }
+                    )
+                    iteration += 1
+                    continue
+
                 if (
                     isinstance(response.content, str)
                     and not response.content.strip()

@@ -155,3 +155,25 @@ async def test_executor_reported_error_does_not_satisfy_the_gate() -> None:
     model = _ScriptedModel([["recall"], ["recall"], []])
     await _run(model, force_tools_until={"recall"}, tool_executor=executor)
     assert model.choices == ["required", "required", "auto"]
+
+
+@pytest.mark.asyncio
+async def test_no_tool_response_under_an_unmet_gate_is_nudged() -> None:
+    model = _ScriptedModel([[], ["recall"], []])
+    await _run(model, force_tools_until={"recall"})
+    assert model.choices == ["required", "required", "auto"]
+
+
+@pytest.mark.asyncio
+async def test_no_tool_responses_stop_being_nudged_at_the_cap() -> None:
+    model = _ScriptedModel([[], [], [], []])
+    await _run(model, force_tools_until={"recall"}, max_forced_iterations=3)
+    assert model.choices == ["required", "required", "required"]
+    assert model.turns == [[]], "the answer in hand is returned, no fourth call"
+
+
+@pytest.mark.asyncio
+async def test_no_tool_response_without_a_gate_returns_immediately() -> None:
+    model = _ScriptedModel([[]])
+    await _run(model)
+    assert model.choices == ["required"]
