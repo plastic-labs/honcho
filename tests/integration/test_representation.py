@@ -319,11 +319,8 @@ class TestDocumentCreationWorkflow:
             observed="test_peer",
             content="User said they like programming",
             level="explicit",
-            internal_metadata={
-                "message_ids": [1],
-                "source_message_ids": [2, 1],
-                "source_indices": [1, 0],
-            },
+            internal_metadata={"message_ids": [1]},
+            source_message_ids=["msg_public_id_two___", "msg_public_id_one___"],
             session_name="test_session",
             created_at=datetime(2025, 1, 1, 10, 0, 0, tzinfo=UTC),
         )
@@ -352,8 +349,10 @@ class TestDocumentCreationWorkflow:
         explicit_obs = representation.explicit[0]
         assert explicit_obs.content == "User said they like programming"
         assert explicit_obs.message_ids == [1]
-        assert explicit_obs.source_message_ids == [2, 1]
-        assert explicit_obs.source_indices == [1, 0]
+        assert explicit_obs.source_message_ids == [
+            "msg_public_id_two___",
+            "msg_public_id_one___",
+        ]
         assert explicit_obs.session_name == "test_session"
 
         deductive_obs = representation.deductive[0]
@@ -447,7 +446,7 @@ class TestPromptRepresentationConversion:
         representation = Representation.from_prompt_representation(
             prompt_rep,
             message_ids=[123],
-            prompt_message_ids=[123],
+            prompt_message_ids=["msg_public_id_123___"],
             session_name="test_session",
             created_at=timestamp,
         )
@@ -460,7 +459,7 @@ class TestPromptRepresentationConversion:
         # Check explicit observations
         assert representation.explicit[0].content == "User likes coffee"
         assert representation.explicit[0].message_ids == [123]
-        assert representation.explicit[0].source_message_ids == [123]
+        assert representation.explicit[0].source_message_ids == ["msg_public_id_123___"]
         assert representation.explicit[0].session_name == "test_session"
         assert representation.explicit[1].content == "User works remotely"
         assert representation.explicit[1].source_message_ids == []
@@ -472,7 +471,7 @@ class TestPromptRepresentationConversion:
         representation = Representation.from_prompt_representation(
             empty_prompt_rep,
             message_ids=[1],
-            prompt_message_ids=[1],
+            prompt_message_ids=["msg_public_id_one___"],
             session_name="test",
             created_at=datetime(2025, 1, 1, 12, 0, 0, tzinfo=UTC),
         )

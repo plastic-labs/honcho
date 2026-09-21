@@ -108,7 +108,7 @@ def test_prompt_representation_conversion():
     rep = Representation.from_prompt_representation(
         pr,
         message_ids=[1],
-        prompt_message_ids=[1],
+        prompt_message_ids=["msg_public_id_one___"],
         session_name="s",
         created_at=timestamp,
     )
@@ -125,14 +125,15 @@ def test_mixed_peer_source_indices_resolve_against_prompt_order(
 ) -> None:
     created_at = datetime.datetime(2025, 1, 1, 12, 0, 0, tzinfo=datetime.UTC)
     messages = [
-        models.Message(id=10, peer_name="bob", content="Which option?"),
-        models.Message(id=20, peer_name="alice", content="The first one"),
-        models.Message(id=30, peer_name="bob", content="Got it"),
+        models.Message(id=10, public_id="bob_asks_______000010", peer_name="bob"),
+        models.Message(id=20, public_id="alice_picks____000020", peer_name="alice"),
+        models.Message(id=30, public_id="bob_acks_______000030", peer_name="bob"),
     ]
     for message in messages:
         message.created_at = created_at
 
-    prompt_message_ids = [message.id for message in messages]
+    # Same mapping the deriver builds: every batch message, prompt order.
+    prompt_message_ids = [message.public_id for message in messages]
     prompt_representation = PromptRepresentation(
         explicit=[
             ExplicitObservationBase(
@@ -152,6 +153,9 @@ def test_mixed_peer_source_indices_resolve_against_prompt_order(
         )
 
     observation = representation.explicit[0]
-    assert observation.source_indices == [0, 1]
-    assert observation.source_message_ids == [10, 20]
+    # bob's question is cited as context; alice's answer is the fact.
+    assert observation.source_message_ids == [
+        "bob_asks_______000010",
+        "alice_picks____000020",
+    ]
     assert "Dropping out-of-range source_indices [3]" in caplog.text

@@ -85,26 +85,21 @@ class ObservationMetadata(BaseModel):
     id: str = Field(default="", description="Document ID for this observation")
     created_at: datetime
     message_ids: list[int]
-    source_message_ids: list[int] = Field(
+    source_message_ids: list[str] = Field(
         default_factory=list,
-        description="Canonical citation message IDs resolved from source_indices",
+        description="Public ids of the messages cited as evidence, in citation order",
     )
     session_name: str | None = None
-    source_indices: list[int] = Field(
-        default_factory=list,
-        description="Per-derivation debugging provenance only: 0-based positions in the deriver batch that lose meaning across deduplication merges; source_message_ids is the canonical citation",
-    )
 
 
 class ExplicitObservationBase(BaseModel):
+    # Cite-first: the model commits to its evidence before writing the claim.
     source_indices: list[int] = Field(
         default_factory=list,
         description=(
-            "0-based indices of the messages in the <messages> block that "
-            "directly support this observation. Include the message "
-            "containing any context needed to interpret the conclusion "
-            '(e.g., the question being answered by "the first one"). '
-            "Only include messages that directly support the observation."
+            "idx values of the messages that directly support this observation, "
+            "including any message needed to interpret it (e.g. the question "
+            'answered by "the first one"). Only messages that support it.'
         ),
     )
     content: str = Field(description="The explicit observation")
@@ -642,11 +637,8 @@ class Representation(BaseModel):
                     message_ids=flatten_message_ids(
                         doc.internal_metadata.get("message_ids", [])
                     ),
-                    source_message_ids=doc.internal_metadata.get(
-                        "source_message_ids", []
-                    ),
+                    source_message_ids=doc.source_message_ids or [],
                     session_name=doc.session_name,
-                    source_indices=doc.internal_metadata.get("source_indices", []),
                 )
                 for doc in documents
                 if doc.level == "explicit"
@@ -707,19 +699,21 @@ class Representation(BaseModel):
         cls,
         prompt_representation: "PromptRepresentation",
         message_ids: list[int],
-        prompt_message_ids: list[int],
+        prompt_message_ids: list[str],
         session_name: str,
         created_at: datetime,
     ) -> "Representation":
-        """Convert PromptRepresentation to Representation."""
+        """Convert PromptRepresentation to Representation.
+
+        ``prompt_message_ids`` holds the public id of every batch message in
+        prompt order, so each cited ``idx`` resolves to a message id here.
+        """
         explicit_observations: list[ExplicitObservation] = []
         for explicit in prompt_representation.explicit:
-            valid_source_indices: list[int] = []
-            source_message_ids: list[int] = []
+            source_message_ids: list[str] = []
             invalid_source_indices: list[int] = []
             for source_index in explicit.source_indices:
                 if 0 <= source_index < len(prompt_message_ids):
-                    valid_source_indices.append(source_index)
                     source_message_ids.append(prompt_message_ids[source_index])
                 else:
                     invalid_source_indices.append(source_index)
@@ -735,10 +729,9 @@ class Representation(BaseModel):
             explicit_observations.append(
                 ExplicitObservation(
                     content=explicit.content,
-                    source_indices=valid_source_indices,
                     created_at=created_at,
                     message_ids=message_ids,
-                    source_message_ids=source_message_ids,
+                    source_message_ids=list(dict.fromkeys(source_message_ids)),
                     session_name=session_name,
                 )
             )

@@ -510,7 +510,8 @@ class TestRepresentationManagerSessionScoping:
 
 class TestRepresentationManagerSave:
     @pytest.mark.asyncio
-    async def test_save_representation_threads_source_trace_metadata(self):
+    async def test_save_representation_threads_source_message_ids(self):
+        """Citations ride on DocumentCreate, not in the JSONB metadata."""
         manager = RepresentationManager(
             "workspace",
             observer="observer",
@@ -518,10 +519,9 @@ class TestRepresentationManagerSave:
         )
         observation = ExplicitObservation(
             content="Alice chose the first option",
-            source_indices=[0, 1],
             created_at=datetime.now(UTC),
             message_ids=[20],
-            source_message_ids=[10, 20],
+            source_message_ids=["bob_asks_______000010", "alice_picks____000020"],
             session_name="session",
         )
 
@@ -549,14 +549,11 @@ class TestRepresentationManagerSave:
         assert create_call is not None
         document = create_call.args[1][0]
         assert document.metadata.message_ids == [20]
-        assert document.metadata.source_message_ids == [10, 20]
-        assert document.metadata.source_indices == [0, 1]
-        assert document.metadata.model_dump(exclude_none=True)[
-            "source_message_ids"
-        ] == [
-            10,
-            20,
+        assert document.source_message_ids == [
+            "bob_asks_______000010",
+            "alice_picks____000020",
         ]
+        assert "source_message_ids" not in document.metadata.model_dump()
 
     @pytest.mark.asyncio
     async def test_save_representation_filters_blank_observations_before_embedding(

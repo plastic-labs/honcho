@@ -90,6 +90,7 @@ RULES:
 - Each message is wrapped as `<message idx="N" peer="..." target="true|false" time="...">`. `target="true"` marks messages authored by the target peer; `target="false"` marks everyone else.
 - Extract ALL observations from `target="true"` messages. Use `target="false"` messages only as context to interpret them; never derive a fact about the target peer from what another peer said, did, or reported.
 - A batch may contain few or no `target="true"` messages, even when it holds many long messages from other peers (agent turns, tool output, system notices). In that case produce few or no conclusions.
+- For each observation, set `source_indices` to the `idx` values of the messages it rests on: the `target="true"` messages that state it, plus any `target="false"` message needed to interpret them (e.g. the question answered by "the first one"). Cite only messages that directly support the observation.
 - Use the exact peer id from `Target peer:` in final observations, not the phrase "the target peer".
 - Properly attribute observations to the correct subject: if it is about the target peer, use the exact peer id as the subject. If the target peer is referencing someone or something else, make that clear.
 - Observations should make sense on their own. Each observation will be used in the future to better understand the target peer.

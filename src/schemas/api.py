@@ -632,6 +632,15 @@ class Conclusion(BaseModel):
             "conclusions for 'contradiction'. None for 'explicit' conclusions."
         ),
     )
+    source_message_ids: list[str] | None = Field(
+        default=None,
+        description=(
+            "IDs of the messages the deriver cited as evidence for an 'explicit' "
+            "conclusion, in citation order. Evidence may include messages from "
+            "peers other than the observed one. None for derived levels and for "
+            "conclusions written before citations were recorded."
+        ),
+    )
     times_derived: int = Field(
         default=1,
         description="Number of times this conclusion has been independently derived.",

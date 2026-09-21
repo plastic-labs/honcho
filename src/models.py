@@ -472,6 +472,32 @@ class Document(Base):
             for i, sid in enumerate(dict.fromkeys(value or []))
         ]
 
+    # Messages the deriver cited as evidence for an explicit conclusion.
+    source_message_links: Mapped[list["DocumentSourceMessage"]] = relationship(
+        "DocumentSourceMessage",
+        order_by="DocumentSourceMessage.position",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        lazy="selectin",
+    )
+
+    @property
+    def source_message_ids(self) -> list[str] | None:
+        """Public ids of the cited messages in citation order; None when uncited."""
+        if self.source_message_links:
+            return [link.message_id for link in self.source_message_links]
+        return None
+
+    @source_message_ids.setter
+    def source_message_ids(self, value: list[str] | None) -> None:
+        # Same constructor ordering caveat as source_ids: workspace_name first.
+        self.source_message_links = [
+            DocumentSourceMessage(
+                message_id=mid, position=i, workspace_name=self.workspace_name
+            )
+            for i, mid in enumerate(dict.fromkeys(value or []))
+        ]
+
     __table_args__ = (
         CheckConstraint("length(id) = 21", name="id_length"),
         CheckConstraint("length(content) <= 65535", name="content_length"),
@@ -559,6 +585,32 @@ class DocumentSource(Base):
         Index("ix_document_sources_source_id", "source_id", "workspace_name"),
         CheckConstraint("length(source_id) = 21", name="source_id_length"),
         CheckConstraint("source_id ~ '^[A-Za-z0-9_-]+$'", name="source_id_format"),
+    )
+
+
+@final
+class DocumentSourceMessage(Base):
+    """One evidence edge: derived_id was concluded from message_id."""
+
+    __tablename__: str = "document_source_messages"
+
+    derived_id: Mapped[str] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE"), primary_key=True
+    )
+    message_id: Mapped[str] = mapped_column(
+        ForeignKey("messages.public_id", ondelete="CASCADE"), primary_key=True
+    )
+    position: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
+    workspace_name: Mapped[str] = mapped_column(
+        ForeignKey("workspaces.name"), nullable=False
+    )
+
+    __table_args__ = (
+        Index("ix_document_source_messages_message_id", "message_id", "workspace_name"),
+        CheckConstraint("length(message_id) = 21", name="message_id_length"),
+        CheckConstraint("message_id ~ '^[A-Za-z0-9_-]+$'", name="message_id_format"),
     )
 
 

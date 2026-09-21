@@ -1841,6 +1841,150 @@ class TestConclusionRoutes:
         ids = {item["id"] for item in response.json()["items"]}
         assert ids == {derived1.id, derived2.id}
 
+    async def _create_cited_conclusions(
+        self,
+        db_session: AsyncSession,
+        workspace_name: str,
+        observer: str,
+        observed: str,
+    ) -> tuple[list[models.Message], models.Document, models.Document]:
+        """One session with two messages; one conclusion cites both, one cites none."""
+        session = models.Session(
+            name=str(generate_nanoid()), workspace_name=workspace_name
+        )
+        db_session.add(session)
+        await db_session.flush()
+
+        messages = [
+            models.Message(
+                session_name=session.name,
+                workspace_name=workspace_name,
+                peer_name=peer,
+                content=content,
+                seq_in_session=seq,
+            )
+            for seq, (peer, content) in enumerate(
+                [(observer, "Postgres or SQLite?"), (observed, "SQLite it is")], 1
+            )
+        ]
+        db_session.add_all(messages)
+        await db_session.flush()
+
+        cited = models.Document(
+            workspace_name=workspace_name,
+            observer=observer,
+            observed=observed,
+            content=f"{observed} chose SQLite",
+            session_name=session.name,
+            embedding=[0.1] * 1536,
+            source_message_ids=[m.public_id for m in messages],
+        )
+        uncited = models.Document(
+            workspace_name=workspace_name,
+            observer=observer,
+            observed=observed,
+            content="Written before citations existed",
+            session_name=session.name,
+            embedding=[0.1] * 1536,
+            internal_metadata={"message_ids": [messages[1].id]},
+        )
+        db_session.add_all([cited, uncited])
+        await db_session.commit()
+        return messages, cited, uncited
+
+    @pytest.mark.asyncio
+    async def test_get_conclusion_source_message_ids(
+        self,
+        client: TestClient,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
+    ):
+        """Explicit conclusions expose their cited messages by public id, in
+        citation order. Rows written before citations existed surface None,
+        not the batch-level message_ids."""
+        test_workspace, test_peer = sample_data
+        test_peer2 = models.Peer(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add(test_peer2)
+        await db_session.flush()
+        await self._create_collection(
+            db_session, test_workspace.name, test_peer.name, test_peer2.name
+        )
+        messages, cited, uncited = await self._create_cited_conclusions(
+            db_session, test_workspace.name, test_peer.name, test_peer2.name
+        )
+
+        response = client.get(
+            f"/v3/workspaces/{test_workspace.name}/conclusions/{cited.id}"
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["level"] == "explicit"
+        assert body["source_ids"] is None
+        assert body["source_message_ids"] == [m.public_id for m in messages]
+
+        # Each cited id is a real message id, fetchable through the messages route.
+        cited_id = body["source_message_ids"][0]
+        fetched = client.get(
+            f"/v3/workspaces/{test_workspace.name}/sessions/{body['session_id']}/messages/{cited_id}"
+        )
+        assert fetched.status_code == 200
+        assert fetched.json()["content"] == "Postgres or SQLite?"
+
+        response = client.get(
+            f"/v3/workspaces/{test_workspace.name}/conclusions/{uncited.id}"
+        )
+        assert response.status_code == 200
+        assert response.json()["source_message_ids"] is None
+
+    @pytest.mark.asyncio
+    async def test_list_conclusions_filter_by_source_message_ids_contains(
+        self,
+        client: TestClient,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
+    ):
+        """Reverse lookup: which conclusions cite this message?"""
+        test_workspace, test_peer = sample_data
+        test_peer2 = models.Peer(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add(test_peer2)
+        await db_session.flush()
+        await self._create_collection(
+            db_session, test_workspace.name, test_peer.name, test_peer2.name
+        )
+        messages, cited, _uncited = await self._create_cited_conclusions(
+            db_session, test_workspace.name, test_peer.name, test_peer2.name
+        )
+
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/conclusions/list",
+            json={
+                "filters": {"source_message_ids": {"contains": messages[0].public_id}}
+            },
+        )
+        assert response.status_code == 200
+        items = response.json()["items"]
+        assert [item["id"] for item in items] == [cited.id]
+        assert items[0]["source_message_ids"] == [m.public_id for m in messages]
+
+        # Bare list means every listed message must be cited.
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/conclusions/list",
+            json={
+                "filters": {
+                    "source_message_ids": [
+                        messages[0].public_id,
+                        str(generate_nanoid()),
+                    ]
+                }
+            },
+        )
+        assert response.status_code == 200
+        assert response.json()["items"] == []
+
     @pytest.mark.asyncio
     async def test_list_conclusions_filter_by_ids(
         self,
