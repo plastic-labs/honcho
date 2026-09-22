@@ -1646,14 +1646,34 @@ async def _handle_create_observations_impl(
     forced_level: str | None = None,
 ) -> "str | ToolResult":
     """Handle create_observations tool."""
-    raw_observations = tool_input.get("observations", [])
-
+    raw_observations: Any = tool_input.get("observations", [])
+    if not isinstance(raw_observations, list):
+        return (
+            "ERROR: observations must be a list of objects, "
+            f"got {type(raw_observations).__name__}"
+        )
     if not raw_observations:
         return "ERROR: observations list is empty"
 
+    observation_dicts: list[dict[str, Any]] = []
+    validation_failures: list[ObservationFailure] = []
+    for obs in cast(list[Any], raw_observations):
+        if isinstance(obs, dict):
+            observation_dicts.append(cast(dict[str, Any], obs))
+        else:
+            validation_failures.append(
+                ObservationFailure(
+                    content_preview=str(obs)[:50],
+                    error=(
+                        "Each observation must be an object with a 'content' "
+                        f"field, got {type(obs).__name__}"
+                    ),
+                )
+            )
+
     # Set context-specific default level before Pydantic validation
     default_level = "explicit" if ctx.current_messages else "deductive"
-    for obs in raw_observations:
+    for obs in observation_dicts:
         if forced_level is not None:
             obs["level"] = forced_level
         else:
@@ -1669,8 +1689,7 @@ async def _handle_create_observations_impl(
             obs["source_ids"] = normalized_source_ids
     # Validate observations individually so valid ones are still processed
     observations: list[schemas.ObservationInput] = []
-    validation_failures: list[ObservationFailure] = []
-    for obs in raw_observations:
+    for obs in observation_dicts:
         try:
             validated = schemas.ObservationInput.model_validate(obs)
         except ValidationError as e:
@@ -2515,7 +2534,12 @@ async def _handle_delete_observations(
     ctx: ToolContext, tool_input: dict[str, Any]
 ) -> "str | ToolResult":
     """Handle delete_observations tool."""
-    observation_ids = tool_input.get("observation_ids", [])
+    raw_observation_ids: Any = tool_input.get("observation_ids", [])
+    if not isinstance(raw_observation_ids, list) or not all(
+        isinstance(obs_id, str) for obs_id in cast(list[Any], raw_observation_ids)
+    ):
+        return "ERROR: observation_ids must be a list of observation ID strings"
+    observation_ids = cast(list[str], raw_observation_ids)
     if not observation_ids:
         return "ERROR: observation_ids list is empty"
 
