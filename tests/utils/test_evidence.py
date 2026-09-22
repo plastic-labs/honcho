@@ -30,6 +30,8 @@ def make_document(
     source_ids: list[str] | None = None,
     session_name: str | None = "session-1",
     created_at: datetime = NOW,
+    observer: str = "observer",
+    observed: str = "observed",
 ) -> models.Document:
     """Build an unpersisted Document.
 
@@ -45,8 +47,8 @@ def make_document(
         source_ids=source_ids,
         session_name=session_name,
         created_at=created_at,
-        observer="observer",
-        observed="observed",
+        observer=observer,
+        observed=observed,
         workspace_name="workspace",
     )
 
@@ -80,6 +82,29 @@ class TestConclusionCollection:
         assert conclusion.level == "explicit"
         assert conclusion.content == "User likes tea"
         assert conclusion.session_id == "session-1"
+
+    def test_attributes_each_conclusion_to_its_own_peer_pair(self):
+        """Workspace chat reads across peers into one accumulator.
+
+        Without the pair on the row, a caller holding the evidence cannot tell
+        which peer any given conclusion is about.
+        """
+        accumulator = EvidenceAccumulator()
+        accumulator.add_documents(
+            [
+                make_document("doc-1", observer="alice", observed="alice"),
+                make_document("doc-2", observer="bob", observed="bob"),
+            ]
+        )
+
+        pairs = {
+            c.id: (c.observer_id, c.observed_id)
+            for c in accumulator.build().conclusions
+        }
+        assert pairs == {
+            "doc-1": ("alice", "alice"),
+            "doc-2": ("bob", "bob"),
+        }
 
     def test_deduplicates_by_id_across_tools(self):
         """A conclusion two tools both returned is reported once."""
