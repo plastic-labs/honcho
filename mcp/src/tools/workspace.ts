@@ -37,6 +37,10 @@ export function register(server: McpServer, ctx: ToolContext) {
   server.registerTool(
     "inspect_workspace",
     {
+      annotations: {
+        title: "Inspect Workspace",
+        readOnlyHint: true,
+      },
       description: [
         "Inspect a workspace at a glance.",
         "Aggregates workspace metadata, configuration, peer IDs, and session IDs.",
@@ -78,6 +82,10 @@ export function register(server: McpServer, ctx: ToolContext) {
   server.registerTool(
     "list_workspaces",
     {
+      annotations: {
+        title: "List Workspaces",
+        readOnlyHint: true,
+      },
       description: [
         "List workspaces accessible to the current credentials (paginated).",
         "Skip this if the connection already set X-Honcho-Workspace-ID — that header is the workspace; omit workspace_id on other tools.",
@@ -124,6 +132,10 @@ export function register(server: McpServer, ctx: ToolContext) {
   server.registerTool(
     "create_workspace",
     {
+      annotations: {
+        title: "Create Workspace",
+        destructiveHint: false,
+      },
       description: [
         "Get or create a workspace with the given ID.",
         "Skip this if the connection already set X-Honcho-Workspace-ID — that header pins the workspace without a create call.",
@@ -164,6 +176,10 @@ export function register(server: McpServer, ctx: ToolContext) {
   server.registerTool(
     "search",
     {
+      annotations: {
+        title: "Search Workspace",
+        readOnlyHint: true,
+      },
       description: [
         "Semantic search across messages and, when peer_id is given, that peer's saved conclusions.",
         "Message scope is determined by which optional params are provided:",
@@ -285,6 +301,10 @@ export function register(server: McpServer, ctx: ToolContext) {
   server.registerTool(
     "workspace_chat",
     {
+      annotations: {
+        title: "Ask About a Workspace",
+        readOnlyHint: true,
+      },
       description: [
         "Ask a natural-language question about the whole workspace and get an answer from Honcho's reasoning system.",
         "Reasons across ALL peers and their conclusions — use for cross-peer analysis, common themes, or questions not tied to one peer.",
@@ -353,6 +373,10 @@ export function register(server: McpServer, ctx: ToolContext) {
   server.registerTool(
     "get_metadata",
     {
+      annotations: {
+        title: "Get Metadata",
+        readOnlyHint: true,
+      },
       description: [
         "Get metadata for a resource. Scope is determined by which optional params are provided:",
         "- No scope params: get workspace metadata.",
@@ -397,6 +421,10 @@ export function register(server: McpServer, ctx: ToolContext) {
   server.registerTool(
     "set_metadata",
     {
+      annotations: {
+        title: "Set Metadata",
+        destructiveHint: true,
+      },
       description: [
         "Set metadata for a resource. Overwrites existing metadata.",
         "Scope is determined by which optional params are provided:",
