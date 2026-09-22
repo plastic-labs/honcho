@@ -48,6 +48,11 @@ def store() -> ChromaVectorStore:
     return ChromaVectorStore()
 
 
+@pytest.fixture(autouse=True)
+def no_retry_delay(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("src.vector_store.chroma._QUERY_RETRY_BACKOFF_SECONDS", 0.0)
+
+
 @pytest.fixture
 def record() -> VectorRecord:
     return VectorRecord(
@@ -109,6 +114,28 @@ def test_build_where_empty_returns_none(store: ChromaVectorStore) -> None:
 def test_build_where_null_value_raises(store: ChromaVectorStore) -> None:
     with pytest.raises(ValueError, match="null"):
         store._build_where({"session_name": None})  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.parametrize(
+    "value",
+    [{"gte": "s1"}, {"eq": "s1"}, {}, {"in": ["s1"], "ne": "s2"}],
+)
+async def test_query_rejects_unsupported_operators_before_connecting(
+    store: ChromaVectorStore, value: dict[str, Any]
+) -> None:
+    client = AsyncMock(side_effect=AssertionError("must not connect"))
+    store._get_client = client  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(ValueError, match="only the 'in' filter operator"):
+        await store.query("test", [1.0, 0.0], filters={"session_id": value})
+    client.assert_not_called()
+
+
+@pytest.mark.parametrize("value", ["s1", 1, None, {"s1": True}])
+def test_build_where_rejects_invalid_membership(
+    store: ChromaVectorStore, value: Any
+) -> None:
+    with pytest.raises(ValueError, match="requires a list, tuple, or set"):
+        store._build_where({"session_id": {"in": value}})  # pyright: ignore[reportPrivateUsage]
 
 
 # === Metadata sanitization ===
@@ -283,6 +310,46 @@ async def test_query_returns_empty_on_transport_failure(
     results = await store.query("honcho.doc.test", [0.1, 0.2, 0.3, 0.4])
 
     assert results == []
+    assert collection.query.call_count == 3
+
+
+@pytest.mark.parametrize("stage", ["lookup", "query"])
+async def test_query_recovers_from_transient_failure(
+    store: ChromaVectorStore, stage: str
+) -> None:
+    collection = MagicMock()
+    response = _query_response([("doc_1", 0.1, None)])
+    collection.query.return_value = response
+    _patch_collection(store, collection)
+    lookup = AsyncMock(return_value=collection)
+    store._get_collection = lookup  # pyright: ignore[reportPrivateUsage]
+    if stage == "lookup":
+        lookup.side_effect = [httpx.ConnectError("offline"), collection]
+    else:
+        collection.query.side_effect = [httpx.ReadTimeout("slow"), response]
+
+    results = await store.query("test", [1.0, 0.0])
+
+    assert [result.id for result in results] == ["doc_1"]
+    if stage == "lookup":
+        assert lookup.await_count == 2
+        assert collection.query.call_count == 1
+    else:
+        assert collection.query.call_count == 2
+
+
+@pytest.mark.parametrize(
+    "error", [ValueError("invalid query"), chromadb.errors.AuthorizationError("denied")]
+)
+async def test_query_does_not_retry_permanent_errors(
+    store: ChromaVectorStore, error: Exception
+) -> None:
+    collection = MagicMock()
+    collection.query.side_effect = error
+    _patch_collection(store, collection)
+    with pytest.raises(type(error)):
+        await store.query("test", [1.0, 0.0])
+    assert collection.query.call_count == 1
 
 
 # === Delete ===
@@ -334,14 +401,9 @@ async def test_delete_namespace_noop_when_collection_missing(
 
 
 @pytest.mark.asyncio
-async def test_persistent_round_trip(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: object
-) -> None:
+@pytest.mark.usefixtures("embedded_chroma")
+async def test_persistent_round_trip() -> None:
     """Exercise the real embedded client end-to-end in a tmp dir."""
-    monkeypatch.setattr(
-        "src.config.settings.VECTOR_STORE.CHROMA_CLIENT_MODE", "persistent"
-    )
-    monkeypatch.setattr("src.config.settings.VECTOR_STORE.CHROMA_PATH", str(tmp_path))
 
     store = ChromaVectorStore()
     ns = store.get_vector_namespace("document", "ws1", observer="a", observed="b")
@@ -386,13 +448,8 @@ async def test_persistent_round_trip(
 
 
 @pytest.mark.parametrize("membership", [["explicit"], ("explicit",), {"explicit"}])
-async def test_persistent_bare_membership(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: object, membership: Any
-) -> None:
-    monkeypatch.setattr(
-        "src.config.settings.VECTOR_STORE.CHROMA_CLIENT_MODE", "persistent"
-    )
-    monkeypatch.setattr("src.config.settings.VECTOR_STORE.CHROMA_PATH", str(tmp_path))
+@pytest.mark.usefixtures("embedded_chroma")
+async def test_persistent_bare_membership(membership: Any) -> None:
     store = ChromaVectorStore()
     try:
         await store.upsert_many(
@@ -415,13 +472,8 @@ async def test_persistent_bare_membership(
 
 
 @pytest.mark.parametrize("membership", [{"in": []}, [], (), set[str]()])
-async def test_persistent_empty_membership_matches_nothing(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: object, membership: Any
-) -> None:
-    monkeypatch.setattr(
-        "src.config.settings.VECTOR_STORE.CHROMA_CLIENT_MODE", "persistent"
-    )
-    monkeypatch.setattr("src.config.settings.VECTOR_STORE.CHROMA_PATH", str(tmp_path))
+@pytest.mark.usefixtures("embedded_chroma")
+async def test_persistent_empty_membership_matches_nothing(membership: Any) -> None:
     store = ChromaVectorStore()
     try:
         await store.upsert_many(
@@ -470,13 +522,8 @@ async def test_nonpositive_top_k_skips_client(
     client.assert_not_called()
 
 
-async def test_probe_retains_dimension_after_deleting_every_record(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: object
-) -> None:
-    monkeypatch.setattr(
-        "src.config.settings.VECTOR_STORE.CHROMA_CLIENT_MODE", "persistent"
-    )
-    monkeypatch.setattr("src.config.settings.VECTOR_STORE.CHROMA_PATH", str(tmp_path))
+@pytest.mark.usefixtures("embedded_chroma")
+async def test_probe_retains_dimension_after_deleting_every_record() -> None:
     store = ChromaVectorStore()
     await store.upsert_many("dimension", [VectorRecord(id="a", embedding=[0.1] * 4)])
     await store.delete_many("dimension", ["a"])
@@ -494,13 +541,8 @@ async def test_probe_retains_dimension_after_deleting_every_record(
         await reopened.close()
 
 
-async def test_probe_returns_none_for_never_written_collection(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: object
-) -> None:
-    monkeypatch.setattr(
-        "src.config.settings.VECTOR_STORE.CHROMA_CLIENT_MODE", "persistent"
-    )
-    monkeypatch.setattr("src.config.settings.VECTOR_STORE.CHROMA_PATH", str(tmp_path))
+@pytest.mark.usefixtures("embedded_chroma")
+async def test_probe_returns_none_for_never_written_collection() -> None:
     store = ChromaVectorStore()
     try:
         await store._get_or_create_collection("fresh")  # pyright: ignore[reportPrivateUsage]

@@ -1475,23 +1475,33 @@ class VectorStoreSettings(HonchoSettings):
 
     # ChromaDB-specific settings
     # CHROMA_CLIENT_MODE selects the deployment shape:
-    # - "persistent": local embedded storage at CHROMA_PATH
     # - "http": self-hosted Chroma server at CHROMA_HOST:CHROMA_PORT
     # - "cloud": Chroma Cloud (requires CHROMA_API_KEY)
-    CHROMA_CLIENT_MODE: Literal["persistent", "http", "cloud"] = "persistent"
-    CHROMA_PATH: str = "./chroma_data"
+    # Embedded persistence is unsafe across Honcho's API/worker processes.
+    CHROMA_CLIENT_MODE: Literal["http", "cloud"] = "http"
     CHROMA_HOST: str = "localhost"
     CHROMA_PORT: Annotated[int, Field(default=8000, gt=0)] = 8000
     CHROMA_SSL: bool = False
     CHROMA_API_KEY: str | None = None
     # Tenant/database are optional for cloud mode (resolved from the API key
-    # when omitted); ignored in persistent and http modes.
+    # when omitted); ignored in http mode.
     CHROMA_TENANT: str | None = None
     CHROMA_DATABASE: str | None = None
 
     RECONCILIATION_INTERVAL_SECONDS: Annotated[int, Field(default=300, gt=0)] = (
         300  # 5 minutes
     )
+
+    @field_validator("CHROMA_CLIENT_MODE", mode="before")
+    @classmethod
+    def _reject_embedded_chroma(cls, value: Any) -> Any:
+        if value == "persistent":
+            raise ValueError(
+                "ChromaDB persistent mode is unsafe across Honcho's multiple "
+                + "processes. Use VECTOR_STORE_CHROMA_CLIENT_MODE=http with a "
+                + "Chroma server, or cloud."
+            )
+        return value
 
     @model_validator(mode="after")
     def _require_api_key_for_turbopuffer(self) -> "VectorStoreSettings":

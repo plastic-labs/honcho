@@ -615,8 +615,7 @@ VECTOR_STORE_QDRANT_PREFIX=  # optional, for reverse-proxy path prefix
 VECTOR_STORE_QDRANT_TIMEOUT=  # optional, request timeout in seconds
 
 # ChromaDB-specific
-VECTOR_STORE_CHROMA_CLIENT_MODE=persistent  # Options: persistent, http, cloud
-VECTOR_STORE_CHROMA_PATH=./chroma_data      # persistent mode
+VECTOR_STORE_CHROMA_CLIENT_MODE=http        # Options: http, cloud
 VECTOR_STORE_CHROMA_HOST=localhost          # http mode (self-hosted server)
 VECTOR_STORE_CHROMA_PORT=8000               # http mode
 VECTOR_STORE_CHROMA_SSL=false               # http mode
@@ -627,15 +626,15 @@ VECTOR_STORE_CHROMA_DATABASE=your-database       # cloud mode (optional)
 
 LanceDB is an optional extra and is not included in the default Docker image. Build with `docker build --build-arg INSTALL_LANCEDB=true .` (or `INSTALL_LANCEDB=true docker compose up -d --build`), or run `uv sync --extra lancedb` for manual setups. Note the extra is unavailable on Intel macOS.
 
-The ChromaDB backend requires the `chromadb` extra, which is not installed by default:
+The ChromaDB backend requires the `chromadb` extra, which is not installed by default. Install it for manual deployments as shown below. The standard Docker image does not include ChromaDB, and this backend does not currently have an `INSTALL_CHROMADB` build argument.
 
 ```bash
 uv sync --extra chromadb
 ```
 
-ChromaDB's `persistent` mode stores data on local disk (embedded, like LanceDB) and is intended for development and small deployments: Honcho creates one Chroma collection per `(observer, observed)` peer pair, and embedded Chroma serializes writes across collections through a single SQLite file and keeps a bounded number of collection indices warm in memory. For production volume, use `cloud` (Chroma Cloud) or `http` against a self-hosted distributed Chroma deployment — both are designed for many collections.
+Use `http` with a self-hosted Chroma server or `cloud` with Chroma Cloud. Honcho rejects embedded `persistent` mode because its API and workers run in separate processes, and [Chroma does not support concurrent writers sharing a local persistence path](https://cookbook.chromadb.dev/core/system_constraints/). For local development, run `chroma run --path ./chroma_data --port 8001` and set `VECTOR_STORE_CHROMA_PORT=8001` so Chroma uses a different port from Honcho.
 
-ChromaDB queries return no results during connection failures, rate limiting, or temporary server errors. Failed writes remain eligible for reconciliation. Authentication and invalid-request errors remain visible. Selecting ChromaDB without its optional dependency raises an installation error when the backend is initialized.
+ChromaDB queries retry connection failures, rate limiting, and temporary server errors up to three attempts, waiting 0.1 seconds and then 0.2 seconds between attempts. These short retries can recover brief interruptions; they may not outlast rate-limit windows. ChromaDB 1.5.9 disables HTTP timeouts, so retries do not bound request duration: a stalled server can leave a request waiting indefinitely. If all attempts fail with transient errors, queries return no results. Failed writes remain eligible for reconciliation. Authentication and invalid-request errors remain visible. Startup dimension sampling fails if a sampled namespace cannot be inspected or has a dimension mismatch; missing namespaces are allowed. Selecting ChromaDB without its optional dependency raises an installation error when the backend is initialized.
 
 ## Monitoring
 
@@ -814,6 +813,7 @@ ENABLED = false
 ENABLED = false
 TRACE_PAYLOADS_ENABLED = false
 TRACE_PURPOSES = []
+TRACE_MAX_BYTES = 262144
 
 [vector_store]
 TYPE = "pgvector"

@@ -55,18 +55,11 @@ async def test_lancedb_probe_returns_none_for_missing_namespace(
 
 
 @pytest.mark.asyncio
-async def test_chroma_probe_returns_declared_dim(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: object
-) -> None:
+@pytest.mark.usefixtures("embedded_chroma")
+async def test_chroma_probe_returns_declared_dim() -> None:
     """Write real vectors at dim 8, confirm the probe recovers the dim."""
-    pytest.importorskip("chromadb")
     from src.vector_store import VectorRecord
     from src.vector_store.chroma import ChromaVectorStore
-
-    monkeypatch.setattr(
-        "src.config.settings.VECTOR_STORE.CHROMA_CLIENT_MODE", "persistent"
-    )
-    monkeypatch.setattr("src.config.settings.VECTOR_STORE.CHROMA_PATH", str(tmp_path))
 
     store = ChromaVectorStore()
     try:
@@ -81,17 +74,10 @@ async def test_chroma_probe_returns_declared_dim(
 
 
 @pytest.mark.asyncio
-async def test_chroma_probe_returns_none_for_missing_namespace(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: object
-) -> None:
+@pytest.mark.usefixtures("embedded_chroma")
+async def test_chroma_probe_returns_none_for_missing_namespace() -> None:
     """Lazy-create model: probing a nonexistent collection is not an error."""
-    pytest.importorskip("chromadb")
     from src.vector_store.chroma import ChromaVectorStore
-
-    monkeypatch.setattr(
-        "src.config.settings.VECTOR_STORE.CHROMA_CLIENT_MODE", "persistent"
-    )
-    monkeypatch.setattr("src.config.settings.VECTOR_STORE.CHROMA_PATH", str(tmp_path))
 
     store = ChromaVectorStore()
     try:

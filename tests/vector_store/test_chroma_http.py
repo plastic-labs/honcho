@@ -105,6 +105,7 @@ class ChromaHTTP:
 
 @pytest.fixture
 def transport(monkeypatch: pytest.MonkeyPatch) -> ChromaHTTP:
+    monkeypatch.setattr("src.vector_store.chroma._QUERY_RETRY_BACKOFF_SECONDS", 0.0)
     server = ChromaHTTP()
     original_init = httpx.Client.__init__
 
@@ -183,6 +184,13 @@ async def test_remote_transient_errors(
         await remote_store.delete_many("remote", ["a"])
     with pytest.raises(VectorStoreError):
         await remote_store.delete_namespace("remote")
+    if stage == "operation":
+        # The probe reads the collection model, not the failing query endpoint.
+        assert await remote_store.probe_namespace_dim("remote") == 4
+    else:
+        with pytest.raises(Exception) as probe_error:
+            await remote_store.probe_namespace_dim("remote")
+        assert not isinstance(probe_error.value, VectorStoreError)
 
 
 async def test_remote_connection_failure_recovers(
@@ -218,3 +226,6 @@ async def test_remote_nontransient_errors_remain_visible(
     with pytest.raises(expected) as raised:
         await remote_store.query("remote", [0.1] * 4)
     assert not isinstance(raised.value, VectorStoreError)
+    with pytest.raises(expected) as probe_error:
+        await remote_store.probe_namespace_dim("remote")
+    assert not isinstance(probe_error.value, VectorStoreError)

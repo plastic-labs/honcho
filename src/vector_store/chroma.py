@@ -2,16 +2,16 @@
 ChromaDB vector store implementation.
 
 This module provides a ChromaDB-based implementation of the VectorStore
-interface, supporting three deployment modes selected by
+interface, supporting two deployment modes selected by
 VECTOR_STORE_CHROMA_CLIENT_MODE:
 
-- "persistent": local embedded storage (chromadb.PersistentClient)
 - "http": self-hosted Chroma server (chromadb.HttpClient)
 - "cloud": Chroma Cloud (chromadb.CloudClient)
 
-Chroma's persistent and cloud clients are synchronous, so every client call
+Chroma's cloud client is synchronous, so every client call
 is offloaded through asyncio.to_thread to keep the event loop free. One code
-path covers all three modes.
+path covers both modes. Embedded persistence is not supported because Honcho
+uses multiple processes and Chroma's local storage is not process-safe.
 
 Each Honcho namespace maps to one Chroma collection. Honcho namespace strings
 ({prefix}.{type}.{base64url-hash}) are not valid Chroma collection names
@@ -29,6 +29,13 @@ from typing import TYPE_CHECKING, Any, cast
 import chromadb
 import httpx
 from chromadb.errors import ChromaError, InternalError, NotFoundError, RateLimitError
+from tenacity import (
+    AsyncRetrying,
+    before_sleep_log,
+    retry_if_exception,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from src.config import settings
 from src.exceptions import VectorStoreError
@@ -45,6 +52,10 @@ logger = logging.getLogger(__name__)
 # expose their own limit via client.get_max_batch_size(). Batches are split
 # to min of both so one upsert_many call never exceeds either.
 CLOUD_MAX_BATCH_SIZE = 300
+
+# Read failures have no reconciler retry, so give brief outages a chance to heal.
+_QUERY_RETRY_ATTEMPTS = 3
+_QUERY_RETRY_BACKOFF_SECONDS = 0.1
 
 # Errors that indicate the store is unreachable/unavailable rather than a
 # logic error. Chroma can wrap these exceptions during client initialization
@@ -101,19 +112,16 @@ class ChromaVectorStore(VectorStore):
     def _create_client(self) -> "ClientAPI":
         """Construct the sync Chroma client for the configured mode.
 
-        Runs inside a worker thread: PersistentClient does disk I/O and the
-        http/cloud clients issue a version heartbeat on construction.
+        Runs inside a worker thread because client construction makes HTTP calls.
         """
         mode = settings.VECTOR_STORE.CHROMA_CLIENT_MODE
-        if mode == "persistent":
-            return chromadb.PersistentClient(path=settings.VECTOR_STORE.CHROMA_PATH)
-        elif mode == "http":
+        if mode == "http":
             return chromadb.HttpClient(
                 host=settings.VECTOR_STORE.CHROMA_HOST,
                 port=settings.VECTOR_STORE.CHROMA_PORT,
                 ssl=settings.VECTOR_STORE.CHROMA_SSL,
             )
-        else:
+        elif mode == "cloud":
             api_key = settings.VECTOR_STORE.CHROMA_API_KEY
             if not api_key:
                 raise ValueError(
@@ -124,6 +132,7 @@ class ChromaVectorStore(VectorStore):
                 tenant=settings.VECTOR_STORE.CHROMA_TENANT,
                 database=settings.VECTOR_STORE.CHROMA_DATABASE,
             )
+        raise ValueError("ChromaDB requires http or cloud mode")
 
     async def _get_client(self) -> "ClientAPI":
         """Get or create the Chroma client (asyncio-safe)."""
@@ -189,11 +198,23 @@ class ChromaVectorStore(VectorStore):
         least two operands for $and, so a single clause is passed bare).
 
         Raises:
-            ValueError: If a filter value is None (Chroma cannot match null;
-                write-side sanitization omits null keys entirely).
+            ValueError: If a filter value is None, uses unsupported operators,
+                or supplies a non-sequence membership operand.
         """
         clauses: list[dict[str, Any]] = []
         for key, value in filters.items():
+            if isinstance(value, dict):
+                value = cast(dict[str, Any], value)
+                if set(value) != {"in"}:
+                    raise ValueError(
+                        "ChromaDB backend supports only the 'in' filter operator "
+                        + f"(key: {key!r})"
+                    )
+                if not isinstance(value["in"], list | tuple | set):
+                    raise ValueError(
+                        "ChromaDB 'in' filter requires a list, tuple, or set "
+                        + f"(key: {key!r})"
+                    )
             if (isinstance(value, dict) and "in" in value) or isinstance(
                 value, list | tuple | set
             ):
@@ -325,13 +346,6 @@ class ChromaVectorStore(VectorStore):
             return []
 
         try:
-            collection = await self._get_collection(namespace)
-            if collection is None:
-                logger.debug(
-                    f"Collection for namespace {namespace} does not exist, returning empty results"
-                )
-                return []
-
             where = self._build_where(filters) if filters else None
             include: list[str] = ["distances"]
             if include_attributes is not False:
@@ -345,13 +359,9 @@ class ChromaVectorStore(VectorStore):
             if where is not None:
                 query_kwargs["where"] = where
 
-            response = cast(
-                dict[str, Any],
-                cast(
-                    object,
-                    await asyncio.to_thread(collection.query, **query_kwargs),
-                ),
-            )
+            response = await self._query_collection(namespace, query_kwargs)
+            if response is None:
+                return []
 
             # Chroma returns column-major, per-query-embedding lists; we send
             # exactly one query embedding, so index 0 everywhere.
@@ -399,6 +409,30 @@ class ChromaVectorStore(VectorStore):
                 return []
             logger.exception(f"Failed to query namespace {namespace}")
             raise
+
+    async def _query_collection(
+        self, namespace: str, query_kwargs: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        """Retry transient lookup/query failures before the empty-result fallback."""
+        async for attempt in AsyncRetrying(
+            retry=retry_if_exception(_is_transient_error),
+            stop=stop_after_attempt(_QUERY_RETRY_ATTEMPTS),
+            wait=wait_exponential(multiplier=_QUERY_RETRY_BACKOFF_SECONDS, max=1),
+            before_sleep=before_sleep_log(logger, logging.WARNING),
+            reraise=True,
+        ):
+            with attempt:
+                collection = await self._get_collection(namespace)
+                if collection is None:
+                    return None
+                return cast(
+                    dict[str, Any],
+                    cast(
+                        object,
+                        await asyncio.to_thread(collection.query, **query_kwargs),
+                    ),
+                )
+        raise AssertionError("ChromaDB query retry loop did not run")
 
     async def delete_many(self, namespace: str, ids: list[str]) -> None:
         """
