@@ -882,6 +882,18 @@ class QueueItemBatch(Base):
     # input; the claim gate reads task_type/total_tokens/oldest_created_at and
     # claims by row existence.
     # endregion
+    # region ai
+    # work_unit_key alone is the primary key, not (tenant_id, work_unit_key):
+    # under MULTI_TENANT, construct_work_unit_key (src/utils/work_unit.py)
+    # prefixes every tenant-scoped key with its tenant_id, so the key is
+    # already tenant-scoped by construction and a composite key would be
+    # redundant. tenant_id below is a derived attribution column, not part of
+    # identity — it stays nullable because it is NULL both for the
+    # tenant-less reconciler lane (task_type "reconciler", which scans across
+    # tenants and never gets a tenant prefix) and for every row when
+    # MULTI_TENANT is off (src/deriver/enqueue.py's _stamp_tenant_id, which
+    # derives this column from the key prefix at every insert site).
+    # endregion
     work_unit_key: Mapped[str] = mapped_column(TEXT, primary_key=True)
     # ai: Service table: tenant_id is plain attribution, no FK / RLS.
     tenant_id: Mapped[str | None] = mapped_column(TEXT, nullable=True)
