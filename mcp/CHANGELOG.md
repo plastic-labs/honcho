@@ -9,6 +9,14 @@ This package versions independently of the Honcho API, `@honcho-ai/sdk`, and hos
 
 ## [Unreleased]
 
+### Fixed
+
+- `chat` and `workspace_chat` no longer fail when the answer takes more than
+  10 seconds on the HTTP host (Bun's idle timeout dropped the connection) or
+  more than 60 seconds on any host (the SDK timed out and retried the chat).
+  Honcho API requests now time out after 5 minutes, configurable with
+  `HONCHO_TIMEOUT_MS`.
+
 ## [0.2.0] - 2026-09-17
 
 ### Added
