@@ -13,9 +13,9 @@ PEER_NAME = "batch-peer"
 SESSION_NAME = "batch-session"
 TENANT_ID = "default"
 
-# A second tenant, whose queue rows predate every tenant_id writer: the key
-# carries the tenant prefix but the column is still NULL, and the backfill has
-# to derive one from the other.
+# A second tenant, whose queue rows have the flag-on writer's shape: the key
+# carries the tenant prefix and the column is stamped to match, so the
+# aggregate has to carry that tenant and price the message under it.
 PREFIXED_TENANT_ID = "tenant-prefixed-1"
 PREFIXED_WORKSPACE_NAME = "prefixed-workspace"
 PREFIXED_PEER_NAME = "prefixed-peer"
@@ -227,14 +227,14 @@ def prepare_add_queue_item_batches_aggregate(verifier: MigrationVerifier) -> Non
         age_seconds=900,
         processed=True,
     )
-    # The mid-queue upgrade shape: the key was written with a tenant prefix but
-    # the tenant_id column predates every writer of it, so the backfill has to
-    # derive the tenant from the key before it can aggregate — and price the
-    # message through that derived tenant.
+    # The flag-on shape: a tenant-prefixed key with tenant_id stamped on insert,
+    # the way every MULTI_TENANT writer produces it. The aggregate must carry
+    # that tenant and price the message through its partition, not the default
+    # tenant's.
     enqueue(
         PREFIXED_UNIT,
         "representation",
-        tenant_id=None,
+        tenant_id=PREFIXED_TENANT_ID,
         message_id=prefixed_tenant_message,
         age_seconds=45,
         processed=False,
@@ -298,30 +298,15 @@ def verify_add_queue_item_batches_aggregate(verifier: MigrationVerifier) -> None
     assert webhook_unit.pending_count == 1
     assert webhook_unit.total_tokens == 0, "non-representation work carries no tokens"
 
-    # The tenant-derivation half of the backfill: a tenant-prefixed key whose
-    # column was NULL is stamped from the prefix, and only then aggregated.
-    # Left underived, every such unit would share the fair claim's NULL bucket.
-    stamped_tenant = conn.execute(
-        text(
-            f'SELECT DISTINCT tenant_id FROM "{schema}"."queue" '
-            + "WHERE work_unit_key = :key"
-        ),
-        {"key": PREFIXED_UNIT},
-    ).scalar_one()
-    assert stamped_tenant == PREFIXED_TENANT_ID, (
-        f"the queue row's tenant was stamped {stamped_tenant!r}, "
-        + f"expected {PREFIXED_TENANT_ID!r} from the key prefix"
-    )
-
+    # The flag-on shape: the batch row carries the row's own tenant, and the
+    # token probe resolves the message under that tenant's partition rather
+    # than the default tenant's (where it would come back empty).
     prefixed_unit = batch_row(PREFIXED_UNIT)
     assert prefixed_unit is not None
-    assert prefixed_unit.tenant_id == PREFIXED_TENANT_ID, (
-        "the aggregate runs after the stamp, so the batch row carries the "
-        + "derived tenant rather than the NULL the queue row started with"
-    )
+    assert prefixed_unit.tenant_id == PREFIXED_TENANT_ID
     assert prefixed_unit.pending_count == 1
     assert prefixed_unit.total_tokens == PREFIXED_UNIT_TOKENS, (
-        "the token probe is keyed on the derived tenant, so it has to resolve "
+        "the token probe is keyed on the row's tenant, so it has to resolve "
         + "the message under that tenant rather than come back empty"
     )
 
