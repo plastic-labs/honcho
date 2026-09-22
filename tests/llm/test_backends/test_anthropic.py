@@ -59,6 +59,7 @@ async def test_anthropic_backend_extracts_text_thinking_and_tool_calls() -> None
         ],
         thinking_budget_tokens=2048,
         tool_choice="required",
+        extra_params={"thinking_tool_choice_conflict": "override_thinking"},
     )
 
     assert result.content == "Hello from Anthropic"
@@ -107,7 +108,7 @@ def _client_with_text_response() -> Mock:
     "tool_choice",
     ["required", "any", "search", {"type": "any"}, {"type": "tool", "name": "search"}],
 )
-async def test_anthropic_backend_drops_thinking_when_tool_choice_forces_tool_use(
+async def test_anthropic_backend_override_thinking_drops_thinking(
     tool_choice: str | dict[str, Any],
 ) -> None:
     client = _client_with_text_response()
@@ -120,6 +121,7 @@ async def test_anthropic_backend_drops_thinking_when_tool_choice_forces_tool_use
         tools=[SEARCH_TOOL],
         tool_choice=tool_choice,
         thinking_budget_tokens=2048,
+        extra_params={"thinking_tool_choice_conflict": "override_thinking"},
     )
 
     call = client.messages.create.await_args.kwargs
@@ -150,7 +152,12 @@ async def test_anthropic_backend_override_tool_relaxes_tool_choice_and_keeps_thi
 
 
 @pytest.mark.asyncio
-async def test_anthropic_backend_throw_mode_raises_before_calling_provider() -> None:
+@pytest.mark.parametrize(
+    "extra_params", [None, {}, {"thinking_tool_choice_conflict": "throw"}]
+)
+async def test_anthropic_backend_throws_by_default_when_tool_choice_forces_tool_use(
+    extra_params: dict[str, Any] | None,
+) -> None:
     client = _client_with_text_response()
     backend = AnthropicBackend(client)
 
@@ -162,7 +169,7 @@ async def test_anthropic_backend_throw_mode_raises_before_calling_provider() -> 
             tools=[SEARCH_TOOL],
             tool_choice="required",
             thinking_budget_tokens=2048,
-            extra_params={"thinking_tool_choice_conflict": "throw"},
+            extra_params=extra_params,
         )
 
     client.messages.create.assert_not_awaited()
@@ -206,9 +213,7 @@ async def test_anthropic_backend_conflict_mode_ignored_without_conflict() -> Non
 
 
 @pytest.mark.asyncio
-async def test_anthropic_backend_stream_drops_thinking_when_tool_choice_forces_tool_use() -> (
-    None
-):
+async def test_anthropic_backend_stream_override_thinking_drops_thinking() -> None:
     class _FakeStream:
         async def __aenter__(self) -> "_FakeStream":
             return self
@@ -241,6 +246,7 @@ async def test_anthropic_backend_stream_drops_thinking_when_tool_choice_forces_t
             tools=[SEARCH_TOOL],
             tool_choice="required",
             thinking_budget_tokens=2048,
+            extra_params={"thinking_tool_choice_conflict": "override_thinking"},
         )
     ]
 

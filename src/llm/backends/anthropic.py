@@ -312,9 +312,7 @@ class AnthropicBackend:
             return
         tool_choice = params.get("tool_choice")
         if tool_choice is not None and tool_choice.get("type") in {"any", "tool"}:
-            mode = (extra_params or {}).get(
-                "thinking_tool_choice_conflict", "override_thinking"
-            )
+            mode = (extra_params or {}).get("thinking_tool_choice_conflict", "throw")
             if mode not in THINKING_TOOL_CHOICE_CONFLICT_MODES:
                 expected = sorted(THINKING_TOOL_CHOICE_CONFLICT_MODES)
                 raise ValidationException(
