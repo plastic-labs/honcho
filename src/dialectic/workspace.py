@@ -9,7 +9,9 @@ observation machinery, supplying the pair as tool arguments.
 
 Observation search deliberately stays pair-scoped: it matches both the
 (observer, observed) collection ownership and the per-pair vector-store
-namespaces, and avoids retrieval dilution from a workspace-flat top-k.
+namespaces, and avoids retrieval dilution from a workspace-flat top-k. One
+call may name several peers, which keeps a cross-peer question to one tool
+round without giving up that scoping.
 
 Design carried over from plastic-labs/honcho#373 (Dan), re-grown on the
 current DialecticAgent seams instead of a base-class extraction.
@@ -142,9 +144,9 @@ class WorkspaceDialecticAgent(DialecticAgent):
         return (
             "Workspace scale, the most active peers, and any known "
             "biographical facts about them. Use this to decide who is "
-            "relevant, then search that peer's own representation with "
-            "search_memory (observer and observed both set to their name), "
-            "or search_messages to find peers not listed here."
+            "relevant, then read their representations with search_memory "
+            "(pass every relevant peer in one call), or search_messages to "
+            "find peers not listed here."
         )
 
     def _select_tools(self) -> list[dict[str, Any]]:
@@ -196,6 +198,20 @@ class WorkspaceDialecticAgent(DialecticAgent):
         recall keeps the model searching until it has read the corpus.
         """
         return WORKSPACE_RECALL_TOOLS
+
+    def _max_tool_iterations(self, level_settings: DialecticLevelSettings) -> int:
+        """Add the workspace bonus to the level's limit.
+
+        A pair query reads one representation; a workspace query routes first
+        and then recalls, often over several peers. `minimal` is excluded
+        because its single round is the level's whole contract.
+        """
+        if self.reasoning_level == "minimal":
+            return level_settings.MAX_TOOL_ITERATIONS
+        return (
+            level_settings.MAX_TOOL_ITERATIONS
+            + settings.DIALECTIC.WORKSPACE_EXTRA_TOOL_ITERATIONS
+        )
 
     async def _create_tool_executor(self) -> Callable[[str, dict[str, Any]], Any]:
         return await create_workspace_tool_executor(

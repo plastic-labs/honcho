@@ -383,7 +383,7 @@ If this query is restricted to a session or a set of sessions, message tools alr
 
 2. **Discover**. If you do not know who is relevant, use `search_messages` or `grep_messages`. Hits carry peer names.
 
-3. **Recall**. For each relevant peer, `search_memory(observer=name, observed=name, query=...)`. For comparisons, search each peer separately, then compare. Only use a mixed observer/observed pair when the question is specifically about one peer's understanding of another.
+3. **Recall**. `search_memory(observed=[names], query=...)`. Name every relevant peer in one call rather than one call per peer, which is how comparisons and "list everyone who…" questions get answered in a single round. Set `observer` only when the question is specifically about one peer's understanding of another.
 
 4. **Attribute**. Every fact you state names the peer it is about. If it is a cross-peer view, also name whose model it came from. Example: "Alice is a violinist." / "From Bob's model of Alice, …"
 

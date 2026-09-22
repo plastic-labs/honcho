@@ -168,6 +168,10 @@ class DialecticAgent:
         """Tools that satisfy a forced tool_choice; None means any tool does."""
         return None
 
+    def _max_tool_iterations(self, level_settings: DialecticLevelSettings) -> int:
+        """Tool rounds this query gets; defaults to the reasoning level's limit."""
+        return level_settings.MAX_TOOL_ITERATIONS
+
     async def _initialize_session_history(self) -> None:
         """Fetch and inject session history into the system prompt if configured."""
         if self._session_history_initialized:
@@ -556,7 +560,7 @@ class DialecticAgent:
                 tool_choice=self._tool_choice(level_settings),
                 force_tools_until=self._force_tools_until(),
                 tool_executor=tool_executor,
-                max_tool_iterations=level_settings.MAX_TOOL_ITERATIONS,
+                max_tool_iterations=self._max_tool_iterations(level_settings),
                 messages=self.messages,
                 max_input_tokens=settings.DIALECTIC.MAX_INPUT_TOKENS,
                 trace_name="dialectic_chat",
@@ -636,7 +640,7 @@ class DialecticAgent:
                 tool_choice=self._tool_choice(level_settings),
                 force_tools_until=self._force_tools_until(),
                 tool_executor=tool_executor,
-                max_tool_iterations=level_settings.MAX_TOOL_ITERATIONS,
+                max_tool_iterations=self._max_tool_iterations(level_settings),
                 messages=self.messages,
                 max_input_tokens=settings.DIALECTIC.MAX_INPUT_TOKENS,
                 trace_name="dialectic_chat",
