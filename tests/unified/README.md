@@ -74,9 +74,14 @@ here rather than being masked by client-side validation.
   independent of how it phrased the answer. The runner always requests
   `include_evidence`, so this is deterministic where `llm_judge` is not. Every
   field given must hold:
-  * `conclusions_match`: case-insensitive substring some evidence conclusion contains.
+  * `conclusions_match`: case-insensitive substring some evidence conclusion
+      contains. A peer card the run read through a `get_peer_card` call counts
+      too, since a card is derived memory; a card that only arrived in the
+      workspace prefetch does not, so this still cannot pass without a tool call.
   * `conclusions_from_peers` + `min_count` (default: all): at least `min_count`
-      of the listed peers have a conclusion *about them* (`observed_id`) in evidence.
+      of the listed peers have a conclusion *about them* (`observed_id`) in
+      evidence. Peer cards do not count here — this condition is what proves
+      per-peer corpus retrieval rather than an orientation read.
   * `messages_match`: substring some evidence message contains. Evidence carries
       message ids only, so the runner fetches each one's content.
   * `not_from_sessions`: no evidence conclusion or message belongs to these

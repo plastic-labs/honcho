@@ -154,7 +154,11 @@ class EvidenceContainsAssertion(Assertion):
     assertion_type: Literal["evidence_contains"] = "evidence_contains"
     conclusions_match: str | None = Field(
         default=None,
-        description="Case-insensitive substring some evidence conclusion must contain",
+        description=(
+            "Case-insensitive substring some evidence conclusion must contain."
+            " A peer card the run read through `get_peer_card` also counts;"
+            " cards that only arrived in a prefetch do not."
+        ),
     )
     conclusions_from_peers: list[str] | None = Field(
         default=None,

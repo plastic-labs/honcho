@@ -95,7 +95,7 @@ def test_failure_message_lists_tools_peers_and_clipped_content() -> None:
     with pytest.raises(runner.TestExecutionError) as exc_info:
         _check(conclusions_match="tea")
     text = str(exc_info.value)
-    assert "no evidence conclusion contains 'tea'" in text
+    assert "no evidence conclusion or peer card contains 'tea'" in text
     assert "tool_calls=['list_peers']" in text
     assert "conclusion alice (observer alice) explicit session=s1: Alice is" in text
     assert "conclusion unattributed explicit: Bob likes" in text
@@ -107,3 +107,41 @@ def test_all_conditions_are_reported_together() -> None:
         _check(conclusions_match="tea", messages_match="cipher")
     text = str(exc_info.value)
     assert "'tea'" in text and "'cipher'" in text
+
+
+def test_peer_cards_count_toward_conclusions_match() -> None:
+    cards = {("bob", "bob"): ["Bob dives twice a month"]}
+    evaluate_evidence(
+        EvidenceContainsAssertion(conclusions_match="dives"),
+        Evidence(tool_calls=[EvidenceToolCall(tool_name="get_peer_card")]),
+        {},
+        {},
+        cards,
+    )
+
+
+def test_peer_cards_do_not_count_toward_conclusions_from_peers() -> None:
+    cards = {("bob", "bob"): ["Bob dives twice a month"]}
+    with pytest.raises(runner.TestExecutionError, match="found \\[\\]"):
+        evaluate_evidence(
+            EvidenceContainsAssertion(conclusions_from_peers=["bob"]),
+            Evidence(tool_calls=[EvidenceToolCall(tool_name="get_peer_card")]),
+            {},
+            {},
+            cards,
+        )
+
+
+def test_failure_message_lists_peer_cards() -> None:
+    cards = {("bob", "bob"): ["Bob dives twice a month"]}
+    with pytest.raises(runner.TestExecutionError) as exc_info:
+        evaluate_evidence(
+            EvidenceContainsAssertion(conclusions_match="tea"),
+            Evidence(),
+            {},
+            {},
+            cards,
+        )
+    assert "peer card bob (observer bob): Bob dives twice a month" in str(
+        exc_info.value
+    )

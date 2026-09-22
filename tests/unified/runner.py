@@ -103,6 +103,7 @@ def describe_evidence(
     evidence: Evidence,
     attribution: dict[str, ConclusionAttribution],
     message_contents: dict[str, str],
+    peer_cards: dict[tuple[str, str], list[str]] | None = None,
 ) -> str:
     """Render evidence for a failure message: tool calls, conclusions, messages."""
     tool_names = [call.tool_name for call in evidence.tool_calls]
@@ -110,6 +111,9 @@ def describe_evidence(
         f"evidence: {len(evidence.conclusions)} conclusions, "
         + f"{len(evidence.messages)} messages, tool_calls={tool_names}"
     ]
+    for (observer, observed), card in (peer_cards or {}).items():
+        for fact in card:
+            lines.append(f"  peer card {observed} (observer {observer}): {_clip(fact)}")
     for conclusion in evidence.conclusions:
         who = attribution.get(conclusion.id)
         peer = f"{who.observed} (observer {who.observer})" if who else "unattributed"
@@ -131,19 +135,25 @@ def evaluate_evidence(
     evidence: Evidence,
     attribution: dict[str, ConclusionAttribution],
     message_contents: dict[str, str],
+    peer_cards: dict[tuple[str, str], list[str]] | None = None,
 ) -> None:
     """Check every condition on the assertion; raise on the first that fails.
 
-    `attribution` maps conclusion id to its peer pair and `message_contents`
-    maps message id to text; both are resolved by the caller because evidence
-    carries neither.
+    `attribution` maps conclusion id to its peer pair, `message_contents` maps
+    message id to text, and `peer_cards` holds the cards a `get_peer_card` call
+    returned; all three are resolved by the caller because evidence carries
+    none of them.
     """
     failures: list[str] = []
 
     if assertion.conclusions_match is not None:
         needle = assertion.conclusions_match.lower()
-        if not any(needle in c.content.lower() for c in evidence.conclusions):
-            failures.append(f"no evidence conclusion contains {needle!r}")
+        card_facts = [fact for card in (peer_cards or {}).values() for fact in card]
+        if not any(
+            needle in text.lower()
+            for text in [c.content for c in evidence.conclusions] + card_facts
+        ):
+            failures.append(f"no evidence conclusion or peer card contains {needle!r}")
 
     if assertion.conclusions_from_peers is not None:
         present = {
@@ -180,7 +190,7 @@ def evaluate_evidence(
             "evidence_contains failed: "
             + "; ".join(failures)
             + "\n"
-            + describe_evidence(evidence, attribution, message_contents)
+            + describe_evidence(evidence, attribution, message_contents, peer_cards)
         )
 
 
@@ -644,6 +654,8 @@ class UnifiedTestExecutor:
         Evidence conclusions carry no peer pair and evidence messages carry no
         content, so both are fetched here: the pair for `conclusions_from_peers`
         and the failure listing, the content only when `messages_match` asks.
+        Peer cards are not in evidence at all, so any the run read through
+        `get_peer_card` are re-read from the tool call log.
         """
         attribution: dict[str, ConclusionAttribution] = {}
         if evidence.conclusions:
@@ -664,7 +676,39 @@ class UnifiedTestExecutor:
                 message = await session.aio.get_message(ref.id)
                 message_contents[ref.id] = message.content
 
-        evaluate_evidence(assertion, evidence, attribution, message_contents)
+        peer_cards: dict[tuple[str, str], list[str]] = {}
+        if assertion.conclusions_match is not None:
+            peer_cards = await self._peer_cards_read(evidence)
+
+        evaluate_evidence(
+            assertion, evidence, attribution, message_contents, peer_cards
+        )
+
+    async def _peer_cards_read(
+        self, evidence: Evidence
+    ) -> dict[tuple[str, str], list[str]]:
+        """Fetch the peer cards a run read through `get_peer_card`.
+
+        A card is derived memory, so a run that answered from one did reach
+        memory, but only through an explicit tool call: cards in the workspace
+        prefetch arrive without one and stay out of this, which is what keeps
+        the assertion from passing on the prefetch alone.
+        """
+        cards: dict[tuple[str, str], list[str]] = {}
+        for call in evidence.tool_calls:
+            if call.tool_name != "get_peer_card":
+                continue
+            observer = call.tool_input.get("observer")
+            observed = call.tool_input.get("observed", observer)
+            if not isinstance(observer, str) or not isinstance(observed, str):
+                continue
+            if (observer, observed) in cards:
+                continue
+            peer = await self.client.aio.peer(id=observer)
+            card = await peer.aio.get_card(observed)
+            if card:
+                cards[(observer, observed)] = card
+        return cards
 
     async def wait_for_queue(self, timeout: int):
         # Poll deriver status
