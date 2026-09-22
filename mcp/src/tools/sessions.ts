@@ -217,6 +217,8 @@ export function register(server: McpServer, ctx: ToolContext) {
       },
       description: [
         "Remove one or more peers from a session.",
+        "Membership ends at the current time; messages the peer already wrote stay in the session, and its representation is not deleted.",
+        "Scopes are not removed this way — use remove_session_from_scope.",
       ].join("\n"),
       inputSchema: {
         workspace_id: workspaceIdSchema(ctx),

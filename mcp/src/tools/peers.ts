@@ -55,15 +55,20 @@ export function register(server: McpServer, ctx: ToolContext) {
       description: [
         "List peers in the given workspace (paginated).",
         "Use this to discover which users and agents exist.",
-        "Returns peer IDs with pagination metadata.",
+        "Returns peer IDs with pagination metadata; pass page/size to walk past the first page.",
       ].join("\n"),
       inputSchema: {
         workspace_id: workspaceIdSchema(ctx),
+        page: z.number().int().min(1).optional().describe("Page number (1-indexed)."),
+        size: z.number().int().min(1).max(100).optional().describe("Results per page (max 100)."),
+        reverse: z.boolean().optional().describe("Newest first when true."),
       },
     },
-    async ({ workspace_id }) => {
+    async ({ workspace_id, page: pageNum, size, reverse }) => {
       try {
-        const page = await ctx.clientFor(workspace_id).peers();
+        const page = await ctx
+          .clientFor(workspace_id)
+          .peers({ page: pageNum, size, reverse });
         return textResult({
           peers: page.items.map((p) => ({ id: p.id })),
           total: page.total,
