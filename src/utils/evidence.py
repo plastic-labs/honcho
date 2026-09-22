@@ -181,7 +181,13 @@ def _flatten_conclusions(document: models.Document) -> list[EvidenceObservation]
     An observation's ``message_ids`` are dropped: they are internal row ids,
     and Honcho identifies messages by their public id everywhere it faces a
     caller.
+
+    ``observer``/``observed`` come from the rows rather than from the
+    representation, which does not model them. Workspace chat accumulates
+    across every peer it reads, so without them a caller cannot tell which
+    peer any given conclusion is about.
     """
+    pairs = {document.id: (document.observer, document.observed)}
     representation = Representation.from_documents([document])
     by_level: tuple[tuple[DocumentLevel, Sequence[_Observation]], ...] = (
         ("explicit", representation.explicit),
@@ -196,6 +202,8 @@ def _flatten_conclusions(document: models.Document) -> list[EvidenceObservation]
             content=_observation_text(observation),
             created_at=_restore_utc_marker(observation.created_at),
             session_id=observation.session_name,
+            observer_id=pairs[observation.id][0],
+            observed_id=pairs[observation.id][1],
             source_ids=_observation_source_ids(observation),
         )
         for level, observations_at_level in by_level
