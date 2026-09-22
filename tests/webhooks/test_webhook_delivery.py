@@ -13,6 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
 from src.db import tenant_context
+from src.deriver.consumer import process_item
+from src.exceptions import WebhookTenantUnresolved
 from src.models import QueueItem
 from src.utils.queue_payload import WebhookPayload
 from src.utils.work_unit import tenant_id_for_work_unit_key
@@ -189,6 +191,173 @@ async def test_deliver_webhook_posts_signed_payload_to_each_endpoint(
         assert call["content"] == expected_event_json
         assert call["headers"]["Content-Type"] == "application/json"
         assert call["headers"]["X-Honcho-Signature"] == expected_signature
+
+
+@pytest.mark.asyncio
+async def test_deliver_webhook_flag_off_body_is_byte_identical_to_baseline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """OSS single-tenant invariant: with MULTI_TENANT off, the wire body and
+    signature must be byte-identical to today's shape, regardless of whether a
+    caller passes tenant_id. Pins the literal serialized JSON (rather than
+    reconstructing it from the payload, like the dynamic-comparison test
+    above) so a future change to key order, separators, or shape is caught
+    here even if it happened to also correctly update the reconstruction.
+    """
+    monkeypatch.setattr(settings, "MULTI_TENANT", False)
+    monkeypatch.setattr(settings.WEBHOOK, "SECRET", "delivery-secret")
+    monkeypatch.setattr(webhook_delivery, "utc_now_iso", lambda: "2026-02-13T00:00:00Z")
+
+    url = "https://a.example.com/hook"
+    monkeypatch.setattr(
+        webhook_delivery, "_get_webhook_urls", AsyncMock(return_value=[url])
+    )
+
+    fake_client = FakeAsyncClient(
+        {url: httpx.Response(status_code=200, request=httpx.Request("POST", url))}
+    )
+
+    def async_client_factory(*args: Any, **kwargs: Any) -> FakeAsyncClient:
+        _ = (args, kwargs)
+        return fake_client
+
+    monkeypatch.setattr(httpx, "AsyncClient", async_client_factory)
+
+    payload = WebhookPayload(
+        event_type="message.created",
+        data={"id": "m_1", "workspace": "workspace-a"},
+    )
+    # tenant_id is supplied but must be ignored entirely flag-off.
+    await webhook_delivery.deliver_webhook(payload, "workspace-a", tenant_id="t1")
+
+    expected_body = (
+        '{"data":{"id":"m_1","workspace":"workspace-a"},'
+        '"timestamp":"2026-02-13T00:00:00Z","type":"message.created"}'
+    )
+    expected_signature = hmac.new(
+        b"delivery-secret", expected_body.encode("utf-8"), hashlib.sha256
+    ).hexdigest()
+
+    assert len(fake_client.calls) == 1
+    call = fake_client.calls[0]
+    assert call["content"] == expected_body
+    assert call["headers"]["X-Honcho-Signature"] == expected_signature
+
+
+@pytest.mark.asyncio
+async def test_deliver_webhook_flag_on_adds_tenant_id_to_signed_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Flag-on with a tenant present: tenant_id joins type/data/timestamp as a
+    top-level key, data is untouched, and the signature verifies over the
+    exact bytes sent (the existing HMAC needs no change since tenant_id is
+    inside the signed body)."""
+    monkeypatch.setattr(settings, "MULTI_TENANT", True)
+    monkeypatch.setattr(settings.WEBHOOK, "SECRET", "delivery-secret")
+    monkeypatch.setattr(webhook_delivery, "utc_now_iso", lambda: "2026-02-13T00:00:00Z")
+
+    url = "https://a.example.com/hook"
+    monkeypatch.setattr(
+        webhook_delivery, "_get_webhook_urls", AsyncMock(return_value=[url])
+    )
+
+    fake_client = FakeAsyncClient(
+        {url: httpx.Response(status_code=200, request=httpx.Request("POST", url))}
+    )
+
+    def async_client_factory(*args: Any, **kwargs: Any) -> FakeAsyncClient:
+        _ = (args, kwargs)
+        return fake_client
+
+    monkeypatch.setattr(httpx, "AsyncClient", async_client_factory)
+
+    payload = WebhookPayload(
+        event_type="message.created",
+        data={"id": "m_1", "workspace": "workspace-a"},
+    )
+    await webhook_delivery.deliver_webhook(
+        payload, "workspace-a", tenant_id="tenant-xyz"
+    )
+
+    assert len(fake_client.calls) == 1
+    call = fake_client.calls[0]
+    sent_body: str = call["content"]
+
+    assert json.loads(sent_body) == {
+        "type": "message.created",
+        "data": {"id": "m_1", "workspace": "workspace-a"},
+        "timestamp": "2026-02-13T00:00:00Z",
+        "tenant_id": "tenant-xyz",
+    }
+    assert '"tenant_id":"tenant-xyz"' in sent_body
+
+    expected_signature = hmac.new(
+        b"delivery-secret", sent_body.encode("utf-8"), hashlib.sha256
+    ).hexdigest()
+    assert call["headers"]["X-Honcho-Signature"] == expected_signature
+
+
+@pytest.mark.asyncio
+async def test_deliver_webhook_flag_on_without_tenant_raises_and_makes_no_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Flag-on with no tenant resolvable: fail closed before any DB session
+    opens or any HTTP call is attempted."""
+    monkeypatch.setattr(settings, "MULTI_TENANT", True)
+
+    get_urls = AsyncMock()
+    monkeypatch.setattr(webhook_delivery, "_get_webhook_urls", get_urls)
+
+    fake_client = FakeAsyncClient({})
+
+    def async_client_factory(*args: Any, **kwargs: Any) -> FakeAsyncClient:
+        _ = (args, kwargs)
+        return fake_client
+
+    monkeypatch.setattr(httpx, "AsyncClient", async_client_factory)
+
+    payload = WebhookPayload(event_type="message.created", data={"id": "m_1"})
+
+    with pytest.raises(WebhookTenantUnresolved):
+        await webhook_delivery.deliver_webhook(payload, "workspace-a", tenant_id=None)
+
+    assert fake_client.calls == []
+    # _get_webhook_urls is the only thing that opens a DB session
+    # (tracked_db), so asserting it was never awaited stands in for "no DB
+    # session was opened".
+    get_urls.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_process_item_webhook_threads_queue_item_tenant_to_deliver_webhook(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The webhook branch of process_item must pass QueueItem.tenant_id
+    through to deliver_webhook explicitly -- the authoritative attribution
+    column -- rather than relying on delivery to read tenant_context.get()
+    itself, matching publish_webhook_event's own explicit-threading pattern
+    for the same tenant (auditable at the one call site instead of ambient)."""
+    deliver_mock = AsyncMock()
+    monkeypatch.setattr(webhook_delivery, "deliver_webhook", deliver_mock)
+
+    queue_item = QueueItem(
+        task_type="webhook",
+        work_unit_key="tenant-abc:webhook:workspace-a",
+        payload={
+            "task_type": "webhook",
+            "event_type": "message.created",
+            "data": {"id": "m_1"},
+        },
+        processed=False,
+        workspace_name="workspace-a",
+        tenant_id="tenant-abc",
+    )
+
+    await process_item(queue_item)
+
+    deliver_mock.assert_awaited_once()
+    _, call_kwargs = deliver_mock.await_args
+    assert call_kwargs["tenant_id"] == "tenant-abc"
 
 
 @pytest.mark.asyncio
