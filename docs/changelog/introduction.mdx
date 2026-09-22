@@ -27,7 +27,28 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 ### Honcho API and SDK Changelogs
 <Tabs>
     <Tab title="Honcho API">
-        <Update label="v3.2.0 (Current)">
+        <Update label="v3.2.1 (Current)">
+        ### Added
+
+        - Chat evidence conclusions carry `observer_id` and `observed_id`, matching the Conclusions response. Workspace chat reads across every peer into one evidence list, so each row now says which pair it belongs to without re-fetching it (#1193)
+        - `thinking_tool_choice_conflict` provider param for Anthropic model configs, which decides what happens when extended thinking meets a forced tool choice (Anthropic rejects the combination): `throw` (default, raises a validation error before the request is sent), `override_thinking` (drops thinking for that call), or `override_tool` (relaxes the tool choice to `auto`). Set it per model config, e.g. `DIALECTIC_LEVELS__medium__MODEL_CONFIG__OVERRIDES__PROVIDER_PARAMS__THINKING_TOOL_CHOICE_CONFLICT=override_thinking` (#1211)
+
+        ### Changed
+
+        - `source_ids` is `[]` rather than `null` for explicit conclusions on the Conclusions response, matching chat evidence. Clients that checked for `null` should check for an empty list (#1193)
+        - Workspace chat keeps its forced tool choice until a recall tool runs cleanly, capped at 3 forced rounds, so an answer always rests on at least one search instead of the prefetched overview. A tool that returns an error does not count. `get_workspace_stats` is removed from the workspace toolset, since the prefetch already supplies the same overview (#1210)
+        - The deriver wraps each batch message in a tag carrying its peer and whether it is a target, and derives only from target messages, instead of relying on the model to match a name prefix. Message content that imitates the tag is escaped so it cannot claim target attribution (#1192)
+        - Smaller runtime footprint: the Docker image drops from 627MB to 426MB. PDF extraction uses pypdf instead of pdfplumber, provider SDKs import only for the configured backend, and scikit-learn moves behind a new optional `surprisal` extra. Self-hosted deployments that enable `DREAM.SURPRISAL.ENABLED` with an sklearn-backed tree type need the extra; `rptree`, `covertree`, and `lsh` still work without it (#1201)
+
+        ### Fixed
+
+        - Chat with `include_evidence` no longer fails with "Instance is not bound to a Session" when evidence is read after its DB session closes (#1212)
+        - On Redis Cluster, each process releases the idle connection its startup PING leaves on the default node. Every client picks the same slot-0 primary, so these sockets piled up there (92% of that node's connections in one observed cluster) and could hit `maxclients`, which stops every new client from initialising (#1198)
+        - Dreamer tools return an actionable error for malformed arguments (a string instead of a list, non-object items) instead of raising a `TypeError` mid-loop. Valid sibling observations in the same call still land (#1217)
+        - Deleting a session no longer loads the content of every embedding chunk to rebuild vector IDs; chunk counts are aggregated in SQL (#1206)
+        </Update>
+
+        <Update label="v3.2.0">
         ### Added
 
         - Conclusion attribution on the public API: `source_ids` and `times_derived` on the Conclusions response (already stored on documents, previously stripped). `GET /v3/workspaces/{workspace_id}/conclusions/{conclusion_id}` returns a single conclusion with those fields. `source_ids` is filterable via JSONB containment (`{"source_ids": {"contains": "<id>"}}`); `id`, `level`, `source_ids`, and `times_derived` are explicit entries in the documents filter allowlist. The same `contains` fix applies to other JSONB columns, which previously generated invalid ILIKE-on-JSONB SQL. Message attribution (conclusion → source messages) and chain traversal are follow-ups (#952)
@@ -838,7 +859,16 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 
     <Tab title="Python SDK">
         [Python SDK](https://pypi.org/project/honcho-ai/)
-        <Update label="v2.5.0 (Current)">
+        <Update label="v2.5.1 (Current)">
+            ### Added
+
+            - `observer_id` and `observed_id` on `EvidenceObservation`, so evidence from workspace chat says which peer pair each conclusion belongs to. Previously the SDK dropped these fields. Requires Honcho v3.2.1+ (#1220)
+
+            ### Changed
+
+            - `Conclusion.source_ids` is `[]` rather than `None` for explicit conclusions when talking to Honcho v3.2.1+. The type still admits `None` for older servers (#1193)
+        </Update>
+        <Update label="v2.5.0">
             ### Added
 
             - `honcho.get_scope(id)` (sync and async) fetches an existing scope by ID and raises `NotFoundError` when it does not exist. Unlike `honcho.scope()`, it never creates the scope, so lookups cannot provision a recall boundary by accident (#1163)
@@ -1026,7 +1056,16 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 
     <Tab title="TypeScript SDK">
         [TypeScript SDK](https://www.npmjs.com/package/@honcho-ai/sdk)
-        <Update label="v2.5.0 (Current)">
+        <Update label="v2.5.1 (Current)">
+            ### Added
+
+            - `observer_id` and `observed_id` on `EvidenceObservation`, so evidence from workspace chat says which peer pair each conclusion belongs to. Requires Honcho v3.2.1+ (#1193)
+
+            ### Changed
+
+            - `Conclusion.sourceIds` is `[]` rather than `null` for explicit conclusions when talking to Honcho v3.2.1+. The type still admits `null` for older servers (#1193)
+        </Update>
+        <Update label="v2.5.0">
             ### Added
 
             - `honcho.getScope(id)` fetches an existing scope by ID and rejects with `NotFoundError` when it does not exist. Unlike `honcho.scope()`, it never creates the scope, so lookups cannot provision a recall boundary by accident (#1163)
@@ -1240,6 +1279,21 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
     </Tab>
     <Tab title="Honcho CLI">
         [Honcho CLI](https://pypi.org/project/honcho-cli/)
+        <Update label="v0.2.0 (Current)">
+        ### Added
+
+        - CLI requests carry `X-Honcho-Host: honcho-cli/<version> (<platform>)` so telemetry counts them as CLI traffic rather than direct SDK use (#1181)
+        - Conclusion attribution on `honcho conclusion list` and `honcho conclusion search` (Honcho v3.2.0+): every row now carries `level`, `source_ids` and `times_derived`, so an extracted fact is distinguishable from a dreamed one. Table output shows a premise count; `--json` keeps the full id list, ready to pipe into `honcho conclusion get` (#952)
+        - `honcho conclusion get <id>...` fetches conclusions by ID from anywhere in the workspace, with no observer/observed pair required. Feed it a conclusion's `source_ids` to walk a reasoning chain down to the explicit facts underneath it; IDs that no longer exist are reported rather than failing the command (#952)
+        - `honcho conclusion derived <id>` lists what was built on top of a conclusion — the same edge walked upward. Worth checking before deleting or correcting a fact (#952)
+        - `--level` on `honcho conclusion list` and `honcho conclusion search`, and `--derived-from` on `honcho conclusion list` (#952)
+        - `--evidence` on `honcho peer chat` and `honcho workspace chat` (Honcho v3.2.0+): reports the conclusions and messages the dialectic read and the tools it called. Evidence is collated from what the agent accessed rather than reported by the model, so it over-reports and costs no extra model tokens. Messages are summarised per session, since evidence carries their identity but not their text (#1129)
+
+        ### Changed
+
+        - Requires `honcho-ai` 2.5.0 (was 2.4.0), which carries the attribution fields and the evidence-bearing chat response
+        </Update>
+
         <Update label="v0.1.5">
         ### Added
 
