@@ -123,6 +123,9 @@ _ScopeOption = (
 # Tenant schemas (the above-tenant provisioning surface — see routers/tenants.py)
 # ---------------------------------------------------------------------------
 
+# ai: The provisioner's only two backend deployment classes (src/models.py Tenant.tier).
+TenantTier = Literal["shared", "dedicated"]
+
 
 class TenantCreate(BaseModel):
     # region ai
@@ -137,13 +140,13 @@ class TenantCreate(BaseModel):
         Field(min_length=1, max_length=128, pattern=RESOURCE_NAME_PATTERN),
     ]
     vector_correlation_id: str | None = None
-    tier: Annotated[str, Field(min_length=1, max_length=64)]
+    tier: TenantTier
 
 
 class Tenant(BaseModel):
     tenant_id: str
     vector_correlation_id: str | None = None
-    tier: str
+    tier: TenantTier
     created_at: datetime.datetime
 
     model_config = ConfigDict(from_attributes=True)  # pyright: ignore
