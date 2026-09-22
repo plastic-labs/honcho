@@ -23,6 +23,80 @@ from src.utils.work_unit import construct_work_unit_key, parse_work_unit_key
 class TestDeriverProcessing:
     """Test suite for deriver processing using the conftest fixtures"""
 
+    async def test_cited_indices_resolve_to_batch_public_ids(self):
+        """source_indices are batch positions; the saved observation carries the
+        public ids of those messages, including a non-target context message."""
+
+        def _message(row_id: int, public_id: str, peer: str) -> Mock:
+            return Mock(
+                id=row_id,
+                public_id=public_id,
+                session_name="session-1",
+                workspace_name="workspace-1",
+                peer_name=peer,
+                content="...",
+                token_count=5,
+                created_at=datetime.now(UTC),
+            )
+
+        messages: list[Any] = [
+            _message(10, "bob_asks_______000010", "bob"),
+            _message(20, "alice_picks____000020", "alice"),
+            _message(30, "bob_acks_______000030", "bob"),
+        ]
+        configuration = Mock()
+        configuration.reasoning.enabled = True
+        configuration.dream.enabled = False
+
+        mock_response = HonchoLLMCallResponse(
+            content=PromptRepresentation(
+                explicit=[
+                    ExplicitObservationBase(
+                        source_indices=[1, 0, 7], content="alice chose SQLite"
+                    )
+                ]
+            ),
+            input_tokens=10,
+            output_tokens=5,
+            finish_reasons=["STOP"],
+        )
+        saved: list[Representation] = []
+
+        async def capture_save(
+            _self: RepresentationManager,
+            observations: Representation,
+            *_args: Any,
+            **_kwargs: Any,
+        ) -> crud.CreateDocumentsResult:
+            saved.append(observations)
+            return crud.CreateDocumentsResult()
+
+        with (
+            patch(
+                "src.deriver.deriver.honcho_llm_call",
+                new_callable=AsyncMock,
+                return_value=mock_response,
+            ),
+            patch.object(RepresentationManager, "save_representation", capture_save),
+        ):
+            await process_representation_tasks_batch(
+                messages=messages,
+                message_level_configuration=configuration,
+                observers=["bob"],
+                observed="alice",
+                queue_item_message_ids=[20],
+                session_id="canonical-session-1",
+            )
+
+        assert len(saved) == 1
+        observation = saved[0].explicit[0]
+        assert observation.message_ids == [20]
+        # Citation order is preserved; the out-of-range index is dropped.
+        assert observation.source_message_ids == [
+            "alice_picks____000020",
+            "bob_asks_______000010",
+        ]
+
     async def test_process_representation_tasks_batch_uses_model_config(self):
         message = Mock(
             id=1,

@@ -356,6 +356,7 @@ export interface ConclusionResponse {
   session_id: string | null
   level: ConclusionLevel
   source_ids?: string[] | null
+  source_message_ids?: string[] | null
   times_derived?: number
   created_at: string
 }

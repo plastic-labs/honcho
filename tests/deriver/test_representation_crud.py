@@ -1,5 +1,9 @@
 import datetime
+import logging
 
+import pytest
+
+from src import models
 from src.utils.representation import (
     DeductiveObservation,
     ExplicitObservation,
@@ -7,6 +11,13 @@ from src.utils.representation import (
     PromptRepresentation,
     Representation,
 )
+
+
+def test_prompt_representation_schema_orders_citations_before_content() -> None:
+    schema = PromptRepresentation.model_json_schema()
+    explicit_properties = schema["$defs"]["ExplicitObservationBase"]["properties"]
+
+    assert list(explicit_properties) == ["source_indices", "content"]
 
 
 def test_representation_is_empty_and_diff():
@@ -97,6 +108,7 @@ def test_prompt_representation_conversion():
     rep = Representation.from_prompt_representation(
         pr,
         message_ids=[1],
+        prompt_message_ids=["msg_public_id_one___"],
         session_name="s",
         created_at=timestamp,
     )
@@ -106,3 +118,44 @@ def test_prompt_representation_conversion():
     # (they would be created directly by the Dreamer via the create_observations tool)
     assert len(rep.deductive) == 0
     assert rep.explicit[0].created_at == timestamp
+
+
+def test_mixed_peer_source_indices_resolve_against_prompt_order(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    created_at = datetime.datetime(2025, 1, 1, 12, 0, 0, tzinfo=datetime.UTC)
+    messages = [
+        models.Message(id=10, public_id="bob_asks_______000010", peer_name="bob"),
+        models.Message(id=20, public_id="alice_picks____000020", peer_name="alice"),
+        models.Message(id=30, public_id="bob_acks_______000030", peer_name="bob"),
+    ]
+    for message in messages:
+        message.created_at = created_at
+
+    # Same mapping the deriver builds: every batch message, prompt order.
+    prompt_message_ids = [message.public_id for message in messages]
+    prompt_representation = PromptRepresentation(
+        explicit=[
+            ExplicitObservationBase(
+                content="Alice chose the first option",
+                source_indices=[0, 1, 3],
+            )
+        ]
+    )
+
+    with caplog.at_level(logging.WARNING, logger="src.utils.representation"):
+        representation = Representation.from_prompt_representation(
+            prompt_representation,
+            message_ids=[20],
+            prompt_message_ids=prompt_message_ids,
+            session_name="s",
+            created_at=created_at,
+        )
+
+    observation = representation.explicit[0]
+    # bob's question is cited as context; alice's answer is the fact.
+    assert observation.source_message_ids == [
+        "bob_asks_______000010",
+        "alice_picks____000020",
+    ]
+    assert "Dropping out-of-range source_indices [3]" in caplog.text

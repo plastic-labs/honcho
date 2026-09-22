@@ -459,6 +459,7 @@ class ConclusionResponse(BaseModel):
     session_id: str | None = None
     level: ConclusionLevel = "explicit"
     source_ids: list[str] | None = None
+    source_message_ids: list[str] | None = None
     times_derived: int = 1
     created_at: datetime.datetime
 

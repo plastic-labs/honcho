@@ -510,6 +510,52 @@ class TestRepresentationManagerSessionScoping:
 
 class TestRepresentationManagerSave:
     @pytest.mark.asyncio
+    async def test_save_representation_threads_source_message_ids(self):
+        """Citations ride on DocumentCreate, not in the JSONB metadata."""
+        manager = RepresentationManager(
+            "workspace",
+            observer="observer",
+            observed="alice",
+        )
+        observation = ExplicitObservation(
+            content="Alice chose the first option",
+            created_at=datetime.now(UTC),
+            message_ids=[20],
+            source_message_ids=["bob_asks_______000010", "alice_picks____000020"],
+            session_name="session",
+        )
+
+        with (
+            patch(
+                "src.crud.representation.crud.get_or_create_collection",
+                new=AsyncMock(return_value=MagicMock()),
+            ),
+            patch(
+                "src.crud.representation.crud.create_documents",
+                new=AsyncMock(return_value=CreateDocumentsResult()),
+            ) as mock_create_documents,
+        ):
+            await manager._save_representation_internal(  # pyright: ignore[reportPrivateUsage]
+                MagicMock(spec=AsyncSession),
+                [observation],
+                [[0.1]],
+                message_ids=[20],
+                session_name="session",
+                message_created_at=datetime.now(UTC),
+                message_level_configuration=_resolved_config(),
+            )
+
+        create_call = mock_create_documents.await_args
+        assert create_call is not None
+        document = create_call.args[1][0]
+        assert document.metadata.message_ids == [20]
+        assert document.source_message_ids == [
+            "bob_asks_______000010",
+            "alice_picks____000020",
+        ]
+        assert "source_message_ids" not in document.metadata.model_dump()
+
+    @pytest.mark.asyncio
     async def test_save_representation_filters_blank_observations_before_embedding(
         self,
     ):

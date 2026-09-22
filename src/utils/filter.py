@@ -12,6 +12,7 @@ from sqlalchemy import (
     and_,
     case,
     cast,
+    false,
     literal,
     or_,
     select,
@@ -74,6 +75,7 @@ ALLOWED_EXTERNAL_TO_INTERNAL_COLUMN_MAPPING_DOCUMENTS = {
     "observed_id": "observed",
     "level": "level",
     "source_ids": "source_ids",
+    "source_message_ids": "source_message_ids",
     "times_derived": "times_derived",
     "metadata": "internal_metadata",
 }
@@ -527,17 +529,10 @@ def _build_filter_conditions(
 def _build_source_ids_condition(
     value: Any, model_class: type[Any]
 ) -> ColumnElement[bool] | None:
-    """Filter documents by reasoning-tree linkage via document_sources.
-
-    Preserves the old JSONB containment semantics: a scalar matches
-    membership, a bare list requires ALL entries present, {"contains": x}
-    matches membership, {"in": [...]} matches any entry present.
-    """
+    """Filter documents by reasoning-tree linkage via document_sources."""
     from ..models import DocumentSource
 
-    def _member(sid: Any) -> ColumnElement[bool]:
-        if not isinstance(sid, str) or not sid:
-            raise FilterError("source_ids filter entries must be non-empty strings")
+    def _member(sid: str) -> ColumnElement[bool]:
         linked = (
             select(literal(1))
             .where(
@@ -549,6 +544,45 @@ def _build_source_ids_condition(
         # Undrained rows still carry linkage in the legacy JSONB column.
         return or_(linked, model_class.legacy_source_ids.contains([sid]))
 
+    return _build_link_condition(value, _member, "source_ids")
+
+
+def _build_source_message_ids_condition(
+    value: Any, model_class: type[Any]
+) -> ColumnElement[bool] | None:
+    """Filter documents by cited evidence via document_source_messages."""
+    from ..models import DocumentSourceMessage
+
+    def _member(mid: str) -> ColumnElement[bool]:
+        return (
+            select(literal(1))
+            .where(
+                DocumentSourceMessage.derived_id == model_class.id,
+                DocumentSourceMessage.message_id == mid,
+            )
+            .exists()
+        )
+
+    return _build_link_condition(value, _member, "source_message_ids")
+
+
+def _build_link_condition(
+    value: Any,
+    member: Callable[[str], ColumnElement[bool]],
+    field: str,
+) -> ColumnElement[bool] | None:
+    """Shared grammar for edge-table linkage filters.
+
+    Preserves the old JSONB containment semantics: a scalar matches
+    membership, a bare list requires ALL entries present, {"contains": x}
+    matches membership, {"in": [...]} matches any entry present.
+    """
+
+    def _member(entry: Any) -> ColumnElement[bool]:
+        if not isinstance(entry, str) or not entry:
+            raise FilterError(f"{field} filter entries must be non-empty strings")
+        return member(entry)
+
     if value == "*":
         return None
     if isinstance(value, str):
@@ -557,6 +591,10 @@ def _build_source_ids_condition(
         entries = list(typing_cast(Sequence[Any], value))
         if "*" in entries:
             return None
+        # An empty list names no ids, so nothing can match it (same as a
+        # regular column's `in: []`); dropping the condition would widen it.
+        if not entries:
+            return false()
         return _combine_conditions_with_and([_member(v) for v in entries])
     if isinstance(value, dict):
         conditions: list[ColumnElement[bool]] = []
@@ -574,14 +612,11 @@ def _build_source_ids_condition(
                 if "*" in in_entries:
                     continue
                 members = [_member(v) for v in in_entries]
-                if members:
-                    conditions.append(or_(*members))
+                conditions.append(or_(*members) if members else false())
             else:
-                raise FilterError(
-                    f"Operator '{operator}' is not supported on source_ids"
-                )
+                raise FilterError(f"Operator '{operator}' is not supported on {field}")
         return _combine_conditions_with_and(conditions)
-    raise FilterError(f"Invalid source_ids filter value: {value}")
+    raise FilterError(f"Invalid {field} filter value: {value}")
 
 
 def _build_field_condition(
@@ -624,6 +659,8 @@ def _build_field_condition(
     # column; translate to EXISTS subqueries before column resolution.
     if model_class.__name__ == "Document" and column_name == "source_ids":
         return _build_source_ids_condition(value, model_class)
+    if model_class.__name__ == "Document" and column_name == "source_message_ids":
+        return _build_source_message_ids_condition(value, model_class)
 
     # Check if the column exists on the model
     if not hasattr(model_class, column_name):

@@ -121,6 +121,7 @@ async def process_representation_tasks_batch(
         )
         for idx, msg in enumerate(messages)
     )
+    prompt_message_ids = [msg.public_id for msg in messages]
 
     # Track token usage - count only tokens from messages being processed
     prompt_tokens = estimate_deriver_prompt_tokens(custom_instructions)
@@ -210,6 +211,7 @@ async def process_representation_tasks_batch(
     observations = Representation.from_prompt_representation(
         response.content,
         message_ids,
+        prompt_message_ids,
         latest_message.session_name,
         latest_message.created_at,
     )

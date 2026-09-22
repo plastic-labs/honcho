@@ -32,12 +32,18 @@ def runner():
     return CliRunner()
 
 
-def _conclusion(cid: str, level: str = "inductive", source_ids: list[str] | None = None) -> MagicMock:
+def _conclusion(
+    cid: str,
+    level: str = "inductive",
+    source_ids: list[str] | None = None,
+    source_message_ids: list[str] | None = None,
+) -> MagicMock:
     return MagicMock(
         id=cid,
         content=f"content for {cid}",
         level=level,
         source_ids=source_ids if source_ids is not None else ["p1", "p2"],
+        source_message_ids=source_message_ids,
         times_derived=3,
         observer_id="alice",
         observed_id="alice",
@@ -59,9 +65,41 @@ class TestConclusionAttribution:
         row = json.loads(result.stdout)[0]
         assert row["level"] == "inductive"
         assert row["source_ids"] == ["p1", "p2"]
+        assert row["source_message_ids"] == []
         assert row["times_derived"] == 3
         # --level reaches the server as a filter rather than being applied locally
         assert client.peer.return_value.conclusions.list.call_args.kwargs["filters"] == {"level": "inductive"}
+
+    def test_list_reports_cited_messages_and_filters_by_them(self, cfg, runner):
+        client = MagicMock()
+        config = MagicMock(workspace_id="ws1", peer_id="alice")
+        client.peer.return_value.conclusions.list.return_value = MagicMock(
+            items=[_conclusion("c1", level="explicit", source_ids=[], source_message_ids=["m1", "m2"])]
+        )
+
+        with patch("honcho_cli.commands.conclusion.get_client", return_value=(client, config)):
+            result = runner.invoke(app, ["conclusion", "list", "--cites", "m1", "-p", "alice"])
+
+        assert result.exit_code == 0
+        row = json.loads(result.stdout)[0]
+        assert row["source_message_ids"] == ["m1", "m2"]
+        assert client.peer.return_value.conclusions.list.call_args.kwargs["filters"] == {
+            "source_message_ids": {"contains": "m1"}
+        }
+
+    def test_list_tolerates_sdks_without_source_message_ids(self, cfg, runner):
+        """An SDK predating the field must not break the listing."""
+        client = MagicMock()
+        config = MagicMock(workspace_id="ws1", peer_id="alice")
+        legacy = _conclusion("c1", level="explicit", source_ids=[])
+        del legacy.source_message_ids
+        client.peer.return_value.conclusions.list.return_value = MagicMock(items=[legacy])
+
+        with patch("honcho_cli.commands.conclusion.get_client", return_value=(client, config)):
+            result = runner.invoke(app, ["conclusion", "list", "-p", "alice"])
+
+        assert result.exit_code == 0
+        assert json.loads(result.stdout)[0]["source_message_ids"] == []
 
     def test_list_rejects_an_unknown_level(self, cfg, runner):
         result = runner.invoke(app, ["conclusion", "list", "--level", "nonsense", "-p", "alice"])

@@ -4400,6 +4400,21 @@
             "title": "Source Ids",
             "description": "IDs of the conclusions this one was derived from: premises for 'deductive', supporting sources for 'inductive', conflicting conclusions for 'contradiction'. None for 'explicit' conclusions."
           },
+          "source_message_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Message Ids",
+            "description": "IDs of the messages the deriver cited as evidence for an 'explicit' conclusion, in citation order. Evidence may include messages from peers other than the observed one. None for derived levels and for conclusions written before citations were recorded."
+          },
           "times_derived": {
             "type": "integer",
             "title": "Times Derived",

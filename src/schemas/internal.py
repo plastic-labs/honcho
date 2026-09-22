@@ -82,6 +82,10 @@ class DocumentCreate(DocumentBase):
         default=None,
         description="Document IDs of source/premise documents -- for deductive and inductive documents",
     )
+    source_message_ids: list[str] | None = Field(
+        default=None,
+        description="Public IDs of the messages cited as evidence -- for explicit documents",
+    )
 
 
 class ObservationInput(BaseModel):

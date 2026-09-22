@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Explicit conclusions cite the messages they came from. The deriver emits `source_indices` per conclusion, resolved against the batch and stored as edges in a new `document_source_messages` table (DDL-only migration `c4d8e2f6a1b3`, no backfill: citations are per-derivation, so rows written earlier surface null). Conclusions responses carry `source_message_ids` (public message ids, citation order; null for derived levels), and `source_message_ids` joins the documents filter allowlist with the same `contains` / `in` / bare-list grammar as `source_ids`, so `POST /conclusions/list` answers "which conclusions cite this message?". Cited messages may belong to any peer in the batch, not only the observed one. The batch-level `message_ids` metadata is unchanged (#935)
+
 ## [3.2.0] - 2026-09-15
 
 ### Added

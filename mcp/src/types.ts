@@ -59,14 +59,20 @@ export function formatMessage(message: Message) {
  * `level`, `source_ids` and `times_derived` are the attribution fields the
  * server started returning in Honcho v3.2.0. `source_ids` is null for
  * explicit conclusions, which are extracted from messages rather than
- * derived from other conclusions.
+ * derived from other conclusions. `source_message_ids` (v3.3.0) is the
+ * reverse: the messages an explicit conclusion cites, null for derived ones.
+ * Read structurally so this compiles against SDKs that predate the field.
  */
 export function formatConclusion(conclusion: Conclusion) {
+  const { sourceMessageIds = null } = conclusion as Conclusion & {
+    sourceMessageIds?: string[] | null;
+  };
   return {
     id: conclusion.id,
     content: conclusion.content,
     level: conclusion.level,
     source_ids: conclusion.sourceIds,
+    source_message_ids: sourceMessageIds,
     times_derived: conclusion.timesDerived,
     observer_id: conclusion.observerId,
     observed_id: conclusion.observedId,

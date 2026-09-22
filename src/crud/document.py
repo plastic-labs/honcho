@@ -53,6 +53,21 @@ def build_source_links(
     ]
 
 
+def build_source_message_links(
+    message_ids: list[str] | None, workspace_name: str
+) -> list[models.DocumentSourceMessage]:
+    """Convert cited message public ids to DocumentSourceMessage rows, deduped."""
+    if not message_ids:
+        return []
+    return [
+        models.DocumentSourceMessage(
+            message_id=mid, position=i, workspace_name=workspace_name
+        )
+        for i, mid in enumerate(dict.fromkeys(message_ids))
+        if models.SOURCE_ID_RE.match(mid)
+    ]
+
+
 def get_all_documents(
     workspace_name: str,
     *,
@@ -1288,6 +1303,9 @@ def _document_model_from_create(
             session_name=doc.session_name,
             embedding=doc.embedding,
             source_links=build_source_links(doc.source_ids, workspace_name),
+            source_message_links=build_source_message_links(
+                doc.source_message_ids, workspace_name
+            ),
         )
     else:
         new_doc = models.Document(
@@ -1300,6 +1318,9 @@ def _document_model_from_create(
             internal_metadata=metadata_dict,
             session_name=doc.session_name,
             source_links=build_source_links(doc.source_ids, workspace_name),
+            source_message_links=build_source_message_links(
+                doc.source_message_ids, workspace_name
+            ),
         )
     if doc.embedding:
         new_doc.sync_state = "pending"

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `source_message_ids` on conclusion output: the messages an explicit conclusion cites as evidence (Honcho v3.3.0+; a count in table mode, the full list in JSON). `conclusion list --cites <message_id>` narrows to the conclusions that cite a message. Empty on servers or SDKs that predate the field
+
 ## [0.2.0] - 2026-09-21
 
 ### Added

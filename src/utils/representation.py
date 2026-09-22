@@ -1,3 +1,4 @@
+import logging
 from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
@@ -6,6 +7,8 @@ from pydantic import BaseModel, Field, field_validator
 
 from src import models
 from src.utils.formatting import parse_datetime_iso
+
+logger = logging.getLogger(__name__)
 
 # Conclusion levels whose `session_name` stamp is trustworthy enough to scope on.
 #
@@ -82,10 +85,23 @@ class ObservationMetadata(BaseModel):
     id: str = Field(default="", description="Document ID for this observation")
     created_at: datetime
     message_ids: list[int]
+    source_message_ids: list[str] = Field(
+        default_factory=list,
+        description="Public ids of the messages cited as evidence, in citation order",
+    )
     session_name: str | None = None
 
 
 class ExplicitObservationBase(BaseModel):
+    # Cite-first: the model commits to its evidence before writing the claim.
+    source_indices: list[int] = Field(
+        default_factory=list,
+        description=(
+            "idx values of the messages that directly support this observation, "
+            "including any message needed to interpret it (e.g. the question "
+            'answered by "the first one"). Only messages that support it.'
+        ),
+    )
     content: str = Field(description="The explicit observation")
 
 
@@ -621,6 +637,7 @@ class Representation(BaseModel):
                     message_ids=flatten_message_ids(
                         doc.internal_metadata.get("message_ids", [])
                     ),
+                    source_message_ids=doc.source_message_ids or [],
                     session_name=doc.session_name,
                 )
                 for doc in documents
@@ -682,20 +699,45 @@ class Representation(BaseModel):
         cls,
         prompt_representation: "PromptRepresentation",
         message_ids: list[int],
+        prompt_message_ids: list[str],
         session_name: str,
         created_at: datetime,
     ) -> "Representation":
-        """Convert PromptRepresentation to Representation."""
-        return cls(
-            explicit=[
+        """Convert PromptRepresentation to Representation.
+
+        ``prompt_message_ids`` holds the public id of every batch message in
+        prompt order, so each cited ``idx`` resolves to a message id here.
+        """
+        explicit_observations: list[ExplicitObservation] = []
+        for explicit in prompt_representation.explicit:
+            source_message_ids: list[str] = []
+            invalid_source_indices: list[int] = []
+            for source_index in explicit.source_indices:
+                if 0 <= source_index < len(prompt_message_ids):
+                    source_message_ids.append(prompt_message_ids[source_index])
+                else:
+                    invalid_source_indices.append(source_index)
+
+            if invalid_source_indices:
+                logger.warning(
+                    "Dropping out-of-range source_indices %s for observation %r; deriver batch contains %d messages",
+                    invalid_source_indices,
+                    explicit.content,
+                    len(prompt_message_ids),
+                )
+
+            explicit_observations.append(
                 ExplicitObservation(
-                    content=e.content,
+                    content=explicit.content,
                     created_at=created_at,
                     message_ids=message_ids,
+                    source_message_ids=list(dict.fromkeys(source_message_ids)),
                     session_name=session_name,
                 )
-                for e in prompt_representation.explicit
-            ],
+            )
+
+        return cls(
+            explicit=explicit_observations,
             deductive=[],
             inductive=[],
         )
