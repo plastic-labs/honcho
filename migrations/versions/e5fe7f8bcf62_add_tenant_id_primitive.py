@@ -287,6 +287,243 @@ NEW_FKS: list[tuple[str, str, list[str], str, list[str], str | None]] = [
     ),
 ]
 
+# region ai
+# downgrade() cannot recover OLD_UNIQUES / OLD_FKS by introspection: by the
+# time it runs, upgrade()'s _drop_all_fks / _drop_all_uniques have already
+# removed those constraints from the catalog under their original names, so
+# there is nothing left on the DB to read the old definitions back from. The
+# two lists below are instead the literal pre-migration constraint set,
+# captured by migrating a fresh database to this revision's down_revision
+# (a7c3e9f1b2d4) and dumping pg_constraint for every TENANT_SCOPED table plus
+# queue. Keep them in lockstep with a7c3e9f1b2d4's schema, not with NEW_FKS /
+# NEW_UNIQUES above (those are the *new* tenant-aware shape).
+# endregion
+
+# Pre-migration unique constraints (table -> list of (name, cols)), exactly as
+# they existed on down_revision.
+OLD_UNIQUES: dict[str, list[tuple[str, list[str]]]] = {
+    "workspaces": [("uq_workspaces_name", ["name"])],
+    "peers": [("uq_peers_name_workspace_name", ["name", "workspace_name"])],
+    "sessions": [("uq_sessions_name_workspace_name", ["name", "workspace_name"])],
+    "messages": [
+        ("uq_messages_public_id", ["public_id"]),
+        (
+            "uq_messages_workspace_name_session_name_seq_in_session",
+            ["workspace_name", "session_name", "seq_in_session"],
+        ),
+    ],
+    "collections": [
+        (
+            "uq_collections_observer_observed_workspace_name",
+            ["observer", "observed", "workspace_name"],
+        )
+    ],
+}
+
+# Pre-migration foreign keys: (name, source_table, [local_cols], ref_table,
+# [ref_cols], ondelete), exactly as they existed on down_revision. Includes
+# queue's FKs: queue is not in TENANT_SCOPED, but upgrade() step 3 drops its
+# FKs too (via _drop_all_fks((*TENANT_SCOPED, "queue"))), so downgrade must
+# restore them here.
+OLD_FKS: list[tuple[str, str, list[str], str, list[str], str | None]] = [
+    # peers
+    (
+        "fk_peers_workspace_name_workspaces",
+        "peers",
+        ["workspace_name"],
+        "workspaces",
+        ["name"],
+        None,
+    ),
+    # sessions
+    (
+        "fk_sessions_workspace_name_workspaces",
+        "sessions",
+        ["workspace_name"],
+        "workspaces",
+        ["name"],
+        None,
+    ),
+    # messages
+    (
+        "fk_messages_session_name_sessions",
+        "messages",
+        ["session_name", "workspace_name"],
+        "sessions",
+        ["name", "workspace_name"],
+        None,
+    ),
+    (
+        "fk_messages_peer_name_peers",
+        "messages",
+        ["peer_name", "workspace_name"],
+        "peers",
+        ["name", "workspace_name"],
+        None,
+    ),
+    # message_embeddings
+    (
+        "fk_message_embeddings_message_id_messages",
+        "message_embeddings",
+        ["message_id"],
+        "messages",
+        ["public_id"],
+        "CASCADE",
+    ),
+    (
+        "fk_message_embeddings_workspace_name_workspaces",
+        "message_embeddings",
+        ["workspace_name"],
+        "workspaces",
+        ["name"],
+        None,
+    ),
+    (
+        "fk_message_embeddings_session_name_workspace_name_sessions",
+        "message_embeddings",
+        ["session_name", "workspace_name"],
+        "sessions",
+        ["name", "workspace_name"],
+        None,
+    ),
+    (
+        "fk_message_embeddings_peer_name_workspace_name_peers",
+        "message_embeddings",
+        ["peer_name", "workspace_name"],
+        "peers",
+        ["name", "workspace_name"],
+        None,
+    ),
+    # collections
+    (
+        "fk_collections_workspace_name_workspaces",
+        "collections",
+        ["workspace_name"],
+        "workspaces",
+        ["name"],
+        None,
+    ),
+    (
+        "fk_collections_observer_workspace_name_peers",
+        "collections",
+        ["observer", "workspace_name"],
+        "peers",
+        ["name", "workspace_name"],
+        None,
+    ),
+    (
+        "fk_collections_observed_workspace_name_peers",
+        "collections",
+        ["observed", "workspace_name"],
+        "peers",
+        ["name", "workspace_name"],
+        None,
+    ),
+    # documents
+    (
+        "fk_documents_workspace_name_workspaces",
+        "documents",
+        ["workspace_name"],
+        "workspaces",
+        ["name"],
+        None,
+    ),
+    (
+        "fk_documents_observer_observed_workspace_name_collections",
+        "documents",
+        ["observer", "observed", "workspace_name"],
+        "collections",
+        ["observer", "observed", "workspace_name"],
+        None,
+    ),
+    (
+        "fk_documents_observer_workspace_name_peers",
+        "documents",
+        ["observer", "workspace_name"],
+        "peers",
+        ["name", "workspace_name"],
+        None,
+    ),
+    (
+        "fk_documents_observed_workspace_name_peers",
+        "documents",
+        ["observed", "workspace_name"],
+        "peers",
+        ["name", "workspace_name"],
+        None,
+    ),
+    (
+        "fk_documents_session_workspace",
+        "documents",
+        ["session_name", "workspace_name"],
+        "sessions",
+        ["name", "workspace_name"],
+        None,
+    ),
+    # document_sources
+    (
+        "fk_document_sources_derived_id_documents",
+        "document_sources",
+        ["derived_id"],
+        "documents",
+        ["id"],
+        "CASCADE",
+    ),
+    (
+        "fk_document_sources_workspace_name_workspaces",
+        "document_sources",
+        ["workspace_name"],
+        "workspaces",
+        ["name"],
+        None,
+    ),
+    # webhook_endpoints
+    (
+        "fk_webhook_endpoints_workspace_name_workspaces",
+        "webhook_endpoints",
+        ["workspace_name"],
+        "workspaces",
+        ["name"],
+        None,
+    ),
+    # session_peers
+    (
+        "fk_session_peers_workspace_name",
+        "session_peers",
+        ["workspace_name"],
+        "workspaces",
+        ["name"],
+        None,
+    ),
+    (
+        "fk_session_peers_session_name_workspace_name_sessions",
+        "session_peers",
+        ["session_name", "workspace_name"],
+        "sessions",
+        ["name", "workspace_name"],
+        None,
+    ),
+    (
+        "fk_session_peers_peer_name_workspace_name_peers",
+        "session_peers",
+        ["peer_name", "workspace_name"],
+        "peers",
+        ["name", "workspace_name"],
+        None,
+    ),
+    # queue (not TENANT_SCOPED, but upgrade() drops its FKs alongside the rest)
+    ("fk_queue_message_id", "queue", ["message_id"], "messages", ["id"], None),
+    ("fk_queue_session_id", "queue", ["session_id"], "sessions", ["id"], None),
+    (
+        "fk_queue_workspace_name",
+        "queue",
+        ["workspace_name"],
+        "workspaces",
+        ["name"],
+        None,
+    ),
+]
+
 
 def _inspector() -> sa.Inspector:
     return sa.inspect(op.get_bind())
@@ -544,6 +781,35 @@ def downgrade() -> None:
         _drop_pk(tname)
         cols = old_pks.get(tname, ["id"])
         op.create_primary_key(f"pk_{tname}", tname, cols, schema=schema)
+
+    # Restore the pre-migration uniques and FKs (see the OLD_UNIQUES / OLD_FKS
+    # comment above for why these are a recorded list rather than introspected
+    # here). Uniques first: several of the FKs below target one of them rather
+    # than a primary key (e.g. fk_queue_workspace_name -> workspaces.name).
+    for tname, uniques in OLD_UNIQUES.items():
+        insp = _inspector()
+        existing_uniques = {
+            uq.get("name") for uq in insp.get_unique_constraints(tname, schema=schema)
+        }
+        for uname, cols in uniques:
+            if uname not in existing_uniques:
+                op.create_unique_constraint(uname, tname, cols, schema=schema)
+
+    for name, src, local_cols, ref, ref_cols, ondelete in OLD_FKS:
+        insp = _inspector()
+        if not any(
+            fk.get("name") == name for fk in insp.get_foreign_keys(src, schema=schema)
+        ):
+            op.create_foreign_key(
+                name,
+                src,
+                ref,
+                local_cols,
+                ref_cols,
+                ondelete=ondelete,
+                source_schema=schema,
+                referent_schema=schema,
+            )
 
     for tname in (*TENANT_SCOPED, "queue", "active_queue_sessions"):
         if column_exists(tname, "tenant_id"):
