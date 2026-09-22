@@ -458,3 +458,87 @@ class TestSessionCRUD:
             await crud.clone_session(
                 db_session, test_workspace.name, test_session.name, "invalid_message_id"
             )
+
+
+class TestDeleteSessionQueueItemTenantScopedCleanup:
+    """delete_session's QueueItem cleanup must be tenant-aware too (B5).
+
+    session_id is globally unique in practice, so a tenant-blind match here
+    isn't the live data-loss bug delete_workspace has (that's the
+    workspace_name collision, since workspace_name is only unique per
+    tenant). This exercises the defense-in-depth pin: even a QueueItem row
+    that carries a colliding session_id for another tenant (synthetic here,
+    since real session ids never collide) must survive a delete_session call
+    scoped to a different tenant. See queue_item_tenant_match in
+    src/crud/deriver.py.
+    """
+
+    @pytest.mark.asyncio
+    async def test_queue_items_scoped_to_deleting_tenant(
+        self, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+        from src.db import tenant_context
+
+        workspace_name = str(generate_nanoid())
+        session_name = str(generate_nanoid())
+        for tenant_id in ("tenant-a", "tenant-b"):
+            await db_session.execute(
+                pg_insert(models.Tenant)
+                .values(tenant_id=tenant_id, tier="shared")
+                .on_conflict_do_nothing()
+            )
+        db_session.add(models.Workspace(name=workspace_name, tenant_id="tenant-a"))
+        await db_session.flush()
+        session_a = models.Session(
+            name=session_name, workspace_name=workspace_name, tenant_id="tenant-a"
+        )
+        db_session.add(session_a)
+        await db_session.flush()
+
+        db_session.add_all(
+            [
+                models.QueueItem(
+                    tenant_id="tenant-a",
+                    session_id=session_a.id,
+                    workspace_name=workspace_name,
+                    work_unit_key=(
+                        f"tenant-a:representation:{workspace_name}:"
+                        f"{session_name}:alice:alice"
+                    ),
+                    task_type="representation",
+                    payload={},
+                ),
+                # Synthetic: real session ids never collide across tenants,
+                # but this proves the defense-in-depth pin actually works
+                # rather than being dead code.
+                models.QueueItem(
+                    tenant_id="tenant-b",
+                    session_id=session_a.id,
+                    workspace_name=workspace_name,
+                    work_unit_key=(
+                        f"tenant-b:representation:{workspace_name}:"
+                        f"{session_name}:alice:alice"
+                    ),
+                    task_type="representation",
+                    payload={},
+                ),
+            ]
+        )
+        await db_session.commit()
+
+        monkeypatch.setattr(settings, "MULTI_TENANT", True)
+        token = tenant_context.set("tenant-a")
+        try:
+            await crud.delete_session(db_session, workspace_name, session_name)
+        finally:
+            tenant_context.reset(token)
+
+        surviving = (
+            (await db_session.execute(select(models.QueueItem.tenant_id)))
+            .scalars()
+            .all()
+        )
+        assert "tenant-a" not in surviving
+        assert surviving.count("tenant-b") == 1
