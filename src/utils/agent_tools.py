@@ -811,17 +811,18 @@ TOOLS: dict[str, dict[str, Any]] = {
     },
     "search_memory_workspace": {
         "name": "search_memory",
-        "description": "Search within a specific peer representation's memory using semantic similarity. You MUST specify observer and observed. To get a peer's global representation, set observer AND observed to the SAME peer name (this is where most information lives). Only use different observer/observed when seeking one peer's specific understanding of another.",
+        "description": "Search peer representations in memory using semantic similarity. Name every peer the question covers in ONE call: 'observed' takes a list, and each peer's own global representation is searched (this is where most information lives). Only set 'observer' when you want one peer's specific understanding of another.",
         "input_schema": {
             "type": "object",
             "properties": {
+                "observed": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Names of the peers to search, one entry per peer",
+                },
                 "observer": {
                     "type": "string",
-                    "description": "Name of the observer peer",
-                },
-                "observed": {
-                    "type": "string",
-                    "description": "Name of the observed peer",
+                    "description": "(Optional) name of the observer peer; defaults to each observed peer itself",
                 },
                 "query": {
                     "type": "string",
@@ -829,19 +830,11 @@ TOOLS: dict[str, dict[str, Any]] = {
                 },
                 "top_k": {
                     "type": "integer",
-                    "description": "(Optional) number of results to return (default: 20, max: 40)",
+                    "description": "(Optional) total results across all peers named (default: 20, max: 40)",
                     "default": 20,
                 },
             },
-            "required": ["observer", "observed", "query"],
-        },
-    },
-    "get_workspace_stats": {
-        "name": "get_workspace_stats",
-        "description": "Get workspace-level statistics — peer count, session count, message count, date range of messages — plus the most recently active peers with their message counts and last-active timestamps. Use this to orient yourself and discover which peers are most relevant.",
-        "input_schema": {
-            "type": "object",
-            "properties": {},
+            "required": ["observed", "query"],
         },
     },
     "get_peer_card_by_name": {
@@ -889,7 +882,6 @@ DIALECTIC_TOOLS_MINIMAL: list[dict[str, Any]] = [
 # ownership and the per-pair vector-store namespaces. Message tools are
 # workspace-flat and double as the routing signal (results carry peer_name).
 WORKSPACE_DIALECTIC_TOOLS: list[dict[str, Any]] = [
-    TOOLS["get_workspace_stats"],
     TOOLS["search_memory_workspace"],
     TOOLS["search_messages"],
     TOOLS["get_observation_context"],
@@ -903,10 +895,22 @@ WORKSPACE_DIALECTIC_TOOLS: list[dict[str, Any]] = [
 # Reduced workspace loadout for reasoning_level="minimal" (token cost of the
 # tool definitions themselves), mirroring DIALECTIC_TOOLS_MINIMAL.
 WORKSPACE_TOOLS_MINIMAL: list[dict[str, Any]] = [
-    TOOLS["get_workspace_stats"],
     TOOLS["search_memory_workspace"],
     TOOLS["search_messages"],
 ]
+
+# Workspace tools that read the corpus. The workspace agent's forced first
+# turn is satisfied only by one of these, not by an orientation tool.
+WORKSPACE_RECALL_TOOLS: frozenset[str] = frozenset(
+    {
+        "search_memory",
+        "search_messages",
+        "grep_messages",
+        "get_observation_context",
+        "get_messages_by_date_range",
+        "search_messages_temporal",
+    }
+)
 
 # Tools for the dreamer agent (consolidation + peer card + deduplication)
 DREAMER_TOOLS: list[dict[str, Any]] = [
@@ -2863,6 +2867,7 @@ async def create_tool_executor(
             get_current_iteration,
             get_current_provider_tool_call_id,
             get_current_tool_call_seq,
+            set_last_tool_error,
             set_last_tool_metadata,
         )
 
@@ -2895,6 +2900,9 @@ async def create_tool_executor(
                     metadata = handler_result.metadata
                 else:
                     result_str = handler_result
+                # Handlers report recoverable failures to the model as
+                # "ERROR: ..." strings rather than raising.
+                is_error = result_str.startswith("ERROR:")
                 # Log shape, not contents — `result_str` can carry retrieved
                 # observations, message snippets, peer-card text, etc. The
                 # AgentToolCallCompletedEvent telemetry captures the
@@ -2948,6 +2956,7 @@ async def create_tool_executor(
             # Reset to {} (rather than leaving stale metadata) so a non-ToolResult
             # handler doesn't appear to have leaked metadata from a prior call.
             set_last_tool_metadata(metadata)
+            set_last_tool_error(is_error)
 
             _emit_agent_tool_call_completed(
                 ctx=ctx,
@@ -3098,24 +3107,117 @@ def _estimate_tokens_safe(text: str | None) -> int | None:
 # ---------------------------------------------------------------------------
 
 
+# Peers one workspace search_memory call may fan out over. Each peer is a
+# separate collection and vector-store namespace, so width costs a query per
+# peer; beyond this the agent should narrow its routing instead.
+_WORKSPACE_SEARCH_FANOUT_LIMIT = 5
+
+# Floor for the per-peer slice of a fanned-out top_k, so a wide search still
+# returns something usable per peer.
+_WORKSPACE_SEARCH_MIN_TOP_K = 5
+
+
+def _workspace_search_pairs(
+    tool_input: dict[str, Any],
+) -> "list[tuple[str, str]] | str":
+    """Resolve the (observer, observed) pairs one search call covers.
+
+    `observed` names one or more peers; a bare string is accepted alongside the
+    documented list. `observer` is optional and defaults per pair to the
+    observed peer itself, which is the global representation the workspace
+    agent wants nearly every time. Returns an error string for the model when
+    the arguments don't name anything searchable.
+    """
+    raw_observed = tool_input.get("observed")
+    if isinstance(raw_observed, str):
+        raw_observed = [raw_observed]
+    if not isinstance(raw_observed, list):
+        return (
+            "ERROR: 'observed' is required and takes a list of peer names, "
+            "one entry per peer you want searched."
+        )
+
+    observed_peers: list[str] = []
+    for entry in cast("list[Any]", raw_observed):
+        if isinstance(entry, str) and entry and entry not in observed_peers:
+            observed_peers.append(entry)
+    if not observed_peers:
+        return "ERROR: 'observed' must name at least one peer"
+    if len(observed_peers) > _WORKSPACE_SEARCH_FANOUT_LIMIT:
+        return (
+            f"ERROR: at most {_WORKSPACE_SEARCH_FANOUT_LIMIT} peers per search. "
+            "Search the most relevant ones first, then search again."
+        )
+
+    observer = tool_input.get("observer")
+    if not isinstance(observer, str) or not observer:
+        return [(peer, peer) for peer in observed_peers]
+    return [(observer, peer) for peer in observed_peers]
+
+
 async def _handle_search_memory_workspace(
     ctx: ToolContext, tool_input: dict[str, Any]
 ) -> "str | ToolResult":
-    """Pair-scoped observation search; the pair comes from tool arguments."""
-    observer = tool_input.get("observer", "")
-    observed = tool_input.get("observed", "")
-    if not observer or not observed:
-        return (
-            "ERROR: 'observer' and 'observed' are required. For a peer's "
-            "global representation set both to the SAME peer name."
+    """Pair-scoped observation search over one or more peers named in the call.
+
+    Searches run concurrently, one per pair, and `top_k` is the budget across
+    all of them so a wide search costs the reader no more context than a narrow
+    one.
+    """
+    pairs = _workspace_search_pairs(tool_input)
+    if isinstance(pairs, str):
+        return pairs
+
+    top_k = _bounded_int(tool_input.get("top_k"), 20, hi=40)
+    per_pair_input = {
+        **tool_input,
+        "top_k": max(_WORKSPACE_SEARCH_MIN_TOP_K, top_k // len(pairs)),
+    }
+    results = await asyncio.gather(
+        *(
+            _handle_search_memory(
+                replace(ctx, observer=observer, observed=observed), per_pair_input
+            )
+            for observer, observed in pairs
         )
-    pair_ctx = replace(ctx, observer=observer, observed=observed)
-    result = await _handle_search_memory(pair_ctx, tool_input)
+    )
+
     # Attribute the pair in the output — the workspace agent may query
     # several pairs in one turn and must not conflate their results.
-    if isinstance(result, ToolResult):
-        return replace(result, content=f"[{observer}->{observed}]\n{result.content}")
-    return f"[{observer}->{observed}]\n{result}"
+    sections: list[str] = []
+    metadata: dict[str, Any] = {}
+    failures: list[str] = []
+    for (observer, observed), result in zip(pairs, results, strict=True):
+        content = result.content if isinstance(result, ToolResult) else result
+        sections.append(f"[{observer}->{observed}]\n{content}")
+        if content.startswith("ERROR:"):
+            failures.append(content)
+        if isinstance(result, ToolResult):
+            metadata = _merge_search_metadata(metadata, result.metadata)
+
+    # A per-pair failure is invisible once it is nested under a pair heading,
+    # and the caller only reads the leading "ERROR:". Surface the whole call as
+    # failed when no pair succeeded, so a search that read nothing cannot pass
+    # for recall; a partial failure still returns what the other pairs found.
+    if len(failures) == len(pairs):
+        return failures[0]
+    return ToolResult(content="\n\n".join(sections), metadata=metadata)
+
+
+def _merge_search_metadata(
+    into: dict[str, Any], addition: dict[str, Any]
+) -> dict[str, Any]:
+    """Roll several per-pair search metadata dicts into one call's worth.
+
+    Counts sum across the pairs searched; anything else keeps the first pair's
+    value, which is the same for every pair of a single call.
+    """
+    merged = {**addition, **into}
+    for key in ("results_count", "embedding_query_count"):
+        left, right = into.get(key), addition.get(key)
+        if isinstance(left, int) and isinstance(right, int):
+            merged[key] = left + right
+    return merged
 
 
 async def _handle_get_peer_card_by_name(
@@ -3136,12 +3238,6 @@ async def _handle_get_peer_card_by_name(
         return f"No peer named '{observer}' exists in this workspace"
 
 
-# Peers listed by get_workspace_stats. Fixed rather than a tool argument:
-# folding active peers into stats keeps the tool zero-arg (one discovery
-# round instead of two); deeper discovery goes through search_messages.
-_STATS_ACTIVE_PEERS = 10
-
-
 # Peer-card facts listed per peer when cards are supplied.
 _STATS_CARD_FACTS = 8
 
@@ -3153,9 +3249,8 @@ def format_workspace_stats(
 ) -> str:
     """Render workspace counts and most-active peers as prompt-ready lines.
 
-    Shared by the get_workspace_stats tool and WorkspaceDialecticAgent's
-    routing prefetch; the prefetch passes ``cards`` to nest each peer's
-    known biographical facts under it.
+    Used by WorkspaceDialecticAgent's routing prefetch; ``cards`` nests each
+    peer's known biographical facts under it.
     """
     lines = [
         f"Peers: {stats.peer_count}",
@@ -3181,28 +3276,9 @@ def format_workspace_stats(
     return "\n".join(lines)
 
 
-async def _handle_get_workspace_stats(
-    ctx: ToolContext, tool_input: dict[str, Any]
-) -> str:
-    """Workspace-level counts, message date range, and most active peers."""
-    _ = tool_input
-    async with tracked_db("workspace_tool.get_workspace_stats", read_only=True) as db:
-        stats = await crud.get_workspace_stats(
-            db, ctx.workspace_name, session_names=ctx.session_allowlist
-        )
-        peers = await crud.get_active_peers(
-            db,
-            ctx.workspace_name,
-            limit=_STATS_ACTIVE_PEERS,
-            session_names=ctx.session_allowlist,
-        )
-    return "Workspace stats:\n" + format_workspace_stats(stats, peers)
-
-
 # Dispatch table consulted before _TOOL_HANDLERS by the workspace executor.
 _WORKSPACE_TOOL_HANDLERS: dict[str, Callable[[ToolContext, dict[str, Any]], Any]] = {
     "search_memory": _handle_search_memory_workspace,
-    "get_workspace_stats": _handle_get_workspace_stats,
     "get_peer_card": _handle_get_peer_card_by_name,
     "get_reasoning_chain": _handle_get_reasoning_chain,  # already workspace-scoped
 }

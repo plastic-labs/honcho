@@ -2648,12 +2648,9 @@ class TestEvidenceCoverage:
         "get_observation_context",
         "get_reasoning_chain",
     }
-    # Tools with nothing citable to record: workspace stats are aggregates and a
-    # peer card is free text, so neither carries conclusion or message identity.
-    NON_RECORDING_TOOLS: ClassVar[set[str]] = {
-        "get_workspace_stats",
-        "get_peer_card",
-    }
+    # Tools with nothing citable to record: a peer card is free text, so it
+    # carries no conclusion or message identity.
+    NON_RECORDING_TOOLS: ClassVar[set[str]] = {"get_peer_card"}
 
     def test_every_dialectic_tool_is_accounted_for(self):
         reachable = {
