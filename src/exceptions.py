@@ -175,20 +175,20 @@ class RepresentationSaveError(HonchoException):
 
 @final
 class WebhookTenantUnresolved(HonchoException):
-    """Raised when a webhook work unit has no tenant to attribute on a
-    multi-tenant deployment.
+    """Raised when a webhook work unit has no tenant to attribute on a multi-tenant deployment."""
 
-    Deliberately terminal, not transient: ``is_retryable_error``
-    (``src/utils/retryable_errors.py``) only recognizes DB and transport
-    failures, so this -- like any other plain exception -- is non-retryable by
-    default and the deriver burns the queue item to ``errored`` on the first
-    attempt (``src/deriver/queue_manager.py``'s ``_handle_processing_error`` /
-    ``mark_queue_item_as_errored``) instead of endlessly retrying a body that
-    would only ever be rejected. ``QueueItem.tenant_id`` is stamped by every
-    tenant-bound writer, so this should be unreachable in production; it
-    exists so a future writer that forgets the stamp fails loudly instead of
-    posting an unattributed event groudon has no way to route.
-    """
+    # region ai
+    # Deliberately terminal, not transient: ``is_retryable_error``
+    # (``src/utils/retryable_errors.py``) only recognizes DB and transport
+    # failures, so this -- like any other plain exception -- is non-retryable by
+    # default and the deriver burns the queue item to ``errored`` on the first
+    # attempt (``src/deriver/queue_manager.py``'s ``_handle_processing_error`` /
+    # ``mark_queue_item_as_errored``) instead of endlessly retrying a body that
+    # would only ever be rejected. ``QueueItem.tenant_id`` is stamped by every
+    # tenant-bound writer, so this should be unreachable in production; it
+    # exists so a future writer that forgets the stamp fails loudly instead of
+    # posting an unattributed event the control plane has no way to route.
+    # endregion
 
     status_code = 422
     detail = "Webhook work unit has no tenant on a multi-tenant deployment"

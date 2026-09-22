@@ -21,36 +21,33 @@ logger = logging.getLogger(__name__)
 async def deliver_webhook(
     payload: WebhookPayload, workspace_name: str, *, tenant_id: str | None = None
 ) -> None:
-    """
-    Deliver a single webhook event to its configured endpoints.
-
+    """Deliver a single webhook event to its configured endpoints."""
     # region ai
-    Under MULTI_TENANT, tenant_id rides in the signed body (not the URL and
-    not a header) because it is the only carrier honcho itself asserts:
-    webhook endpoint URLs are customer-registered via
-    POST /v3/workspaces/{ws}/webhooks, so a tenant could point its endpoint at
-    another tenant's URL and have the shared pool sign events into it; a
-    header sits outside the HMAC entirely, which covers exactly the body
-    bytes produced below (_generate_webhook_signature). Putting the claim in
-    the body means the existing signature already authenticates it, with no
-    signing change. groudon's ingress reads this field to route a pool event
-    to the right tenant's webhooks.
-
-    tenant_id is threaded explicitly by the caller rather than read from
-    tenant_context.get() at the point of use: this is the one call site that
-    builds a webhook body, so the value is auditable right here instead of
-    depending on ambient state, and it mirrors publish_webhook_event's own
-    explicit-threading of the same tenant for the same reason.
-
-    Fails closed: under MULTI_TENANT, a work unit with no tenant_id raises
-    WebhookTenantUnresolved before any DB session is opened or any body is
-    built, rather than delivering an unattributed event groudon can only
-    reject. QueueItem.tenant_id is stamped by every tenant-bound writer, so
-    this branch should be unreachable in practice; it exists so a future
-    writer that forgets the stamp fails loudly instead of silently.
+    # Under MULTI_TENANT, tenant_id rides in the signed body (not the URL and
+    # not a header) because it is the only carrier honcho itself asserts:
+    # webhook endpoint URLs are customer-registered via
+    # POST /v3/workspaces/{ws}/webhooks, so a tenant could point its endpoint at
+    # another tenant's URL and have the shared pool sign events into it; a
+    # header sits outside the HMAC entirely, which covers exactly the body
+    # bytes produced below (_generate_webhook_signature). Putting the claim in
+    # the body means the existing signature already authenticates it, with no
+    # signing change. The control plane's webhook ingress reads this field to
+    # route a pooled event to the right tenant's webhooks.
+    #
+    # tenant_id is threaded explicitly by the caller rather than read from
+    # tenant_context.get() at the point of use: this is the one call site that
+    # builds a webhook body, so the value is auditable right here instead of
+    # depending on ambient state, and it mirrors publish_webhook_event's own
+    # explicit-threading of the same tenant for the same reason.
+    #
+    # Fails closed: under MULTI_TENANT, a work unit with no tenant_id raises
+    # WebhookTenantUnresolved before any DB session is opened or any body is
+    # built, rather than delivering an unattributed event the control plane
+    # can only reject. QueueItem.tenant_id is stamped by every tenant-bound
+    # writer, so this branch should be unreachable in practice; it exists so
+    # a future writer that forgets the stamp fails loudly instead of silently.
     # endregion
-    """
-    if settings.MULTI_TENANT and tenant_id is None:
+    if settings.MULTI_TENANT and not tenant_id:
         raise WebhookTenantUnresolved(
             f"Webhook work unit 'webhook:{workspace_name}' has no tenant_id "
             + "but MULTI_TENANT is enabled; refusing to deliver an unattributed event."
@@ -71,7 +68,7 @@ async def deliver_webhook(
             "timestamp": utc_now_iso(),
         }
         if settings.MULTI_TENANT:
-            # tenant_id is guaranteed non-None here: the fail-closed check
+            # tenant_id is guaranteed non-empty here: the fail-closed check
             # above already raised for the flag-on/no-tenant case.
             event_payload["tenant_id"] = tenant_id
         event_json = json.dumps(event_payload, separators=(",", ":"), sort_keys=True)

@@ -197,13 +197,15 @@ async def test_deliver_webhook_posts_signed_payload_to_each_endpoint(
 async def test_deliver_webhook_flag_off_body_is_byte_identical_to_baseline(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """OSS single-tenant invariant: with MULTI_TENANT off, the wire body and
-    signature must be byte-identical to today's shape, regardless of whether a
-    caller passes tenant_id. Pins the literal serialized JSON (rather than
-    reconstructing it from the payload, like the dynamic-comparison test
-    above) so a future change to key order, separators, or shape is caught
-    here even if it happened to also correctly update the reconstruction.
-    """
+    """OSS single-tenant invariant: flag-off body and signature are
+    byte-identical to the single-tenant wire format regardless of
+    `tenant_id`."""
+    # region ai
+    # Pins the literal JSON rather than a round-trip comparison (like the
+    # dynamic-comparison test above) so a future change to key order,
+    # separators, or shape is caught here even if it happened to also
+    # correctly update the reconstruction.
+    # endregion
     monkeypatch.setattr(settings, "MULTI_TENANT", False)
     monkeypatch.setattr(settings.WEBHOOK, "SECRET", "delivery-secret")
     monkeypatch.setattr(webhook_delivery, "utc_now_iso", lambda: "2026-02-13T00:00:00Z")
@@ -291,6 +293,18 @@ async def test_deliver_webhook_flag_on_adds_tenant_id_to_signed_body(
     }
     assert '"tenant_id":"tenant-xyz"' in sent_body
 
+    # region ai
+    # Literal pin (in addition to the round-trip check above) so a future
+    # sort_keys=False regression -- which json.loads == would not catch,
+    # since dict equality ignores key order -- is caught directly here.
+    # endregion
+    expected_body = (
+        '{"data":{"id":"m_1","workspace":"workspace-a"},'
+        '"tenant_id":"tenant-xyz","timestamp":"2026-02-13T00:00:00Z",'
+        '"type":"message.created"}'
+    )
+    assert sent_body == expected_body
+
     expected_signature = hmac.new(
         b"delivery-secret", sent_body.encode("utf-8"), hashlib.sha256
     ).hexdigest()
@@ -329,14 +343,49 @@ async def test_deliver_webhook_flag_on_without_tenant_raises_and_makes_no_call(
 
 
 @pytest.mark.asyncio
+async def test_deliver_webhook_flag_on_with_empty_tenant_raises_and_makes_no_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Flag-on with an empty-string tenant_id: fail closed before any DB
+    session opens or any HTTP call is attempted, same as no tenant at all."""
+    monkeypatch.setattr(settings, "MULTI_TENANT", True)
+
+    get_urls = AsyncMock()
+    monkeypatch.setattr(webhook_delivery, "_get_webhook_urls", get_urls)
+
+    fake_client = FakeAsyncClient({})
+
+    def async_client_factory(*args: Any, **kwargs: Any) -> FakeAsyncClient:
+        _ = (args, kwargs)
+        return fake_client
+
+    monkeypatch.setattr(httpx, "AsyncClient", async_client_factory)
+
+    payload = WebhookPayload(event_type="message.created", data={"id": "m_1"})
+
+    with pytest.raises(WebhookTenantUnresolved):
+        await webhook_delivery.deliver_webhook(payload, "workspace-a", tenant_id="")
+
+    assert fake_client.calls == []
+    # _get_webhook_urls is the only thing that opens a DB session
+    # (tracked_db), so asserting it was never awaited stands in for "no DB
+    # session was opened".
+    get_urls.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_process_item_webhook_threads_queue_item_tenant_to_deliver_webhook(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The webhook branch of process_item must pass QueueItem.tenant_id
-    through to deliver_webhook explicitly -- the authoritative attribution
-    column -- rather than relying on delivery to read tenant_context.get()
-    itself, matching publish_webhook_event's own explicit-threading pattern
-    for the same tenant (auditable at the one call site instead of ambient)."""
+    """The webhook branch of `process_item` threads `QueueItem.tenant_id` to `deliver_webhook` explicitly."""
+    # region ai
+    # Why not tenant_context.get(): QueueItem.tenant_id is the authoritative
+    # attribution column, so threading it explicitly here -- rather than
+    # relying on delivery to read ambient tenant_context.get() itself --
+    # keeps the value auditable at the one call site instead of ambient,
+    # mirroring publish_webhook_event's own explicit-threading pattern for
+    # the same tenant.
+    # endregion
     deliver_mock = AsyncMock()
     monkeypatch.setattr(webhook_delivery, "deliver_webhook", deliver_mock)
 

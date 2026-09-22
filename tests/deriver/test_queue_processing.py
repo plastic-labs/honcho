@@ -2194,24 +2194,26 @@ class TestQueueRetry:
         db_session: AsyncSession,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """A webhook queue item with no tenant_id under MULTI_TENANT is the
-        "forgot to stamp" bug the fail-closed check in deliver_webhook exists
-        for. WebhookTenantUnresolved is neither a DBAPIError nor a transport
-        error, so it is non-retryable and must burn to errored on the first
-        attempt like any other terminal error -- not crash the worker loop,
-        not leave the item claimed forever.
-
-        Built by hand rather than via publish_webhook_event /
-        construct_work_unit_key: both refuse to construct an un-namespaced
-        webhook work_unit_key under MULTI_TENANT (the same invariant that
-        should make this state unreachable in production), so reaching it
-        here means bypassing them -- matching the "future writer forgets the
-        stamp" scenario the check guards against.
-        """
+        """A webhook item with no `tenant_id` under `MULTI_TENANT` burns to
+        `errored` on the first attempt."""
         monkeypatch.setattr(settings, "MULTI_TENANT", True)
         workspace_name = f"webhook-orphan-{generate_nanoid()}"
         work_unit_key = f"webhook:{workspace_name}"
 
+        # region ai
+        # Built by hand rather than via publish_webhook_event /
+        # construct_work_unit_key: both refuse to construct an un-namespaced
+        # webhook work_unit_key under MULTI_TENANT (the same invariant that
+        # should make this state unreachable in production), so reaching it
+        # here means bypassing them -- this is the forgot-to-stamp bug
+        # scenario, matching the "future writer forgets the stamp" case the
+        # fail-closed check in deliver_webhook guards against.
+        #
+        # WebhookTenantUnresolved is neither a DBAPIError nor a transport
+        # error, so it is non-retryable and must burn to errored on the first
+        # attempt like any other terminal error -- not crash the worker loop,
+        # not leave the item claimed forever.
+        # endregion
         queue_item = models.QueueItem(
             task_type="webhook",
             work_unit_key=work_unit_key,
@@ -2242,6 +2244,7 @@ class TestQueueRetry:
         assert items[0].processed
         assert items[0].error is not None
         assert "WebhookTenantUnresolved" in items[0].error
+        assert await self._aqs_rows(db_session, work_unit_key) == 0
 
     async def test_counter_cleared_after_success(
         self,
