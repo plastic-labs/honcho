@@ -12,6 +12,7 @@ from sqlalchemy import (
     and_,
     case,
     cast,
+    false,
     literal,
     or_,
     select,
@@ -590,6 +591,10 @@ def _build_link_condition(
         entries = list(typing_cast(Sequence[Any], value))
         if "*" in entries:
             return None
+        # An empty list names no ids, so nothing can match it (same as a
+        # regular column's `in: []`); dropping the condition would widen it.
+        if not entries:
+            return false()
         return _combine_conditions_with_and([_member(v) for v in entries])
     if isinstance(value, dict):
         conditions: list[ColumnElement[bool]] = []
@@ -607,8 +612,7 @@ def _build_link_condition(
                 if "*" in in_entries:
                     continue
                 members = [_member(v) for v in in_entries]
-                if members:
-                    conditions.append(or_(*members))
+                conditions.append(or_(*members) if members else false())
             else:
                 raise FilterError(f"Operator '{operator}' is not supported on {field}")
         return _combine_conditions_with_and(conditions)

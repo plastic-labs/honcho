@@ -337,6 +337,16 @@ def test_source_message_ids_null_is_rejected():
         apply_filter(select(Document), Document, {"source_message_ids": None})
 
 
+@pytest.mark.parametrize("field", ["source_ids", "source_message_ids"])
+@pytest.mark.parametrize("value", [[], {"in": []}])
+def test_link_filter_empty_list_matches_nothing(field: str, value: Any):
+    """An empty id list names nothing, so it must not widen to every row the
+    way a dropped condition would. Mirrors `in: []` on regular columns."""
+    where = _where(Document, {field: value})
+    assert "false" in where.lower()
+    assert "EXISTS" not in where
+
+
 @pytest.mark.parametrize(
     ("filters", "expected"),
     [

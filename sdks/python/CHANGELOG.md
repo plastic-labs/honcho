@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
-- `Conclusion.source_message_ids`: the messages the deriver cited as evidence for an explicit conclusion (Honcho v3.3.0+). None for derived levels and for conclusions recorded before citations existed. Filter with `{"source_message_ids": {"contains": "<message_id>"}}` to find the conclusions a message produced
+- `Conclusion.source_message_ids`: the messages the deriver cited as evidence for an explicit conclusion (Honcho v3.3.0+). None for derived levels and for conclusions recorded before citations existed. Filter with `{"source_message_ids": {"contains": "<message_id>"}}` to find the conclusions that cite a message as evidence
 
 ## [2.5.0] - 2026-09-15
 

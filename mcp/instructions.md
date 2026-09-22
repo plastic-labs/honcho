@@ -149,7 +149,7 @@ The full API for advanced use cases.
 
 | Tool | When to use |
 | --- | --- |
-| `list_conclusions` | See what Honcho has derived about a peer. Paginate with `page` / `size`, narrow with `session_id` or `filters` (e.g. `{"level": "inductive"}`, or `{"source_message_ids": {"contains": "<message id>"}}` for what a message produced) |
+| `list_conclusions` | See what Honcho has derived about a peer. Paginate with `page` / `size`, narrow with `session_id` or `filters` (e.g. `{"level": "inductive"}`, or `{"source_message_ids": {"contains": "<message id>"}}` for the conclusions that cite a message as evidence) |
 | `query_conclusions` | Semantic search across derived facts |
 | `get_conclusions` | Fetch conclusions by ID from anywhere in the workspace. Pass a conclusion's `source_ids` to see its premises |
 | `get_derived_conclusions` | List what was built on top of a conclusion — the other direction of the same edge |
