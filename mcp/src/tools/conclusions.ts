@@ -17,6 +17,10 @@ export function register(server: McpServer, ctx: ToolContext) {
   server.registerTool(
     "list_conclusions",
     {
+      annotations: {
+        title: "List Conclusions",
+        readOnlyHint: true,
+      },
       description: [
         "List conclusions (facts and observations) that Honcho has derived about a peer (paginated).",
         "Use this to see what Honcho has learned. If no target is given, returns self-conclusions.",
@@ -37,7 +41,7 @@ export function register(server: McpServer, ctx: ToolContext) {
           .optional()
           .describe("Optional: only conclusions attached to this session."),
         filters: z
-          .record(z.string(), z.unknown())
+          .looseObject({})
           .optional()
           .describe(
             'Optional: filter criteria, e.g. {"level": "inductive"} for pattern conclusions only, or {"source_ids": {"contains": "<id>"}} for conclusions derived from a given one. See https://honcho.dev/docs/v3/documentation/features/advanced/using-filters',
@@ -96,6 +100,10 @@ export function register(server: McpServer, ctx: ToolContext) {
   server.registerTool(
     "query_conclusions",
     {
+      annotations: {
+        title: "Query Conclusions",
+        readOnlyHint: true,
+      },
       description: [
         "Semantic search across a peer's conclusions.",
         "Use this to find specific knowledge Honcho has derived — more targeted than list_conclusions.",
@@ -115,7 +123,7 @@ export function register(server: McpServer, ctx: ToolContext) {
           .optional()
           .describe("Max results to return."),
         filters: z
-          .record(z.string(), z.unknown())
+          .looseObject({})
           .optional()
           .describe(
             'Optional: filter criteria, e.g. {"level": ["deductive", "inductive"]} to only return conclusions derived during dreaming. Levels: explicit (extracted directly from messages), deductive, inductive, contradiction. See https://honcho.dev/docs/v3/documentation/features/advanced/using-filters',
@@ -142,6 +150,10 @@ export function register(server: McpServer, ctx: ToolContext) {
   server.registerTool(
     "get_conclusions",
     {
+      annotations: {
+        title: "Get Conclusions",
+        readOnlyHint: true,
+      },
       description: [
         "Fetch conclusions by ID, from anywhere in the workspace — no observer/observed pair needed.",
         "Pass the `source_ids` of a conclusion to see the premises it was derived from; repeat to walk a reasoning chain down to the explicit facts it rests on.",
@@ -179,6 +191,10 @@ export function register(server: McpServer, ctx: ToolContext) {
   server.registerTool(
     "get_derived_conclusions",
     {
+      annotations: {
+        title: "Get Derived Conclusions",
+        readOnlyHint: true,
+      },
       description: [
         "List the conclusions derived FROM a given conclusion — those naming it in their `source_ids`.",
         "This walks the reasoning tree upward (premise -> conclusion); `get_conclusions` on a conclusion's `source_ids` walks it downward.",
@@ -223,6 +239,10 @@ export function register(server: McpServer, ctx: ToolContext) {
   server.registerTool(
     "create_conclusions",
     {
+      annotations: {
+        title: "Create Conclusions",
+        destructiveHint: false,
+      },
       description: [
         "Manually create conclusions (facts/observations) about a peer.",
         "Use this to inject knowledge into Honcho that wasn't derived from conversation.",
@@ -275,6 +295,10 @@ export function register(server: McpServer, ctx: ToolContext) {
   server.registerTool(
     "delete_conclusion",
     {
+      annotations: {
+        title: "Delete Conclusion",
+        destructiveHint: true,
+      },
       description: [
         "Delete a specific conclusion by ID.",
         "Use query_conclusions or list_conclusions to find the ID first.",
