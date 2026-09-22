@@ -335,7 +335,7 @@ export function register(server: McpServer, ctx: ToolContext) {
               peer_id: z.string().describe("Peer ID authoring this message."),
               content: z.string().describe("Message text."),
               metadata: z
-                .record(z.string(), z.unknown())
+                .looseObject({})
                 .optional()
                 .describe("Optional metadata."),
             }),
@@ -388,7 +388,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         workspace_id: workspaceIdSchema(ctx),
         session_id: z.string().describe("The session to get messages from."),
         filters: z
-          .record(z.string(), z.unknown())
+          .looseObject({})
           .optional()
           .describe("Optional metadata filter criteria."),
         page: z.number().int().min(1).optional().describe("Page number (1-indexed)."),

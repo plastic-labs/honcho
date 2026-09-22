@@ -41,7 +41,7 @@ export function register(server: McpServer, ctx: ToolContext) {
           .optional()
           .describe("Optional: only conclusions attached to this session."),
         filters: z
-          .record(z.string(), z.unknown())
+          .looseObject({})
           .optional()
           .describe(
             'Optional: filter criteria, e.g. {"level": "inductive"} for pattern conclusions only, or {"source_ids": {"contains": "<id>"}} for conclusions derived from a given one. See https://honcho.dev/docs/v3/documentation/features/advanced/using-filters',
@@ -123,7 +123,7 @@ export function register(server: McpServer, ctx: ToolContext) {
           .optional()
           .describe("Max results to return."),
         filters: z
-          .record(z.string(), z.unknown())
+          .looseObject({})
           .optional()
           .describe(
             'Optional: filter criteria, e.g. {"level": ["deductive", "inductive"]} to only return conclusions derived during dreaming. Levels: explicit (extracted directly from messages), deductive, inductive, contradiction. See https://honcho.dev/docs/v3/documentation/features/advanced/using-filters',

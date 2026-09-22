@@ -146,7 +146,7 @@ export function register(server: McpServer, ctx: ToolContext) {
       inputSchema: {
         workspace_id: workspaceIdSchema(ctx),
         metadata: z
-          .record(z.string(), z.unknown())
+          .looseObject({})
           .optional()
           .describe(
             "Optional key-value metadata to store on the workspace (e.g. project, purpose).",
@@ -205,7 +205,7 @@ export function register(server: McpServer, ctx: ToolContext) {
           .optional()
           .describe("Optional: max message results (1-100, default 10)."),
         message_filters: z
-          .record(z.string(), z.unknown())
+          .looseObject({})
           .optional()
           .describe(
             'Optional: filters for the message search, e.g. {"created_at": {"gte": "2026-01-01"}}. See https://honcho.dev/docs/v3/documentation/features/advanced/using-filters',
@@ -215,7 +215,7 @@ export function register(server: McpServer, ctx: ToolContext) {
           .optional()
           .describe("Optional: max conclusion results (default 10)."),
         conclusion_filters: z
-          .record(z.string(), z.unknown())
+          .looseObject({})
           .optional()
           .describe(
             'Optional: filters for the conclusion search, e.g. {"level": ["deductive", "inductive"]} to only return conclusions derived during dreaming. Levels: explicit (extracted directly from messages), deductive, inductive, contradiction. The session_id param does not scope conclusions; use {"session_id": ...} here for that.',
@@ -435,7 +435,7 @@ export function register(server: McpServer, ctx: ToolContext) {
       inputSchema: {
         workspace_id: workspaceIdSchema(ctx),
         metadata: z
-          .record(z.string(), z.unknown())
+          .looseObject({})
           .describe("Key-value pairs to set as metadata."),
         peer_id: z
           .string()

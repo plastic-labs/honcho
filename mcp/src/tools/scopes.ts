@@ -90,7 +90,7 @@ export function register(server: McpServer, ctx: ToolContext) {
           .string()
           .describe("Scope name, unique within the workspace (e.g. 'therapy', 'honcho-core')."),
         metadata: z
-          .record(z.string(), z.unknown())
+          .looseObject({})
           .optional()
           .describe("Optional metadata to store with the scope."),
       },
