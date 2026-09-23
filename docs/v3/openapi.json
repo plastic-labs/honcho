@@ -13,7 +13,7 @@
       "name": "GNU Affero General Public License v3.0",
       "url": "https://github.com/plastic-labs/honcho/blob/main/LICENSE"
     },
-    "version": "3.1.2"
+    "version": "3.2.1"
   },
   "servers": [
     {
@@ -4386,19 +4386,12 @@
             "default": "explicit"
           },
           "source_ids": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
             "title": "Source Ids",
-            "description": "IDs of the conclusions this one was derived from: premises for 'deductive', supporting sources for 'inductive', conflicting conclusions for 'contradiction'. None for 'explicit' conclusions."
+            "description": "IDs of the conclusions this one was derived from: premises for 'deductive', supporting sources for 'inductive', conflicting conclusions for 'contradiction'. Empty for 'explicit' conclusions, which derive from messages rather than from other conclusions."
           },
           "times_derived": {
             "type": "integer",
@@ -6768,6 +6761,16 @@
             "description": "Session the conclusion is scoped to, if any",
             "title": "Session Id"
           },
+          "observer_id": {
+            "description": "The peer who made the conclusion",
+            "title": "Observer Id",
+            "type": "string"
+          },
+          "observed_id": {
+            "description": "The peer the conclusion is about",
+            "title": "Observed Id",
+            "type": "string"
+          },
           "source_ids": {
             "description": "IDs of the conclusions this one was derived from. Empty for explicit conclusions, which derive from messages rather than from other conclusions.",
             "items": {
@@ -6781,7 +6784,9 @@
           "id",
           "level",
           "content",
-          "created_at"
+          "created_at",
+          "observer_id",
+          "observed_id"
         ],
         "title": "EvidenceObservation",
         "type": "object"

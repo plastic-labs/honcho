@@ -5,11 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
-## [Unreleased]
+## [2.5.1] - 2026-09-22
 
 ### Added
 
-- `honcho.getScope(id)` fetches an existing scope by ID and rejects with `NotFoundError` when it does not exist. Unlike `honcho.scope()`, it never creates the scope, so lookups cannot provision a recall boundary by accident.
+- `observer_id` and `observed_id` on `EvidenceObservation`, so evidence from workspace chat says which peer pair each conclusion belongs to. Requires Honcho v3.2.1+ (#1193)
+
+### Changed
+
+- `Conclusion.sourceIds` is `[]` rather than `null` for explicit conclusions when talking to Honcho v3.2.1+. The type still admits `null` for older servers (#1193)
+
+## [2.5.0] - 2026-09-15
+
+### Added
+
+- `honcho.getScope(id)` fetches an existing scope by ID and rejects with `NotFoundError` when it does not exist. Unlike `honcho.scope()`, it never creates the scope, so lookups cannot provision a recall boundary by accident (#1163)
+- `includeEvidence` on peer and workspace `chat()` / `chatStream()`. Opting in returns a `ChatResponse` carrying the answer plus the conclusions, messages, and tool calls the dialectic read; leaving it out returns the answer on its own. Streaming exposes `.evidence` once the stream is drained. Requires a Honcho server with the matching API support (Honcho v3.2.0+) (#1129)
+- `sourceIds` and `timesDerived` on `Conclusion`. `ConclusionsView.get(id)` / `getMany(ids)` / `derived(id)` and the workspace-level `honcho.conclusions.get` / `getMany` fetch a conclusion with attribution or walk the reasoning tree upward (source → derived). Requires a Honcho server with the matching API support (Honcho v3.2.0+) (#952)
+- SDK requests send `X-Honcho-Host: honcho-typescript/<version> (platform)` so CloudEvents can split harness vs direct SDK vs raw REST traffic. A caller-supplied `X-Honcho-Host` still wins. `VERSION` is exported next to `API_VERSION` (#1182)
 
 ## [2.4.0] - 2026-08-25
 

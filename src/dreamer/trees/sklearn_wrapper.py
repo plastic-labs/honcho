@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 from numpy.typing import NDArray
 
-from .base import SurprisalTree
+from .base import SurprisalTree, sklearn_import_error
 
 if TYPE_CHECKING:
     from sklearn.neighbors import (
@@ -52,10 +52,13 @@ class SklearnTreeWrapper(SurprisalTree):
         if len(self.points) == 0:
             return
 
-        from sklearn.neighbors import (
-            BallTree,  # pyright: ignore[reportUnknownVariableType]
-            KDTree,  # pyright: ignore[reportUnknownVariableType]
-        )
+        try:
+            from sklearn.neighbors import (
+                BallTree,  # pyright: ignore[reportUnknownVariableType]
+                KDTree,  # pyright: ignore[reportUnknownVariableType]
+            )
+        except ImportError as exc:
+            raise sklearn_import_error("'kdtree' or 'balltree'", exc) from exc
 
         points_array: NDArray[np.floating[Any]] = np.array(self.points)
         if self.tree_type == "kd":

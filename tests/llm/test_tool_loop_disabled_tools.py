@@ -31,8 +31,12 @@ OTHER_RESULT = "Search completed."
 @pytest.mark.parametrize("provider", ["openai", "anthropic", "gemini"])
 @pytest.mark.parametrize("include_other_tool", [True, False])
 @pytest.mark.parametrize("same_response", [True, False])
+@pytest.mark.parametrize("choice_form", ["canonical", "name", "openai"])
 async def test_two_card_failures_remove_tool_without_stopping_other_work(
-    provider: ModelTransport, include_other_tool: bool, same_response: bool
+    provider: ModelTransport,
+    include_other_tool: bool,
+    same_response: bool,
+    choice_form: str,
 ) -> None:
     plan = AttemptPlan(
         provider=provider,
@@ -117,7 +121,13 @@ async def test_two_card_failures_remove_tool_without_stopping_other_work(
             max_tokens=256,
             messages=None,
             tools=tools,
-            tool_choice={"type": "tool", "name": CARD_TOOL},
+            tool_choice=(
+                CARD_TOOL
+                if choice_form == "name"
+                else {"type": "function", "function": {"name": CARD_TOOL}}
+                if choice_form == "openai"
+                else {"type": "tool", "name": CARD_TOOL}
+            ),
             tool_executor=recording_executor,
             max_tool_iterations=5,
             response_model=None,

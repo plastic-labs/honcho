@@ -11,6 +11,47 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 - `update_peer_card` rejects over-cap lists without changing the stored card instead of silently truncating them. The first rejection gives consolidation guidance; the second disables card updates for the remaining tool chain and logs that the update was not applied. Disabled tools are removed from subsequent model requests, while other tools remain available. The failure budget is local to each run; no model fallback is introduced (#1144)
 
+## [3.2.1] - 2026-09-22
+
+### Added
+
+- Chat evidence conclusions carry `observer_id` and `observed_id`, matching the Conclusions response. Workspace chat reads across every peer into one evidence list, so each row now says which pair it belongs to without re-fetching it (#1193)
+- `thinking_tool_choice_conflict` provider param for Anthropic model configs, which decides what happens when extended thinking meets a forced tool choice (Anthropic rejects the combination): `throw` (default, raises a validation error before the request is sent), `override_thinking` (drops thinking for that call), or `override_tool` (relaxes the tool choice to `auto`). Set it per model config, e.g. `DIALECTIC_LEVELS__medium__MODEL_CONFIG__OVERRIDES__PROVIDER_PARAMS__THINKING_TOOL_CHOICE_CONFLICT=override_thinking` (#1211)
+
+### Changed
+
+- `source_ids` is `[]` rather than `null` for explicit conclusions on the Conclusions response, matching chat evidence. Clients that checked for `null` should check for an empty list (#1193)
+- Workspace chat keeps its forced tool choice until a recall tool runs cleanly, capped at 3 forced rounds, so an answer always rests on at least one search instead of the prefetched overview. A tool that returns an error does not count. `get_workspace_stats` is removed from the workspace toolset, since the prefetch already supplies the same overview (#1210)
+- The deriver wraps each batch message in a tag carrying its peer and whether it is a target, and derives only from target messages, instead of relying on the model to match a name prefix. Message content that imitates the tag is escaped so it cannot claim target attribution (#1192)
+- Smaller runtime footprint: the Docker image drops from 627MB to 426MB. PDF extraction uses pypdf instead of pdfplumber, provider SDKs import only for the configured backend, and scikit-learn moves behind a new optional `surprisal` extra. Self-hosted deployments that enable `DREAM.SURPRISAL.ENABLED` with an sklearn-backed tree type need the extra; `rptree`, `covertree`, and `lsh` still work without it (#1201)
+
+### Fixed
+
+- Chat with `include_evidence` no longer fails with "Instance is not bound to a Session" when evidence is read after its DB session closes (#1212)
+- On Redis Cluster, each process releases the idle connection its startup PING leaves on the default node. Every client picks the same slot-0 primary, so these sockets piled up there (92% of that node's connections in one observed cluster) and could hit `maxclients`, which stops every new client from initialising (#1198)
+- Dreamer tools return an actionable error for malformed arguments (a string instead of a list, non-object items) instead of raising a `TypeError` mid-loop. Valid sibling observations in the same call still land (#1217)
+- Deleting a session no longer loads the content of every embedding chunk to rebuild vector IDs; chunk counts are aggregated in SQL (#1206)
+
+## [3.2.0] - 2026-09-15
+
+### Added
+
+- Conclusion attribution on the public API: `source_ids` and `times_derived` on the Conclusions response (already stored on documents, previously stripped). `GET /v3/workspaces/{workspace_id}/conclusions/{conclusion_id}` returns a single conclusion with those fields. `source_ids` is filterable via JSONB containment (`{"source_ids": {"contains": "<id>"}}`); `id`, `level`, `source_ids`, and `times_derived` are explicit entries in the documents filter allowlist. The same `contains` fix applies to other JSONB columns, which previously generated invalid ILIKE-on-JSONB SQL. Message attribution (conclusion → source messages) and chain traversal are follow-ups (#952)
+- Opt-in `include_evidence` on pair and workspace chat (`POST /peers/{id}/chat` and `POST /workspaces/{id}/chat`). When true, the response carries the conclusions and messages the agent read plus the tools it called, so a caller can inspect what an answer was built from. Evidence is collated from what the agent accessed, never reported by the model — it over-reports (a conclusion appears because it was seen, not because the answer used it) but is deterministic and costs no model tokens. Off by default so existing callers are unchanged. Streaming puts evidence on the terminal SSE event only (#1129)
+
+### Changed
+
+- CloudEvents LLM and embedding traces (schema version 2) now carry session, workspace, observers, observed, agent type, track name, source message ids, queue item ids, duration, outcome, retry, and a full `system_prompt_ref`. Streamed calls record once at the provider boundary, including interrupted streams. New fields are nullable so v1 archives still load (#1166)
+- Request middleware falls back to `User-Agent` as the CloudEvents `client.host` when `X-Honcho-Host` is absent, so raw REST clients are distinguishable from SDKs without waiting for SDK upgrades. An explicit `X-Honcho-Host` still wins (#1182)
+
+### Fixed
+
+- Dreamer-written conclusions no longer persist fabricated `source_ids`. Unresolvable ids are stripped at the write path; an observation left below its level's minimum real sources is rejected (#945)
+- LLM provider outages (connection failures and upstream 5xx) now surface as 503 instead of an opaque 500. Exhausted retries re-raise the provider error instead of a tenacity `RetryError`. 4xx including 429 is unchanged. The streaming path is not covered (#1165)
+- Peer-scoped keys on `POST /sessions` and `POST /peers` may only name their own peer, must already be a member to get an existing session, and may not send metadata or configuration for one. Creating a fresh session for itself is unchanged. Session-scoped keys are denied on `POST /peers` (#1172)
+- `get_working_representation` reclaims unused query budget when semantic or most-derived search returns fewer unique documents than requested, filling the remainder from recent observations while preserving search priority (#1008)
+- Redis Cluster async client no longer leaks connections on topology re-init. The pin is now `redis>=8.0.1,<9.0.0` (was `<8.0.0`, which excluded the upstream fix in redis-py 8.0.0) (#1157)
+
 ## [3.1.2] - 2026-09-09
 
 ### Added

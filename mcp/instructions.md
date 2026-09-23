@@ -1,20 +1,15 @@
 # Honcho MCP Server — Instructions
 
-## Quick Start: Recommended Flow
+Honcho keeps a model of the people and agents in a conversation ("peers") and answers questions about them. Two modes use this connection, and they need different tools.
 
-The simplest way to use Honcho for a standard user/assistant conversation. Three steps using the general tools.
+- **Recall** — read what Honcho already knows: `chat`, `workspace_chat`, `search`, `get_representation`, `get_peer_context`, `list_conclusions`. Nothing is written. This is the usual case when the user's own application writes to Honcho and this conversation only reads from it.
+- **Memory store** — this conversation is itself what Honcho learns from, because the user asked for it to be remembered or set Honcho up as this assistant's memory. Adds `create_session`, `create_peer`, `add_peers_to_session`, and `add_messages_to_session`.
 
-Every workspace-scoped tool takes `workspace_id`. The simplest setup is for the client to set `X-Honcho-Workspace-ID` on the connection — then omit `workspace_id` on every call. Do not list or create a workspace just to rediscover a header that is already set.
+If the user hasn't asked for this conversation to be recorded, stay in recall mode.
 
-If the header is unset and you don't already know the workspace:
+## Setting up a session
 
-1. Call `list_workspaces` and pick the workspace whose id or metadata best matches this work.
-2. If none fit, call `create_workspace` with a descriptive id (and optional metadata like `{ "project": "...", "purpose": "..." }`).
-3. Reuse that same `workspace_id` for the rest of the conversation.
-
-### 1. Start a conversation (once per conversation)
-
-Create a session and set up the user and assistant peers:
+In memory-store mode, a session holds the conversation and the peers in it:
 
 ```
 create_session
@@ -45,9 +40,30 @@ add_peers_to_session
       observe_others: true
 ```
 
-Store the `session_id` for the rest of this conversation.
+Reuse that `session_id` for the rest of the conversation.
 
-### 2. Get personalization insights (before responding, when helpful)
+## Recording messages
+
+`add_messages_to_session` appends messages to a tracked session:
+
+```
+add_messages_to_session
+  workspace_id: "<workspace-id>"
+  session_id: "<session_id>"
+  messages:
+    - peer_id: "<user-name>"
+      content: "<the user's message>"
+    - peer_id: "Assistant"
+      content: "<your response>"
+```
+
+Record both sides of each exchange as it happens. Honcho can only learn from
+messages it has, and gaps in a session produce a weaker representation than a
+complete one.
+
+## Asking what Honcho knows
+
+`chat` answers a question about one peer, grounded in everything Honcho has learned across that peer's conversations:
 
 ```
 chat
@@ -58,29 +74,14 @@ chat
   session_id: "<session_id>"
 ```
 
-This calls Honcho's reasoning system to answer your question about the user, grounded in everything Honcho has learned across all their conversations. It takes a few seconds, so use it when personalization would genuinely improve your response.
+It runs live reasoning and takes a few seconds, so reach for it when the answer would change your response. `workspace_chat` does the same across all peers.
 
-**Good queries:**
+Questions it answers well:
 
 - "What does this message reveal about the user's communication preferences?"
 - "How formal or casual should I be?"
 - "What is the user really asking for beyond their explicit question?"
 - "What emotional state might the user be in right now?"
-
-### 3. Record the turn (after every exchange)
-
-```
-add_messages_to_session
-  workspace_id: "<workspace-id>"
-  session_id: "<session_id>"
-  messages:
-    - peer_id: "<user-name>"
-      content: "<exact user message>"
-    - peer_id: "Assistant"
-      content: "<your exact response>"
-```
-
-**Always** call this after responding so Honcho can learn from the conversation.
 
 ---
 
@@ -91,75 +92,6 @@ add_messages_to_session
 - **`observe_me: false` skips building a model of a peer** — reserve it for deterministic bots (nothing meaningful to model). For a real AI assistant it's fine to leave observation on.
 - **Reasoning is asynchronous** — don't poll or wait for it to finish before responding. A brand-new or low-volume peer legitimately has little to show yet.
 - **Reach for reads before `chat`** — `get_session_context` / `get_peer_context` / `get_representation` / `search` are near-instant; `chat` runs live reasoning and takes a few seconds. Use `chat` only when you need a reasoned answer.
-
----
-
-## General Tools
-
-The full API for advanced use cases.
-
-### Workspace Tools
-
-| Tool | When to use |
-| --- | --- |
-| `list_workspaces` | Discover available workspaces (id, metadata, created_at). No `workspace_id` needed. |
-| `create_workspace` | Get or create a workspace when none of the listed ones fit |
-| `inspect_workspace` | Inspect a single workspace's details. Requires `workspace_id`. |
-| `search` | Semantic search across messages — scope with optional `peer_id` or `session_id` params |
-| `workspace_chat` | Ask Honcho a question about the whole workspace — reasons across all peers. Use for cross-peer themes or questions not about one peer; use `chat` for a single peer. Accepts optional `reasoning_level`, and `session_id` / `scope` to confine recall. |
-| `get_metadata` | Read metadata for workspace, peer, or session (scope with optional `peer_id` or `session_id`) |
-| `set_metadata` | Store metadata for workspace, peer, or session (scope with optional `peer_id` or `session_id`) |
-
-### Peer Tools
-
-| Tool | When to use |
-| --- | --- |
-| `create_peer` | Register a new participant (user or agent) |
-| `list_peers` | See all participants in the workspace |
-| `chat` | Ask Honcho what it knows about one peer (`peer_id` required). Use `workspace_chat` for the whole workspace. Accepts optional `reasoning_level` (`minimal`–`max`) to control depth vs. speed. Confine recall with `session_id` (one session), `scope` (a scope name for that scope's reasoned view, or a list of names as an explicit-only allowlist), or `sessions` (an ad hoc session-ID allowlist, explicit-only). |
-| `get_peer_card` | Get compact biographical facts about a peer |
-| `set_peer_card` | Manually set/correct facts about a peer |
-| `get_peer_context` | Get full context (representation + peer card) |
-| `get_representation` | Get the textual representation from conclusions |
-
-### Session Tools
-
-| Tool | When to use |
-| --- | --- |
-| `create_session` | Create or get a session with the given ID |
-| `list_sessions` | Discover existing conversations (paginated: `page`, `size`, `reverse`) |
-| `delete_session` | Permanently remove a session |
-| `clone_session` | Fork a conversation (optionally up to a specific message) |
-| `add_peers_to_session` | Add peers to a session with optional per-session config |
-| `remove_peers_from_session` | Remove peers from a session |
-| `get_session_peers` | See who is in a session |
-| `inspect_session` | Inspect detailed session structure/metadata |
-| `add_messages_to_session` | Add messages from specific peers |
-| `get_session_messages` | Read conversation history (paginated: `page`, `size`, `reverse`; optional metadata filters) |
-| `list_scopes` | List the workspace's scopes — named session sets that act as recall boundaries |
-| `get_scope_sessions` | List the sessions a scope covers (paginated) |
-| `create_scope` | Get or create a scope, with optional metadata (label, description, example queries) |
-| `add_sessions_to_scope` | Put existing sessions inside a scope's recall boundary (max 100 per call; history backfills asynchronously) |
-| `remove_session_from_scope` | Take a session back out of a scope |
-| `get_scope_status` | Check whether a scope's backfill has caught up before trusting scoped recall |
-| `get_session_message` | Get a single message from a session by ID |
-| `get_session_context` | Get LLM-ready context (messages + summary) |
-
-### Conclusion Tools
-
-| Tool | When to use |
-| --- | --- |
-| `list_conclusions` | See what Honcho has derived about a peer |
-| `query_conclusions` | Semantic search across derived facts |
-| `create_conclusions` | Inject facts manually |
-| `delete_conclusion` | Remove incorrect or outdated facts |
-
-### System Tools
-
-| Tool | When to use |
-| --- | --- |
-| `schedule_dream` | Trigger memory consolidation for better insights |
-| `get_queue_status` | Check if background processing is complete |
 
 ---
 
@@ -176,6 +108,14 @@ A **session** is a conversation context. Sessions track message history, manage 
 ### Conclusions
 
 **Conclusions** are facts and observations that Honcho derives from conversations. They power the representation — Honcho's understanding of a peer.
+
+Every conclusion carries its own attribution. `level` says how it was reached: `explicit` conclusions are extracted straight from messages, while `deductive`, `inductive` and `contradiction` conclusions are derived while dreaming. `source_ids` names the conclusions a derived one was built from, and is null for explicit ones. `times_derived` counts how many times Honcho independently reached the same conclusion — a rough confidence signal.
+
+Those fields make the reasoning tree walkable in both directions: `get_conclusions` on a conclusion's `source_ids` steps down toward the explicit facts it rests on, and `get_derived_conclusions` steps up to whatever was built on top of it. Walk down before correcting a fact, and up before deleting one.
+
+### Evidence
+
+`chat` and `workspace_chat` accept `include_evidence`. With it, the answer arrives alongside the conclusions and messages the agent read and the tools it called. This is collated from what the agent actually accessed rather than reported by the model, so it over-reports — a listed conclusion was read, which is not proof the answer leaned on it. It costs no extra model tokens, so reach for it whenever an answer needs auditing.
 
 ### Representations
 

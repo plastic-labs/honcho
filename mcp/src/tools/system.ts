@@ -8,6 +8,10 @@ export function register(server: McpServer, ctx: ToolContext) {
   server.registerTool(
     "schedule_dream",
     {
+      annotations: {
+        title: "Schedule Dream",
+        destructiveHint: true,
+      },
       description: [
         "Schedule a dream — a background memory-consolidation task for a peer.",
         "Dreams consolidate observations into higher-level insights and update peer cards.",
@@ -48,6 +52,10 @@ export function register(server: McpServer, ctx: ToolContext) {
   server.registerTool(
     "get_queue_status",
     {
+      annotations: {
+        title: "Get Queue Status",
+        readOnlyHint: true,
+      },
       description: [
         "Get the current processing queue status for background tasks (message derivation, dreams).",
         "Use this to check if Honcho is still processing messages before querying for insights.",

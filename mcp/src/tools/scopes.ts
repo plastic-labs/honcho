@@ -35,6 +35,10 @@ export function register(server: McpServer, ctx: ToolContext) {
   server.registerTool(
     "list_scopes",
     {
+      annotations: {
+        title: "List Scopes",
+        readOnlyHint: true,
+      },
       description: [
         "List the scopes in a workspace (paginated).",
         "A scope is a named set of sessions that acts as a recall boundary: chat with scope=<name> answers only from that scope's sessions.",
@@ -71,6 +75,10 @@ export function register(server: McpServer, ctx: ToolContext) {
   server.registerTool(
     "create_scope",
     {
+      annotations: {
+        title: "Create Scope",
+        destructiveHint: false,
+      },
       description: [
         "Get or create a scope with the given ID.",
         "A scope is a named set of sessions that acts as a recall boundary. Optional metadata (e.g. a label, description, example queries) is stored with it.",
@@ -82,7 +90,7 @@ export function register(server: McpServer, ctx: ToolContext) {
           .string()
           .describe("Scope name, unique within the workspace (e.g. 'therapy', 'honcho-core')."),
         metadata: z
-          .record(z.string(), z.unknown())
+          .looseObject({})
           .optional()
           .describe("Optional metadata to store with the scope."),
       },
@@ -109,6 +117,10 @@ export function register(server: McpServer, ctx: ToolContext) {
   server.registerTool(
     "add_sessions_to_scope",
     {
+      annotations: {
+        title: "Add Sessions to Scope",
+        destructiveHint: false,
+      },
       description: [
         "Add sessions to a scope. Every session must already exist; re-adding a member is a no-op.",
         "Sessions that already hold messages are backfilled into the scope asynchronously — poll get_scope_status before relying on scoped recall for them.",
@@ -141,6 +153,10 @@ export function register(server: McpServer, ctx: ToolContext) {
   server.registerTool(
     "remove_session_from_scope",
     {
+      annotations: {
+        title: "Remove Session from Scope",
+        destructiveHint: true,
+      },
       description: [
         "Remove a session from a scope.",
         "Conclusions derived while it was a member are reconciled out asynchronously; the session itself is untouched.",
@@ -168,6 +184,10 @@ export function register(server: McpServer, ctx: ToolContext) {
   server.registerTool(
     "get_scope_status",
     {
+      annotations: {
+        title: "Get Scope Status",
+        readOnlyHint: true,
+      },
       description: [
         "Get backfill progress for a scope, keyed by session ID.",
         "Each entry is pending, completed, or failed. Only sessions with a backfill enqueued appear, so an empty result means nothing is outstanding.",
@@ -205,6 +225,10 @@ export function register(server: McpServer, ctx: ToolContext) {
   server.registerTool(
     "get_scope_sessions",
     {
+      annotations: {
+        title: "Get Scope Sessions",
+        readOnlyHint: true,
+      },
       description: [
         "List the sessions that belong to a scope (paginated).",
         "Use this to see which conversations a recall boundary covers.",

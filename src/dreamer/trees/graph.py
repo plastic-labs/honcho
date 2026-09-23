@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 from numpy.typing import NDArray
 
-from .base import SurprisalTree
+from .base import SurprisalTree, sklearn_import_error
 
 if TYPE_CHECKING:
     from sklearn.neighbors import NearestNeighbors
@@ -19,7 +19,10 @@ def _knn_indices(
     points: NDArray[np.floating[Any]], n_neighbors: int
 ) -> NDArray[np.intp]:
     """Get k-nearest neighbor indices for each point."""
-    from sklearn.neighbors import NearestNeighbors
+    try:
+        from sklearn.neighbors import NearestNeighbors
+    except ImportError as exc:
+        raise sklearn_import_error("'graph'", exc) from exc
 
     knn: NearestNeighbors = NearestNeighbors(n_neighbors=n_neighbors, algorithm="auto")
     knn.fit(points)  # pyright: ignore[reportUnknownMemberType]
@@ -29,7 +32,10 @@ def _knn_indices(
 
 def _nearest_index(points: NDArray[np.floating[Any]], query: np.ndarray) -> int:
     """Find index of nearest point to query."""
-    from sklearn.neighbors import NearestNeighbors
+    try:
+        from sklearn.neighbors import NearestNeighbors
+    except ImportError as exc:
+        raise sklearn_import_error("'graph'", exc) from exc
 
     knn: NearestNeighbors = NearestNeighbors(n_neighbors=1)
     knn.fit(points)  # pyright: ignore[reportUnknownMemberType]
