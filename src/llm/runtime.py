@@ -480,14 +480,6 @@ def plan_pinned_attempt(
     reasoning_effort: ReasoningEffortType,
     is_fallback: bool,
 ) -> AttemptPlan:
-    """Build an AttemptPlan on exactly `model_config`, never its fallback.
-
-    Tool loops use this so every call in one run hits one provider. Failing
-    over mid-run would splice one model's turns into another's history, and
-    the second provider may reject what the first one wrote (Anthropic
-    validates replayed thinking signatures, for instance). The whole run is
-    restarted on the fallback instead; see `honcho_llm_call`.
-    """
     provider = model_config.transport
     return AttemptPlan(
         provider=provider,
