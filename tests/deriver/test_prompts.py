@@ -4,11 +4,13 @@ from unittest.mock import patch
 import pytest
 
 from src.deriver.prompts import (
+    DERIVER_EXAMPLE_SENTINEL,
     estimate_deriver_prompt_tokens,
     estimate_minimal_deriver_prompt_tokens,
     format_deriver_message,
     minimal_deriver_prompt,
 )
+from src.utils.representation import PromptRepresentation
 
 
 def test_format_deriver_message_marks_target_peer() -> None:
@@ -52,6 +54,28 @@ def test_minimal_deriver_prompt_explains_message_tags() -> None:
     assert 'target="true"' in prompt
     assert 'target="false"' in prompt
     assert "few or no conclusions" in prompt
+
+
+def test_deriver_scaffold_uses_only_synthetic_example_facts() -> None:
+    prompt = minimal_deriver_prompt(
+        peer_id="target_peer",
+        messages=(
+            '<message idx="0" peer="target_peer" target="true">hello</message>'
+        ),
+        custom_instructions=None,
+    )
+    response_schema = str(PromptRepresentation.model_json_schema())
+    scaffold = f"{prompt}\n{response_schema}"
+
+    assert DERIVER_EXAMPLE_SENTINEL in prompt
+    for legacy_example in (
+        "I just turned 25",
+        "I took my dog for a walk in NYC",
+        "I've lived in NYC for six years",
+        "dog named Rover",
+        "Ann is nervous",
+    ):
+        assert legacy_example not in scaffold
 
 
 def test_minimal_deriver_prompt_includes_custom_instructions_when_present() -> None:

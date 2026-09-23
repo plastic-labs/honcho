@@ -73,6 +73,68 @@ class TestDeriverProcessing:
         assert kwargs["model_config"].stop_sequences == expected_config.stop_sequences
         assert "llm_settings" not in kwargs
 
+    async def test_example_sentinel_observations_are_dropped_before_save(self):
+        message = Mock(
+            id=1,
+            public_id="msg_1",
+            session_name="session-1",
+            workspace_name="workspace-1",
+            peer_name="alice",
+            content="I prefer modal editors",
+            token_count=5,
+            created_at=datetime.now(UTC),
+        )
+        configuration = Mock()
+        configuration.reasoning.enabled = True
+        configuration.reasoning.custom_instructions = None
+
+        mock_response = HonchoLLMCallResponse(
+            content=PromptRepresentation(
+                explicit=[
+                    ExplicitObservationBase(content="alice prefers modal editors"),
+                    ExplicitObservationBase(
+                        content=(
+                            "alice configured __HONCHO_EXAMPLE_SERVICE_ALPHA__ "
+                            "to use __HONCHO_EXAMPLE_MODE_BETA__"
+                        )
+                    ),
+                ]
+            ),
+            input_tokens=10,
+            output_tokens=5,
+            finish_reasons=["STOP"],
+        )
+
+        manager = Mock()
+        manager.save_representation = AsyncMock(
+            return_value=crud.CreateDocumentsResult()
+        )
+        with (
+            patch(
+                "src.deriver.deriver.honcho_llm_call",
+                new_callable=AsyncMock,
+                return_value=mock_response,
+            ),
+            patch(
+                "src.deriver.deriver.RepresentationManager",
+                return_value=manager,
+            ),
+        ):
+            await process_representation_tasks_batch(
+                messages=[message],
+                message_level_configuration=configuration,
+                observers=["bob"],
+                observed="alice",
+                queue_item_message_ids=[1],
+                session_id="canonical-session-1",
+            )
+
+        manager.save_representation.assert_awaited_once()
+        saved = manager.save_representation.await_args.args[0]
+        assert [observation.content for observation in saved.explicit] == [
+            "alice prefers modal editors"
+        ]
+
     async def test_all_observer_saves_failing_surfaces_failure(self):
         """When every observer's save_representation fails, the batch must raise."""
         message = Mock(

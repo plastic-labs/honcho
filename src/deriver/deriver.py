@@ -28,6 +28,7 @@ from src.utils.retryable_errors import is_retryable_error
 from src.utils.tokens import track_deriver_input_tokens
 
 from .prompts import (
+    contains_deriver_example_sentinel,
     estimate_deriver_prompt_tokens,
     format_deriver_message,
     minimal_deriver_prompt,
@@ -213,6 +214,23 @@ async def process_representation_tasks_batch(
         latest_message.session_name,
         latest_message.created_at,
     )
+
+    retained_explicit = [
+        observation
+        for observation in observations.explicit
+        if not contains_deriver_example_sentinel(observation.content)
+    ]
+    dropped_example_count = len(observations.explicit) - len(retained_explicit)
+    if dropped_example_count:
+        observations.explicit = retained_explicit
+        logger.warning(
+            "Deriver dropped %d observation(s) containing the reserved few-shot "
+            "example marker for observed=%s in %s/%s",
+            dropped_example_count,
+            observed,
+            latest_message.workspace_name,
+            latest_message.session_name,
+        )
 
     agg_representation_result = crud.CreateDocumentsResult()
     successful_observer_count = 0
