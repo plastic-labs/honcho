@@ -89,16 +89,25 @@ async def get_or_create_tenant(
 
 
 async def update_tenant(
-    db: AsyncSession, tenant_id: str, *, derivation_paused: bool | None
+    db: AsyncSession,
+    tenant_id: str,
+    *,
+    derivation_paused: bool | None,
+    vector_correlation_id: str | None = None,
 ) -> models.Tenant:
-    """Apply the allowlisted mutable fields to an existing tenant; 404 if unknown.
+    """Apply the allowlisted fields to an existing tenant; 404 if unknown.
 
     Additive to the create contract: ``get_or_create_tenant`` still never
     mutates, so a provisioning retry keeps its same-fields-or-409 guarantee.
-    Idempotent — re-asserting the value a row already holds is a 200, so a
-    control plane that retries never trips a conflict.
+    The two fields mutate differently: ``derivation_paused`` is idempotent —
+    re-asserting the value a row already holds is a 200, so a control plane
+    that retries never trips a conflict. ``vector_correlation_id`` is
+    set-once — a ``NULL`` row accepts a value (200), an equal value is a
+    no-op (200), and a row that already holds a different value is a 409;
+    both fields, when present, apply in one commit.
     """
     tenant = await get_tenant(db, tenant_id)
+    dirty = False
     if derivation_paused is not None and tenant.derivation_paused != derivation_paused:
         logger.info(
             "Tenant %s derivation_paused %s -> %s",
@@ -107,6 +116,23 @@ async def update_tenant(
             derivation_paused,
         )
         tenant.derivation_paused = derivation_paused
+        dirty = True
+    if vector_correlation_id is not None:
+        if tenant.vector_correlation_id is None:
+            logger.info(
+                "Tenant %s vector_correlation_id set to %s",
+                tenant_id,
+                vector_correlation_id,
+            )
+            tenant.vector_correlation_id = vector_correlation_id
+            dirty = True
+        elif tenant.vector_correlation_id != vector_correlation_id:
+            raise ConflictException(
+                f"Tenant {tenant_id} vector_correlation_id is already set and "
+                + "cannot be changed"
+            )
+        # else: already this exact value — idempotent no-op.
+    if dirty:
         await db.commit()
     return tenant
 

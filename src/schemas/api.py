@@ -135,7 +135,17 @@ class TenantCreate(BaseModel):
         str,
         Field(min_length=1, max_length=128, pattern=RESOURCE_NAME_PATTERN),
     ]
-    vector_correlation_id: str | None = None
+    # region ai
+    # Required, not optional: under MULTI_TENANT this key is what separates one
+    # tenant's vectors from another's, and a tenant registered without one
+    # cannot be served — it fails closed on its first vector-store call. A
+    # missing, empty, or malformed key is refused here, at the control plane's
+    # first allocation (a 422), rather than stored as NULL and discovered
+    # later at that tenant's first search.
+    # endregion
+    vector_correlation_id: Annotated[
+        str, Field(min_length=1, max_length=128, pattern=RESOURCE_NAME_PATTERN)
+    ]
     tier: Annotated[str, Field(min_length=1, max_length=64)]
 
     # region ai
@@ -152,18 +162,30 @@ class TenantUpdate(BaseModel):
     """The registry's mutable-field allowlist — everything else on the row is fixed.
 
     ``extra="forbid"`` IS the allowlist: a field not declared here is a 422, so
-    the identity fields (``tenant_id``, ``created_at``) and the ones another
-    concern owns (``tier``, ``vector_correlation_id``) cannot be changed through
-    this verb without a deliberate edit here.
+    the identity fields (``tenant_id``, ``created_at``) and ``tier`` cannot be
+    changed through this verb without a deliberate edit here. The two fields
+    that ARE here have different mutation semantics — see the region-ai block
+    below.
     """
 
     # region ai
-    # vector_correlation_id is deliberately absent: the registry's contract is
-    # that it never changes after create, so consumers may cache anything
-    # derived from it for the process lifetime. Making it mutable is an
-    # every-process invalidation problem, not a line here.
+    # The allowlist's two entries mutate differently. derivation_paused is
+    # fully mutable and idempotent: any value may follow any value.
+    # vector_correlation_id is set-once: a NULL row accepts a value, an equal
+    # value is a no-op, and a row that already holds a different value is a
+    # 409 (src/crud/tenant.py). Set-once is what makes process-lifetime
+    # memoization of the key safe without cross-process invalidation —
+    # consumers that resolve this key never cache a missing one, they refuse
+    # to serve instead — so the only transition this verb allows is one no
+    # process has cached.
     # endregion
     derivation_paused: bool | None = None
+    vector_correlation_id: (
+        Annotated[
+            str, Field(min_length=1, max_length=128, pattern=RESOURCE_NAME_PATTERN)
+        ]
+        | None
+    ) = None
 
     model_config = ConfigDict(extra="forbid")  # pyright: ignore
 
