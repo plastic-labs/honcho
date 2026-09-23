@@ -450,9 +450,11 @@ class MessageEmbedding(Base):
             ["peers.name", "peers.workspace_name", "peers.tenant_id"],
         ),
         # region ai
-        # message_id-leading: every lookup on message_id is cross-tenant (the
-        # reconciler / embed_now filter by message_id with no tenant_id in scope),
-        # so a tenant_id prefix would force a scan of all partitions.
+        # message_id-leading: the reconciler's lookups on message_id are
+        # cross-tenant (it sweeps every tenant and filters by message_id with no
+        # tenant_id in scope), so a tenant_id prefix would force a scan of all
+        # partitions. embed_now is NOT one of those callers — it is per-request
+        # and tenant-bound — but the reconciler alone settles the column order.
         # endregion
         Index("ix_message_embeddings_message_tenant", "message_id", "tenant_id"),
         # region ai

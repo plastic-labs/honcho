@@ -9,6 +9,13 @@ background task right after the response is sent. The reconciler remains the
 fallback for anything this path leaves pending (failures, process restarts, or
 rows it could not claim).
 
+Despite sitting beside the reconciler, this path is *not* cross-tenant. Its only
+entrypoints are the message-creation routes, so a batch is always one request's
+messages and therefore one tenant's rows. It runs on ``tracked_db`` bound to that
+tenant — captured in the request and threaded into the background task — so its
+writes are RLS-checked (``WITH CHECK``) like any other per-tenant write. The
+reconciler, which genuinely sweeps every tenant, keeps the service session.
+
 The fast path never holds a DB session across a network call (embedding or
 external vector store): it claims and leases rows in one short transaction,
 embeds with no session open, then persists in short transactions with any
@@ -29,7 +36,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
 from src.config import settings
-from src.dependencies import service_db
+from src.db import tenant_context
+from src.dependencies import tracked_db
 from src.embedding_client import embedding_client
 from src.exceptions import VectorStoreError
 from src.reconciler.sync_vectors import (
@@ -97,12 +105,20 @@ class EmbedTaskGate:
         self.in_flight += 1
         if settings.METRICS.ENABLED:
             prometheus_metrics.set_embed_now_tasks_in_flight(self.in_flight)
-        background_tasks.add_task(self._run, message_ids)
+        # region ai
+        # Capture the tenant HERE, in the request, and thread it into the task
+        # rather than letting the task read the ambient ContextVar. The ambient
+        # one is owned by require_auth's yield-dependency, and whether its
+        # teardown runs before or after background tasks is a FastAPI
+        # implementation detail that has changed across releases. Reading it at
+        # schedule time makes the fast path independent of that ordering.
+        # endregion
+        background_tasks.add_task(self._run, message_ids, tenant_context.get())
         return True
 
-    async def _run(self, message_ids: list[str]) -> None:
+    async def _run(self, message_ids: list[str], tenant_id: str | None) -> None:
         try:
-            await embed_messages_now(message_ids)
+            await embed_messages_now(message_ids, tenant_id=tenant_id)
         finally:
             self.in_flight -= 1
             if settings.METRICS.ENABLED:
@@ -128,7 +144,9 @@ class _ClaimedChunk:
     peer_name: str | None
 
 
-async def embed_messages_now(message_ids: list[str]) -> None:
+async def embed_messages_now(
+    message_ids: list[str], *, tenant_id: str | None = None
+) -> None:
     """Embed freshly created messages immediately, leaving the reconciler as the
     fallback for anything left pending.
 
@@ -136,6 +154,11 @@ async def embed_messages_now(message_ids: list[str]) -> None:
         message_ids: ``Message.public_id`` values (what
             ``MessageEmbedding.message_id`` references). Messages without
             embeddable content simply have no pending rows to claim.
+        tenant_id: The tenant these messages belong to, captured in the request
+            that created them; every session below binds to it. None falls back
+            to the ambient ``tenant_context``, which under ``MULTI_TENANT``
+            fails closed in ``tracked_db`` when there is none — the batch then
+            stays pending and the reconciler heals it.
     """
     if not message_ids:
         return
@@ -145,7 +168,7 @@ async def embed_messages_now(message_ids: list[str]) -> None:
     # lost. Any failure just leaves rows pending (claimed rows stay leased),
     # and the reconciler heals them on its next cycle.
     try:
-        claimed = await _claim_and_lease(message_ids)
+        claimed = await _claim_and_lease(message_ids, tenant_id)
         if not claimed:
             return
 
@@ -154,7 +177,7 @@ async def embed_messages_now(message_ids: list[str]) -> None:
             # Embedding failed; rows stay pending + leased, reconciler will retry.
             return
 
-        await _persist(message_ids, claimed, vectors)
+        await _persist(message_ids, claimed, vectors, tenant_id)
     except Exception:
         logger.exception(
             "Immediate embed failed for %s message(s); reconciler will retry",
@@ -162,7 +185,9 @@ async def embed_messages_now(message_ids: list[str]) -> None:
         )
 
 
-async def _claim_and_lease(message_ids: list[str]) -> list[_ClaimedChunk]:
+async def _claim_and_lease(
+    message_ids: list[str], tenant_id: str | None
+) -> list[_ClaimedChunk]:
     """Phase 1 (short txn): claim eligible pending rows with FOR UPDATE SKIP
     LOCKED, lease them by stamping ``last_sync_at``, and snapshot their data.
 
@@ -170,7 +195,7 @@ async def _claim_and_lease(message_ids: list[str]) -> list[_ClaimedChunk]:
     accounting and the eventual ``sync_state='failed'`` backstop, so a transient
     embedding failure on this best-effort path never burns that budget.
     """
-    async with service_db("embed_now_claim") as db:
+    async with tracked_db("embed_now_claim", tenant_id=tenant_id) as db:
         rows_stmt = (
             select(models.MessageEmbedding)
             .where(
@@ -234,6 +259,7 @@ async def _persist(
     message_ids: list[str],
     claimed: list[_ClaimedChunk],
     vectors: list[list[float]],
+    tenant_id: str | None,
 ) -> None:
     """Phase 3: persist vectors and mark rows synced. On failure, rows stay
     pending (already leased) and the reconciler heals them.
@@ -258,16 +284,18 @@ async def _persist(
     external = get_external_vector_store()
 
     if external is None:
-        async with service_db("embed_now_persist") as db:
+        async with tracked_db("embed_now_persist", tenant_id=tenant_id) as db:
             await _persist_pgvector(db, claimed, vector_by_id)
             await db.commit()
         return
 
-    synced = await _upsert_external(message_ids, claimed, vector_by_id, external)
+    synced = await _upsert_external(
+        message_ids, claimed, vector_by_id, external, tenant_id
+    )
     if not synced:
         return
 
-    async with service_db("embed_now_persist") as db:
+    async with tracked_db("embed_now_persist", tenant_id=tenant_id) as db:
         await _mark_synced(db, synced, vector_by_id, store_in_postgres)
         await db.commit()
 
@@ -303,6 +331,7 @@ async def _upsert_external(
     claimed: list[_ClaimedChunk],
     vector_by_id: dict[int, list[float]],
     external: VectorStore,
+    tenant_id: str | None,
 ) -> list[_ClaimedChunk]:
     """External-store mode: upsert vectors per namespace with no DB session
     open, returning the chunks whose namespaces upserted successfully.
@@ -311,7 +340,7 @@ async def _upsert_external(
     ids match whatever the reconciler writes for any chunk we skipped; reading
     them is the only DB work here, done in its own short transaction before any
     network call."""
-    async with service_db("embed_now_positions") as db:
+    async with tracked_db("embed_now_positions", tenant_id=tenant_id) as db:
         chunk_position = await compute_chunk_positions(db, message_ids)
 
     by_namespace: dict[str, list[_ClaimedChunk]] = {}
