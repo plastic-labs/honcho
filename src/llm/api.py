@@ -274,11 +274,7 @@ async def honcho_llm_call(
 
     def before_retry_for_model(config: ModelConfig) -> Callable[[Any], None]:
         def before_retry_with_state(retry_state: Any) -> None:
-            """Update attempt counter before each retry + log transient failures.
-
-            tenacity's before_sleep fires AFTER an attempt fails, BEFORE
-            sleeping, so we increment to the next attempt number here.
-            """
+            """Update attempt counter before each retry + log transient failures."""
             next_attempt = retry_state.attempt_number + 1
             current_attempt.set(next_attempt)
             exc = retry_state.outcome.exception() if retry_state.outcome else None
