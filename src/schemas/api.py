@@ -137,11 +137,12 @@ class TenantCreate(BaseModel):
     ]
     # region ai
     # Required, not optional: under MULTI_TENANT this key is what separates one
-    # tenant's vectors from another's, and a tenant registered without one
-    # cannot be served — it fails closed on its first vector-store call. A
-    # missing, empty, or malformed key is refused here, at the control plane's
-    # first allocation (a 422), rather than stored as NULL and discovered
-    # later at that tenant's first search.
+    # tenant's vectors from another's, so a tenant registered without one must
+    # not be served — any consumer that resolves the key is expected to fail
+    # closed rather than substitute a default. A missing, empty, or malformed
+    # key is therefore refused here, at the control plane's first allocation
+    # (a 422), rather than stored as NULL and discovered later at that
+    # tenant's first search.
     # endregion
     vector_correlation_id: Annotated[
         str, Field(min_length=1, max_length=128, pattern=RESOURCE_NAME_PATTERN)
@@ -173,11 +174,11 @@ class TenantUpdate(BaseModel):
     # fully mutable and idempotent: any value may follow any value.
     # vector_correlation_id is set-once: a NULL row accepts a value, an equal
     # value is a no-op, and a row that already holds a different value is a
-    # 409 (src/crud/tenant.py). Set-once is what makes process-lifetime
-    # memoization of the key safe without cross-process invalidation —
-    # consumers that resolve this key never cache a missing one, they refuse
-    # to serve instead — so the only transition this verb allows is one no
-    # process has cached.
+    # 409 (src/crud/tenant.py, under a row lock). Set-once is what makes
+    # process-lifetime memoization of the key safe without cross-process
+    # invalidation — a consumer that memoizes this key must never cache a
+    # missing one, it must refuse to serve instead — so the only transition
+    # this verb allows is one nothing has cached.
     # endregion
     derivation_paused: bool | None = None
     vector_correlation_id: (

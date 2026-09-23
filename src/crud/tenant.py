@@ -21,9 +21,11 @@ from src.utils.types import GetOrCreateResult
 logger = logging.getLogger(__name__)
 
 
-async def get_tenant(db: AsyncSession, tenant_id: str) -> models.Tenant:
-    """Fetch a tenant row or raise 404."""
-    tenant = await db.get(models.Tenant, tenant_id)
+async def get_tenant(
+    db: AsyncSession, tenant_id: str, *, for_update: bool = False
+) -> models.Tenant:
+    """Fetch a tenant row or raise 404; ``for_update`` takes a row lock."""
+    tenant = await db.get(models.Tenant, tenant_id, with_for_update=for_update)
     if tenant is None:
         raise ResourceNotFoundException(f"Tenant {tenant_id} not found")
     return tenant
@@ -106,8 +108,15 @@ async def update_tenant(
     no-op (200), and a row that already holds a different value is a 409;
     both fields, when present, apply in one commit.
     """
-    tenant = await get_tenant(db, tenant_id)
-    dirty = False
+    # region ai
+    # The row is locked for the read-compare-write. Without the lock two
+    # concurrent PATCHes could both read NULL, the first commit its value, and
+    # the second overwrite it with no 409 — set-once would hold in the code
+    # and not in the database. Under the lock the second waits, re-reads the
+    # committed value, and conflicts.
+    # endregion
+    tenant = await get_tenant(db, tenant_id, for_update=True)
+    needs_update = False
     if derivation_paused is not None and tenant.derivation_paused != derivation_paused:
         logger.info(
             "Tenant %s derivation_paused %s -> %s",
@@ -116,7 +125,7 @@ async def update_tenant(
             derivation_paused,
         )
         tenant.derivation_paused = derivation_paused
-        dirty = True
+        needs_update = True
     if vector_correlation_id is not None:
         if tenant.vector_correlation_id is None:
             logger.info(
@@ -125,14 +134,13 @@ async def update_tenant(
                 vector_correlation_id,
             )
             tenant.vector_correlation_id = vector_correlation_id
-            dirty = True
+            needs_update = True
         elif tenant.vector_correlation_id != vector_correlation_id:
             raise ConflictException(
                 f"Tenant {tenant_id} vector_correlation_id is already set and "
                 + "cannot be changed"
             )
-        # else: already this exact value — idempotent no-op.
-    if dirty:
+    if needs_update:
         await db.commit()
     return tenant
 
