@@ -8,6 +8,7 @@ database through ``service_db`` (patched onto the per-test engine by conftest's
 
 from typing import Any
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 from nanoid import generate as generate_nanoid
@@ -38,7 +39,11 @@ def _create_body(
     return {
         "tenant_id": tenant_id,
         "tier": tier,
-        "vector_correlation_id": vector_correlation_id,
+        "vector_correlation_id": (
+            f"vec-{tenant_id}"
+            if vector_correlation_id is None
+            else vector_correlation_id
+        ),
     }
 
 
@@ -176,6 +181,31 @@ def test_create_tenant_invalid_id(client: TestClient, enabled: str):
     assert response.status_code == 422, response.text
 
 
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {},
+        {"vector_correlation_id": None},
+        {"vector_correlation_id": ""},
+        {"vector_correlation_id": "a:b"},
+        {"vector_correlation_id": "x" * 129},
+    ],
+    ids=["missing", "null", "empty", "bad_pattern", "too_long"],
+)
+def test_create_requires_vector_correlation_id(
+    client: TestClient, enabled: str, overrides: dict[str, Any]
+):
+    """A missing, null, empty, out-of-pattern, or over-length key is a 422 — no row is stored."""
+    tenant_id = generate_nanoid()
+    body: dict[str, Any] = {"tenant_id": tenant_id, "tier": "dedicated"} | overrides
+
+    response = client.post("/v3/tenants", json=body, headers={HEADER: enabled})
+    assert response.status_code == 422, response.text
+
+    missing = client.get(f"/v3/tenants/{tenant_id}", headers={HEADER: enabled})
+    assert missing.status_code == 404, missing.text
+
+
 # ---------------------------------------------------------------------------
 # Read
 # ---------------------------------------------------------------------------
@@ -271,6 +301,14 @@ async def test_delete_non_empty_tenant_conflict(
 # ---------------------------------------------------------------------------
 
 
+def _patch(
+    client: TestClient, enabled: str, tenant_id: str, body: dict[str, Any]
+) -> httpx.Response:
+    return client.patch(
+        f"/v3/tenants/{tenant_id}", json=body, headers={HEADER: enabled}
+    )
+
+
 def _created(client: TestClient, enabled: str, tenant_id: str) -> dict[str, Any]:
     response = client.post(
         "/v3/tenants", json=_create_body(tenant_id), headers={HEADER: enabled}
@@ -335,6 +373,81 @@ def test_patch_pauses_resumes_and_is_idempotent(client: TestClient, enabled: str
     assert resumed.json()["derivation_paused"] is False
 
 
+@pytest.mark.asyncio
+async def test_patch_vector_correlation_id_is_set_once(
+    client: TestClient, enabled: str, db_session: AsyncSession
+):
+    """vector_correlation_id is set-once: NULL -> value is 200, value -> the same
+    value is idempotent 200, value -> a different value is 409, and it is still
+    refused a null or out-of-pattern value like every other allowlisted field.
+
+    Create requires the field, so the route cannot produce a NULL-keyed row;
+    this seeds one directly — the shape a tenant registered before the control
+    plane sent keys would have.
+    """
+    tenant_id = generate_nanoid()
+    db_session.add(models.Tenant(tenant_id=tenant_id, tier="dedicated"))
+    await db_session.commit()
+
+    def current() -> dict[str, Any]:
+        return client.get(f"/v3/tenants/{tenant_id}", headers={HEADER: enabled}).json()
+
+    v = f"vec-{generate_nanoid()}"
+    w = f"vec-{generate_nanoid()}"
+
+    first = _patch(client, enabled, tenant_id, {"vector_correlation_id": v})
+    assert first.status_code == 200, first.text
+    assert first.json()["vector_correlation_id"] == v
+    assert current()["vector_correlation_id"] == v
+
+    # Re-asserting the value the row already holds is idempotent.
+    again = _patch(client, enabled, tenant_id, {"vector_correlation_id": v})
+    assert again.status_code == 200, again.text
+    assert again.json()["vector_correlation_id"] == v
+
+    # A different value is refused outright — the key never changes once set.
+    conflict = _patch(client, enabled, tenant_id, {"vector_correlation_id": w})
+    assert conflict.status_code == 409, conflict.text
+    assert current()["vector_correlation_id"] == v
+
+    # Still refused a null or out-of-pattern value, like every other field.
+    assert (
+        _patch(client, enabled, tenant_id, {"vector_correlation_id": None}).status_code
+        == 422
+    )
+    assert (
+        _patch(
+            client, enabled, tenant_id, {"vector_correlation_id": "bad:pattern"}
+        ).status_code
+        == 422
+    )
+
+    # One body may set both allowlisted fields at once.
+    combined = _patch(
+        client,
+        enabled,
+        tenant_id,
+        {"derivation_paused": True, "vector_correlation_id": v},
+    )
+    assert combined.status_code == 200, combined.text
+    assert combined.json()["derivation_paused"] is True
+    assert combined.json()["vector_correlation_id"] == v
+
+    # A body that trips the 409 applies nothing — the pause beside the bad key
+    # is not half-committed. Otherwise a control plane retrying a repair could
+    # flip a pause it never meant to.
+    half = _patch(
+        client,
+        enabled,
+        tenant_id,
+        {"derivation_paused": False, "vector_correlation_id": w},
+    )
+    assert half.status_code == 409, half.text
+    after = current()
+    assert after["derivation_paused"] is True
+    assert after["vector_correlation_id"] == v
+
+
 def test_patch_unknown_tenant_is_404(client: TestClient, enabled: str):
     response = client.patch(
         f"/v3/tenants/{generate_nanoid()}",
@@ -348,7 +461,6 @@ def test_patch_unknown_tenant_is_404(client: TestClient, enabled: str):
     "body",
     [
         {"tier": "enterprise"},
-        {"vector_correlation_id": "moved"},
         {"tenant_id": "someone-else"},
         {"created_at": "2026-01-01T00:00:00Z"},
         {"derivation_paused": True, "tier": "enterprise"},
@@ -357,7 +469,6 @@ def test_patch_unknown_tenant_is_404(client: TestClient, enabled: str):
     ],
     ids=[
         "tier",
-        "vector_correlation_id",
         "tenant_id",
         "created_at",
         "mixed",
@@ -368,10 +479,13 @@ def test_patch_unknown_tenant_is_404(client: TestClient, enabled: str):
 def test_patch_rejects_everything_outside_the_allowlist(
     client: TestClient, enabled: str, body: dict[str, Any]
 ):
-    """The allowlist is the whole contract: one field today, a 422 for anything else.
+    """Anything outside the allowlist is a 422, and a mixed body is refused whole.
 
-    A mixed body is refused whole rather than partially applied — otherwise a
-    client could learn that a pause "worked" while its tier change was dropped.
+    ``vector_correlation_id``'s own 409-on-change half lives in
+    ``test_patch_vector_correlation_id_is_set_once`` — it IS on the allowlist,
+    just with set-once semantics instead of full mutability. Refusing a mixed
+    body whole rather than partially applying it matters: otherwise a client
+    could learn that a pause "worked" while its tier change was dropped.
     """
     tenant_id = generate_nanoid()
     before = _created(client, enabled, tenant_id)
