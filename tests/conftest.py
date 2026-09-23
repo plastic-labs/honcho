@@ -951,7 +951,10 @@ def mock_tracked_db(request: pytest.FixtureRequest):
         # the same per-test database session.
         del read_only
         async with session_factory() as session:
-            yield session
+            try:
+                yield session
+            finally:
+                await session.rollback()
 
     # Each module imports tracked_db by name, so patch every import site.
     # Use ExitStack (not a parenthesized `with`) to stay under CPython's

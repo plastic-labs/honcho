@@ -47,6 +47,7 @@ TRANSLATED = [
     pytest.param(anthropic.APITimeoutError(request=_REQUEST), id="anthropic-timeout"),
     pytest.param(httpx.ConnectError("connection refused"), id="httpx-connect"),
     pytest.param(httpx.ReadTimeout("timed out"), id="httpx-timeout"),
+    pytest.param(TimeoutError(), id="aiohttp-timeout"),
 ]
 
 # 4xx is our request being wrong, and 429 is a throttle the caller handles

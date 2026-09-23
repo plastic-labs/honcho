@@ -8,6 +8,10 @@ export function register(server: McpServer, ctx: ToolContext) {
   server.registerTool(
     "create_peer",
     {
+      annotations: {
+        title: "Create Peer",
+        destructiveHint: false,
+      },
       description: [
         "Get or create a peer with the given ID.",
         "Use this to register a new participant (user or agent) in the workspace.",
@@ -44,18 +48,27 @@ export function register(server: McpServer, ctx: ToolContext) {
   server.registerTool(
     "list_peers",
     {
+      annotations: {
+        title: "List Peers",
+        readOnlyHint: true,
+      },
       description: [
         "List peers in the given workspace (paginated).",
         "Use this to discover which users and agents exist.",
-        "Returns peer IDs with pagination metadata.",
+        "Returns peer IDs with pagination metadata; pass page/size to walk past the first page.",
       ].join("\n"),
       inputSchema: {
         workspace_id: workspaceIdSchema(ctx),
+        page: z.number().int().min(1).optional().describe("Page number (1-indexed)."),
+        size: z.number().int().min(1).max(100).optional().describe("Results per page (max 100)."),
+        reverse: z.boolean().optional().describe("Newest first when true."),
       },
     },
-    async ({ workspace_id }) => {
+    async ({ workspace_id, page: pageNum, size, reverse }) => {
       try {
-        const page = await ctx.clientFor(workspace_id).peers();
+        const page = await ctx
+          .clientFor(workspace_id)
+          .peers({ page: pageNum, size, reverse });
         return textResult({
           peers: page.items.map((p) => ({ id: p.id })),
           total: page.total,
@@ -74,6 +87,10 @@ export function register(server: McpServer, ctx: ToolContext) {
   server.registerTool(
     "chat",
     {
+      annotations: {
+        title: "Ask About a Peer",
+        readOnlyHint: true,
+      },
       description: [
         "Ask a natural-language question about ONE peer and get an answer from Honcho's reasoning system.",
         "Requires `peer_id`. Answers from that peer's representation only — not the rest of the workspace.",
@@ -161,6 +178,10 @@ export function register(server: McpServer, ctx: ToolContext) {
   server.registerTool(
     "get_peer_card",
     {
+      annotations: {
+        title: "Get Peer Card",
+        readOnlyHint: true,
+      },
       description: [
         "Get the peer card — a compact set of biographical facts about a peer.",
         "Use this when you need a quick summary of who someone is.",
@@ -194,6 +215,10 @@ export function register(server: McpServer, ctx: ToolContext) {
   server.registerTool(
     "set_peer_card",
     {
+      annotations: {
+        title: "Set Peer Card",
+        destructiveHint: true,
+      },
       description: [
         "Set or update the peer card — a list of biographical facts about a peer.",
         "Use this to manually establish or correct facts about a peer.",
@@ -230,6 +255,10 @@ export function register(server: McpServer, ctx: ToolContext) {
   server.registerTool(
     "get_peer_context",
     {
+      annotations: {
+        title: "Get Peer Context",
+        readOnlyHint: true,
+      },
       description: [
         "Get comprehensive context for a peer — combines their representation (conclusions) and peer card.",
         "Use this when you need the full picture of what Honcho knows about someone.",
@@ -284,6 +313,10 @@ export function register(server: McpServer, ctx: ToolContext) {
   server.registerTool(
     "get_representation",
     {
+      annotations: {
+        title: "Get Peer Representation",
+        readOnlyHint: true,
+      },
       description: [
         "Get the formatted representation for a peer — a text summary built from their conclusions.",
         "Use this when you want the textual representation without the peer card.",

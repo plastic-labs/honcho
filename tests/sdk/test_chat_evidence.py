@@ -12,7 +12,7 @@ from typing import Any
 import pytest
 from pydantic import BaseModel
 
-from sdks.python.src.honcho import ChatResponse, Evidence
+from sdks.python.src.honcho import ChatResponse, Evidence, EvidenceObservation
 from sdks.python.src.honcho.client import Honcho
 from src import models
 
@@ -32,8 +32,8 @@ def _server_document() -> models.Document:
         source_ids=["doc-a", "doc-b"],
         session_name="session-1",
         created_at=NOW,
-        observer="observer",
-        observed="observed",
+        observer="alice",
+        observed="bob",
         workspace_name="workspace",
     )
 
@@ -175,12 +175,29 @@ class TestPeerChat:
         assert conclusion.id == "doc-sentinel"
         assert conclusion.level == "deductive"
         assert conclusion.content == "User drinks coffee in the morning"
+        assert conclusion.observer_id == "alice"
+        assert conclusion.observed_id == "bob"
         assert conclusion.source_ids == ["doc-a", "doc-b"]
         assert conclusion.created_at.tzinfo is not None
         (message,) = result.evidence.messages
         assert message.id == "msg-sentinel"
         assert message.peer_id == "alice"
         assert message.created_at.tzinfo is not None
+
+
+def test_evidence_conclusion_parses_without_peer_pair():
+    """Servers before 3.2.1 send evidence conclusions without the peer pair."""
+    conclusion = EvidenceObservation.model_validate(
+        {
+            "id": "doc-sentinel",
+            "level": "explicit",
+            "content": "User drinks coffee",
+            "created_at": "2026-01-01T00:00:00Z",
+        }
+    )
+
+    assert conclusion.observer_id is None
+    assert conclusion.observed_id is None
 
 
 class TestPeerChatStream:

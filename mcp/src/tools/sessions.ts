@@ -15,6 +15,10 @@ export function register(server: McpServer, ctx: ToolContext) {
   server.registerTool(
     "create_session",
     {
+      annotations: {
+        title: "Create Session",
+        destructiveHint: false,
+      },
       description: [
         "Get or create a session with the given ID.",
         "Use this to create or get a session with the given ID.",
@@ -41,6 +45,10 @@ export function register(server: McpServer, ctx: ToolContext) {
   server.registerTool(
     "list_sessions",
     {
+      annotations: {
+        title: "List Sessions",
+        readOnlyHint: true,
+      },
       description: [
         "List sessions in the given workspace (paginated).",
         "Use this to discover existing conversations.",
@@ -76,6 +84,10 @@ export function register(server: McpServer, ctx: ToolContext) {
   server.registerTool(
     "delete_session",
     {
+      annotations: {
+        title: "Delete Session",
+        destructiveHint: true,
+      },
       description: [
         "Delete a session and all its messages.",
         "This cannot be undone.",
@@ -102,6 +114,10 @@ export function register(server: McpServer, ctx: ToolContext) {
   server.registerTool(
     "clone_session",
     {
+      annotations: {
+        title: "Clone Session",
+        destructiveHint: false,
+      },
       description: [
         "Clone a session, optionally up to a specific message.",
         "Use this to fork a conversation — e.g. to explore a different branch.",
@@ -135,6 +151,10 @@ export function register(server: McpServer, ctx: ToolContext) {
   server.registerTool(
     "add_peers_to_session",
     {
+      annotations: {
+        title: "Add Peers to Session",
+        destructiveHint: false,
+      },
       description: [
         "Add one or more peers to a session.",
         "Use this to bring participants into a conversation.",
@@ -191,8 +211,14 @@ export function register(server: McpServer, ctx: ToolContext) {
   server.registerTool(
     "remove_peers_from_session",
     {
+      annotations: {
+        title: "Remove Peers from Session",
+        destructiveHint: true,
+      },
       description: [
         "Remove one or more peers from a session.",
+        "Membership ends at the current time; messages the peer already wrote stay in the session, and its representation is not deleted.",
+        "Scopes are not removed this way — use remove_session_from_scope.",
       ].join("\n"),
       inputSchema: {
         workspace_id: workspaceIdSchema(ctx),
@@ -219,6 +245,10 @@ export function register(server: McpServer, ctx: ToolContext) {
   server.registerTool(
     "get_session_peers",
     {
+      annotations: {
+        title: "Get Session Peers",
+        readOnlyHint: true,
+      },
       description: [
         "Get all peers participating in a session.",
         "Use this to see who is in a conversation.",
@@ -246,6 +276,10 @@ export function register(server: McpServer, ctx: ToolContext) {
   server.registerTool(
     "inspect_session",
     {
+      annotations: {
+        title: "Inspect Session",
+        readOnlyHint: true,
+      },
       description: [
         "Inspect a session at a glance.",
         "Aggregates peer IDs, message count, and available summaries.",
@@ -283,6 +317,10 @@ export function register(server: McpServer, ctx: ToolContext) {
   server.registerTool(
     "add_messages_to_session",
     {
+      annotations: {
+        title: "Add Messages to Session",
+        destructiveHint: false,
+      },
       description: [
         "Add messages to a session from specific peers.",
         "Use this to record conversation turns. Each message must specify the peer_id of the author.",
@@ -297,7 +335,7 @@ export function register(server: McpServer, ctx: ToolContext) {
               peer_id: z.string().describe("Peer ID authoring this message."),
               content: z.string().describe("Message text."),
               metadata: z
-                .record(z.string(), z.unknown())
+                .looseObject({})
                 .optional()
                 .describe("Optional metadata."),
             }),
@@ -337,6 +375,10 @@ export function register(server: McpServer, ctx: ToolContext) {
   server.registerTool(
     "get_session_messages",
     {
+      annotations: {
+        title: "Get Session Messages",
+        readOnlyHint: true,
+      },
       description: [
         "Get messages from a session (paginated), with optional metadata filtering.",
         "Use this to read the conversation history.",
@@ -346,7 +388,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         workspace_id: workspaceIdSchema(ctx),
         session_id: z.string().describe("The session to get messages from."),
         filters: z
-          .record(z.string(), z.unknown())
+          .looseObject({})
           .optional()
           .describe("Optional metadata filter criteria."),
         page: z.number().int().min(1).optional().describe("Page number (1-indexed)."),
@@ -376,6 +418,10 @@ export function register(server: McpServer, ctx: ToolContext) {
   server.registerTool(
     "get_session_message",
     {
+      annotations: {
+        title: "Get Session Message",
+        readOnlyHint: true,
+      },
       description: [
         "Get a single message from a session by ID.",
         "Use this when you already know the message ID and need the exact record.",
@@ -404,6 +450,10 @@ export function register(server: McpServer, ctx: ToolContext) {
   server.registerTool(
     "get_session_context",
     {
+      annotations: {
+        title: "Get Session Context",
+        readOnlyHint: true,
+      },
       description: [
         "Get optimized context for a session, suitable for LLM prompts.",
         "Includes recent messages and an optional summary of older ones.",

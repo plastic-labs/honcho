@@ -14,7 +14,13 @@ from __future__ import annotations
 import dataclasses
 import functools
 import logging
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Collection,
+)
 from typing import Any, ParamSpec, TypeVar
 
 from pydantic import BaseModel
@@ -23,10 +29,12 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from src.config import ModelTransport
 from src.exceptions import ValidationException
 from src.utils.types import (
+    get_last_tool_error,
     get_last_tool_metadata,
     iteration_scope,
     set_current_iteration,
     set_current_tool_call_seq,
+    set_last_tool_error,
     set_last_tool_metadata,
 )
 
@@ -328,6 +336,8 @@ async def execute_tool_loop(
     iteration_callback: IterationCallback | None = None,
     telemetry: LLMTelemetryContext | None = None,
     langfuse_run_handle: Any | None = None,
+    force_tools_until: Collection[str] | None = None,
+    max_forced_iterations: int = 3,
 ) -> HonchoLLMCallResponse[Any] | StreamingResponseWithMetadata:
     """Run the iterative tool calling loop for agentic LLM interactions.
 
@@ -375,8 +385,14 @@ async def execute_tool_loop(
     # DialecticCompletedEvent.hit_input_token_cap reflect the cap hit
     # (the toolless path tracks this in src/llm/api.py:325-340).
     hit_input_token_cap = False
-    # Track effective tool_choice — switches from "required"/"any" to "auto" after iter 1.
+    # A forced tool_choice ("required"/"any") relaxes to "auto" once a tool in
+    # `force_tools_until` has run, or after `max_forced_iterations` rounds so a
+    # model that keeps dodging still gets to answer. With no gate, the first
+    # successful round is enough.
     effective_tool_choice = tool_choice
+    # An empty gate would be unsatisfiable, so it means no gate.
+    gate = frozenset(force_tools_until or ()) or None
+    forced_rounds = 0
 
     while iteration < max_tool_iterations:
         step = start_langfuse_agent_step(
@@ -468,6 +484,29 @@ async def execute_tool_loop(
             if not response.tool_calls_made:
                 logger.debug("No tool calls in response, finishing")
 
+                # A provider can ignore a forced tool_choice and answer
+                # outright. While the gate is unmet, spend a forced round on a
+                # nudge instead of returning that answer; at the cap, keep it.
+                if (
+                    gate is not None
+                    and effective_tool_choice in ("required", "any")
+                    and forced_rounds + 1 < max_forced_iterations
+                    and iteration < max_tool_iterations - 1
+                ):
+                    forced_rounds += 1
+                    conversation_messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                "Your last response called no tool. Call one of "
+                                + ", ".join(sorted(gate))
+                                + " to read the relevant memory before answering."
+                            ),
+                        }
+                    )
+                    iteration += 1
+                    continue
+
                 if (
                     isinstance(response.content, str)
                     and not response.content.strip()
@@ -553,6 +592,7 @@ async def execute_tool_loop(
             set_current_iteration(iteration + 1)
 
             tool_results: list[dict[str, Any]] = []
+            succeeded_tools: set[str] = set()
             for seq, tool_call in enumerate(response.tool_calls_made):
                 tool_name = tool_call["name"]
                 tool_input = tool_call["input"]
@@ -567,6 +607,7 @@ async def execute_tool_loop(
                 # observe stale state from a prior call.
                 set_current_tool_call_seq(seq, tool_id or None)
                 set_last_tool_metadata({})
+                set_last_tool_error(False)
 
                 try:
                     tool_result = await tool_executor(tool_name, tool_input)
@@ -574,6 +615,10 @@ async def execute_tool_loop(
                     # specialist rollups can read created/deleted observation
                     # counts without round-tripping through the event store.
                     tool_result_metadata = get_last_tool_metadata()
+                    # The executor reports handler failures as returned
+                    # strings, so a normal return is not proof of success.
+                    if not get_last_tool_error():
+                        succeeded_tools.add(tool_name)
                     tool_results.append(
                         {
                             "tool_id": tool_id,
@@ -621,12 +666,16 @@ async def execute_tool_loop(
             except Exception:
                 logger.warning("iteration_callback failed", exc_info=True)
 
-        # After first iteration, switch "required"/"any" → "auto" so the model can stop.
-        if iteration == 0 and effective_tool_choice in ("required", "any"):
-            effective_tool_choice = "auto"
-            logger.debug(
-                "Switched tool_choice from 'required'/'any' to 'auto' after first iteration"
-            )
+        if effective_tool_choice in ("required", "any"):
+            forced_rounds += 1
+            gate_met = gate is None or bool(succeeded_tools & gate)
+            if gate_met or forced_rounds >= max_forced_iterations:
+                effective_tool_choice = "auto"
+                logger.debug(
+                    "Relaxed tool_choice to 'auto' after %d forced round(s) (gate_met=%s)",
+                    forced_rounds,
+                    gate_met,
+                )
 
         iteration += 1
 

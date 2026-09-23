@@ -72,6 +72,10 @@ Built on:
 If you run Honcho yourself, point this server at it with `HONCHO_API_URL`.
 When unset, requests go to `https://api.honcho.dev`.
 
+`HONCHO_TIMEOUT_MS` caps each Honcho API request (default 300000, 5 minutes).
+Raise it if `chat` runs longer than that on your model. A reverse proxy in
+front of the HTTP host needs a read timeout at least this long.
+
 **Cloudflare Worker (`bun run dev` / `bun run deploy`):** create `mcp/.dev.vars`:
 
 ```
