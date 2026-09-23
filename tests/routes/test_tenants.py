@@ -443,6 +443,19 @@ async def test_patch_vector_correlation_id_is_set_once(
     assert combined_data["derivation_paused"] is True
     assert combined_data["vector_correlation_id"] == v
 
+    # A body that trips the 409 applies nothing — the pause beside the bad key
+    # is not half-committed. Otherwise a control plane retrying a repair could
+    # flip a pause it never meant to.
+    half = client.patch(
+        f"/v3/tenants/{tenant_id}",
+        json={"derivation_paused": False, "vector_correlation_id": w},
+        headers={HEADER: enabled},
+    )
+    assert half.status_code == 409, half.text
+    after = client.get(f"/v3/tenants/{tenant_id}", headers={HEADER: enabled}).json()
+    assert after["derivation_paused"] is True
+    assert after["vector_correlation_id"] == v
+
 
 def test_patch_unknown_tenant_is_404(client: TestClient, enabled: str):
     response = client.patch(
@@ -475,13 +488,13 @@ def test_patch_unknown_tenant_is_404(client: TestClient, enabled: str):
 def test_patch_rejects_everything_outside_the_allowlist(
     client: TestClient, enabled: str, body: dict[str, Any]
 ):
-    """The allowlist's non-mutable fields are a 422 for anything else.
+    """Anything outside the allowlist is a 422, and a mixed body is refused whole.
 
     ``vector_correlation_id``'s own 409-on-change half lives in
     ``test_patch_vector_correlation_id_is_set_once`` — it IS on the allowlist,
-    just with set-once semantics instead of full mutability. A mixed body is
-    refused whole rather than partially applied — otherwise a client could
-    learn that a pause "worked" while its tier change was dropped.
+    just with set-once semantics instead of full mutability. Refusing a mixed
+    body whole rather than partially applying it matters: otherwise a client
+    could learn that a pause "worked" while its tier change was dropped.
     """
     tenant_id = generate_nanoid()
     before = _created(client, enabled, tenant_id)
