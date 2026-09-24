@@ -557,6 +557,10 @@ class EvidenceObservation(BaseModel):
     content: str
     created_at: datetime.datetime
     session_id: str | None = None
+    observer_id: str | None = None
+    """The peer who made the conclusion. None from servers before 3.2.1."""
+    observed_id: str | None = None
+    """The peer the conclusion is about. None from servers before 3.2.1."""
     source_ids: list[str] = Field(default_factory=list)
 
 

@@ -3,7 +3,7 @@
   "name": "io.github.plastic-labs/honcho",
   "title": "Honcho",
   "description": "Memory that reasons: continual learning for stateful agents. Better context, fewer tokens.",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "repository": {
     "url": "https://github.com/plastic-labs/honcho",
     "source": "github"

@@ -54,3 +54,22 @@ test("established sessions require the initialize bearer", async () => {
   );
   expect(ok.status).toBe(200);
 });
+
+test("MCP requests disable the idle timeout", async () => {
+  const disabled: string[] = [];
+  const server = {
+    timeout(request: Request, seconds: number) {
+      if (seconds === 0) disabled.push(new URL(request.url).pathname);
+    },
+  };
+  await fetch(new Request(`${origin}/health`), server);
+  await fetch(
+    new Request(`${origin}/mcp`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(pingBody),
+    }),
+    server,
+  );
+  expect(disabled).toEqual(["/mcp"]);
+});

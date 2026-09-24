@@ -11,6 +11,16 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 - `Session.last_message_at` exposes the newest message timestamp, and sync/async `Honcho.sessions()` accept `sort_by="created_at" | "last_message_at"` while preserving `reverse` across pagination. Requires a Honcho server with the matching API support.
 
+## [2.5.1] - 2026-09-22
+
+### Added
+
+- `observer_id` and `observed_id` on `EvidenceObservation`, so evidence from workspace chat says which peer pair each conclusion belongs to. Previously the SDK dropped these fields. Requires Honcho v3.2.1+ (#1220)
+
+### Changed
+
+- `Conclusion.source_ids` is `[]` rather than `None` for explicit conclusions when talking to Honcho v3.2.1+. The type still admits `None` for older servers (#1193)
+
 ## [2.5.0] - 2026-09-15
 
 ### Added

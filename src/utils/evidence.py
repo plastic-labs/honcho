@@ -121,19 +121,29 @@ class EvidenceAccumulator:
     distinct conclusions that happen to read the same.
     """
 
-    conclusions: dict[str, models.Document] = field(default_factory=dict)
-    messages: dict[str, models.Message] = field(default_factory=dict)
+    conclusions: dict[str, EvidenceObservation] = field(default_factory=dict)
+    messages: dict[str, EvidenceMessageRef] = field(default_factory=dict)
     tool_calls: list[EvidenceToolCall] = field(default_factory=list)
 
     def add_documents(self, documents: Iterable[models.Document]) -> None:
         """Record conclusions a read path returned."""
         for document in documents:
-            self.conclusions.setdefault(document.id, document)
+            if document.id in self.conclusions:
+                continue
+            for observation in _flatten_conclusions(document):
+                self.conclusions[observation.id] = observation
 
     def add_messages(self, messages: Iterable[models.Message]) -> None:
-        """Record messages a read path returned."""
+        """Record messages a read path returned, while they are still attached."""
         for message in messages:
-            self.messages.setdefault(message.public_id, message)
+            if message.public_id in self.messages:
+                continue
+            self.messages[message.public_id] = EvidenceMessageRef(
+                id=message.public_id,
+                session_id=message.session_name,
+                peer_id=message.peer_name,
+                created_at=message.created_at,
+            )
 
     def record_tool_calls(self, tool_calls_made: Sequence[dict[str, Any]]) -> None:
         """Replace the tool call log with a completed loop's history.
@@ -147,28 +157,20 @@ class EvidenceAccumulator:
         ]
 
     def build(self) -> Evidence:
-        """Flatten what was collected into the API shape."""
+        """Assemble what was collected into the API shape."""
         return Evidence(
-            conclusions=_flatten_conclusions(self.conclusions.values()),
+            conclusions=sorted(
+                self.conclusions.values(),
+                key=lambda observation: (observation.created_at, observation.id),
+            ),
             messages=sorted(
-                (
-                    EvidenceMessageRef(
-                        id=message.public_id,
-                        session_id=message.session_name,
-                        peer_id=message.peer_name,
-                        created_at=message.created_at,
-                    )
-                    for message in self.messages.values()
-                ),
-                key=lambda ref: (ref.created_at, ref.id),
+                self.messages.values(), key=lambda ref: (ref.created_at, ref.id)
             ),
             tool_calls=list(self.tool_calls),
         )
 
 
-def _flatten_conclusions(
-    documents: Iterable[models.Document],
-) -> list[EvidenceObservation]:
+def _flatten_conclusions(document: models.Document) -> list[EvidenceObservation]:
     """Turn conclusion rows into a flat, level-tagged list.
 
     Goes through ``Representation.from_documents`` rather than reading the rows
@@ -179,25 +181,31 @@ def _flatten_conclusions(
     An observation's ``message_ids`` are dropped: they are internal row ids,
     and Honcho identifies messages by their public id everywhere it faces a
     caller.
+
+    ``observer``/``observed`` come from the rows rather than from the
+    representation, which does not model them. Workspace chat accumulates
+    across every peer it reads, so without them a caller cannot tell which
+    peer any given conclusion is about.
     """
-    representation = Representation.from_documents(list(documents))
+    pairs = {document.id: (document.observer, document.observed)}
+    representation = Representation.from_documents([document])
     by_level: tuple[tuple[DocumentLevel, Sequence[_Observation]], ...] = (
         ("explicit", representation.explicit),
         ("deductive", representation.deductive),
         ("inductive", representation.inductive),
         ("contradiction", representation.contradiction),
     )
-    observations = [
+    return [
         EvidenceObservation(
             id=observation.id,
             level=level,
             content=_observation_text(observation),
             created_at=_restore_utc_marker(observation.created_at),
             session_id=observation.session_name,
+            observer_id=pairs[observation.id][0],
+            observed_id=pairs[observation.id][1],
             source_ids=_observation_source_ids(observation),
         )
         for level, observations_at_level in by_level
         for observation in observations_at_level
     ]
-    observations.sort(key=lambda observation: (observation.created_at, observation.id))
-    return observations

@@ -12,7 +12,7 @@ Orchestrates:
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Collection
 from typing import Any, Literal, TypeVar, cast, overload
 
 from pydantic import BaseModel
@@ -68,6 +68,8 @@ async def honcho_llm_call(
     tool_choice: str | dict[str, Any] | None = None,
     tool_executor: Callable[[str, dict[str, Any]], Any] | None = None,
     max_tool_iterations: int = 10,
+    force_tools_until: Collection[str] | None = None,
+    max_forced_iterations: int = 3,
     messages: list[dict[str, Any]] | None = None,
     max_input_tokens: int | None = None,
     trace_name: str | None = None,
@@ -97,6 +99,8 @@ async def honcho_llm_call(
     tool_choice: str | dict[str, Any] | None = None,
     tool_executor: Callable[[str, dict[str, Any]], Any] | None = None,
     max_tool_iterations: int = 10,
+    force_tools_until: Collection[str] | None = None,
+    max_forced_iterations: int = 3,
     messages: list[dict[str, Any]] | None = None,
     max_input_tokens: int | None = None,
     trace_name: str | None = None,
@@ -126,6 +130,8 @@ async def honcho_llm_call(
     tool_choice: str | dict[str, Any] | None = None,
     tool_executor: Callable[[str, dict[str, Any]], Any] | None = None,
     max_tool_iterations: int = 10,
+    force_tools_until: Collection[str] | None = None,
+    max_forced_iterations: int = 3,
     messages: list[dict[str, Any]] | None = None,
     max_input_tokens: int | None = None,
     trace_name: str | None = None,
@@ -154,6 +160,8 @@ async def honcho_llm_call(
     tool_choice: str | dict[str, Any] | None = None,
     tool_executor: Callable[[str, dict[str, Any]], Any] | None = None,
     max_tool_iterations: int = 10,
+    force_tools_until: Collection[str] | None = None,
+    max_forced_iterations: int = 3,
     messages: list[dict[str, Any]] | None = None,
     max_input_tokens: int | None = None,
     trace_name: str | None = None,
@@ -457,6 +465,8 @@ async def honcho_llm_call(
             tool_choice=tool_choice,
             tool_executor=tool_executor,
             max_tool_iterations=max_tool_iterations,
+            force_tools_until=force_tools_until,
+            max_forced_iterations=max_forced_iterations,
             response_model=response_model,
             json_mode=json_mode,
             temperature=temperature,

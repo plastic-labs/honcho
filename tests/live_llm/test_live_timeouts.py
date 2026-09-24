@@ -8,6 +8,7 @@ import httpx
 import openai
 import pytest
 
+from src.exceptions import UpstreamLLMError
 from src.llm.request_builder import execute_completion
 
 from .conftest import make_backend, require_provider_key, wrap_async_method
@@ -103,7 +104,7 @@ async def test_live_tight_provider_timeout_aborts_request(
     )
 
     started = time.monotonic()
-    with pytest.raises(TIMEOUT_EXCEPTIONS[model_spec.provider]):
+    with pytest.raises(UpstreamLLMError) as excinfo:
         await execute_completion(
             backend,
             config,
@@ -112,6 +113,7 @@ async def test_live_tight_provider_timeout_aborts_request(
         )
     elapsed = time.monotonic() - started
 
+    assert isinstance(excinfo.value.__cause__, TIMEOUT_EXCEPTIONS[model_spec.provider])
     assert elapsed < TIGHT_TIMEOUT_WALL_CLOCK_LIMIT_SECONDS, (
         f"tight timeout took {elapsed:.1f}s — per-request timeout likely not applied"
     )

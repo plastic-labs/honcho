@@ -1102,6 +1102,12 @@ class DialecticSettings(HonchoSettings):
     # Token limit for get_recent_history tool within the agent
     HISTORY_TOKEN_LIMIT: Annotated[int, Field(default=8192, gt=0, le=100_000)] = 8192
 
+    # Extra tool rounds workspace chat gets on top of its level's limit. A
+    # workspace query fans out over peers where a pair query reads one
+    # representation, so it needs room to route and then recall. Not applied at
+    # "minimal", whose single round is the point of the level.
+    WORKSPACE_EXTRA_TOOL_ITERATIONS: Annotated[int, Field(default=3, ge=0, le=20)] = 3
+
     # Session history injection: max tokens of recent messages to include when session_id is specified.
     # Set to 0 to disable automatic session history injection.
     SESSION_HISTORY_MAX_TOKENS: Annotated[

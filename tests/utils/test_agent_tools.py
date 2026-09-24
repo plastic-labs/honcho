@@ -2,6 +2,7 @@
 
 import asyncio
 import inspect
+import json
 import re
 from collections.abc import Callable
 from dataclasses import replace
@@ -30,6 +31,8 @@ from src.utils.agent_tools import (
     ToolContext,
     _bounded_int,  # pyright: ignore[reportPrivateUsage]
     _handle_create_observations,  # pyright: ignore[reportPrivateUsage]
+    _handle_create_observations_deductive,  # pyright: ignore[reportPrivateUsage]
+    _handle_create_observations_inductive,  # pyright: ignore[reportPrivateUsage]
     _handle_delete_observations,  # pyright: ignore[reportPrivateUsage]
     _handle_extract_preferences,  # pyright: ignore[reportPrivateUsage]
     _handle_finish_consolidation,  # pyright: ignore[reportPrivateUsage]
@@ -501,6 +504,115 @@ class TestCreateObservations:
         # Handlers may return ToolResult (); str() returns .content.
         assert "empty" in str(result).lower()
 
+    async def test_non_object_observations_rejected_not_raised(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        """Bare-string items become per-item failures; valid siblings still land."""
+        *_, documents = tool_test_data
+        ctx = make_tool_context(current_messages=None)
+
+        result = await _handle_create_observations_deductive(
+            ctx,
+            {
+                "observations": [
+                    "User prefers quiet spaces",
+                    {
+                        "content": "Valid sibling deduction",
+                        "source_ids": [documents[0].id],
+                        "premises": ["User works in libraries"],
+                    },
+                ]
+            },
+        )
+
+        assert "Created 1 observations" in result
+        assert "Failed 1" in result
+        assert "must be an object" in str(result)
+
+        stmt = select(models.Document).where(
+            models.Document.content == "Valid sibling deduction"
+        )
+        doc = (await db_session.execute(stmt)).scalar_one_or_none()
+        assert doc is not None
+        assert doc.level == "deductive"
+
+    async def test_nested_list_observation_rejected_not_raised(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        """A nested list item is a per-item failure; valid siblings still land."""
+        *_, documents = tool_test_data
+        ctx = make_tool_context(current_messages=None)
+        inductive = {
+            "source_ids": [documents[0].id, documents[1].id],
+            "sources": ["User works in libraries", "User avoids noisy cafes"],
+            "pattern_type": "preference",
+            "confidence": "medium",
+        }
+
+        result = await _handle_create_observations_inductive(
+            ctx,
+            {
+                "observations": [
+                    {"content": "Top-level induction", **inductive},
+                    [{"content": "Nested induction", **inductive}],
+                ]
+            },
+        )
+
+        assert "Created 1 observations" in result
+        assert "Failed 1" in result
+        assert "got list" in str(result)
+
+        stmt = select(models.Document).where(
+            models.Document.content.in_(["Top-level induction", "Nested induction"])
+        )
+        docs = (await db_session.execute(stmt)).scalars().all()
+        assert [d.content for d in docs] == ["Top-level induction"]
+        assert docs[0].level == "inductive"
+
+    async def test_all_string_observations_returns_error(
+        self, make_tool_context: Callable[..., ToolContext]
+    ):
+        """A list of only bare strings returns an error instead of raising."""
+        ctx = make_tool_context(current_messages=None)
+
+        result = await _handle_create_observations_inductive(
+            ctx, {"observations": ["pattern one", "pattern two"]}
+        )
+
+        assert "ERROR: All observations failed validation" in str(result)
+        assert "must be an object" in str(result)
+
+    @pytest.mark.parametrize(
+        "observations",
+        [
+            json.dumps([{"content": "Stringified", "source_ids": ["x"]}]),
+            "not json at all",
+            42,
+            {"content": "Single object", "source_ids": ["x"]},
+        ],
+        ids=["json_string", "plain_string", "int", "single_object"],
+    )
+    async def test_non_list_observations_returns_error(
+        self,
+        make_tool_context: Callable[..., ToolContext],
+        observations: Any,
+    ):
+        """Anything other than a list is rejected without coercion."""
+        ctx = make_tool_context(current_messages=None)
+
+        result = await _handle_create_observations_deductive(
+            ctx, {"observations": observations}
+        )
+
+        assert "ERROR: observations must be a list of objects" in str(result)
+
     async def test_batch_embedding_failure_falls_back_to_individual_embeds(
         self,
         tool_test_data: Any,
@@ -893,6 +1005,39 @@ class TestDeleteObservations:
 
         # Should report 0 deleted (graceful handling)
         assert "Deleted 0 observations" in result
+
+    @pytest.mark.parametrize(
+        "shape", ["nested_list", "non_string_item", "json_string", "bare_string"]
+    )
+    async def test_malformed_observation_ids_rejected_without_deleting(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
+        shape: str,
+    ):
+        """Anything other than a list of strings is rejected and deletes nothing."""
+        *_, documents = tool_test_data
+        doc_id: str = documents[0].id
+        observation_ids: Any = {
+            "nested_list": [[doc_id]],
+            "non_string_item": [doc_id, 42],
+            "json_string": json.dumps([doc_id]),
+            "bare_string": doc_id,
+        }[shape]
+        ctx = make_tool_context(include_observation_ids=True)
+
+        result = await _handle_delete_observations(
+            ctx, {"observation_ids": observation_ids}
+        )
+
+        assert "ERROR: observation_ids must be a list of observation ID strings" in (
+            str(result)
+        )
+        db_session.expire(documents[0])
+        stmt = select(models.Document).where(models.Document.id == doc_id)
+        doc = (await db_session.execute(stmt)).scalar_one()
+        assert doc.deleted_at is None
 
     async def test_delete_batch_emits_levels_for_successful_only(
         self,
@@ -2648,12 +2793,9 @@ class TestEvidenceCoverage:
         "get_observation_context",
         "get_reasoning_chain",
     }
-    # Tools with nothing citable to record: workspace stats are aggregates and a
-    # peer card is free text, so neither carries conclusion or message identity.
-    NON_RECORDING_TOOLS: ClassVar[set[str]] = {
-        "get_workspace_stats",
-        "get_peer_card",
-    }
+    # Tools with nothing citable to record: a peer card is free text, so it
+    # carries no conclusion or message identity.
+    NON_RECORDING_TOOLS: ClassVar[set[str]] = {"get_peer_card"}
 
     def test_every_dialectic_tool_is_accounted_for(self):
         reachable = {

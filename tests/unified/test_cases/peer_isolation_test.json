@@ -132,13 +132,14 @@
     {
       "step_type": "query",
       "target": "workspace_chat",
+      "description": "A workspace-scoped read can see a fact from a session the querying peer was not part of. Only visibility of the secret is under test; which collection, session or representation it came from is deliberately not asserted.",
       "input": "What did peer_x tell peer_y about their password?",
       "reasoning_level": "low",
       "assertions": [
         {
-          "assertion_type": "llm_judge",
-          "prompt": "The workspace chat should be able to answer this question since it can access information from all sessions. Does the response mention the password 'strawberry_unicorn_42' or indicate that peer_x shared a password with peer_y? Return true if the workspace-level query CAN see this information.",
-          "pass_if": true
+          "assertion_type": "contains",
+          "text": "strawberry_unicorn_42",
+          "case_sensitive": false
         }
       ]
     }
