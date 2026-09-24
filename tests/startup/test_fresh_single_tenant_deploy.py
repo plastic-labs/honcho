@@ -132,11 +132,11 @@ async def test_first_boot_seeds_one_tenant_and_every_validator_passes(
 
     # The API lifespan and the deriver entrypoint run these three before serving.
     await validate_embedding_schema(fresh_engine)
-    await validate_tenant_isolation(fresh_engine)
+    await validate_tenant_isolation(fresh_engine, instance_type="api")
     await validate_queue_item_batches(fresh_engine)
 
     # Flag off, the isolation validator must not so much as open a connection.
-    await validate_tenant_isolation(untouchable_engine())
+    await validate_tenant_isolation(untouchable_engine(), instance_type="api")
 
 
 @pytest.mark.asyncio

@@ -23,9 +23,6 @@ NAMESPACE = "honcho"
 # (AUTH_USE_AUTH) with tenant-bearing tokens, and a session-mode or no pooler; the
 # app refuses to boot otherwise. Self-hosted: leave off.
 # MULTI_TENANT = false
-# Which process this is, "api" (default) or "deriver". Set per process — the compose
-# example sets it on the deriver service — never in a config both processes share.
-# INSTANCE_TYPE = "api"
 
 # Database settings
 [db]

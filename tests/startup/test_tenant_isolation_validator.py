@@ -32,7 +32,6 @@ def _flag_on_settings() -> AppSettings:
     s = settings.model_copy(deep=True)
     s.MULTI_TENANT = True
     s.MULTI_TENANT_SKIP_RLS_ASSERT = False
-    s.INSTANCE_TYPE = "api"
     s.AUTH.USE_AUTH = True
     s.AUTH.JWT_SECRET = "test-secret"
     s.DB.POOLER_MODE = "session"
@@ -79,7 +78,7 @@ async def test_flag_off_is_a_no_op_that_never_touches_the_engine() -> None:
     s.DB.SERVICE_CONNECTION_URI = None
     s.MULTI_TENANT_SKIP_RLS_ASSERT = False
 
-    await validate_tenant_isolation(_NO_ENGINE, app_settings=s)
+    await validate_tenant_isolation(_NO_ENGINE, instance_type="api", app_settings=s)
 
 
 # ---------------------------------------------------------------------------
@@ -92,7 +91,7 @@ async def test_refuses_boot_when_auth_is_off() -> None:
     s = _flag_on_settings()
     s.AUTH.USE_AUTH = False
     with pytest.raises(StartupValidationError, match="AUTH_USE_AUTH is off"):
-        await validate_tenant_isolation(_NO_ENGINE, app_settings=s)
+        await validate_tenant_isolation(_NO_ENGINE, instance_type="api", app_settings=s)
 
 
 @pytest.mark.asyncio
@@ -101,10 +100,9 @@ async def test_deriver_instance_skips_the_auth_check() -> None:
     # JWT, so it is not forced to carry the API's auth config. Everything else it
     # would be checked for is set so the validator returns before touching the DB.
     s = _flag_on_settings()
-    s.INSTANCE_TYPE = "deriver"
     s.AUTH.USE_AUTH = False
     s.MULTI_TENANT_SKIP_RLS_ASSERT = True
-    await validate_tenant_isolation(_NO_ENGINE, app_settings=s)
+    await validate_tenant_isolation(_NO_ENGINE, instance_type="deriver", app_settings=s)
 
 
 @pytest.mark.asyncio
@@ -112,7 +110,7 @@ async def test_refuses_boot_under_a_transaction_mode_pooler() -> None:
     s = _flag_on_settings()
     s.DB.POOLER_MODE = "transaction"
     with pytest.raises(StartupValidationError, match="DB_POOLER_MODE='transaction'"):
-        await validate_tenant_isolation(_NO_ENGINE, app_settings=s)
+        await validate_tenant_isolation(_NO_ENGINE, instance_type="api", app_settings=s)
 
 
 @pytest.mark.asyncio
@@ -122,7 +120,7 @@ async def test_skip_rls_assert_warns_and_returns_before_introspection(
     s = _flag_on_settings()
     s.MULTI_TENANT_SKIP_RLS_ASSERT = True
     with caplog.at_level("WARNING"):
-        await validate_tenant_isolation(_NO_ENGINE, app_settings=s)
+        await validate_tenant_isolation(_NO_ENGINE, instance_type="api", app_settings=s)
     assert "MULTI_TENANT_SKIP_RLS_ASSERT is set" in caplog.text
 
 
@@ -149,7 +147,9 @@ async def test_fails_closed_when_introspection_keeps_failing(
     )
 
     with pytest.raises(StartupValidationError, match="could not validate"):
-        await validate_tenant_isolation(_NO_ENGINE, app_settings=_flag_on_settings())
+        await validate_tenant_isolation(
+            _NO_ENGINE, instance_type="api", app_settings=_flag_on_settings()
+        )
 
     assert call_count == 3, "should exhaust the retry budget before failing"
 
@@ -164,7 +164,9 @@ async def test_refuses_boot_when_rls_is_not_enforced(db_engine: AsyncEngine) -> 
     """The migrated schema carries no RLS (policies are provisioned out of band), which
     is exactly what a self-hoster who flips the flag has. Boot must refuse."""
     with pytest.raises(StartupValidationError, match=r"RLS is not enabled\+forced"):
-        await validate_tenant_isolation(db_engine, app_settings=_flag_on_settings())
+        await validate_tenant_isolation(
+            db_engine, instance_type="api", app_settings=_flag_on_settings()
+        )
 
 
 @pytest.mark.asyncio
@@ -178,13 +180,15 @@ async def test_requires_a_service_role_once_rls_is_enforced(
         with pytest.raises(
             StartupValidationError, match="DB_SERVICE_CONNECTION_URI is unset"
         ):
-            await validate_tenant_isolation(db_engine, app_settings=s)
+            await validate_tenant_isolation(
+                db_engine, instance_type="api", app_settings=s
+            )
 
         # The fully configured flag-on state: auth on, safe pooler, RLS enforced,
         # service role set. The one combination that boots.
         s.DB.SERVICE_CONNECTION_URI = (
             "postgresql+psycopg://service:service@localhost:5432/postgres"
         )
-        await validate_tenant_isolation(db_engine, app_settings=s)
+        await validate_tenant_isolation(db_engine, instance_type="api", app_settings=s)
     finally:
         await _set_rls(db_engine, enforced=False)

@@ -6,13 +6,13 @@ a hard boot failure. Listed in check order: the first two are settings-only and 
 no connection; the last two introspect the database (with retry) and are skipped
 together when ``MULTI_TENANT_SKIP_RLS_ASSERT`` is set (migration window only).
 
-1. Flag vs auth (``INSTANCE_TYPE=api`` only). ``MULTI_TENANT`` on with
+1. Flag vs auth (API processes only). ``MULTI_TENANT`` on with
    ``AUTH_USE_AUTH`` off means every request authenticates as a tenant-less admin,
    so no tenant is ever bound and every tenant-scoped session fails closed — not a
    leak, but a uniform outage on every data route that is hard to read from the
    500s. Refuse to boot with one clear error instead. A deriver takes its tenant
-   from the claimed work unit's key, not a JWT, so ``INSTANCE_TYPE=deriver`` skips
-   this check.
+   from the claimed work unit's key, not a JWT, so a deriver process skips this
+   check. Each entrypoint names its own process type when it calls the validator.
 
 2. Pooler vs read-path strategy. The read-path binding is a session-scoped
    ``app.tenant`` set at checkout; it is safe under NullPool / session-mode, but a
@@ -41,6 +41,7 @@ flag on without RLS in place.
 from __future__ import annotations
 
 import logging
+from typing import Literal
 
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
@@ -90,18 +91,21 @@ _RETRY_BACKOFF_SECONDS = 1.0
 async def validate_tenant_isolation(
     engine: AsyncEngine,
     *,
+    instance_type: Literal["api", "deriver"],
     app_settings: AppSettings | None = None,
 ) -> None:
     """Fail boot on a multi-tenant half-state. No-op unless MULTI_TENANT is on.
 
     Run after the DB pool is initialized and before serving traffic / processing
-    the queue — the same placement as ``validate_embedding_schema``.
+    the queue — the same placement as ``validate_embedding_schema``. The caller
+    passes its own ``instance_type`` (the API lifespan ``"api"``, the deriver
+    entrypoint ``"deriver"``), the same way both label their metrics.
     """
     s = app_settings if app_settings is not None else settings
     if not s.MULTI_TENANT:
         return
 
-    _assert_auth_enabled(s)
+    _assert_auth_enabled(s, instance_type)
     _assert_pooler_mode_safe(s.DB.POOLER_MODE)
 
     if s.MULTI_TENANT_SKIP_RLS_ASSERT:
@@ -135,7 +139,9 @@ def _assert_service_role_configured(s: AppSettings) -> None:
         )
 
 
-def _assert_auth_enabled(s: AppSettings) -> None:
+def _assert_auth_enabled(
+    s: AppSettings, instance_type: Literal["api", "deriver"]
+) -> None:
     """API instances: require JWT auth under the flag; the claim is the tenant source."""
     # region ai
     # With AUTH_USE_AUTH off, auth() short-circuits every request to a tenant-less
@@ -144,18 +150,16 @@ def _assert_auth_enabled(s: AppSettings) -> None:
     # No cross-tenant read is possible in that state — operability, not a security
     # gap — but one boot error beats a storm of identical runtime errors. The
     # deriver binds its tenant from the claimed work unit's key and verifies no
-    # JWT, so it is exempt by INSTANCE_TYPE rather than forced to carry the API's
-    # auth config.
+    # JWT, so it is exempt rather than forced to carry the API's auth config.
     # endregion
-    if s.INSTANCE_TYPE != "api":
+    if instance_type != "api":
         return
     if not s.AUTH.USE_AUTH:
         raise StartupValidationError(
             "MULTI_TENANT is on but AUTH_USE_AUTH is off: with auth disabled no"
             + " request carries a tenant claim, so no tenant is ever bound and every"
             + " tenant-scoped request fails closed. Enable AUTH_USE_AUTH (with"
-            + " AUTH_JWT_SECRET) and issue tenant-bearing tokens; if this process is"
-            + " a deriver, set INSTANCE_TYPE=deriver instead."
+            + " AUTH_JWT_SECRET) and issue tenant-bearing tokens."
         )
 
 

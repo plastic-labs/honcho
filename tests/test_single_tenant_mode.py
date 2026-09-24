@@ -79,7 +79,7 @@ def _single_tenant_with_stray_subordinates(  # pyright: ignore[reportUnusedFunct
 async def test_isolation_validator_is_a_no_op() -> None:
     # A transaction-mode pooler or an unreachable service role are boot refusals
     # flag-on; flag-off the validator returns before reading either, or the engine.
-    await validate_tenant_isolation(untouchable_engine())
+    await validate_tenant_isolation(untouchable_engine(), instance_type="api")
 
 
 def test_tenant_api_stays_disabled(client: TestClient) -> None:

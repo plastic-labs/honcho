@@ -144,7 +144,7 @@ async def lifespan(_: FastAPI):
     await validate_embedding_schema(engine)
     # Fail closed on a multi-tenant half-state (no-op unless MULTI_TENANT is on);
     # the validator's module docstring lists the four it refuses.
-    await validate_tenant_isolation(engine)
+    await validate_tenant_isolation(engine, instance_type="api")
     # Fail closed if the deriver claim's trigger-maintained aggregate is not
     # wired: missing or disabled queue_item_batches triggers would leave
     # enqueued work invisible to every deriver, with no error anywhere.

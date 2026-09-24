@@ -87,7 +87,7 @@ async def run_deriver():
         # gates the API runs in its lifespan. Inside the try block so the
         # telemetry buffer is still flushed if validation raises.
         await validate_embedding_schema(engine)
-        await validate_tenant_isolation(engine)
+        await validate_tenant_isolation(engine, instance_type="deriver")
         await validate_queue_item_batches(engine)
         await main()
     finally:

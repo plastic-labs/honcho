@@ -72,9 +72,6 @@ services:
       # - .:/app
       # - venv:/app/.venv
     environment:
-      # This process claims queue work rather than serving requests; the startup
-      # validators pick their checks by INSTANCE_TYPE. Overrides any INSTANCE_TYPE in .env.
-      - INSTANCE_TYPE=deriver
       - DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@database:5432/postgres
       - CACHE_URL=redis://redis:6379/0?suppress=true
       - CACHE_ENABLED=true
