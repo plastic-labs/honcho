@@ -652,6 +652,9 @@ async def test_openai_backend_passes_timeout_to_structured_parse_request() -> No
         "gpt-5.4",
         "gpt-5.4-mini",
         "gpt-5.5-preview",
+        "gpt-6",
+        "gpt-6-sol",
+        "gpt-6-luna",
         "o1",
         "o1-mini",
         "o3",
@@ -660,9 +663,9 @@ async def test_openai_backend_passes_timeout_to_structured_parse_request() -> No
     ],
 )
 def test_openai_reasoning_models_use_max_completion_tokens(model: str) -> None:
-    """Reasoning model families (gpt-5 incl. x.y versions, o1/o3/o4) must send
-    max_completion_tokens, not max_tokens — OpenAI rejects max_tokens for them
-    with 400 unsupported_parameter."""
+    """Reasoning model families (gpt-5+ incl. x.y versions, gpt-6, o1/o3/o4)
+    must send max_completion_tokens, not max_tokens — OpenAI rejects
+    max_tokens for them with 400 unsupported_parameter."""
     from src.llm.backends.openai import (
         _uses_max_completion_tokens,  # pyright: ignore[reportPrivateUsage]
     )
