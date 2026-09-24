@@ -485,7 +485,7 @@ def test_missing_duration_leaves_start_untouched(_exporter_env: FakeClient):
     (gen,) = client.observations
     assert gen._otel_span._start_time is not None
     assert gen._otel_span._start_time >= before
-    assert gen.ended
+    assert _latency_ns(gen) >= 0
 
 
 def test_non_recording_span_is_not_backdated(_exporter_env: FakeClient):

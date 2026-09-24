@@ -229,12 +229,13 @@ class LangfuseExporter:
             usage_details=self._usage(call),
             level=level,
         )
-        self._backdate_start(obs, start_ns)
+        backdated = self._backdate_start(obs, start_ns)
         if stamp_trace:
             self._stamp_trace_attrs(obs, call)
         if parent_span_id is not None:
             self._demote_from_root(obs)
-        obs.end(end_time=end_ns)
+        # end_ns predates the SDK's own start stamp, so only pin it when backdated.
+        obs.end(end_time=end_ns if backdated else None)
 
     def _create_tool_span(
         self,
@@ -262,12 +263,13 @@ class LangfuseExporter:
         obs.end()
 
     @staticmethod
-    def _backdate_start(obs: Any, start_ns: int | None) -> None:
+    def _backdate_start(obs: Any, start_ns: int | None) -> bool:
         """Move an observation's start back to when its captured call began.
 
         `start_observation` has no start-time parameter, so this rewrites the
         OTEL SDK span's start before `end()`; the span processor reads it only
-        at export. No-op for non-recording spans (Langfuse disabled).
+        at export. No-op for non-recording spans (Langfuse disabled). Returns
+        whether the start was moved.
         """
         span = getattr(obs, "_otel_span", None)
         if (
@@ -275,8 +277,9 @@ class LangfuseExporter:
             or start_ns is None
             or getattr(span, "_start_time", None) is None
         ):
-            return
+            return False
         span._start_time = start_ns
+        return True
 
     @staticmethod
     def _demote_from_root(obs: Any) -> None:
