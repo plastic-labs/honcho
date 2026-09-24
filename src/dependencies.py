@@ -121,9 +121,9 @@ async def tracked_db(
         # read_only/AUTOCOMMIT it is a wire-level no-op.)
         await db.rollback()
         await db.close()
-        if token:  # Only reset if we set it
+        if token is not None:  # Only reset if we set it
             request_context.reset(token)
-        if tenant_token:  # Only reset if we set it
+        if tenant_token is not None:  # Only reset if we set it
             tenant_context.reset(tenant_token)
 
 
@@ -167,7 +167,7 @@ async def service_db(operation_name: str | None = None, *, read_only: bool = Fal
         # endregion
         await db.rollback()
         await db.close()
-        if token:  # Only reset if we set it
+        if token is not None:  # Only reset if we set it
             request_context.reset(token)
 
 

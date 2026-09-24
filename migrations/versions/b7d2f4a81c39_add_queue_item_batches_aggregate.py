@@ -6,9 +6,8 @@ Create Date: 2026-09-10
 
 Adds ``queue_item_batches`` — one row per pending work unit (tenant_id,
 task_type, pending_count, total_tokens, oldest_created_at) — plus the
-triggers on ``queue`` that maintain it, and backfills it (deriving each
-unit's tenant from its key prefix) so an instance upgrading mid-queue
-starts exact.
+triggers on ``queue`` that maintain it, and backfills it from the unprocessed
+queue so an instance upgrading mid-queue starts exact.
 
 The claim path reads this table instead of re-aggregating the queue on
 every poll. Rows exist only while a unit has unprocessed items; the
@@ -63,13 +62,6 @@ schema = get_schema()
 #   unique index; trigger effects roll back with the transaction, so the
 #   dedup loser is never counted.
 # endregion
-
-# Mirrors src/utils/work_unit.py _TASK_TYPES at this revision: a key whose
-# first segment is none of these carries a tenant prefix.
-TASK_TYPE_LIST = (
-    "'representation','summary','dream','webhook','deletion',"
-    "'reconciler','scope_backfill','scope_removal'"
-)
 
 
 def upgrade() -> None:
@@ -297,23 +289,14 @@ def upgrade() -> None:
     )
 
     # region ai
-    # Backfill in two steps. Rows enqueued before this revision predate every
-    # tenant_id writer, so the column is NULL even where the key carries a
-    # tenant prefix — left as-is, the entire pre-upgrade backlog would share
-    # the fair claim's single NULL bucket. Derive the tenant from the key
-    # (first segment not a task type ⟹ tenant prefix), stamp the queue rows,
-    # then aggregate. The trigger install above already holds SHARE ROW
-    # EXCLUSIVE on queue, so no enqueue interleaves with either step.
+    # Populate the aggregate from whatever is already unprocessed, so an
+    # instance upgrading mid-queue claims its existing backlog instead of
+    # ignoring it (the claim reads this table, never the queue). No tenant_id
+    # stamp is needed here: a flag-off queue never carries a tenant, and a
+    # flag-on queue is only ever created on an instance whose writers already
+    # stamp tenant_id on insert. The trigger install above already holds
+    # SHARE ROW EXCLUSIVE on queue, so no enqueue interleaves with this step.
     # endregion
-    op.execute(
-        f"""
-        UPDATE {schema}.queue
-        SET tenant_id = split_part(work_unit_key, ':', 1)
-        WHERE tenant_id IS NULL
-          AND NOT processed
-          AND split_part(work_unit_key, ':', 1) NOT IN ({TASK_TYPE_LIST});
-        """
-    )
     op.execute(
         f"""
         INSERT INTO {schema}.queue_item_batches

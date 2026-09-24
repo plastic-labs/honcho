@@ -696,3 +696,115 @@ class TestDeleteWorkspaceTenantScopedQueueCleanup:
         monkeypatch.setattr(settings, "MULTI_TENANT", True)
         with pytest.raises(ValueError, match="without a tenant when MULTI_TENANT"):
             await crud.delete_workspace(db_session, workspace_name)
+
+
+class TestDeleteWorkspaceQueueItemTenantScopedCleanup:
+    """delete_workspace's QueueItem cleanup must be tenant-aware too (B5).
+
+    QueueItem.workspace_name is only unique per tenant (every tenant has a
+    "default" workspace) and queue is deliberately not under RLS (see
+    _RLS_REQUIRED_TABLES), so a tenant-blind match on workspace_name alone
+    deletes another tenant's same-named workspace's queue rows. See
+    queue_item_tenant_match in src/crud/deriver.py.
+    """
+
+    @pytest.mark.asyncio
+    async def test_queue_items_scoped_to_deleting_tenant(
+        self, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+        from src.config import settings
+        from src.db import tenant_context
+
+        workspace_name = str(generate_nanoid())
+        for tenant_id in ("tenant-a", "tenant-b"):
+            await db_session.execute(
+                pg_insert(models.Tenant)
+                .values(tenant_id=tenant_id, tier="shared")
+                .on_conflict_do_nothing()
+            )
+        # Only tenant-a gets an actual Workspace row: workspaces are
+        # partitioned (tenant_id, id) with a (tenant_id, name) unique
+        # constraint, not a global one, so two tenants legitimately have a
+        # workspace named the same; the test db_session connects as the
+        # Postgres superuser, which always bypasses RLS, so a second
+        # same-named Workspace row here would make delete_workspace's own
+        # by-name lookup ambiguous for reasons unrelated to this fix. The
+        # real bug is entirely about the QueueItem.workspace_name string
+        # colliding across tenants, which this reproduces without needing a
+        # second Workspace row: tenant-b's QueueItem carries the identical
+        # workspace_name string a real tenant-b writer would use for its own
+        # "default" workspace.
+        db_session.add(models.Workspace(name=workspace_name, tenant_id="tenant-a"))
+        db_session.add_all(
+            [
+                models.QueueItem(
+                    tenant_id="tenant-a",
+                    workspace_name=workspace_name,
+                    work_unit_key=(
+                        f"tenant-a:representation:{workspace_name}:alice:alice"
+                    ),
+                    task_type="representation",
+                    payload={},
+                ),
+                models.QueueItem(
+                    tenant_id="tenant-b",
+                    workspace_name=workspace_name,
+                    work_unit_key=(
+                        f"tenant-b:representation:{workspace_name}:alice:alice"
+                    ),
+                    task_type="representation",
+                    payload={},
+                ),
+            ]
+        )
+        await db_session.commit()
+
+        monkeypatch.setattr(settings, "MULTI_TENANT", True)
+        token = tenant_context.set("tenant-a")
+        try:
+            await crud.delete_workspace(db_session, workspace_name)
+        finally:
+            tenant_context.reset(token)
+
+        surviving = (
+            (await db_session.execute(select(models.QueueItem.tenant_id)))
+            .scalars()
+            .all()
+        )
+        assert "tenant-a" not in surviving
+        assert surviving.count("tenant-b") == 1
+
+    def test_flag_off_returns_none_and_adds_no_predicate(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Flag-off, queue_item_tenant_match must return None so callers add zero
+        predicate — confirmed at the compiled-SQL level, not just the Python
+        return value, so a caller that drops the `if match is not None` guard
+        can't silently reintroduce a tenant_id clause into the flag-off
+        single-tenant SQL (the OSS byte-identity invariant)."""
+        from sqlalchemy import delete
+        from sqlalchemy.dialects import postgresql
+
+        from src.config import settings
+        from src.crud.deriver import queue_item_tenant_match
+
+        monkeypatch.setattr(settings, "MULTI_TENANT", False)
+        assert queue_item_tenant_match() is None
+
+        stmt = delete(models.QueueItem).where(
+            models.QueueItem.workspace_name == "some-workspace"
+        )
+        compiled = str(stmt.compile(dialect=postgresql.dialect()))
+        assert "tenant_id" not in compiled
+
+    def test_flag_on_without_tenant_fails_closed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from src.config import settings
+        from src.crud.deriver import queue_item_tenant_match
+
+        monkeypatch.setattr(settings, "MULTI_TENANT", True)
+        with pytest.raises(ValueError, match="without a tenant when MULTI_TENANT"):
+            queue_item_tenant_match()

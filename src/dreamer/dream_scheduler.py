@@ -112,7 +112,7 @@ class DreamScheduler:
         return False
 
     async def cancel_dreams_for_observed(
-        self, workspace_name: str, observed: str, tenant_id: str | None = None
+        self, workspace_name: str, observed: str, *, tenant_id: str | None = None
     ) -> set[str]:
         """
         Cancel all pending dreams where the observed peer matches.
