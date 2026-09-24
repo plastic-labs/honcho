@@ -57,16 +57,18 @@ def _json_object_instruction(response_format: type[BaseModel]) -> str:
 
 
 def _uses_max_completion_tokens(model: str) -> bool:
-    """OpenAI reasoning models (gpt-5 family + o-series) require
+    """OpenAI reasoning models (gpt-5+ family + o-series) require
     ``max_completion_tokens`` instead of the classic ``max_tokens`` parameter.
 
-    Matches: gpt-5, gpt-5-anything, gpt-5.anything (incl. gpt-5.4, gpt-5.4-mini),
-    o1*, o3*, o4*. Anything else (gpt-4.x, gpt-4o, chat models on proxies)
-    stays on ``max_tokens``.
+    Matches: gpt-5, gpt-5-anything, gpt-5.anything (incl. gpt-5.4, gpt-5.4-mini,
+    gpt-5.6-sol), gpt-6-anything (gpt-6-sol, gpt-6-luna), o1*, o3*, o4*.
+    Anything else (gpt-4.x, gpt-4o, chat models on proxies) stays on
+    ``max_tokens``.
     """
     m = model.lower()
-    if m == "gpt-5" or m.startswith("gpt-5-") or m.startswith("gpt-5."):
-        return True
+    for base in ("gpt-5", "gpt-6"):
+        if m == base or m.startswith(base + "-") or m.startswith(base + "."):
+            return True
     for prefix in ("o1", "o3", "o4"):
         if m == prefix or m.startswith(prefix + "-"):
             return True
