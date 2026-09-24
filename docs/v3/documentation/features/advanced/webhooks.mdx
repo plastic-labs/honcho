@@ -109,6 +109,9 @@ envelope:
 }
 ```
 
+On a multi-tenant deployment, the envelope also carries a top-level
+`tenant_id` identifying which tenant the event belongs to.
+
 **`data` is event-specific — its keys differ by event type.** A `test.event`
 carries only `workspace_id`:
 
