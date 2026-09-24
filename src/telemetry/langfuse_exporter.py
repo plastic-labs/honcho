@@ -30,6 +30,7 @@ LLM call path.
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from src.config import settings
@@ -61,6 +62,14 @@ class LangfuseExporter:
         if not seed:
             return
         lf_trace_id = client.create_trace_id(seed=seed)
+        # Export runs right after the provider call returns, so "now" stands in
+        # for the call's end and duration_ms backdates its start.
+        end_ns = time.time_ns()
+        start_ns = (
+            end_ns - int(call.duration_ms * 1_000_000)
+            if call.duration_ms is not None
+            else None
+        )
 
         # Agentic runs (run_id set: dialectic / dreamer) get a run span and
         # per-iteration step spans; single-shot calls put the generation at root.
@@ -73,7 +82,7 @@ class LangfuseExporter:
             # the trace has one root instead of one per specialist. That root
             # also stamps the trace attrs. Single-specialist agents (dialectic)
             # get None here and let their run span be the root.
-            root_span_id = self._ensure_trace_root(client, lf_trace_id, call)
+            root_span_id = self._ensure_trace_root(client, lf_trace_id, call, start_ns)
             run_span_id = langfuse_session.ensure_run_span(
                 lf_trace_id,
                 branch,
@@ -87,6 +96,7 @@ class LangfuseExporter:
                     # otherwise the first branch's run span does.
                     stamp_trace=should_stamp and root_span_id is None,
                     call=call,
+                    start_ns=start_ns,
                 ),
             )
             parent_span_id = run_span_id
@@ -103,6 +113,7 @@ class LangfuseExporter:
                         metadata=self._step_metadata(call),
                         stamp_trace=False,
                         call=call,
+                        start_ns=start_ns,
                     ),
                 )
 
@@ -114,6 +125,8 @@ class LangfuseExporter:
             # trace attrs. Agentic: the first branch's run span already did.
             stamp_trace=call.run_id is None,
             call=call,
+            start_ns=start_ns,
+            end_ns=end_ns,
         )
 
         # Tool calls the model requested this iteration: siblings of the
@@ -128,7 +141,11 @@ class LangfuseExporter:
     # -- observation builders ------------------------------------------------
 
     def _ensure_trace_root(
-        self, client: Any, lf_trace_id: str, call: CapturedLLMCall
+        self,
+        client: Any,
+        lf_trace_id: str,
+        call: CapturedLLMCall,
+        start_ns: int | None,
     ) -> str | None:
         """Single branch-agnostic trace root for multi-specialist agents.
 
@@ -152,6 +169,7 @@ class LangfuseExporter:
                 metadata=self._root_metadata(call),
                 stamp_trace=True,
                 call=call,
+                start_ns=start_ns,
             ),
         )
 
@@ -165,12 +183,14 @@ class LangfuseExporter:
         metadata: dict[str, str],
         stamp_trace: bool,
         call: CapturedLLMCall,
+        start_ns: int | None,
     ) -> str | None:
         """Create a (run or step) span, returning its OTEL span id.
 
         Created-and-ended immediately: nesting is by id, so children link fine to
-        an already-ended parent. Span durations are therefore approximate — an
-        accepted v1 trade for not having a 'run finished' signal in the stream.
+        an already-ended parent. The span starts with the first call that mints
+        it and ends when that call does; later calls are not reflected, since
+        the stream has no 'run finished' signal.
         """
         obs = client.start_observation(
             trace_context=self._trace_context(lf_trace_id, parent_span_id),
@@ -178,6 +198,7 @@ class LangfuseExporter:
             as_type="span",
             metadata=metadata,
         )
+        self._backdate_start(obs, start_ns)
         if stamp_trace:
             self._stamp_trace_attrs(obs, call)
         if parent_span_id is not None:
@@ -193,6 +214,8 @@ class LangfuseExporter:
         parent_span_id: str | None,
         stamp_trace: bool,
         call: CapturedLLMCall,
+        start_ns: int | None,
+        end_ns: int,
     ) -> None:
         level = "ERROR" if (call.finish_reason in _ERROR_FINISHES) else None
         obs = client.start_observation(
@@ -206,11 +229,12 @@ class LangfuseExporter:
             usage_details=self._usage(call),
             level=level,
         )
+        self._backdate_start(obs, start_ns)
         if stamp_trace:
             self._stamp_trace_attrs(obs, call)
         if parent_span_id is not None:
             self._demote_from_root(obs)
-        obs.end()
+        obs.end(end_time=end_ns)
 
     def _create_tool_span(
         self,
@@ -236,6 +260,23 @@ class LangfuseExporter:
         )
         self._demote_from_root(obs)  # always a child of the step span
         obs.end()
+
+    @staticmethod
+    def _backdate_start(obs: Any, start_ns: int | None) -> None:
+        """Move an observation's start back to when its captured call began.
+
+        `start_observation` has no start-time parameter, so this rewrites the
+        OTEL SDK span's start before `end()`; the span processor reads it only
+        at export. No-op for non-recording spans (Langfuse disabled).
+        """
+        span = getattr(obs, "_otel_span", None)
+        if (
+            span is None
+            or start_ns is None
+            or getattr(span, "_start_time", None) is None
+        ):
+            return
+        span._start_time = start_ns
 
     @staticmethod
     def _demote_from_root(obs: Any) -> None:
