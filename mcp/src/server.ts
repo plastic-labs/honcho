@@ -7,12 +7,13 @@ import { register as registerScopeTools } from "./tools/scopes.js";
 import { register as registerConclusionTools } from "./tools/conclusions.js";
 import { register as registerSystemTools } from "./tools/system.js";
 import instructions from "../instructions.md";
+import pkg from "../package.json";
 
 export function createServer(ctx: ToolContext): McpServer {
   const server = new McpServer(
     {
       name: "Honcho MCP Server",
-      version: "0.2.0",
+      version: pkg.version,
     },
     { instructions },
   );
