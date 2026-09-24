@@ -120,6 +120,16 @@ class PromptRepresentation(BaseModel):
 
     @classmethod
     def _extract_explicit_container(cls, value: Any, *, depth: int = 0) -> Any:
+        """Unwrap aliases until recursion passes depth three.
+
+        Args:
+            value: Provider output to inspect.
+            depth: Current wrapper depth, starting at zero.
+
+        Returns:
+            The explicit value, the first matching alias value in observations,
+            facts, items, data, result, output order, or the original value.
+        """
         if depth > 3:
             return value
         if value is None or isinstance(value, list):
@@ -130,7 +140,9 @@ class PromptRepresentation(BaseModel):
             return value.get("explicit")
         for alias in ("observations", "facts", "items", "data", "result", "output"):
             if alias in value:
-                return cls._extract_explicit_container(value.get(alias), depth=depth + 1)
+                return cls._extract_explicit_container(
+                    value.get(alias), depth=depth + 1
+                )
         return value
 
     @model_validator(mode="before")
@@ -147,10 +159,14 @@ class PromptRepresentation(BaseModel):
             return value
 
         extracted = cls._extract_explicit_container(value)
-        if isinstance(extracted, dict) and not any(
-            key in extracted for key in ("content", "text", "fact", "observation")
-        ):
-            raise ValueError(f"Unsupported PromptRepresentation shape: {sorted(value.keys())}")
+        if isinstance(extracted, dict):
+            if any(
+                key in extracted for key in ("content", "text", "fact", "observation")
+            ):
+                return {"explicit": [extracted]}
+            raise ValueError(
+                f"Unsupported PromptRepresentation shape: {sorted(value.keys())}"
+            )
         return {"explicit": extracted}
 
     @field_validator("explicit", mode="before")
