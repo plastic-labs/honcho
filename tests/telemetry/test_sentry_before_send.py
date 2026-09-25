@@ -8,6 +8,7 @@ single issue each, so they stop spawning a fresh one per transaction.
 
 from typing import TYPE_CHECKING, cast, final
 
+import httpx
 import pytest
 import sentry_sdk
 from fastapi.exceptions import RequestValidationError
@@ -158,16 +159,33 @@ def _llm_integration_event(mechanism_type: str) -> "Event":
     )
 
 
+class _ProviderError(Exception):
+    def __init__(self, status_code: int) -> None:
+        super().__init__(f"HTTP {status_code}")
+        self.status_code: int = status_code
+
+
 @pytest.mark.parametrize("mechanism_type", ["google_genai", "openai", "anthropic"])
-def test_llm_sdk_integration_per_attempt_errors_are_dropped(
-    mechanism_type: str,
+@pytest.mark.parametrize(
+    "exc",
+    [_ProviderError(503), _ProviderError(500), httpx.ConnectError("refused")],
+)
+def test_llm_sdk_integration_outage_attempts_are_dropped(
+    mechanism_type: str, exc: Exception
 ) -> None:
-    exc = RuntimeError("The service is currently unavailable.")
     event = _llm_integration_event(mechanism_type)
     assert default_before_send(event, _hint(exc)) is None
 
 
-def test_other_mechanisms_pass_through() -> None:
-    exc = RuntimeError("boom")
+@pytest.mark.parametrize("mechanism_type", ["google_genai", "openai", "anthropic"])
+@pytest.mark.parametrize("status_code", [400, 401, 404, 429])
+def test_llm_sdk_integration_client_errors_pass_through(
+    mechanism_type: str, status_code: int
+) -> None:
+    event = _llm_integration_event(mechanism_type)
+    assert default_before_send(event, _hint(_ProviderError(status_code))) is event
+
+
+def test_outage_from_other_mechanisms_passes_through() -> None:
     event = _llm_integration_event("starlette")
-    assert default_before_send(event, _hint(exc)) is event
+    assert default_before_send(event, _hint(_ProviderError(503))) is event

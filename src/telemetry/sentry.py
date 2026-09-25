@@ -15,6 +15,7 @@ from sqlalchemy.exc import OperationalError
 
 from src.config import settings
 from src.exceptions import HonchoException, SentryPolicy
+from src.llm import errors as llm_errors
 
 P = ParamSpec("P")
 T = TypeVar("T")
@@ -70,9 +71,6 @@ def default_before_send(event: Event, hint: Hint | None) -> Event | None:
     above the blanket drop below. Third-party types have no such hook and are
     still matched explicitly.
     """
-    if _is_llm_sdk_integration_event(event):
-        return None
-
     if not hint:
         return event
 
@@ -81,6 +79,12 @@ def default_before_send(event: Event, hint: Hint | None) -> Event | None:
         return event
 
     _, exc_value, _ = exc_info
+    if (
+        _is_llm_sdk_integration_event(event)
+        and llm_errors.as_upstream_error(exc_value) is not None
+    ):
+        return None
+
     if isinstance(exc_value, HonchoException):
         return _apply_policy(event, type(exc_value).sentry_policy)
 
