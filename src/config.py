@@ -976,6 +976,20 @@ class DeriverSettings(HonchoSettings):
 
     SCHEDULER: Literal["api", "deriver"] = "deriver"
 
+    # Bounded retry of an empty structured representation. A truncated or
+    # provider-mangled body parses to a *valid but empty* model, so at this
+    # layer an empty parse cannot be distinguished from a model that read the
+    # batch and found nothing to record -- re-requesting it once is the cheap
+    # insurance, and the last response's finish reasons decide whether the batch
+    # also deserves a work-unit requeue (queue_manager.MAX_RETRYABLE_ATTEMPTS).
+    # Worst-case provider calls per batch is the product:
+    #   (1 + EMPTY_PARSE_MAX_ATTEMPTS) * MAX_RETRYABLE_ATTEMPTS  == 6 by default.
+    # Set to 0 to keep the previous single-call behaviour.
+    EMPTY_PARSE_MAX_ATTEMPTS: Annotated[int, Field(default=1, ge=0, le=5)] = 1
+    EMPTY_PARSE_BACKOFF_SECONDS: Annotated[
+        float, Field(default=1.0, ge=0.0, le=30.0)
+    ] = 1.0
+
     @model_validator(mode="before")
     @classmethod
     def _merge_model_config_defaults(cls, data: Any) -> Any:
