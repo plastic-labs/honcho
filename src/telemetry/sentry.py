@@ -47,6 +47,18 @@ def _apply_policy(event: Event, policy: SentryPolicy | None) -> Event | None:
     return event
 
 
+_LLM_SDK_INTEGRATION_MECHANISMS = frozenset({"google_genai", "openai", "anthropic"})
+
+
+def _is_llm_sdk_integration_event(event: Event) -> bool:
+    values = event.get("exception", {}).get("values") or []
+    for value in values:
+        mechanism: dict[str, Any] = value.get("mechanism") or {}
+        if mechanism.get("type") in _LLM_SDK_INTEGRATION_MECHANISMS:
+            return True
+    return False
+
+
 def default_before_send(event: Event, hint: Hint | None) -> Event | None:
     """Filter/regroup known non-actionable events before Sentry ingests them.
 
@@ -58,6 +70,9 @@ def default_before_send(event: Event, hint: Hint | None) -> Event | None:
     above the blanket drop below. Third-party types have no such hook and are
     still matched explicitly.
     """
+    if _is_llm_sdk_integration_event(event):
+        return None
+
     if not hint:
         return event
 

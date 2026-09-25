@@ -141,3 +141,33 @@ def test_initialize_sentry_explicit_none_bypasses_shared_filter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     assert _captured_before_send(monkeypatch, before_send=None) is None
+
+
+def _llm_integration_event(mechanism_type: str) -> "Event":
+    return _event(
+        level="error",
+        exception={
+            "values": [
+                {
+                    "type": "ServerError",
+                    "value": "The service is currently unavailable.",
+                    "mechanism": {"type": mechanism_type, "handled": False},
+                }
+            ]
+        },
+    )
+
+
+@pytest.mark.parametrize("mechanism_type", ["google_genai", "openai", "anthropic"])
+def test_llm_sdk_integration_per_attempt_errors_are_dropped(
+    mechanism_type: str,
+) -> None:
+    exc = RuntimeError("The service is currently unavailable.")
+    event = _llm_integration_event(mechanism_type)
+    assert default_before_send(event, _hint(exc)) is None
+
+
+def test_other_mechanisms_pass_through() -> None:
+    exc = RuntimeError("boom")
+    event = _llm_integration_event("starlette")
+    assert default_before_send(event, _hint(exc)) is event
