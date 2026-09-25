@@ -28,7 +28,9 @@ from .runtime import (
     AttemptPlan,
     current_attempt,
     effective_temperature,
+    fallback_model_config,
     plan_attempt,
+    plan_pinned_attempt,
     resolve_runtime_model_config,
     start_langfuse_agent_run,
 )
@@ -176,6 +178,8 @@ async def honcho_llm_call(
 
     Backup provider/model (if configured on the primary ModelConfig's
     `fallback`) is used on the final retry attempt, which is 3 by default.
+    When a tool loop exhausts its retries on the primary the whole
+    run is restarted on the fallback.
 
     Raises:
         ValidationException: If streaming and tool calling are combined
@@ -268,21 +272,22 @@ async def honcho_llm_call(
     if sentry_track_name:
         decorated = ai_track(sentry_track_name)(decorated)
 
-    def before_retry_callback(retry_state: Any) -> None:
-        """Update attempt counter before each retry + log transient failures.
+    def before_retry_for_model(config: ModelConfig) -> Callable[[Any], None]:
+        def before_retry_with_state(retry_state: Any) -> None:
+            """Update attempt counter before each retry + log transient failures."""
+            next_attempt = retry_state.attempt_number + 1
+            current_attempt.set(next_attempt)
+            exc = retry_state.outcome.exception() if retry_state.outcome else None
+            if exc:
+                logger.warning(
+                    f"Error on attempt {retry_state.attempt_number}/{retry_attempts} "
+                    + f"with {config.transport}/{config.model}: {exc}"
+                )
+                logger.info(f"Will retry with attempt {next_attempt}/{retry_attempts}")
 
-        tenacity's before_sleep fires AFTER an attempt fails, BEFORE sleeping,
-        so we increment to the next attempt number here.
-        """
-        next_attempt = retry_state.attempt_number + 1
-        current_attempt.set(next_attempt)
-        exc = retry_state.outcome.exception() if retry_state.outcome else None
-        if exc:
-            logger.warning(
-                f"Error on attempt {retry_state.attempt_number}/{retry_attempts} with "
-                + f"{runtime_model_config.transport}/{runtime_model_config.model}: {exc}"
-            )
-            logger.info(f"Will retry with attempt {next_attempt}/{retry_attempts}")
+        return before_retry_with_state
+
+    before_retry_callback = before_retry_for_model(runtime_model_config)
 
     if enable_retry:
         decorated = retry(
@@ -454,10 +459,15 @@ async def honcho_llm_call(
         run_handle.update(
             input=messages if messages else [{"role": "user", "content": prompt}]
         )
-    try:
+
+    async def run_tool_loop(
+        get_plan: Callable[[], AttemptPlan],
+        before_retry: Callable[[Any], None],
+    ) -> HonchoLLMCallResponse[Any] | StreamingResponseWithMetadata:
+        current_attempt.set(1)
         # execute_tool_loop raises ValidationException on out-of-range
         # max_tool_iterations; fail-fast is cheaper than silent clamping here.
-        result = await execute_tool_loop(
+        return await execute_tool_loop(
             prompt=prompt,
             max_tokens=max_tokens,
             messages=messages,
@@ -475,13 +485,51 @@ async def honcho_llm_call(
             enable_retry=enable_retry,
             retry_attempts=retry_attempts,
             max_input_tokens=max_input_tokens,
-            get_attempt_plan=_get_attempt_plan,
-            before_retry_callback=before_retry_callback,
+            get_attempt_plan=get_plan,
+            before_retry_callback=before_retry,
             stream_final=stream_final_only,
             iteration_callback=iteration_callback,
             telemetry=telemetry,
             langfuse_run_handle=run_handle,
         )
+
+    def primary_run_plan() -> AttemptPlan:
+        return plan_pinned_attempt(
+            model_config=runtime_model_config,
+            attempt=current_attempt.get(),
+            retry_attempts=retry_attempts,
+            thinking_budget_tokens=thinking_budget_tokens,
+            reasoning_effort=reasoning_effort,
+            is_fallback=False,
+        )
+
+    try:
+        try:
+            result = await run_tool_loop(primary_run_plan, before_retry_callback)
+        except Exception as primary_exc:
+            fallback_config = fallback_model_config(runtime_model_config)
+            if fallback_config is None:
+                raise
+            logger.warning(
+                f"Tool loop on {runtime_model_config.transport}/"
+                + f"{runtime_model_config.model} failed after {retry_attempts} "
+                + f"attempts ({primary_exc}); restarting the run on backup "
+                + f"{fallback_config.transport}/{fallback_config.model}"
+            )
+
+            def _fallback_run_plan() -> AttemptPlan:
+                return plan_pinned_attempt(
+                    model_config=fallback_config,
+                    attempt=current_attempt.get(),
+                    retry_attempts=retry_attempts,
+                    thinking_budget_tokens=fallback_config.thinking_budget_tokens,
+                    reasoning_effort=fallback_config.thinking_effort,
+                    is_fallback=True,
+                )
+
+            result = await run_tool_loop(
+                _fallback_run_plan, before_retry_for_model(fallback_config)
+            )
     except BaseException:
         if run_handle is not None:
             run_handle.end()

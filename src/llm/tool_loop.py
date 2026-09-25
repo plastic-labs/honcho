@@ -298,12 +298,18 @@ async def stream_final_response(
     else:
         stream = await _setup_stream()
 
-    try:
-        async for chunk in stream:
-            yield chunk
-    finally:
-        if isinstance(stream, AsyncGenerator):
-            await stream.aclose()
+    # Separating the yields here from the function ensures the `async`
+    # expressions in `stream_final_response` get evaluated immediately instead
+    # of waiting for someone to iterate over this iterator
+    async def _drain() -> AsyncIterator[HonchoLLMCallStreamChunk]:
+        try:
+            async for chunk in stream:
+                yield chunk
+        finally:
+            if isinstance(stream, AsyncGenerator):
+                await stream.aclose()
+
+    return _drain()
 
 
 @_with_iteration_scope
@@ -394,7 +400,7 @@ async def execute_tool_loop(
             _telemetry_for_iteration(telemetry, iteration + 1, step_seq=iteration + 1),
         )
         try:
-            # Reset attempt counter so each iteration starts with the primary provider.
+            # Reset attempt counter so each iteration gets the full retry budget.
             current_attempt.set(1)
             logger.debug(
                 f"Tool execution iteration {iteration + 1}/{max_tool_iterations}"
@@ -522,8 +528,7 @@ async def execute_tool_loop(
 
                 if stream_final:
                     # Snapshot the plan that just succeeded — streaming retries
-                    # pin to this exact client/model so we don't bounce back to
-                    # primary after the tool loop settled on fallback.
+                    # pin to this exact client/model.
                     winning_plan = get_attempt_plan()
                     # +2 (not +1): the in-loop call we just made used iteration+1,
                     # so the streamed tail needs the next ordinal — otherwise its
@@ -532,7 +537,7 @@ async def execute_tool_loop(
                     stream_telemetry = _telemetry_for_iteration(
                         telemetry, iteration + 2, step_seq=iteration + 2
                     )
-                    stream = stream_final_response(
+                    stream = await stream_final_response(
                         winning_plan=winning_plan,
                         prompt=prompt,
                         max_tokens=max_tokens,
@@ -705,7 +710,7 @@ async def execute_tool_loop(
         stream_telemetry = _telemetry_for_iteration(
             telemetry, synthesis_iteration, step_seq=synthesis_iteration
         )
-        stream = stream_final_response(
+        stream = await stream_final_response(
             winning_plan=winning_plan,
             prompt=prompt,
             max_tokens=max_tokens,
