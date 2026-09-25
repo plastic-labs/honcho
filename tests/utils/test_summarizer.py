@@ -27,6 +27,49 @@ _MESSAGE_PUBLIC_ID = "msg_abc123"
 _LAST_MESSAGE_ID = 42
 _LAST_MESSAGE_CONTENT_PREVIEW = "hello there how are you"
 _MESSAGE_COUNT = 5
+# Degenerate long-summary loop from #899 — non-empty, highly repetitive.
+_DEGENERATE_TEXT = "Human. Forever. Human. Always. Human value. Always. " * 300
+# Clean prose that can still hit the output cap (must not be rejected).
+# Distinct-4 ratio must stay well above 0.35 — do not build this by repeating
+# a single paragraph (that scores ~0.05 and would false-trigger the guard).
+_CLEAN_CAP_HIT_TOPICS = [
+    "project planning",
+    "deadline prioritization",
+    "communication preferences",
+    "quarterly goals",
+    "beta launch readiness",
+    "analytics rewrite deferral",
+    "stakeholder alignment",
+    "risk mitigation",
+    "capacity planning",
+    "design review feedback",
+    "API contract changes",
+    "migration sequencing",
+    "observability gaps",
+    "incident response drills",
+    "onboarding materials",
+    "vendor evaluation",
+    "budget reforecast",
+    "security audit findings",
+    "customer interviews",
+    "feature flag rollout",
+    "performance baselines",
+    "dependency upgrades",
+    "test coverage targets",
+    "release checklist",
+    "team rituals",
+    "documentation debt",
+    "support handoff notes",
+    "partner integrations",
+    "data retention policy",
+    "accessibility fixes",
+]
+_CLEAN_CAP_HIT_TEXT = " ".join(
+    f"In discussion segment {i + 1}, the participants covered {topic}. "
+    f"They agreed on concrete next steps, owners, and a follow-up date. "
+    f"Open questions around {topic} were parked for the next working session."
+    for i, topic in enumerate(_CLEAN_CAP_HIT_TOPICS)
+)
 
 
 async def _call_create_summary(
@@ -220,6 +263,107 @@ class TestCreateSummary:
         assert is_fallback is True
         assert summary["content"] == ""
         assert summary["token_count"] == 0
+
+    @pytest.mark.parametrize("finish_reason", ["max_tokens", "length", "MAX_TOKENS"])
+    async def test_degenerate_cap_hit_response_uses_fallback(self, finish_reason: str):
+        """A summary that loops until the output cap is discarded, not persisted (#899)."""
+        mock_response = HonchoLLMCallResponse(
+            content=_DEGENERATE_TEXT,
+            input_tokens=20000,
+            output_tokens=settings.SUMMARY.MAX_TOKENS_LONG,
+            finish_reasons=[finish_reason],
+        )
+        with patch(
+            "src.utils.summarizer.create_long_summary",
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ):
+            summary, is_fallback, in_tok, out_tok = await _call_create_summary(
+                SummaryType.LONG
+            )
+
+        assert is_fallback is True
+        assert "Human. Forever." not in summary["content"]
+        assert (in_tok, out_tok) == (0, 0)
+
+    async def test_degenerate_cap_hit_short_summary_uses_fallback(self):
+        """Shared guard covers SHORT as well as LONG (#899)."""
+        mock_response = HonchoLLMCallResponse(
+            content=_DEGENERATE_TEXT,
+            input_tokens=5000,
+            output_tokens=settings.SUMMARY.MAX_TOKENS_SHORT,
+            finish_reasons=["max_tokens"],
+        )
+        with patch(
+            "src.utils.summarizer.create_short_summary",
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ):
+            summary, is_fallback, in_tok, out_tok = await _call_create_summary(
+                SummaryType.SHORT
+            )
+
+        assert is_fallback is True
+        assert "Human. Forever." not in summary["content"]
+        assert (in_tok, out_tok) == (0, 0)
+
+    async def test_degenerate_stop_finish_keeps_content(self):
+        """Cap-hit conjunct is required — stop + degenerate text is not rejected (#899)."""
+        mock_response = HonchoLLMCallResponse(
+            content=_DEGENERATE_TEXT,
+            input_tokens=20000,
+            output_tokens=500,
+            finish_reasons=["stop"],
+        )
+        with patch(
+            "src.utils.summarizer.create_long_summary",
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ):
+            summary, is_fallback, _, _ = await _call_create_summary(SummaryType.LONG)
+
+        assert is_fallback is False
+        assert "Human. Forever." in summary["content"]
+
+    async def test_degenerate_empty_finish_reasons_keeps_content(self):
+        """Empty finish_reasons must not reject (#899)."""
+        mock_response = HonchoLLMCallResponse(
+            content=_DEGENERATE_TEXT,
+            input_tokens=20000,
+            output_tokens=500,
+            finish_reasons=[],
+        )
+        with patch(
+            "src.utils.summarizer.create_long_summary",
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ):
+            summary, is_fallback, _, _ = await _call_create_summary(SummaryType.LONG)
+
+        assert is_fallback is False
+        assert "Human. Forever." in summary["content"]
+
+    async def test_clean_prose_cap_hit_keeps_content(self):
+        """Dense valid summary that hits the cap is still valid (#899)."""
+        mock_response = HonchoLLMCallResponse(
+            content=_CLEAN_CAP_HIT_TEXT,
+            input_tokens=20000,
+            output_tokens=settings.SUMMARY.MAX_TOKENS_LONG,
+            finish_reasons=["max_tokens"],
+        )
+        with patch(
+            "src.utils.summarizer.create_long_summary",
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ):
+            summary, is_fallback, in_tok, out_tok = await _call_create_summary(
+                SummaryType.LONG
+            )
+
+        assert is_fallback is False
+        assert "project planning" in summary["content"]
+        assert in_tok == 20000
+        assert out_tok == settings.SUMMARY.MAX_TOKENS_LONG
 
 
 @pytest.mark.asyncio
