@@ -8,6 +8,8 @@ user attributes, session-as-metadata) without a real Langfuse backend.
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from src.config import settings
@@ -21,6 +23,8 @@ from src.telemetry.langfuse_exporter import LangfuseExporter
 class FakeOtelSpan:
     def __init__(self) -> None:
         self.attributes: dict[str, object] = {}
+        self._start_time: int | None = time.time_ns()
+        self.end_time: int | None = None
 
     def set_attribute(self, key: str, value: object) -> None:
         self.attributes[key] = value
@@ -36,8 +40,9 @@ class FakeObs:
         self._otel_span = FakeOtelSpan()
         self.ended = False
 
-    def end(self) -> None:
+    def end(self, *, end_time: int | None = None) -> None:
         self.ended = True
+        self._otel_span.end_time = end_time if end_time is not None else time.time_ns()
 
 
 class FakeClient:
@@ -83,6 +88,7 @@ def _call(
     tool_names: list[str] | None = None,
     finish_reason: str = "stop",
     content: str = "answer",
+    duration_ms: float | None = None,
 ):
     telemetry = LLMTelemetryContext(
         workspace_name="ws",
@@ -121,6 +127,7 @@ def _call(
         was_fallback=False,
         was_stream=False,
         finish_reason=finish_reason,
+        duration_ms=duration_ms,
     )
 
 
@@ -436,3 +443,64 @@ def test_dreamer_specialists_nest_under_one_dream_root(_exporter_env: FakeClient
     assert len(named) == 1
     assert named[0] is dream_root
     assert named[0]._otel_span.attributes["langfuse.trace.name"] == "Dream"
+
+
+def _latency_ns(obs: FakeObs) -> int:
+    span = obs._otel_span
+    assert span._start_time is not None and span.end_time is not None
+    return span.end_time - span._start_time
+
+
+def test_generation_latency_matches_call_duration(_exporter_env: FakeClient):
+    client = _exporter_env
+    LangfuseExporter().export(_call(run_id=None, trace_id="t1", duration_ms=1500.0))
+
+    (gen,) = client.observations
+    assert _latency_ns(gen) == 1_500_000_000
+
+
+def test_run_and_step_spans_start_with_their_first_generation(
+    _exporter_env: FakeClient,
+):
+    client = _exporter_env
+    exporter = LangfuseExporter()
+    exporter.export(_call(run_id="r1", trace_id="r1", iteration=0, duration_ms=2000.0))
+    exporter.export(_call(run_id="r1", trace_id="r1", iteration=1, duration_ms=500.0))
+
+    run_span, step0, gen0, step1, gen1 = client.observations
+    assert gen0.kwargs["as_type"] == gen1.kwargs["as_type"] == "generation"
+    assert _latency_ns(gen0) == 2_000_000_000
+    assert _latency_ns(gen1) == 500_000_000
+    # Parents never start after the generation that minted them.
+    assert run_span._otel_span._start_time == gen0._otel_span._start_time
+    assert step0._otel_span._start_time == gen0._otel_span._start_time
+    assert step1._otel_span._start_time == gen1._otel_span._start_time
+
+
+def test_missing_duration_leaves_start_untouched(_exporter_env: FakeClient):
+    client = _exporter_env
+    before = time.time_ns()
+    LangfuseExporter().export(_call(run_id=None, trace_id="t1"))
+
+    (gen,) = client.observations
+    assert gen._otel_span._start_time is not None
+    assert gen._otel_span._start_time >= before
+    assert _latency_ns(gen) >= 0
+
+
+def test_non_recording_span_is_not_backdated(_exporter_env: FakeClient):
+    # Langfuse-disabled clients hand back spans without an SDK start time.
+    client = _exporter_env
+    original = client.start_observation
+
+    def start_observation(**kwargs: object) -> FakeObs:
+        obs = original(**kwargs)
+        del obs._otel_span._start_time
+        return obs
+
+    client.start_observation = start_observation
+    LangfuseExporter().export(_call(run_id=None, trace_id="t1", duration_ms=10.0))
+
+    (gen,) = client.observations
+    assert not hasattr(gen._otel_span, "_start_time")
+    assert gen.ended
