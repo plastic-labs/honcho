@@ -115,7 +115,8 @@ class ModelOverrideSettings(BaseModel):
         default_factory=dict,
         description=(
             "Operator escape hatch for provider-specific request fields. "
-            "Three recognized keys: `extra_body` (merged into the request body), "
+            "`api_mode=responses` selects the OpenAI Responses wire protocol. "
+            "Three passthrough keys are also recognized: `extra_body` (merged into the request body), "
             "`extra_headers` (HTTP headers), `extra_query` (URL query params). "
             "OpenAI and Anthropic transports forward these as identically-named "
             "SDK kwargs. The Gemini transport merges `extra_body` into the "
@@ -131,8 +132,11 @@ class ModelOverrideSettings(BaseModel):
 
     @field_validator("provider_params")
     @classmethod
-    def _validate_provider_timeout(cls, v: dict[str, Any]) -> dict[str, Any]:
-        """Reject bad `timeout` values at config load; normalize good ones to float."""
+    def _validate_provider_params(cls, v: dict[str, Any]) -> dict[str, Any]:
+        """Reject invalid Responses modes/timeouts at config load."""
+        api_mode = v.get("api_mode")
+        if api_mode is not None and api_mode != "responses":
+            raise ValueError("provider_params.api_mode must be 'responses' when set")
         if "timeout" not in v:
             return v
         return {**v, "timeout": coerce_provider_timeout(v["timeout"])}
@@ -200,6 +204,22 @@ def _validate_structured_output_mode(
         )
 
 
+def _validate_api_mode_transport(
+    transport: ModelTransport,
+    provider_params: dict[str, Any],
+) -> None:
+    """Reject invalid or unsupported Responses mode configuration."""
+    api_mode = provider_params.get("api_mode")
+    if api_mode is None:
+        return
+    if api_mode != "responses":
+        raise ValueError("provider_params.api_mode must be 'responses' when set")
+    if transport != "openai":
+        raise ValueError(
+            "provider_params.api_mode is only supported on the 'openai' transport"
+        )
+
+
 class FallbackModelSettings(BaseModel):
     """Independent fallback model configuration. No inheritance from primary."""
 
@@ -241,6 +261,7 @@ class FallbackModelSettings(BaseModel):
     def _validate_runtime_shape(self) -> "FallbackModelSettings":
         _validate_thinking_constraints(self.transport, self.thinking_budget_tokens)
         _validate_structured_output_mode(self.transport, self.structured_output_mode)
+        _validate_api_mode_transport(self.transport, self.overrides.provider_params)
         return self
 
 
@@ -288,6 +309,7 @@ class ConfiguredModelSettings(BaseModel):
     def _validate_runtime_shape(self) -> "ConfiguredModelSettings":
         _validate_thinking_constraints(self.transport, self.thinking_budget_tokens)
         _validate_structured_output_mode(self.transport, self.structured_output_mode)
+        _validate_api_mode_transport(self.transport, self.overrides.provider_params)
         return self
 
 
@@ -323,6 +345,11 @@ class ResolvedFallbackConfig(BaseModel):
     @property
     def reasoning_effort(self) -> ThinkingEffortLevel | None:
         return self.thinking_effort
+
+    @model_validator(mode="after")
+    def _validate_api_mode_on_self(self) -> "ResolvedFallbackConfig":
+        _validate_api_mode_transport(self.transport, self.provider_params)
+        return self
 
 
 class ModelConfig(BaseModel):
@@ -369,6 +396,7 @@ class ModelConfig(BaseModel):
     @model_validator(mode="after")
     def _validate_thinking_constraints_on_self(self) -> "ModelConfig":
         _validate_thinking_constraints(self.transport, self.thinking_budget_tokens)
+        _validate_api_mode_transport(self.transport, self.provider_params)
         return self
 
     def for_model(
@@ -377,12 +405,13 @@ class ModelConfig(BaseModel):
         *,
         transport_override: ModelTransport | None = None,
     ) -> "ModelConfig":
-        return self.model_copy(
-            update={
-                "model": model_override,
-                "transport": transport_override or self.transport,
-            }
-        )
+        update = self.model_dump(mode="python", round_trip=True)
+        update["model"] = model_override
+        update["transport"] = transport_override or self.transport
+        # model_copy(update=...) deliberately skips Pydantic validation. A full
+        # re-validation is required here because changing transport can make
+        # retained provider params (for example api_mode=responses) invalid.
+        return type(self).model_validate(update)
 
 
 class ConfiguredEmbeddingModelSettings(BaseModel):
