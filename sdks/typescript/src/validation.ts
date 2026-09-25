@@ -407,7 +407,8 @@ export const FilterSchema = z.record(z.string(), z.unknown()).optional()
  * shape are both accepted.
  *
  * Discriminates on the `filters` key: if the input has a `filters` property or
- * any of the pagination-only keys (`page`, `size`, `reverse`) it is treated as
+ * any of the supplied option-only keys (for example `page`, `reverse`, or
+ * `sortBy`) it is treated as
  * the new options object. Otherwise it is treated as a legacy raw filter.
  */
 export function normalizeListOptions<T extends { filters?: Filters }>(

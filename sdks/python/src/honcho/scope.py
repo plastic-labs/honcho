@@ -202,6 +202,7 @@ class Scope(ScopeBase):
                 metadata=response.metadata,
                 configuration=response.configuration,
                 created_at=response.created_at,
+                last_message_at=response.last_message_at,
                 is_active=response.is_active,
             )
 
