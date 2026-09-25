@@ -15,18 +15,24 @@ from __future__ import annotations
 
 import logging
 import time
-import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 import sentry_sdk
+from nanoid import generate as generate_nanoid
+from sqlalchemy import func, select
 
-from src import crud
+from src import crud, models
 from src.config import settings
 from src.dependencies import tracked_db
-from src.dreamer.specialists import SPECIALISTS, SpecialistResult
+from src.dreamer.specialists import (
+    SPECIALISTS,
+    CardRefreshSpecialist,
+    SpecialistResult,
+)
 from src.dreamer.surprisal import SurprisalScore  # type: ignore
-from src.exceptions import SpecialistExecutionError, SurprisalError
+from src.exceptions import SurprisalError
 from src.schemas import DreamType
 from src.telemetry.events import DreamRunEvent, emit
 from src.telemetry.logging import (
@@ -67,6 +73,13 @@ async def run_dream(
     observer: str,
     observed: str,
     session_name: str | None = None,
+    *,
+    dream_type: str | None = None,
+    trigger_reason: str | None = None,
+    delay_reason: str | None = None,
+    documents_since_last_dream_at_schedule: int | None = None,
+    document_threshold: int | None = None,
+    queue_item_id: int | None = None,
 ) -> DreamResult | None:
     """
     Run a full dream cycle with optional surprisal-based sampling.
@@ -87,7 +100,7 @@ async def run_dream(
     if not settings.DREAM.ENABLED:
         return None
 
-    run_id = str(uuid.uuid4())[:8]
+    run_id = generate_nanoid()
     task_name = f"dream_orchestrator_{run_id}"
     start_time = time.perf_counter()
 
@@ -106,6 +119,7 @@ async def run_dream(
 
         workspace = await crud.get_workspace(db, workspace_name=workspace_name)
         configuration = get_configuration(None, session, workspace)
+        resolved_session_id = session.id if session else None
     if not configuration.dream.enabled:
         logger.info(
             f"[{run_id}] Dreams disabled for {workspace_name}/{session_name}, skipping dream"
@@ -119,12 +133,12 @@ async def run_dream(
     deduction_result: SpecialistResult | None = None
     induction_result: SpecialistResult | None = None
 
-    # Phase 0: Surprisal-based sampling (if enabled)
+    # Surprisal-based sampling (if enabled)
     # Specialists are self-directed by default - hints are optional suggestions
     exploration_hints: list[str] | None = None
 
     if settings.DREAM.SURPRISAL.ENABLED:
-        logger.info(f"[{run_id}] Phase 0: Computing surprisal scores")
+        logger.info(f"[{run_id}] Computing surprisal scores")
         try:
             from src.dreamer.surprisal import sample_observations_with_surprisal
 
@@ -163,91 +177,131 @@ async def run_dream(
             accumulate_metric(task_name, "surprisal_error", str(e), "blob")
             # Specialists will explore freely without hints
 
-    # Phase 1: Run deduction specialist (manages its own DB sessions)
-    logger.info(f"[{run_id}] Phase 1: Running deduction specialist")
-    deduction_specialist = SPECIALISTS["deduction"]
+    # Specialist phase wrapped in try/finally so DreamRunEvent ALWAYS emits —
+    # both for graceful failures (specialist raises Exception) AND unexpected
+    # exceptions including CancelledError. The orphaned-child-event problem
+    # before this fix: specialists.py:350 catches BaseException and re-raises,
+    # but the orchestrator's old `except SpecialistExecutionError` clauses
+    # didn't match anything actually raised in src/, so any real failure
+    # propagated past the emit at the bottom of this function. Now: the
+    # specialist try blocks catch Exception (CancelledError still propagates
+    # correctly), and the outer try/finally guarantees the parent event fires.
+    #
+    # Pre-init aggregate locals so the function-level return below and the
+    # finally's emit both see defined values even on an early exception.
+    duration_ms = 0.0
+    total_iterations = 0
+    total_input_tokens = 0
+    total_output_tokens = 0
     try:
-        deduction_result = await deduction_specialist.run(
-            workspace_name=workspace_name,
-            observer=observer,
-            observed=observed,
-            session_name=session_name,
-            hints=exploration_hints,
-            configuration=configuration,
-            parent_run_id=run_id,
-        )
-        logger.info(
-            f"[{run_id}] Deduction completed: {deduction_result.content[:200]}..."
-        )
-        accumulate_metric(
-            task_name, "deduction_result", deduction_result.content, "blob"
-        )
-        deduction_success = deduction_result.success
-    except SpecialistExecutionError as e:
-        logger.error(f"[{run_id}] Deduction specialist failed: {e}", exc_info=True)
-        accumulate_metric(task_name, "deduction_error", str(e), "blob")
+        # Run deduction specialist (manages its own DB sessions)
+        logger.info(f"[{run_id}] Running deduction specialist")
+        deduction_specialist = SPECIALISTS["deduction"]
+        try:
+            deduction_result = await deduction_specialist.run(
+                workspace_name=workspace_name,
+                observer=observer,
+                observed=observed,
+                session_name=session_name,
+                hints=exploration_hints,
+                configuration=configuration,
+                parent_run_id=run_id,
+                session_id=resolved_session_id,
+                queue_item_id=queue_item_id,
+            )
+            logger.info(
+                f"[{run_id}] Deduction completed: {deduction_result.content[:200]}..."
+            )
+            accumulate_metric(
+                task_name, "deduction_result", deduction_result.content, "blob"
+            )
+            deduction_success = deduction_result.success
+        except Exception as e:
+            # `Exception` (not `BaseException`) — CancelledError must still
+            # propagate so the worker can shut down. SpecialistExecutionError
+            # is no longer raised by `src/`, but the catch is broad enough to
+            # cover provider/DB/tool/validation errors.
+            logger.error(f"[{run_id}] Deduction specialist failed: {e}", exc_info=True)
+            accumulate_metric(task_name, "deduction_error", str(e), "blob")
 
-    # Phase 2: Run induction specialist (after deduction so it can see new deductive obs)
-    logger.info(f"[{run_id}] Phase 2: Running induction specialist")
-    induction_specialist = SPECIALISTS["induction"]
-    try:
-        induction_result = await induction_specialist.run(
-            workspace_name=workspace_name,
-            observer=observer,
-            observed=observed,
-            session_name=session_name,
-            hints=exploration_hints,
-            configuration=configuration,
-            parent_run_id=run_id,
-        )
-        logger.info(
-            f"[{run_id}] Induction completed: {induction_result.content[:200]}..."
-        )
-        accumulate_metric(
-            task_name, "induction_result", induction_result.content, "blob"
-        )
-        induction_success = induction_result.success
-    except SpecialistExecutionError as e:
-        logger.error(f"[{run_id}] Induction specialist failed: {e}", exc_info=True)
-        accumulate_metric(task_name, "induction_error", str(e), "blob")
+        # Run induction specialist (after deduction so it can see new deductive obs)
+        logger.info(f"[{run_id}] Running induction specialist")
+        induction_specialist = SPECIALISTS["induction"]
+        try:
+            induction_result = await induction_specialist.run(
+                workspace_name=workspace_name,
+                observer=observer,
+                observed=observed,
+                session_name=session_name,
+                hints=exploration_hints,
+                configuration=configuration,
+                parent_run_id=run_id,
+                session_id=resolved_session_id,
+                queue_item_id=queue_item_id,
+            )
+            logger.info(
+                f"[{run_id}] Induction completed: {induction_result.content[:200]}..."
+            )
+            accumulate_metric(
+                task_name, "induction_result", induction_result.content, "blob"
+            )
+            induction_success = induction_result.success
+        except Exception as e:
+            logger.error(f"[{run_id}] Induction specialist failed: {e}", exc_info=True)
+            accumulate_metric(task_name, "induction_error", str(e), "blob")
 
-    # Log final metrics
-    duration_ms = (time.perf_counter() - start_time) * 1000
-    accumulate_metric(task_name, "total_duration", duration_ms, "ms")
+        # Log final metrics
+        duration_ms = (time.perf_counter() - start_time) * 1000
+        accumulate_metric(task_name, "total_duration", duration_ms, "ms")
 
-    logger.info(f"[{run_id}] Dream cycle completed in {duration_ms:.0f}ms")
-    log_performance_metrics("dream_orchestrator", run_id)
-
-    # Aggregate metrics from specialist results
-    total_iterations = (deduction_result.iterations if deduction_result else 0) + (
-        induction_result.iterations if induction_result else 0
-    )
-    total_input_tokens = (deduction_result.input_tokens if deduction_result else 0) + (
-        induction_result.input_tokens if induction_result else 0
-    )
-    total_output_tokens = (
-        deduction_result.output_tokens if deduction_result else 0
-    ) + (induction_result.output_tokens if induction_result else 0)
-
-    # Emit DreamRunEvent with aggregated metrics
-    emit(
-        DreamRunEvent(
-            run_id=run_id,
-            workspace_name=workspace_name,
-            session_name=session_name,
-            observer=observer,
-            observed=observed,
-            specialists_run=["deduction", "induction"],
-            deduction_success=deduction_success,
-            induction_success=induction_success,
-            surprisal_enabled=settings.DREAM.SURPRISAL.ENABLED,
-            surprisal_conclusion_count=surprisal_observation_count,
-            total_iterations=total_iterations,
-            total_input_tokens=total_input_tokens,
-            total_output_tokens=total_output_tokens,
-            total_duration_ms=duration_ms,
-        )
-    )
+        logger.info(f"[{run_id}] Dream cycle completed in {duration_ms:.0f}ms")
+        log_performance_metrics("dream_orchestrator", run_id)
+    finally:
+        # Emit DreamRunEvent unconditionally so analytics see a parent for
+        # every DreamSpecialistEvent. Aggregation guards None specialist
+        # results. Emit-side errors are swallowed by the global telemetry
+        # path; a defensive try around event construction protects against
+        # schema-validation surprises during partial state.
+        if duration_ms == 0.0:
+            duration_ms = (time.perf_counter() - start_time) * 1000
+        try:
+            total_iterations = (
+                deduction_result.iterations if deduction_result else 0
+            ) + (induction_result.iterations if induction_result else 0)
+            total_input_tokens = (
+                deduction_result.input_tokens if deduction_result else 0
+            ) + (induction_result.input_tokens if induction_result else 0)
+            total_output_tokens = (
+                deduction_result.output_tokens if deduction_result else 0
+            ) + (induction_result.output_tokens if induction_result else 0)
+            emit(
+                DreamRunEvent(
+                    run_id=run_id,
+                    workspace_name=workspace_name,
+                    session_name=session_name,
+                    observer=observer,
+                    observed=observed,
+                    specialists_run=["deduction", "induction"],
+                    deduction_success=deduction_success,
+                    induction_success=induction_success,
+                    surprisal_enabled=settings.DREAM.SURPRISAL.ENABLED,
+                    surprisal_conclusion_count=surprisal_observation_count,
+                    total_iterations=total_iterations,
+                    total_input_tokens=total_input_tokens,
+                    total_output_tokens=total_output_tokens,
+                    total_duration_ms=duration_ms,
+                    # scheduling context threaded through the
+                    # queue payload by check_and_schedule_dream.
+                    dream_type=dream_type,
+                    enabled_types_count=len(settings.DREAM.ENABLED_TYPES),
+                    trigger_reason=trigger_reason,
+                    delay_reason=delay_reason,
+                    documents_since_last_dream_at_schedule=documents_since_last_dream_at_schedule,
+                    document_threshold=document_threshold,
+                )
+            )
+        except Exception:  # pragma: no cover - telemetry must not raise
+            logger.debug("Failed to emit DreamRunEvent", exc_info=True)
 
     return DreamResult(
         run_id=run_id,
@@ -260,6 +314,155 @@ async def run_dream(
         total_duration_ms=duration_ms,
         input_tokens=total_input_tokens,
         output_tokens=total_output_tokens,
+    )
+
+
+async def run_card_refresh_dream(
+    workspace_name: str,
+    observer: str,
+    observed: str,
+    session_name: str | None = None,
+    *,
+    rebuild: bool = False,
+    dream_type: str | None = None,
+    trigger_reason: str | None = None,
+    delay_reason: str | None = None,
+    queue_item_id: int | None = None,
+) -> DreamResult | None:
+    """
+    Run a lightweight card-only refresh dream.
+
+    Runs a single CardRefreshSpecialist restricted to peer-card tools
+    (get_recent_observations, search_memory, update_peer_card) with a low
+    tool-iteration cap. It never creates or deletes observations.
+
+    Args:
+        workspace_name: Workspace identifier
+        observer: Observer peer name
+        observed: Observed peer name
+        session_name: Session identifier if specified
+        rebuild: When True the existing card is NOT injected into the prompt
+            and the specialist rebuilds it solely from observations present in
+            the collection (used after removals).
+    """
+    if not settings.DREAM.ENABLED:
+        return None
+
+    run_id = generate_nanoid()
+    task_name = f"dream_orchestrator_{run_id}"
+    start_time = time.perf_counter()
+
+    logger.info(
+        f"[{run_id}] Starting card-refresh dream for {workspace_name}/{observer}/{observed} (rebuild={rebuild})"
+    )
+
+    # Short-lived DB session for config resolution
+    async with tracked_db("dream.config") as db:
+        if session_name is not None:
+            session = await crud.get_session(
+                db, workspace_name=workspace_name, session_name=session_name
+            )
+        else:
+            session = None
+
+        workspace = await crud.get_workspace(db, workspace_name=workspace_name)
+        configuration = get_configuration(None, session, workspace)
+        resolved_session_id = session.id if session else None
+    if not configuration.dream.enabled:
+        logger.info(
+            f"[{run_id}] Dreams disabled for {workspace_name}/{session_name}, skipping card refresh"
+        )
+        return None
+    if not configuration.peer_card.create:
+        logger.info(
+            f"[{run_id}] Peer card creation disabled for {workspace_name}, skipping card refresh"
+        )
+        return None
+
+    specialist_success = False
+    specialist_result: SpecialistResult | None = None
+    duration_ms = 0.0
+    try:
+        specialist = CardRefreshSpecialist(rebuild=rebuild)
+        try:
+            specialist_result = await specialist.run(
+                workspace_name=workspace_name,
+                observer=observer,
+                observed=observed,
+                session_name=session_name,
+                configuration=configuration,
+                parent_run_id=run_id,
+                session_id=resolved_session_id,
+                queue_item_id=queue_item_id,
+            )
+            logger.info(
+                f"[{run_id}] Card refresh completed: {specialist_result.content[:200]}..."
+            )
+            accumulate_metric(
+                task_name, "card_refresh_result", specialist_result.content, "blob"
+            )
+            specialist_success = specialist_result.success
+        except Exception as e:
+            # Exception (not BaseException) — CancelledError must propagate so
+            # the worker can shut down; the finally still emits the run event.
+            logger.error(
+                f"[{run_id}] Card refresh specialist failed: {e}", exc_info=True
+            )
+            accumulate_metric(task_name, "card_refresh_error", str(e), "blob")
+
+        duration_ms = (time.perf_counter() - start_time) * 1000
+        accumulate_metric(task_name, "total_duration", duration_ms, "ms")
+        logger.info(f"[{run_id}] Card-refresh dream completed in {duration_ms:.0f}ms")
+        log_performance_metrics("dream_orchestrator", run_id)
+    finally:
+        # Emit DreamRunEvent unconditionally so analytics see a parent for the
+        # specialist event, mirroring run_dream. Card refresh is a
+        # deduction-family run, so its outcome rides on deduction_success.
+        if duration_ms == 0.0:
+            duration_ms = (time.perf_counter() - start_time) * 1000
+        try:
+            emit(
+                DreamRunEvent(
+                    run_id=run_id,
+                    workspace_name=workspace_name,
+                    session_name=session_name,
+                    observer=observer,
+                    observed=observed,
+                    specialists_run=["card_refresh"],
+                    deduction_success=specialist_success,
+                    induction_success=False,
+                    surprisal_enabled=False,
+                    surprisal_conclusion_count=0,
+                    total_iterations=(
+                        specialist_result.iterations if specialist_result else 0
+                    ),
+                    total_input_tokens=(
+                        specialist_result.input_tokens if specialist_result else 0
+                    ),
+                    total_output_tokens=(
+                        specialist_result.output_tokens if specialist_result else 0
+                    ),
+                    total_duration_ms=duration_ms,
+                    dream_type=dream_type,
+                    enabled_types_count=len(settings.DREAM.ENABLED_TYPES),
+                    trigger_reason=trigger_reason,
+                    delay_reason=delay_reason,
+                )
+            )
+        except Exception:  # pragma: no cover - telemetry must not raise
+            logger.debug("Failed to emit DreamRunEvent", exc_info=True)
+
+    return DreamResult(
+        run_id=run_id,
+        specialists_run=["card_refresh"],
+        deduction_success=specialist_success,
+        induction_success=False,
+        surprisal_enabled=False,
+        surprisal_conclusion_count=0,
+        total_iterations=specialist_result.iterations if specialist_result else 0,
+        total_duration_ms=duration_ms,
+        input_tokens=specialist_result.input_tokens if specialist_result else 0,
+        output_tokens=specialist_result.output_tokens if specialist_result else 0,
     )
 
 
@@ -291,6 +494,8 @@ def _create_queries_from_surprisal(
 async def process_dream(
     payload: DreamPayload,
     workspace_name: str,
+    *,
+    queue_item_id: int | None = None,
 ) -> None:
     """
     Process a dream task by performing collection maintenance operations.
@@ -313,12 +518,70 @@ DREAM: {payload.dream_type} documents for {workspace_name}/{payload.observer}/{p
                     observer=payload.observer,
                     observed=payload.observed,
                     session_name=payload.session_name,
+                    # scheduling context — propagated to DreamRunEvent.
+                    dream_type=payload.dream_type.value,
+                    trigger_reason=payload.trigger_reason,
+                    delay_reason=payload.delay_reason,
+                    documents_since_last_dream_at_schedule=payload.documents_since_last_dream_at_schedule,
+                    document_threshold=payload.document_threshold,
+                    queue_item_id=queue_item_id,
                 )
 
                 # Log completion (telemetry event already emitted in run_dream)
                 if result is not None:
                     logger.info(
                         f"Dream completed: run_id={result.run_id}, "
+                        + f"iterations={result.total_iterations}, "
+                        + f"duration={result.total_duration_ms:.0f}ms"
+                    )
+
+                    # Both guard fields advance together only on successful consolidation.
+                    now_iso = datetime.now(UTC).isoformat()
+                    async with tracked_db("dream.guard_pair_write") as db:
+                        collection = await crud.get_collection(
+                            db,
+                            workspace_name,
+                            observer=payload.observer,
+                            observed=payload.observed,
+                            with_for_update=True,
+                        )
+                        count_stmt = select(func.count(models.Document.id)).where(
+                            models.Document.workspace_name == workspace_name,
+                            models.Document.observer == payload.observer,
+                            models.Document.observed == payload.observed,
+                            models.Document.level == "explicit",
+                        )
+                        current_explicit_count = int(await db.scalar(count_stmt) or 0)
+                        dream_meta = dict(collection.internal_metadata.get("dream", {}))
+                        dream_meta["last_dream_at"] = now_iso
+                        dream_meta["last_dream_document_count"] = current_explicit_count
+                        await crud.update_collection_internal_metadata(
+                            db,
+                            workspace_name,
+                            payload.observer,
+                            payload.observed,
+                            update_data={"dream": dream_meta},
+                        )
+
+            case DreamType.CARD_REFRESH:
+                # Card-only refresh: never touches observations and never
+                # advances the omni dream guard pair (last_dream_at /
+                # last_dream_document_count) — a card refresh must not delay
+                # or satisfy consolidation scheduling.
+                result = await run_card_refresh_dream(
+                    workspace_name=workspace_name,
+                    observer=payload.observer,
+                    observed=payload.observed,
+                    session_name=payload.session_name,
+                    rebuild=payload.rebuild,
+                    queue_item_id=queue_item_id,
+                    dream_type=payload.dream_type.value,
+                    trigger_reason=payload.trigger_reason,
+                    delay_reason=payload.delay_reason,
+                )
+                if result is not None:
+                    logger.info(
+                        f"Card-refresh dream completed: run_id={result.run_id}, "
                         + f"iterations={result.total_iterations}, "
                         + f"duration={result.total_duration_ms:.0f}ms"
                     )

@@ -652,20 +652,24 @@ def filter_dataset(
 
     if max_context_len is not None:
         dataset = dataset.filter(
-            lambda x: x.get(
-                "context_len",
-                calculate_context_length(str(x.get("context_window_text", ""))),
+            lambda x: (
+                x.get(
+                    "context_len",
+                    calculate_context_length(str(x.get("context_window_text", ""))),
+                )
+                <= max_context_len
             )
-            <= max_context_len
         )
 
     if min_context_len is not None:
         dataset = dataset.filter(
-            lambda x: x.get(
-                "context_len",
-                calculate_context_length(str(x.get("context_window_text", ""))),
+            lambda x: (
+                x.get(
+                    "context_len",
+                    calculate_context_length(str(x.get("context_window_text", ""))),
+                )
+                > min_context_len
             )
-            > min_context_len
         )
 
     if max_examples is not None and max_examples > 0:

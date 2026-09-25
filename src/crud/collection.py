@@ -10,7 +10,8 @@ from sqlalchemy.orm import make_transient_to_detached
 from src import models
 from src.cache.client import (
     cache,
-    get_cache_namespace,
+    cache_key_namespace,
+    cache_prefix_namespace,
     safe_cache_delete,
     safe_cache_set,
 )
@@ -22,13 +23,13 @@ logger = getLogger(__name__)
 COLLECTION_CACHE_KEY_TEMPLATE = (
     "v2:workspace:{workspace_name}:collection:{observer}:{observed}"
 )
-COLLECTION_LOCK_PREFIX = f"{get_cache_namespace()}:lock:v2"
+COLLECTION_LOCK_PREFIX = f"{cache_prefix_namespace()}:lock:v2"
 
 
 def collection_cache_key(workspace_name: str, observer: str, observed: str) -> str:
     """Generate cache key for collection."""
     return (
-        get_cache_namespace()
+        cache_key_namespace()
         + ":"
         + COLLECTION_CACHE_KEY_TEMPLATE.format(
             workspace_name=workspace_name,
@@ -41,13 +42,14 @@ def collection_cache_key(workspace_name: str, observer: str, observed: str) -> s
 @cache(
     key=COLLECTION_CACHE_KEY_TEMPLATE,
     ttl=f"{settings.CACHE.DEFAULT_TTL_SECONDS}s",
-    prefix=get_cache_namespace(),
+    prefix=cache_prefix_namespace(),
     condition=NOT_NONE,
 )
 @cache.locked(
     key=COLLECTION_CACHE_KEY_TEMPLATE,
     ttl=f"{settings.CACHE.DEFAULT_LOCK_TTL_SECONDS}s",
     prefix=COLLECTION_LOCK_PREFIX,
+    check_interval=settings.CACHE.LOCK_WAIT_CHECK_INTERVAL_SECONDS,
 )
 async def _fetch_collection(
     db: AsyncSession,
@@ -81,6 +83,7 @@ async def get_collection(
     *,
     observer: str,
     observed: str,
+    with_for_update: bool = False,
 ) -> models.Collection:
     """
     Get a collection by observer/observed for a workspace.
@@ -90,6 +93,11 @@ async def get_collection(
         workspace_name: Name of the workspace
         observer: Name of the observing peer (owns the collection)
         observed: Name of the observed peer
+        with_for_update: If True, acquire a row-level lock (SELECT ... FOR UPDATE)
+            on the collection. Bypasses the cache so the lock is actually held
+            by the current transaction. Callers using this flag must wrap the
+            read and subsequent write in the same transaction (the lock is
+            released on commit/rollback).
 
     Returns:
         The collection if found
@@ -97,6 +105,22 @@ async def get_collection(
     Raises:
         ResourceNotFoundException: If the collection does not exist
     """
+    if with_for_update:
+        # Row-lock path: go direct to DB (skip cache) so the FOR UPDATE lock
+        # is actually acquired on the row in the current transaction. The
+        # cached dict path would return without issuing SELECT ... FOR UPDATE.
+        stmt = (
+            select(models.Collection)
+            .where(models.Collection.workspace_name == workspace_name)
+            .where(models.Collection.observer == observer)
+            .where(models.Collection.observed == observed)
+            .with_for_update()
+        )
+        collection = await db.scalar(stmt)
+        if collection is None:
+            raise ResourceNotFoundException("Collection not found")
+        return collection
+
     data = await _fetch_collection(db, workspace_name, observer, observed)
     if data is None:
         raise ResourceNotFoundException("Collection not found")

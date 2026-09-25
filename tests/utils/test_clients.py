@@ -1,16 +1,15 @@
 """
-Comprehensive tests for src/utils/clients.py
+Comprehensive tests for the public src.llm orchestration surface.
 
 Tests cover:
-- All supported LLM providers (Anthropic, OpenAI, Google/Gemini, Groq)
+- All supported LLM providers (Anthropic, OpenAI, Google/Gemini)
 - Streaming and non-streaming responses
 - Response models (structured output)
 - Error handling and retries
 - Provider-specific features
-- Client initialization
-- Langfuse integration
 """
 
+import contextlib
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -25,16 +24,21 @@ from openai.types.chat.chat_completion_message import ChatCompletionMessage
 from openai.types.completion_usage import CompletionUsage
 from pydantic import BaseModel, Field
 
-from src.config import settings
-from src.exceptions import LLMError
-from src.utils.clients import (
+from src.config import (
+    ConfiguredModelSettings,
+    ModelConfig,
+    ResolvedFallbackConfig,
+    settings,
+)
+from src.exceptions import LLMError, ValidationException
+from src.llm import (
     CLIENTS,
     HonchoLLMCallResponse,
     HonchoLLMCallStreamChunk,
-    handle_streaming_response,
     honcho_llm_call,
     honcho_llm_call_inner,
 )
+from src.llm.types import LLMTelemetryContext
 
 
 class SampleTestModel(BaseModel):
@@ -185,45 +189,14 @@ class TestAnthropicClient:
                 model="claude-3-sonnet",
                 prompt="Think about this",
                 max_tokens=100,
-                thinking_budget_tokens=1000,
+                thinking_budget_tokens=1024,
             )
 
             # Verify thinking parameter was passed
             mock_client.messages.create.assert_called_once()
             call_args = mock_client.messages.create.call_args
             thinking_config = call_args.kwargs["thinking"]
-            assert thinking_config == {"type": "enabled", "budget_tokens": 1000}
-
-    async def test_anthropic_response_model_with_json_parsing(self):
-        """Test that Anthropic supports response models via JSON schema in prompt"""
-        from anthropic.types import TextBlock
-
-        # Create an actual Anthropic client mock that passes isinstance checks
-        mock_messages = AsyncMock()
-        mock_response = Mock()
-        # Create an actual TextBlock instance that will pass isinstance checks
-        text_block = TextBlock(type="text", text='"name": "Alice", "age": 30}')
-        mock_response.content = [text_block]
-        mock_response.usage = Mock(output_tokens=10)
-        mock_response.stop_reason = "end_turn"
-        mock_messages.create.return_value = mock_response
-
-        # Instead of mocking the CLIENTS dict, we mock the entire AsyncAnthropic class
-        # to return our configured mock when instantiated
-        with patch("src.utils.clients.AsyncAnthropic") as mock_anthropic_class:
-            mock_client_instance = Mock()
-            mock_client_instance.messages = mock_messages
-            mock_anthropic_class.return_value = mock_client_instance
-
-            # Also need to patch the CLIENTS dict with an instance that passes isinstance
-            # Since this is complex, let's verify the simpler behavior - that response_model
-            # is supported and the prompt is modified (no NotImplementedError)
-
-            # Note: Full integration testing of response_model parsing would require
-            # a more complex setup with actual Anthropic client mocking.
-            # This test verifies that the code path for response_model exists and
-            # modifies the prompt appropriately.
-            pass  # Test simplified - behavior is now supported
+            assert thinking_config == {"type": "enabled", "budget_tokens": 1024}
 
     async def test_anthropic_streaming(self):
         """Test Anthropic streaming response"""
@@ -253,16 +226,16 @@ class TestAnthropicClient:
 
         with patch.dict(CLIENTS, {"anthropic": mock_client}):
             chunks: list[HonchoLLMCallStreamChunk] = []
-            async for chunk in handle_streaming_response(
-                client=mock_client,
-                params={
-                    "model": "claude-3-sonnet",
-                    "max_tokens": 100,
-                    "messages": [{"role": "user", "content": "Hello"}],
-                },
-                json_mode=False,
-                thinking_budget_tokens=None,
-            ):
+            stream = await honcho_llm_call_inner(
+                provider="anthropic",
+                model="claude-3-sonnet",
+                prompt="Hello",
+                max_tokens=100,
+                stream=True,
+                client_override=mock_client,
+                messages=[{"role": "user", "content": "Hello"}],
+            )
+            async for chunk in stream:
                 chunks.append(chunk)
 
             assert len(chunks) == 3  # 2 content chunks + 1 final chunk
@@ -501,16 +474,16 @@ class TestOpenAIClient:
 
         with patch.dict(CLIENTS, {"openai": mock_client}):
             chunks: list[HonchoLLMCallStreamChunk] = []
-            async for chunk in handle_streaming_response(
-                client=mock_client,
-                params={
-                    "model": "gpt-4",
-                    "max_tokens": 100,
-                    "messages": [{"role": "user", "content": "Hello"}],
-                },
-                json_mode=False,
-                thinking_budget_tokens=None,
-            ):
+            stream = await honcho_llm_call_inner(
+                provider="openai",
+                model="gpt-4",
+                prompt="Hello",
+                max_tokens=100,
+                stream=True,
+                client_override=mock_client,
+                messages=[{"role": "user", "content": "Hello"}],
+            )
+            async for chunk in stream:
                 chunks.append(chunk)
 
             assert len(chunks) == 3
@@ -553,9 +526,9 @@ class TestGoogleClient:
         mock_aio.models.generate_content = AsyncMock(return_value=mock_response)
         mock_client.aio = mock_aio
 
-        with patch.dict(CLIENTS, {"google": mock_client}):
+        with patch.dict(CLIENTS, {"gemini": mock_client}):
             response = await honcho_llm_call_inner(
-                provider="google",
+                provider="gemini",
                 model="gemini-1.5-pro",
                 prompt="Hello",
                 max_tokens=100,
@@ -600,9 +573,9 @@ class TestGoogleClient:
         mock_aio.models.generate_content = AsyncMock(return_value=mock_response)
         mock_client.aio = mock_aio
 
-        with patch.dict(CLIENTS, {"google": mock_client}):
+        with patch.dict(CLIENTS, {"gemini": mock_client}):
             _response = await honcho_llm_call_inner(
-                provider="google",
+                provider="gemini",
                 model="gemini-1.5-pro",
                 prompt="Generate JSON",
                 max_tokens=100,
@@ -637,9 +610,9 @@ class TestGoogleClient:
         mock_aio.models.generate_content = AsyncMock(return_value=mock_response)
         mock_client.aio = mock_aio
 
-        with patch.dict(CLIENTS, {"google": mock_client}):
+        with patch.dict(CLIENTS, {"gemini": mock_client}):
             response = await honcho_llm_call_inner(
-                provider="google",
+                provider="gemini",
                 model="gemini-1.5-pro",
                 prompt="Generate a person",
                 max_tokens=100,
@@ -691,18 +664,18 @@ class TestGoogleClient:
         )
         mock_client.aio = mock_aio
 
-        with patch.dict(CLIENTS, {"google": mock_client}):
+        with patch.dict(CLIENTS, {"gemini": mock_client}):
             chunks: list[HonchoLLMCallStreamChunk] = []
-            async for chunk in handle_streaming_response(
-                client=mock_client,
-                params={
-                    "model": "gemini-1.5-pro",
-                    "max_tokens": 100,
-                    "messages": [{"role": "user", "content": "Hello"}],
-                },
-                json_mode=False,
-                thinking_budget_tokens=None,
-            ):
+            stream = await honcho_llm_call_inner(
+                provider="gemini",
+                model="gemini-1.5-pro",
+                prompt="Hello",
+                max_tokens=100,
+                stream=True,
+                client_override=mock_client,
+                messages=[{"role": "user", "content": "Hello"}],
+            )
+            async for chunk in stream:
                 chunks.append(chunk)
 
             assert len(chunks) == 3
@@ -731,9 +704,9 @@ class TestGoogleClient:
         mock_aio.models.generate_content = AsyncMock(return_value=mock_response)
         mock_client.aio = mock_aio
 
-        with patch.dict(CLIENTS, {"google": mock_client}):
+        with patch.dict(CLIENTS, {"gemini": mock_client}):
             response = await honcho_llm_call_inner(
-                provider="google",
+                provider="gemini",
                 model="gemini-1.5-pro",
                 prompt="Hello",
                 max_tokens=100,
@@ -769,11 +742,11 @@ class TestGoogleClient:
         mock_client.aio = mock_aio
 
         with (
-            patch.dict(CLIENTS, {"google": mock_client}),
+            patch.dict(CLIENTS, {"gemini": mock_client}),
             pytest.raises(LLMError, match=f"finish_reason={finish_reason}"),
         ):
             await honcho_llm_call_inner(
-                provider="google",
+                provider="gemini",
                 model="gemini-2.5-flash",
                 prompt="Summarize this",
                 max_tokens=1000,
@@ -799,9 +772,9 @@ class TestGoogleClient:
         mock_aio.models.generate_content = AsyncMock(return_value=mock_response)
         mock_client.aio = mock_aio
 
-        with patch.dict(CLIENTS, {"google": mock_client}):
+        with patch.dict(CLIENTS, {"gemini": mock_client}):
             response = await honcho_llm_call_inner(
-                provider="google",
+                provider="gemini",
                 model="gemini-2.5-flash",
                 prompt="Hello",
                 max_tokens=100,
@@ -829,11 +802,11 @@ class TestGoogleClient:
         mock_client.aio = mock_aio
 
         with (
-            patch.dict(CLIENTS, {"google": mock_client}),
+            patch.dict(CLIENTS, {"gemini": mock_client}),
             pytest.raises(LLMError, match="finish_reason=SAFETY"),
         ):
             await honcho_llm_call_inner(
-                provider="google",
+                provider="gemini",
                 model="gemini-2.5-flash",
                 prompt="Generate a person",
                 max_tokens=100,
@@ -858,9 +831,9 @@ class TestGoogleClient:
         mock_aio.models.generate_content = AsyncMock(return_value=mock_response)
         mock_client.aio = mock_aio
 
-        with patch.dict(CLIENTS, {"google": mock_client}):
+        with patch.dict(CLIENTS, {"gemini": mock_client}):
             response = await honcho_llm_call_inner(
-                provider="google",
+                provider="gemini",
                 model="gemini-2.5-flash",
                 prompt="Generate a person",
                 max_tokens=100,
@@ -870,244 +843,6 @@ class TestGoogleClient:
         assert isinstance(response.content, SampleTestModel)
         assert response.content.name == "Alice"
         assert response.finish_reasons == ["SAFETY"]
-
-
-@pytest.mark.asyncio
-class TestGroqClient:
-    """Tests for Groq client functionality"""
-
-    async def test_groq_basic_call(self):
-        """Test basic Groq API call"""
-        from groq import AsyncGroq
-
-        mock_client = AsyncMock(spec=AsyncGroq)
-        mock_response = ChatCompletion(
-            id="test-id",
-            object="chat.completion",
-            created=1234567890,
-            model="llama-3.1-70b",
-            choices=[
-                Choice(
-                    index=0,
-                    message=ChatCompletionMessage(
-                        role="assistant", content="Hello from Groq"
-                    ),
-                    finish_reason="stop",
-                )
-            ],
-            usage=CompletionUsage(
-                prompt_tokens=10, completion_tokens=8, total_tokens=18
-            ),
-        )
-        mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
-
-        with patch.dict(CLIENTS, {"groq": mock_client}):
-            response = await honcho_llm_call_inner(
-                provider="groq", model="llama-3.1-70b", prompt="Hello", max_tokens=100
-            )
-
-            assert isinstance(response, HonchoLLMCallResponse)
-            assert response.content == "Hello from Groq"
-            assert response.output_tokens == 8
-            assert response.finish_reasons == ["stop"]
-
-    async def test_groq_json_mode(self):
-        """Test Groq with JSON mode"""
-        from groq import AsyncGroq
-
-        mock_client = AsyncMock(spec=AsyncGroq)
-        mock_response = ChatCompletion(
-            id="test-id",
-            object="chat.completion",
-            created=1234567890,
-            model="llama-3.1-70b",
-            choices=[
-                Choice(
-                    index=0,
-                    message=ChatCompletionMessage(
-                        role="assistant", content='{"success": true}'
-                    ),
-                    finish_reason="stop",
-                )
-            ],
-            usage=CompletionUsage(
-                prompt_tokens=10, completion_tokens=5, total_tokens=15
-            ),
-        )
-        mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
-
-        with patch.dict(CLIENTS, {"groq": mock_client}):
-            _response = await honcho_llm_call_inner(
-                provider="groq",
-                model="llama-3.1-70b",
-                prompt="Generate JSON",
-                max_tokens=100,
-                json_mode=True,
-            )
-
-            # Verify JSON mode was set
-            mock_client.chat.completions.create.assert_called_once()
-            call_args = mock_client.chat.completions.create.call_args
-            assert call_args.kwargs["response_format"] == {"type": "json_object"}
-
-    async def test_groq_response_model(self):
-        """Test Groq with response model (structured output)"""
-        from groq import AsyncGroq
-
-        mock_client = AsyncMock(spec=AsyncGroq)
-        # Mock JSON response that matches SampleTestModel structure
-        json_content = '{"name": "Bob", "age": 30, "active": true}'
-        mock_response = ChatCompletion(
-            id="test-id",
-            object="chat.completion",
-            created=1234567890,
-            model="llama-3.1-70b",
-            choices=[
-                Choice(
-                    index=0,
-                    message=ChatCompletionMessage(
-                        role="assistant", content=json_content
-                    ),
-                    finish_reason="stop",
-                )
-            ],
-            usage=CompletionUsage(
-                prompt_tokens=10, completion_tokens=12, total_tokens=22
-            ),
-        )
-        mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
-
-        with patch.dict(CLIENTS, {"groq": mock_client}):
-            response = await honcho_llm_call_inner(
-                provider="groq",
-                model="llama-3.1-70b",
-                prompt="Generate a person",
-                max_tokens=100,
-                response_model=SampleTestModel,
-            )
-
-            # Verify the response contains the parsed model
-            assert isinstance(response.content, SampleTestModel)
-            assert response.content.name == "Bob"
-            assert response.content.age == 30
-            assert response.content.active is True
-            assert response.output_tokens == 12
-            assert response.finish_reasons == ["stop"]
-
-            # Verify the response format was set to the model
-            mock_client.chat.completions.create.assert_called_once()
-            call_args = mock_client.chat.completions.create.call_args
-            assert call_args.kwargs["response_format"] == SampleTestModel
-
-    async def test_groq_no_content_error(self):
-        """Test Groq error handling when no content in response"""
-        from groq import AsyncGroq
-
-        mock_client = AsyncMock(spec=AsyncGroq)
-        mock_response = ChatCompletion(
-            id="test-id",
-            object="chat.completion",
-            created=1234567890,
-            model="llama-3.1-70b",
-            choices=[
-                Choice(
-                    index=0,
-                    message=ChatCompletionMessage(role="assistant", content=None),
-                    finish_reason="stop",
-                )
-            ],
-            usage=CompletionUsage(
-                prompt_tokens=10, completion_tokens=0, total_tokens=10
-            ),
-        )
-        mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
-
-        with (
-            patch.dict(CLIENTS, {"groq": mock_client}),
-            pytest.raises(ValueError, match="No content in response"),
-        ):
-            await honcho_llm_call_inner(
-                provider="groq",
-                model="llama-3.1-70b",
-                prompt="Hello",
-                max_tokens=100,
-            )
-
-    async def test_groq_streaming(self):
-        """Test Groq streaming response"""
-        from groq import AsyncGroq
-
-        mock_client = AsyncMock(spec=AsyncGroq)
-
-        # Create mock streaming chunks
-        mock_chunks = [
-            ChatCompletionChunk(
-                id="test-id",
-                object="chat.completion.chunk",
-                created=1234567890,
-                model="llama-3.1-70b",
-                choices=[
-                    ChunkChoice(
-                        index=0, delta=ChoiceDelta(content="Hello"), finish_reason=None
-                    )
-                ],
-            ),
-            ChatCompletionChunk(
-                id="test-id",
-                object="chat.completion.chunk",
-                created=1234567890,
-                model="llama-3.1-70b",
-                choices=[
-                    ChunkChoice(
-                        index=0,
-                        delta=ChoiceDelta(content=" from Groq"),
-                        finish_reason=None,
-                    )
-                ],
-            ),
-            ChatCompletionChunk(
-                id="test-id",
-                object="chat.completion.chunk",
-                created=1234567890,
-                model="llama-3.1-70b",
-                choices=[
-                    ChunkChoice(
-                        index=0, delta=ChoiceDelta(content=None), finish_reason="stop"
-                    )
-                ],
-            ),
-        ]
-
-        # Create async iterator
-        async def async_chunk_iterator():
-            for chunk in mock_chunks:
-                yield chunk
-
-        # Mock the create method to return the async generator when awaited
-        mock_client.chat.completions.create = AsyncMock(
-            return_value=async_chunk_iterator()
-        )
-
-        with patch.dict(CLIENTS, {"groq": mock_client}):
-            chunks: list[HonchoLLMCallStreamChunk] = []
-            async for chunk in handle_streaming_response(
-                client=mock_client,
-                params={
-                    "model": "llama-3.1-70b",
-                    "max_tokens": 100,
-                    "messages": [{"role": "user", "content": "Hello"}],
-                },
-                json_mode=False,
-                thinking_budget_tokens=None,
-            ):
-                chunks.append(chunk)
-
-            assert len(chunks) == 3
-            assert chunks[0].content == "Hello"
-            assert chunks[1].content == " from Groq"
-            assert chunks[2].content == ""
-            assert chunks[2].is_done is True
-            assert chunks[2].finish_reasons == ["stop"]
 
 
 @pytest.mark.asyncio
@@ -1136,11 +871,12 @@ class TestMainLLMCallFunction:
         mock_client.messages.stream.return_value = mock_stream
 
         with patch.dict(CLIENTS, {"anthropic": mock_client}):
-            settings.DIALECTIC.LEVELS["medium"].PROVIDER = "anthropic"
-            settings.DIALECTIC.LEVELS["medium"].MODEL = "claude-4-sonnet"
             chunks: list[HonchoLLMCallStreamChunk] = []
             async for chunk in await honcho_llm_call(
-                llm_settings=settings.DIALECTIC.LEVELS["medium"],
+                model_config=ConfiguredModelSettings(
+                    model="claude-4-sonnet",
+                    transport="anthropic",
+                ),
                 prompt="Hello",
                 max_tokens=100,
                 stream=True,
@@ -1164,16 +900,198 @@ class TestMainLLMCallFunction:
         mock_client.messages.create = AsyncMock(return_value=mock_response)
 
         with patch.dict(CLIENTS, {"anthropic": mock_client}):
-            settings.DIALECTIC.LEVELS["medium"].PROVIDER = "anthropic"
-            settings.DIALECTIC.LEVELS["medium"].MODEL = "claude-4-sonnet"
             response = await honcho_llm_call(
-                llm_settings=settings.DIALECTIC.LEVELS["medium"],
+                model_config=ConfiguredModelSettings(
+                    model="claude-4-sonnet",
+                    transport="anthropic",
+                ),
                 prompt="Hello",
                 max_tokens=100,
                 enable_retry=False,
             )
 
             assert response.content == "No retry response"
+
+    async def test_track_name_on_telemetry_names_langfuse_trace_and_generation(self):
+        """track_name on telemetry should name the Langfuse trace + generation
+        per agent and stamp provider/model metadata (via propagate_attributes +
+        update_current_generation; see annotate_current_langfuse_trace)."""
+
+        mock_llm_client = AsyncMock(spec=AsyncAnthropic)
+        mock_response = Mock()
+        mock_response.content = [TextBlock(text="Named response", type="text")]
+        mock_response.usage = Usage(input_tokens=5, output_tokens=5)
+        mock_response.stop_reason = "stop"
+        mock_llm_client.messages.create = AsyncMock(return_value=mock_response)
+
+        mock_langfuse_client = Mock()
+        captured: dict[str, Any] = {}
+
+        @contextlib.contextmanager
+        def fake_propagate(**kwargs: Any):
+            captured.update(kwargs)
+            yield
+
+        with (
+            patch.dict(CLIENTS, {"anthropic": mock_llm_client}),
+            patch.object(settings, "LANGFUSE_PUBLIC_KEY", "test-public-key"),
+            patch.object(settings, "LANGFUSE_EXPORTER_MODE", "inline"),
+            patch("langfuse.get_client", return_value=mock_langfuse_client),
+            patch("langfuse.propagate_attributes", fake_propagate),
+        ):
+            response = await honcho_llm_call(
+                model_config=ConfiguredModelSettings(
+                    model="claude-4-sonnet",
+                    transport="anthropic",
+                ),
+                prompt="Hello",
+                max_tokens=100,
+                enable_retry=False,
+                telemetry=LLMTelemetryContext(
+                    workspace_name="ws1", track_name="Dialectic Agent"
+                ),
+            )
+
+            assert response.content == "Named response"
+            # No run_id → this single call IS the trace root: it names the trace
+            # and stamps metadata via propagate_attributes...
+            assert captured["trace_name"] == "Dialectic Agent"
+            assert captured["session_id"] is None
+            assert captured["metadata"]["namespace"] == settings.NAMESPACE
+            assert captured["metadata"]["provider"] == "anthropic"
+            assert captured["metadata"]["model"] == "claude-4-sonnet"
+            # ...and the generation is named + carries per-call model/metadata.
+            gen_calls = mock_langfuse_client.update_current_generation.call_args_list
+            meta_kwargs = next(c.kwargs for c in gen_calls if "model" in c.kwargs)
+            assert meta_kwargs["name"] == "Dialectic Agent LLM call"
+            assert meta_kwargs["model"] == "claude-4-sonnet"
+            assert meta_kwargs["metadata"]["provider"] == "anthropic"
+            # Input/output are stamped explicitly: @observe auto-capture is
+            # disabled so the live client / api-key-bearing config never reach
+            # the trace (HONCHO-4HA), with no loss of trace fidelity.
+            input_kwargs = next(c.kwargs for c in gen_calls if "input" in c.kwargs)
+            assert input_kwargs["input"] == [{"role": "user", "content": "Hello"}]
+            output_kwargs = next(c.kwargs for c in gen_calls if "output" in c.kwargs)
+            assert output_kwargs["output"].content == "Named response"
+            # Token usage is duplicated onto the generation (also in CloudEvents)
+            # so Langfuse renders native per-call tokens + cost.
+            assert output_kwargs["usage_details"]["input"] == 5
+            assert output_kwargs["usage_details"]["output"] == 5
+            # Tuning knobs are tracked as model_parameters (not the live client
+            # or api-key-bearing config). No serialized client/secret anywhere.
+            params = next(c.kwargs for c in gen_calls if "model_parameters" in c.kwargs)
+            assert params["model_parameters"]["max_tokens"] == 100
+            assert params["model_parameters"]["stream"] is False
+            assert "client_override" not in params["model_parameters"]
+            assert "api_key" not in params["model_parameters"]
+
+    async def test_no_telemetry_still_stamps_trace_without_name(self):
+        """Without telemetry, propagate_attributes still fires with namespace
+        metadata, but the trace stays unnamed — track_name lives exclusively
+        on telemetry now. The per-call generation still gets model/metadata
+        stamped (the multi-turn-regression fix means we always stamp these)."""
+
+        mock_llm_client = AsyncMock(spec=AsyncAnthropic)
+        mock_response = Mock()
+        mock_response.content = [TextBlock(text="Unnamed response", type="text")]
+        mock_response.usage = Usage(input_tokens=5, output_tokens=5)
+        mock_response.stop_reason = "stop"
+        mock_llm_client.messages.create = AsyncMock(return_value=mock_response)
+
+        mock_langfuse_client = Mock()
+        captured: dict[str, Any] = {}
+
+        @contextlib.contextmanager
+        def fake_propagate(**kwargs: Any):
+            captured.update(kwargs)
+            yield
+
+        with (
+            patch.dict(CLIENTS, {"anthropic": mock_llm_client}),
+            patch.object(settings, "LANGFUSE_PUBLIC_KEY", "test-public-key"),
+            patch.object(settings, "LANGFUSE_EXPORTER_MODE", "inline"),
+            patch("langfuse.get_client", return_value=mock_langfuse_client),
+            patch("langfuse.propagate_attributes", fake_propagate),
+        ):
+            response = await honcho_llm_call(
+                model_config=ConfiguredModelSettings(
+                    model="claude-4-sonnet",
+                    transport="anthropic",
+                ),
+                prompt="Hello",
+                max_tokens=100,
+                enable_retry=False,
+            )
+
+            assert response.content == "Unnamed response"
+            assert captured["user_id"] == str(settings.NAMESPACE)
+            assert captured["trace_name"] is None
+            assert captured["metadata"]["namespace"] == settings.NAMESPACE
+            assert captured["metadata"]["provider"] == "anthropic"
+            # Generation gets model + metadata even without a track_name — only
+            # the name kwarg stays None.
+            gen_calls = mock_langfuse_client.update_current_generation.call_args_list
+            meta_kwargs = next(c.kwargs for c in gen_calls if "model" in c.kwargs)
+            assert meta_kwargs["name"] is None
+            assert meta_kwargs["model"] == "claude-4-sonnet"
+            # Input/output stamped explicitly (auto-capture disabled; HONCHO-4HA).
+            input_kwargs = next(c.kwargs for c in gen_calls if "input" in c.kwargs)
+            assert input_kwargs["input"] == [{"role": "user", "content": "Hello"}]
+            output_kwargs = next(c.kwargs for c in gen_calls if "output" in c.kwargs)
+            assert output_kwargs["output"].content == "Unnamed response"
+
+
+class TestLangfuseModelParameters:
+    """`_langfuse_model_parameters` is the deny-list seam that keeps secrets and
+    live clients out of Langfuse traces while still surfacing every tuning knob
+    (HONCHO-4HA). It dumps the config and excludes only secret-bearing fields, so
+    new knobs are traced automatically without an allow-list to maintain."""
+
+    def test_secret_fields_never_leak_but_knobs_do(self):
+        from src.config import ModelConfig
+        from src.llm.executor import (
+            _langfuse_model_parameters,  # pyright: ignore[reportPrivateUsage]
+        )
+
+        # A config shaped like the production override path: real api_key /
+        # base_url / nested fallback / opaque provider_params.
+        config = ModelConfig(
+            model="gpt-4o",
+            transport="openai",
+            api_key="sk-super-secret",
+            base_url="https://user:pw@private.host/v1",
+            temperature=0.7,
+            provider_params={"x-internal-auth": "leak-me"},
+        )
+
+        params = _langfuse_model_parameters(
+            max_tokens=256,
+            config=config,
+            json_mode=True,
+            verbosity=None,
+            stream=False,
+            tools=[{"name": "search_memory"}],
+            tool_choice="auto",
+            response_model=None,
+        )
+
+        # Secrets and their nested holders are excluded entirely...
+        assert "api_key" not in params
+        assert "base_url" not in params
+        assert "fallback" not in params
+        assert "provider_params" not in params
+        # ...and no value anywhere echoes a secret.
+        flat = str(params)
+        assert "sk-super-secret" not in flat
+        assert "leak-me" not in flat
+        assert "private.host" not in flat
+        # Tuning knobs (config-derived + per-call) are still tracked.
+        assert params["model"] == "gpt-4o"
+        assert params["temperature"] == 0.7
+        assert params["max_tokens"] == 256
+        assert params["json_mode"] is True
+        assert params["tools"] == ["search_memory"]
+        assert params["tool_choice"] == "auto"
 
 
 class TestEdgeCases:
@@ -1191,44 +1109,399 @@ class TestEdgeCases:
         assert new_chunk.finish_reasons == []  # Should still be empty
 
 
-# Test fixtures and utilities
-@pytest.fixture
-def sample_test_model():
-    """Fixture providing a sample SampleTestModel instance"""
-    return SampleTestModel(name="Test User", age=25, active=True)
+@pytest.mark.asyncio
+class TestModelConfigCalls:
+    async def test_honcho_llm_call_accepts_model_config(self):
+        mock_client = AsyncMock(spec=AsyncAnthropic)
+        mock_response = Mock()
+        mock_response.content = [TextBlock(text="ModelConfig response", type="text")]
+        mock_response.usage = Usage(input_tokens=8, output_tokens=4)
+        mock_response.stop_reason = "stop"
+        mock_client.messages.create = AsyncMock(return_value=mock_response)
 
-
-@pytest.fixture
-def mock_anthropic_client():
-    """Fixture providing a mocked Anthropic client"""
-    mock_client = AsyncMock()
-    mock_response = Mock()
-    mock_response.content = [TextBlock(text="Mocked Anthropic response", type="text")]
-    mock_response.usage = Usage(input_tokens=10, output_tokens=5)
-    mock_response.stop_reason = "stop"
-    mock_client.messages.create.return_value = mock_response
-    return mock_client
-
-
-@pytest.fixture
-def mock_openai_client():
-    """Fixture providing a mocked OpenAI client"""
-    mock_client = AsyncMock()
-    mock_response = ChatCompletion(
-        id="test-id",
-        object="chat.completion",
-        created=1234567890,
-        model="gpt-4",
-        choices=[
-            Choice(
-                index=0,
-                message=ChatCompletionMessage(
-                    role="assistant", content="Mocked OpenAI response"
+        with patch.dict(CLIENTS, {"anthropic": mock_client}):
+            response = await honcho_llm_call(
+                model_config=ModelConfig(
+                    model="claude-haiku-4-5",
+                    transport="anthropic",
                 ),
-                finish_reason="stop",
+                prompt="Hello",
+                max_tokens=100,
+                enable_retry=False,
             )
-        ],
-        usage=CompletionUsage(prompt_tokens=10, completion_tokens=5, total_tokens=15),
-    )
-    mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
-    return mock_client
+
+            assert response.content == "ModelConfig response"
+            await_args = mock_client.messages.create.await_args
+            if await_args is None:
+                raise AssertionError("Expected Anthropic create call")
+            call_args = await_args.kwargs
+            assert call_args["model"] == "claude-haiku-4-5"
+
+    async def test_honcho_llm_call_accepts_configured_model_settings(self):
+        mock_client = AsyncMock(spec=AsyncAnthropic)
+        mock_response = Mock()
+        mock_response.content = [
+            TextBlock(text="ConfiguredModelSettings response", type="text")
+        ]
+        mock_response.usage = Usage(input_tokens=8, output_tokens=4)
+        mock_response.stop_reason = "stop"
+        mock_client.messages.create = AsyncMock(return_value=mock_response)
+
+        with patch.dict(CLIENTS, {"anthropic": mock_client}):
+            response = await honcho_llm_call(
+                model_config=ConfiguredModelSettings(
+                    model="claude-haiku-4-5",
+                    transport="anthropic",
+                    thinking_budget_tokens=1024,
+                ),
+                prompt="Hello",
+                max_tokens=100,
+                enable_retry=False,
+            )
+
+            assert response.content == "ConfiguredModelSettings response"
+            await_args = mock_client.messages.create.await_args
+            if await_args is None:
+                raise AssertionError("Expected Anthropic create call")
+            call_args = await_args.kwargs
+            assert call_args["model"] == "claude-haiku-4-5"
+            assert call_args["thinking"] == {
+                "type": "enabled",
+                "budget_tokens": 1024,
+            }
+
+
+@pytest.mark.asyncio
+class TestModelConfigExtraParamsPropagation:
+    """Regression tests — config knobs must reach the backend.
+
+    Prior to the fix, honcho_llm_call_inner built extra_params from only
+    {json_mode, verbosity}, silently dropping top_p/top_k/frequency_penalty/
+    presence_penalty/seed/provider_params off the ModelConfig. These tests
+    lock in that each backend now receives them.
+    """
+
+    async def test_openai_propagates_top_p_frequency_seed(self):
+        from openai import AsyncOpenAI
+
+        mock_client = AsyncMock(spec=AsyncOpenAI)
+        mock_response = ChatCompletion(
+            id="test-id",
+            object="chat.completion",
+            created=1234567890,
+            model="gpt-4.1",
+            choices=[
+                Choice(
+                    index=0,
+                    message=ChatCompletionMessage(role="assistant", content="ok"),
+                    finish_reason="stop",
+                )
+            ],
+            usage=CompletionUsage(
+                prompt_tokens=10, completion_tokens=5, total_tokens=15
+            ),
+        )
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
+
+        with patch.dict(CLIENTS, {"openai": mock_client}):
+            await honcho_llm_call(
+                model_config=ModelConfig(
+                    model="gpt-4.1",
+                    transport="openai",
+                    top_p=0.92,
+                    frequency_penalty=0.5,
+                    presence_penalty=0.1,
+                    seed=42,
+                ),
+                prompt="Hello",
+                max_tokens=100,
+                enable_retry=False,
+            )
+
+            mock_client.chat.completions.create.assert_called_once()
+            kwargs = mock_client.chat.completions.create.call_args.kwargs
+            assert kwargs["top_p"] == 0.92
+            assert kwargs["frequency_penalty"] == 0.5
+            assert kwargs["presence_penalty"] == 0.1
+            assert kwargs["seed"] == 42
+
+    async def test_anthropic_propagates_top_p_top_k(self):
+        mock_client = AsyncMock(spec=AsyncAnthropic)
+        mock_response = Mock()
+        mock_response.content = [TextBlock(text="ok", type="text")]
+        mock_response.usage = Usage(input_tokens=8, output_tokens=4)
+        mock_response.stop_reason = "stop"
+        mock_client.messages.create = AsyncMock(return_value=mock_response)
+
+        with patch.dict(CLIENTS, {"anthropic": mock_client}):
+            await honcho_llm_call(
+                model_config=ModelConfig(
+                    model="claude-haiku-4-5",
+                    transport="anthropic",
+                    top_p=0.85,
+                    top_k=40,
+                ),
+                prompt="Hello",
+                max_tokens=100,
+                enable_retry=False,
+            )
+
+            await_args = mock_client.messages.create.await_args
+            if await_args is None:
+                raise AssertionError("Expected Anthropic create call")
+            kwargs = await_args.kwargs
+            assert kwargs["top_p"] == 0.85
+            assert kwargs["top_k"] == 40
+
+    async def test_provider_params_passthrough(self):
+        """Operator-supplied provider_params must reach the backend's extra_params.
+
+        Scope: verifies the ModelConfig.provider_params → backend.extra_params
+        boundary inside honcho_llm_call_inner. This is NOT a guarantee that
+        arbitrary keys reach the provider SDK — each backend's _build_params
+        forwards only an allowlist (top_p, top_k, frequency_penalty, seed,
+        etc.). We assert only that the sentinel key arrives in extra_params
+        at the backend boundary, which is the internal contract this test
+        exists to protect.
+        """
+        from openai import AsyncOpenAI
+
+        mock_client = AsyncMock(spec=AsyncOpenAI)
+        mock_response = ChatCompletion(
+            id="test-id",
+            object="chat.completion",
+            created=1234567890,
+            model="gpt-4.1",
+            choices=[
+                Choice(
+                    index=0,
+                    message=ChatCompletionMessage(role="assistant", content="ok"),
+                    finish_reason="stop",
+                )
+            ],
+            usage=CompletionUsage(
+                prompt_tokens=10, completion_tokens=5, total_tokens=15
+            ),
+        )
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
+
+        captured_extra: dict[str, Any] = {}
+
+        from src.llm.backends.openai import OpenAIBackend
+
+        original_complete = OpenAIBackend.complete
+
+        async def capture_extra(self: Any, **kwargs: Any) -> Any:
+            captured_extra.update(kwargs.get("extra_params") or {})
+            return await original_complete(self, **kwargs)
+
+        with (
+            patch.dict(CLIENTS, {"openai": mock_client}),
+            patch.object(OpenAIBackend, "complete", capture_extra),
+        ):
+            await honcho_llm_call(
+                model_config=ModelConfig(
+                    model="gpt-4.1",
+                    transport="openai",
+                    provider_params={"honcho_sentinel": "zap"},
+                ),
+                prompt="Hello",
+                max_tokens=100,
+                enable_retry=False,
+            )
+
+            assert captured_extra.get("honcho_sentinel") == "zap"
+
+    async def test_cache_policy_reaches_gemini_backend(self):
+        """PromptCachePolicy set on ModelConfig must reach the Gemini backend's
+        extra_params as a typed object (so gemini_cached_content reuse fires)."""
+        from google import genai
+
+        from src.config import PromptCachePolicy
+        from src.llm.backends.gemini import GeminiBackend
+
+        mock_client = Mock(spec=genai.Client)
+        mock_client.__class__ = genai.Client  # pyright: ignore[reportAttributeAccessIssue]
+
+        import contextlib
+
+        captured_extra: dict[str, Any] = {}
+
+        async def capture_extra(_self: Any, **kwargs: Any) -> Any:
+            captured_extra.update(kwargs.get("extra_params") or {})
+            return None
+
+        policy = PromptCachePolicy(mode="gemini_cached_content", ttl_seconds=300)
+
+        with (
+            patch.dict(CLIENTS, {"gemini": mock_client}),
+            patch.object(GeminiBackend, "complete", capture_extra),
+            # capture_extra returns None, so downstream normalization will raise;
+            # we only care that extra_params was observed pre-raise.
+            contextlib.suppress(Exception),
+        ):
+            await honcho_llm_call(
+                model_config=ModelConfig(
+                    model="gemini-2.5-flash",
+                    transport="gemini",
+                    cache_policy=policy,
+                ),
+                prompt="Hello",
+                max_tokens=100,
+                enable_retry=False,
+            )
+
+        assert captured_extra.get("cache_policy") is policy
+
+    async def test_per_call_kwargs_override_provider_params(self):
+        """json_mode/verbosity from honcho_llm_call must win over provider_params defaults."""
+        from openai import AsyncOpenAI
+
+        from src.llm.backends.openai import OpenAIBackend
+
+        mock_client = AsyncMock(spec=AsyncOpenAI)
+        mock_response = ChatCompletion(
+            id="test-id",
+            object="chat.completion",
+            created=1234567890,
+            model="gpt-4.1",
+            choices=[
+                Choice(
+                    index=0,
+                    message=ChatCompletionMessage(role="assistant", content="{}"),
+                    finish_reason="stop",
+                )
+            ],
+            usage=CompletionUsage(
+                prompt_tokens=10, completion_tokens=5, total_tokens=15
+            ),
+        )
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
+
+        captured_extra: dict[str, Any] = {}
+        original_complete = OpenAIBackend.complete
+
+        async def capture_extra(self: Any, **kwargs: Any) -> Any:
+            captured_extra.update(kwargs.get("extra_params") or {})
+            return await original_complete(self, **kwargs)
+
+        with (
+            patch.dict(CLIENTS, {"openai": mock_client}),
+            patch.object(OpenAIBackend, "complete", capture_extra),
+        ):
+            await honcho_llm_call(
+                model_config=ModelConfig(
+                    model="gpt-4.1",
+                    transport="openai",
+                    provider_params={"json_mode": False, "verbosity": "low"},
+                ),
+                prompt="Hello",
+                max_tokens=100,
+                json_mode=True,
+                verbosity="high",
+                enable_retry=False,
+            )
+
+            assert captured_extra["json_mode"] is True
+            assert captured_extra["verbosity"] == "high"
+
+    async def test_fallback_config_thinking_params_applied_on_final_retry(
+        self,
+    ) -> None:
+        """When primary fails, the FALLBACK ModelConfig's own temperature and
+        thinking_budget_tokens must reach the backend on the final retry —
+        not the primary's values, and not whatever the caller never set.
+
+        Regression for the 'default caller kwargs from runtime_model_config too
+        early' bug: if honcho_llm_call pre-populated temperature from
+        runtime_model_config (the primary) before attempt selection, those
+        primary values would clobber the fallback's own thinking params via
+        effective_config_for_call(update={...}).
+        """
+        mock_client = AsyncMock(spec=AsyncAnthropic)
+        mock_response = Mock()
+        mock_response.content = [TextBlock(text="from fallback", type="text")]
+        mock_response.usage = Usage(input_tokens=5, output_tokens=3)
+        mock_response.stop_reason = "stop"
+
+        # Primary fails twice, then fallback succeeds on attempt 3.
+        mock_client.messages.create = AsyncMock(
+            side_effect=[
+                RuntimeError("primary attempt 1"),
+                RuntimeError("primary attempt 2"),
+                mock_response,
+            ]
+        )
+
+        fallback = ResolvedFallbackConfig(
+            model="claude-haiku-4-5",
+            transport="anthropic",
+            temperature=0.9,
+            thinking_budget_tokens=2048,
+        )
+
+        with patch.dict(CLIENTS, {"anthropic": mock_client}):
+            await honcho_llm_call(
+                model_config=ModelConfig(
+                    model="claude-sonnet-4-5",
+                    transport="anthropic",
+                    temperature=0.1,
+                    thinking_budget_tokens=1024,
+                    fallback=fallback,
+                ),
+                prompt="Hello",
+                max_tokens=100,
+                enable_retry=True,
+                retry_attempts=3,
+            )
+
+            # Final call should carry the FALLBACK's values, not primary's.
+            final_call = mock_client.messages.create.await_args_list[-1]
+            kwargs = final_call.kwargs
+            assert kwargs["model"] == "claude-haiku-4-5"
+            assert kwargs["temperature"] == 0.9
+            assert kwargs["thinking"] == {
+                "type": "enabled",
+                "budget_tokens": 2048,
+            }
+
+
+@pytest.mark.asyncio
+class TestToolLoopValidation:
+    """Lock in the fail-fast behavior on max_tool_iterations out of range."""
+
+    @pytest.mark.parametrize("bad_value", [0, -1, 101, 1_000])
+    async def test_invalid_max_tool_iterations_raises(self, bad_value: int) -> None:
+        from src.llm.tool_loop import execute_tool_loop
+
+        def _noop_plan() -> Any:  # pragma: no cover - never called
+            raise AssertionError("plan should not be invoked for invalid input")
+
+        def _noop_executor(
+            _name: str, _input: dict[str, Any]
+        ) -> str:  # pragma: no cover
+            return "ok"
+
+        def _noop_retry_callback(_state: Any) -> None:  # pragma: no cover
+            return None
+
+        with pytest.raises(ValidationException, match="max_tool_iterations"):
+            await execute_tool_loop(
+                prompt="x",
+                max_tokens=10,
+                messages=None,
+                tools=[{"name": "t", "description": "d", "input_schema": {}}],
+                tool_choice=None,
+                tool_executor=_noop_executor,
+                max_tool_iterations=bad_value,
+                response_model=None,
+                json_mode=False,
+                temperature=None,
+                stop_seqs=None,
+                verbosity=None,
+                enable_retry=False,
+                retry_attempts=3,
+                max_input_tokens=None,
+                get_attempt_plan=_noop_plan,
+                before_retry_callback=_noop_retry_callback,
+            )

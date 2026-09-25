@@ -170,10 +170,10 @@ def calculate_level_cost(
         realistic_final_answer=realistic_final,
     )
 
-    model = level_config.MODEL
+    model = level_config.MODEL_CONFIG.model
     max_iterations = level_config.MAX_TOOL_ITERATIONS
-    thinking_budget = level_config.THINKING_BUDGET_TOKENS
-    provider = level_config.PROVIDER
+    thinking_budget = level_config.MODEL_CONFIG.thinking_budget_tokens or 0
+    provider = level_config.MODEL_CONFIG.transport
 
     # Get pricing for this model
     pricing = MODEL_PRICING.get(model, {"input": 0, "output": 0, "cached": 0})

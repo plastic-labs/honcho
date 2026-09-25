@@ -10,6 +10,10 @@
     {
       "source": "/v3/guides/integrations/claudecode",
       "destination": "/v3/guides/integrations/claude-code"
+    },
+    {
+      "source": "/v3/documentation/features/advanced/representation-scopes",
+      "destination": "/v3/documentation/features/advanced/directional-representations"
     }
   ],
   "colors": {
@@ -19,21 +23,14 @@
   },
   "favicon": "/favicon.svg",
   "contextual": {
-    "options": [
-      "copy",
-      "view",
-      "chatgpt",
-      "claude"
-    ]
+    "options": ["copy", "view", "chatgpt", "claude"]
   },
   "navigation": {
     "versions": [
       {
-        "version": "v3.0.5",
+        "version": "v3.2.1",
         "api": {
-          "openapi": [
-            "v3/openapi.json"
-          ]
+          "openapi": ["v3/openapi.json"]
         },
         "tabs": [
           {
@@ -69,13 +66,18 @@
                       "v3/documentation/features/advanced/reasoning-configuration",
                       "v3/documentation/features/advanced/summarizer",
                       "v3/documentation/features/advanced/peer-card",
-                      "v3/documentation/features/advanced/representation-scopes",
+                      "v3/documentation/features/advanced/directional-representations",
+                      "v3/documentation/features/advanced/scopes",
                       "v3/documentation/features/advanced/dreaming",
                       "v3/documentation/features/advanced/queue-status",
+                      "v3/documentation/features/advanced/webhooks",
                       "v3/documentation/features/advanced/search",
                       "v3/documentation/features/advanced/using-filters",
+                      "v3/documentation/features/advanced/structured-outputs",
+                      "v3/documentation/features/advanced/evidence",
                       "v3/documentation/features/advanced/streaming-response",
-                      "v3/documentation/features/advanced/file-uploads"
+                      "v3/documentation/features/advanced/file-uploads",
+                      "v3/documentation/features/advanced/deleting-data"
                     ]
                   }
                 ]
@@ -84,7 +86,8 @@
                 "group": "Reference",
                 "pages": [
                   "v3/documentation/reference/platform",
-                  "v3/documentation/reference/sdk"
+                  "v3/documentation/reference/sdk",
+                  "v3/documentation/reference/cli"
                 ]
               }
             ]
@@ -94,14 +97,16 @@
             "groups": [
               {
                 "group": "Overview",
-                "pages": [
-                  "v3/guides/overview"
-                ]
+                "pages": ["v3/guides/overview"]
               },
               {
                 "group": "Integrations",
                 "pages": [
                   "v3/guides/integrations/claude-code",
+                  "v3/guides/integrations/opencode",
+                  "v3/guides/integrations/codex",
+                  "v3/guides/integrations/deepseek-harness",
+                  "v3/guides/integrations/vercel-ai-sdk",
                   "v3/guides/integrations/crewai",
                   "v3/guides/integrations/langgraph",
                   "v3/guides/integrations/mcp",
@@ -109,12 +114,14 @@
                   "v3/guides/integrations/openclaw",
                   "v3/guides/integrations/hermes",
                   "v3/guides/integrations/zo-computer",
-                  "v3/guides/integrations/paperclip"
+                  "v3/guides/integrations/paperclip",
+                  "v3/guides/integrations/sillytavern"
                 ]
               },
               {
                 "group": "Tutorials",
                 "pages": [
+                  "v3/guides/recipes/unified-memory-setup",
                   "v3/guides/discord",
                   "v3/guides/granola",
                   "v3/guides/telegram",
@@ -131,9 +138,7 @@
               },
               {
                 "group": "Migrations",
-                "pages": [
-                  "v3/guides/migrations/mem0"
-                ]
+                "pages": ["v3/guides/migrations/mem0"]
               }
             ]
           },
@@ -145,6 +150,7 @@
                 "pages": [
                   "v3/contributing/self-hosting",
                   "v3/contributing/configuration",
+                  "v3/contributing/changing-embeddings",
                   "v3/contributing/troubleshooting"
                 ]
               },
@@ -162,9 +168,7 @@
             "groups": [
               {
                 "group": "API Documentation",
-                "pages": [
-                  "v3/api-reference/introduction"
-                ]
+                "pages": ["v3/api-reference/introduction"]
               },
               {
                 "group": "workspaces",
@@ -174,6 +178,7 @@
                   "v3/api-reference/endpoint/workspaces/update-workspace",
                   "v3/api-reference/endpoint/workspaces/delete-workspace",
                   "v3/api-reference/endpoint/workspaces/search-workspace",
+                  "v3/api-reference/endpoint/workspaces/chat-workspace",
                   "v3/api-reference/endpoint/workspaces/get-queue-status",
                   "v3/api-reference/endpoint/workspaces/schedule-dream"
                 ]
@@ -213,6 +218,18 @@
                 ]
               },
               {
+                "group": "scopes",
+                "pages": [
+                  "v3/api-reference/endpoint/scopes/get-or-create-scope",
+                  "v3/api-reference/endpoint/scopes/get-scopes",
+                  "v3/api-reference/endpoint/scopes/get-scope",
+                  "v3/api-reference/endpoint/scopes/add-sessions-to-scope",
+                  "v3/api-reference/endpoint/scopes/get-scope-sessions",
+                  "v3/api-reference/endpoint/scopes/remove-session-from-scope",
+                  "v3/api-reference/endpoint/scopes/get-scope-status"
+                ]
+              },
+              {
                 "group": "messages",
                 "pages": [
                   "v3/api-reference/endpoint/messages/create-messages-for-session",
@@ -228,6 +245,7 @@
                   "v3/api-reference/endpoint/conclusions/create-conclusions",
                   "v3/api-reference/endpoint/conclusions/list-conclusions",
                   "v3/api-reference/endpoint/conclusions/query-conclusions",
+                  "v3/api-reference/endpoint/conclusions/get-conclusion",
                   "v3/api-reference/endpoint/conclusions/delete-conclusion"
                 ]
               },
@@ -242,9 +260,7 @@
               },
               {
                 "group": "miscellaneous",
-                "pages": [
-                  "v3/api-reference/endpoint/keys/create-key"
-                ]
+                "pages": ["v3/api-reference/endpoint/keys/create-key"]
               }
             ]
           },
@@ -265,9 +281,7 @@
       {
         "version": "v2.5.1",
         "api": {
-          "openapi": [
-            "v2/openapi.json"
-          ]
+          "openapi": ["v2/openapi.json"]
         },
         "tabs": [
           {
@@ -314,15 +328,11 @@
             "groups": [
               {
                 "group": "Getting Started",
-                "pages": [
-                  "v2/guides/overview"
-                ]
+                "pages": ["v2/guides/overview"]
               },
               {
                 "group": "Migrations",
-                "pages": [
-                  "v2/migrations/from-mem0"
-                ]
+                "pages": ["v2/migrations/from-mem0"]
               },
               {
                 "group": "Integrations",
@@ -347,9 +357,7 @@
             "groups": [
               {
                 "group": "API Documentation",
-                "pages": [
-                  "v2/api-reference/introduction"
-                ]
+                "pages": ["v2/api-reference/introduction"]
               },
               {
                 "group": "workspaces",
@@ -453,9 +461,7 @@
       {
         "version": "v1.1.0",
         "api": {
-          "openapi": [
-            "openapi.json"
-          ]
+          "openapi": ["openapi.json"]
         },
         "tabs": [
           {
@@ -485,23 +491,15 @@
             "groups": [
               {
                 "group": "Getting Started",
-                "pages": [
-                  "v1/guides/overview",
-                  "v1/guides/streaming-response"
-                ]
+                "pages": ["v1/guides/overview", "v1/guides/streaming-response"]
               },
               {
                 "group": "Application Interfaces",
-                "pages": [
-                  "v1/guides/discord",
-                  "v1/guides/honcho-mcp"
-                ]
+                "pages": ["v1/guides/discord", "v1/guides/honcho-mcp"]
               },
               {
                 "group": "Personal Memory",
-                "pages": [
-                  "v1/guides/dialectic-endpoint"
-                ]
+                "pages": ["v1/guides/dialectic-endpoint"]
               }
             ]
           },
@@ -510,9 +508,7 @@
             "groups": [
               {
                 "group": "API Documentation",
-                "pages": [
-                  "v1/api-reference/introduction"
-                ]
+                "pages": ["v1/api-reference/introduction"]
               },
               {
                 "group": "apps",
@@ -560,9 +556,7 @@
               },
               {
                 "group": "keys",
-                "pages": [
-                  "v1/api-reference/endpoint/keys/create-key"
-                ]
+                "pages": ["v1/api-reference/endpoint/keys/create-key"]
               },
               {
                 "group": "metamessages",
@@ -621,8 +615,8 @@
     }
   },
   "integrations": {
-    "posthog": {
-      "apiKey": "phc_1yrzzcgywqXGcerkkI4g7C0YfyPMcAKNOOvGcjTCiUk"
+    "gtm": {
+      "tagId": "GTM-NSPT9PJF"
     }
   }
 }

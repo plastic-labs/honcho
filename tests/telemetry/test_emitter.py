@@ -15,6 +15,7 @@ import asyncio
 import contextlib
 import json
 from datetime import UTC, datetime
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -44,6 +45,7 @@ def create_test_event(message_id: str = "msg_001") -> RepresentationCompletedEve
         llm_call_ms=100.0,
         total_duration_ms=110.0,
         input_tokens=100,
+        total_input_tokens=150,
         output_tokens=50,
     )
 
@@ -980,3 +982,158 @@ class TestCloudEventFormat:
         cloud_event = json.loads(captured_content)
         # Without namespace, source should be /honcho/{category}
         assert cloud_event["source"] == "/honcho/representation"
+
+
+class TestHonchoVersionInjection:
+    """Tests for honcho_version body injection."""
+
+    @pytest.mark.asyncio
+    async def test_honcho_version_present_in_body(self):
+        """honcho_version is unconditionally injected into event.data from the
+        HONCHO_VERSION constant (sourced from pyproject.toml)."""
+        from src._version import HONCHO_VERSION
+
+        emitter = TelemetryEmitter(endpoint="http://test:8001/events")
+
+        captured_content = None
+
+        async def capture_post(url, content=None, headers=None):
+            nonlocal captured_content
+            captured_content = content
+            response = MagicMock()
+            response.status_code = 200
+            response.raise_for_status = MagicMock()
+            return response
+
+        mock_client = AsyncMock()
+        mock_client.post = capture_post
+        mock_client.aclose = AsyncMock()
+        emitter._client = mock_client
+        emitter._running = True
+
+        with patch("src.config.settings") as mock_settings:
+            mock_settings.TELEMETRY.NAMESPACE = "test"
+            event = create_test_event()
+            emitter.emit(event)
+
+        await emitter.flush()
+
+        assert captured_content is not None
+        cloud_event = json.loads(captured_content)
+        assert cloud_event["data"]["honcho_version"] == HONCHO_VERSION
+
+    def test_emit_does_not_mutate_event_instance(self):
+        """contract: emit() injects into the serialized body, never the
+        event instance. Tests asserting on the event object stay deterministic."""
+        emitter = TelemetryEmitter(endpoint="http://test:8001/events")
+        emitter._running = True
+
+        with patch("src.config.settings") as mock_settings:
+            mock_settings.TELEMETRY.NAMESPACE = "test"
+            event = create_test_event()
+            before = event.model_dump()
+            emitter.emit(event)
+            after = event.model_dump()
+
+        # The event instance must be unchanged by emit().
+        assert before == after
+        assert "honcho_version" not in after
+
+
+class TestClientContextInjection:
+    """The ``client`` body object comes from X-Honcho-* request headers via the
+    API middleware; like honcho_version it is emitter-injected and exempt from
+    per-event schema versioning."""
+
+    @staticmethod
+    def _emit_and_capture_body(emitter: TelemetryEmitter) -> dict[str, Any]:
+        with patch("src.config.settings") as mock_settings:
+            mock_settings.TELEMETRY.NAMESPACE = "test"
+            emitter.emit(create_test_event())
+        return emitter._buffer[-1].data
+
+    def test_client_object_null_members_outside_request(self):
+        emitter = TelemetryEmitter(endpoint="http://test:8001/events")
+        emitter._running = True
+
+        body = self._emit_and_capture_body(emitter)
+
+        assert body["client"] == {"host": None, "plugin": None, "agent_model": None}
+
+    def test_request_headers_land_in_client_object(self):
+        """End to end: the real track_request middleware sets the ContextVars
+        from the headers, and an event emitted inside the request carries them."""
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from src.main import track_request
+
+        emitter = TelemetryEmitter(endpoint="http://test:8001/events")
+        emitter._running = True
+
+        app = FastAPI()
+        app.middleware("http")(track_request)
+
+        async def probe() -> dict[str, Any]:
+            return self._emit_and_capture_body(emitter)
+
+        app.get("/probe")(probe)
+
+        with TestClient(app) as client:
+            resp = client.get(
+                "/probe",
+                headers={
+                    "X-Honcho-Host": "claude-code/2.1.3 (darwin)",
+                    "X-Honcho-Plugin": "claude-honcho/0.2.11",
+                    "X-Honcho-Agent-Model": "claude-sonnet-4-5",
+                },
+            )
+
+        assert resp.json()["client"] == {
+            "host": "claude-code/2.1.3 (darwin)",
+            "plugin": "claude-honcho/0.2.11",
+            "agent_model": "claude-sonnet-4-5",
+        }
+
+    @pytest.mark.parametrize(
+        ("headers", "expected_host"),
+        [
+            # Raw REST client: no X-Honcho-Host, User-Agent stands in.
+            ({"User-Agent": "curl/8.4.0"}, "curl/8.4.0"),
+            # Identity header present: it wins over User-Agent.
+            (
+                {
+                    "User-Agent": "python-httpx/0.27.0",
+                    "X-Honcho-Host": "honcho-python/2.4.1",
+                },
+                "honcho-python/2.4.1",
+            ),
+            # Blank identity header is treated as absent.
+            ({"User-Agent": "undici", "X-Honcho-Host": "  "}, "undici"),
+        ],
+    )
+    def test_user_agent_is_host_fallback(
+        self, headers: dict[str, str], expected_host: str
+    ):
+        """A request without X-Honcho-Host records its User-Agent as the host,
+        so raw REST traffic is distinguishable from SDK and harness traffic."""
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from src.main import track_request
+
+        emitter = TelemetryEmitter(endpoint="http://test:8001/events")
+        emitter._running = True
+
+        app = FastAPI()
+        app.middleware("http")(track_request)
+
+        async def probe() -> dict[str, Any]:
+            return self._emit_and_capture_body(emitter)
+
+        app.get("/probe")(probe)
+
+        with TestClient(app) as client:
+            resp = client.get("/probe", headers=headers)
+
+        assert resp.json()["client"]["host"] == expected_host

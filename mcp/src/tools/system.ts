@@ -1,19 +1,24 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ToolContext } from "../types.js";
-import { textResult, errorResult } from "../types.js";
+import { textResult, errorResult, workspaceIdSchema } from "../types.js";
 
 export function register(server: McpServer, ctx: ToolContext) {
   // ── schedule_dream ──────────────────────────────────────────────────
   server.registerTool(
     "schedule_dream",
     {
+      annotations: {
+        title: "Schedule Dream",
+        destructiveHint: true,
+      },
       description: [
         "Schedule a dream — a background memory-consolidation task for a peer.",
         "Dreams consolidate observations into higher-level insights and update peer cards.",
         "Use this after a long conversation to improve Honcho's memory quality.",
       ].join("\n"),
       inputSchema: {
+        workspace_id: workspaceIdSchema(ctx),
         peer_id: z.string().describe("The observer peer to dream for."),
         target_peer_id: z
           .string()
@@ -27,9 +32,9 @@ export function register(server: McpServer, ctx: ToolContext) {
           .describe("Optional: scope the dream to a session."),
       },
     },
-    async ({ peer_id, target_peer_id, session_id }) => {
+    async ({ workspace_id, peer_id, target_peer_id, session_id }) => {
       try {
-        await ctx.honcho.scheduleDream({
+        await ctx.clientFor(workspace_id).scheduleDream({
           observer: peer_id,
           observed: target_peer_id,
           session: session_id,
@@ -47,16 +52,22 @@ export function register(server: McpServer, ctx: ToolContext) {
   server.registerTool(
     "get_queue_status",
     {
+      annotations: {
+        title: "Get Queue Status",
+        readOnlyHint: true,
+      },
       description: [
         "Get the current processing queue status for background tasks (message derivation, dreams).",
         "Use this to check if Honcho is still processing messages before querying for insights.",
         "Returns work unit counts: total, completed, in-progress, and pending.",
       ].join("\n"),
-      inputSchema: {},
+      inputSchema: {
+        workspace_id: workspaceIdSchema(ctx),
+      },
     },
-    async () => {
+    async ({ workspace_id }) => {
       try {
-        const status = await ctx.honcho.queueStatus();
+        const status = await ctx.clientFor(workspace_id).queueStatus();
         return textResult(status);
       } catch (e) {
         return errorResult(

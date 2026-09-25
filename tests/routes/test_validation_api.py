@@ -18,11 +18,11 @@ def test_workspace_validations_api(client: TestClient):
     assert error["type"] == "string_too_short"
 
     # Test name too long
-    response = client.post("/v3/workspaces", json={"name": "a" * 101, "metadata": {}})
+    response = client.post("/v3/workspaces", json={"name": "a" * 513, "metadata": {}})
     assert response.status_code == 422
     error = response.json()["detail"][0]
     assert error["loc"] == ["body", "name"]
-    assert error["msg"] == "String should have at most 100 characters"
+    assert error["msg"] == "String should have at most 512 characters"
     assert error["type"] == "string_too_long"
 
     # Test invalid metadata type
@@ -51,12 +51,12 @@ def test_peer_validations_api(client: TestClient, sample_data: tuple[Workspace, 
     # Test name too long
     response = client.post(
         f"/v3/workspaces/{test_workspace.name}/peers",
-        json={"name": "a" * 101, "metadata": {}},
+        json={"name": "a" * 513, "metadata": {}},
     )
     assert response.status_code == 422
     error = response.json()["detail"][0]
     assert error["loc"] == ["body", "name"]
-    assert error["msg"] == "String should have at most 100 characters"
+    assert error["msg"] == "String should have at most 512 characters"
     assert error["type"] == "string_too_long"
 
 

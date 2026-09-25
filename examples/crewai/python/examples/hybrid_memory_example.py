@@ -1,18 +1,17 @@
 """
 Hybrid Memory Example: Combining Automatic Memory + Explicit Tools
 
-Demonstrates combining automatic memory (HonchoStorage) with explicit memory tools.
+Demonstrates combining automatic memory (HonchoMemoryStorage) with explicit memory tools.
 The agent gets baseline context automatically but can also make targeted queries.
 """
 
+from crewai import Agent, Crew, Memory, Process, Task
 from dotenv import load_dotenv
-from crewai import Agent, Task, Crew, Process
-from crewai.memory.external.external_memory import ExternalMemory
 from honcho import Honcho
 from honcho_crewai import (
-    HonchoStorage,
-    HonchoSearchTool,
     HonchoDialecticTool,
+    HonchoMemoryStorage,
+    HonchoSearchTool,
 )
 
 load_dotenv()
@@ -25,13 +24,13 @@ def main():
     user_id = "hybrid-demo-user"
     session_id = "hybrid-demo-session"
 
-    # Setup automatic memory
-    storage = HonchoStorage(
-        user_id=user_id,
+    # Setup unified CrewAI memory
+    storage = HonchoMemoryStorage(
+        peer_id=user_id,
         session_id=session_id,
-        honcho_client=honcho
+        honcho_client=honcho,
     )
-    external_memory = ExternalMemory(storage=storage)
+    memory = Memory(storage=storage)
 
     # Add conversation history
     messages = [
@@ -45,7 +44,12 @@ def main():
     ]
 
     for role, message in messages:
-        external_memory.save(message, metadata={"agent": role})
+        memory.remember(
+            message,
+            scope=f"/users/{user_id}/conversation",
+            categories=["conversation"],
+            metadata={"role": role},
+        )
 
     # Create memory tools for targeted queries
     search_tool = HonchoSearchTool(honcho=honcho, session_id=session_id)
@@ -63,7 +67,7 @@ def main():
         ),
         tools=[search_tool, dialectic_tool],
         verbose=True,
-        allow_delegation=False
+        allow_delegation=False,
     )
 
     # Create task
@@ -75,7 +79,7 @@ def main():
             "Then create a personalized itinerary with activities and restaurant recommendations."
         ),
         expected_output="A 3-day Tokyo itinerary with daily activities and dining suggestions",
-        agent=travel_agent
+        agent=travel_agent,
     )
 
     # Execute with hybrid memory: automatic baseline + explicit tools
@@ -83,8 +87,8 @@ def main():
         agents=[travel_agent],
         tasks=[task],
         process=Process.sequential,
-        external_memory=external_memory,  # Automatic memory!
-        verbose=True
+        memory=memory,
+        verbose=True,
     )
 
     result = crew.kickoff()

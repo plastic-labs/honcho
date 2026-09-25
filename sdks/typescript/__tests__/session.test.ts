@@ -95,6 +95,42 @@ describe('Session', () => {
       expect(session1.id).toBe(session2.id)
       expect(session2.metadata).toEqual({ version: 2 })
     })
+
+    test('creates session with peers from string array', async () => {
+      const session = await client.session('session-with-peers-strings', {
+        peers: ['create-peer-a', 'create-peer-b'],
+      })
+
+      const peers = await session.peers()
+      const ids = peers.map((p) => p.id)
+      expect(ids).toContain('create-peer-a')
+      expect(ids).toContain('create-peer-b')
+    })
+
+    test('creates session with peers from Peer objects', async () => {
+      const peerA = await client.peer('create-obj-peer-a')
+      const peerB = await client.peer('create-obj-peer-b')
+      const session = await client.session('session-with-peer-objects', {
+        peers: [peerA, peerB],
+      })
+
+      const peers = await session.peers()
+      const ids = peers.map((p) => p.id)
+      expect(ids).toContain('create-obj-peer-a')
+      expect(ids).toContain('create-obj-peer-b')
+    })
+
+    test('creates session with peers and per-peer config', async () => {
+      const session = await client.session('session-with-peer-config', {
+        peers: [
+          ['create-config-peer', { observeMe: true, observeOthers: false }],
+        ],
+      })
+
+      const config = await session.getPeerConfiguration('create-config-peer')
+      expect(config.observeMe).toBe(true)
+      expect(config.observeOthers).toBe(false)
+    })
   })
 
   // ===========================================================================

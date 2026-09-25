@@ -5,22 +5,22 @@ This module provides a Turbopuffer-based implementation of the VectorStore inter
 """
 
 import logging
+import re
 from collections.abc import Sequence
 from typing import Any, Literal, cast
 
-from turbopuffer import AsyncTurbopuffer, NotFoundError
+from turbopuffer import AsyncTurbopuffer, InternalServerError, NotFoundError
 from turbopuffer.lib.namespace import AsyncNamespace
-from turbopuffer.types import Filter
+from turbopuffer.types import Filter, RowParam
 
 from src.config import settings
+from src.exceptions import VectorStoreError
 
-from . import VectorQueryResult, VectorRecord, VectorStore, VectorUpsertResult
+from . import VectorQueryResult, VectorRecord, VectorStore
 
 logger = logging.getLogger(__name__)
 
-# Type aliases for Turbopuffer's filter formats
-EqFilter = tuple[str, Literal["Eq"], Any]
-InFilter = tuple[str, Literal["In"], Sequence[Any]]
+# Type alias for Turbopuffer's AND filter format
 AndFilter = tuple[Literal["And"], Sequence[Filter]]
 
 DISTANCE_METRIC = "cosine_distance"
@@ -62,7 +62,7 @@ class TurbopufferVectorStore(VectorStore):
         self,
         namespace: str,
         vectors: list[VectorRecord],
-    ) -> VectorUpsertResult:
+    ) -> None:
         """
         Upsert multiple vectors into Turbopuffer.
 
@@ -71,25 +71,47 @@ class TurbopufferVectorStore(VectorStore):
             vectors: List of VectorRecord objects to upsert
         """
         if not vectors:
-            return VectorUpsertResult(ok=True)
+            return
 
         ns = self._get_namespace(namespace)
 
-        rows: list[dict[str, Any]] = [
-            {
-                "id": v.id,
-                "vector": v.embedding,
-                **(v.metadata or {}),
-            }
+        # The dict literal carries arbitrary metadata fields, which RowParam supports
+        # via extra_items=object. basedpyright can't see through the spread, so cast
+        # via object per its reportInvalidCast guidance.
+        # Spread metadata first so a caller-supplied "id" or "vector" key
+        # can never clobber the required upsert fields.
+        rows: list[RowParam] = [
+            cast(
+                RowParam,
+                cast(
+                    object,
+                    {
+                        **(v.metadata or {}),
+                        "id": v.id,
+                        "vector": v.embedding,
+                    },
+                ),
+            )
             for v in vectors
         ]
 
         try:
             await ns.write(
-                upsert_rows=rows,
+                upsert_rows=cast(Any, rows),
                 distance_metric=DISTANCE_METRIC,
             )
-            return VectorUpsertResult(ok=True)
+            return
+        except InternalServerError as exc:
+            # Turbopuffer unavailable. SDK implicitly retries 5xx responses,
+            # so raise a vector store error and let callers leave writes unsynced.
+            logger.warning(
+                "Turbopuffer unavailable for upsert to namespace %s (%s after retries)",
+                namespace,
+                exc.status_code,
+            )
+            raise VectorStoreError(
+                f"Turbopuffer unavailable for upsert to namespace {namespace}"
+            ) from exc
         except Exception:
             logger.exception(
                 f"Failed to upsert {len(vectors)} vectors to namespace {namespace}"
@@ -104,6 +126,7 @@ class TurbopufferVectorStore(VectorStore):
         top_k: int = 10,
         filters: dict[str, Any] | None = None,
         max_distance: float | None = None,
+        include_attributes: bool | list[str] = True,
     ) -> list[VectorQueryResult]:
         """
         Query for similar vectors in Turbopuffer.
@@ -114,10 +137,15 @@ class TurbopufferVectorStore(VectorStore):
             top_k: Maximum number of results to return
             filters: Optional metadata filters
             max_distance: Optional maximum distance threshold (cosine distance)
+            include_attributes: Attributes to include in the response. Passing False
+                avoids parsing unused row attributes.
 
         Returns:
             List of VectorQueryResult objects, ordered by similarity (most similar first)
         """
+        if top_k <= 0:
+            return []
+
         ns = self._get_namespace(namespace)
 
         try:
@@ -137,7 +165,7 @@ class TurbopufferVectorStore(VectorStore):
                 "rank_by": rank_by,
                 "top_k": top_k,
                 "distance_metric": DISTANCE_METRIC,
-                "include_attributes": True,
+                "include_attributes": include_attributes,
             }
             if filter_condition is not None:
                 query_kwargs["filters"] = filter_condition
@@ -183,6 +211,16 @@ class TurbopufferVectorStore(VectorStore):
             )
             return []
 
+        except InternalServerError as exc:
+            # Turbopuffer unavailable. SDK implicitly retries 5xx responses,
+            # so we should return [].
+            logger.warning(
+                "Turbopuffer unavailable for query on namespace %s (%s after retries), returning empty results",
+                namespace,
+                exc.status_code,
+            )
+            return []
+
         except Exception:
             logger.exception(f"Failed to query namespace {namespace}")
             raise
@@ -208,13 +246,17 @@ class TurbopufferVectorStore(VectorStore):
         if not filters:
             return None
 
-        filter_list: list[EqFilter | InFilter] = []
+        filter_list: list[Filter] = []
         for key, value in filters.items():
             # Check if value is a dict with "in" operator
             if isinstance(value, dict) and "in" in value:
                 # Membership filter using "In" operator
-                in_values = cast(Sequence[Any], value["in"])
-                filter_list.append((key, "In", in_values))
+                in_values = list(cast(Sequence[Any], value["in"]))
+                filter_list.append(self._membership_filter(key, in_values))
+            elif isinstance(value, list | tuple | set):
+                # Bare-list sugar: same membership semantics as {"in": [...]}
+                in_values = list(cast(Sequence[Any], value))
+                filter_list.append(self._membership_filter(key, in_values))
             else:
                 # Simple equality filter using "Eq" operator
                 filter_list.append((key, "Eq", cast(Any, value)))
@@ -228,6 +270,20 @@ class TurbopufferVectorStore(VectorStore):
         # Combine multiple filters with AND
         and_filter: AndFilter = ("And", filter_list)
         return and_filter
+
+    @staticmethod
+    def _membership_filter(key: str, values: list[Any]) -> Filter:
+        """Build an "In" membership filter, failing closed on an empty list.
+
+        Turbopuffer's empty-"In" semantics are undocumented, so an empty
+        allowlist emits an explicit contradiction (`Eq(x) AND NotEq(x)` is
+        false for every document) rather than risk a fail-open widening.
+        Mirrors lancedb's `1 = 0` guard.
+        """
+        if not values:
+            never: AndFilter = ("And", [(key, "Eq", ""), (key, "NotEq", "")])
+            return never
+        return (key, "In", values)
 
     async def delete_many(self, namespace: str, ids: list[str]) -> None:
         """
@@ -247,6 +303,15 @@ class TurbopufferVectorStore(VectorStore):
         except NotFoundError:
             # Namespace doesn't exist - nothing to delete
             logger.debug(f"Namespace {namespace} does not exist, nothing to delete")
+        except InternalServerError as exc:
+            logger.warning(
+                "Turbopuffer unavailable for delete from namespace %s (%s after retries)",
+                namespace,
+                exc.status_code,
+            )
+            raise VectorStoreError(
+                f"Turbopuffer unavailable while deleting vectors in namespace {namespace}"
+            ) from exc
         except Exception:
             logger.exception(
                 f"Failed to delete {len(ids)} vectors from namespace {namespace}"
@@ -276,3 +341,46 @@ class TurbopufferVectorStore(VectorStore):
         """Close the Turbopuffer client and release resources."""
         await self.tpuf.close()
         logger.debug("Turbopuffer client closed")
+
+    async def probe_namespace_dim(self, namespace: str) -> int | None:
+        """Inspect a Turbopuffer namespace schema to recover the vector dim.
+
+        Turbopuffer namespaces are lazy-created; ``namespace.exists()`` returns
+        False before the first write. The schema response maps attribute name
+        to ``AttributeSchemaConfig``; the vector field's ``type`` string is
+        a bracket-prefixed dim with a width suffix, e.g. ``"[768]f32"``,
+        ``"[1536]f16"``, ``"[256]i8"``.
+
+        Returns ``None`` only when the namespace does not exist yet
+        (NotFoundError or ``exists() == False``). When the namespace
+        exists but its schema lacks a parseable ``vector`` attribute,
+        raises ``VectorStoreError`` — silently bucketing that as "missing"
+        would let a corrupt namespace pass the startup validator.
+        """
+        ns = self._get_namespace(namespace)
+        try:
+            if not await ns.exists():
+                return None
+        except NotFoundError:
+            return None
+
+        try:
+            schema = await ns.schema()
+        except NotFoundError:
+            return None
+
+        vector_attr = schema.get("vector")
+        if vector_attr is None:
+            raise VectorStoreError(
+                f"Turbopuffer namespace {namespace!r} exists but its schema"
+                + " has no 'vector' attribute; cannot probe dim."
+            )
+        type_str = str(vector_attr.type)
+        match = re.search(r"\[(\d+)\]", type_str)
+        if match is None:
+            raise VectorStoreError(
+                f"Turbopuffer namespace {namespace!r} has an unparseable"
+                + f" vector type {type_str!r}; expected `[<dim>]<width>`"
+                + " (e.g. `[768]f32`). SDK format may have changed."
+            )
+        return int(match.group(1))

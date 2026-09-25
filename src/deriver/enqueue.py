@@ -1,8 +1,8 @@
 import logging
-from datetime import datetime, timezone
 from typing import Any, Literal
 
 from sqlalchemy import exists, insert, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
@@ -17,6 +17,7 @@ from src.utils.queue_payload import (
     create_deletion_payload,
     create_dream_payload,
     create_payload,
+    create_scope_task_payload,
 )
 from src.utils.work_unit import construct_work_unit_key
 
@@ -400,6 +401,11 @@ def create_dream_record(
     observed: str,
     dream_type: schemas.DreamType,
     session_name: str | None = None,
+    trigger_reason: str | None = None,
+    delay_reason: str | None = None,
+    documents_since_last_dream_at_schedule: int | None = None,
+    document_threshold: int | None = None,
+    rebuild: bool = False,
 ) -> dict[str, Any]:
     """
     Create a queue record for a dream task.
@@ -410,6 +416,11 @@ def create_dream_record(
         observed: Name of the observed peer
         dream_type: Type of dream to execute
         session_name: Name of the session to scope the dream to if specified
+        trigger_reason: what tripped the schedule
+        delay_reason: what governed when it fires
+        documents_since_last_dream_at_schedule: count snapshot at schedule time
+        document_threshold: DOCUMENT_THRESHOLD snapshot at schedule time
+        rebuild: card_refresh only — rebuild the card without the prior card
 
     Returns:
         Queue record dictionary with workspace_name and other fields
@@ -419,6 +430,11 @@ def create_dream_record(
         observer=observer,
         observed=observed,
         session_name=session_name,
+        trigger_reason=trigger_reason,
+        delay_reason=delay_reason,
+        documents_since_last_dream_at_schedule=documents_since_last_dream_at_schedule,
+        document_threshold=document_threshold,
+        rebuild=rebuild,
     )
 
     return {
@@ -436,42 +452,65 @@ async def enqueue_dream(
     observer: str,
     observed: str,
     dream_type: schemas.DreamType,
-    document_count: int,
     session_name: str | None = None,
+    trigger_reason: str | None = None,
+    delay_reason: str | None = None,
+    documents_since_last_dream_at_schedule: int | None = None,
+    document_threshold: int | None = None,
+    rebuild: bool = False,
 ) -> None:
     """
     Enqueue a dream task for immediate processing by the deriver.
 
+    Does not touch collection.internal_metadata["dream"] — both guard fields
+    are written atomically in process_dream on successful completion.
+
     Deduplication: If a dream with the same work_unit_key is already in-progress
-    (has an ActiveQueueSession), the enqueue is skipped to prevent running
-    multiple dreams concurrently for the same collection.
+    (has an ActiveQueueSession) or pending in the queue, the enqueue is skipped.
+    The work unit key includes the dream type, so e.g. a card_refresh dream
+    never collides with a pending omni dream for the same collection.
 
     Args:
         workspace_name: Name of the workspace
         observer: Name of the observer peer
         observed: Name of the observed peer
         dream_type: Type of dream to execute
-        document_count: Current document count for metadata update
         session_name: Name of the session to scope the dream to if specified
+        rebuild: card_refresh only — rebuild the card without the prior card
     """
     async with tracked_db("dream_enqueue") as db_session:
+        # Authoritative scope check, in the same transaction as the queue insert.
+        # A route-level precheck cannot be relied on: it runs in its own session,
+        # and a *missing* reserved name passes it (nothing has flagged that peer
+        # yet) — so the dream would be enqueued and the scope created before the
+        # worker picked it up, letting the Dreamer run with a real scope as
+        # observed. A scope as `observer` stays allowed: consolidating scoped
+        # collections is exactly what the Dreamer does.
+        await crud.reject_scope_observed(
+            db_session,
+            workspace_name,
+            [observed],
+            action=(
+                "No representation is formed of a scope, so a scope cannot be the"
+                " observed peer of a dream."
+            ),
+        )
         try:
-            # Create the dream queue record
             dream_record = create_dream_record(
                 workspace_name,
                 observer=observer,
                 observed=observed,
                 dream_type=dream_type,
                 session_name=session_name,
+                trigger_reason=trigger_reason,
+                delay_reason=delay_reason,
+                documents_since_last_dream_at_schedule=documents_since_last_dream_at_schedule,
+                document_threshold=document_threshold,
+                rebuild=rebuild,
             )
 
             work_unit_key = dream_record["work_unit_key"]
 
-            # Check if a dream with this work_unit_key is currently in progress
-            # (has an ActiveQueueSession, meaning a worker is processing it)
-            # We only block on in-progress dreams, not pending ones - if there's
-            # a pending dream, we don't need to add another one anyway since
-            # the queue processor will pick it up.
             in_progress_check = select(
                 exists(
                     select(models.ActiveQueueSession.id).where(
@@ -482,7 +521,7 @@ async def enqueue_dream(
             is_in_progress = await db_session.scalar(in_progress_check)
 
             if is_in_progress:
-                logger.info(
+                logger.debug(
                     "Skipping dream enqueue - already in progress: %s/%s/%s (type: %s)",
                     workspace_name,
                     observer,
@@ -491,7 +530,6 @@ async def enqueue_dream(
                 )
                 return
 
-            # Check if there's already a pending dream with the same work_unit_key
             pending_check = select(
                 exists(
                     select(QueueItem.id).where(
@@ -503,7 +541,7 @@ async def enqueue_dream(
             is_pending = await db_session.scalar(pending_check)
 
             if is_pending:
-                logger.info(
+                logger.debug(
                     "Dream already pending in queue: %s/%s/%s (type: %s)",
                     workspace_name,
                     observer,
@@ -512,25 +550,9 @@ async def enqueue_dream(
                 )
                 return
 
-            # Insert into queue
             stmt = insert(QueueItem).returning(QueueItem)
             await db_session.execute(stmt, [dream_record])
-
-            # Update collection metadata (CRUD handles cache invalidation)
-            now_iso = datetime.now(timezone.utc).isoformat()
-            await crud.update_collection_internal_metadata(
-                db_session,
-                workspace_name,
-                observer,
-                observed,
-                update_data={
-                    "dream": {
-                        "last_dream_document_count": document_count,
-                        "last_dream_at": now_iso,
-                    }
-                },
-            )
-            # update_collection_internal_metadata commits already
+            await db_session.commit()
 
             logger.info(
                 "Enqueued dream task for %s/%s/%s (type: %s)",
@@ -540,6 +562,14 @@ async def enqueue_dream(
                 dream_type.value,
             )
 
+        except IntegrityError:
+            logger.debug(
+                "Dream already enqueued by another process: %s/%s/%s (type: %s)",
+                workspace_name,
+                observer,
+                observed,
+                dream_type.value,
+            )
         except Exception as e:
             logger.exception("Failed to enqueue dream task!")
             if settings.SENTRY.ENABLED:
@@ -547,6 +577,168 @@ async def enqueue_dream(
 
                 sentry_sdk.capture_exception(e)
             raise
+
+
+def create_scope_task_record(
+    workspace_name: str,
+    *,
+    task_type: Literal["scope_backfill", "scope_removal"],
+    scope_peer: str,
+    session_name: str,
+) -> dict[str, Any]:
+    """
+    Create a queue record for a scope backfill / removal task (DEV-1999).
+
+    Args:
+        workspace_name: Name of the workspace
+        task_type: "scope_backfill" or "scope_removal"
+        scope_peer: Prefixed name of the peer backing the scope
+        session_name: Name of the session whose membership changed
+
+    Returns:
+        Queue record dictionary ready for insertion into the queue
+    """
+    payload = create_scope_task_payload(
+        task_type, scope_peer=scope_peer, session_name=session_name
+    )
+    return {
+        "work_unit_key": construct_work_unit_key(workspace_name, payload),
+        "payload": payload,
+        "session_id": None,
+        "task_type": task_type,
+        "workspace_name": workspace_name,
+        "message_id": None,
+    }
+
+
+async def _enqueue_scope_task(
+    workspace_name: str,
+    *,
+    task_type: Literal["scope_backfill", "scope_removal"],
+    scope_peer: str,
+    session_name: str,
+) -> None:
+    """
+    Enqueue a scope backfill / removal task, deduplicating like enqueue_dream.
+
+    If a task with the same work_unit_key is already in progress (has an
+    ActiveQueueSession) or pending in the queue, the enqueue is skipped — the
+    handlers are idempotent, so a queued task already covers this membership
+    change.
+
+    For backfill tasks, the scope peer's per-session status entry is written
+    to "pending" in the same transaction as the queue insert, so the status
+    surface never claims a job exists that was never enqueued (or vice versa).
+    """
+    async with tracked_db("scope_task_enqueue") as db_session:
+        try:
+            record = create_scope_task_record(
+                workspace_name,
+                task_type=task_type,
+                scope_peer=scope_peer,
+                session_name=session_name,
+            )
+            work_unit_key = record["work_unit_key"]
+
+            is_in_progress = await db_session.scalar(
+                select(
+                    exists(
+                        select(models.ActiveQueueSession.id).where(
+                            models.ActiveQueueSession.work_unit_key == work_unit_key
+                        )
+                    )
+                )
+            )
+            if is_in_progress:
+                logger.debug(
+                    "Skipping %s enqueue - already in progress: %s",
+                    task_type,
+                    work_unit_key,
+                )
+                return
+
+            is_pending = await db_session.scalar(
+                select(
+                    exists(
+                        select(QueueItem.id).where(
+                            QueueItem.work_unit_key == work_unit_key,
+                            QueueItem.processed == False,  # noqa: E712
+                        )
+                    )
+                )
+            )
+            if is_pending:
+                logger.debug(
+                    "%s already pending in queue: %s", task_type, work_unit_key
+                )
+                return
+
+            stmt = insert(QueueItem).returning(QueueItem)
+            await db_session.execute(stmt, [record])
+
+            if task_type == "scope_backfill":
+                await crud.update_scope_backfill_status(
+                    db_session,
+                    workspace_name,
+                    scope_peer,
+                    session_name,
+                    state="pending",
+                )
+
+            await db_session.commit()
+            await crud.invalidate_scope_peer_cache(workspace_name, scope_peer)
+
+            logger.info(
+                "Enqueued %s task for %s/%s/%s",
+                task_type,
+                workspace_name,
+                scope_peer,
+                session_name,
+            )
+
+        except Exception as e:
+            logger.exception("Failed to enqueue %s task!", task_type)
+            if settings.SENTRY.ENABLED:
+                import sentry_sdk
+
+                sentry_sdk.capture_exception(e)
+            raise
+
+
+async def enqueue_scope_backfill(
+    workspace_name: str,
+    *,
+    scope_peer: str,
+    session_name: str,
+) -> None:
+    """
+    Enqueue a backfill-by-copy task for a session newly added to a scope.
+
+    Only call this for sessions that already have messages — fresh sessions
+    need nothing (the deriver fan-out covers everything ingested after the
+    membership change).
+    """
+    await _enqueue_scope_task(
+        workspace_name,
+        task_type="scope_backfill",
+        scope_peer=scope_peer,
+        session_name=session_name,
+    )
+
+
+async def enqueue_scope_removal(
+    workspace_name: str,
+    *,
+    scope_peer: str,
+    session_name: str,
+) -> None:
+    """Enqueue a removal reconciliation task for a session removed from a scope."""
+    await _enqueue_scope_task(
+        workspace_name,
+        task_type="scope_removal",
+        scope_peer=scope_peer,
+        session_name=session_name,
+    )
 
 
 def create_deletion_record(

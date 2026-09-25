@@ -1,15 +1,14 @@
 [project]
 name = "honcho"
-version = "3.0.6"
+version = "3.2.1"
 description = "Honcho Server"
 authors = [
   {name = "Plastic Labs", email = "hello@plasticlabs.ai"},
 ]
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.13"
 dependencies = [
-    "fastapi[standard]>=0.131.0",
-    "groq>=0.31.0",
+    "fastapi[standard-no-fastapi-cloud-cli]>=0.131.0",
     "python-dotenv>=1.0.0",
     "sqlalchemy>=2.0.30",
     "fastapi-pagination>=0.14.2",
@@ -29,17 +28,28 @@ dependencies = [
     "pydantic>=2.11.7",
     "pydantic-settings>=2.10.1",
     "google-genai>=1.32.0",
-    "pdfplumber>=0.11.7",
+    "pypdf>=6.1.1",
     "typing-extensions>=4.11.0",
     "json-repair>=0.49.0",
     "turbopuffer>=1.8.1",
-    "lancedb>=0.25.3",
-    "pyarrow>=19.0.0",
-    "redis>=7.0.0,<8.0.0",
-    "cashews[redis]==7.4.4",
-    "scikit-learn>=1.6.0",
+    "redis>=8.0.1,<9.0.0",
+    "cashews[redis]==7.5.0",
     "prometheus_client>=0.21.0",
-    "cloudevents>=1.12.0",
+    "cloudevents>=1.12.0,<2.0",
+]
+[project.optional-dependencies]
+# Surprisal-based dream prioritisation (DREAM.SURPRISAL.ENABLED, off by
+# default). scikit-learn pulls in scipy, ~199MB installed on linux, so it is
+# optional rather than a base dependency.
+surprisal = [
+    "scikit-learn>=1.6.0",
+]
+lancedb = [
+    "lancedb>=0.25.3; sys_platform != \"darwin\" or platform_machine != \"x86_64\"",
+    "pyarrow>=19.0.0",
+]
+qdrant = [
+    "qdrant-client>=1.18.0",
 ]
 [dependency-groups]
 dev = [
@@ -49,24 +59,29 @@ dev = [
     "coverage>=7.6.0",
     "interrogate>=1.7.0",
     "py-spy>=0.3.14",
-    "ruff>=0.11.2",
+    "ruff==0.15.12",
     "basedpyright>=1.29.4",
     "pre-commit>=4.2.0",
     "pytest-cov>=6.2.1",
     "honcho-ai",
-    "fakeredis>=2.32.0",
     "scipy>=1.15.3",
+    "scikit-learn>=1.6.0",
     "boto3>=1.42.5",
     "pytest-xdist>=3.8.0",
 ]
 
+[tool.uv]
+exclude-newer = "5 days"
+
 [tool.uv.workspace]
 members = [
     "sdks/python",
+    "honcho-cli",
 ]
 
 [tool.uv.sources]
 honcho-ai = { workspace = true }
+honcho-cli = { workspace = true }
 
 [tool.ruff.lint]
 # from https://docs.astral.sh/ruff/linter/#rule-selection example
@@ -84,7 +99,9 @@ select = [
     # isort
     "I",
 ]
-ignore = ["E501", "B008", "COM812"]
+# UP040/UP042/UP046/UP047: StrEnum and PEP 695 generics are behavior/signature
+# changes, not formatting; adopt deliberately rather than via autofix.
+ignore = ["E501", "B008", "COM812", "UP040", "UP042", "UP046", "UP047"]
 
 [tool.ruff.lint.flake8-bugbear]
 extend-immutable-calls = ["fastapi.Depends"]
@@ -95,6 +112,12 @@ asyncio_default_fixture_loop_scope = "session"
 addopts = "--strict-markers -n auto --ignore=tests/alembic"
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = [
+    "live_llm: calls live LLM provider APIs and requires --live-llm",
+    "requires_anthropic: requires LLM_ANTHROPIC_API_KEY",
+    "requires_openai: requires LLM_OPENAI_API_KEY",
+    "requires_gemini: requires LLM_GEMINI_API_KEY",
+]
 filterwarnings = [
     "ignore:Call to deprecated close\\. \\(Use aclose\\(\\) instead\\).*:DeprecationWarning",
     "ignore:websockets\\.legacy is deprecated; see .* for upgrade instructions:DeprecationWarning",

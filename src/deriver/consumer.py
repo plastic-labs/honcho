@@ -8,9 +8,16 @@ from sqlalchemy import select
 from src import crud, models
 from src.dependencies import tracked_db
 from src.deriver.deriver import process_representation_tasks_batch
+from src.deriver.scope_backfill import (
+    process_scope_backfill,
+    process_scope_removal,
+)
 from src.dreamer import process_dream
-from src.exceptions import ResourceNotFoundException
+from src.exceptions import ResourceNotFoundException, ValidationException
 from src.models import Message
+from src.reconciler.backfill_document_sources import (
+    run_document_sources_backfill_cycle,
+)
 from src.reconciler.queue_cleanup import cleanup_queue_items
 from src.reconciler.sync_vectors import run_vector_reconciliation_cycle
 from src.schemas import ReconcilerType, ResolvedConfiguration
@@ -23,9 +30,12 @@ from src.telemetry.events import (
 from src.telemetry.logging import log_performance_metrics
 from src.utils import summarizer
 from src.utils.queue_payload import (
+    RETRY_ATTEMPTS_PAYLOAD_KEY,
     DeletionPayload,
     DreamPayload,
     ReconcilerPayload,
+    ScopeBackfillPayload,
+    ScopeRemovalPayload,
     SummaryPayload,
     WebhookPayload,
 )
@@ -38,22 +48,29 @@ logging.getLogger("sqlalchemy.engine.Engine").disabled = True
 async def process_item(queue_item: models.QueueItem) -> None:
     """Process a single item from the queue."""
     task_type = queue_item.task_type
-    queue_payload = queue_item.payload
+    # Drop the work-unit retry counter before payload validation: every payload
+    # model sets extra="forbid", so leaving it in burns the item as
+    # extra_forbidden on the reclaim that was supposed to retry it.
+    queue_payload = dict(queue_item.payload or {})
+    queue_payload.pop(RETRY_ATTEMPTS_PAYLOAD_KEY, None)
     workspace_name = queue_item.workspace_name
 
     # Handle reconciler first - it's the only task type that doesn't require workspace_name
     if task_type == "reconciler":
-        with sentry_sdk.start_transaction(name="process_reconciler_task", op="deriver"):
-            try:
-                validated = ReconcilerPayload(**queue_payload)
-            except ValidationError as e:
-                logger.error(
-                    "Invalid reconciler payload received: %s. Payload: %s",
-                    str(e),
-                    queue_payload,
-                )
-                raise ValueError(f"Invalid payload structure: {str(e)}") from e
-            await process_reconciler(validated)
+        # No top-level transaction here: reconciler tasks poll on a fixed
+        # interval and usually find no work. Tracing is started per-batch
+        # inside the reconciler only when actual work is found, so idle
+        # cycles don't consume Sentry tracing/profiling quota.
+        try:
+            validated = ReconcilerPayload(**queue_payload)
+        except ValidationError as e:
+            logger.error(
+                "Invalid reconciler payload received: %s. Payload: %s",
+                str(e),
+                queue_payload,
+            )
+            raise ValueError(f"Invalid payload structure: {str(e)}") from e
+        await process_reconciler(validated)
         return
 
     # All other task types require a workspace_name
@@ -118,6 +135,7 @@ async def process_item(queue_item: models.QueueItem) -> None:
                 validated.message_seq_in_session,
                 message_public_id,
                 validated.configuration,
+                queue_item_id=queue_item.id,
             )
             log_performance_metrics("summary", f"{workspace_name}_{message_id}")
 
@@ -132,7 +150,7 @@ async def process_item(queue_item: models.QueueItem) -> None:
                     queue_payload,
                 )
                 raise ValueError(f"Invalid payload structure: {str(e)}") from e
-            await process_dream(validated, workspace_name)
+            await process_dream(validated, workspace_name, queue_item_id=queue_item.id)
 
     elif task_type == "deletion":
         with sentry_sdk.start_transaction(name="process_deletion_task", op="deriver"):
@@ -147,6 +165,36 @@ async def process_item(queue_item: models.QueueItem) -> None:
                 raise ValueError(f"Invalid payload structure: {str(e)}") from e
             await process_deletion(validated, workspace_name)
 
+    elif task_type == "scope_backfill":
+        with sentry_sdk.start_transaction(
+            name="process_scope_backfill_task", op="deriver"
+        ):
+            try:
+                validated = ScopeBackfillPayload(**queue_payload)
+            except ValidationError as e:
+                logger.error(
+                    "Invalid scope_backfill payload received: %s. Payload: %s",
+                    str(e),
+                    queue_payload,
+                )
+                raise ValueError(f"Invalid payload structure: {str(e)}") from e
+            await process_scope_backfill(validated, workspace_name)
+
+    elif task_type == "scope_removal":
+        with sentry_sdk.start_transaction(
+            name="process_scope_removal_task", op="deriver"
+        ):
+            try:
+                validated = ScopeRemovalPayload(**queue_payload)
+            except ValidationError as e:
+                logger.error(
+                    "Invalid scope_removal payload received: %s. Payload: %s",
+                    str(e),
+                    queue_payload,
+                )
+                raise ValueError(f"Invalid payload structure: {str(e)}") from e
+            await process_scope_removal(validated, workspace_name)
+
     else:
         raise ValueError(f"Invalid task type: {task_type}")
 
@@ -158,6 +206,11 @@ async def process_representation_batch(
     observers: list[str] | None,
     observed: str | None,
     queue_item_message_ids: list[int],
+    session_id: str | None = None,
+    queue_item_ids: list[int] | None = None,
+    hit_batch_token_cap: bool = False,
+    was_flush_enabled: bool = False,
+    batch_max_tokens: int = 0,
 ) -> None:
     """
     Prepares and processes a batch of messages for representation tasks.
@@ -168,6 +221,11 @@ async def process_representation_batch(
         observers: List of observers for the messages
         observed: The observed of the messages
         queue_item_message_ids: Message IDs from queue items
+        session_id: Canonical Session.id from the queue.
+        queue_item_ids: Queue rows that triggered this batch, when available.
+        hit_batch_token_cap: whether the queue batcher clamped this batch to fit
+        was_flush_enabled: snapshot of DERIVER.FLUSH_ENABLED at fetch time
+        batch_max_tokens: DERIVER.REPRESENTATION_BATCH_TARGET_INPUT_TOKENS snapshot
     """
     if not messages or not messages[0]:
         logger.debug("process_representation_batch received no messages")
@@ -182,6 +240,11 @@ async def process_representation_batch(
         observers=observers,
         observed=observed,
         queue_item_message_ids=queue_item_message_ids,
+        session_id=session_id,
+        queue_item_ids=queue_item_ids,
+        hit_batch_token_cap=hit_batch_token_cap,
+        was_flush_enabled=was_flush_enabled,
+        batch_max_tokens=batch_max_tokens,
     )
 
 
@@ -218,92 +281,107 @@ async def process_deletion(
         workspace_name,
     )
 
-    async with tracked_db("process_deletion") as db:
-        if deletion_type == "session":
-            try:
-                result = await crud.delete_session(
-                    db, workspace_name=workspace_name, session_name=resource_id
-                )
-                messages_deleted = result.messages_deleted
-                conclusions_deleted = result.conclusions_deleted
-                logger.info(
-                    "Successfully deleted session %s in workspace %s "
-                    + "(messages=%d, conclusions=%d)",
-                    resource_id,
-                    workspace_name,
-                    messages_deleted,
-                    conclusions_deleted,
-                )
-            except ResourceNotFoundException as e:
-                # Session not found - may have already been deleted, treat as success
-                logger.warning(
-                    "Session %s not found during deletion (may already be deleted): %s",
-                    resource_id,
-                    str(e),
-                )
+    # try/except/finally so the event ALWAYS fires — both success and
+    # failure (unsupported type, unexpected CRUD error). Previously the
+    # unsupported-type branch raised before the emit ran, and unexpected
+    # CRUD errors bubbled up without telemetry.
+    try:
+        async with tracked_db("process_deletion") as db:
+            if deletion_type == "session":
+                try:
+                    result = await crud.delete_session(
+                        db, workspace_name=workspace_name, session_name=resource_id
+                    )
+                    messages_deleted = result.messages_deleted
+                    conclusions_deleted = result.conclusions_deleted
+                    logger.info(
+                        "Successfully deleted session %s in workspace %s "
+                        + "(messages=%d, conclusions=%d)",
+                        resource_id,
+                        workspace_name,
+                        messages_deleted,
+                        conclusions_deleted,
+                    )
+                except ResourceNotFoundException as e:
+                    # Session not found - may have already been deleted, treat as success
+                    logger.warning(
+                        "Session %s not found during deletion (may already be deleted): %s",
+                        resource_id,
+                        str(e),
+                    )
 
-        elif deletion_type == "observation":
-            try:
-                await crud.delete_document_by_id(
-                    db, workspace_name=workspace_name, document_id=resource_id
-                )
-                conclusions_deleted = 1  # Single observation deleted
-                logger.info(
-                    "Successfully deleted observation %s in workspace %s",
-                    resource_id,
-                    workspace_name,
-                )
-            except ResourceNotFoundException as e:
-                # Document not found - may have already been deleted, treat as success
-                logger.warning(
-                    "Observation %s not found during deletion (may already be deleted): %s",
-                    resource_id,
-                    str(e),
-                )
+            elif deletion_type == "observation":
+                try:
+                    await crud.delete_document_by_id(
+                        db, workspace_name=workspace_name, document_id=resource_id
+                    )
+                    conclusions_deleted = 1  # Single observation deleted
+                    logger.info(
+                        "Successfully deleted observation %s in workspace %s",
+                        resource_id,
+                        workspace_name,
+                    )
+                except ResourceNotFoundException as e:
+                    # Document not found - may have already been deleted, treat as success
+                    logger.warning(
+                        "Observation %s not found during deletion (may already be deleted): %s",
+                        resource_id,
+                        str(e),
+                    )
 
-        elif deletion_type == "workspace":
-            try:
-                result = await crud.delete_workspace(db, workspace_name=workspace_name)
-                peers_deleted = result.peers_deleted
-                sessions_deleted = result.sessions_deleted
-                messages_deleted = result.messages_deleted
-                conclusions_deleted = result.conclusions_deleted
-                logger.info(
-                    "Successfully deleted workspace %s "
-                    + "(peers=%d, sessions=%d, messages=%d, conclusions=%d)",
-                    workspace_name,
-                    peers_deleted,
-                    sessions_deleted,
-                    messages_deleted,
-                    conclusions_deleted,
-                )
-            except ResourceNotFoundException as e:
-                # Workspace not found - may have already been deleted, treat as success
-                logger.warning(
-                    "Workspace %s not found during deletion (may already be deleted): %s",
-                    workspace_name,
-                    str(e),
-                )
+            elif deletion_type == "workspace":
+                try:
+                    result = await crud.delete_workspace(
+                        db, workspace_name=workspace_name
+                    )
+                    peers_deleted = result.peers_deleted
+                    sessions_deleted = result.sessions_deleted
+                    messages_deleted = result.messages_deleted
+                    conclusions_deleted = result.conclusions_deleted
+                    logger.info(
+                        "Successfully deleted workspace %s "
+                        + "(peers=%d, sessions=%d, messages=%d, conclusions=%d)",
+                        workspace_name,
+                        peers_deleted,
+                        sessions_deleted,
+                        messages_deleted,
+                        conclusions_deleted,
+                    )
+                except ResourceNotFoundException as e:
+                    # Workspace not found - may have already been deleted, treat as success
+                    logger.warning(
+                        "Workspace %s not found during deletion (may already be deleted): %s",
+                        workspace_name,
+                        str(e),
+                    )
 
-        else:
-            success = False
-            error_message = f"Unsupported deletion type: {deletion_type}"
-            raise ValueError(error_message)
-
-    # Emit telemetry event
-    emit(
-        DeletionCompletedEvent(
-            workspace_name=workspace_name,
-            deletion_type=deletion_type,
-            resource_id=resource_id,
-            success=success,
-            peers_deleted=peers_deleted,
-            sessions_deleted=sessions_deleted,
-            messages_deleted=messages_deleted,
-            conclusions_deleted=conclusions_deleted,
-            error_message=error_message,
+            else:
+                success = False
+                error_message = f"Unsupported deletion type: {deletion_type}"
+                raise ValidationException(error_message)
+    except Exception as e:
+        # Catch anything that survived the per-branch `ResourceNotFoundException`
+        # handling above (incl. the ValueError from the unsupported-type branch).
+        # Record telemetry, then re-raise so the queue worker still surfaces
+        # the failure to its caller.
+        success = False
+        if error_message is None:
+            error_message = f"{type(e).__name__}: {e}"
+        raise
+    finally:
+        emit(
+            DeletionCompletedEvent(
+                workspace_name=workspace_name,
+                deletion_type=deletion_type,
+                resource_id=resource_id,
+                success=success,
+                peers_deleted=peers_deleted,
+                sessions_deleted=sessions_deleted,
+                messages_deleted=messages_deleted,
+                conclusions_deleted=conclusions_deleted,
+                error_message=error_message,
+            )
         )
-    )
 
 
 async def process_reconciler(payload: ReconcilerPayload) -> None:
@@ -314,6 +392,8 @@ async def process_reconciler(payload: ReconcilerPayload) -> None:
     - sync_vectors: Syncs pending documents/message embeddings to vector store
       and cleans up soft-deleted documents.
     - cleanup_queue: Removes old processed queue items.
+    - backfill_document_sources: Drains legacy JSONB source linkage into
+      the document_sources table.
 
     Args:
         payload: The reconciler payload containing the reconciler type
@@ -363,8 +443,13 @@ async def process_reconciler(payload: ReconcilerPayload) -> None:
             # Emit telemetry event for cleanup stale items
             emit(
                 CleanupStaleItemsCompletedEvent(
+                    queue_items_cleaned=deleted_count,
                     total_duration_ms=duration_ms,
                 )
             )
+    elif reconciler_type == ReconcilerType.BACKFILL_DOCUMENT_SOURCES:
+        logger.debug("Processing backfill_document_sources task")
+        await run_document_sources_backfill_cycle()
+
     else:
         raise ValueError(f"Unsupported reconciler type: {reconciler_type}")

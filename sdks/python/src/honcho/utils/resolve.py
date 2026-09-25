@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, overload
 
 if TYPE_CHECKING:
-    from ..base import PeerBase, SessionBase
+    from ..base import PeerBase, ScopeBase, SessionBase
 
 
 @overload
@@ -17,12 +17,12 @@ def resolve_id(obj: str) -> str: ...
 
 
 @overload
-def resolve_id(obj: "PeerBase | SessionBase") -> str: ...
+def resolve_id(obj: "PeerBase | SessionBase | ScopeBase") -> str: ...
 
 
-def resolve_id(obj: "str | PeerBase | SessionBase | None") -> str | None:
+def resolve_id(obj: "str | PeerBase | SessionBase | ScopeBase | None") -> str | None:
     """
-    Resolve an ID from a string, PeerBase, SessionBase, or None.
+    Resolve an ID from a string, PeerBase, SessionBase, ScopeBase, or None.
 
     This utility function extracts the ID from an object that may be:
     - A string (returned as-is)

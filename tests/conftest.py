@@ -1,4 +1,8 @@
 import logging
+import os
+import re
+import time
+import uuid
 from collections.abc import AsyncGenerator, Callable
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -6,14 +10,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import jwt
 import pytest
 import pytest_asyncio
-from cashews.backends.interface import ControlMixin
 from cashews.picklers import PicklerType
-from fakeredis import FakeAsyncRedis
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 from nanoid import generate as generate_nanoid
-from sqlalchemy import text
+from sqlalchemy import create_engine, text
 from sqlalchemy.engine.url import URL, make_url
 from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.ext.asyncio import (
@@ -25,18 +27,24 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy_utils import (
     create_database,  # pyright: ignore[reportUnknownVariableType]
     database_exists,  # pyright: ignore[reportUnknownVariableType]
-    drop_database,  # pyright: ignore[reportUnknownVariableType]
 )
 
 from src import models
 from src.cache.client import cache
 from src.config import settings
 from src.db import Base
-from src.dependencies import get_db
+from src.dependencies import get_db, get_read_db
 from src.exceptions import HonchoException
-from src.main import app
 from src.models import Peer, Workspace
 from src.security import JWTParams, create_admin_jwt, create_jwt
+
+# Disable Langfuse for the whole suite before importing src.main: @conditional_observe
+# binds to settings.LANGFUSE_PUBLIC_KEY at import time, so blanking it here keeps mocked
+# test calls from emitting traces to a configured Langfuse backend. Tests that exercise
+# Langfuse patch settings.LANGFUSE_PUBLIC_KEY themselves.
+settings.LANGFUSE_PUBLIC_KEY = None
+
+from src.main import app  # noqa: E402
 
 
 # Create a custom handler that doesn't get closed prematurely
@@ -72,7 +80,24 @@ _RUNTIME_MOCK_TEST_BLOCKLIST_PREFIXES = (
     "tests/bench/",
     "tests/alembic/",
     "tests/unified/",
+    "tests/live_llm/",
+    # Pure llm unit tests should stay isolated from the broader app/runtime fixtures.
+    "tests/llm/",
+    # LLM transport tests mock providers directly and don't need database/runtime setup.
+    "tests/utils/test_length_finish_reason.py",
+    "tests/utils/test_clients.py",
+    # Session-scope SQL shape — asserts on compiled statements, never executes one.
+    "tests/crud/test_session_scope_clauses.py",
+    # Pure JWT scope tests — operate on src.security directly, no DB needed.
+    "tests/test_security.py",
+    "tests/test_generate_jwt_script.py",
+    # The mock provider is a standalone ASGI app with no database or LLM of its
+    # own; the runtime mocks would patch the very seams it exists to replace.
+    "tests/mock_provider/",
 )
+
+_LIVE_LLM_MARKER = "live_llm"
+_LIVE_LLM_SKIP_REASON = "live LLM tests are disabled; pass --live-llm to run them"
 
 
 def _requires_runtime_mocks(nodeid: str) -> bool:
@@ -87,11 +112,144 @@ def _get_nodeid(request: pytest.FixtureRequest) -> str:
     return nodeid if isinstance(nodeid, str) else ""
 
 
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        "--live-llm",
+        action="store_true",
+        default=False,
+        help="Run opt-in live LLM integration tests that call provider APIs.",
+    )
+
+
+def pytest_collection_modifyitems(
+    config: pytest.Config,
+    items: list[pytest.Item],
+) -> None:
+    if config.getoption("--live-llm"):
+        return
+
+    skip_live = pytest.mark.skip(reason=_LIVE_LLM_SKIP_REASON)
+    for item in items:
+        if _LIVE_LLM_MARKER in item.keywords:
+            item.add_marker(skip_live)
+
+
+_RUN_ID_ENV_VAR = "HONCHO_TEST_RUN_ID"
+_RUN_ID_TIME_FORMAT = "%Y%m%d%H%M%S"
+
+# Only a database whose name carries a run-id timestamp this old is swept. Long
+# enough that no live suite is ever this stale, short enough that a leak from the
+# morning is gone by the afternoon.
+_STALE_DB_AGE_SECONDS = 2 * 60 * 60
+
+# test_db_<14-digit timestamp>_<4 hex>[_gwN] -- only names this function minted.
+# A pinned HONCHO_TEST_RUN_ID deliberately won't match, so it's never swept.
+_SWEEPABLE_DB_NAME = re.compile(r"^test_db_(\d{14})_[0-9a-f]{4}(?:_gw\d+)?$")
+
+
+def pytest_configure(config: pytest.Config) -> None:  # pyright: ignore[reportUnusedParameter]
+    """Stamp this pytest run with an id so its databases can't collide with another run's.
+
+    The xdist controller runs this first and its environment is inherited by the
+    workers it spawns, so `setdefault` gives every worker in a run the same id
+    while separate runs (concurrent worktrees, two agents, a local run alongside
+    CI) each get their own. Set the env var yourself to pin a stable name.
+
+    The id leads with a sortable local-time timestamp so leaked databases can be
+    aged out (see `_sweep_stale_test_databases`); the random tail keeps two runs
+    starting in the same second apart.
+    """
+
+    os.environ.setdefault(
+        _RUN_ID_ENV_VAR,
+        f"{time.strftime(_RUN_ID_TIME_FORMAT)}_{uuid.uuid4().hex[:4]}",
+    )
+
+    # Workers inherit the controller's env and would each redo this.
+    if os.environ.get("PYTEST_XDIST_WORKER") is None:
+        _sweep_stale_test_databases()
+
+
 def _get_test_db_url(worker_id: str) -> URL:
     """Get a worker-specific test database URL for pytest-xdist parallelism."""
 
-    db_name = "test_db" if worker_id == "master" else f"test_db_{worker_id}"
-    return CONNECTION_URI.set(database=db_name)
+    run_id = os.environ.get(_RUN_ID_ENV_VAR, "local")
+    suffix = "" if worker_id == "master" else f"_{worker_id}"
+    return CONNECTION_URI.set(database=f"test_db_{run_id}{suffix}")
+
+
+def _drop_database(db_url: URL) -> None:
+    """Drop a test database, evicting any connections still holding it open.
+
+    WITH (FORCE) (pg13+) is what makes this reliable: a pooled connection that
+    outlives engine disposal, or an xdist worker killed mid-query, otherwise
+    leaves the drop failing with "database is being accessed by other users".
+    """
+
+    name = db_url.database
+    if not name:
+        return
+
+    # Maintenance connection: you cannot drop the database you're connected to.
+    engine = create_engine(
+        db_url.set(database="postgres"), isolation_level="AUTOCOMMIT"
+    )
+    try:
+        with engine.connect() as conn:
+            conn.exec_driver_sql(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+    finally:
+        engine.dispose()
+
+
+def _sweep_stale_test_databases() -> None:
+    """Reclaim test databases left behind by runs that died before teardown.
+
+    A run killed by SIGKILL, an IDE stop button, an OOM'd worker or `-x` on a hang
+    never reaches the `db_engine` teardown, and since every run mints its own
+    database name nothing later reuses (and thus cleans) it.
+
+    Two guards keep this from touching a suite that is currently running, which is
+    the whole point of per-run names:
+
+    - the run-id timestamp in the name must be older than `_STALE_DB_AGE_SECONDS`
+    - the database must have no backends connected to it right now
+
+    Each covers the other's blind spot: the age check is immune to the race where
+    a database has been created but its first worker hasn't connected yet, and the
+    connection check catches a genuinely long-running suite. Failure to sweep is
+    logged and ignored -- it must never fail a test session.
+    """
+
+    cutoff = time.strftime(
+        _RUN_ID_TIME_FORMAT, time.localtime(time.time() - _STALE_DB_AGE_SECONDS)
+    )
+
+    try:
+        engine = create_engine(
+            CONNECTION_URI.set(database="postgres"), isolation_level="AUTOCOMMIT"
+        )
+        try:
+            with engine.connect() as conn:
+                names = [
+                    row[0]
+                    for row in conn.exec_driver_sql(
+                        "SELECT datname FROM pg_database d "
+                        + "WHERE NOT EXISTS ("
+                        + "  SELECT 1 FROM pg_stat_activity WHERE datname = d.datname"
+                        + ")"
+                    )
+                ]
+        finally:
+            engine.dispose()
+
+        for name in names:
+            match = _SWEEPABLE_DB_NAME.match(name)
+            if match is None or match.group(1) >= cutoff:
+                continue
+            logger.info(f"Dropping stale test database: {name}")
+            _drop_database(CONNECTION_URI.set(database=name))
+    except Exception as e:
+        logger.warning(f"Could not sweep stale test databases: {e}")
 
 
 # Test API authorization - no longer needed as module-level constants
@@ -152,11 +310,21 @@ async def setup_test_database(db_url: URL):
     return engine
 
 
-async def _truncate_all_tables(engine: AsyncEngine) -> None:
-    """Remove all data from every mapped table while resetting identities."""
+async def _clear_all_tables(engine: AsyncEngine) -> None:
+    """Remove all data from every mapped table between tests.
+
+    Uses DELETE rather than TRUNCATE: TRUNCATE rewrites the relfilenode of every
+    table and index it touches, so it costs a flat ~33ms for this schema's 11
+    tables / 41 indexes no matter how few rows a test actually wrote. DELETE of
+    the same (near-empty) tables, batched into one round trip, is ~3ms. Tables go
+    in reverse dependency order so foreign keys are satisfied without CASCADE.
+
+    This does not reset identity sequences, so tests must not assert on absolute
+    generated id values -- compare against the ids the test itself created.
+    """
 
     table_names: list[str] = []
-    for table in Base.metadata.sorted_tables:
+    for table in reversed(Base.metadata.sorted_tables):
         if table.schema:
             table_names.append(f'"{table.schema}"."{table.name}"')
         else:
@@ -165,9 +333,9 @@ async def _truncate_all_tables(engine: AsyncEngine) -> None:
     if not table_names:
         return
 
-    joined_names = ", ".join(table_names)
+    statement = "; ".join(f"DELETE FROM {name}" for name in table_names)
     async with engine.begin() as conn:
-        await conn.execute(text(f"TRUNCATE {joined_names} RESTART IDENTITY CASCADE"))
+        await conn.exec_driver_sql(statement)
 
 
 @pytest_asyncio.fixture(scope="session")
@@ -201,7 +369,7 @@ async def db_engine(worker_id: str):
         for table in Base.metadata.tables.values():
             table.schema = original_schema
 
-        drop_database(test_db_url)
+        _drop_database(test_db_url)
 
 
 @pytest_asyncio.fixture(scope="function")
@@ -215,59 +383,37 @@ async def db_session(db_engine: AsyncEngine):
             finally:
                 await session.rollback()
     finally:
-        await _truncate_all_tables(db_engine)
+        await _clear_all_tables(db_engine)
 
 
 @pytest_asyncio.fixture(scope="session")
 async def fake_cache_session():
-    """Set up fakeredis for caching once per test session."""
+    """Set up a taskless in-memory cache once per test session.
+
+    Cashews' normal memory backend starts a periodic expiry task on whichever
+    event loop first uses it. Tests use both pytest-asyncio loops and TestClient
+    portal loops, so that task can be cancelled when its originating loop closes
+    and then leak a CancelledError into the next app startup. Disabling the
+    periodic sweep keeps the backend loop-agnostic; expired entries are still
+    discarded lazily when read.
+    """
     # Store original settings
     original_enabled = settings.CACHE.ENABLED
     original_url = settings.CACHE.URL
 
-    # Create a fake redis instance that persists for the session
-    fake_redis = FakeAsyncRedis(decode_responses=True)
-
-    # Patch redis creation to use fakeredis
-    # Cashews uses redis.asyncio.from_url to create connections
-    def fake_redis_from_url(*_args: Any, **_kwargs: Any):
-        return fake_redis
-
-    # Patch the cashews backend's _disable property to avoid ContextVar issues
-    # This works around cashews' ContextVar not being properly initialized in TestClient context
-
-    original_disable_property = ControlMixin._disable  # pyright: ignore[reportPrivateUsage]
-
-    @property  # type: ignore
-    def patched_disable_property(self):  # pyright: ignore
-        try:
-            return original_disable_property.fget(self)  # pyright: ignore[reportOptionalCall]
-        except LookupError:
-            # Return empty set as default if ContextVar not set in current context
-            return set()  # pyright: ignore
-
-    # Start patching
-    redis_patch = patch("redis.asyncio.from_url", fake_redis_from_url)
-    redis_patch.start()
-    ControlMixin._disable = patched_disable_property  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]
-
     try:
-        # Enable caching and set URL for tests
+        # Use the same backend from pytest-asyncio and TestClient event loops.
         settings.CACHE.ENABLED = True
-        settings.CACHE.URL = "redis://fake-redis:6379/0"
-
-        # Setup cache for tests that don't use TestClient (direct CRUD tests)
-        # For TestClient tests, the app's lifespan handler will also call cache.setup()
-        # The ContextVar patch above handles any context issues
+        settings.CACHE.URL = "mem://?check_interval=0"
         cache.setup(
-            "redis://fake-redis:6379/0", pickle_type=PicklerType.SQLALCHEMY, enable=True
+            settings.CACHE.URL,
+            pickle_type=PicklerType.SQLALCHEMY,
+            enable=True,
         )
 
-        yield fake_redis
+        yield cache
     finally:
-        # Stop the patches
-        redis_patch.stop()
-        ControlMixin._disable = original_disable_property  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]
+        await cache.close()
 
         # Restore original settings
         settings.CACHE.ENABLED = original_enabled
@@ -275,21 +421,22 @@ async def fake_cache_session():
 
 
 @pytest_asyncio.fixture(scope="function", autouse=True)
-async def fake_cache(fake_cache_session: FakeAsyncRedis):
+async def fake_cache(fake_cache_session: Any):  # pyright: ignore[reportUnusedParameter]
     """Clear cache between tests."""
     # Clear cache before each test
-    await fake_cache_session.flushall()  # pyright: ignore[reportUnknownMemberType]
+    await cache.clear()
 
     yield cache
 
     # Clear cache after each test
-    await fake_cache_session.flushall()  # pyright: ignore[reportUnknownMemberType]
+    await cache.clear()
 
 
 @pytest.fixture(scope="function")
 async def client(
     db_session: AsyncSession,
-    fake_cache_session: FakeAsyncRedis,  # pyright: ignore[reportUnusedParameter]
+    fake_cache_session: Any,  # pyright: ignore[reportUnusedParameter]
+    monkeypatch: pytest.MonkeyPatch,
 ) -> AsyncGenerator[TestClient, Any]:
     """Create a FastAPI TestClient for the scope of a single test function"""
 
@@ -307,6 +454,22 @@ async def client(
         yield db_session
 
     app.dependency_overrides[get_db] = override_get_db
+    # Read-only routes use get_read_db (AUTOCOMMIT engine) in production; in
+    # tests they must see the same per-test database/session as writes, both
+    # for isolation and so data written by a test is visible to its reads.
+    app.dependency_overrides[get_read_db] = override_get_db
+
+    # No-op the startup embedding-schema validator inside the lifespan. The
+    # global `engine` it would inspect points to a DB that isn't migrated in
+    # CI (per-worker test DBs are migrated separately by db_engine), and we
+    # don't want the validator to dispose the test engine via the lifespan
+    # finally block either. The validator has its own dedicated coverage in
+    # tests/startup/test_embedding_validator.py against db_engine directly.
+    async def _skip_validate(_engine: object) -> None:
+        return None
+
+    monkeypatch.setattr("src.main.validate_embedding_schema", _skip_validate)
+
     with TestClient(app) as c:
         if settings.AUTH.USE_AUTH:
             # give the test client the admin JWT
@@ -372,7 +535,7 @@ async def sample_data(
     db_session.add(test_peer)
 
     # Commit so data is visible to independent tracked_db sessions.
-    # _truncate_all_tables handles cleanup between tests.
+    # _clear_all_tables handles cleanup between tests.
     await db_session.commit()
 
     yield test_workspace, test_peer
@@ -412,9 +575,10 @@ def _content_to_embedding(content: str) -> list[float]:
 
     # Hash the content to get a deterministic seed
     content_hash = hashlib.sha256(content.encode()).digest()
-    # Use hash bytes to generate 1536 floats between -1 and 1
+    vector_dimensions = settings.EMBEDDING.VECTOR_DIMENSIONS
+    # Use hash bytes to generate deterministic floats between -1 and 1
     embedding: list[float] = []
-    for i in range(1536):
+    for i in range(vector_dimensions):
         # Use different bytes from hash (cycling through)
         byte_val = content_hash[i % len(content_hash)]
         # Normalize to [-1, 1] range
@@ -431,6 +595,12 @@ def mock_openai_embeddings(request: pytest.FixtureRequest):
 
     with (
         patch("src.embedding_client.embedding_client.embed") as mock_embed,
+        patch(
+            "src.embedding_client.embedding_client.simple_batch_embed"
+        ) as mock_simple_batch_embed,
+        patch(
+            "src.embedding_client.embedding_client.prepare_chunks"
+        ) as mock_prepare_chunks,
         patch("src.embedding_client.embedding_client.batch_embed") as mock_batch_embed,
     ):
         # Mock the embed method to return content-dependent embedding
@@ -439,18 +609,38 @@ def mock_openai_embeddings(request: pytest.FixtureRequest):
 
         mock_embed.side_effect = embed_side_effect
 
+        async def mock_simple_batch_embed_func(
+            texts: list[str], **_kwargs: object
+        ) -> list[list[float]]:
+            return [_content_to_embedding(text) for text in texts]
+
+        mock_simple_batch_embed.side_effect = mock_simple_batch_embed_func
+
+        def mock_prepare_chunks_func(
+            id_resource_dict: dict[str, str],
+        ) -> dict[str, list[str]]:
+            # No real tokenizer in mocks: treat each input as a single chunk.
+            return {text_id: [text] for text_id, text in id_resource_dict.items()}
+
+        mock_prepare_chunks.side_effect = mock_prepare_chunks_func
+
         # Mock the batch_embed method to return content-dependent embeddings
         async def mock_batch_embed_func(
-            id_resource_dict: dict[str, tuple[str, list[int]]],
+            id_resource_dict: dict[str, str],
         ) -> dict[str, list[list[float]]]:
             return {
-                text_id: [_content_to_embedding(resource[0])]
-                for text_id, resource in id_resource_dict.items()
+                text_id: [_content_to_embedding(content)]
+                for text_id, content in id_resource_dict.items()
             }
 
         mock_batch_embed.side_effect = mock_batch_embed_func
 
-        yield {"embed": mock_embed, "batch_embed": mock_batch_embed}
+        yield {
+            "embed": mock_embed,
+            "simple_batch_embed": mock_simple_batch_embed,
+            "prepare_chunks": mock_prepare_chunks,
+            "batch_embed": mock_batch_embed,
+        }
 
 
 @pytest.fixture(autouse=True)
@@ -465,21 +655,18 @@ def mock_vector_store(request: pytest.FixtureRequest):
     from src.vector_store import (
         VectorQueryResult,
         VectorRecord,
-        VectorUpsertResult,
-        _hash_namespace_components,  # pyright: ignore[reportPrivateUsage]
+        _hash_namespace_components,
     )
 
     # Create a mock vector store that stores vectors in memory
     vector_storage: dict[str, dict[str, tuple[list[float], dict[str, Any]]]] = {}
 
-    async def mock_upsert_many(
-        namespace: str, vectors: list[VectorRecord]
-    ) -> VectorUpsertResult:
+    async def mock_upsert_many(namespace: str, vectors: list[VectorRecord]) -> None:
         if namespace not in vector_storage:
             vector_storage[namespace] = {}
         for vector in vectors:
             vector_storage[namespace][vector.id] = (vector.embedding, vector.metadata)
-        return VectorUpsertResult(ok=True)
+        return
 
     async def mock_query(
         namespace: str, embedding: list[float], **kwargs: Any
@@ -587,19 +774,41 @@ def mock_llm_call_functions(request: pytest.FixtureRequest):
         patch(
             "src.routers.peers.agentic_chat_stream", side_effect=mock_stream
         ) as mock_agentic_chat_stream,
+        patch(
+            "src.routers.workspaces.workspace_chat", new_callable=AsyncMock
+        ) as mock_workspace_chat,
+        patch(
+            "src.routers.workspaces.workspace_chat_stream", side_effect=mock_stream
+        ) as mock_workspace_chat_stream,
     ):
         # Mock return values for different function types
         mock_short_summary.return_value = "Test short summary content"
         mock_long_summary.return_value = "Test long summary content"
 
-        # Mock agentic_chat to return a string (matching actual return type)
-        mock_agentic_chat.return_value = "Test dialectic response"
+        # Mock agentic_chat to return a string (matching actual return type).
+        # With a response_model (structured output) the real function returns
+        # a JSON string, so mirror that for SDK clients that parse content.
+        async def _agentic_chat_response(*_args: object, **kwargs: object) -> str:
+            if kwargs.get("response_model") is not None:
+                return "{}"
+            return "Test dialectic response"
+
+        mock_agentic_chat.side_effect = _agentic_chat_response
+
+        async def _workspace_chat_response(*_args: object, **kwargs: object) -> str:
+            if kwargs.get("response_model") is not None:
+                return "{}"
+            return "Test workspace chat response"
+
+        mock_workspace_chat.side_effect = _workspace_chat_response
 
         yield {
             "short_summary": mock_short_summary,
             "long_summary": mock_long_summary,
             "agentic_chat": mock_agentic_chat,
             "agentic_chat_stream": mock_agentic_chat_stream,
+            "workspace_chat": mock_workspace_chat,
+            "workspace_chat_stream": mock_workspace_chat_stream,
         }
 
 
@@ -670,10 +879,10 @@ def mock_honcho_llm_call(request: pytest.FixtureRequest):
     # Patch the honcho_llm_call decorator to prevent actual LLM calls at module level
     original_decorator = None
     try:
-        import src.utils.clients
+        import src.llm
 
-        original_decorator = src.utils.clients.honcho_llm_call
-        src.utils.clients.honcho_llm_call = lambda *args, **kwargs: lambda func: func  # pyright: ignore[reportUnknownLambdaType]
+        original_decorator = src.llm.honcho_llm_call
+        src.llm.honcho_llm_call = lambda *args, **kwargs: lambda func: func  # pyright: ignore[reportUnknownLambdaType]
     except ImportError:
         pass
 
@@ -707,21 +916,21 @@ def mock_honcho_llm_call(request: pytest.FixtureRequest):
 
         return mock_llm_decorator
 
-    with patch("src.utils.clients.honcho_llm_call", side_effect=decorator_factory):
+    with patch("src.llm.honcho_llm_call", side_effect=decorator_factory):
         yield decorator_factory
 
     # Restore the original decorator
     if original_decorator:
         try:
-            import src.utils.clients
+            import src.llm
 
-            src.utils.clients.honcho_llm_call = original_decorator
+            src.llm.honcho_llm_call = original_decorator
         except ImportError:
             pass
 
 
 @pytest.fixture(autouse=True)
-def mock_tracked_db(db_engine: AsyncEngine, request: pytest.FixtureRequest):
+def mock_tracked_db(request: pytest.FixtureRequest):
     """Mock tracked_db to create fresh sessions per call.
 
     Using a session factory instead of a shared session avoids asyncio lock
@@ -731,36 +940,54 @@ def mock_tracked_db(db_engine: AsyncEngine, request: pytest.FixtureRequest):
         yield
         return
 
-    from contextlib import asynccontextmanager
+    from contextlib import ExitStack, asynccontextmanager
 
+    db_engine = request.getfixturevalue("db_engine")
     session_factory = async_sessionmaker(bind=db_engine, expire_on_commit=False)
 
     @asynccontextmanager
-    async def mock_tracked_db_context(_: str | None = None):
+    async def mock_tracked_db_context(_: str | None = None, *, read_only: bool = False):
+        # read_only is accepted (and ignored): in tests both engines resolve to
+        # the same per-test database session.
+        del read_only
         async with session_factory() as session:
-            yield session
+            try:
+                yield session
+            finally:
+                await session.rollback()
 
-    with (
-        patch("src.dependencies.tracked_db", mock_tracked_db_context),
-        patch("src.deriver.queue_manager.tracked_db", mock_tracked_db_context),
-        patch("src.deriver.consumer.tracked_db", mock_tracked_db_context),
-        patch("src.deriver.enqueue.tracked_db", mock_tracked_db_context),
-        patch("src.routers.peers.tracked_db", mock_tracked_db_context),
-        patch("src.crud.representation.tracked_db", mock_tracked_db_context),
-        patch("src.dreamer.orchestrator.tracked_db", mock_tracked_db_context),
-        patch("src.dreamer.dream_scheduler.tracked_db", mock_tracked_db_context),
-        patch("src.dialectic.chat.tracked_db", mock_tracked_db_context),
-        patch("src.utils.summarizer.tracked_db", mock_tracked_db_context),
-        patch("src.webhooks.events.tracked_db", mock_tracked_db_context),
-        patch("src.webhooks.webhook_delivery.tracked_db", mock_tracked_db_context),
-        patch("src.utils.agent_tools.tracked_db", mock_tracked_db_context),
-        patch("src.utils.search.tracked_db", mock_tracked_db_context),
-        patch("src.crud.document.tracked_db", mock_tracked_db_context),
-        patch("src.crud.message.tracked_db", mock_tracked_db_context),
-        patch("src.dialectic.core.tracked_db", mock_tracked_db_context),
-        patch("src.dreamer.specialists.tracked_db", mock_tracked_db_context),
-        patch("src.dreamer.surprisal.tracked_db", mock_tracked_db_context),
-    ):
+    # Each module imports tracked_db by name, so patch every import site.
+    # Use ExitStack (not a parenthesized `with`) to stay under CPython's
+    # 20-statically-nested-block limit as this list grows.
+    tracked_db_targets = [
+        "src.dependencies.tracked_db",
+        "src.deriver.queue_manager.tracked_db",
+        "src.deriver.consumer.tracked_db",
+        "src.deriver.deriver.tracked_db",
+        "src.deriver.enqueue.tracked_db",
+        "src.routers.peers.tracked_db",
+        "src.routers.workspaces.tracked_db",
+        "src.crud.representation.tracked_db",
+        "src.dreamer.orchestrator.tracked_db",
+        "src.dreamer.dream_scheduler.tracked_db",
+        "src.dialectic.chat.tracked_db",
+        "src.utils.summarizer.tracked_db",
+        "src.webhooks.events.tracked_db",
+        "src.webhooks.webhook_delivery.tracked_db",
+        "src.utils.agent_tools.tracked_db",
+        "src.utils.search.tracked_db",
+        "src.crud.document.tracked_db",
+        "src.crud.message.tracked_db",
+        "src.reconciler.sync_vectors.tracked_db",
+        "src.reconciler.embed_now.tracked_db",
+        "src.dialectic.core.tracked_db",
+        "src.dreamer.specialists.tracked_db",
+        "src.dreamer.surprisal.tracked_db",
+        "src.deriver.scope_backfill.tracked_db",
+    ]
+    with ExitStack() as stack:
+        for target in tracked_db_targets:
+            stack.enter_context(patch(target, mock_tracked_db_context))
         yield
 
 

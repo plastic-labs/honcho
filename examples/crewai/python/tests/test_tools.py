@@ -1,194 +1,117 @@
 """
-Tests for Honcho CrewAI Tools
-
-Tests the CrewAI-Honcho tool integration layer using real Honcho SDK.
-Focuses on tool interface compliance and result formatting.
+Tests for Honcho CrewAI tools.
 """
 
-from honcho import Honcho
 from honcho_crewai import (
     HonchoDialecticTool,
     HonchoGetContextTool,
     HonchoSearchTool,
 )
+from test_storage import FakeHoncho
 
 
 class TestGetContextTool:
-    """Tests for HonchoGetContextTool."""
+    def test_initialization_is_lazy(self):
+        honcho = FakeHoncho()
 
-    def test_initialization(self):
-        """Test that tool initializes with correct attributes."""
-        honcho = Honcho()
         tool = HonchoGetContextTool(
-            honcho=honcho, session_id="test_session", peer_id="test_peer"
+            honcho=honcho,
+            session_id="session-1",
+            peer_id="user-1",
         )
 
-        assert tool is not None
         assert tool.name == "get_session_context"
-        assert tool.description is not None
-        assert tool.args_schema is not None
+        assert honcho.session_calls == []
 
     def test_returns_formatted_context(self):
-        """Test that tool returns formatted context string."""
-        honcho = Honcho()
-        peer = honcho.peer("context_test_user")
-        session_id = "context_test_session"
-        session = honcho.session(session_id)
-
-        # Add test message
+        honcho = FakeHoncho()
+        peer = honcho.peer("user-1")
+        session = honcho.session("session-1")
         session.add_messages([peer.message("Test message for context")])
 
-        # Create and execute tool
+        honcho.session_calls.clear()
         tool = HonchoGetContextTool(
-            honcho=honcho, session_id=session_id, peer_id="context_test_user"
+            honcho=honcho,
+            session_id="session-1",
+            peer_id="user-1",
         )
         result = tool._run()
 
-        # Verify result is a formatted string
-        assert isinstance(result, str)
-        assert len(result) > 0
+        assert "Messages (1)" in result
+        assert "user-1: Test message for context" in result
+        assert honcho.session_calls == ["session-1"]
 
 
 class TestDialecticTool:
-    """Tests for HonchoDialecticTool."""
+    def test_initialization_is_lazy(self):
+        honcho = FakeHoncho()
 
-    def test_initialization(self):
-        """Test that tool initializes with correct attributes."""
-        honcho = Honcho()
         tool = HonchoDialecticTool(
-            honcho=honcho, session_id="test_session", peer_id="test_peer"
+            honcho=honcho,
+            session_id="session-1",
+            peer_id="user-1",
         )
 
-        assert tool is not None
         assert tool.name == "query_peer_knowledge"
-        assert tool.description is not None
+        assert honcho.peer_calls == []
 
     def test_returns_response(self):
-        """Test that tool returns a response string."""
-        honcho = Honcho()
-        peer = honcho.peer("dialectic_test_user")
-        session_id = "dialectic_test_session"
-        session = honcho.session(session_id)
-
-        # Add test messages
-        session.add_messages([peer.message("I love pizza and Italian food")])
-
-        # Create and execute tool
+        honcho = FakeHoncho()
         tool = HonchoDialecticTool(
-            honcho=honcho, session_id=session_id, peer_id="dialectic_test_user"
+            honcho=honcho,
+            session_id="session-1",
+            peer_id="user-1",
         )
+
         result = tool._run(query="What does the user like?")
 
-        # Verify result is a string
-        assert isinstance(result, str)
-        assert len(result) > 0
+        assert "answer: What does the user like?" in result
+        assert honcho.peer_calls == ["user-1"]
 
 
 class TestSearchTool:
-    """Tests for HonchoSearchTool."""
+    def test_initialization_is_lazy(self):
+        honcho = FakeHoncho()
 
-    def test_initialization(self):
-        """Test that tool initializes with correct attributes."""
-        honcho = Honcho()
-        tool = HonchoSearchTool(honcho=honcho, session_id="test_session")
+        tool = HonchoSearchTool(honcho=honcho, session_id="session-1")
 
-        assert tool is not None
         assert tool.name == "search_session_messages"
-        assert tool.description is not None
+        assert honcho.session_calls == []
 
     def test_returns_formatted_results(self):
-        """Test that tool returns formatted search results."""
-        honcho = Honcho()
-        peer = honcho.peer("search_test_user")
-        session_id = "search_test_session"
-        session = honcho.session(session_id)
-
-        # Add test messages
+        honcho = FakeHoncho()
+        peer = honcho.peer("user-1")
+        session = honcho.session("session-1")
         session.add_messages([peer.message("I love pizza and pasta")])
 
-        # Create and execute tool
-        tool = HonchoSearchTool(honcho=honcho, session_id=session_id)
+        honcho.session_calls.clear()
+        tool = HonchoSearchTool(honcho=honcho, session_id="session-1")
         result = tool._run(query="food", limit=5)
 
-        # Verify result is a formatted string
-        assert isinstance(result, str)
-        assert len(result) > 0
-        # Should have either results or "No messages found"
-        assert "Search Results" in result or "No messages found" in result
-
-    def test_search_with_filters(self):
-        """Test that search tool accepts and uses filters parameter."""
-        honcho = Honcho()
-        peer = honcho.peer("search_filter_test_user")
-        session_id = "search_filter_test_session"
-        session = honcho.session(session_id)
-
-        # Add test messages
-        session.add_messages([peer.message("Important message about Python")])
-
-        # Create and execute tool with filters
-        tool = HonchoSearchTool(honcho=honcho, session_id=session_id)
-        result = tool._run(
-            query="Python",
-            limit=5,
-            filters={"peer_id": peer.id}
-        )
-
-        # Verify result is a formatted string
-        assert isinstance(result, str)
-        assert len(result) > 0
-
-    def test_search_with_metadata_filters(self):
-        """Test that search tool works with metadata filters."""
-        honcho = Honcho()
-        peer = honcho.peer("search_metadata_filter_user")
-        session_id = "search_metadata_filter_session"
-        session = honcho.session(session_id)
-
-        # Add test messages with metadata
-        session.add_messages([peer.message("High priority task", metadata={"priority": "high"})])
-
-        # Create and execute tool with metadata filter
-        tool = HonchoSearchTool(honcho=honcho, session_id=session_id)
-        result = tool._run(
-            query="task",
-            limit=5,
-            filters={"metadata": {"priority": "high"}}
-        )
-
-        # Verify result is a formatted string
-        assert isinstance(result, str)
-        assert len(result) > 0
+        assert "Search Results" in result
+        assert "[user-1] I love pizza and pasta" in result
+        assert honcho.session_calls == ["session-1"]
 
 
 class TestToolsWorkTogether:
-    """Test that all tools can work together."""
-
     def test_all_tools_in_same_session(self):
-        """Test that all three tools can be used in the same session."""
-        honcho = Honcho()
-        peer = honcho.peer("combo_test_user")
-        session_id = "combo_test_session"
-        session = honcho.session(session_id)
-
-        # Add messages
+        honcho = FakeHoncho()
+        peer = honcho.peer("user-1")
+        session = honcho.session("session-1")
         session.add_messages([peer.message("I enjoy coding in Python")])
 
-        # Create all tools
         context_tool = HonchoGetContextTool(
-            honcho=honcho, session_id=session_id, peer_id="combo_test_user"
+            honcho=honcho,
+            session_id="session-1",
+            peer_id="user-1",
         )
         dialectic_tool = HonchoDialecticTool(
-            honcho=honcho, session_id=session_id, peer_id="combo_test_user"
+            honcho=honcho,
+            session_id="session-1",
+            peer_id="user-1",
         )
-        search_tool = HonchoSearchTool(honcho=honcho, session_id=session_id)
+        search_tool = HonchoSearchTool(honcho=honcho, session_id="session-1")
 
-        # Execute all tools
-        context_result = context_tool._run()
-        dialectic_result = dialectic_tool._run(query="What does the user like?")
-        search_result = search_tool._run(query="coding", limit=5)
-
-        # Verify all return valid strings
-        assert isinstance(context_result, str) and len(context_result) > 0
-        assert isinstance(dialectic_result, str) and len(dialectic_result) > 0
-        assert isinstance(search_result, str) and len(search_result) > 0
+        assert context_tool._run()
+        assert dialectic_tool._run(query="What does the user like?")
+        assert search_tool._run(query="coding", limit=5)

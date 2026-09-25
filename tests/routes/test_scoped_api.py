@@ -20,45 +20,6 @@ def test_create_workspace_with_auth(auth_client: AuthClient):
     assert response.status_code in [200, 201]
 
 
-def test_auth_response_time(auth_client: AuthClient):
-    name = str(generate_nanoid())
-
-    import time
-
-    start_time = time.time()
-
-    response = auth_client.post(
-        "/v3/workspaces", json={"name": name, "metadata": {"key": "value"}}
-    )
-
-    end_time = time.time()
-    response_time = end_time - start_time
-    print(
-        f"Server response time for client {auth_client.auth_type}: {response_time:.6f} seconds"
-    )
-
-    # Check expected behavior based on auth type
-    if auth_client.auth_type != "admin":
-        assert response.status_code == 401
-        return
-
-    assert response.status_code in [200, 201]
-
-
-def test_get_or_create_workspace_with_auth(auth_client: AuthClient):
-    name = str(generate_nanoid())
-
-    response = auth_client.post(
-        "/v3/workspaces", json={"name": name, "metadata": {"key": "value"}}
-    )
-
-    if auth_client.auth_type != "admin":
-        assert response.status_code == 401
-        return
-
-    assert response.status_code in [200, 201]
-
-
 def test_get_workspace_with_auth(
     auth_client: AuthClient, sample_data: tuple[Workspace, Peer]
 ):
@@ -180,7 +141,7 @@ def test_get_peer_by_name_with_auth(
     # Test with peer-scoped JWT
     if auth_client.auth_type == "empty":
         auth_client.headers["Authorization"] = (
-            f"Bearer {create_jwt(JWTParams(p=test_peer.name))}"
+            f"Bearer {create_jwt(JWTParams(w=test_workspace.name, p=test_peer.name))}"
         )
 
         # Get specific peer using get_or_create endpoint
@@ -257,7 +218,7 @@ def test_create_session_with_auth(
     # Test with peer-scoped JWT
     if auth_client.auth_type == "empty":
         auth_client.headers["Authorization"] = (
-            f"Bearer {create_jwt(JWTParams(p=test_peer.name))}"
+            f"Bearer {create_jwt(JWTParams(w=test_workspace.name, p=test_peer.name))}"
         )
 
         session_name2 = str(generate_nanoid())
@@ -301,7 +262,7 @@ def test_get_session_by_name_with_auth(
     if auth_client.auth_type == "empty":
         # Test with session-scoped JWT
         auth_client.headers["Authorization"] = (
-            f"Bearer {create_jwt(JWTParams(s=session_name))}"
+            f"Bearer {create_jwt(JWTParams(w=test_workspace.name, s=session_name))}"
         )
 
         response = auth_client.post(
@@ -321,7 +282,7 @@ def test_get_session_by_name_with_auth(
 
         # Test with peer-scoped JWT
         auth_client.headers["Authorization"] = (
-            f"Bearer {create_jwt(JWTParams(p=test_peer.name))}"
+            f"Bearer {create_jwt(JWTParams(w=test_workspace.name, p=test_peer.name))}"
         )
 
         assert auth_client.post(

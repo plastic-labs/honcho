@@ -1,0 +1,62 @@
+---
+title: "Changing Embeddings"
+description: "How to switch embedding dimension or model on a Honcho deployment"
+icon: "rotate"
+---
+
+## Short answer: you can't, in place.
+
+The embedding dimension is **machine-enforced** as immutable for the life of a deployment. The embedding model is **operator-owned** as immutable by contract. The supported way to change either is:
+
+1. Stand up a new deployment at the desired configuration.
+2. Replay or re-embed your data into it out-of-band.
+3. Cut traffic over to the new deployment.
+
+The rest of this page explains why, and what the safety boundaries actually are.
+
+## Why dimension is enforced and model is not
+
+On boot, both the API (`src/main.py` lifespan) and the deriver (`src/deriver/__main__.py`) run the validator in `src/startup/embedding_validator.py`. It does a schema-qualified `pg_attribute` lookup against `documents.embedding` and `message_embeddings.embedding`, decodes the declared `atttypmod`, and compares it to `EMBEDDING_VECTOR_DIMENSIONS`. A mismatch crashes the process with an actionable error before any HTTP route is served or any queue task is processed.
+
+There is no equivalent check for the model. The pgvector column does not record what model produced the vectors inside it, and this design intentionally avoids adding new persistent metadata fields. The runtime has no way to detect that you swapped `text-embedding-3-small` for a different model that emits the same dimension.
+
+That last point is a real footgun:
+
+<Warning>
+Changing `EMBEDDING_MODEL_CONFIG__MODEL` to a different model at the **same dimension** (for example `text-embedding-3-small@1536` → `text-embedding-3-large` truncated to 1536) will silently succeed. New writes will use the new model; existing rows still hold vectors from the old model; recall quality will degrade with no startup or runtime warning.
+
+Treat model identity as a contract you own. If you need to change it, follow the destroy + rebuild path below.
+</Warning>
+
+## Recipe: changing dim or model
+
+Concretely, for either a dim change or a model change:
+
+1. **Provision the new deployment** with the target environment.
+
+   ```bash
+   # On the new deployment:
+   export EMBEDDING_VECTOR_DIMENSIONS=768
+   export EMBEDDING_MODEL_CONFIG__TRANSPORT=openai
+   export EMBEDDING_MODEL_CONFIG__MODEL=nomic-embed-text
+   export EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL=http://your-ollama:11434/v1
+   alembic upgrade head
+   uv run python scripts/configure_embeddings.py --dry-run
+   uv run python scripts/configure_embeddings.py --yes
+   ```
+
+2. **Replay your source data** (messages, documents, ingested content) into the new deployment via your normal application path. Honcho's existing message-creation API will re-derive embeddings using the new configuration. There is no in-place re-embedding tool — that would be a separate spec covering atomicity, cost-per-token, and dialectic-during-migration semantics.
+
+3. **Cut over** at your application layer (DNS, load balancer, feature flag — whatever you use). The old deployment can stay running until you are confident in the new one; this design does not require an atomic switch.
+
+The startup validator on the new deployment will refuse to start if step 1's `configure_embeddings.py` did not run, so a misconfiguration cannot quietly write wrong-dim vectors into the new schema.
+
+## Edge case: truncation at the default dimension
+
+If you are using `text-embedding-3-large` but truncating to 1536 (the default), be aware that `EMBEDDING_MODEL_CONFIG__DIMENSIONS_MODE=auto` will **not** forward `dimensions=` to the API — `auto` interprets the default as "operator did not opt into a non-default dim." The provider will return native 3072, the response-dim validator will reject it, and the request will fail.
+
+For this case, either set `EMBEDDING_VECTOR_DIMENSIONS=1536` explicitly (so `auto` knows the operator opted in), or set `EMBEDDING_MODEL_CONFIG__DIMENSIONS_MODE=always`.
+
+## Backend swap (turbopuffer ↔ lancedb ↔ pgvector) is a different operation
+
+Switching the *storage backend* at constant dim/model — for example moving from pgvector to Turbopuffer — is supported via `src/reconciler/sync_vectors.py` and `VECTOR_STORE_MIGRATED`. That flow is unchanged by the embedding-pipeline work and is documented separately. It is **not** the destroy + rebuild path described above.

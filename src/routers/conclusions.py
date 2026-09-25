@@ -6,9 +6,11 @@ from fastapi_pagination.ext.sqlalchemy import apaginate
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, schemas
-from src.dependencies import db
+from src.dependencies import db, read_db
 from src.exceptions import ResourceNotFoundException, ValidationException
 from src.security import require_auth
+from src.telemetry.events import EmbeddingCallPurpose
+from src.utils.types import embedding_call_purpose
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +67,7 @@ async def list_conclusions(
         False,
         description="Whether to reverse the order of results",
     ),
-    db: AsyncSession = db,
+    db: AsyncSession = read_db,
 ):
     """
     List Conclusions using optional filters, ordered by recency unless `reverse` is true. Results are paginated.
@@ -95,7 +97,7 @@ async def query_conclusions(
         ...,
         description="Semantic search parameters for Conclusions",
     ),
-    db: AsyncSession = db,
+    db: AsyncSession = read_db,
 ) -> list[schemas.Conclusion]:
     """
     Query Conclusions using semantic search. Use `top_k` to control the number of results returned.
@@ -108,20 +110,48 @@ async def query_conclusions(
 
     if not observer or not observed:
         raise ValidationException(
-            "observer and observed must be specified for semantic search"
+            "observer and observed must be specified for semantic search. "
+            + "Pass them inside the 'filters' object, e.g. "
+            + '{"query": "...", "filters": {"observer": "alice", "observed": "bob"}}. '
+            + "Both 'observer'/'observer_id' and 'observed'/'observed_id' are accepted."
         )
 
-    documents = await crud.query_documents(
+    with embedding_call_purpose(
+        EmbeddingCallPurpose.GENERIC_DOCUMENT_SEARCH.value,
+        workspace_name=workspace_id,
+        parent_category="api",
+    ):
+        documents = await crud.query_documents(
+            db,
+            workspace_name=workspace_id,
+            query=body.query,
+            observer=observer,
+            observed=observed,
+            filters=body.filters,
+            max_distance=body.distance,
+            top_k=body.top_k,
+        )
+    return [schemas.Conclusion.model_validate(doc) for doc in documents]
+
+
+@router.get(
+    "/{conclusion_id}",
+    response_model=schemas.Conclusion,
+)
+async def get_conclusion(
+    workspace_id: str = Path(...),
+    conclusion_id: str = Path(...),
+    db: AsyncSession = read_db,
+) -> schemas.Conclusion:
+    """Get a single Conclusion by ID."""
+    documents = await crud.get_documents_by_ids(
         db,
         workspace_name=workspace_id,
-        query=body.query,
-        observer=observer,
-        observed=observed,
-        filters=body.filters,
-        max_distance=body.distance,
-        top_k=body.top_k,
+        document_ids=[conclusion_id],
     )
-    return [schemas.Conclusion.model_validate(doc) for doc in documents]
+    if not documents:
+        raise ResourceNotFoundException("Conclusion not found")
+    return schemas.Conclusion.model_validate(documents[0])
 
 
 @router.delete(

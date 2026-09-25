@@ -1,9 +1,15 @@
+import datetime
 from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 from nanoid import generate as generate_nanoid
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from src import models
+from src.config import settings
 from src.models import Peer, Workspace
+from src.security import JWTParams, create_jwt
 
 
 def test_get_or_create_session(client: TestClient, sample_data: tuple[Workspace, Peer]):
@@ -221,6 +227,158 @@ def test_get_sessions_with_empty_filter(
     data = response.json()
     assert "items" in data
     assert isinstance(data["items"], list)
+
+
+def test_get_sessions_with_reverse(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test session listing with reverse creation-time ordering."""
+    test_workspace, test_peer = sample_data
+    reverse_group = f"reverse-sessions-{generate_nanoid()}"
+    first_session = f"reverse-session-a-{generate_nanoid()}"
+    second_session = f"reverse-session-b-{generate_nanoid()}"
+
+    first_response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions",
+        json={
+            "id": first_session,
+            "peer_names": {test_peer.name: {}},
+            "metadata": {"reverse_group": reverse_group},
+        },
+    )
+    assert first_response.status_code in [200, 201]
+
+    second_response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions",
+        json={
+            "id": second_session,
+            "peer_names": {test_peer.name: {}},
+            "metadata": {"reverse_group": reverse_group},
+        },
+    )
+    assert second_response.status_code in [200, 201]
+
+    normal_response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions/list",
+        json={"filters": {"metadata": {"reverse_group": reverse_group}}},
+    )
+    assert normal_response.status_code == 200
+
+    reverse_response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions/list?reverse=true",
+        json={"filters": {"metadata": {"reverse_group": reverse_group}}},
+    )
+    assert reverse_response.status_code == 200
+
+    assert [item["id"] for item in normal_response.json()["items"]] == [
+        first_session,
+        second_session,
+    ]
+    assert [item["id"] for item in reverse_response.json()["items"]] == [
+        second_session,
+        first_session,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_get_sessions_reverse_uses_id_tiebreaker(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+):
+    """Sessions with identical created_at fall back to ordering by id (nanoid PK)."""
+    test_workspace, _ = sample_data
+    reverse_group = f"tiebreaker-sessions-{generate_nanoid()}"
+    shared_created_at = datetime.datetime(2026, 1, 1, 12, 0, 0, tzinfo=datetime.UTC)
+
+    low_id = "A" * 21
+    high_id = "z" * 21
+    low_name = f"tie-low-{generate_nanoid()}"
+    high_name = f"tie-high-{generate_nanoid()}"
+
+    db_session.add(
+        models.Session(
+            id=low_id,
+            name=low_name,
+            workspace_name=test_workspace.name,
+            created_at=shared_created_at,
+            h_metadata={"reverse_group": reverse_group},
+        )
+    )
+    db_session.add(
+        models.Session(
+            id=high_id,
+            name=high_name,
+            workspace_name=test_workspace.name,
+            created_at=shared_created_at,
+            h_metadata={"reverse_group": reverse_group},
+        )
+    )
+    await db_session.commit()
+
+    normal_response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions/list",
+        json={"filters": {"metadata": {"reverse_group": reverse_group}}},
+    )
+    assert normal_response.status_code == 200
+
+    reverse_response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions/list?reverse=true",
+        json={"filters": {"metadata": {"reverse_group": reverse_group}}},
+    )
+    assert reverse_response.status_code == 200
+
+    # When created_at ties, ordering falls back to the nanoid id: low_id < high_id
+    # lexicographically, so low sorts first ascending and last descending.
+    assert [item["id"] for item in normal_response.json()["items"]] == [
+        low_name,
+        high_name,
+    ]
+    assert [item["id"] for item in reverse_response.json()["items"]] == [
+        high_name,
+        low_name,
+    ]
+
+
+def test_get_sessions_reverse_with_pagination(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Paged reverse listing returns newest-first across consecutive pages."""
+    test_workspace, test_peer = sample_data
+    reverse_group = f"paged-reverse-sessions-{generate_nanoid()}"
+    session_names = [f"paged-reverse-session-{i}-{generate_nanoid()}" for i in range(3)]
+
+    for session_name in session_names:
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/sessions",
+            json={
+                "id": session_name,
+                "peer_names": {test_peer.name: {}},
+                "metadata": {"reverse_group": reverse_group},
+            },
+        )
+        assert response.status_code in [200, 201]
+
+    page_one = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions/list?reverse=true&page=1&size=1",
+        json={"filters": {"metadata": {"reverse_group": reverse_group}}},
+    )
+    assert page_one.status_code == 200
+    page_two = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions/list?reverse=true&page=2&size=1",
+        json={"filters": {"metadata": {"reverse_group": reverse_group}}},
+    )
+    assert page_two.status_code == 200
+    page_three = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions/list?reverse=true&page=3&size=1",
+        json={"filters": {"metadata": {"reverse_group": reverse_group}}},
+    )
+    assert page_three.status_code == 200
+
+    assert page_one.json()["total"] == 3
+    assert [item["id"] for item in page_one.json()["items"]] == [session_names[2]]
+    assert [item["id"] for item in page_two.json()["items"]] == [session_names[1]]
+    assert [item["id"] for item in page_three.json()["items"]] == [session_names[0]]
 
 
 def test_update_delete_metadata(
@@ -1124,6 +1282,59 @@ def test_get_session_context_with_peer_perspective(
     data = response.json()
     assert "peer_representation" in data
     assert "peer_card" in data
+
+
+@pytest.mark.asyncio
+async def test_get_session_context_peer_key_denied_for_co_member_perspective(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """`allow_member_read` gets a peer-scoped key onto this route, but it may only
+    read from its OWN perspective. A co-member's representation and peer card are
+    not session data, so membership must not hand them over."""
+    test_workspace, alice = sample_data
+    bob = str(generate_nanoid())
+    client.post(
+        f"/v3/workspaces/{test_workspace.name}/peers",
+        json={"name": bob, "metadata": {}},
+    )
+    session_id = str(generate_nanoid())
+    client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions",
+        json={"id": session_id, "peer_names": {alice.name: {}, bob: {}}},
+    )
+    # Membership is read on a separate committed-only connection by the auth
+    # dependency, so it must be committed before a member-scoped read.
+    await db_session.commit()
+
+    monkeypatch.setattr(settings.AUTH, "USE_AUTH", True)
+    monkeypatch.setattr(settings.AUTH, "JWT_SECRET", "test-secret")
+    client.headers["Authorization"] = (
+        f"Bearer {create_jwt(JWTParams(w=test_workspace.name, p=alice.name))}"
+    )
+    url = f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/context"
+
+    # Bob's view of alice — alice is not the observer.
+    assert (
+        client.get(
+            url, params={"peer_target": alice.name, "peer_perspective": bob}
+        ).status_code
+        == 401
+    )
+    # The omniscient view of bob — nobody's own perspective.
+    assert client.get(url, params={"peer_target": bob}).status_code == 401
+    # Alice's own perspective on bob is hers to read, as is her own global view.
+    assert (
+        client.get(
+            url, params={"peer_target": bob, "peer_perspective": alice.name}
+        ).status_code
+        == 200
+    )
+    assert client.get(url, params={"peer_target": alice.name}).status_code == 200
+    # Session data itself is still readable by any member.
+    assert client.get(url).status_code == 200
 
 
 def test_get_session_context_peer_perspective_without_target_fails(

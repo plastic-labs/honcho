@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import re
+import sys
 import time
 from collections.abc import Iterator
+from importlib.metadata import PackageNotFoundError, version
+from pathlib import Path
 from typing import Any, cast
 
 import httpx
@@ -20,6 +24,35 @@ DEFAULT_TIMEOUT = 60.0  # 60 seconds
 DEFAULT_MAX_RETRIES = 2
 RETRY_STATUS_CODES = {429, 500, 502, 503, 504}
 INITIAL_RETRY_DELAY = 0.5  # 500ms
+
+HOST_HEADER = "X-Honcho-Host"
+
+
+def _detect_version() -> str:
+    """This SDK's version: installed package metadata, else the source pyproject."""
+    try:
+        return version("honcho-ai")
+    except PackageNotFoundError:
+        try:
+            pyproject_path = Path(__file__).resolve().parents[3] / "pyproject.toml"
+            pyproject_text = pyproject_path.read_text(encoding="utf-8")
+            match = re.search(r'^version\s*=\s*"([^"]+)"', pyproject_text, re.MULTILINE)
+            if match:
+                return match.group(1)
+        except OSError:
+            pass
+        return "0.0.0"
+
+
+__version__ = _detect_version()
+
+
+def default_host_header() -> str:
+    """Default ``X-Honcho-Host``, e.g. ``honcho-python/2.4.0 (darwin)``.
+
+    Harness plugins override it with their own host identity.
+    """
+    return f"honcho-python/{__version__} ({sys.platform})"
 
 
 class HonchoHTTPClient:
@@ -52,6 +85,7 @@ class HonchoHTTPClient:
         self.max_retries = max_retries
         self.default_headers = {
             "Content-Type": "application/json",
+            HOST_HEADER: default_host_header(),
             **(default_headers or {}),
         }
         self.default_query = default_query
@@ -367,7 +401,7 @@ class HonchoHTTPClient:
             from datetime import datetime
             from email.utils import parsedate_to_datetime
 
-            dt: datetime = cast(datetime, parsedate_to_datetime(header))
+            dt: datetime = parsedate_to_datetime(header)
             timestamp: float = dt.timestamp()
             return max(0.0, timestamp - time.time())
         except Exception:

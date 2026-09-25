@@ -2,6 +2,7 @@
 title: "Honcho Reasoning"
 icon: "gears"
 sidebarTitle: "Reasoning"
+description: "How Honcho reasons over stored messages in the background to build memory, and how to tune reasoning depth, cost and latency for your agent."
 ---
 
 Honcho is a memory system that *reasons*. You can read more on the philosophy behind the approach [here](https://blog.plasticlabs.ai/blog/Memory-as-Reasoning), but practically speaking, the system runs inference on data in the background to produce the highest quality context for simulating statefulness. This document explains why reasoning is necessary and how Honcho implements it.
@@ -54,6 +55,8 @@ The explicit reasoning model ([Neuromancer XR](https://blog.plasticlabs.ai/resea
 
 The reasoning that Honcho does is something we're constantly iterating and improving on. Our goal is simple--provide the richest, most relevant context in the fastest, cheapest way possible in order to simulate statefulness in whatever setting you need.
 
+Two components produce this logic: the **Deriver** extracts explicit and deductive conclusions from incoming messages as they arrive, and the **Dreamer** periodically revisits stored conclusions to consolidate them and draw inductive conclusions across patterns spanning multiple messages. See [Architecture](/v3/documentation/core-concepts/architecture) for how these fit into the request/background split.
+
 ## How It Works
 
 When you write messages to Honcho, they're stored immediately and enqueued for background processing. Reasoning asynchronously ensures fast writes while still providing rich reasoning capabilities. Messages are stored immediately without blocking, and session-based queues maintain chronological consistency so reasoning tasks affecting the same peer representation are always processed in order.
@@ -64,21 +67,11 @@ The reasoning outputs--conclusions, summaries, peer cards--are stored as part of
 
 The diagram above shows how agents write messages to Honcho, which triggers reasoning that updates peer representations. Agents can then query representations to get additional context for their next response.
 
-### Token Batching
-
-Rather than running inference on every individual message, Honcho accumulates messages in the queue and processes them as a batch once the total token count of pending messages for a given peer representation crosses a threshold--roughly **1,000 tokens** at the current batch size. This keeps ingestion costs down, since Honcho charges based on reasoning passes, and ensures each pass has a meaningful amount of context to work with. At ~1,000 tokens the batch comfortably fits in the context window of any modern LLM, so no content is lost.
-
-If a user sends several short messages in a row (e.g., "yes", "ok", "sounds good"), those messages sit in the queue until enough content has accumulated. Once the threshold is met, the full batch is processed together in a single reasoning call.
-
-<Note>
-This batching only applies to **representation** tasks (conclusion extraction). Summary and dream tasks have their own scheduling logic and are not subject to the token threshold.
-</Note>
-
 ## Balances & Design Choices
 
 Off-the-shelf LLMs can perform formal logical reasoning, but they aren't optimized for it. Honcho uses custom models trained specifically for logical rigor (following formal reasoning rules rather than plausible-sounding text), structured output (consistent JSON schema with premises and conclusions), and efficiency (smaller, faster models tuned for this specific task). This allows Honcho to reason more reliably and at lower cost than general-purpose frontier LLMs.
 
-The approach balances quality with practical constraints. Custom models are smaller and cheaper to run, scaffolded conclusions are more token-efficient than raw conversation history, and we batch where appropriate to optimize update frequency.
+The approach balances quality with practical constraints. Custom models are smaller and cheaper to run, and scaffolded conclusions are more token-efficient than raw conversation history.
 
 Honcho's reasoning capabilities are actively being improved. Current areas of development include enhanced inductive and abductive reasoning, multi-hop  and temporal reasoning, and expanded file types and modalities. The system is designed to be extensible--new reasoning capabilities can be added without breaking existing functionality.
 

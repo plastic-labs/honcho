@@ -5,6 +5,67 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [2.5.1] - 2026-09-22
+
+### Added
+
+- `observer_id` and `observed_id` on `EvidenceObservation`, so evidence from workspace chat says which peer pair each conclusion belongs to. Previously the SDK dropped these fields. Requires Honcho v3.2.1+ (#1220)
+
+### Changed
+
+- `Conclusion.source_ids` is `[]` rather than `None` for explicit conclusions when talking to Honcho v3.2.1+. The type still admits `None` for older servers (#1193)
+
+## [2.5.0] - 2026-09-15
+
+### Added
+
+- `honcho.get_scope(id)` (sync and async) fetches an existing scope by ID and raises `NotFoundError` when it does not exist. Unlike `honcho.scope()`, it never creates the scope, so lookups cannot provision a recall boundary by accident (#1163)
+- Optional per-call `timeout` on synchronous and asynchronous `Peer.chat()`. It overrides the timeout for each HTTP attempt; when omitted or set to `None`, the client-wide timeout configured on `Honcho` remains in effect (#1098)
+- `include_evidence` on peer and workspace chat (sync, async, and streaming). Opting in returns a `ChatResponse` carrying the answer plus the conclusions, messages, and tool calls the dialectic read; leaving it out returns the answer on its own, so existing callers are unaffected. Streaming exposes `.evidence` once the stream is drained. Requires a Honcho server with the matching API support (Honcho v3.2.0+) (#1130)
+- `source_ids` and `times_derived` on `Conclusion`. `ConclusionsView.get(id)` / `get_many(ids)` / `derived(id)` and the workspace-level `honcho.conclusions.get` / `get_many` fetch a conclusion with attribution or walk the reasoning tree upward (source → derived). Requires a Honcho server with the matching API support (Honcho v3.2.0+) (#952)
+- SDK requests send `X-Honcho-Host: honcho-python/<version> (platform)` so CloudEvents can split harness vs direct SDK vs raw REST traffic. A caller-supplied `X-Honcho-Host` still wins (#1182)
+
+## [2.4.0] - 2026-08-25
+
+### Added
+
+- Scopes: `Honcho.scope()` / `HonchoAio.scope()` get-or-create a named visibility boundary, `Honcho.scopes()` lists them, and a `Scope` object adds/removes sessions, lists membership, and reads backfill `status()`. `Honcho.session(..., scopes=[...])` joins a new session to scopes at creation. Requires a Honcho server with the matching API support (Honcho v3.1.0+).
+- `scope` option on `Peer.chat()` / `chat_stream()`, representation, session context, and workspace search. A single scope answers from that scope's collection and card; a list of scopes restricts recall to the union of their member sessions (explicit-only). Mutually exclusive with `session` / `sessions` / `filters`.
+- Workspace-level chat: `Honcho.chat()` / `HonchoAio.chat()` and `chat_stream()` ask a question across every peer in the workspace, with the same `session`, `scope`, `reasoning_level`, and `response_format` options as `Peer.chat()`. Requires a Honcho server with the matching API support (Honcho v3.1.0+).
+
+### Changed
+
+- `ConclusionScope` is renamed to `ConclusionsView`. The old name remains as a deprecated alias for one more minor version. "Scope" now means a named set of sessions (`Scope`); these objects are views over one observer/observed pair.
+
+## [2.3.0] - 2026-08-10
+
+### Added
+
+- `response_format` on `Peer.chat()` / `PeerAio.chat()` and `Peer.chat_stream()` / `PeerAio.chat_stream()`, for constraining a dialectic answer to a schema. Pass a Pydantic model class to get a validated instance back (parsed via `model_validate_json`), or a raw JSON Schema dict to get the JSON string as-is. Overloads type the return precisely, so a model class narrows to that model and a dict narrows to `str`. On the streaming variants, chunks stay raw text that accumulates to a JSON string — parse it after the stream completes. Requires a Honcho server with the matching API support (Honcho v3.0.12+).
+- `response_format` field on `DialecticParams`.
+
+## [2.2.0] - 2026-07-02
+
+### Added
+
+- `ConclusionLevel` type (`explicit`, `deductive`, `inductive`, `contradiction`) and a `level` field on `Conclusion`, exposing the reasoning level the server already tracked but previously stripped from responses.
+- `filters` parameter on `ConclusionScope.list()` and `ConclusionScope.query()` (sync and async), passed through to the same dynamic server-side filter logic as `peers()`/`sessions()`/`messages()`. Filter explicit-only conclusions with `filters={"level": "explicit"}`, or by any other supported field/operator. Requires a Honcho server with the matching API support (Honcho v3.0.11+).
+
+### Fixed
+
+- Scope-managed filter keys (`observer`, `observed`, `session`) are now rejected with a clear `ValueError` if passed in `filters`, instead of silently overriding the scope and returning conclusions from a different peer pair. Use `peer.conclusions` / `conclusions_of(target)` and the `session=` parameter instead. `session_id` remains a valid filter on `query()`.
+
+## [2.1.2] - 2026-05-21
+
+### Added
+
+- `page`, `size`, and `reverse` pagination parameters on `Honcho.workspaces()` and `HonchoAio.workspaces()`, closing the gap from 2.1.0 which added these to `peers()`, `sessions()`, `messages()`, and `conclusions.list()` but not to `workspaces()`. Honoring `reverse` on the workspace/peer/session list routes also requires a Honcho server with the matching API fix; older servers silently ignore the parameter.
+- `peers` parameter on `Honcho.session()` and `HonchoAio.session()` — attach peers to a session at creation time instead of needing a follow-up `session.add_peers()` call. Accepts the same shapes as `Session.add_peers` (peer ID string, `Peer` object, list of either, or tuples with `SessionPeerConfig`).
+
+### Changed
+
+- `WorkspaceCreateParams`, `PeerCreateParams`, and `SessionCreateParams` now accept IDs up to 512 characters (was 100), matching the server-side schema change in Honcho v3.0.7.
+
 ## [2.1.1] - 2026-04-01
 
 ### Fixed

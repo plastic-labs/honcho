@@ -1,16 +1,309 @@
 import signal
+from datetime import UTC, datetime
 from typing import Any
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from src import models
-from src.utils.representation import Representation
+from src import crud, models
+from src.config import settings
+from src.crud.representation import RepresentationManager
+from src.deriver.deriver import process_representation_tasks_batch
+from src.exceptions import RepresentationSaveError
+from src.llm import HonchoLLMCallResponse
+from src.utils.representation import (
+    ExplicitObservationBase,
+    PromptRepresentation,
+    Representation,
+)
 from src.utils.work_unit import construct_work_unit_key, parse_work_unit_key
 
 
 @pytest.mark.asyncio
 class TestDeriverProcessing:
     """Test suite for deriver processing using the conftest fixtures"""
+
+    async def test_process_representation_tasks_batch_uses_model_config(self):
+        message = Mock(
+            id=1,
+            public_id="msg_1",
+            session_name="session-1",
+            workspace_name="workspace-1",
+            peer_name="alice",
+            content="hello",
+            token_count=5,
+            created_at=datetime.now(UTC),
+        )
+        configuration = Mock()
+        configuration.reasoning.enabled = True
+
+        mock_response = HonchoLLMCallResponse(
+            content=PromptRepresentation(explicit=[]),
+            input_tokens=10,
+            output_tokens=5,
+            finish_reasons=["STOP"],
+        )
+
+        with patch(
+            "src.deriver.deriver.honcho_llm_call",
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ) as mock_llm_call:
+            await process_representation_tasks_batch(
+                messages=[message],
+                message_level_configuration=configuration,
+                observers=["bob"],
+                observed="alice",
+                queue_item_message_ids=[1],
+                session_id="canonical-session-1",
+            )
+
+        await_args = mock_llm_call.await_args
+        if await_args is None:
+            raise AssertionError("Expected deriver LLM call")
+        kwargs = await_args.kwargs
+        expected_config = settings.DERIVER.MODEL_CONFIG
+        assert "model_config" in kwargs
+        assert kwargs["model_config"].model == expected_config.model
+        assert kwargs["model_config"].thinking_effort == expected_config.thinking_effort
+        assert (
+            kwargs["model_config"].thinking_budget_tokens
+            == expected_config.thinking_budget_tokens
+        )
+        assert kwargs["model_config"].stop_sequences == expected_config.stop_sequences
+        assert "llm_settings" not in kwargs
+
+    async def test_all_observer_saves_failing_surfaces_failure(self):
+        """When every observer's save_representation fails, the batch must raise."""
+        message = Mock(
+            id=1,
+            public_id="msg_1",
+            session_name="session-1",
+            workspace_name="workspace-1",
+            peer_name="alice",
+            content="hello",
+            token_count=5,
+            created_at=datetime.now(UTC),
+        )
+        configuration = Mock()
+        configuration.reasoning.enabled = True
+
+        mock_response = HonchoLLMCallResponse(
+            content=PromptRepresentation(
+                explicit=[
+                    ExplicitObservationBase(content="The user has a dog named Rover")
+                ]
+            ),
+            input_tokens=10,
+            output_tokens=5,
+            finish_reasons=["STOP"],
+        )
+
+        failing_save = AsyncMock(side_effect=RuntimeError("429 RESOURCE_EXHAUSTED"))
+        emitted: list[Any] = []
+        with (
+            patch(
+                "src.deriver.deriver.honcho_llm_call",
+                new_callable=AsyncMock,
+                return_value=mock_response,
+            ),
+            patch.object(RepresentationManager, "save_representation", failing_save),
+            patch("src.deriver.deriver.emit", side_effect=emitted.append),
+            pytest.raises(RepresentationSaveError, match="save_representation failed"),
+        ):
+            await process_representation_tasks_batch(
+                messages=[message],
+                message_level_configuration=configuration,
+                observers=["bob"],
+                observed="alice",
+                queue_item_message_ids=[1],
+                session_id="canonical-session-1",
+            )
+
+        # Telemetry must fire *before* the raise so a total save failure is still
+        # visible to metrics. Guards against emit() being moved after the raise.
+        assert emitted, "expected telemetry to be emitted before the raised failure"
+        assert emitted[-1].observer_count == 0
+        assert emitted[-1].failed_observer_count == 1
+
+    async def test_partial_observer_failure_is_processed_and_surfaced(self):
+        """When some observers save and one fails, the batch does NOT raise
+        (saved observers are kept) and the failure is visible via telemetry.
+        """
+        message = Mock(
+            id=1,
+            public_id="msg_1",
+            session_name="session-1",
+            workspace_name="workspace-1",
+            peer_name="alice",
+            content="hello",
+            token_count=5,
+            created_at=datetime.now(UTC),
+        )
+        configuration = Mock()
+        configuration.reasoning.enabled = True
+
+        mock_response = HonchoLLMCallResponse(
+            content=PromptRepresentation(
+                explicit=[
+                    ExplicitObservationBase(content="The user has a dog named Rover")
+                ]
+            ),
+            input_tokens=10,
+            output_tokens=5,
+            finish_reasons=["STOP"],
+        )
+
+        # bob succeeds, carol fails.
+        partial_save = AsyncMock(
+            side_effect=[
+                crud.CreateDocumentsResult(),
+                RuntimeError("429 RESOURCE_EXHAUSTED"),
+            ]
+        )
+        emitted: list[Any] = []
+        with (
+            patch(
+                "src.deriver.deriver.honcho_llm_call",
+                new_callable=AsyncMock,
+                return_value=mock_response,
+            ),
+            patch.object(RepresentationManager, "save_representation", partial_save),
+            patch("src.deriver.deriver.emit", side_effect=emitted.append),
+        ):
+            await process_representation_tasks_batch(
+                messages=[message],
+                message_level_configuration=configuration,
+                observers=["bob", "carol"],
+                observed="alice",
+                queue_item_message_ids=[1],
+                session_id="canonical-session-1",
+            )
+
+        assert emitted, "expected a telemetry event to be emitted"
+        event = emitted[-1]
+        assert event.observer_count == 1
+        assert event.failed_observer_count == 1
+
+    async def test_retryable_observer_save_reraises_after_telemetry(self):
+        """A deadlock on one observer must propagate so the queue can retry."""
+        from sqlalchemy.exc import OperationalError
+
+        class FakePGError(Exception):
+            sqlstate: str = "40P01"
+
+        deadlock = OperationalError("UPDATE documents", {}, FakePGError())
+        message = Mock(
+            id=1,
+            public_id="msg_1",
+            session_name="session-1",
+            workspace_name="workspace-1",
+            peer_name="alice",
+            content="hello",
+            token_count=5,
+            created_at=datetime.now(UTC),
+        )
+        configuration = Mock()
+        configuration.reasoning.enabled = True
+
+        mock_response = HonchoLLMCallResponse(
+            content=PromptRepresentation(
+                explicit=[
+                    ExplicitObservationBase(content="The user has a dog named Rover")
+                ]
+            ),
+            input_tokens=10,
+            output_tokens=5,
+            finish_reasons=["STOP"],
+        )
+        partial_save = AsyncMock(side_effect=[crud.CreateDocumentsResult(), deadlock])
+        emitted: list[Any] = []
+        with (
+            patch(
+                "src.deriver.deriver.honcho_llm_call",
+                new_callable=AsyncMock,
+                return_value=mock_response,
+            ),
+            patch.object(RepresentationManager, "save_representation", partial_save),
+            patch("src.deriver.deriver.emit", side_effect=emitted.append),
+            pytest.raises(OperationalError),
+        ):
+            await process_representation_tasks_batch(
+                messages=[message],
+                message_level_configuration=configuration,
+                observers=["bob", "carol"],
+                observed="alice",
+                queue_item_message_ids=[1],
+                session_id="canonical-session-1",
+            )
+
+        assert emitted, "expected telemetry to be emitted before the raised failure"
+        assert emitted[-1].observer_count == 1
+        assert emitted[-1].failed_observer_count == 1
+
+    async def test_process_representation_tasks_batch_passes_custom_instructions_into_prompt(
+        self,
+    ) -> None:
+        message = Mock(
+            id=1,
+            public_id="msg_1",
+            session_name="session-1",
+            workspace_name="workspace-1",
+            peer_name="alice",
+            content="hello",
+            token_count=5,
+            created_at=datetime.now(UTC),
+        )
+        configuration = Mock()
+        configuration.reasoning.enabled = True
+        configuration.reasoning.custom_instructions = (
+            "Prefer explicit facts with dates."
+        )
+
+        mock_response = HonchoLLMCallResponse(
+            content=PromptRepresentation(explicit=[]),
+            input_tokens=10,
+            output_tokens=5,
+            finish_reasons=["STOP"],
+        )
+
+        with (
+            patch(
+                "src.deriver.deriver.estimate_deriver_prompt_tokens",
+                return_value=123,
+            ) as mock_estimate_prompt_tokens,
+            patch(
+                "src.deriver.deriver.minimal_deriver_prompt",
+                return_value="prompt",
+            ) as mock_prompt,
+            patch(
+                "src.deriver.deriver.honcho_llm_call",
+                new_callable=AsyncMock,
+                return_value=mock_response,
+            ) as mock_llm_call,
+        ):
+            await process_representation_tasks_batch(
+                messages=[message],
+                message_level_configuration=configuration,
+                observers=["bob"],
+                observed="alice",
+                queue_item_message_ids=[1],
+                session_id="canonical-session-1",
+            )
+
+        mock_estimate_prompt_tokens.assert_called_once_with(
+            "Prefer explicit facts with dates."
+        )
+        mock_prompt.assert_called_once()
+        assert (
+            mock_prompt.call_args.kwargs["custom_instructions"]
+            == "Prefer explicit facts with dates."
+        )
+
+        await_args = mock_llm_call.await_args
+        if await_args is None:
+            raise AssertionError("Expected deriver LLM call")
+        assert await_args.kwargs["prompt"] == "prompt"
 
     async def test_work_unit_key_generation(
         self,
@@ -92,6 +385,187 @@ class TestDeriverProcessing:
 
         # Verify the methods were called
         assert mock_representation_manager.save_representation.called  # type: ignore[attr-defined]
+
+    async def test_warns_when_response_input_tokens_less_than_messages_tokens(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Data-quality invariant: provider should report at least as many
+        input tokens as we summed from messages. Drift surfaces as a WARNING
+        so analytics alerting can catch it."""
+        import logging
+
+        message = Mock(
+            id=1,
+            public_id="msg_drift",
+            session_name="session-1",
+            workspace_name="workspace-1",
+            peer_name="alice",
+            content="hello",
+            token_count=100,
+            created_at=datetime.now(UTC),
+        )
+        configuration = Mock()
+        configuration.reasoning.enabled = True
+
+        mock_response = HonchoLLMCallResponse(
+            content=PromptRepresentation(explicit=[]),
+            input_tokens=10,
+            output_tokens=5,
+            finish_reasons=["STOP"],
+        )
+
+        with (
+            patch(
+                "src.deriver.deriver.honcho_llm_call",
+                new_callable=AsyncMock,
+                return_value=mock_response,
+            ),
+            caplog.at_level(logging.WARNING, logger="src.deriver.deriver"),
+        ):
+            await process_representation_tasks_batch(
+                messages=[message],
+                message_level_configuration=configuration,
+                observers=["bob"],
+                observed="alice",
+                queue_item_message_ids=[1],
+                session_id="canonical-session-1",
+            )
+
+        assert any(
+            "token-breakdown invariant violated" in record.message
+            and record.levelno == logging.WARNING
+            for record in caplog.records
+        )
+
+    async def test_warns_when_prompt_scaffold_tokens_is_zero(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Data-quality invariant: prompt scaffold estimator returning 0
+        signals a silent failure — log WARNING so the metric pipeline can
+        alert."""
+        import logging
+
+        message = Mock(
+            id=1,
+            public_id="msg_scaffold_zero",
+            session_name="session-1",
+            workspace_name="workspace-1",
+            peer_name="alice",
+            content="hello",
+            token_count=5,
+            created_at=datetime.now(UTC),
+        )
+        configuration = Mock()
+        configuration.reasoning.enabled = True
+
+        mock_response = HonchoLLMCallResponse(
+            content=PromptRepresentation(explicit=[]),
+            input_tokens=100,
+            output_tokens=5,
+            finish_reasons=["STOP"],
+        )
+
+        with (
+            patch(
+                "src.deriver.deriver.honcho_llm_call",
+                new_callable=AsyncMock,
+                return_value=mock_response,
+            ),
+            patch(
+                "src.deriver.deriver.estimate_deriver_prompt_tokens",
+                return_value=0,
+            ),
+            caplog.at_level(logging.WARNING, logger="src.deriver.deriver"),
+        ):
+            await process_representation_tasks_batch(
+                messages=[message],
+                message_level_configuration=configuration,
+                observers=["bob"],
+                observed="alice",
+                queue_item_message_ids=[1],
+                session_id="canonical-session-1",
+            )
+
+        assert any(
+            "prompt_scaffold_tokens estimated as 0" in record.message
+            and record.levelno == logging.WARNING
+            for record in caplog.records
+        )
+
+    async def test_emits_dedup_counts_summed_across_observers(self) -> None:
+        """RepresentationCompletedEvent dedup counts must be the sum across all
+        observer collections, not the last observer's result."""
+        message = Mock(
+            id=1,
+            public_id="msg_dedup",
+            session_name="session-1",
+            workspace_name="workspace-1",
+            peer_name="alice",
+            content="hello",
+            token_count=5,
+            created_at=datetime.now(UTC),
+        )
+        configuration = Mock()
+        configuration.reasoning.enabled = True
+
+        mock_response = HonchoLLMCallResponse(
+            content=PromptRepresentation(
+                explicit=[ExplicitObservationBase(content="alice says hello")]
+            ),
+            input_tokens=10,
+            output_tokens=5,
+            finish_reasons=["STOP"],
+        )
+
+        manager = Mock()
+        manager.save_representation = AsyncMock(
+            side_effect=[
+                crud.CreateDocumentsResult(
+                    exact_dup_in_batch_count=1,
+                    exact_dup_existing_count=2,
+                    semantic_dup_rejected_count=3,
+                    semantic_dup_replaced_count=4,
+                ),
+                crud.CreateDocumentsResult(
+                    exact_dup_in_batch_count=10,
+                    exact_dup_existing_count=20,
+                    semantic_dup_rejected_count=30,
+                    semantic_dup_replaced_count=40,
+                ),
+            ]
+        )
+        emitted: list[Any] = []
+
+        with (
+            patch(
+                "src.deriver.deriver.honcho_llm_call",
+                new_callable=AsyncMock,
+                return_value=mock_response,
+            ),
+            patch(
+                "src.deriver.deriver.RepresentationManager",
+                return_value=manager,
+            ),
+            patch("src.deriver.deriver.emit", side_effect=emitted.append),
+        ):
+            await process_representation_tasks_batch(
+                messages=[message],
+                message_level_configuration=configuration,
+                observers=["bob", "carol"],
+                observed="alice",
+                queue_item_message_ids=[1],
+                session_id="canonical-session-1",
+            )
+
+        assert len(emitted) == 1
+        event = emitted[0]
+        assert event.observer_count == 2
+        assert event.exact_dup_in_batch_count == 11
+        assert event.exact_dup_existing_count == 22
+        assert event.semantic_dup_rejected_count == 33
+        assert event.semantic_dup_replaced_count == 44
 
 
 class TestBackwardsCompatibility:

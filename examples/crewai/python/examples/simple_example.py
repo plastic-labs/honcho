@@ -1,23 +1,27 @@
 """
 Simple Honcho + CrewAI Example
 
-A minimal example showing how to use Honcho's ExternalMemory with CrewAI agents.
+A minimal example showing how to use Honcho-backed unified Memory with CrewAI agents.
 This demonstrates the basic pattern for persistent conversation memory.
 """
 
+from crewai import Agent, Crew, Memory, Process, Task
 from dotenv import load_dotenv
-from crewai import Agent, Task, Crew, Process
-from crewai.memory.external.external_memory import ExternalMemory
-from honcho_crewai import HonchoStorage
+from honcho_crewai import HonchoMemoryStorage
 
 load_dotenv()
 
 
 def main():
     """Simple example of CrewAI agent with Honcho memory."""
-    # Initialize Honcho storage
-    storage = HonchoStorage(user_id="simple-demo-user")
-    external_memory = ExternalMemory(storage=storage)
+    user_id = "simple-demo-user"
+
+    # Initialize CrewAI unified memory backed by Honcho
+    storage = HonchoMemoryStorage(
+        peer_id=user_id,
+        session_id="simple-demo-session",
+    )
+    memory = Memory(storage=storage)
 
     # Add some conversation history
     messages = [
@@ -27,7 +31,12 @@ def main():
     ]
 
     for role, message in messages:
-        external_memory.save(message, metadata={"agent": role})
+        memory.remember(
+            message,
+            scope=f"/users/{user_id}/conversation",
+            categories=["conversation"],
+            metadata={"role": role},
+        )
 
     # Create agent with memory
     agent = Agent(
@@ -38,7 +47,7 @@ def main():
             "have told you about their learning journey and interests."
         ),
         verbose=True,
-        allow_delegation=False
+        allow_delegation=False,
     )
 
     # Create task
@@ -48,16 +57,16 @@ def main():
             "suggest a simple web development project they could build to practice Python."
         ),
         expected_output="A specific project suggestion with brief explanation",
-        agent=agent
+        agent=agent,
     )
 
-    # Execute with memory - CrewAI automatically retrieves relevant context!
+    # Execute with memory - CrewAI automatically retrieves relevant context.
     crew = Crew(
         agents=[agent],
         tasks=[task],
         process=Process.sequential,
-        external_memory=external_memory,
-        verbose=True
+        memory=memory,
+        verbose=True,
     )
 
     result = crew.kickoff()

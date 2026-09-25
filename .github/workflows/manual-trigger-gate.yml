@@ -1,0 +1,81 @@
+name: Manual Trigger Gate
+
+# Shared gate for workflows that can be triggered manually on PRs by adding a
+# label (and optionally via workflow_dispatch): verifies the actor is a code
+# owner and purges the trigger label so it can be re-added for another run.
+#
+# Callers must grant `pull-requests: write` on the calling job so the
+# remove-label job can delete the label, and should gate downstream jobs on
+# the `authorized` output rather than this workflow's conclusion.
+
+on:
+  workflow_call:
+    inputs:
+      label:
+        description: PR label that triggers the calling workflow
+        required: true
+        type: string
+      allow-workflow-dispatch:
+        description: Whether workflow_dispatch events may pass the gate
+        required: false
+        default: false
+        type: boolean
+    outputs:
+      authorized:
+        description: >-
+          'true' when the manual trigger's actor passed the CODEOWNERS check.
+          Empty on events where the check did not run (e.g. push).
+        value: ${{ jobs.check-actor.outputs.authorized }}
+
+jobs:
+  # Only code owners (.github/CODEOWNERS) may trigger the calling workflow
+  # manually.
+  check-actor:
+    name: Verify actor is a code owner
+    if: >-
+      (inputs.allow-workflow-dispatch && github.event_name == 'workflow_dispatch') ||
+      (github.event_name == 'pull_request' && github.event.label.name == inputs.label)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      authorized: ${{ steps.codeowners.outputs.authorized }}
+    steps:
+      - name: Check actor against CODEOWNERS on main
+        id: codeowners
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          # Usernames are case-insensitive on GitHub; compare lowercased.
+          owners="$(gh api -H "Accept: application/vnd.github.raw" \
+            "repos/${{ github.repository }}/contents/.github/CODEOWNERS?ref=main" \
+            | sed 's/#.*//' | grep -oE '@[A-Za-z0-9-]+' | tr -d '@' \
+            | tr '[:upper:]' '[:lower:]' | sort -u)"
+          actor_lc="$(printf '%s' "$ACTOR" | tr '[:upper:]' '[:lower:]')"
+          if printf '%s\n' "$owners" | grep -qxF "$actor_lc"; then
+            echo "@${ACTOR} is a code owner; proceeding"
+            echo "authorized=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::@${ACTOR} is not listed in .github/CODEOWNERS on main — only code owners may trigger this workflow manually"
+            exit 1
+          fi
+
+  # Purge the trigger label first thing. Best-effort: failing to remove the
+  # label (e.g. read-only token on a fork PR) doesn't block the tests.
+  remove-label:
+    name: Remove trigger label
+    if: github.event_name == 'pull_request' && github.event.label.name == inputs.label
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Remove trigger label
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh api --method DELETE \
+            "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels/${{ inputs.label }}"; then
+            echo "::warning::Could not remove the ${{ inputs.label }} label (it may have been removed already)"
+          fi

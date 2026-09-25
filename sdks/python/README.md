@@ -159,6 +159,6 @@ Apache 2.0 - see [LICENSE](../../LICENSE) for details.
 
 ## Support
 
-- [Documentation](https://docs.honcho.dev)
+- [Documentation](https://honcho.dev/docs)
 - [GitHub Issues](https://github.com/plastic-labs/honcho/issues)
 - [Discord Community](https://discord.gg/honcho)

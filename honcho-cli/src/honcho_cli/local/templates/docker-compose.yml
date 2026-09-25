@@ -1,0 +1,100 @@
+# Managed by `honcho start`. Re-rendered on every start — edit .env and config.toml, not this file.
+#
+# Images: ghcr.io/plastic-labs/honcho (API + deriver), pgvector/pgvector:pg15, redis:8.2
+# Ports bind to 127.0.0.1. Auth is off (AUTH_USE_AUTH=false in .env).
+
+services:
+  api:
+    image: ${HONCHO_IMAGE:-ghcr.io/plastic-labs/honcho:latest}
+    entrypoint: ["sh", "docker/entrypoint.sh"]
+    depends_on:
+      database:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "/app/.venv/bin/python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2).read()",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    volumes:
+      - lancedb-data:/app/lancedb_data
+      - ./config.toml:/app/config.toml:ro
+    environment:
+      - DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@database:5432/postgres
+      - CACHE_URL=redis://redis:6379/0?suppress=true
+      - CACHE_ENABLED=true
+    env_file:
+      - path: .env
+        required: false
+    restart: unless-stopped
+
+  deriver:
+    image: ${HONCHO_IMAGE:-ghcr.io/plastic-labs/honcho:latest}
+    entrypoint: ["/app/.venv/bin/python", "-m", "src.deriver"]
+    depends_on:
+      api:
+        condition: service_healthy
+      database:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - lancedb-data:/app/lancedb_data
+      - ./config.toml:/app/config.toml:ro
+    environment:
+      - DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@database:5432/postgres
+      - CACHE_URL=redis://redis:6379/0?suppress=true
+      - CACHE_ENABLED=true
+    env_file:
+      - path: .env
+        required: false
+    restart: unless-stopped
+
+  database:
+    image: pgvector/pgvector:pg15
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${DB_PORT:-5432}:5432"
+    command: ["postgres", "-c", "max_connections=200"]
+    environment:
+      - POSTGRES_DB=postgres
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_HOST_AUTH_METHOD=trust
+      - PGDATA=/var/lib/postgresql/data/pgdata
+    volumes:
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+      - pgdata:/var/lib/postgresql/data/
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:8.2
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:
+  redis-data:
+  lancedb-data:

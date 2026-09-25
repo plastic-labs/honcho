@@ -13,17 +13,48 @@ from src import crud, exceptions, models, schemas
 from src.config import settings
 from src.dependencies import tracked_db
 from src.dreamer.dream_scheduler import check_and_schedule_dream
-from src.embedding_client import embedding_client
+from src.embedding_client import EmbeddingTokenLimitError, embedding_client
 from src.schemas import ResolvedConfiguration
+from src.telemetry.events import EmbeddingCallPurpose
 from src.telemetry.logging import accumulate_metric
 from src.utils.formatting import format_datetime_utc
 from src.utils.representation import (
+    ALLOWLIST_SAFE_LEVELS,
     DeductiveObservation,
     ExplicitObservation,
     Representation,
+    allowlist_safe_levels,
 )
+from src.utils.sanitization import strip_nul
+from src.utils.types import embedding_call_purpose
 
 logger = logging.getLogger(__name__)
+
+
+def _observation_text(obs: ExplicitObservation | DeductiveObservation) -> str:
+    """Return the canonical text payload for an explicit or deductive observation."""
+    return obs.conclusion if isinstance(obs, DeductiveObservation) else obs.content
+
+
+def _normalized_observation(
+    obs: ExplicitObservation | DeductiveObservation,
+) -> ExplicitObservation | DeductiveObservation:
+    """Return an observation with its persisted/embed text normalized.
+
+    NUL bytes are removed here rather than closer to the database so that the
+    text that gets embedded is the same text that gets stored.
+    """
+    text = strip_nul(_observation_text(obs)).strip()
+    if isinstance(obs, DeductiveObservation):
+        return obs.model_copy(
+            update={
+                "conclusion": text,
+                # Premises ride along in internal_metadata, and jsonb rejects
+                # NUL in strings just as text columns do.
+                "premises": strip_nul(obs.premises),
+            }
+        )
+    return obs.model_copy(update={"content": text})
 
 
 class RepresentationManager:
@@ -47,7 +78,7 @@ class RepresentationManager:
         session_name: str,
         message_created_at: datetime.datetime,
         message_level_configuration: ResolvedConfiguration,
-    ) -> int:
+    ) -> crud.CreateDocumentsResult:
         """
         Save Representation objects to the collection as a set of documents.
 
@@ -58,29 +89,47 @@ class RepresentationManager:
             message_created_at: Timestamp when the message was created
 
         Returns:
-            The number of *new documents saved*
+            The result of document creation, including saved documents and
+            deduplication counts.
         """
 
-        new_documents = 0
+        empty_result = crud.CreateDocumentsResult()
 
         if not representation.deductive and not representation.explicit:
             logger.debug("No observations to save")
-            return new_documents
+            return empty_result
 
-        all_observations = representation.deductive + representation.explicit
+        # Normalize before the emptiness check: str.strip() does not remove
+        # NUL, so content that normalizes away has to be dropped afterwards.
+        all_observations = [
+            normalized
+            for normalized in (
+                _normalized_observation(obs)
+                for obs in representation.deductive + representation.explicit
+            )
+            if _observation_text(normalized)
+        ]
+        if not all_observations:
+            logger.debug("No non-empty observations to save")
+            return empty_result
 
         # Batch embed all observations
         batch_embed_start = time.perf_counter()
 
-        observation_texts = [
-            obs.conclusion if isinstance(obs, DeductiveObservation) else obs.content
-            for obs in all_observations
-        ]
+        observation_texts = [_observation_text(obs) for obs in all_observations]
         try:
-            embeddings = await embedding_client.simple_batch_embed(observation_texts)
-        except ValueError as e:
+            with embedding_call_purpose(
+                EmbeddingCallPurpose.CREATE_OBSERVATIONS.value,
+                workspace_name=self.workspace_name,
+                parent_category="representation",
+            ):
+                embeddings = await embedding_client.simple_batch_embed(
+                    observation_texts, on_oversize="truncate"
+                )
+        except EmbeddingTokenLimitError as e:
             raise exceptions.ValidationException(
-                f"Observation content exceeds maximum token limit of {settings.MAX_EMBEDDING_TOKENS}."
+                "Observation content exceeds maximum token limit of "
+                + f"{settings.EMBEDDING.MAX_INPUT_TOKENS}."
             ) from e
 
         batch_embed_duration = (time.perf_counter() - batch_embed_start) * 1000
@@ -94,7 +143,7 @@ class RepresentationManager:
         # Batch create document objects
         create_document_start = time.perf_counter()
         async with tracked_db("representation_manager.save_representation") as db:
-            new_documents = await self._save_representation_internal(
+            new_documents_result = await self._save_representation_internal(
                 db,
                 all_observations,
                 embeddings,
@@ -112,7 +161,7 @@ class RepresentationManager:
             "ms",
         )
 
-        return new_documents
+        return new_documents_result
 
     async def _save_representation_internal(
         self,
@@ -123,7 +172,7 @@ class RepresentationManager:
         session_name: str,
         message_created_at: datetime.datetime,
         message_level_configuration: ResolvedConfiguration,
-    ) -> int:
+    ) -> crud.CreateDocumentsResult:
         # get_or_create_collection already handles IntegrityError with rollback and a retry
         collection = await crud.get_or_create_collection(
             db,
@@ -162,7 +211,7 @@ class RepresentationManager:
             )
 
         # Use bulk creation with optional duplicate detection
-        accepted_documents = await crud.create_documents(
+        accepted_documents_result = await crud.create_documents(
             db,
             documents_to_create,
             self.workspace_name,
@@ -177,19 +226,21 @@ class RepresentationManager:
             except Exception as e:
                 logger.warning(f"Failed to check dream scheduling: {e}")
 
-        return len(accepted_documents)
+        return accepted_documents_result
 
     async def get_working_representation(
         self,
         *,
         db: AsyncSession | None = None,
-        session_name: str | None = None,
+        session_allowlist: list[str] | None = None,
         include_semantic_query: str | None = None,
         embedding: list[float] | None = None,
         semantic_search_top_k: int | None = None,
         semantic_search_max_distance: float | None = None,
         include_most_derived: bool = False,
         max_observations: int = settings.DERIVER.WORKING_REPRESENTATION_MAX_OBSERVATIONS,
+        parent_category: str | None = None,
+        embedding_purpose: EmbeddingCallPurpose = EmbeddingCallPurpose.SEARCH_MEMORY,
     ) -> Representation:
         """
         Get working representation with flexible query options.
@@ -197,26 +248,48 @@ class RepresentationManager:
         Args:
             db: Optional database session. If provided, uses it directly;
                 otherwise creates a new session via tracked_db.
-            session_name: Optional session to filter by
+            session_allowlist: Optional session allowlist to filter by. Applied
+                uniformly to every query path (semantic, most-derived, and
+                recent). None means no session restriction; an empty list
+                fail-closes to an empty representation.
             include_semantic_query: Query for semantic search
             embedding: Pre-computed embedding for the semantic query.
             semantic_search_top_k: Number of semantic results
             semantic_search_max_distance: Maximum distance for semantic search
             include_most_derived: Include most derived observations
             max_observations: Maximum total observations to return
+            parent_category: Optional workflow attribution forwarded to the
+                fallback embedding call when the caller didn't pre-compute
+                an embedding (or pre-compute failed).
+            embedding_purpose: Embedding call_purpose tag to use on the
+                fallback embed when no pre-computed embedding was supplied.
+                Defaults to SEARCH_MEMORY; callers whose route-level
+                precompute uses a more specific purpose (e.g.
+                SESSION_CONTEXT_SEARCH) should pass that here so the
+                fallback path lands in the same analytics bucket.
 
         Returns:
             Representation combining various query strategies
         """
         if include_semantic_query and embedding is None:
-            with suppress(Exception):
-                # Best-effort precompute
+            # Best-effort precompute when caller didn't supply one (or their
+            # precompute was suppressed). The purpose is parameterized so
+            # this fallback shows up in the same telemetry bucket as the
+            # successful path — see embedding_purpose docstring above.
+            with (
+                suppress(Exception),
+                embedding_call_purpose(
+                    embedding_purpose.value,
+                    workspace_name=self.workspace_name,
+                    parent_category=parent_category,
+                ),
+            ):
                 embedding = await embedding_client.embed(include_semantic_query)
 
         if db is not None:
             return await self._get_working_representation_internal(
                 db,
-                session_name=session_name,
+                session_allowlist=session_allowlist,
                 include_semantic_query=include_semantic_query,
                 embedding=embedding,
                 semantic_search_top_k=semantic_search_top_k,
@@ -226,11 +299,11 @@ class RepresentationManager:
             )
 
         async with tracked_db(
-            "representation_manager.get_working_representation"
+            "representation_manager.get_working_representation", read_only=True
         ) as new_db:
             return await self._get_working_representation_internal(
                 new_db,
-                session_name=session_name,
+                session_allowlist=session_allowlist,
                 include_semantic_query=include_semantic_query,
                 embedding=embedding,
                 semantic_search_top_k=semantic_search_top_k,
@@ -245,7 +318,7 @@ class RepresentationManager:
         self,
         db: AsyncSession,
         *,
-        session_name: str | None = None,
+        session_allowlist: list[str] | None = None,
         include_semantic_query: str | None = None,
         embedding: list[float] | None = None,
         semantic_search_top_k: int | None = None,
@@ -254,13 +327,20 @@ class RepresentationManager:
         max_observations: int = settings.DERIVER.WORKING_REPRESENTATION_MAX_OBSERVATIONS,
     ) -> Representation:
         """Internal implementation of get_working_representation."""
+        # Fail closed on an empty allowlist. This must short-circuit before
+        # any query: downstream stores drop an `IN ()` clause with an empty
+        # list (lancedb), which would silently widen the scope instead.
+        if session_allowlist is not None and not session_allowlist:
+            return Representation()
+
         total = max_observations
 
-        # Calculate how many observations to get from each source
+        # Calculate how many observations to get from each source.
+        # Floor of 1 when a semantic query was explicitly requested.
         semantic_observations = (
             min(
                 max(
-                    0,
+                    1,
                     semantic_search_top_k
                     if semantic_search_top_k is not None
                     else total // 3,
@@ -281,10 +361,8 @@ class RepresentationManager:
             # no derived observations requested
             top_observations = 0
 
-        # remaining observations are recent
-        recent_observations = total - semantic_observations - top_observations
-
         representation = Representation()
+        selected_document_ids: set[str] = set()
 
         # Get semantic observations if requested
         if include_semantic_query:
@@ -294,23 +372,38 @@ class RepresentationManager:
                 top_k=semantic_observations,
                 max_distance=semantic_search_max_distance,
                 embedding=embedding,
+                session_allowlist=session_allowlist,
             )
             representation.merge_representation(
                 Representation.from_documents(semantic_docs)
             )
+            selected_document_ids.update(document.id for document in semantic_docs)
 
-        # Get most derived observations if requested
+        # Get most derived observations if requested. The semantic query may
+        # return fewer documents than requested, so cap this query by the
+        # actual remaining representation capacity rather than the configured
+        # budget alone.
         if include_most_derived:
+            remaining_observations = max(0, total - representation.len())
             derived_docs = await self._query_documents_most_derived(
-                db, top_k=top_observations
+                db,
+                top_k=min(top_observations, remaining_observations),
+                session_allowlist=session_allowlist,
             )
             representation.merge_representation(
                 Representation.from_documents(derived_docs)
             )
+            selected_document_ids.update(document.id for document in derived_docs)
 
-        # Get recent observations
+        # Reclaim any capacity left by queries that returned fewer unique
+        # documents than requested. This keeps the final representation from
+        # shrinking when semantic or most-derived search underfills its slice.
+        recent_observations = max(0, total - representation.len())
         recent_docs = await self._query_documents_recent(
-            db, top_k=recent_observations, session_name=session_name
+            db,
+            top_k=recent_observations,
+            session_allowlist=session_allowlist,
+            excluded_document_ids=selected_document_ids,
         )
 
         representation.merge_representation(Representation.from_documents(recent_docs))
@@ -325,6 +418,7 @@ class RepresentationManager:
         max_distance: float | None = None,
         level: str | None = None,
         embedding: list[float] | None = None,
+        session_allowlist: list[str] | None = None,
     ) -> list[models.Document]:
         """Query documents by semantic similarity."""
         try:
@@ -336,6 +430,7 @@ class RepresentationManager:
                     top_k,
                     max_distance,
                     embedding=embedding,
+                    session_allowlist=session_allowlist,
                 )
             else:
                 documents = await crud.query_documents(
@@ -347,6 +442,10 @@ class RepresentationManager:
                     max_distance=max_distance,
                     top_k=top_k,
                     embedding=embedding,
+                    filters=self._build_filter_conditions(
+                        session_allowlist=session_allowlist
+                    )
+                    or None,
                 )
                 db.expunge_all()
                 return list(documents)
@@ -356,7 +455,11 @@ class RepresentationManager:
             return []
 
     async def _query_documents_recent(
-        self, db: AsyncSession, top_k: int, session_name: str | None = None
+        self,
+        db: AsyncSession,
+        top_k: int,
+        session_allowlist: list[str] | None = None,
+        excluded_document_ids: set[str] | None = None,
     ) -> list[models.Document]:
         """Query most recent documents."""
         stmt = (
@@ -368,8 +471,18 @@ class RepresentationManager:
                 models.Document.observed == self.observed,
                 models.Document.deleted_at.is_(None),
                 *(
-                    [models.Document.session_name == session_name]
-                    if session_name is not None
+                    [models.Document.id.notin_(excluded_document_ids)]
+                    if excluded_document_ids
+                    else []
+                ),
+                *(
+                    [
+                        models.Document.session_name.in_(session_allowlist),
+                        # Only levels with a trustworthy session stamp are
+                        # scopeable — see ALLOWLIST_SAFE_LEVELS.
+                        models.Document.level.in_(ALLOWLIST_SAFE_LEVELS),
+                    ]
+                    if session_allowlist is not None
                     else []
                 ),
             )
@@ -382,7 +495,7 @@ class RepresentationManager:
         return list(documents)
 
     async def _query_documents_most_derived(
-        self, db: AsyncSession, top_k: int
+        self, db: AsyncSession, top_k: int, session_allowlist: list[str] | None = None
     ) -> list[models.Document]:
         """Query most derived documents."""
         stmt = (
@@ -393,8 +506,24 @@ class RepresentationManager:
                 models.Document.observer == self.observer,
                 models.Document.observed == self.observed,
                 models.Document.deleted_at.is_(None),
+                *(
+                    [
+                        models.Document.session_name.in_(session_allowlist),
+                        # Only levels with a trustworthy session stamp are
+                        # scopeable — see ALLOWLIST_SAFE_LEVELS.
+                        models.Document.level.in_(ALLOWLIST_SAFE_LEVELS),
+                    ]
+                    if session_allowlist is not None
+                    else []
+                ),
             )
-            .order_by(models.Document.times_derived.desc())
+            .order_by(
+                models.Document.times_derived.desc(),
+                models.Document.created_at.desc(),
+                # created_at is the transaction timestamp, so documents created
+                # in the same batch share it -- id keeps the order deterministic.
+                models.Document.id,
+            )
         )
 
         result = await db.execute(stmt)
@@ -423,6 +552,7 @@ class RepresentationManager:
         count: int,
         max_distance: float | None = None,
         embedding: list[float] | None = None,
+        session_allowlist: list[str] | None = None,
     ) -> list[models.Document]:
         """Query documents for a specific level."""
         documents = await crud.query_documents(
@@ -433,7 +563,9 @@ class RepresentationManager:
             query=query,
             max_distance=max_distance,
             top_k=count,
-            filters=self._build_filter_conditions(level),
+            filters=self._build_filter_conditions(
+                level, session_allowlist=session_allowlist
+            ),
             embedding=embedding,
         )
 
@@ -446,16 +578,31 @@ class RepresentationManager:
     def _build_filter_conditions(
         self,
         level: str | None = None,
+        session_allowlist: list[str] | None = None,
     ) -> dict[str, Any]:
         """
         Build filter conditions for document queries.
 
         Returns a flat dict of key-value pairs for vector store filtering.
+        Callers must not pass an empty session_allowlist list — empty allowlists
+        fail closed before any query is issued (see
+        _get_working_representation_internal).
         """
         filters: dict[str, Any] = {}
 
         if level:
             filters["level"] = level
+
+        # `is not None` (not truthiness): an explicit empty allowlist must emit
+        # an empty `in` so downstream stores fail closed, matching
+        # _query_documents_recent / _query_documents_most_derived. Truthiness
+        # here would silently drop the filter and widen scope.
+        if session_allowlist is not None:
+            filters["session_name"] = {"in": session_allowlist}
+            # Only levels with a trustworthy session stamp are scopeable. This
+            # overrides any narrower `level` above; an empty intersection emits
+            # `{"in": []}`, which matches nothing rather than everything.
+            filters["level"] = {"in": allowlist_safe_levels([level] if level else None)}
 
         return filters
 
@@ -469,13 +616,15 @@ async def get_working_representation(
     db: AsyncSession | None = None,
     observer: str,
     observed: str,
-    session_name: str | None = None,
+    session_allowlist: list[str] | None = None,
     include_semantic_query: str | None = None,
     embedding: list[float] | None = None,
     semantic_search_top_k: int | None = None,
     semantic_search_max_distance: float | None = None,
     include_most_derived: bool = False,
     max_observations: int = settings.DERIVER.WORKING_REPRESENTATION_MAX_OBSERVATIONS,
+    parent_category: str | None = None,
+    embedding_purpose: EmbeddingCallPurpose = EmbeddingCallPurpose.SEARCH_MEMORY,
 ) -> Representation:
     """
     Get raw working representation data from the relevant document collection.
@@ -487,6 +636,11 @@ async def get_working_representation(
         db: Optional database session. If provided, uses it directly;
             otherwise creates a new session via tracked_db.
         embedding: Pre-computed embedding for the semantic query.
+        parent_category: Workflow attribution forwarded to the fallback
+            embedding call when no pre-computed embedding was supplied.
+        embedding_purpose: Embedding call_purpose for the fallback embed;
+            callers should match it to whatever purpose their route-level
+            precompute used so failure/retry paths stay in the same bucket.
     """
     manager = RepresentationManager(
         workspace_name=workspace_name,
@@ -495,11 +649,13 @@ async def get_working_representation(
     )
     return await manager.get_working_representation(
         db=db,
-        session_name=session_name,
+        session_allowlist=session_allowlist,
         include_semantic_query=include_semantic_query,
         embedding=embedding,
         semantic_search_top_k=semantic_search_top_k,
         semantic_search_max_distance=semantic_search_max_distance,
         include_most_derived=include_most_derived,
         max_observations=max_observations,
+        parent_category=parent_category,
+        embedding_purpose=embedding_purpose,
     )

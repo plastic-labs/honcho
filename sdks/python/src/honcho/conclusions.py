@@ -8,21 +8,132 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
 
-from .api_types import ConclusionResponse, RepresentationResponse
+from .api_types import ConclusionLevel, ConclusionResponse, RepresentationResponse
 from .base import SessionBase
-from .http import routes
+from .http import NotFoundError, routes
 from .pagination import SyncPage
 from .utils import resolve_id
 
 if TYPE_CHECKING:
-    from .aio import ConclusionScopeAio
+    from .aio import ConclusionsViewAio, WorkspaceConclusionsAio
     from .client import Honcho
 
 __all__ = [
     "Conclusion",
-    "ConclusionScope",
+    "ConclusionsView",
     "ConclusionCreateParams",
+    "WorkspaceConclusions",
 ]
+
+_LIST_PAGE_CAP = 100
+
+# Filter keys that define a conclusions view (the observer/observed peer pair).
+# They are set from the view itself, so a caller must not pass them in `filters`.
+_VIEW_RESERVED = ("observer", "observed", "observer_id", "observed_id")
+
+
+def _reject_reserved_filter_keys(
+    filters: dict[str, Any] | None, reserved: tuple[str, ...]
+) -> None:
+    """Raise if ``filters`` contains keys managed by the conclusions view.
+
+    The observer/observed peer pair (and, on ``list``, the session) is fixed by
+    the view, so letting a user filter override it would silently return data
+    from a different pair than requested. Fail loud instead.
+    """
+    if not filters:
+        return
+    clash = sorted(k for k in reserved if k in filters)
+    if clash:
+        guidance = (
+            "Choose the peer pair via peer.conclusions / peer.conclusions_of(target)"
+        )
+        if "session" in reserved or "session_id" in reserved:
+            guidance += "; use the session= parameter to filter by session"
+        raise ValueError(
+            f"Filter key(s) {clash} are managed by this conclusions view and "
+            + f"cannot be passed in filters. {guidance}."
+        )
+
+
+def _list_query(page: int, size: int, reverse: bool) -> dict[str, Any]:
+    query: dict[str, Any] = {"page": page, "size": size}
+    if reverse:
+        query["reverse"] = "true"
+    return query
+
+
+def _conclusion_from_item(item: Any) -> Conclusion:
+    return Conclusion.from_api_response(ConclusionResponse.model_validate(item))
+
+
+def _get_conclusion(honcho: "Honcho", conclusion_id: str) -> Conclusion:
+    honcho._ensure_workspace()
+    data = honcho._http.get(routes.conclusion(honcho.workspace_id, conclusion_id))
+    return _conclusion_from_item(data)
+
+
+def _require_view(
+    conclusion: Conclusion, observer_id: str, observed_id: str
+) -> Conclusion:
+    if conclusion.observer_id != observer_id or conclusion.observed_id != observed_id:
+        raise NotFoundError("Conclusion not found")
+    return conclusion
+
+
+def _get_many_conclusions(
+    honcho: "Honcho",
+    conclusion_ids: list[str],
+    extra_filters: dict[str, Any] | None = None,
+) -> list[Conclusion]:
+    if not conclusion_ids:
+        return []
+    honcho._ensure_workspace()
+    conclusions: list[Conclusion] = []
+    for start in range(0, len(conclusion_ids), _LIST_PAGE_CAP):
+        chunk = conclusion_ids[start : start + _LIST_PAGE_CAP]
+        filters: dict[str, Any] = {"id": {"in": chunk}, **(extra_filters or {})}
+        data = honcho._http.post(
+            routes.conclusions_list(honcho.workspace_id),
+            body={"filters": filters},
+            query={"page": 1, "size": len(chunk)},
+        )
+        conclusions.extend(
+            _conclusion_from_item(item) for item in data.get("items", [])
+        )
+    return conclusions
+
+
+def _list_conclusions(
+    honcho: "Honcho",
+    filters: dict[str, Any] | None,
+    *,
+    page: int,
+    size: int,
+    reverse: bool,
+) -> SyncPage[ConclusionResponse, Conclusion]:
+    honcho._ensure_workspace()
+    body: dict[str, Any] | None = {"filters": filters} if filters else None
+    data = honcho._http.post(
+        routes.conclusions_list(honcho.workspace_id),
+        body=body,
+        query=_list_query(page, size, reverse),
+    )
+
+    def transform(response: ConclusionResponse) -> Conclusion:
+        return Conclusion.from_api_response(response)
+
+    def fetch_next(
+        next_page: int,
+    ) -> SyncPage[ConclusionResponse, Conclusion]:
+        next_data = honcho._http.post(
+            routes.conclusions_list(honcho.workspace_id),
+            body=body,
+            query=_list_query(next_page, size, reverse),
+        )
+        return SyncPage(next_data, ConclusionResponse, transform, fetch_next)
+
+    return SyncPage(data, ConclusionResponse, transform, fetch_next)
 
 
 class ConclusionCreateParams(BaseModel):
@@ -43,6 +154,14 @@ class Conclusion:
         observer_id: The peer ID who made this conclusion
         observed_id: The peer ID this conclusion is about
         session_id: The session this conclusion relates to
+        level: Reasoning level ("explicit", "deductive", "inductive",
+            "contradiction"). "explicit" conclusions are extracted directly
+            from messages; the others are derived during dreaming.
+        source_ids: IDs of the conclusions this one was derived from (premises
+            for "deductive", supporting sources for "inductive", conflicting
+            conclusions for "contradiction"). None for "explicit" conclusions.
+        times_derived: Number of times this conclusion has been independently
+            derived.
         created_at: Timestamp for when the conclusion was created
     """
 
@@ -51,6 +170,9 @@ class Conclusion:
     observer_id: str
     observed_id: str
     session_id: str | None = None
+    level: ConclusionLevel = "explicit"
+    source_ids: list[str] | None = None
+    times_derived: int = 1
     created_at: datetime.datetime
 
     def __init__(
@@ -61,12 +183,18 @@ class Conclusion:
         observed_id: str,
         session_id: str | None,
         created_at: datetime.datetime,
+        level: ConclusionLevel = "explicit",
+        source_ids: list[str] | None = None,
+        times_derived: int = 1,
     ) -> None:
         self.id = id
         self.content = content
         self.observer_id = observer_id
         self.observed_id = observed_id
         self.session_id = session_id
+        self.level = level
+        self.source_ids = source_ids
+        self.times_derived = times_derived
         self.created_at = created_at
 
     @classmethod
@@ -78,6 +206,9 @@ class Conclusion:
             observer_id=data.observer_id,
             observed_id=data.observed_id,
             session_id=data.session_id,
+            level=data.level,
+            source_ids=data.source_ids,
+            times_derived=data.times_derived,
             created_at=data.created_at,
         )
 
@@ -91,7 +222,67 @@ class Conclusion:
         return self.content
 
 
-class ConclusionScope:
+class WorkspaceConclusions:
+    """Workspace-wide conclusion access. No observer/observed pair is implied.
+
+    Use this to list or look up conclusions across the workspace, then filter
+    down to a peer or session. Pair-scoped create/query/delete stay on
+    ``peer.conclusions`` / ``peer.conclusions_of(target)``.
+
+    Example:
+        ```python
+        honcho.conclusions.list()  # whole workspace
+        honcho.conclusions.list(filters={"observed_id": "alice"})
+        honcho.conclusions.list(filters={"session_id": session.id})
+        honcho.conclusions.get(conclusion_id)
+        honcho.conclusions.get_many(node.source_ids or [])
+        ```
+    """
+
+    _honcho: "Honcho"
+    workspace_id: str
+
+    def __init__(self, honcho: "Honcho") -> None:
+        self._honcho = honcho
+        self.workspace_id = honcho.workspace_id
+
+    @property
+    def aio(self) -> "WorkspaceConclusionsAio":
+        from .aio import WorkspaceConclusionsAio
+
+        return WorkspaceConclusionsAio(self)
+
+    def list(
+        self,
+        page: int = 1,
+        size: int = 50,
+        *,
+        filters: dict[str, Any] | None = None,
+        reverse: bool = False,
+    ) -> SyncPage[ConclusionResponse, Conclusion]:
+        """List conclusions in this workspace.
+
+        Unlike ``peer.conclusions.list``, no observer/observed pair is injected.
+        Pass ``filters`` to narrow the view — e.g. ``{"observed_id": "alice"}``
+        or ``{"session_id": "..."}``.
+        """
+        return _list_conclusions(
+            self._honcho, filters, page=page, size=size, reverse=reverse
+        )
+
+    def get(self, conclusion_id: str) -> Conclusion:
+        """Get a single conclusion by ID, anywhere in the workspace."""
+        return _get_conclusion(self._honcho, conclusion_id)
+
+    def get_many(self, conclusion_ids: list[str]) -> list[Conclusion]:
+        """Get multiple conclusions by ID. Missing IDs are omitted."""
+        return _get_many_conclusions(self._honcho, conclusion_ids)
+
+    def __repr__(self) -> str:
+        return f"WorkspaceConclusions(workspace_id={self.workspace_id!r})"
+
+
+class ConclusionsView:
     """
     Scoped access to conclusions for a specific observer/observed relationship.
 
@@ -130,7 +321,7 @@ class ConclusionScope:
         observed: str,
     ):
         """
-        Initialize a ConclusionScope.
+        Initialize a ConclusionsView.
 
         Args:
             honcho: The Honcho client instance
@@ -144,12 +335,12 @@ class ConclusionScope:
         self.observed = observed
 
     @property
-    def aio(self) -> "ConclusionScopeAio":
+    def aio(self) -> "ConclusionsViewAio":
         """
-        Access async versions of all ConclusionScope methods.
+        Access async versions of all ConclusionsView methods.
 
-        Returns a ConclusionScopeAio view that provides async versions of all methods
-        while sharing state with this ConclusionScope instance.
+        Returns a ConclusionsViewAio view that provides async versions of all methods
+        while sharing state with this ConclusionsView instance.
 
         Example:
             ```python
@@ -159,9 +350,9 @@ class ConclusionScope:
             ```
         """
         # Import here to avoid circular import (aio.py imports from this module)
-        from .aio import ConclusionScopeAio
+        from .aio import ConclusionsViewAio
 
-        return ConclusionScopeAio(self)
+        return ConclusionsViewAio(self)
 
     def list(
         self,
@@ -169,6 +360,7 @@ class ConclusionScope:
         size: int = 50,
         session: str | SessionBase | None = None,
         *,
+        filters: dict[str, Any] | None = None,
         reverse: bool = False,
     ) -> SyncPage[ConclusionResponse, Conclusion]:
         """
@@ -178,52 +370,40 @@ class ConclusionScope:
             page: Page number (1-indexed)
             size: Number of results per page
             session: Optional session (ID string or Session object) to filter by
+            filters: Optional dictionary of additional filter criteria, merged
+                with this scope's observer/observed (and session, if given).
+                Supports the same operators as other list endpoints — e.g.
+                ``{"level": "explicit"}`` to get only conclusions extracted
+                directly from messages (i.e. not derived during dreaming), or
+                ``{"source_ids": {"contains": "<id>"}}`` to get conclusions
+                derived from a given conclusion (see also ``derived()``). See
+                https://honcho.dev/docs/v3/documentation/features/advanced/using-filters
             reverse: If True, reverses the default ordering. Default: False.
 
         Returns:
             Paginated response containing Conclusion objects
         """
-        self._honcho._ensure_workspace()
+        _reject_reserved_filter_keys(
+            filters, _VIEW_RESERVED + ("session", "session_id")
+        )
         resolved_session_id = resolve_id(session)
-        filters: dict[str, Any] = {
+        filters = {
             "observer_id": self.observer,
             "observed_id": self.observed,
+            **({"session_id": resolved_session_id} if resolved_session_id else {}),
+            **(filters or {}),
         }
-        if resolved_session_id:
-            filters["session_id"] = resolved_session_id
-
-        query: dict[str, Any] = {"page": page, "size": size}
-        if reverse:
-            query["reverse"] = "true"
-        data = self._honcho._http.post(
-            routes.conclusions_list(self.workspace_id),
-            body={"filters": filters},
-            query=query,
+        return _list_conclusions(
+            self._honcho, filters, page=page, size=size, reverse=reverse
         )
-
-        def transform(response: ConclusionResponse) -> Conclusion:
-            return Conclusion.from_api_response(response)
-
-        def fetch_next(
-            next_page: int,
-        ) -> SyncPage[ConclusionResponse, Conclusion]:
-            next_query: dict[str, Any] = {"page": next_page, "size": size}
-            if reverse:
-                next_query["reverse"] = "true"
-            next_data = self._honcho._http.post(
-                routes.conclusions_list(self.workspace_id),
-                body={"filters": filters},
-                query=next_query,
-            )
-            return SyncPage(next_data, ConclusionResponse, transform, fetch_next)
-
-        return SyncPage(data, ConclusionResponse, transform, fetch_next)
 
     def query(
         self,
         query: str,
         top_k: int = 10,
         distance: float | None = None,
+        *,
+        filters: dict[str, Any] | None = None,
     ) -> list[Conclusion]:
         """
         Semantic search for conclusions in this scope.
@@ -232,14 +412,21 @@ class ConclusionScope:
             query: The search query string
             top_k: Maximum number of results to return
             distance: Maximum cosine distance threshold (0.0-1.0)
+            filters: Optional dictionary of additional filter criteria, merged
+                with this scope's observer/observed. Supports the same operators
+                as the list endpoint — e.g. ``{"level": "deductive"}`` to search
+                only conclusions derived during dreaming. See
+                https://honcho.dev/docs/v3/documentation/features/advanced/using-filters
 
         Returns:
             List of matching Conclusion objects
         """
+        _reject_reserved_filter_keys(filters, _VIEW_RESERVED)
         self._honcho._ensure_workspace()
-        filters: dict[str, Any] = {
+        filters = {
             "observer_id": self.observer,
             "observed_id": self.observed,
+            **(filters or {}),
         }
 
         body: dict[str, Any] = {
@@ -258,6 +445,92 @@ class ConclusionScope:
             Conclusion.from_api_response(ConclusionResponse.model_validate(item))
             for item in data
         ]
+
+    def get(self, conclusion_id: str) -> Conclusion:
+        """
+        Get a single conclusion by ID.
+
+        Args:
+            conclusion_id: The ID of the conclusion to retrieve
+
+        Returns:
+            The Conclusion object, including its attribution fields
+            (`source_ids`, `times_derived`)
+
+        Raises:
+            NotFoundError: If no conclusion with the given ID exists in this
+                observer/observed pair. Use ``honcho.conclusions.get`` for a
+                workspace-wide lookup.
+        """
+        return _require_view(
+            _get_conclusion(self._honcho, conclusion_id),
+            self.observer,
+            self.observed,
+        )
+
+    def get_many(self, conclusion_ids: list[str]) -> list[Conclusion]:
+        """
+        Get multiple conclusions by ID in a single call.
+
+        Useful for resolving a derived conclusion's premises: pass its
+        ``source_ids`` to fetch all of them at once instead of one
+        ``get()`` per ID.
+
+        Args:
+            conclusion_ids: The IDs of the conclusions to retrieve
+
+        Returns:
+            The matching Conclusion objects. IDs that don't exist are
+            omitted, so the result may be shorter than the input (order
+            is not guaranteed to match the input either).
+        """
+        return _get_many_conclusions(
+            self._honcho,
+            conclusion_ids,
+            extra_filters={
+                "observer_id": self.observer,
+                "observed_id": self.observed,
+            },
+        )
+
+    def derived(
+        self,
+        conclusion_id: str,
+        page: int = 1,
+        size: int = 50,
+        *,
+        reverse: bool = False,
+    ) -> SyncPage[ConclusionResponse, Conclusion]:
+        """
+        Get the conclusions derived from the given conclusion — i.e. those
+        that list it in their ``source_ids``. Traverses the reasoning tree
+        upward (source -> derived).
+
+        Args:
+            conclusion_id: The ID of the source conclusion
+            page: Page number to fetch. Default: 1.
+            size: Number of results per page. Default: 50.
+            reverse: If True, reverses the default newest-first ordering.
+
+        Equivalent to ``list`` with
+        ``{"source_ids": {"contains": conclusion_id}}``, restricted to this
+        observer/observed pair. An unknown ``conclusion_id`` yields an empty
+        page rather than an error.
+
+        Returns:
+            Paginated response containing Conclusion objects
+        """
+        return _list_conclusions(
+            self._honcho,
+            {
+                "source_ids": {"contains": conclusion_id},
+                "observer_id": self.observer,
+                "observed_id": self.observed,
+            },
+            page=page,
+            size=size,
+            reverse=reverse,
+        )
 
     def delete(self, conclusion_id: str) -> None:
         """
@@ -389,6 +662,6 @@ class ConclusionScope:
 
     def __repr__(self) -> str:
         return (
-            f"ConclusionScope(workspace_id={self.workspace_id!r}, "
+            f"ConclusionsView(workspace_id={self.workspace_id!r}, "
             f"observer={self.observer!r}, observed={self.observed!r})"
         )

@@ -1,13 +1,31 @@
 import contextvars
+import logging
+from typing import Any
 
-from sqlalchemy import MetaData, text
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy import MetaData, event, text
+from sqlalchemy.ext.asyncio import (
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 from sqlalchemy.orm import declarative_base
-from sqlalchemy.pool import NullPool
+from sqlalchemy.pool import NullPool, QueuePool
 
 from src.config import settings
+from src.telemetry.prometheus.metrics import (
+    db_connections_established_counter,
+    db_connections_open_gauge,
+    db_queries_in_flight_gauge,
+)
 
-connect_args = {"prepare_threshold": None}
+logger = logging.getLogger(__name__)
+
+connect_args = {
+    "prepare_threshold": None,
+    # Bound a single connection attempt so it fails fast instead of hanging when
+    # the server/pooler is unreachable or stalled (psycopg, seconds).
+    "connect_timeout": settings.DB.CONNECT_TIMEOUT_SECONDS,
+}
 
 # Context variable to store request context
 request_context: contextvars.ContextVar[str | None] = contextvars.ContextVar(
@@ -38,12 +56,248 @@ engine = create_async_engine(
     **engine_kwargs,
 )
 
+# A vanilla AsyncSession is lazy: it checks out a pooled connection on the first
+# DB-touching call (not at construction) and couples the checkout to the
+# statement, so a handler doing non-DB work (embedding/file/LLM) before its
+# first query does not pin a connection across it. Connection acquisition is a
+# single attempt with no retry — callers handle a saturated/unreachable DB (the
+# API surfaces the error; the deriver backs off and retries on a later poll).
 SessionLocal = async_sessionmaker(
     autocommit=False,
     autoflush=False,
     expire_on_commit=False,
     bind=engine,
+    class_=AsyncSession,
 )
+
+# Read-only engine: shares `engine`'s pool, but checks connections out in DBAPI
+# AUTOCOMMIT mode, so psycopg emits NO BEGIN — a SELECT never autobegins a
+# transaction. The backend therefore returns to state 'idle' (not 'idle in
+# transaction') the moment a statement completes.
+read_engine = engine.execution_options(isolation_level="AUTOCOMMIT")
+
+# Sessions for SELECT-only work (same lazy-checkout semantics as SessionLocal).
+# MUST NOT be used for writes: with no enclosing transaction, begin_nested()
+# savepoints (see the crud get-or-create paths) break, and every flush would
+# commit immediately. Use SessionLocal for anything that mutates.
+ReadSessionLocal = async_sessionmaker(
+    autocommit=False,
+    autoflush=False,
+    expire_on_commit=False,
+    bind=read_engine,
+    class_=AsyncSession,
+)
+
+
+def _set_application_name_on_checkout(
+    dbapi_connection: Any, _connection_record: Any, _connection_proxy: Any
+) -> None:
+    """Tag each checked-out connection with the current request context.
+
+    Registered only when ``DB.TRACING`` is on. Fires on every pool checkout (so a
+    reused pooled connection is re-tagged for the new caller), reading the
+    per-task ``request_context`` the request/task scope has already set.
+    Best-effort: a failure here must never break the checkout.
+
+    Runs in autocommit so it never leaves the connection 'idle in transaction'
+    at checkout: this hook fires BEFORE the dialect applies execution-option
+    isolation levels, and psycopg refuses to switch a connection into AUTOCOMMIT
+    (which the read engine does) while a transaction opened by this statement is
+    still in progress. set_config(..., is_local=false) is session-scoped, so it
+    persists past the autocommit boundary.
+    """
+    context = request_context.get() or "unknown"
+    try:
+        previous_autocommit = dbapi_connection.autocommit
+        if not previous_autocommit:
+            dbapi_connection.autocommit = True
+        try:
+            cursor = dbapi_connection.cursor()
+            try:
+                cursor.execute(
+                    "SELECT set_config('application_name', %s, false)", (context,)
+                )
+            finally:
+                cursor.close()
+        finally:
+            if not previous_autocommit:
+                dbapi_connection.autocommit = False
+    except Exception:
+        logger.debug("setting application_name on checkout failed", exc_info=True)
+
+
+if settings.DB.TRACING:
+    event.listen(engine.sync_engine, "checkout", _set_application_name_on_checkout)
+
+
+def get_pool_stats() -> dict[str, int]:
+    """Return live connection-pool stats for this process.
+
+    ``engine.pool`` is the AsyncEngine's pool (the same object as
+    ``engine.sync_engine.pool``); its stat methods are synchronous counter
+    reads with no I/O, so they are safe to call without ``await``. Returns
+    zeros for pools that do not track connections (e.g. ``NullPool``).
+    """
+    zeros = {"checked_out": 0, "checked_in": 0, "size": 0, "overflow": 0}
+    pool = engine.pool
+    # Only QueuePool (and its AsyncAdaptedQueuePool subclass) tracks connection
+    # counts; NullPool and others have no meaningful stats.
+    if not isinstance(pool, QueuePool):
+        return zeros
+    try:
+        # overflow() is negative until the base pool fills (it starts at
+        # -pool_size); clamp to the count of overflow connections actually open.
+        return {
+            "checked_out": pool.checkedout(),
+            "checked_in": pool.checkedin(),
+            "size": pool.size(),
+            "overflow": max(0, pool.overflow()),
+        }
+    except Exception:
+        return zeros
+
+
+class DBQueryInflightTracker:
+    """Tracks statements executing on the wire via SQLAlchemy cursor events.
+
+    Drift-proof: marks ``Connection.info`` when a statement starts and clears it
+    on completion OR error, so the gauge can't leak upward (an errored statement
+    skips ``after_cursor_execute``) or go negative (a connect-time error has no
+    matching start). Bound to a pre-resolved labeled gauge child so the
+    per-statement hot path does no label resolution.
+    """
+
+    # Marker on Connection.info recording that we incremented for the current
+    # statement, so we decrement exactly once on completion or error.
+    INFLIGHT_KEY: str = "_honcho_inflight"
+
+    def __init__(self, gauge_child: Any) -> None:
+        self._child: Any = gauge_child
+
+    def on_before(self, conn: Any, *_: Any) -> None:
+        try:
+            conn.info[self.INFLIGHT_KEY] = True
+            self._child.inc()
+        except Exception:
+            logger.debug("in-flight gauge inc failed", exc_info=True)
+
+    def on_after(self, conn: Any, *_: Any) -> None:
+        try:
+            if conn.info.pop(self.INFLIGHT_KEY, False):
+                self._child.dec()
+        except Exception:
+            logger.debug("in-flight gauge dec failed", exc_info=True)
+
+    def on_error(self, exception_context: Any) -> None:
+        try:
+            conn = exception_context.connection
+            if conn is not None and conn.info.pop(self.INFLIGHT_KEY, False):
+                self._child.dec()
+        except Exception:
+            logger.debug("in-flight gauge error-path dec failed", exc_info=True)
+
+
+# Process-wide tracker, created at registration (None until then / if metrics off).
+_inflight_tracker: DBQueryInflightTracker | None = None
+
+
+_db_query_instrumentation_registered = False
+
+
+def register_db_query_instrumentation(instance_type: str) -> None:
+    """Attach per-statement in-flight tracking to the engine (no-op if off).
+
+    Gated on METRICS.ENABLED so there is zero overhead — not even attached event
+    listeners — when metrics are disabled. Idempotent: repeated calls (e.g. a
+    re-run lifespan or test startup) won't attach duplicate listeners, which
+    would double-count in-flight statements.
+    """
+    global _inflight_tracker, _db_query_instrumentation_registered
+    if not settings.METRICS.ENABLED or _db_query_instrumentation_registered:
+        return
+    child = db_queries_in_flight_gauge.labels(instance_type=instance_type)
+    _inflight_tracker = DBQueryInflightTracker(child)
+    sync_engine = engine.sync_engine
+    event.listen(sync_engine, "before_cursor_execute", _inflight_tracker.on_before)
+    event.listen(sync_engine, "after_cursor_execute", _inflight_tracker.on_after)
+    event.listen(sync_engine, "handle_error", _inflight_tracker.on_error)
+    _db_query_instrumentation_registered = True
+
+
+class DBConnectionTracker:
+    """Tracks physical DB connections open on this engine via pool lifecycle events.
+
+    Drift-proof, mirroring ``DBQueryInflightTracker``: marks the ``ConnectionRecord``
+    on ``connect`` and decrements only if that mark is still present on
+    ``close``/``invalidate``, so each physical connection increments the gauge
+    exactly once and decrements at most once — it can't leak upward or go negative
+    when both events fire during invalidation cleanup. Works for every pool class,
+    including ``NullPool`` (whose pool keeps no records, so the scrape-time
+    ``db_pool_connections`` collector reads zero).
+    """
+
+    # Marker on ConnectionRecord.info recording that we incremented for this
+    # connection, so we decrement exactly once across close/invalidate.
+    OPEN_KEY: str = "_honcho_conn_open"
+
+    def __init__(self, open_child: Any, established_child: Any) -> None:
+        self._open: Any = open_child
+        self._established: Any = established_child
+
+    def on_connect(self, _dbapi_connection: Any, connection_record: Any) -> None:
+        try:
+            connection_record.info[self.OPEN_KEY] = True
+            self._established.inc()
+            self._open.inc()
+        except Exception:
+            logger.debug("db-connection gauge inc failed", exc_info=True)
+
+    def on_close(self, _dbapi_connection: Any, connection_record: Any, *_: Any) -> None:
+        try:
+            if connection_record is not None and connection_record.info.pop(
+                self.OPEN_KEY, False
+            ):
+                self._open.dec()
+        except Exception:
+            logger.debug("db-connection gauge dec failed", exc_info=True)
+
+
+# Process-wide tracker, created at registration (None until then / if metrics off).
+_connection_tracker: DBConnectionTracker | None = None
+
+
+_db_connection_instrumentation_registered = False
+
+
+def register_db_connection_instrumentation(instance_type: str) -> None:
+    """Attach physical-connection tracking to the engine (no-op if metrics off).
+
+    Counts connections via pool lifecycle events, so it reports real numbers under
+    any pool class — unlike the pool-object collector, which reads zero under
+    ``NullPool``. Pre-resolving the labeled children materializes both series at 0,
+    so an absent series signals a broken scrape rather than "no connections" (the
+    zero-init convention). Idempotent: repeated calls won't attach duplicate
+    listeners, which would double-count connections.
+    """
+    global _connection_tracker, _db_connection_instrumentation_registered
+    if not settings.METRICS.ENABLED or _db_connection_instrumentation_registered:
+        return
+    open_child = db_connections_open_gauge.labels(instance_type=instance_type)
+    established_child = db_connections_established_counter.labels(
+        instance_type=instance_type
+    )
+    _connection_tracker = DBConnectionTracker(open_child, established_child)
+    sync_engine = engine.sync_engine
+    event.listen(sync_engine, "connect", _connection_tracker.on_connect)
+    # A connection is torn down by close (normal return / recycle discard),
+    # invalidate (broken connection), or detach — the last fires on GC-cleanup of an
+    # abandoned async connection, where NullPool's close is a no-op so `close` never
+    # fires. All three carry the ConnectionRecord; the marker dedupes if more than
+    # one fires for the same connection.
+    for teardown_event in ("close", "invalidate", "detach"):
+        event.listen(sync_engine, teardown_event, _connection_tracker.on_close)
+    _db_connection_instrumentation_registered = True
+
 
 # Define your naming convention
 convention = {

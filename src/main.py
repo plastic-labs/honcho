@@ -1,44 +1,60 @@
 import logging
 import re
+import time
 import uuid
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING
 
 import sentry_sdk
 from fastapi import FastAPI, Request, Response
-from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi_pagination import add_pagination
-from pydantic import ValidationError
 from sentry_sdk.integrations.fastapi import FastApiIntegration
+from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
 
+from src._version import HONCHO_VERSION
+from src.backlog import DeriverMetricsPoller
 from src.cache.client import close_cache, init_cache
 from src.config import settings
-from src.db import engine, request_context
+from src.db import (
+    engine,
+    register_db_connection_instrumentation,
+    register_db_query_instrumentation,
+    request_context,
+)
 from src.exceptions import HonchoException
+from src.reconciler import ReconcilerScheduler, set_reconciler_scheduler
 from src.routers import (
     conclusions,
+    deriver_metrics,
     keys,
     messages,
     peers,
+    scopes,
     sessions,
     webhooks,
     workspaces,
 )
+from src.startup import validate_embedding_schema
 from src.telemetry import (
     initialize_telemetry_async,
     metrics_endpoint,
     prometheus_metrics,
+    register_db_pool_collector,
     shutdown_telemetry,
+)
+from src.telemetry.client_context import (
+    HEADER_AGENT_MODEL,
+    HEADER_HOST,
+    HEADER_PLUGIN,
+    HEADER_USER_AGENT,
+    reset_client_context,
+    set_client_context,
 )
 from src.telemetry.logging import get_route_template
 from src.telemetry.sentry import initialize_sentry
-
-if TYPE_CHECKING:
-    from sentry_sdk._types import Event, Hint
 
 
 def get_log_level() -> int:
@@ -83,30 +99,10 @@ class MetricsAccessFilter(logging.Filter):
 logging.getLogger("uvicorn.access").addFilter(MetricsAccessFilter())
 
 
-def before_send(event: "Event", hint: "Hint | None") -> "Event | None":
-    """Filter out events raised from known non-actionable exceptions before Sentry sees them."""
-    if not hint:
-        return event
-
-    exc_info = hint.get("exc_info")
-    if not exc_info:
-        return event
-
-    _, exc_value, _ = exc_info
-    if isinstance(exc_value, HonchoException):
-        return None
-
-    # Filters out ValidationErrors and RequestValidationErrors (typically coming from Pydantic)
-    if isinstance(exc_value, ValidationError | RequestValidationError):
-        logger.info(f"Filtering out validation error from Sentry: {exc_value}")
-        return None
-
-    return event
-
-
 # Sentry Setup
 SENTRY_ENABLED = settings.SENTRY.ENABLED
 if SENTRY_ENABLED:
+    # before_send defaults to sentry.default_before_send (shared with the deriver).
     initialize_sentry(
         integrations=[
             StarletteIntegration(
@@ -115,8 +111,9 @@ if SENTRY_ENABLED:
             FastApiIntegration(
                 transaction_style="endpoint",
             ),
+            # Explicit so DB-query spans are not reliant on auto-enabling.
+            SqlalchemyIntegration(),
         ],
-        before_send=before_send,
     )
 
 
@@ -125,6 +122,23 @@ async def lifespan(_: FastAPI):
     # Initialize CloudEvents telemetry
     await initialize_telemetry_async()
 
+    # Expose DB connection-pool stats for this API instance (no-op if metrics off)
+    register_db_pool_collector("api")
+    register_db_query_instrumentation("api")
+    register_db_connection_instrumentation("api")
+
+    # region ai
+    # Zero-init bounded-label counters so a missing series signals a broken scrape,
+    # not "no events" — see initialize_bounded_metrics. No-op if metrics off.
+    # endregion
+    prometheus_metrics.initialize_bounded_metrics(instance_type="api")
+
+    # Validate embedding schema before serving any traffic. Fails closed: if
+    # the configured EMBEDDING_VECTOR_DIMENSIONS does not match the physical
+    # pgvector columns, the process refuses to start rather than silently
+    # writing wrong-dim vectors.
+    await validate_embedding_schema(engine)
+
     try:
         await init_cache()
     except Exception as e:
@@ -132,12 +146,32 @@ async def lifespan(_: FastAPI):
             "Error initializing cache in api process; proceeding without cache: %s", e
         )
 
+    deriver_metrics_poller = DeriverMetricsPoller()
+    deriver_metrics.set_deriver_metrics_poller(deriver_metrics_poller)
+    try:
+        await deriver_metrics_poller.start()
+    except Exception as e:
+        logger.error("Failed to start backlog metrics poller: %s", e)
+
+    reconciler_scheduler = None
+    if settings.DERIVER.SCHEDULER == "api":
+        reconciler_scheduler = ReconcilerScheduler()
+        set_reconciler_scheduler(reconciler_scheduler)
+        try:
+            await reconciler_scheduler.start()
+        except Exception as e:
+            logger.error("Failed to start reconciler scheduler: %s", e)
+
     try:
         yield
     finally:
         # Import here to avoid circular import at module load time
         from src.vector_store import close_external_vector_store
 
+        if reconciler_scheduler is not None:
+            await reconciler_scheduler.shutdown()
+        await deriver_metrics_poller.shutdown()
+        deriver_metrics.set_deriver_metrics_poller(None)
         await close_external_vector_store()
         await close_cache()
         await engine.dispose()
@@ -154,28 +188,23 @@ app = FastAPI(
     title="Honcho API",
     summary="The Identity Layer for the Agentic World",
     description="""Honcho is a platform for giving agents user-centric memory and social cognition.""",
-    version="3.0.6",
+    version=HONCHO_VERSION,
     contact={
         "name": "Plastic Labs",
         "url": "https://honcho.dev",
         "email": "hello@plasticlabs.ai",
     },
     license_info={
+        # The 3.1 License Object treats `identifier` and `url` as mutually
+        # exclusive, and emitting both makes the schema fail validation.
         "name": "GNU Affero General Public License v3.0",
-        "identifier": "AGPL-3.0-only",
         "url": "https://github.com/plastic-labs/honcho/blob/main/LICENSE",
     },
 )
 
-origins = [
-    "http://localhost",
-    "http://127.0.0.1:8000",
-    "https://api.honcho.dev",
-]
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -187,10 +216,12 @@ add_pagination(app)
 app.include_router(workspaces.router, prefix="/v3")
 app.include_router(peers.router, prefix="/v3")
 app.include_router(sessions.router, prefix="/v3")
+app.include_router(scopes.router, prefix="/v3")
 app.include_router(messages.router, prefix="/v3")
 app.include_router(conclusions.router, prefix="/v3")
 app.include_router(keys.router, prefix="/v3")
 app.include_router(webhooks.router, prefix="/v3")
+app.include_router(deriver_metrics.router)
 
 # Prometheus metrics endpoint
 app.add_route("/metrics", metrics_endpoint, methods=["GET"])
@@ -238,8 +269,17 @@ async def track_request(
     # Store in request state and context var
     request.state.request_id = request_id
     token = request_context.set(f"api:{request_id}")
+    # Optional client identity headers; the telemetry emitter injects these
+    # into every event body emitted during this request.
+    client_tokens = set_client_context(
+        host=request.headers.get(HEADER_HOST),
+        plugin=request.headers.get(HEADER_PLUGIN),
+        agent_model=request.headers.get(HEADER_AGENT_MODEL),
+        user_agent=request.headers.get(HEADER_USER_AGENT),
+    )
 
     try:
+        start_time = time.perf_counter()
         response = await call_next(request)
 
         # Track metrics if enabled
@@ -249,8 +289,10 @@ async def track_request(
                 method=request.method,
                 endpoint=template,
                 status_code=str(response.status_code),
+                duration_seconds=time.perf_counter() - start_time,
             )
 
         return response
     finally:
+        reset_client_context(client_tokens)
         request_context.reset(token)

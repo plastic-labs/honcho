@@ -22,11 +22,11 @@ class DreamRunEvent(BaseEvent):
     """
 
     _event_type: ClassVar[str] = "dream.run"
-    _schema_version: ClassVar[int] = 1
+    _schema_version: ClassVar[int] = 2
     _category: ClassVar[str] = "dream"
 
     # Run identification (for correlating with specialist/iteration/tool events)
-    run_id: str = Field(..., description="8-char UUID prefix for run correlation")
+    run_id: str = Field(..., description="Nanoid for run correlation")
 
     # Workspace context
     workspace_name: str = Field(..., description="Workspace name")
@@ -69,6 +69,43 @@ class DreamRunEvent(BaseEvent):
     )
     total_duration_ms: float = Field(..., description="Total processing time")
 
+    # ---- Additive fields ----
+    dream_type: str | None = Field(
+        default=None,
+        description="DreamType slug (currently 'omni'; future: 'deductive'/'inductive')",
+    )
+    enabled_types_count: int = Field(
+        default=0,
+        description="len(settings.DREAM.ENABLED_TYPES) at run start — how many dream types this deploy was producing",
+    )
+    trigger_reason: str | None = Field(
+        default=None,
+        description=(
+            "What tripped the schedule: 'document_threshold' | 'manual' | 'surprisal'. "
+            "Captured at schedule time and threaded through the queue payload."
+        ),
+    )
+    delay_reason: str | None = Field(
+        default=None,
+        description=(
+            "What governed when this dream actually fired: 'idle_timeout' | "
+            "'immediate' | 'min_hours_gate'. Disambiguates from trigger_reason "
+            "to preserve the two-gate scheduler semantics in analytics."
+        ),
+    )
+    documents_since_last_dream_at_schedule: int | None = Field(
+        default=None,
+        description=(
+            "Document count at the moment check_and_schedule_dream made the decision. "
+            "Named _at_schedule because the live count changes between schedule and fire "
+            "(idle delay) — this is the snapshot, not the current value."
+        ),
+    )
+    document_threshold: int | None = Field(
+        default=None,
+        description="settings.DREAM.DOCUMENT_THRESHOLD snapshot at schedule time",
+    )
+
     def get_resource_id(self) -> str:
         """Resource ID is the run_id for uniqueness."""
         return self.run_id
@@ -82,11 +119,11 @@ class DreamSpecialistEvent(BaseEvent):
     """
 
     _event_type: ClassVar[str] = "dream.specialist"
-    _schema_version: ClassVar[int] = 1
+    _schema_version: ClassVar[int] = 2
     _category: ClassVar[str] = "dream"
 
     # Run identification (correlates with parent dream.run)
-    run_id: str = Field(..., description="8-char UUID prefix for run correlation")
+    run_id: str = Field(..., description="Nanoid for run correlation")
 
     # Specialist info
     specialist_type: str = Field(
@@ -107,6 +144,52 @@ class DreamSpecialistEvent(BaseEvent):
     output_tokens: int = Field(..., description="Output tokens generated")
     duration_ms: float = Field(..., description="Processing time")
     success: bool = Field(..., description="Whether the specialist succeeded")
+
+    # ---- Additive fields ----
+    # Denormalized rollups so analytics can answer "how many observations did
+    # this specialist actually produce" without re-aggregating per-tool events.
+    # Sourced from ToolResult.metadata via tool_loop's all_tool_calls, NOT
+    # from tool-name counting — `create_observations` calls can produce zero
+    # observations when all entries fail validation.
+    created_observation_count: int = Field(
+        default=0,
+        description="Actual observations created across all create_observations calls (from ToolResult.metadata.created_count)",
+    )
+    deleted_observation_count: int = Field(
+        default=0,
+        description="Actual observations deleted across all delete_observations calls (from ToolResult.metadata.deleted_count)",
+    )
+    created_counts_by_level: dict[str, int] = Field(
+        default_factory=dict,
+        description=(
+            "Counts of created observations per level (explicit / deductive / "
+            "inductive / contradiction), aggregated across all "
+            "create_observations tool calls in this specialist run. Levels "
+            "with zero count may be omitted; queries should treat missing "
+            "keys as 0. Dict-of-counts rather than list[str] because dream "
+            "specialists can produce 10-20+ observations per run — a flat "
+            "list becomes noisy at that scale."
+        ),
+    )
+    deleted_counts_by_level: dict[str, int] = Field(
+        default_factory=dict,
+        description=(
+            "Counts of deleted observations per level, aggregated across all "
+            "delete_observations tool calls in this specialist run."
+        ),
+    )
+    peer_card_updated: bool = Field(
+        default=False,
+        description="True when at least one update_peer_card tool call succeeded",
+    )
+    search_tool_calls_count: int = Field(
+        default=0,
+        description="Number of search_memory / search_messages / search_messages_temporal invocations",
+    )
+    error_class: str | None = Field(
+        default=None,
+        description="Exception class name when success=False; None on success.",
+    )
 
     def get_resource_id(self) -> str:
         """Resource ID includes run_id and specialist type for uniqueness."""

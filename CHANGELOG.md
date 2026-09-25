@@ -5,6 +5,324 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [3.2.1] - 2026-09-22
+
+### Added
+
+- Chat evidence conclusions carry `observer_id` and `observed_id`, matching the Conclusions response. Workspace chat reads across every peer into one evidence list, so each row now says which pair it belongs to without re-fetching it (#1193)
+- `thinking_tool_choice_conflict` provider param for Anthropic model configs, which decides what happens when extended thinking meets a forced tool choice (Anthropic rejects the combination): `throw` (default, raises a validation error before the request is sent), `override_thinking` (drops thinking for that call), or `override_tool` (relaxes the tool choice to `auto`). Set it per model config, e.g. `DIALECTIC_LEVELS__medium__MODEL_CONFIG__OVERRIDES__PROVIDER_PARAMS__THINKING_TOOL_CHOICE_CONFLICT=override_thinking` (#1211)
+
+### Changed
+
+- `source_ids` is `[]` rather than `null` for explicit conclusions on the Conclusions response, matching chat evidence. Clients that checked for `null` should check for an empty list (#1193)
+- Workspace chat keeps its forced tool choice until a recall tool runs cleanly, capped at 3 forced rounds, so an answer always rests on at least one search instead of the prefetched overview. A tool that returns an error does not count. `get_workspace_stats` is removed from the workspace toolset, since the prefetch already supplies the same overview (#1210)
+- The deriver wraps each batch message in a tag carrying its peer and whether it is a target, and derives only from target messages, instead of relying on the model to match a name prefix. Message content that imitates the tag is escaped so it cannot claim target attribution (#1192)
+- Smaller runtime footprint: the Docker image drops from 627MB to 426MB. PDF extraction uses pypdf instead of pdfplumber, provider SDKs import only for the configured backend, and scikit-learn moves behind a new optional `surprisal` extra. Self-hosted deployments that enable `DREAM.SURPRISAL.ENABLED` with an sklearn-backed tree type need the extra; `rptree`, `covertree`, and `lsh` still work without it (#1201)
+
+### Fixed
+
+- Chat with `include_evidence` no longer fails with "Instance is not bound to a Session" when evidence is read after its DB session closes (#1212)
+- On Redis Cluster, each process releases the idle connection its startup PING leaves on the default node. Every client picks the same slot-0 primary, so these sockets piled up there (92% of that node's connections in one observed cluster) and could hit `maxclients`, which stops every new client from initialising (#1198)
+- Dreamer tools return an actionable error for malformed arguments (a string instead of a list, non-object items) instead of raising a `TypeError` mid-loop. Valid sibling observations in the same call still land (#1217)
+- Deleting a session no longer loads the content of every embedding chunk to rebuild vector IDs; chunk counts are aggregated in SQL (#1206)
+
+## [3.2.0] - 2026-09-15
+
+### Added
+
+- Conclusion attribution on the public API: `source_ids` and `times_derived` on the Conclusions response (already stored on documents, previously stripped). `GET /v3/workspaces/{workspace_id}/conclusions/{conclusion_id}` returns a single conclusion with those fields. `source_ids` is filterable via JSONB containment (`{"source_ids": {"contains": "<id>"}}`); `id`, `level`, `source_ids`, and `times_derived` are explicit entries in the documents filter allowlist. The same `contains` fix applies to other JSONB columns, which previously generated invalid ILIKE-on-JSONB SQL. Message attribution (conclusion → source messages) and chain traversal are follow-ups (#952)
+- Opt-in `include_evidence` on pair and workspace chat (`POST /peers/{id}/chat` and `POST /workspaces/{id}/chat`). When true, the response carries the conclusions and messages the agent read plus the tools it called, so a caller can inspect what an answer was built from. Evidence is collated from what the agent accessed, never reported by the model — it over-reports (a conclusion appears because it was seen, not because the answer used it) but is deterministic and costs no model tokens. Off by default so existing callers are unchanged. Streaming puts evidence on the terminal SSE event only (#1129)
+
+### Changed
+
+- CloudEvents LLM and embedding traces (schema version 2) now carry session, workspace, observers, observed, agent type, track name, source message ids, queue item ids, duration, outcome, retry, and a full `system_prompt_ref`. Streamed calls record once at the provider boundary, including interrupted streams. New fields are nullable so v1 archives still load (#1166)
+- Request middleware falls back to `User-Agent` as the CloudEvents `client.host` when `X-Honcho-Host` is absent, so raw REST clients are distinguishable from SDKs without waiting for SDK upgrades. An explicit `X-Honcho-Host` still wins (#1182)
+
+### Fixed
+
+- Dreamer-written conclusions no longer persist fabricated `source_ids`. Unresolvable ids are stripped at the write path; an observation left below its level's minimum real sources is rejected (#945)
+- LLM provider outages (connection failures and upstream 5xx) now surface as 503 instead of an opaque 500. Exhausted retries re-raise the provider error instead of a tenacity `RetryError`. 4xx including 429 is unchanged. The streaming path is not covered (#1165)
+- Peer-scoped keys on `POST /sessions` and `POST /peers` may only name their own peer, must already be a member to get an existing session, and may not send metadata or configuration for one. Creating a fresh session for itself is unchanged. Session-scoped keys are denied on `POST /peers` (#1172)
+- `get_working_representation` reclaims unused query budget when semantic or most-derived search returns fewer unique documents than requested, filling the remainder from recent observations while preserving search priority (#1008)
+- Redis Cluster async client no longer leaks connections on topology re-init. The pin is now `redis>=8.0.1,<9.0.0` (was `<8.0.0`, which excluded the upstream fix in redis-py 8.0.0) (#1157)
+
+## [3.1.2] - 2026-09-09
+
+### Added
+
+- Qdrant vector store backend (`VECTOR_STORE_TYPE=qdrant`) as an optional `qdrant` extra. Point at a server with `VECTOR_STORE_QDRANT_URL` (optional API key, gRPC, HTTPS, prefix, timeout). Same `VECTOR_STORE_MIGRATED` cutover path as the other backends (#683)
+- MCP stdio host (`bun --cwd mcp src/stdio.ts`) for local clients, plus a Streamable HTTP host (`bun src/http.ts` / `mcp/Dockerfile`) with an `mcp` compose service. HTTP requires Bearer on every request including established sessions; idle sessions expire after `MCP_SESSION_IDLE_MS` (default 30m) and are capped at `MCP_SESSION_MAX` (default 128). Sessions are in-process — run one replica (#1102)
+- MCP tools take `scope` (name or list) and `sessions` (session-id allowlist) on `chat`, `page`/`size`/`reverse` on `list_sessions` and `get_session_messages`, plus `list_scopes`, `get_scope_sessions`, and `workspace_chat` (#1139)
+- Deterministic OpenAI-compatible mock provider (`src/mock_provider`) so the stack can run with no model key and no spend. Same image, different entrypoint; chat answers from the request's JSON Schema and embeddings are hash-derived (lexical search only — no semantic recall) (#1094)
+- Ephemeral sandbox (`sandbox/sandbox.sh`): seed snapshots a Postgres template database, reset drops and recreates it (plus Redis flush) without restarting services. Default provider is mock; `--provider real` reads gitignored credentials. Reset refuses a stale snapshot (Alembic revision / fixture hash / provider mode) (#1111)
+- `DERIVER.SCHEDULER=api` (env `DERIVER__SCHEDULER`) moves deriver/dream timers onto the API process so deriver replicas only consume work. Default remains `deriver`. When the API owns scheduling, deriver startup poll jitter is skipped (#1136, #1149)
+- Deriver backlog as Prometheus gauges on the API (`deriver_outstanding_work_seconds`, `deriver_queue_work_units_eligible` / `_claimed`, `deriver_queue_items_pending`, `deriver_queue_oldest_pending_age_seconds`, `dreams_due`, `deriver_metrics_last_success_timestamp_seconds`) and as JSON at `GET /deriver/metrics`. Service-wide DB values — aggregate with `max()`/`avg()`, never `sum()` (#1115)
+- Docker API worker count via `API_WORKERS` (default 1) on the image entrypoint (#1088)
+- Client identity on CloudEvents: request middleware reads `X-Honcho-Host`, `X-Honcho-Plugin`, and `X-Honcho-Agent-Model` into a nested `client` object next to `honcho_version`. Null outside a request (deriver worker). Emitter-injected fields are exempt from per-event schema versioning (#1125)
+
+### Fixed
+
+- Workspace chat requires a tool call on the first turn instead of answering from the prefetch overview alone. `low` was the only level that left tool choice as `auto`, and those calls were skipping search. Pair chat is unchanged. The workspace prompt is also marked non-interactive so it stops offering the caller a menu (#1120)
+
+## [3.1.1] - 2026-09-02
+
+### Changed
+
+- Server `requires-python` is `>=3.13`, matching the production image. Self-hosters on 3.10–3.12 need to upgrade; SDK and CLI floors are unchanged (#1090)
+
+### Fixed
+
+- Concurrent `create_documents` writers to the same collection deadlocked on `times_derived` reinforcement UPDATEs issued in batch order; the error was swallowed per-document, the batch was lost, and the queue item was marked processed. Writers now lock target rows with `SELECT ... ORDER BY id FOR UPDATE` before applying, abort the batch on `SQLAlchemyError` instead of continuing through a dead session, and retry transient errors (deadlock, serialization failure, lock/statement timeout, lost connection) up to `MAX_RETRYABLE_ATTEMPTS` instead of burning the item (#1033)
+- Scope backfill no longer embeds, writes, and syncs every planned copy at once. A 14k-document session is ~580MB of vectors; several concurrent backfills OOM-killed the deriver at its 1000Mi limit and crash-looped because the work units never completed. Phases 2–4 now run per chunk of 500 specs, reload source embeddings per chunk, and drop them once synced. Membership is locked across chunk writes so a concurrent leave cannot commit between the check and the inserts (#1104)
+- Model-generated observations with NUL bytes (`\u0000`) no longer fail the exact-content dedup pre-fetch with a Postgres `DataError` that dropped the whole observer batch. Ingress already stripped NUL from user content; the deriver now strips it so stored text matches embedded text. All-NUL content is dropped rather than stored empty (#1095)
+- `search_messages` no longer forwards `top_k=0` to Turbopuffer (which requires 1..10000). Zero/negative limits short-circuit to empty results; tool limits are floored at 1. The documents path was already guarded (#970); this closes the message path (#1084)
+- OpenAI-compatible tool-call turns with `content=null` keep null through history replay instead of being coerced to `""`. Providers that bind reasoning state to the exact assistant message shape were breaking on the empty string. Tool-less null still becomes `""` (#1064)
+- The production image now ships `pyproject.toml` in the runtime stage, so the service reports its real version instead of `unknown` in OpenAPI and telemetry (#1074)
+
+## [3.1.0] - 2026-08-25
+
+### Added
+
+- Scopes: a named grouping of sessions that acts as a visibility boundary on recall, implemented as a facade over an observer peer (`scope.{name}` with `{"kind": "scope"}`). Developers manage them exclusively through `/v3/workspaces/{workspace_id}/scopes` (create-or-get, list, get, add/list/remove session membership) and an optional `scopes` field on session create — never through the observer/observed mechanics. Scope peers cannot author messages, cannot be a chat or representation `target`, are excluded from `peers.list` by default (`PeerGet.kind` = `"scope"` / `"all"` switches the view), and are rejected on the generic session-peer routes. Workspace-level key required; peer- and session-scoped keys get 401. Legacy peers occupying a reserved `scope.` name without the kind flag are refused with 409, never adopted (#884)
+- `scope` read option on chat, representation, session context, and workspace search. A single scope swaps the observer to the backing scope peer so conclusion recall, peer cards, and message tools stay inside that scope's membership. A list of scopes takes the union of member sessions (capped at `MAX_SESSION_ALLOWLIST_ENTRIES`) and executes via the session-allowlist path. Empty scopes fail closed. `scope` is mutually exclusive with `filters` and `session_id`. Workspace- or admin-level key required (403 otherwise). Scope peers are also rejected as `peer_target` / `peer_perspective` on session context and as the path peer or `target` on `GET /peers/{id}/context` (#897)
+- Scope backfill-by-copy and removal reconciliation. Adding a session that already has messages copies its explicit-level documents into the scope's collections (no LLM re-derivation; idempotent via `copied_from`). Removing a session soft-deletes those copies and fail-closed cascades to derived documents whose `source_ids` intersect anything removed, then enqueues a `card_refresh` dream with `rebuild=True` plus an omni dream. `GET /v3/workspaces/{workspace_id}/scopes/{scope_id}/status` reports per-session backfill state (`pending` / `completed` / `failed`, plus `docs_copied`) (#904)
+- Workspace-level chat at `POST /v3/workspaces/{workspace_id}/chat`: agentic dialectic over the whole workspace instead of a single (observer, observed) pair. Prefetches workspace stats and the top active peers' self cards, then searches pair-scoped memory with `[observer->observed]` attribution. Supports `session_id`, `scope`, `reasoning_level`, `response_format`, and SSE streaming (#931)
+- MCP workspace discovery: tools accept `workspace_id`, the worker honors an optional `X-Honcho-Workspace-ID` connection header, and `list_workspace` / `create_workspace` tools let clients pick or create a workspace instead of relying on the SDK default (#1020)
+- MCP `search` also queries conclusions in parallel with messages when `peer_id` is given, returning `{messages, conclusions}`. The conclusions leg degrades to `[]` on error so search never gets worse than before (#974)
+- Prometheus metrics for physical DB connections, visible even under `DB_POOL_CLASS=null`: `db_connections_open` (gauge) and `db_connections_established` (counter), hooked to SQLAlchemy connection-lifecycle events and registered on both the API and the deriver (#1055)
+- Bounded-label Prometheus series are zero-initialized at process start so an absent series means a broken scrape rather than "nothing happened" (#927)
+
+### Changed
+
+- Workspace and pair chat system prompts now describe Honcho, peers, and the harness on their own terms, and render only the tools the request actually offers. The pair prompt no longer advertises a write tool that is not in the loadout (#1066)
+- Deriver idle polling backoff is longer and no longer reset by periodic reconciler work, so downstream connection pools can cull idle DB connections (#1015)
+- LLM provider SDKs are lazy-loaded so idle API and deriver processes no longer pay for every provider at import time (#1011)
+- Production image is a multi-stage build: LanceDB/PyArrow move behind an optional `lancedb` extra (`INSTALL_LANCEDB=true` to restore them), FastAPI's unused cloud CLI is dropped, and the venv is copied into the runtime image with final ownership so Docker does not double the layer. Default unpacked image is about 663 MB (was 1.7 GB) (#1014)
+- Redis Cluster cache keys hash-tag the namespace so one deployment's keys land on a single shard instead of opening a connection to every node. No behaviour change on a non-cluster backend; existing keys age out by TTL (#1058)
+- Deriver extraction prompt no longer leaks its own few-shot examples into extracted conclusions (#1028)
+
+### Fixed
+
+- Observer-scoped `get_observation_context` no longer materializes every session the observer has ever joined into a `session_name IN (...)` list (twice in one statement). Past ~32k sessions that hit psycopg's bind-parameter ceiling and 500'd. The observer half is now a correlated `EXISTS` over `session_peers`, two bind parameters regardless of membership size (#1065)
+- Re-adding an already-active session peer no longer advances `joined_at`, so `peer_perspective` search keeps messages from the original join. Genuine leave-and-rejoin still starts a new window (#1059)
+- Transient embedding-provider errors (for example an OpenAI-compatible 200 with empty `data: []`) were relabeled as token-limit errors. Only genuine oversize input raises `EmbeddingTokenLimitError`; other provider errors propagate unchanged (#791)
+- The filter DSL now fails closed with a 422 instead of a 500 on bad shapes, coerces operands by column type (so `{"session_id": {"ne": "abc"}}` is a string inequality rather than "invalid numeric"), and treats `NOT` / `ne` as null-safe (`IS NOT TRUE` / `IS DISTINCT FROM`) so negation no longer drops rows whose field is unset. Closed-set columns like `level` reject unknown values. Session-allowlist entries must be well-formed ids (`*` is 422, not a silent widen) (#947)
+- `ne` on JSONB metadata keys is null-safe: a missing key is not equal to the compared value, so `{"metadata": {"foo": {"ne": "bar"}}}` includes rows where `foo` is unset (#1036)
+- Oversized texts in `simple_batch_embed` are truncated to the embedding token cap instead of failing the whole batch. Representation processing reports failed observer saves in `RepresentationCompletedEvent` and raises when every observer save fails (#1019)
+- Assistant `reasoning_content` (DeepSeek / some OpenRouter models) is preserved across tool-loop turns. Previously the tool loop dropped thinking content before building the next assistant history message, so continuation requests failed. `reasoning_details` still takes precedence when both are present (#1034)
+- `create_observations` now honors `DERIVER_DEDUPLICATE` instead of hardcoding `deduplicate=True`, matching the representation write path (#1018)
+- `provider_params.timeout` is forwarded to the OpenAI-compatible embedding client, not just the LLM client (#1024)
+- Conclusions semantic-search validation errors name the field and the constraint instead of returning a generic 422 (#960)
+- OpenAI-compatible embedding calls request `encoding_format=float` so providers that default to base64 do not break pgvector inserts (#938)
+- Gemini batch embedding works for `gemini-embedding-2*` models, which rejected the previous request shape (#745)
+- MCP OAuth with no advertised scopes no longer defaults to read-only (which 403'd chat and search POSTs). Protected-resource metadata advertises read and write (#1004)
+
+## [3.0.12] - 2026-08-10
+
+### Added
+
+- Session allowlist on the Dialectic and representation via a constrained `filters` body on `POST /peers/{peer_id}/chat` and `/representation`, supporting only the `session_id` key (a session id, a bare list, or `{"in": [...]}`). Unsupported keys and shapes are rejected with 422 rather than silently ignored, it composes with `session_id` (which must be included in the allowlist when both are given), and it is capped at 1,000 sessions per request. Enforcement is uniform and fail-closed at every recall chokepoint: scoped conclusion recall is restricted to `level == "explicit"` (dream-derived conclusions carry a single `session_name` but are synthesized across all sessions, so that stamp can't be scoped on), `get_reasoning_chain` is unavailable under an allowlist, and an empty allowlist short-circuits to empty results everywhere. Workspace keys pass the allowlist as-given; peer-scoped JWTs must be an active member of every allowlisted session (401 otherwise) (#882)
+- Bare-list membership sugar in the filter DSL: `{"session_id": ["s1", "s2"]}` is now shorthand for `{"session_id": {"in": [...]}}` on regular columns generically. JSONB metadata columns are excluded and keep containment semantics. Strictly additive, since a bare list on a regular column previously compiled to a type-mismatched equality that matched nothing (#881)
+- Optional structured outputs on the Dialectic: `response_format` (a JSON Schema with root type `object`) on peer chat makes `content` a JSON string conforming to that schema. Only a conservative subset of JSON Schema is supported, with DoS guards and non-recursive `$ref` support (#896)
+- Combined tool calling and structured output in the LLM transport layer, with per-backend request shaping: OpenAI routes tool-carrying structured requests through `create()` with an explicit `json_schema` response format (`parse()` 500s on non-strict function tools), Anthropic skips the `{` JSON prefill when tools are present so `tool_use` blocks stay reachable, and Gemini injects a schema instruction into the final turn instead of using native `response_schema` (rejected alongside function calling before Gemini 3). All backends skip structured-output parsing on tool-call turns, which carry no consumable content (#907)
+- `card_refresh` dream type: a lightweight dream that runs only the peer-card update, for event-driven refreshes such as membership changes and cold starts. Handled by a new `CardRefreshSpecialist` restricted to `get_recent_observations`, `search_memory`, and `update_peer_card` (no observation-mutating tools) with a tool-iteration cap of `min(6, DREAM.MAX_TOOL_ITERATIONS)`. `POST /v3/workspaces/{workspace_id}/schedule_dream` accepts `dream_type=card_refresh` plus a `rebuild` flag, which omits the existing card from the prompt so the specialist rebuilds it solely from observations present in the collection. Card refreshes never advance the omni dream guard pair (`last_dream_at` / `last_dream_document_count`) (#883)
+- Full-fidelity LLM trace stream, with Langfuse as one projection over it: each call is captured once (`CapturedLLMCall`) and fanned out to a CloudEvents trace stream (`llm.call.traced` / `trace.content`) and a Langfuse exporter, both reconstructing trace → run → step → generation from the same source of truth. Adds `TELEMETRY_TRACE_PAYLOADS_ENABLED` (default `false`), `TELEMETRY_TRACE_MAX_BYTES` (default 262144, per-message cap with oversized content clipped), `TELEMETRY_TRACE_PURPOSES` (JSON list of `CallPurpose` values; empty means all), and `LANGFUSE_EXPORTER_MODE` (`exporter` by default; `inline` is kept for one release for side-by-side validation). Embedding calls are traced, dreamer branches nest under one dream trace, tool calls become spans under their step, and high-volume events are sampled deterministically. `TRACE_ENDPOINT` is dropped (#845)
+- Redis Cluster support via `CACHE_CLUSTER` (for example GCP Memorystore for Redis Cluster), alongside a new `CACHE_LOCK_WAIT_CHECK_INTERVAL_SECONDS` (#905)
+- `EMBEDDING_MODEL_CONFIG__MAX_BATCH_SIZE` caps texts per embedding request for OpenAI-compatible providers with smaller limits than OpenAI's, such as DashScope `text-embedding-v4` (10) and Alibaba Bailian `qwen3.7-text-embedding` (20). When unset, native provider defaults are preserved (OpenAI 2048, Gemini 100) (#983)
+- Per-request provider timeouts via `provider_params.timeout` on any model config, validated at config load so a bad value fails at startup with the exact config path instead of surfacing per-request as a retried 500. Good values normalize to float seconds; Gemini's is converted to milliseconds (#832)
+- `RepresentationCompletedEvent` now reports deduplication counts: `exact_dup_in_batch_count`, `exact_dup_existing_count`, `semantic_dup_rejected_count`, and `semantic_dup_replaced_count` (#910)
+- OAuth discovery for MCP clients: the MCP worker serves `/.well-known/oauth-protected-resource` (RFC 9728) without auth so clients can discover the authorization server, and a 401 now carries `WWW-Authenticate: Bearer resource_metadata="..."` (exposed cross-origin) to start the flow (#923)
+- Prometheus metrics for the immediate-embed fast path: tasks shed because `EMBEDDING_MAX_PENDING_EMBED_TASKS` was reached, and the current in-flight task count (#892)
+- Docs: a detailed system architecture diagram, a Codex integration guide (#879), a structured-outputs page (#896), a section on filtering conclusions by reasoning level (#851), a health-check endpoint reference, and SDK updates (#867)
+
+### Changed
+
+- **Breaking config change:** `DERIVER_REPRESENTATION_BATCH_MAX_TOKENS` is split into two settings that were previously conflated — `DERIVER_REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS` (default 512), the producer-side minimum a work unit accumulates before the deriver claims it, where `0` disables the gate; and `DERIVER_REPRESENTATION_BATCH_TARGET_INPUT_TOKENS` (default 1024), the consumer-side maximum context-window tokens per deriver LLM call. Deployments setting the old name must migrate (#889)
+- The immediate-embed fast path now applies backpressure: `EMBEDDING_MAX_PENDING_EMBED_TASKS` (default 50) caps in-flight embed tasks, and once saturated, message creation skips the fast path entirely and the reconciler embeds on its next cycle. `0` disables the fast path (#892)
+- Explicit-level documents are now kept session-pure, so memory can be built by copying explicit documents between collections. Enforcement refuses rather than rewrites: `create_documents` rejects explicit documents with a null `session_name`, exact dedup keys on (content, level, session-for-explicit), semantic dedup scopes candidate search to the same level and — for explicit documents — the same session, and the generic `create_observations` tool rejects `level='explicit'` outside message-ingestion (deriver) context. Derived levels keep cross-session consolidation (#883)
+- Sentry's `before_send` filter is centralized as `default_before_send` in `src/telemetry/sentry.py` instead of living only in the API's `main.py`, so the deriver gets the same non-actionable-exception filtering. All Sentry events also carry a `namespace` tag for correlation (#934, #870)
+- The minimal deriver's extraction examples no longer teach inferences its own output schema forbids. The `EXAMPLES` block demonstrated deriving a specific birthday from "I just had my 25th birthday last Saturday", deriving residence from a single visit ("I took my dog for a walk in NYC" → "alice lives in NYC"), and a "+ general knowledge" deductive output the deriver has no channel for. The replacements stay inside the schema's contract and teach the boundary: the dog/NYC message is kept and shown extracting correctly, and a separate example shows "lives in NYC" is valid when actually stated (#985)
+- Dreamer specialists are instructed not to output summaries (#894)
+- `session_name` is deprecated for scoping in favor of the session allowlist. It is not removed and not aliased: it also pins the query to one session, bypasses observer scoping, and drives session-history injection into the dialectic prompt, so it has no drop-in replacement (#882)
+- The MCP worker no longer requires the `X-Honcho-User-Name` or `X-Honcho-Assistant-Name` headers (#923)
+
+### Fixed
+
+- Session scoping was applied to only one of the three working-representation query paths: `session_name` reached the recent-documents query, but the semantic and most-derived paths ignored it, so `limit_to_session` leaked cross-session conclusions into perspectives. The allowlist is now threaded uniformly through all three paths and pushed down to pgvector and external vector stores (#881)
+- Empty membership lists failed open in the vector-store filter builders, silently widening scope: LanceDB dropped empty `IN` clauses and Turbopuffer emitted a bare `In []` with undocumented semantics. Both now emit an explicit always-false predicate, and `_build_filter_conditions` checks `is not None` rather than truthiness so an empty list is no longer treated like `None` (#881, #882)
+- Session-scoped CRUD helpers ignored the session allowlist entirely, so a caller could read a session the allowlist forbids. The API routes guarded this with a 422, but the dialectic tools call these CRUD functions directly and bypassed it. `_semantic_search_messages` (covering `search_messages` and `search_messages_temporal`), `grep_messages`, `get_messages_by_date_range`, `get_recent_history`, and `get_observation_context` now return `[]` when `session_name` is set and outside the allowlist (#882)
+- The cache client logged the full Redis URL — including the password — at INFO and WARNING on every connection attempt and failure, exposing the live credential in container logs and downstream aggregation. Credentials are now redacted across userinfo, the `?password=` (redis-py) and `?secret=` (cashews) query params, scheme-less URLs whose password is invisible to `.port`/`.password` parsing, and malformed URLs, whose fallback previously echoed the raw input verbatim (#869)
+- A `top_k` of `0` reached the vector store, where Turbopuffer rejects it with a 400 (`top_k must be between 1 and 10000`). A non-positive `top_k` now returns `[]` before the embedding call, and the semantic budget floors at 1 so an explicitly requested search isn't silently allocated zero (#970)
+- Gemini clients had no HTTP timeout, so a stalled socket wedged the deriver worker's uvloop event loop, which the in-process reconciler shares. A 10-minute timeout is now set on both the Gemini LLM client and the Gemini embedding client (#903)
+- Dreamer conclusions were dated to ingestion time rather than their latest source observation, and their timestamps are now normalized (#890)
+- Langfuse I/O annotation was gated on `LANGFUSE_PUBLIC_KEY` instead of `langfuse_inline_enabled`, so in the default `exporter` mode it called `update_current_generation()` with no active span — logging "No active span in current context" roughly 14 times per dialectic run and building throwaway `model_dump` payloads on every LLM call. Separately, `AgentToolSummaryCreatedEvent` hardcoded `run_id="deriver"` / `iteration=0`, polluting `run_id` grouping in the CloudEvents stream with a phantom run; both fields are now optional and the resource id is keyed on `message_id:summary_type` (schema_version 2 → 3) (#845)
+- Assistant tool calls were dropped from the captured trace stream for OpenAI and Gemini: `build_captured_messages` read only `{role, content, tool_call_id}`, but those providers keep tool calls outside `content`, so replayed tool-call turns landed as empty content and Gemini lost its text and tool results entirely. Tool calls are now normalized per provider into a unified `tool_calls` field and folded into the content hash. Gemini's `thought_signature` is bytes, so `model_dump(mode="json")` raised `UnicodeDecodeError` inside `emit_trace`, silently dropping whole tool-calling iterations from the trace stream (billing and Langfuse were unaffected); it is now base64-encoded on the telemetry path while replay keeps the raw bytes (#845)
+- `EmbeddingClient.encoding` forced full client construction, raising "OpenAI API key is required" even though tiktoken needs no credentials. The document dedup tie-break only needs `.encoding` for token counting, so any test hitting that path failed in environments without embedding keys — notably CI for pull requests from forks. The encoding is now resolved from the configured model directly, falling back to `cl100k_base`, and the underlying client's encoding is reused only when it has already been constructed (#955)
+- The Docker build failed under Podman because the uv build inputs weren't copied (#878)
+- LanceDB was installed on macOS Intel, where it doesn't work. A PEP 508 marker excludes `darwin/x86_64` and the LanceDB vector-store import is wrapped so a misconfiguration surfaces as a clear config error (#496)
+- Prompt checks requiring the literal token "json" for `json_object` mode are now satisfied in lowercase (#887)
+- Reverted an unintended `RepresentationCompletedEvent` schema-version increment
+- Documented preinstalling pgvector as a privileged role for deployments where the `DB_CONNECTION_URI` role deliberately cannot create extensions (managed Postgres, Kubernetes operators, NixOS). `CREATE EXTENSION IF NOT EXISTS vector` does not help there, because Postgres checks the privilege before checking whether the extension exists. Docker Compose is unaffected, since the bundled stack connects as the `postgres` superuser (#984)
+
+## [3.0.11] - 2026-06-24
+
+### Added
+
+- `api_request_duration_seconds` Prometheus histogram tracking per-route request latency, labeled by method and endpoint (#837)
+- LLM `provider_params` passthroughs (`extra_body` / `extra_headers` / `extra_query`) are now forwarded to the underlying provider transport across all backends, with shape validation that rejects non-mapping values (#821)
+- `structured_output_mode` model-config option to use `json_object` mode for OpenAI-compatible providers that lack native Structured Outputs support (used by the deriver) (#820)
+- OpenRouter app-attribution headers (`HTTP-Referer` / `X-Openrouter-Title`) are now sent on OpenAI-compatible clients when the configured base URL is OpenRouter, so requests are attributed to "Honcho" in OpenRouter's dashboard (#805)
+- Langfuse traces are now tagged with user and session IDs for easier trace filtering (#814)
+- `DERIVER_REPRESENTATION_BATCH_MAX_AGE_SECONDS` (default 1800s) lets sub-threshold representation work units flush once their oldest unprocessed queue item ages out. Set it to `0` to keep the legacy behavior where sub-threshold tails wait indefinitely unless `DERIVER_FLUSH_ENABLED=true` (#826)
+- Conclusion responses now include a `level` field (`explicit`, `deductive`, `inductive`, `contradiction`); list/query endpoints support filtering by `level` via `filters`, with reserved filter keys protected from being overridden by user-supplied filters (#851)
+
+### Changed
+
+- Peer-scoped JWTs now get read-only access to the sessions their peer is an active member of (session context, summaries, peers, their own per-session config, search, and message reads). Session-scoped JWTs remain confined to their session and cannot reach peer routes (#679)
+- Compacted Honcho's log output, with guarded ms/s metric formatting that falls back to a plain string for non-numeric values (#836)
+- Sentry now drops noisy infra/scrape transactions: the reconciler opens a transaction only once a batch has rows (idle cycles emit none), and a `traces_sampler` returns `0.0` for `/metrics`, `/health`, `/openapi.json`, `/docs`, `/redoc`, and the deriver metrics server. `SENTRY.TRACES_SAMPLE_RATE` still governs real traffic (#834)
+
+### Fixed
+
+- Peer- and session-scoped JWTs were effectively workspace-scoped: authorization walked the route's declared scope and fell through to a workspace match, so a `{w, p: alice}` token could act on any peer in the workspace. JWTs are now authorized by their narrowest claim and never widen to workspace access (#679)
+- The keys API now rejects creating a peer- or session-scoped key without a workspace. Such keys were minted successfully but failed verification on every request (#679)
+- Agent-supplied observation IDs carrying the display-format `id:` prefix are now normalized (prefix and trailing whitespace stripped) before `source_ids` are stored and on `get_reasoning_chain` lookups, fixing corrupted provenance links and broken reasoning-chain traversal (#795)
+- Fixed a `create_tree` keyword-argument mismatch in the Dreamer's surprisal tree construction (#749)
+- Providers that omit output-token counts (observed with Gemini on tool-loop completions) returned `output_tokens=None`, which raised a Pydantic validation error that aborted the call and crashed the Dreamer's induction phase before inductive conclusions were persisted. `None` is now coerced to `0` so token accounting degrades gracefully (#809)
+- Document creation now performs exact (case-insensitive, whitespace-trimmed) content deduplication before the existing semantic dedup step: exact duplicates within a batch collapse to a single insert, and an exact match against a live document reinforces it (atomic `times_derived` increment) instead of creating a new row (#861)
+- The OpenAI backend passed `tool_choice` through raw while the Anthropic and Gemini backends translate Honcho's canonical vocabulary to their native form, so on a mixed-provider fallback chain (for example Gemini primary → OpenAI backup) a canonical `"any"` reached OpenAI unchanged and was rejected as an invalid param. The OpenAI backend now converts it, mirroring the others: `any`/`required` → `required`, `auto`/`none` pass through, and a tool-name string or `{"name": ...}` dict becomes a function selection (#850)
+- Langfuse `@observe` auto-capture serialized every argument of `honcho_llm_call_inner` into the generation span input, including `client_override` (a live `AsyncOpenAI`/`genai` client) and `selected_config` (which carries `api_key`). Auto-capture deep-copied the client into a half-constructed object whose teardown raised (`AsyncHttpxClientWrapper ... no attribute '_state'` on OpenAI, flooding stderr; `BaseApiClient ... no attribute '_http_options'` on Gemini), and it leaked `ModelConfig.api_key` into traces. Capture is now an explicit allowlist: `capture_input`/`capture_output` are disabled and curated, serializable input and output are stamped instead, with tuning knobs surfaced as `model_parameters` via a secret-bearing denylist and per-call token usage mirrored as `usage_details` (#849)
+
+## [3.0.10] - 2026-06-15
+
+### Added
+
+- Messages are now embedded via a background task rather than blocking API request
+- Read-only DB session mode (`get_read_db` / `tracked_db(..., read_only=True)`) so reads don't hold a transaction open across the work
+- `CORS_ORIGINS` env var to configure CORS allowed origins without editing source; defaults match the prior hardcoded list, so self-hosted deployments behind custom domains can whitelist their frontend (#697)
+- `scripts/generate_jwt.py` — utility for minting scoped or admin Honcho JWTs (`--admin`, `--workspace`/`--peer`/`--session`, `--expires` with human-friendly durations, `--print-only`) without calling the keys API (#757)
+- `STALE_WORK_UNIT_CLEANUP_INTERVAL_SECONDS` (default 60s) — minimum jittered spacing between deriver stale-work-unit cleanup runs, so cleanup no longer runs on every seconds-scale poll (`0.0` keeps the legacy every-poll behavior) (#773)
+
+### Changed
+
+- Optimized the deriver and dreamer prompt cache prefixes to improve prompt-cache hit rates (#806)
+
+### Fixed
+
+- `times_derived` is now properly reinforced when a duplicate conclusion is detected. It had been pinned at 1 for nearly every conclusion (the reject-new branch dropped the increment and the new-wins branch reset the count to 1), so `ORDER BY times_derived DESC` fell back to arbitrary heap order and froze stale conclusions to the front of injected context. Reinforcement is now an atomic increment and both most-derived queries gained a `created_at DESC` recency tiebreaker (#768)
+- Webhook creation now correctly rejects private/internal IP addresses (#793)
+
+## [3.0.9] - 2026-06-02
+
+### Changed
+
+- Connection acquisition is now a single attempt with no server-side retry, on a vanilla `AsyncSession`. A new `DB_CONNECT_TIMEOUT_SECONDS` (default 2s) bounds the attempt so a saturated or unreachable pooler fails fast instead of holding a client connection open to re-knock. A saturated DB now surfaces to the caller — the API returns an error and the deriver backs off and retries on a later poll — which lets the pooler drain rather than amplifying saturation.
+
+### Added
+
+- Deriver poll jitter so instances that start together don't poll in lockstep: `DERIVER_POLLING_STARTUP_JITTER_SECONDS` (random delay before the first poll, default 30s) and `DERIVER_POLLING_JITTER_RATIO` (±fraction applied to every poll sleep, default 0.5). Both disable at `0.0`; the underlying backoff schedule is unchanged.
+
+### Removed
+
+- Reverted the connection-checkout retry and `HonchoAsyncSession` custom session introduced in 3.0.8. Removed the `DB_CONNECTION_RETRY_ENABLED` / `DB_CONNECTION_RETRY_MAX_DELAY_SECONDS` / `DB_CONNECTION_RETRY_BACKOFF_INITIAL_SECONDS` / `DB_CONNECTION_RETRY_BACKOFF_MAX_SECONDS` settings, the `db_connection_acquisitions{outcome=...}` Prometheus counter, and the `db.pool.acquire` Sentry span. Alerting built on `db_connection_acquisitions` should migrate to `db_pool_connections` / `db_queries_in_flight`.
+
+## [3.0.8] - 2026-06-01
+
+### Added
+
+- Connection-checkout retry with bounded exponential backoff (tenacity) on `get_db`/`tracked_db`: transient transaction-pooler (Supavisor) rejections — SQLAlchemy `TimeoutError` and `OperationalError` — now retry with backoff instead of surfacing as 500s under client-connection saturation. Gated by
+  `DB_CONNECTION_RETRY_ENABLED` with configurable delay/backoff knobs; ~10s default budget (#758)
+- `HonchoAsyncSession` — a lazy `AsyncSession` that checks out its pooled connection (with retry) on the first DB-touching call rather than at construction. Request handlers doing non-DB work (embedding, file, LLM) before their first query no longer pin a pooler connection across it. Only the checkout is retried;
+  the statement still runs exactly once, so writes are never duplicated (#758)
+- Adaptive deriver queue polling: the poll interval backs off when the queue is idle or erroring (base → max, doubling each cycle) and snaps back to base the moment work is claimed, cutting steady-state query load against the DB. Gated by `DERIVER_POLLING_BACKOFF_ENABLED` with configurable max/multiplier (#758)
+- New Prometheus `db_pool_connections` gauge (checked_out / checked_in / size / overflow), labeled `api`|`deriver`, registered in both the API lifespan and the deriver metrics server (#758)
+- New Prometheus `db_connection_acquisitions{outcome=ok|retried|exhausted}` counter — the alertable early-warning signal that connection checkouts are retrying through pooler rejection, before requests start failing (#758)
+- New Prometheus `db_queries_in_flight` gauge — statements actually executing on the wire (via SQLAlchemy cursor-execute events). Paired with `checked_out`, the gap reveals connections held but parked (the "idle in transaction during an external call" antipattern). Gated on `METRICS.ENABLED` for zero overhead when
+  off (#758)
+- Explicit `SqlalchemyIntegration` in both the API and deriver Sentry inits; connection acquisition wrapped in a `db.pool.acquire` span with live pool stats captured on retry exhaustion (#758)
+
+### Changed
+
+- Default `POOL_TIMEOUT` lowered to 5s, with validation that it stays under the connection-retry budget when a pooled (non-null) `POOL_CLASS` is configured; `config.toml.example` and the v2/v3 configuration docs updated to match (#758)
+- `HonchoAsyncSession` wraps every DB-touching session method (execute / scalar / scalars / flush / merge / refresh / commit / get / get_one / stream / stream_scalars / delete) so the lazy-checkout-with-retry guarantee has no holes; the acquired flag resets on `close()`/`reset()` so a reused session re-acquires on
+  next use (#758)
+
+### Fixed
+
+- Roll the session back on a retryable checkout failure before retrying — a failed autobegin could otherwise leave it pending-rollback, making the next connection attempt raise instead of cleanly re-checking-out (#758)
+- Guard `DBPoolCollector.collect()` so a pool-read/import hiccup can't raise and abort the entire `/metrics` scrape (Prometheus drops all metrics if any collector raises) (#758)
+- Clamp the pool overflow gauge to ≥ 0 (it could report negative before the pool fills) (#758)
+- Removed a double-sleep in the deriver idle poll so the backoff cap is a true cap rather than 2× (#758)
+
+## [3.0.7] - 2026-05-21
+
+### Added
+
+- New `src/llm/` module as the single owner of provider runtime: clients, backends, history adapters, tool loop, request builder, credentials, and caching policy (#459)
+- `AttemptPlan` dataclass captures per-retry provider selection (client, model, reasoning_effort, thinking_budget_tokens, selected_config) and pins it across stream-final retries so streaming doesn't bounce back to primary after the tool loop has settled on fallback (#459)
+- Gemini JSON-schema sanitizer for `function_declarations` — strips keywords Gemini's validator rejects (`additionalProperties`, `allOf`, etc.) while preserving semantics for all other backends (#459)
+- Dreamer specialists derive `effective_max_tokens` from `model_config.max_output_tokens` with a per-specialist default fallback (#459)
+- New cloudevent `LLMCallCompletedEvent` (`llm.call.completed`) fires once per provider hit with full cost-attribution context: transport/provider_label, model, token counts with cache breakdown, finish_reason, outcome, `is_final_attempt`, retry/fallback state, duration, tool-call shape, streaming flag, and agent correlation (`run_id` + iteration). Includes a `CallPurpose` closed enum (`deriver.representation`, `dialectic.answer`, `dream.deduction|induction`, `summary.short|long`) (#637)
+- `RepresentationCompletedEvent` now carries `total_input_tokens` for full-trace cost attribution (#637)
+- Per-emitter `honcho_version` injection on all CloudEvents plus emitter health metrics (#637)
+- `TelemetrySettings.HIGH_VOLUME_SAMPLE_RATE` (default 1.0) — deterministic per-`run_id` sampler so an entire agent trace is kept or dropped together; aggregate envelopes bypass the sampler (#637)
+- Deriver custom instructions: per-workspace/peer guidance threaded into the deriver prompt with a `MAX_CUSTOM_INSTRUCTIONS_TOKENS` budget (default 2000); deriver `MAX_INPUT_TOKENS` raised 23000 → 25000 to make room (#609)
+- Configurable embedding dimensions: `EMBEDDING_MODEL_CONFIG__DIMENSIONS_MODE` (`auto`/`always`/`never`) controls whether the OpenAI `dimensions=` parameter is forwarded; `auto` (default) sends it when the operator explicitly set `EMBEDDING_VECTOR_DIMENSIONS` and the model is not on the known-rejecting allowlist (#678)
+- New `honcho-cli` package — Python CLI for inspecting and managing peers, sessions, and configuration against a Honcho deployment (#424)
+- `HONCHO_API_URL` env var support in the MCP Worker, enabling self-hosted Honcho deployments to point the Worker at their own instance instead of `https://api.honcho.dev` (#575)
+- API ID `max_length` increased from 100 to 512 across `WorkspaceCreate`, `PeerCreate`, and `SessionCreate` to align the API contract with the underlying DB schema (#684)
+- Regression tests covering fallback-config thinking-param reach, provider_params → extra_params boundary, OpenAI reasoning-model parameter routing, Gemini blocked finish_reason handling, and fail-fast `max_tool_iterations` validation (#459)
+
+### Changed
+
+- All LLM orchestration moved out of `src/utils/clients.py` into `src/llm/` with modules split by responsibility (api, executor, tool_loop, runtime, registry, conversation, request_builder, credentials, caching, backends, history_adapters) (#459)
+- Default `ModelConfig` factories (deriver, summary, dreamer specialists, dialectic levels) normalized to `openai/gpt-5.4-mini` with no extra parameters set by default; operators add transport/thinking overrides explicitly (#459)
+- OpenAI reasoning-model routing widened via `_uses_max_completion_tokens` heuristic covering `gpt-5.x` and `o1/o3/o4` — these models receive `max_completion_tokens` instead of `max_tokens` (#459)
+- Override client factories switched from unbounded `@cache` to `@lru_cache(maxsize=128)` for predictable memory growth on long-running processes (#459)
+- `get_backend` now delegates to `client_for_model_config`, so the live-test path and production path share one missing-API-key validation (#459)
+- Blocked Gemini responses (`SAFETY`, `RECITATION`, `PROHIBITED_CONTENT`, `BLOCKLIST`) raise `LLMError` in the streaming path too (previously only the non-streaming path), ensuring retry/fallback logic fires uniformly (#459)
+- Transport-change env overrides now strip transport-specific thinking params (thinking_budget_tokens vs. reasoning_effort) during config merge, including at the dialectic-level merge, so switching from Anthropic → OpenAI doesn't leave orphaned Anthropic-only params that the OpenAI backend would reject (#459)
+- `max_tool_iterations` out-of-range inputs now raise `ValidationException` instead of being silently clamped (#459)
+- Public API schemas (`WorkspaceCreate`, `PeerCreate`, `SessionCreate`) and SDK validation (`api_types.py`, `validation.ts`) accept IDs up to 512 chars (was 100) (#684)
+- Peer card prompts reframed as stable identity markers (replaces the prior "biographical/profile facts" language). Induction specialist is now opted out of peer card writes (`can_update_peer_card = False`) so only deduction touches the card (#686)
+- Vector store queries no longer fetch embedding vectors — only document metadata is returned, reducing payload size and DB load (pgvector, lancedb, turbopuffer) (#682)
+- Langfuse trace metadata now includes `namespace`, `model`, and `provider` so traces can be filtered by deployment slice (#565)
+- Deriver: model-aware tokenizer (replaces the previously hardcoded encoding) and explicit guard on empty message content (#647)
+- Dialectic level defaults now merge correctly with per-level overrides in `src/config` (#656)
+- Default dialectic tool choice switched from forced/required to `auto` (#630)
+- Vector sync given a substantial retry budget to tolerate transient embedding provider outages (#604)
+- `AgentToolConclusionsDeletedEvent` payload now carries `levels` for parity with the rest of the conclusion event surface (#612)
+- Turbopuffer vector store: `InternalServerError` caught and surfaced as a warning rather than a hard failure; unused `upsert_with_retry` and `VectorUpsertResult` removed; explicit silent and explicit-error paths for vector DB server errors (#561)
+- Troubleshooting docs updated to reflect nested-env-var form for per-component thinking-budget overrides (#459)
+- README refresh (#681)
+- CLAUDE.md refreshed against the current `src/` layout (#680)
+
+### Fixed
+
+- Fallback `ModelConfig` temperature and `thinking_budget_tokens` reach the backend on the final retry — previously the primary's values were pre-populated into caller kwargs early and clobbered fallback values via `effective_config_for_call(update=...)` (#459)
+- Stream-final retries pin to the `AttemptPlan` that succeeded rather than re-running provider selection through the outer `current_attempt` ContextVar (which could roll streaming back to primary after the tool loop had already switched to fallback) (#459)
+- OpenAI structured-output calls continue to use `chat.completions.parse()` with strict schema enforcement, while tool-calling paths use `chat.completions.create()` without `strict:True` for broader proxy compatibility (OpenRouter, vLLM, Ollama) (#459)
+- Gemini `cached_content` reuse keys now include `system_instruction` and `tool_config` so cache hits don't cross configurations that differ only in those fields (#459)
+- Removed strict parameter validation for thinking params on Anthropic and OpenAI transports — was rejecting valid per-transport configs (#686)
+- `reverse` query parameter is now honored on the v3 workspace list (`POST /v3/workspaces/list`), peer list (`POST /v3/workspaces/{workspace_id}/peers/list`), workspace-scoped session list (`POST /v3/workspaces/{workspace_id}/sessions/list`), and peer-scoped session list (`POST /v3/workspaces/{workspace_id}/peers/{peer_id}/sessions`). Honcho SDKs at 2.1.0+ were already sending `reverse=true` for these routes but the server silently ignored it. Ties on `created_at` now fall back to the internal nanoid `id` so ordering remains stable across pages (#685)
+- LLM client factories now receive `base_url` from `LLMSettings` for default providers — previously the override path honored `base_url` but the default path didn't, so operators pointing at OpenAI-compatible proxies via `LLM__OPENAI_BASE_URL` were ignored (#643, fixes #641)
+- Internal N+1 query in dialectic agent tool execution — collapsed per-iteration DB lookups into a single fetch (#652)
+- Dreamer threshold and time-guard semantics: `check_and_schedule_dream` count filter now includes only `documents.level == 'explicit'` (dreamer-created levels are output, not input, and were inflating the threshold and creating a feedback loop); `last_dream_at` write relocated from `enqueue_dream` into `process_dream` so duplicate enqueues or failed runs no longer reset the 8-hour time guard (#573)
+- Deriver: blank observations are filtered out before embedding (previously triggered noisy embedding calls and persisted empty rows); blank-observation filtering unified across tool paths (#615)
+- Surprisal module: filter for level observations changed from `{"level": levels}` to `{"level": {"in": levels}}` — `apply_filter()` requires operator syntax, so the prior call silently returned 0 results and made the entire Surprisal phase of the Dream cycle a no-op (#581, fixes #559)
+- Removed hardcoded `stop_sequences` override from Deriver `ModelConfig` (was clobbering operator-configured stop sequences) (#587)
+- Removed stale `stop_sequences` from tests (#607)
+- Embedding client: `embed()` now wraps single-string input in an array, restoring compatibility with OpenAI-compatible third-party providers that reject scalar input (#586)
+- Docker Compose: deriver service startup gated on the API service healthcheck (prevents races where the deriver starts before the API has run migrations) (#689)
+- Docker image: `HEALTHCHECK` directive removed from the shared base image — it probed an HTTP endpoint only the API serves, permanently marking deriver containers as unhealthy. Service-level health checks now belong in each service's own configuration (k8s readiness/liveness probes on the API Deployment only) (#530)
+- `tests/unified`: `--test-dir`/`--test-file` arguments now use an argparse mutually-exclusive group instead of manual validation (#650)
+- CrewAI example updated for the latest CrewAI protocol (#631)
+
+### Removed
+
+- `src/utils/clients.py` deleted; its responsibilities are split across `src/llm/registry.py`, `src/llm/credentials.py`, and the backend-specific modules (#459)
+- `HEALTHCHECK` directive removed from the shared Docker image (#530)
+
 ## [3.0.6] - 2026-04-10
 
 ### Changed

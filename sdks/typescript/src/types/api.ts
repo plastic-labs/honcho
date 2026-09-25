@@ -35,6 +35,7 @@ export interface WorkspaceListParams {
   filters?: Record<string, unknown>
   page?: number
   size?: number
+  reverse?: boolean
 }
 
 // =============================================================================
@@ -64,6 +65,7 @@ export interface PeerListParams {
   filters?: Record<string, unknown>
   page?: number
   size?: number
+  reverse?: boolean
 }
 
 export interface PeerChatParams {
@@ -72,10 +74,88 @@ export interface PeerChatParams {
   session_id?: string
   target?: string
   reasoning_level?: 'minimal' | 'low' | 'medium' | 'high' | 'max'
+  response_format?: Record<string, unknown>
+  include_evidence?: boolean
+}
+
+/** A conclusion the dialectic read while answering. */
+export interface EvidenceObservation {
+  id: string
+  level: 'explicit' | 'deductive' | 'inductive' | 'contradiction'
+  content: string
+  created_at: string
+  session_id: string | null
+  /** The peer who made the conclusion. */
+  observer_id: string
+  /** The peer the conclusion is about. */
+  observed_id: string
+  /** Conclusions this one was derived from; empty for explicit conclusions. */
+  source_ids: string[]
+}
+
+/**
+ * A message the dialectic read while answering.
+ *
+ * Identity and provenance only — no content. Fetch the message by `id` when
+ * you need its text; evidence is for auditing what was read, not for reading
+ * messages in bulk.
+ */
+export interface EvidenceMessageRef {
+  id: string
+  session_id: string
+  peer_id: string
+  created_at: string
+}
+
+/** A tool the dialectic invoked while answering. */
+export interface EvidenceToolCall {
+  tool_name: string
+  tool_input: Record<string, unknown>
+}
+
+/**
+ * What the dialectic read and did while answering.
+ *
+ * Collated from what the agent accessed rather than reported by the model, so
+ * it over-reports: a listed conclusion was read, which is not proof the answer
+ * leaned on it. `toolCalls` omits results and failed calls.
+ */
+export interface Evidence {
+  conclusions: EvidenceObservation[]
+  messages: EvidenceMessageRef[]
+  tool_calls: EvidenceToolCall[]
+  reasoning_trace_id: string | null
 }
 
 export interface PeerChatResponse {
   content: string | null
+  evidence?: Evidence | null
+}
+
+export interface WorkspaceChatParams {
+  query: string
+  stream?: boolean
+  session_id?: string
+  reasoning_level?: 'minimal' | 'low' | 'medium' | 'high' | 'max'
+  response_format?: Record<string, unknown>
+  scope?: string | string[]
+  include_evidence?: boolean
+}
+
+export interface WorkspaceChatResponse {
+  content: string | null
+  evidence?: Evidence | null
+}
+
+/**
+ * An answer together with what it was built from.
+ *
+ * Returned by `chat` when `includeEvidence` is set; without it, `chat` returns
+ * the answer on its own.
+ */
+export interface ChatResponse<TContent = string> {
+  content: TContent | null
+  evidence: Evidence | null
 }
 
 export interface PeerRepresentationParams {
@@ -130,6 +210,28 @@ export interface SessionCreateParams {
   metadata?: Record<string, unknown>
   configuration?: SessionConfigApi
   peers?: Record<string, SessionPeerConfigParams>
+  scopes?: string[]
+}
+
+export interface ScopeResponse {
+  id: string
+  metadata: Record<string, unknown>
+  created_at: string
+}
+
+/**
+ * Per-session backfill job state for a scope.
+ *
+ * `docs_copied` is present only once a backfill completes.
+ */
+export interface ScopeBackfillJob {
+  state: 'pending' | 'completed' | 'failed'
+  updated_at: string
+  docs_copied?: number
+}
+
+export interface ScopeStatusResponse {
+  backfill_status: Record<string, ScopeBackfillJob>
 }
 
 export interface SessionUpdateParams {
@@ -141,6 +243,7 @@ export interface SessionListParams {
   filters?: Record<string, unknown>
   page?: number
   size?: number
+  reverse?: boolean
 }
 
 export interface SessionCloneParams {
@@ -226,6 +329,7 @@ export interface MessageListParams {
   filters?: Record<string, unknown>
   page?: number
   size?: number
+  reverse?: boolean
 }
 
 export interface MessageSearchParams {
@@ -238,12 +342,25 @@ export interface MessageSearchParams {
 // Conclusion Types
 // =============================================================================
 
+/**
+ * Reasoning level of a conclusion. "explicit" conclusions are extracted
+ * directly from messages; the others are derived during dreaming.
+ */
+export type ConclusionLevel =
+  | 'explicit'
+  | 'deductive'
+  | 'inductive'
+  | 'contradiction'
+
 export interface ConclusionResponse {
   id: string
   content: string
   observer_id: string
   observed_id: string
   session_id: string | null
+  level: ConclusionLevel
+  source_ids?: string[] | null
+  times_derived?: number
   created_at: string
 }
 
@@ -262,6 +379,7 @@ export interface ConclusionListParams {
   filters?: Record<string, unknown>
   page?: number
   size?: number
+  reverse?: boolean
 }
 
 export interface ConclusionQueryParams {

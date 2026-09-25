@@ -8,9 +8,9 @@ Whenever messages are stored in Honcho, background processes kick off to [reason
 
 Reasoning is an asynchronous process and will not immediately
 generate insights for the latest message you've sent. This is
-by design: we want to reason efficiently over batches of messages
-rather than assessing each message in a vacuum. Honcho provides
-several utilities to check the status of the queue.
+by design: Honcho reasons in the background rather than on the
+write path. Honcho provides several utilities to check the status
+of the queue.
 
 <CodeGroup>
 ```python Python
@@ -95,7 +95,7 @@ not the total number of items ever processed.
 </Note>
 
 The `queue_status` method can take additional
-parameters to scope the status to a specific work unit:
+parameters to filter the status by a matching observer, sender, or session:
 
 <CodeGroup>
 ```python Python

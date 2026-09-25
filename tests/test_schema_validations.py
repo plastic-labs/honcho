@@ -3,11 +3,15 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
+from src.config import settings
 from src.schemas import (
+    DialecticOptions,
     DocumentCreate,
     DocumentMetadata,
     MessageCreate,
+    ObservationInput,
     PeerCreate,
+    ReasoningConfiguration,
     ResolvedConfiguration,
     SessionCreate,
     WorkspaceCreate,
@@ -28,7 +32,7 @@ class TestWorkspaceValidations:
 
     def test_app_name_too_long(self):
         with pytest.raises(ValidationError) as exc_info:
-            WorkspaceCreate(name="a" * 101, metadata={})
+            WorkspaceCreate(name="a" * 513, metadata={})
         error_dict = exc_info.value.errors()[0]
         assert error_dict["type"] == "string_too_long"
 
@@ -62,7 +66,7 @@ class TestPeerValidations:
 
     def test_peer_name_too_long(self):
         with pytest.raises(ValidationError) as exc_info:
-            PeerCreate(name="a" * 101, metadata={})
+            PeerCreate(name="a" * 513, metadata={})
         error_dict = exc_info.value.errors()[0]
         assert error_dict["type"] == "string_too_long"
 
@@ -203,3 +207,138 @@ class TestResolvedConfigurationMigration:
             ResolvedConfiguration.model_validate(payload)
 
         assert any(e["loc"] == ("reasoning",) for e in exc_info.value.errors())
+
+
+class TestReasoningCustomInstructionsValidation:
+    def test_nonblank_custom_instructions_rejected_when_cap_is_zero(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(settings.DERIVER, "MAX_CUSTOM_INSTRUCTIONS_TOKENS", 0)
+
+        with pytest.raises(ValidationError) as exc_info:
+            ReasoningConfiguration(custom_instructions="Prefer concrete facts.")
+
+        errors = exc_info.value.errors()
+        assert any(
+            error["loc"] == ("custom_instructions",)
+            and "custom_instructions are not enabled for this deployment"
+            in error["msg"]
+            for error in errors
+        )
+
+    def test_reasoning_configuration_rejects_oversized_custom_instructions(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(settings.DERIVER, "MAX_CUSTOM_INSTRUCTIONS_TOKENS", 1)
+
+        with pytest.raises(ValidationError) as exc_info:
+            ReasoningConfiguration(
+                custom_instructions="repeat repeat repeat repeat repeat"
+            )
+
+        assert any(
+            error["loc"] == ("custom_instructions",)
+            for error in exc_info.value.errors()
+        )
+
+    def test_oversized_custom_instructions_are_rejected(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(settings.DERIVER, "MAX_CUSTOM_INSTRUCTIONS_TOKENS", 1)
+
+        payload = {
+            "reasoning": {
+                "enabled": True,
+                "custom_instructions": "repeat repeat repeat repeat repeat",
+            },
+            "peer_card": {"use": True, "create": True},
+            "summary": {
+                "enabled": True,
+                "messages_per_short_summary": 20,
+                "messages_per_long_summary": 60,
+            },
+            "dream": {"enabled": False},
+        }
+
+        with pytest.raises(ValidationError) as exc_info:
+            ResolvedConfiguration.model_validate(payload)
+
+        assert any(
+            error["loc"] == ("reasoning", "custom_instructions")
+            for error in exc_info.value.errors()
+        )
+
+    @pytest.mark.parametrize("custom_instructions", ["", "   \n\t  "])
+    def test_blank_custom_instructions_do_not_require_token_cap(
+        self, monkeypatch: pytest.MonkeyPatch, custom_instructions: str
+    ) -> None:
+        monkeypatch.setattr(settings.DERIVER, "MAX_CUSTOM_INSTRUCTIONS_TOKENS", 0)
+
+        configuration = ReasoningConfiguration(custom_instructions=custom_instructions)
+
+        assert configuration.custom_instructions == custom_instructions
+
+
+class TestNulByteSanitization:
+    """Postgres rejects NUL (0x00) in text columns and in jsonb strings.
+
+    Models emit these as `\\u0000` escapes in tool-call arguments, which the
+    JSON parser decodes into real NUL bytes, so model-generated text needs the
+    same treatment as user-supplied input.
+    """
+
+    def test_document_content_strips_nul(self):
+        document = DocumentCreate(
+            content="the key is at c:\\\x00users\\amal",
+            metadata=DocumentMetadata(message_ids=[1], message_created_at="2026-08-28"),
+            embedding=[0.1],
+        )
+
+        assert document.content == "the key is at c:\\users\\amal"
+
+    def test_all_nul_document_content_is_rejected_not_emptied(self):
+        """The validator runs before `min_length`, so content that is nothing
+        but NUL fails validation rather than being stored as an empty string."""
+        with pytest.raises(ValidationError):
+            DocumentCreate(
+                content="\x00\x00",
+                metadata=DocumentMetadata(
+                    message_ids=[1], message_created_at="2026-08-28"
+                ),
+                embedding=[0.1],
+            )
+
+    def test_message_content_strips_nul(self):
+        message = MessageCreate(peer_id="peer", content="before\x00after")
+
+        assert message.content == "beforeafter"
+
+    def test_metadata_strips_nul_at_every_depth(self):
+        message = MessageCreate(
+            peer_id="peer",
+            content="hi",
+            metadata={"a\x00b": {"c": ["d\x00e", 1]}},
+        )
+
+        assert message.metadata == {"ab": {"c": ["de", 1]}}
+
+    def test_observation_content_strips_nul(self):
+        observation = ObservationInput(content="before\x00after")
+
+        assert observation.content == "beforeafter"
+
+    def test_all_nul_observation_content_is_rejected_not_emptied(self):
+        """Sanitization runs before `min_length`, so an all-NUL observation is
+        reported back to the model as a validation failure rather than saved
+        as an empty document."""
+        with pytest.raises(ValidationError):
+            ObservationInput(content="\x00\x00")
+
+    def test_all_nul_query_is_rejected_not_emptied(self):
+        """`NulStripped` runs before the field's own constraints, so a query
+        that is nothing but NUL fails `min_length` instead of reaching the
+        dialectic as an empty prompt."""
+        options = DialecticOptions.model_validate({"query": "before\x00after"})
+        assert options.query == "beforeafter"
+        with pytest.raises(ValidationError):
+            DialecticOptions.model_validate({"query": "\x00"})

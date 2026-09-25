@@ -1,0 +1,742 @@
+from types import SimpleNamespace
+from typing import Any
+from unittest.mock import AsyncMock, Mock
+
+import pytest
+from anthropic.types import TextBlock, ThinkingBlock, ToolUseBlock
+from pydantic import BaseModel
+
+from src.exceptions import ValidationException
+from src.llm.backends.anthropic import AnthropicBackend
+
+
+@pytest.mark.asyncio
+async def test_anthropic_backend_extracts_text_thinking_and_tool_calls() -> None:
+    client = Mock()
+    client.messages.create = AsyncMock(
+        return_value=SimpleNamespace(
+            content=[
+                ThinkingBlock(
+                    type="thinking",
+                    thinking="internal reasoning",
+                    signature="sig_123",
+                ),
+                TextBlock(type="text", text="Hello from Anthropic"),
+                ToolUseBlock(
+                    type="tool_use",
+                    id="tool_1",
+                    name="search",
+                    input={"query": "honcho"},
+                ),
+            ],
+            usage=SimpleNamespace(
+                input_tokens=10,
+                output_tokens=5,
+                cache_creation_input_tokens=3,
+                cache_read_input_tokens=2,
+            ),
+            stop_reason="tool_use",
+        )
+    )
+
+    backend = AnthropicBackend(client)
+    result = await backend.complete(
+        model="claude-haiku-4-5",
+        messages=[
+            {"role": "system", "content": "System prompt"},
+            {"role": "user", "content": "Hello"},
+        ],
+        max_tokens=100,
+        tools=[
+            {
+                "name": "search",
+                "description": "Search for information",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"query": {"type": "string"}},
+                },
+            }
+        ],
+        thinking_budget_tokens=2048,
+        tool_choice="required",
+        extra_params={"thinking_tool_choice_conflict": "override_thinking"},
+    )
+
+    assert result.content == "Hello from Anthropic"
+    assert result.thinking_content == "internal reasoning"
+    assert result.thinking_blocks == [
+        {
+            "type": "thinking",
+            "thinking": "internal reasoning",
+            "signature": "sig_123",
+        }
+    ]
+    assert result.tool_calls[0].name == "search"
+    assert result.input_tokens == 15
+    assert result.output_tokens == 5
+    assert result.finish_reason == "tool_use"
+
+    await_args = client.messages.create.await_args
+    if await_args is None:
+        raise AssertionError("Expected Anthropic client call")
+    call = await_args.kwargs
+    assert call["model"] == "claude-haiku-4-5"
+    assert call["system"][0]["text"] == "System prompt"
+    assert call["tool_choice"] == {"type": "any"}
+    assert "thinking" not in call
+
+
+def _client_with_text_response() -> Mock:
+    client = Mock()
+    client.messages.create = AsyncMock(
+        return_value=SimpleNamespace(
+            content=[TextBlock(type="text", text="ok")],
+            usage=SimpleNamespace(
+                input_tokens=1,
+                output_tokens=1,
+                cache_creation_input_tokens=0,
+                cache_read_input_tokens=0,
+            ),
+            stop_reason="end_turn",
+        )
+    )
+    return client
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "tool_choice",
+    ["required", "any", "search", {"type": "any"}, {"type": "tool", "name": "search"}],
+)
+async def test_anthropic_backend_override_thinking_drops_thinking(
+    tool_choice: str | dict[str, Any],
+) -> None:
+    client = _client_with_text_response()
+    backend = AnthropicBackend(client)
+
+    await backend.complete(
+        model="claude-haiku-4-5",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        tools=[SEARCH_TOOL],
+        tool_choice=tool_choice,
+        thinking_budget_tokens=2048,
+        extra_params={"thinking_tool_choice_conflict": "override_thinking"},
+    )
+
+    call = client.messages.create.await_args.kwargs
+    assert call["tool_choice"]["type"] in {"any", "tool"}
+    assert "thinking" not in call
+
+
+@pytest.mark.asyncio
+async def test_anthropic_backend_override_tool_relaxes_tool_choice_and_keeps_thinking() -> (
+    None
+):
+    client = _client_with_text_response()
+    backend = AnthropicBackend(client)
+
+    await backend.complete(
+        model="claude-haiku-4-5",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        tools=[SEARCH_TOOL],
+        tool_choice="required",
+        thinking_budget_tokens=2048,
+        extra_params={"thinking_tool_choice_conflict": "override_tool"},
+    )
+
+    call = client.messages.create.await_args.kwargs
+    assert call["tool_choice"] == {"type": "auto"}
+    assert call["thinking"] == {"type": "enabled", "budget_tokens": 2048}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "extra_params", [None, {}, {"thinking_tool_choice_conflict": "throw"}]
+)
+async def test_anthropic_backend_throws_by_default_when_tool_choice_forces_tool_use(
+    extra_params: dict[str, Any] | None,
+) -> None:
+    client = _client_with_text_response()
+    backend = AnthropicBackend(client)
+
+    with pytest.raises(ValidationException, match="forces tool use"):
+        await backend.complete(
+            model="claude-haiku-4-5",
+            messages=[{"role": "user", "content": "Hello"}],
+            max_tokens=100,
+            tools=[SEARCH_TOOL],
+            tool_choice="required",
+            thinking_budget_tokens=2048,
+            extra_params=extra_params,
+        )
+
+    client.messages.create.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_anthropic_backend_rejects_unknown_conflict_mode() -> None:
+    client = _client_with_text_response()
+    backend = AnthropicBackend(client)
+
+    with pytest.raises(ValidationException, match="thinking_tool_choice_conflict"):
+        await backend.complete(
+            model="claude-haiku-4-5",
+            messages=[{"role": "user", "content": "Hello"}],
+            max_tokens=100,
+            tools=[SEARCH_TOOL],
+            tool_choice="required",
+            thinking_budget_tokens=2048,
+            extra_params={"thinking_tool_choice_conflict": "bogus"},
+        )
+
+
+@pytest.mark.asyncio
+async def test_anthropic_backend_conflict_mode_ignored_without_conflict() -> None:
+    client = _client_with_text_response()
+    backend = AnthropicBackend(client)
+
+    await backend.complete(
+        model="claude-haiku-4-5",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        tools=[SEARCH_TOOL],
+        tool_choice="auto",
+        thinking_budget_tokens=2048,
+        extra_params={"thinking_tool_choice_conflict": "throw"},
+    )
+
+    call = client.messages.create.await_args.kwargs
+    assert call["tool_choice"] == {"type": "auto"}
+    assert call["thinking"] == {"type": "enabled", "budget_tokens": 2048}
+
+
+@pytest.mark.asyncio
+async def test_anthropic_backend_stream_override_thinking_drops_thinking() -> None:
+    class _FakeStream:
+        async def __aenter__(self) -> "_FakeStream":
+            return self
+
+        async def __aexit__(self, *_: object) -> bool:
+            return False
+
+        def __aiter__(self) -> "_FakeStream":
+            return self
+
+        async def __anext__(self) -> object:
+            raise StopAsyncIteration
+
+        async def get_final_message(self) -> SimpleNamespace:
+            return SimpleNamespace(
+                usage=SimpleNamespace(output_tokens=5),
+                stop_reason="end_turn",
+            )
+
+    client = Mock()
+    client.messages.stream = Mock(return_value=_FakeStream())
+    backend = AnthropicBackend(client)
+
+    _ = [
+        chunk
+        async for chunk in backend.stream(
+            model="claude-haiku-4-5",
+            messages=[{"role": "user", "content": "Hello"}],
+            max_tokens=100,
+            tools=[SEARCH_TOOL],
+            tool_choice="required",
+            thinking_budget_tokens=2048,
+            extra_params={"thinking_tool_choice_conflict": "override_thinking"},
+        )
+    ]
+
+    call = client.messages.stream.call_args
+    if call is None:
+        raise AssertionError("Expected Anthropic stream call")
+    assert call.kwargs["tool_choice"] == {"type": "any"}
+    assert "thinking" not in call.kwargs
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool_choice", [None, "auto", "none", {"type": "auto"}])
+async def test_anthropic_backend_keeps_thinking_when_tool_choice_does_not_force(
+    tool_choice: str | dict[str, Any] | None,
+) -> None:
+    client = _client_with_text_response()
+    backend = AnthropicBackend(client)
+
+    await backend.complete(
+        model="claude-haiku-4-5",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        tools=[SEARCH_TOOL],
+        tool_choice=tool_choice,
+        thinking_budget_tokens=2048,
+    )
+
+    call = client.messages.create.await_args.kwargs
+    assert call["thinking"] == {"type": "enabled", "budget_tokens": 2048}
+
+
+@pytest.mark.asyncio
+async def test_anthropic_backend_keeps_thinking_without_tools() -> None:
+    client = _client_with_text_response()
+    backend = AnthropicBackend(client)
+
+    await backend.complete(
+        model="claude-haiku-4-5",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        tool_choice="required",
+        thinking_budget_tokens=2048,
+    )
+
+    call = client.messages.create.await_args.kwargs
+    assert "tool_choice" not in call
+    assert call["thinking"] == {"type": "enabled", "budget_tokens": 2048}
+
+
+class StructuredResponse(BaseModel):
+    answer: str
+
+
+@pytest.mark.asyncio
+async def test_anthropic_backend_skips_assistant_prefill_for_claude_4_models() -> None:
+    client = Mock()
+    client.messages.create = AsyncMock(
+        return_value=SimpleNamespace(
+            content=[TextBlock(type="text", text='{"answer":"ok"}')],
+            usage=SimpleNamespace(
+                input_tokens=10,
+                output_tokens=5,
+                cache_creation_input_tokens=0,
+                cache_read_input_tokens=0,
+            ),
+            stop_reason="end_turn",
+        )
+    )
+
+    backend = AnthropicBackend(client)
+    result = await backend.complete(
+        model="claude-sonnet-4-5",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        response_format=StructuredResponse,
+    )
+
+    assert isinstance(result.content, StructuredResponse)
+    assert result.content.answer == "ok"
+    await_args = client.messages.create.await_args
+    if await_args is None:
+        raise AssertionError("Expected Anthropic client call")
+    call = await_args.kwargs
+    assert len(call["messages"]) == 1
+    assert call["messages"][0]["role"] == "user"
+    assert call["messages"][0]["content"].startswith("Hello\n\nRespond with valid JSON")
+
+
+@pytest.mark.asyncio
+async def test_anthropic_backend_forwards_provider_params_passthroughs() -> None:
+    """provider_params.extra_body/extra_headers/extra_query reach the Anthropic
+    SDK call as kwargs of the same name (the SDK's documented passthrough).
+    """
+    client = Mock()
+    client.messages.create = AsyncMock(
+        return_value=SimpleNamespace(
+            content=[TextBlock(type="text", text="ok")],
+            usage=SimpleNamespace(
+                input_tokens=10,
+                output_tokens=5,
+                cache_creation_input_tokens=0,
+                cache_read_input_tokens=0,
+            ),
+            stop_reason="end_turn",
+        )
+    )
+
+    backend = AnthropicBackend(client)
+    await backend.complete(
+        model="claude-haiku-4-5",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        extra_params={
+            "extra_body": {"anthropic_beta": ["context-1m-2025-01-15"]},
+            "extra_headers": {"X-Proxy-Route": "vertex"},
+            "extra_query": {"trace_id": "abc123"},
+        },
+    )
+
+    await_args = client.messages.create.await_args
+    if await_args is None:
+        raise AssertionError("Expected Anthropic client call")
+    call = await_args.kwargs
+    assert call["extra_body"] == {"anthropic_beta": ["context-1m-2025-01-15"]}
+    assert call["extra_headers"] == {"X-Proxy-Route": "vertex"}
+    assert call["extra_query"] == {"trace_id": "abc123"}
+
+
+@pytest.mark.asyncio
+async def test_anthropic_backend_stream_forwards_provider_params_passthroughs() -> None:
+    """The stream() path forwards provider_params passthroughs to the SDK the
+    same way complete() does — it has its own merge block, so cover it too.
+    """
+
+    class _FakeStream:
+        async def __aenter__(self) -> "_FakeStream":
+            return self
+
+        async def __aexit__(self, *_: object) -> bool:
+            return False
+
+        def __aiter__(self) -> "_FakeStream":
+            return self
+
+        async def __anext__(self) -> object:
+            raise StopAsyncIteration
+
+        async def get_final_message(self) -> SimpleNamespace:
+            return SimpleNamespace(
+                usage=SimpleNamespace(output_tokens=5),
+                stop_reason="end_turn",
+            )
+
+    client = Mock()
+    client.messages.stream = Mock(return_value=_FakeStream())
+
+    backend = AnthropicBackend(client)
+    chunks = [
+        chunk
+        async for chunk in backend.stream(
+            model="claude-haiku-4-5",
+            messages=[{"role": "user", "content": "Hello"}],
+            max_tokens=100,
+            extra_params={
+                "extra_body": {"anthropic_beta": ["context-1m-2025-01-15"]},
+                "extra_headers": {"X-Proxy-Route": "vertex"},
+                "extra_query": {"trace_id": "abc123"},
+            },
+        )
+    ]
+
+    assert chunks  # the terminal is_done chunk is always emitted
+    call = client.messages.stream.call_args
+    if call is None:
+        raise AssertionError("Expected Anthropic stream call")
+    kwargs = call.kwargs
+    assert kwargs["extra_body"] == {"anthropic_beta": ["context-1m-2025-01-15"]}
+    assert kwargs["extra_headers"] == {"X-Proxy-Route": "vertex"}
+    assert kwargs["extra_query"] == {"trace_id": "abc123"}
+
+
+@pytest.mark.asyncio
+async def test_anthropic_backend_ignores_thinking_effort() -> None:
+    client = Mock()
+    client.messages.create = AsyncMock(
+        return_value=SimpleNamespace(
+            content=[TextBlock(type="text", text="ok")],
+            usage=SimpleNamespace(
+                input_tokens=10,
+                output_tokens=5,
+                cache_creation_input_tokens=0,
+                cache_read_input_tokens=0,
+            ),
+            stop_reason="end_turn",
+        )
+    )
+
+    backend = AnthropicBackend(client)
+    await backend.complete(
+        model="claude-haiku-4-5",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        thinking_effort="high",
+    )
+
+    await_args = client.messages.create.await_args
+    if await_args is None:
+        raise AssertionError("Expected Anthropic client call")
+    call = await_args.kwargs
+    assert "thinking" not in call
+    assert "reasoning_effort" not in call
+
+
+def _make_client(content_blocks: list[Any]) -> Mock:
+    client = Mock()
+    client.messages.create = AsyncMock(
+        return_value=SimpleNamespace(
+            content=content_blocks,
+            usage=SimpleNamespace(
+                input_tokens=10,
+                output_tokens=5,
+                cache_creation_input_tokens=0,
+                cache_read_input_tokens=0,
+            ),
+            stop_reason="end_turn",
+        )
+    )
+    return client
+
+
+SEARCH_TOOL = {
+    "name": "search",
+    "description": "Search for information",
+    "input_schema": {
+        "type": "object",
+        "properties": {"query": {"type": "string"}},
+    },
+}
+
+
+@pytest.mark.asyncio
+async def test_anthropic_backend_no_prefill_when_tools_present() -> None:
+    """With tools + response_format, the '{' prefill must be skipped and the
+    schema instruction must be conditional, so tool_use blocks stay reachable."""
+    client = _make_client([TextBlock(type="text", text='{"answer":"ok"}')])
+
+    backend = AnthropicBackend(client)
+    result = await backend.complete(
+        # claude-3-5 supports prefill, so only the tools guard prevents it here
+        model="claude-3-5-sonnet-latest",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        tools=[SEARCH_TOOL],
+        response_format=StructuredResponse,
+    )
+
+    assert isinstance(result.content, StructuredResponse)
+    call = client.messages.create.await_args.kwargs
+    assert call["messages"][-1]["role"] == "user"  # no assistant '{' prefill
+    assert (
+        "If not responding with a tool call, respond with valid JSON"
+        in call["messages"][0]["content"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_anthropic_backend_prefill_unchanged_without_tools() -> None:
+    """Tool-less structured calls keep the prefill + unconditional wording."""
+    client = _make_client([TextBlock(type="text", text='"answer":"ok"}')])
+
+    backend = AnthropicBackend(client)
+    result = await backend.complete(
+        model="claude-3-5-sonnet-latest",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        response_format=StructuredResponse,
+    )
+
+    assert isinstance(result.content, StructuredResponse)
+    call = client.messages.create.await_args.kwargs
+    assert call["messages"][-1] == {"role": "assistant", "content": "{"}
+    instruction = call["messages"][0]["content"]
+    assert "\n\nRespond with valid JSON matching this schema:" in instruction
+    assert "If not responding with a tool call" not in instruction
+
+
+@pytest.mark.asyncio
+async def test_anthropic_backend_repairs_malformed_structured_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Structured output that fails JSON parsing falls back to
+    repair_response_model_json, whose result becomes the response content."""
+    # After the '{' prefill is prepended this is still invalid JSON.
+    client = _make_client([TextBlock(type="text", text='"answer": not-json')])
+
+    repaired = StructuredResponse(answer="fixed")
+    repair_calls: list[tuple[str, type[BaseModel], str]] = []
+
+    def _fake_repair(
+        raw: str, response_format: type[BaseModel], model_name: str
+    ) -> StructuredResponse:
+        repair_calls.append((raw, response_format, model_name))
+        return repaired
+
+    monkeypatch.setattr(
+        "src.llm.backends.anthropic.repair_response_model_json", _fake_repair
+    )
+
+    backend = AnthropicBackend(client)
+    result = await backend.complete(
+        model="claude-3-5-sonnet-latest",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        response_format=StructuredResponse,
+    )
+
+    assert result.content is repaired
+    assert repair_calls == [
+        ('{"answer": not-json', StructuredResponse, "claude-3-5-sonnet-latest")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_anthropic_backend_skips_parsing_on_tool_call_turns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A tool-call response with response_format set must not attempt JSON
+    parsing — the repair fallback raises on the empty text of tool-call
+    turns, which would fail every intermediate tool iteration."""
+    client = _make_client(
+        [
+            ToolUseBlock(
+                type="tool_use",
+                id="tool_1",
+                name="search",
+                input={"query": "honcho"},
+            )
+        ]
+    )
+
+    def _fail_repair(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("repair must not run for tool-call turns")
+
+    monkeypatch.setattr(
+        "src.llm.backends.anthropic.repair_response_model_json", _fail_repair
+    )
+
+    backend = AnthropicBackend(client)
+    result = await backend.complete(
+        model="claude-3-5-sonnet-latest",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        tools=[SEARCH_TOOL],
+        response_format=StructuredResponse,
+    )
+
+    assert result.content == ""  # raw (empty) text, not a parsed model
+    assert result.tool_calls[0].name == "search"
+
+
+@pytest.mark.asyncio
+async def test_anthropic_backend_stream_no_prefill_when_tools_present() -> None:
+    """The streaming path applies the same tools guard."""
+
+    class _FakeStream:
+        def __init__(self) -> None:
+            self._chunks: list[SimpleNamespace] = [
+                SimpleNamespace(
+                    type="content_block_delta",
+                    delta=SimpleNamespace(text='{"answer":"ok"}'),
+                )
+            ]
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args: object) -> bool:
+            return False
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if self._chunks:
+                return self._chunks.pop(0)
+            raise StopAsyncIteration
+
+        async def get_final_message(self):
+            return SimpleNamespace(
+                stop_reason="end_turn", usage=SimpleNamespace(output_tokens=5)
+            )
+
+    client = Mock()
+    client.messages.stream = Mock(return_value=_FakeStream())
+
+    backend = AnthropicBackend(client)
+    chunks = [
+        chunk
+        async for chunk in backend.stream(
+            model="claude-3-5-sonnet-latest",
+            messages=[{"role": "user", "content": "Hello"}],
+            max_tokens=100,
+            tools=[SEARCH_TOOL],
+            response_format=StructuredResponse,
+        )
+    ]
+
+    assert chunks[0].content == '{"answer":"ok"}'
+    call = client.messages.stream.call_args.kwargs
+    assert call["messages"][-1]["role"] == "user"  # no assistant '{' prefill
+    assert (
+        "If not responding with a tool call, respond with valid JSON"
+        in call["messages"][0]["content"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_anthropic_backend_passes_timeout_to_completion_request() -> None:
+    """Anthropic completion requests receive per-request provider timeout."""
+    client = Mock()
+    client.messages.create = AsyncMock(
+        return_value=SimpleNamespace(
+            content=[TextBlock(type="text", text="ok")],
+            usage=SimpleNamespace(
+                input_tokens=10,
+                output_tokens=5,
+                cache_creation_input_tokens=0,
+                cache_read_input_tokens=0,
+            ),
+            stop_reason="end_turn",
+        )
+    )
+
+    backend = AnthropicBackend(client)
+    await backend.complete(
+        model="claude-haiku-4-5",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        extra_params={"timeout": 45},
+    )
+
+    await_args = client.messages.create.await_args
+    if await_args is None:
+        raise AssertionError("Expected Anthropic create call")
+    assert await_args.kwargs["timeout"] == 45.0
+
+
+@pytest.mark.asyncio
+async def test_anthropic_backend_passes_timeout_to_stream_request() -> None:
+    """Anthropic stream requests receive per-request provider timeout."""
+
+    class FakeStream:
+        """Minimal async stream manager for Anthropic streaming tests."""
+
+        async def __aenter__(self):
+            """Return the stream object used by the backend."""
+            return self
+
+        async def __aexit__(self, *_args: object) -> bool:
+            """Do not suppress stream errors."""
+            return False
+
+        def __aiter__(self):
+            """Return the async iterator used by the backend."""
+            return self
+
+        async def __anext__(self):
+            """End the fake stream immediately."""
+            raise StopAsyncIteration
+
+        async def get_final_message(self):
+            """Return the final message required by the backend."""
+            return SimpleNamespace(
+                usage=SimpleNamespace(output_tokens=1),
+                stop_reason="end_turn",
+            )
+
+    client = Mock()
+    client.messages.stream = Mock(return_value=FakeStream())
+
+    backend = AnthropicBackend(client)
+    chunks = [
+        chunk
+        async for chunk in backend.stream(
+            model="claude-haiku-4-5",
+            messages=[{"role": "user", "content": "Hello"}],
+            max_tokens=100,
+            extra_params={"timeout": "60"},
+        )
+    ]
+
+    assert chunks[-1].is_done is True
+    assert client.messages.stream.call_args.kwargs["timeout"] == 60.0

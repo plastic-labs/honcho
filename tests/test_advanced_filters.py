@@ -3,14 +3,20 @@ Tests for advanced filter functionality including logical operators,
 comparison operators, and wildcards across multiple models.
 """
 
-from datetime import datetime, timedelta, timezone
-from typing import Any
+from datetime import UTC, datetime, timedelta
+from typing import Any, TypedDict
 
 import pytest
 from fastapi.testclient import TestClient
 from nanoid import generate as generate_nanoid
 
 from src.models import Peer, Workspace
+
+
+class MessageConfig(TypedDict):
+    content: str
+    peer_id: str
+    metadata: dict[str, Any]
 
 
 @pytest.mark.parametrize(
@@ -105,21 +111,21 @@ async def test_logical_operators_and_filters(
     found_names = [item["id"] for item in data["items"]]
     expected_names = [peer_names[i] for i in expected_peer_indices]
 
-    assert len(found_names) == len(
-        expected_names
-    ), f"Expected {len(expected_names)} peers for {description}, got {len(found_names)}"
+    assert len(found_names) == len(expected_names), (
+        f"Expected {len(expected_names)} peers for {description}, got {len(found_names)}"
+    )
 
     for expected_name in expected_names:
-        assert (
-            expected_name in found_names
-        ), f"Expected peer {expected_name} in results for {description}"
+        assert expected_name in found_names, (
+            f"Expected peer {expected_name} in results for {description}"
+        )
 
     # Verify unexpected peers are not included
     for i, peer_name in enumerate(peer_names):
         if i not in expected_peer_indices:
-            assert (
-                peer_name not in found_names
-            ), f"Unexpected peer {peer_name} found in results for {description}"
+            assert peer_name not in found_names, (
+                f"Unexpected peer {peer_name} found in results for {description}"
+            )
 
 
 @pytest.mark.parametrize(
@@ -218,21 +224,178 @@ async def test_comparison_operators_filters(
     ]
     found_contents = [item["content"] for item in data["items"]]
 
-    assert (
-        len(found_contents) == len(expected_contents)
-    ), f"Expected {len(expected_contents)} messages for {description}, got {len(found_contents)}"
+    assert len(found_contents) == len(expected_contents), (
+        f"Expected {len(expected_contents)} messages for {description}, got {len(found_contents)}"
+    )
 
     for expected_content in expected_contents:
-        assert (
-            expected_content in found_contents
-        ), f"Expected message '{expected_content}' in results for {description}"
+        assert expected_content in found_contents, (
+            f"Expected message '{expected_content}' in results for {description}"
+        )
 
     # Verify unexpected messages are not included
     for i, message_config in enumerate(message_configs):
         if i not in expected_message_indices:
-            assert (
-                message_config["content"] not in found_contents
-            ), f"Unexpected message '{message_config['content']}' found in results for {description}"
+            assert message_config["content"] not in found_contents, (
+                f"Unexpected message '{message_config['content']}' found in results for {description}"
+            )
+
+
+@pytest.mark.asyncio
+async def test_nested_metadata_ne_includes_missing_and_empty_metadata(
+    client: TestClient,
+    sample_data: tuple[Workspace, Peer],
+):
+    """`ne` on a nested metadata key must not silently drop rows where the
+    key is absent. Under SQL's three-valued logic, comparing NULL (a missing
+    key or empty metadata) with `<>` yields NULL, which excludes the row —
+    the filter builds and executes cleanly either way, so this has to be
+    checked by counting the rows actually returned.
+    """
+    test_workspace, test_peer = sample_data
+
+    session_id = str(generate_nanoid())
+    session_response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions",
+        json={"id": session_id, "peer_names": {test_peer.name: {}}},
+    )
+    assert session_response.status_code == 201
+
+    message_configs: list[MessageConfig] = [
+        {
+            "content": "High priority, score 10",
+            "peer_id": test_peer.name,
+            "metadata": {"priority": "high", "score": 10},
+        },
+        {
+            "content": "Low priority, score 5",
+            "peer_id": test_peer.name,
+            "metadata": {"priority": "low", "score": 5},
+        },
+        {
+            "content": "Metadata present, no priority or score key",
+            "peer_id": test_peer.name,
+            "metadata": {"other": "value"},
+        },
+        {
+            "content": "Empty metadata",
+            "peer_id": test_peer.name,
+            "metadata": {},
+        },
+    ]
+    messages_response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/messages",
+        json={"messages": message_configs},
+    )
+    assert messages_response.status_code == 201
+
+    def list_contents(filter_config: dict[str, Any]) -> list[str]:
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
+            json={"filters": filter_config},
+        )
+        assert response.status_code == 200
+        return [item["content"] for item in response.json()["items"]]
+
+    # String value: excludes only the row where priority actually equals "high"
+    string_ne_contents = list_contents({"metadata": {"priority": {"ne": "high"}}})
+    assert sorted(string_ne_contents) == sorted(
+        [
+            message_configs[1]["content"],
+            message_configs[2]["content"],
+            message_configs[3]["content"],
+        ]
+    )
+
+    # Numeric value: excludes only the row where score actually equals 5
+    numeric_ne_contents = list_contents({"metadata": {"score": {"ne": 5}}})
+    assert sorted(numeric_ne_contents) == sorted(
+        [
+            message_configs[0]["content"],
+            message_configs[2]["content"],
+            message_configs[3]["content"],
+        ]
+    )
+
+
+@pytest.mark.asyncio
+async def test_bare_list_membership_sugar(
+    client: TestClient,
+    sample_data: tuple[Workspace, Peer],
+):
+    """A bare list on a regular column is shorthand for {"in": [...]}.
+
+    JSONB metadata columns are excluded from the sugar: a bare list there
+    keeps JSONB containment semantics.
+    """
+    test_workspace, test_peer = sample_data
+
+    # Second peer so peer_id membership has something to exclude
+    peer2_name = str(generate_nanoid())
+    client.post(
+        f"/v3/workspaces/{test_workspace.name}/peers",
+        json={"id": peer2_name},
+    )
+
+    session_id = str(generate_nanoid())
+    session_response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions",
+        json={
+            "id": session_id,
+            "peer_names": {test_peer.name: {}, peer2_name: {}},
+        },
+    )
+    assert session_response.status_code == 201
+
+    message_configs = [
+        {
+            "content": "From peer one",
+            "peer_id": test_peer.name,
+            "metadata": {"tags": ["important", "urgent"]},
+        },
+        {
+            "content": "From peer two",
+            "peer_id": peer2_name,
+            "metadata": {"tags": ["normal"]},
+        },
+    ]
+    messages_response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/messages",
+        json={"messages": message_configs},
+    )
+    assert messages_response.status_code == 201
+
+    def list_contents(filter_config: dict[str, Any]) -> list[str]:
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
+            json={"filters": filter_config},
+        )
+        assert response.status_code == 200
+        return [item["content"] for item in response.json()["items"]]
+
+    # Bare list == membership on a regular column
+    assert list_contents({"peer_id": [test_peer.name]}) == ["From peer one"]
+
+    # Multiple values
+    assert sorted(list_contents({"peer_id": [test_peer.name, peer2_name]})) == [
+        "From peer one",
+        "From peer two",
+    ]
+
+    # Equivalent to the explicit {"in": [...]} form
+    assert list_contents({"peer_id": [test_peer.name]}) == list_contents(
+        {"peer_id": {"in": [test_peer.name]}}
+    )
+
+    # Empty list matches nothing (fail-closed), never everything
+    assert list_contents({"peer_id": []}) == []
+
+    # JSONB metadata keeps containment semantics for bare lists:
+    # matches arrays containing ALL listed elements, not membership.
+    assert list_contents({"metadata": {"tags": ["important", "urgent"]}}) == [
+        "From peer one"
+    ]
+    assert list_contents({"metadata": {"tags": ["important", "missing"]}}) == []
 
 
 @pytest.mark.asyncio
@@ -1482,7 +1645,7 @@ async def test_real_datetime_column_filtering(
     )
 
     # Test datetime filtering with various formats
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     one_minute_ago = now - timedelta(minutes=1)
 
     # Test ISO format
@@ -1497,7 +1660,7 @@ async def test_real_datetime_column_filtering(
     assert peer2_name in found_names
 
     # Test date-only format
-    today = datetime.now(timezone.utc).date().isoformat()
+    today = datetime.now(UTC).date().isoformat()
     response = client.post(
         f"/v3/workspaces/{test_workspace.name}/peers/list",
         json={"filters": {"created_at": {"gte": today}}},

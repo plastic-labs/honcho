@@ -6,13 +6,12 @@
 # Application-level settings
 [app]
 LOG_LEVEL = "INFO"
+PERFORMANCE_LOG_FORMAT = "compact" # "compact" for single-line logs, "rich" for local panels
 SESSION_OBSERVERS_LIMIT = 10
 GET_CONTEXT_MAX_TOKENS = 100000
 MAX_FILE_SIZE = 5242880  # 5MB
 MAX_MESSAGE_SIZE = 25000 # Characters
 EMBED_MESSAGES = true
-MAX_EMBEDDING_TOKENS = 8192
-MAX_EMBEDDING_TOKENS_PER_REQUEST = 300000
 # LANGFUSE_HOST = "https://api.langfuse.com"
 # LANGFUSE_PUBLIC_KEY = "your-public-key-here"
 # COLLECT_METRICS_LOCAL = false
@@ -28,11 +27,14 @@ POOL_CLASS = "default"
 POOL_PRE_PING = true
 POOL_SIZE = 10
 MAX_OVERFLOW = 20
-POOL_TIMEOUT = 30  # seconds
+POOL_TIMEOUT = 5  # seconds a pooled checkout waits for a free connection (QueuePool only)
 POOL_RECYCLE = 300  # seconds
 POOL_USE_LIFO = true
 SQL_DEBUG = false
 TRACING = false
+# Per-connection establish timeout (seconds) so a single connection attempt
+# fails fast instead of hanging when the server/pooler is unreachable.
+CONNECT_TIMEOUT_SECONDS = 2
 
 # Authentication settings
 [auth]
@@ -51,46 +53,97 @@ PROFILES_SAMPLE_RATE = 0.1
 # LLM settings
 [llm]
 DEFAULT_MAX_TOKENS = 2500
-EMBEDDING_PROVIDER = "openai"
 MAX_TOOL_OUTPUT_CHARS = 10000  # Max chars for tool output (~2500 tokens)
 MAX_MESSAGE_CONTENT_CHARS = 2000  # Max chars per message in tool results
 
 # API Keys for LLM providers (set the ones you need)
-# GEMINI_API_KEY = "your-api-key"       # Default: deriver, summary, dialectic minimal/low
-# ANTHROPIC_API_KEY = "your-api-key"    # Default: dialectic medium/high/max, dream
-# OPENAI_API_KEY = "your-api-key"       # Default: embeddings
-# GROQ_API_KEY = "your-api-key"         # Not used by default
+# Supported transports: openai, anthropic, gemini
+# Base URLs are set per-module via model_config.overrides.base_url
+# Built-in text-generation defaults use openai / gpt-5.4-mini.
+# Embeddings default to openai / text-embedding-3-small.
+OPENAI_API_KEY = "your-api-key-here"
+# ANTHROPIC_API_KEY = "your-api-key"
+# GEMINI_API_KEY = "your-api-key"
 
-# OpenAI-compatible endpoint (OpenRouter, Together, Fireworks, LiteLLM, etc.)
-# Set provider to "custom" in feature config to route calls through this endpoint.
-# OPENAI_COMPATIBLE_BASE_URL = "https://openrouter.ai/api/v1"
-# OPENAI_COMPATIBLE_API_KEY = "your-api-key"
+# Embedding settings
+[embedding]
+VECTOR_DIMENSIONS = 1536
+MAX_INPUT_TOKENS = 8192
+MAX_TOKENS_PER_REQUEST = 300000
 
-# vLLM endpoint (for self-hosted models)
-# Set provider to "vllm" in feature config to route calls through this endpoint.
-# VLLM_BASE_URL = "http://localhost:8000/v1"
-# VLLM_API_KEY = "not-needed"
+[embedding.model_config]
+transport = "openai"
+model = "text-embedding-3-small"
+# Optional provider request input cap. Useful for OpenAI-compatible embedding
+# APIs with smaller limits, such as DashScope text-embedding-v4.
+# max_batch_size = 10
+# Optional client HTTP timeout in seconds (OpenAI + Gemini).
+# timeout = 90.0
+
+# Optional module-level endpoint overrides
+# [embedding.model_config.overrides]
+# base_url = "https://embedding-proxy.internal.example/v1"
+# api_key_env = "EMBEDDING_CUSTOM_API_KEY"
 
 # Deriver settings
 [deriver]
 ENABLED = true
 WORKERS = 1
 POLLING_SLEEP_INTERVAL_SECONDS = 1.0
+# Adaptive polling: when idle/erroring, the sleep interval grows from
+# POLLING_SLEEP_INTERVAL_SECONDS toward POLLING_SLEEP_MAX_INTERVAL_SECONDS by
+# POLLING_BACKOFF_MULTIPLIER each cycle, then snaps back to base when work is
+# found. Cuts steady-state query load against the shared DB/pooler.
+POLLING_BACKOFF_ENABLED = true
+POLLING_SLEEP_MAX_INTERVAL_SECONDS = 30.0
+POLLING_BACKOFF_MULTIPLIER = 2.0
+# Jitter so instances that start together don't poll in lockstep. Startup:
+# sleep a random delay in [0, POLLING_STARTUP_JITTER_SECONDS] before the first
+# poll (0.0 disables). Per-cycle: multiply every poll sleep by a random factor
+# in [1 - ratio, 1 + ratio] (0.5 -> [0.5x, 1.5x]; 0.0 disables).
+POLLING_STARTUP_JITTER_SECONDS = 30.0
+POLLING_JITTER_RATIO = 0.5
 STALE_SESSION_TIMEOUT_MINUTES = 5
+# Minimum (jittered) spacing between stale-work-unit cleanup runs per instance.
+# Staleness is a minutes-timescale condition, so cleanup doesn't need to run on
+# every seconds-scale poll (0.0 = run every poll, legacy behavior).
+STALE_WORK_UNIT_CLEANUP_INTERVAL_SECONDS = 60.0
 # QUEUE_ERROR_RETENTION_SECONDS = 2592000  # 30 days
-PROVIDER = "google"
-MODEL = "gemini-2.5-flash-lite"
-# TEMPERATURE = 0.0
-# BACKUP_PROVIDER = "anthropic"
-# BACKUP_MODEL = "claude-haiku-4-5"
 DEDUPLICATE = true
-MAX_OUTPUT_TOKENS = 4096
-THINKING_BUDGET_TOKENS = 1024
 LOG_OBSERVATIONS = false
-MAX_INPUT_TOKENS = 23000
+MAX_INPUT_TOKENS = 25000
+MAX_CUSTOM_INSTRUCTIONS_TOKENS = 2000
 WORKING_REPRESENTATION_MAX_OBSERVATIONS = 100
-REPRESENTATION_BATCH_MAX_TOKENS = 1024
+REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS = 512  # Min tokens a work unit accumulates before the deriver claims it; 0 disables the gate
+REPRESENTATION_BATCH_TARGET_INPUT_TOKENS = 1024  # Max context-window tokens per deriver LLM call
+REPRESENTATION_BATCH_MAX_AGE_SECONDS = 1800
 FLUSH_ENABLED = false  # Bypass batch token threshold, process work immediately
+
+[deriver.model_config]
+transport = "openai"
+model = "gpt-5.4-mini"
+# temperature = 0.0
+# thinking_effort = "minimal"
+# thinking_budget_tokens = 1024
+# max_output_tokens = 4096
+
+# Optional module-level endpoint overrides
+# transport = "openai"
+# model = "my-local-model"
+# [deriver.model_config.overrides]
+# base_url = "https://llm.internal.example/v1"
+# api_key_env = "DERIVER_CUSTOM_API_KEY"
+
+# Optional fallback model
+# [deriver.model_config.fallback]
+# transport = "anthropic"
+# model = "claude-haiku-4-5"
+# [deriver.model_config.fallback.overrides]
+# base_url = "https://llm-backup.internal.example/v1"
+# api_key_env = "DERIVER_CUSTOM_BACKUP_API_KEY"
+# [deriver.model_config.overrides.provider_params]
+# verbosity = "low"
+# timeout = 3600.0
 
 # Peer card settings
 [peer_card]
@@ -106,55 +159,64 @@ SESSION_HISTORY_MAX_TOKENS = 4096
 # Per-level settings for reasoning levels
 # MAX_OUTPUT_TOKENS is optional per level; if not set, uses global MAX_OUTPUT_TOKENS
 [dialectic.levels.minimal]
-PROVIDER = "google"
-MODEL = "gemini-2.5-flash-lite"
-THINKING_BUDGET_TOKENS = 0
 MAX_TOOL_ITERATIONS = 1
 MAX_OUTPUT_TOKENS = 250
+TOOL_CHOICE = "auto"
+
+[dialectic.levels.minimal.model_config]
+transport = "openai"
+model = "gpt-5.4-mini"
 
 [dialectic.levels.low]
-PROVIDER = "google"
-MODEL = "gemini-2.5-flash-lite"
-THINKING_BUDGET_TOKENS = 0
 MAX_TOOL_ITERATIONS = 5
-# MAX_OUTPUT_TOKENS = 8192  # Optional: override global default
+TOOL_CHOICE = "auto"
+
+[dialectic.levels.low.model_config]
+transport = "openai"
+model = "gpt-5.4-mini"
 
 [dialectic.levels.medium]
-PROVIDER = "anthropic"
-MODEL = "claude-haiku-4-5"
-THINKING_BUDGET_TOKENS = 1024
 MAX_TOOL_ITERATIONS = 2
-# MAX_OUTPUT_TOKENS = 8192  # Optional: override global default
+
+[dialectic.levels.medium.model_config]
+transport = "openai"
+model = "gpt-5.4-mini"
 
 [dialectic.levels.high]
-PROVIDER = "anthropic"
-MODEL = "claude-haiku-4-5"
-THINKING_BUDGET_TOKENS = 1024
 MAX_TOOL_ITERATIONS = 4
-# MAX_OUTPUT_TOKENS = 8192  # Optional: override global default
+
+[dialectic.levels.high.model_config]
+transport = "openai"
+model = "gpt-5.4-mini"
 
 [dialectic.levels.max]
-PROVIDER = "anthropic"
-MODEL = "claude-haiku-4-5"
-THINKING_BUDGET_TOKENS = 2048
 MAX_TOOL_ITERATIONS = 10
-# MAX_OUTPUT_TOKENS = 8192  # Optional: override global default
-# Backup provider example (optional, must set both or neither):
-# BACKUP_PROVIDER = "google"
-# BACKUP_MODEL = "gemini-2.5-pro"
+
+[dialectic.levels.max.model_config]
+transport = "openai"
+model = "gpt-5.4-mini"
+
+# [dialectic.levels.max.model_config.fallback]
+# transport = "gemini"
+# model = "gemini-2.5-pro"
 
 # Summary settings
 [summary]
 ENABLED = true
 MESSAGES_PER_SHORT_SUMMARY = 20
 MESSAGES_PER_LONG_SUMMARY = 60
-PROVIDER = "google"
-MODEL = "gemini-2.5-flash"
 MAX_TOKENS_SHORT = 1000
 MAX_TOKENS_LONG = 4000
-THINKING_BUDGET_TOKENS = 512
-# BACKUP_PROVIDER = "google"
-# BACKUP_MODEL = "gemini-2.5-flash"
+
+[summary.model_config]
+transport = "openai"
+model = "gpt-5.4-mini"
+# thinking_effort = "minimal"
+# thinking_budget_tokens = 1024
+
+# [summary.model_config.fallback]
+# transport = "anthropic"
+# model = "claude-haiku-4-5"
 
 # Dream settings
 [dream]
@@ -163,18 +225,16 @@ DOCUMENT_THRESHOLD = 50
 IDLE_TIMEOUT_MINUTES = 60
 MIN_HOURS_BETWEEN_DREAMS = 8
 ENABLED_TYPES = ["omni"]
-PROVIDER = "anthropic"
-MODEL = "claude-sonnet-4-20250514"
-MAX_OUTPUT_TOKENS = 16384
-THINKING_BUDGET_TOKENS = 8192
 MAX_TOOL_ITERATIONS = 20
 HISTORY_TOKEN_LIMIT = 16384
-# BACKUP_PROVIDER = "google"
-# BACKUP_MODEL = "gemini-2.5-flash"
 
-# Specialist models (use same provider as main model)
-DEDUCTION_MODEL = "claude-haiku-4-5"
-INDUCTION_MODEL = "claude-haiku-4-5"
+[dream.deduction_model_config]
+transport = "openai"
+model = "gpt-5.4-mini"
+
+[dream.induction_model_config]
+transport = "openai"
+model = "gpt-5.4-mini"
 
 # Surprisal-based sampling subsystem
 [dream.surprisal]
@@ -219,13 +279,20 @@ DEFAULT_LOCK_TTL_SECONDS = 5
 
 # Vector store settings
 [vector_store]
-# Vector store type: "pgvector", "turbopuffer", or "lancedb"
+# Vector store type: "pgvector", "turbopuffer", "lancedb", or "qdrant"
 TYPE = "pgvector"
 # Migration flag: set to true when migration from pgvector is complete
 MIGRATED = false
 NAMESPACE = "honcho"
-DIMENSIONS = 1536
+# DIMENSIONS is deprecated; embedding.vector_dimensions is authoritative.
 # TURBOPUFFER_API_KEY = "your-turbopuffer-api-key"
 # TURBOPUFFER_REGION = "us-east-1"
 LANCEDB_PATH = "./lancedb_data"
+# QDRANT_URL = "http://localhost:6333"
+# QDRANT_API_KEY = "your-qdrant-api-key"
+# QDRANT_PREFER_GRPC = false
+# QDRANT_GRPC_PORT = 6334
+# QDRANT_HTTPS = false
+# QDRANT_PREFIX = ""
+# QDRANT_TIMEOUT = 30
 RECONCILIATION_INTERVAL_SECONDS = 300

@@ -1,0 +1,131 @@
+---
+title: 'Deleting Data'
+description: 'How to delete sessions, workspaces, and conclusions — and what survives each'
+icon: 'trash'
+---
+
+Deletion in Honcho is **permanent and cannot be undone**. There is no soft
+delete, no trash, and no restore.
+
+## What can be deleted
+
+| Resource | Endpoint | Behavior |
+|---|---|---|
+| Session | `DELETE /v3/workspaces/{workspace_id}/sessions/{session_id}` | `202` — cascade runs in the background |
+| Workspace | `DELETE /v3/workspaces/{workspace_id}` | `202` — cascade runs in the background |
+| Conclusion | `DELETE /v3/workspaces/{workspace_id}/conclusions/{conclusion_id}` | `204` — immediate |
+| Webhook endpoint | `DELETE /v3/workspaces/{workspace_id}/webhooks/{endpoint_id}` | Immediate |
+
+**Peers and individual messages cannot be deleted.** To remove a peer's data,
+delete the sessions it participated in, then delete its remaining conclusions
+(see [Conclusions outlive their sessions](#conclusions-outlive-their-sessions)).
+To remove a peer from one conversation without deleting anything, use
+[remove peers from session](/v3/api-reference/endpoint/sessions/remove-peers-from-session)
+instead.
+
+## Deleting a session
+
+```bash
+curl -X DELETE "$HONCHO_URL/v3/workspaces/my-app/sessions/session-1" \
+  -H "Authorization: Bearer $HONCHO_API_KEY"
+```
+
+The session is marked inactive immediately and the endpoint returns `202
+Accepted`. The cascade — messages, message embeddings, queued reasoning work,
+session-scoped conclusions, and peer associations — is processed in the
+background with retries.
+
+Because the work is asynchronous, a `202` means *accepted*, not *finished*. The
+session drops out of session listings right away, but its messages and
+conclusions drain afterwards. Deletion tasks are internal infrastructure work
+and do **not** appear in
+[queue status](/v3/documentation/features/advanced/queue-status) counts, so
+there is no endpoint that reports when the cascade has finished.
+
+<CodeGroup>
+```python Python
+session.delete()
+```
+
+```typescript TypeScript
+await session.delete();
+```
+</CodeGroup>
+
+## Deleting a workspace
+
+A workspace can only be deleted once it has **no active sessions**. Deleting a
+workspace that still has sessions returns `409 Conflict`:
+
+```json
+{"detail": "Cannot delete workspace 'my-app': active session(s) remain. Delete all sessions first."}
+```
+
+The correct order is:
+
+1. List the workspace's sessions — `POST /v3/workspaces/{workspace_id}/sessions/list`
+2. Delete each session — `DELETE /v3/workspaces/{workspace_id}/sessions/{session_id}`
+3. Delete the workspace — `DELETE /v3/workspaces/{workspace_id}`
+
+Step 2 returns `202`, so the session deletions are still draining when step 3
+runs. That is fine: a session is marked inactive synchronously, so the workspace
+delete stops returning `409` as soon as the deletes are accepted. Any session
+created after the workspace deletion is accepted is cascade-deleted too.
+
+<CodeGroup>
+```python Python
+# Materialize the list first — deleting shifts the pagination window
+for session in list(honcho.sessions()):
+    session.delete()
+
+honcho.delete_workspace("my-app")
+```
+
+```typescript TypeScript
+// Materialize the list first — deleting shifts the pagination window
+const sessions = [];
+for await (const session of await honcho.sessions()) sessions.push(session);
+for (const session of sessions) await session.delete();
+
+await honcho.deleteWorkspace("my-app");
+```
+</CodeGroup>
+
+Deleting a workspace removes every peer, session, message, conclusion,
+collection, embedding, webhook endpoint, and queued task belonging to it.
+
+## Conclusions outlive their sessions
+
+This is the most common surprise. Deleting a session does **not** erase
+everything Honcho learned in it.
+
+- **Explicit conclusions** — direct facts drawn from messages — are tied to the
+  session they came from and are deleted with it.
+- **Derived conclusions** (deductive, inductive, contradiction) are consolidations
+  that may draw on several sessions. They are stored at the workspace level with
+  no owning session, so they survive session deletion and stay in the peer's
+  [representation](/v3/documentation/core-concepts/representation).
+
+To remove those, list and delete them directly:
+
+<CodeGroup>
+```python Python
+for conclusion in alice.conclusions.list():
+    alice.conclusions.delete(conclusion.id)
+```
+
+```typescript TypeScript
+for (const conclusion of await alice.conclusions.list()) {
+  await alice.conclusions.delete(conclusion.id);
+}
+```
+</CodeGroup>
+
+Deleting the whole workspace removes conclusions at every level and needs no
+follow-up.
+
+## Permissions
+
+Session and workspace deletion accept any key scoped to that workspace — an
+admin key is not required. Deleting a session additionally accepts a
+session-scoped key.

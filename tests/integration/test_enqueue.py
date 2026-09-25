@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -120,9 +120,9 @@ class TestEnqueueFunction:
         # When deriver is disabled, only summary records should be created (if applicable)
         # Since this is message 1, and 1 % 20 != 0 and 1 % 60 != 0, no summary should be created
         # No representation records should be created either (deriver disabled)
-        assert (
-            final_count == initial_count
-        ), f"Expected no queue items, but got {final_count - initial_count}"
+        assert final_count == initial_count, (
+            f"Expected no queue items, but got {final_count - initial_count}"
+        )
 
     @pytest.mark.asyncio
     async def test_session_normal_processing_single_peer(
@@ -528,7 +528,7 @@ class TestEnqueueFunction:
             )
         )
         session_peer = session_peer_result.scalar_one()
-        session_peer.left_at = datetime.now(timezone.utc)
+        session_peer.left_at = datetime.now(UTC)
         await db_session.commit()
 
         # Create message payload from the peer who left
@@ -609,7 +609,7 @@ class TestEnqueueFunction:
             )
         )
         session_peer = session_peer_result.scalar_one()
-        session_peer.left_at = datetime.now(timezone.utc)
+        session_peer.left_at = datetime.now(UTC)
         await db_session.commit()
 
         # Create message payload
@@ -640,68 +640,6 @@ class TestEnqueueFunction:
         assert observer_who_left.name not in observers
         assert observer_who_stayed.name in observers
         assert sender_peer.name in observers
-
-    @pytest.mark.asyncio
-    async def test_sender_not_in_peer_configuration_uses_defaults(
-        self,
-        db_session: AsyncSession,
-        sample_data: tuple[Workspace, Peer],
-    ):
-        """Test get_effective_observe_me handles missing sender configuration gracefully"""
-        test_workspace, existing_peer = sample_data
-
-        # Create observer peer
-        observer_peer = models.Peer(
-            workspace_name=test_workspace.name, name=str(generate_nanoid())
-        )
-        db_session.add(observer_peer)
-
-        # Create session with only observer (sender not in peers_with_configuration)
-        test_session = (
-            await crud.get_or_create_session(
-                db_session,
-                schemas.SessionCreate(
-                    name=str(generate_nanoid()),
-                    peers={
-                        observer_peer.name: schemas.SessionPeerConfig(
-                            observe_others=True
-                        ),
-                    },
-                ),
-                test_workspace.name,
-            )
-        ).resource
-        await db_session.commit()
-
-        # Create message from peer NOT in the session configuration
-        # This simulates the race condition where a peer left after sending
-        payload = await self.create_sample_payload(
-            db_session,
-            workspace_name=test_workspace.name,
-            session_name=test_session.name,
-            peer_name=existing_peer.name,
-        )
-
-        initial_count = await self.count_queue_items(db_session)
-        await enqueue(payload)
-        final_count = await self.count_queue_items(db_session)
-
-        # With deduplication: 1 queue item per message with all observers
-        assert final_count - initial_count == 1
-
-        result = await db_session.execute(
-            select(QueueItem).where(QueueItem.session_id == test_session.id)
-        )
-        queue_items = result.scalars().all()
-
-        assert len(queue_items) == 1
-        item = queue_items[0]
-        assert item.payload.get("task_type") == "representation"
-        assert item.payload.get("observed") == existing_peer.name
-        observers = item.payload.get("observers")
-        assert observers is not None
-        assert existing_peer.name in observers  # self-observation (default)
-        assert observer_peer.name in observers  # observer (observing others)
 
     @pytest.mark.asyncio
     async def test_mixed_active_inactive_peers_complex_scenario(
@@ -773,7 +711,7 @@ class TestEnqueueFunction:
                 )
             )
             session_peer = session_peer_result.scalar_one()
-            session_peer.left_at = datetime.now(timezone.utc)
+            session_peer.left_at = datetime.now(UTC)
         await db_session.commit()
 
         # Create message payload from sender
@@ -915,9 +853,9 @@ class TestGetEffectiveObserveMeFunction:
                 observed = f"sender_{i}"
 
             result = get_effective_observe_me(observed, peers_with_configuration)
-            assert (
-                result == expected
-            ), f"Test case {i} failed: peer_config={peer_config}, session_config={session_config}, expected={expected}, got={result}"
+            assert result == expected, (
+                f"Test case {i} failed: peer_config={peer_config}, session_config={session_config}, expected={expected}, got={result}"
+            )
 
 
 @pytest.mark.asyncio
@@ -1025,7 +963,7 @@ class TestAdvancedEnqueueEdgeCases:
                 )
             )
             session_peer = session_peer_result.scalar_one()
-            session_peer.left_at = datetime.now(timezone.utc)
+            session_peer.left_at = datetime.now(UTC)
         await db_session.commit()
 
         # Create message payload
@@ -1087,7 +1025,7 @@ class TestAdvancedEnqueueEdgeCases:
 
         # Mark both as having left (observer left first, then sender)
 
-        base_time = datetime.now(timezone.utc)
+        base_time = datetime.now(UTC)
 
         # Observer left first
         observer_session_peer_result = await db_session.execute(
@@ -1231,7 +1169,7 @@ class TestGenerateQueueRecordsSeqInSession:
             "session_name": test_session.name,
             "content": "Test message",
             "seq_in_session": 20,  # Multiple of MESSAGES_PER_SHORT_SUMMARY to trigger summary creation
-            "created_at": datetime.now(timezone.utc),  # Required by create_payload
+            "created_at": datetime.now(UTC),  # Required by create_payload
         }
 
         # Mock the CRUD function to track if it's called
@@ -1308,7 +1246,7 @@ class TestGenerateQueueRecordsSeqInSession:
             "workspace_name": test_workspace.name,
             "session_name": test_session.name,
             "content": "Test message",
-            "created_at": datetime.now(timezone.utc),
+            "created_at": datetime.now(UTC),
             # seq_in_session is MISSING
         }
 

@@ -4,8 +4,6 @@ Basic tests for honcho_crewai package
 Validates package structure, imports, and basic functionality.
 """
 
-import pytest
-
 
 def test_package_import():
     """Test that honcho_crewai imports successfully."""
@@ -21,11 +19,18 @@ def test_storage_import():
     assert HonchoStorage is not None
 
 
+def test_memory_storage_import():
+    """Test that HonchoMemoryStorage can be imported."""
+    from honcho_crewai import HonchoMemoryStorage
+
+    assert HonchoMemoryStorage is not None
+
+
 def test_tools_import():
     """Test that tool classes can be imported."""
     from honcho_crewai import (
-        HonchoGetContextTool,
         HonchoDialecticTool,
+        HonchoGetContextTool,
         HonchoSearchTool,
     )
 
@@ -52,6 +57,7 @@ class TestPackageMetadata:
         assert hasattr(honcho_crewai, "__all__")
         expected_exports = [
             "HonchoStorage",
+            "HonchoMemoryStorage",
             "HonchoGetContextTool",
             "HonchoDialecticTool",
             "HonchoSearchTool",

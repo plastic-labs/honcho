@@ -1,16 +1,187 @@
+from __future__ import annotations
+
 import asyncio
 import logging
 import threading
+import time
 from collections import defaultdict
-from typing import NamedTuple
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple, TypeVar, cast
 
 import tiktoken
-from google import genai
-from openai import AsyncOpenAI
+from nanoid import generate as generate_nanoid
 
-from .config import settings
+from .config import (
+    EmbeddingEncodingFormat,
+    EmbeddingModelConfig,
+    resolve_embedding_model_config,
+    settings,
+)
+
+if TYPE_CHECKING:
+    from google import genai
+    from openai import AsyncOpenAI
 
 logger = logging.getLogger(__name__)
+
+_T = TypeVar("_T")
+
+
+async def _emit_embedding_call(
+    *,
+    provider: str,
+    model: str,
+    texts: list[str],
+    input_tokens_estimate: int,
+    fn: Callable[[], Awaitable[_T]],
+    is_final_attempt: bool = True,
+    attempt: int = 1,
+    retry_attempts: int = 1,
+) -> _T:
+    """time a single embedding-provider call, emit
+    `embedding.call.completed` on both success and exception, and return the
+    call's result. Errors propagate unchanged — telemetry never bleeds into
+    the caller's control flow.
+
+    Caller-supplied `texts` is used only for `input_count`; we don't keep the
+    list around for the event to avoid leaking content into telemetry.
+
+    `is_final_attempt` defaults to True so one-shot callers (`embed`,
+    `simple_batch_embed`) get correct semantics without changes. Retry-loop
+    callers (`_process_batch`) pass the real attempt index so dashboards
+    can distinguish exhausted retries from mid-retry failures.
+    """
+    start = time.perf_counter()
+    error: BaseException | None = None
+    try:
+        return await fn()
+    except BaseException as exc:
+        error = exc
+        raise
+    finally:
+        if error is None:
+            outcome: Literal["success", "error", "cancelled"] = "success"
+        elif isinstance(error, asyncio.CancelledError):
+            outcome = "cancelled"
+        else:
+            outcome = "error"
+        _publish_embedding_event(
+            provider=provider,
+            model=model,
+            input_count=len(texts),
+            input_tokens_estimate=input_tokens_estimate,
+            duration_ms=(time.perf_counter() - start) * 1000,
+            outcome=outcome,
+            error=error,
+            is_final_attempt=is_final_attempt,
+            attempt=attempt,
+            retry_attempts=retry_attempts,
+        )
+
+
+def _publish_embedding_event(
+    *,
+    provider: str,
+    model: str,
+    input_count: int,
+    input_tokens_estimate: int,
+    duration_ms: float,
+    outcome: Literal["success", "error", "cancelled"],
+    error: BaseException | None,
+    is_final_attempt: bool,
+    attempt: int = 1,
+    retry_attempts: int = 1,
+) -> None:
+    """Build and emit the EmbeddingCallCompletedEvent. Best-effort."""
+    try:
+        from src.telemetry.events import (
+            EmbeddingCallCompletedEvent,
+            EmbeddingCallPurpose,
+            emit,
+        )
+        from src.utils.types import (
+            get_embedding_call_purpose,
+            get_embedding_parent_category,
+            get_embedding_run_id,
+            get_embedding_session_id,
+            get_embedding_workspace_name,
+        )
+
+        # call_purpose travels via ContextVar so embedding callers don't have
+        # to thread it through every call site. Unknown values drop to None
+        # rather than raising — keeps telemetry resilient to drift.
+        purpose_slug = get_embedding_call_purpose()
+        call_purpose: EmbeddingCallPurpose | None = None
+        if purpose_slug:
+            try:
+                call_purpose = EmbeddingCallPurpose(purpose_slug)
+            except ValueError:
+                logger.debug(
+                    "Unknown embedding_call_purpose=%r; emitting without",
+                    purpose_slug,
+                )
+
+        emit(
+            EmbeddingCallCompletedEvent(
+                workspace_name=get_embedding_workspace_name(),
+                call_purpose=call_purpose,
+                parent_category=get_embedding_parent_category(),
+                provider=provider,
+                model=model,
+                input_count=input_count,
+                input_tokens_estimate=input_tokens_estimate,
+                duration_ms=duration_ms,
+                outcome=outcome,
+                is_final_attempt=is_final_attempt,
+                error_class=type(error).__name__ if error is not None else None,
+                run_id=get_embedding_run_id(),
+            )
+        )
+
+        # Trace stream (ground-truth) — gated on payload tracing. Each embedding
+        # gets its own span nested under the driving agent run (parent_span_id =
+        # run_id), so multiple embeddings in one run don't share a span id.
+        if settings.TELEMETRY.TRACE_PAYLOADS_ENABLED:
+            from src.telemetry.events import EmbeddingCallTracedEvent, emit_trace
+
+            run_id = get_embedding_run_id()
+            span_id = generate_nanoid()
+            emit_trace(
+                EmbeddingCallTracedEvent(
+                    trace_id=run_id or span_id,
+                    span_id=span_id,
+                    parent_span_id=run_id,
+                    session_id=get_embedding_session_id(),
+                    workspace_name=get_embedding_workspace_name(),
+                    run_id=run_id,
+                    attempt=attempt,
+                    retry_attempts=retry_attempts,
+                    is_final_attempt=is_final_attempt,
+                    duration_ms=duration_ms,
+                    outcome=outcome,
+                    error_class=type(error).__name__ if error is not None else None,
+                    call_purpose=purpose_slug,
+                    parent_category=get_embedding_parent_category(),
+                    provider=provider,
+                    model=model,
+                    provider_input_tokens=input_tokens_estimate,
+                    provider_output_tokens=0,
+                    input_count=input_count,
+                )
+            )
+    except Exception:  # pragma: no cover - telemetry must not raise
+        logger.debug("Failed to emit EmbeddingCallCompletedEvent", exc_info=True)
+
+
+class EmbeddingTokenLimitError(ValueError):
+    """Raised when input text genuinely exceeds the model's token limit.
+
+    Subclasses ``ValueError`` so existing broad handlers keep working, while
+    letting callers tell a real "content too long" condition apart from a
+    transient provider or configuration failure (dimension mismatch, empty
+    response, upstream error). Only the pre-flight token checks raise this;
+    provider failures keep raising plain ``ValueError``.
+    """
 
 
 class BatchItem(NamedTuple):
@@ -19,6 +190,7 @@ class BatchItem(NamedTuple):
     text: str
     text_id: str
     chunk_index: int
+    token_count: int
 
 
 class _EmbeddingClient:
@@ -26,126 +198,261 @@ class _EmbeddingClient:
     Embedding client supporting OpenAI and Gemini with chunking and batching support.
     """
 
-    def __init__(self, api_key: str | None = None, provider: str | None = None):
-        self.provider: str = provider or settings.LLM.EMBEDDING_PROVIDER
+    def __init__(
+        self,
+        config: EmbeddingModelConfig,
+        *,
+        vector_dimensions: int,
+        max_input_tokens: int,
+        max_tokens_per_request: int,
+        send_dimensions: bool,
+        encoding_format: EmbeddingEncodingFormat = "float",
+    ):
+        self.transport: str = config.transport
+        self.model: str = config.model
+        self.vector_dimensions: int = vector_dimensions
+        self.send_dimensions: bool = send_dimensions
+        self.encoding_format: EmbeddingEncodingFormat = encoding_format
 
-        if self.provider == "gemini":
-            if api_key is None:
-                api_key = settings.LLM.GEMINI_API_KEY
-            if not api_key:
+        if self.transport == "gemini":
+            if not config.api_key:
                 raise ValueError("Gemini API key is required")
-            self.client: genai.Client | AsyncOpenAI = genai.Client(api_key=api_key)
-            self.model: str = "gemini-embedding-001"
-            # Gemini has a 2048 token limit
-            self.max_embedding_tokens: int = min(settings.MAX_EMBEDDING_TOKENS, 2048)
-            # Gemini batch size is not documented, using conservative estimate
-            self.max_batch_size: int = 100
-        elif self.provider == "openrouter":
-            if api_key is None:
-                api_key = settings.LLM.OPENAI_COMPATIBLE_API_KEY
-            if not api_key:
-                raise ValueError(
-                    "OpenRouter API key (LLM_OPENAI_COMPATIBLE_API_KEY) is required"
-                )
-            base_url = (
-                settings.LLM.OPENAI_COMPATIBLE_BASE_URL
-                or "https://openrouter.ai/api/v1"
-            )
-            self.client = AsyncOpenAI(api_key=api_key, base_url=base_url)
-            self.model = "openai/text-embedding-3-small"
-            self.max_embedding_tokens = settings.MAX_EMBEDDING_TOKENS
-            self.max_batch_size = 2048  # Same as OpenAI
-        else:  # openai
-            if api_key is None:
-                api_key = settings.LLM.OPENAI_API_KEY
-            if not api_key:
-                raise ValueError("OpenAI API key is required")
-            self.client = AsyncOpenAI(api_key=api_key)
-            self.model = "text-embedding-3-small"
-            self.max_embedding_tokens = settings.MAX_EMBEDDING_TOKENS
-            self.max_batch_size = 2048  # OpenAI batch limit
+            from google import genai
+            from google.genai import types as genai_types
 
-        self.encoding: tiktoken.Encoding = tiktoken.get_encoding("o200k_base")
-        self.max_embedding_tokens_per_request: int = (
-            settings.MAX_EMBEDDING_TOKENS_PER_REQUEST
-        )
+            # Default 10-minute HTTP timeout matches the LLM registry Gemini client.
+            timeout_ms = (
+                int(config.timeout * 1000) if config.timeout is not None else 600_000
+            )
+            http_options = genai_types.HttpOptions(
+                base_url=config.base_url,
+                timeout=timeout_ms,
+            )
+            self.client: genai.Client | AsyncOpenAI = genai.Client(
+                api_key=config.api_key,
+                http_options=http_options,
+            )
+            # Gemini has a 2048 token limit
+            self.max_embedding_tokens: int = min(max_input_tokens, 2048)
+            # Gemini batch size is not documented, using conservative estimate
+            self.max_batch_size: int = config.max_batch_size or 100
+        else:  # openai
+            if not config.api_key:
+                raise ValueError("OpenAI API key is required")
+            from openai import AsyncOpenAI
+
+            # Omit timeout when unset so the OpenAI SDK keeps its own default.
+            client_kwargs: dict[str, Any] = {
+                "api_key": config.api_key,
+                "base_url": config.base_url,
+            }
+            if config.timeout is not None:
+                client_kwargs["timeout"] = config.timeout
+            self.client = AsyncOpenAI(**client_kwargs)
+            self.max_embedding_tokens = max_input_tokens
+            self.max_batch_size = config.max_batch_size or 2048
+
+        try:
+            self.encoding: tiktoken.Encoding = tiktoken.encoding_for_model(self.model)
+        except KeyError:
+            self.encoding = tiktoken.get_encoding("cl100k_base")
+        self.max_embedding_tokens_per_request: int = max_tokens_per_request
+
+    @property
+    def provider(self) -> str:
+        return self.transport
+
+    def _validate_embedding_dimensions(self, embedding: list[float]) -> list[float]:
+        if len(embedding) != self.vector_dimensions:
+            raise ValueError(
+                f"Embedding dimension mismatch for {self.transport}:{self.model}. "
+                + f"Expected {self.vector_dimensions}, got {len(embedding)}."
+            )
+        return embedding
+
+    def _apply_encoding_format(self, openai_kwargs: dict[str, Any]) -> None:
+        """Set the embedding wire format on an openai request.
+
+        Base64 is requested by omission, not by name: the SDK injects
+        `encoding_format=base64` when the caller passes nothing and decodes the
+        response, but skips that decode for any format the caller names, handing
+        back the raw base64 string.
+        """
+        if self.encoding_format != "base64":
+            openai_kwargs["encoding_format"] = self.encoding_format
+
+    def _validate_embedding_count(self, expected: int, received: int) -> None:
+        """Guard against a 200 response whose embedding count differs from inputs.
+
+        An explicit `encoding_format` disables the openai SDK's own empty-data
+        check, so this has to live here.
+        """
+        if received != expected:
+            raise ValueError(
+                f"Embedding count mismatch for {self.transport}:{self.model}. "
+                + f"Expected {expected}, got {received}."
+            )
 
     async def embed(self, query: str) -> list[float]:
         token_count = len(self.encoding.encode(query))
 
         if token_count > self.max_embedding_tokens:
-            raise ValueError(
+            raise EmbeddingTokenLimitError(
                 f"Query exceeds maximum token limit of {self.max_embedding_tokens} tokens (got {token_count} tokens)"
             )
 
-        if isinstance(self.client, genai.Client):
-            response = await self.client.aio.models.embed_content(
-                model=self.model,
-                contents=query,
-                config={"output_dimensionality": 1536},
-            )
-            if not response.embeddings or not response.embeddings[0].values:
-                raise ValueError("No embedding returned from Gemini API")
-            return response.embeddings[0].values
-        else:  # openai
-            response = await self.client.embeddings.create(
-                model=self.model, input=query
-            )
-            return response.data[0].embedding
+        # Dispatch on transport rather than isinstance so this module never
+        # needs the SDK types at runtime; the cast gives the closures a typed
+        # local to close over.
+        if self.transport == "gemini":
+            gemini_client = cast("genai.Client", self.client)
 
-    async def simple_batch_embed(self, texts: list[str]) -> list[list[float]]:
+            async def _call_gemini() -> list[float]:
+                # The SDK's contents union includes optional Pillow types, which
+                # are unresolved without Pillow; this call only sends text.
+                response = await gemini_client.aio.models.embed_content(  # pyright: ignore[reportUnknownMemberType]
+                    model=self.model,
+                    contents=query,
+                    config={"output_dimensionality": self.vector_dimensions},
+                )
+                if not response.embeddings or not response.embeddings[0].values:
+                    raise ValueError("No embedding returned from Gemini API")
+                return self._validate_embedding_dimensions(
+                    response.embeddings[0].values
+                )
+
+            return await _emit_embedding_call(
+                provider=self.transport,
+                model=self.model,
+                texts=[query],
+                input_tokens_estimate=token_count,
+                fn=_call_gemini,
+            )
+
+        openai_client = cast("AsyncOpenAI", self.client)
+
+        async def _call_openai() -> list[float]:
+            openai_kwargs: dict[str, Any] = {"model": self.model, "input": [query]}
+            self._apply_encoding_format(openai_kwargs)
+            if self.send_dimensions:
+                openai_kwargs["dimensions"] = self.vector_dimensions
+            response = await openai_client.embeddings.create(**openai_kwargs)
+            self._validate_embedding_count(1, len(response.data))
+            return self._validate_embedding_dimensions(response.data[0].embedding)
+
+        return await _emit_embedding_call(
+            provider=self.transport,
+            model=self.model,
+            texts=[query],
+            input_tokens_estimate=token_count,
+            fn=_call_openai,
+        )
+
+    def _truncate_to_token_limit(self, text: str) -> tuple[str, int]:
+        """Return a prefix of `text` whose re-encoded token count fits the cap.
+
+        Decode/re-encode after slicing: BPE boundaries can re-expand past the cap.
         """
-        Simple batch embedding for a list of text strings.
+        token_ids = self.encoding.encode(text)
+        keep = self.max_embedding_tokens
+        while len(token_ids) > self.max_embedding_tokens:
+            keep = min(keep, len(token_ids) - 1)
+            if keep < 1:
+                return "", 0
+            text = self.encoding.decode(token_ids[:keep])
+            token_ids = self.encoding.encode(text)
+            keep -= 1
+        return text, len(token_ids)
+
+    async def simple_batch_embed(
+        self,
+        texts: list[str],
+        *,
+        on_oversize: Literal["raise", "truncate"] = "raise",
+    ) -> list[list[float]]:
+        """
+        Batch-embed a list of text strings. Does not sub-chunk oversized inputs.
+
+        Internally goes through the same token-aware batching pipeline as
+        `batch_embed()` so the per-request token cap is respected.
 
         Args:
             texts: List of text strings to embed
+            on_oversize: ``"raise"`` (default) errors; ``"truncate"`` embeds a
+                token-capped prefix.
 
         Returns:
-            List of embedding vectors corresponding to input texts
+            List of embedding vectors, one per input text (in order)
 
         Raises:
-            ValueError: If any text exceeds token limits
+            EmbeddingTokenLimitError: If any text exceeds token limits and
+                `on_oversize` is ``"raise"``
         """
-        embeddings: list[list[float]] = []
+        if not texts:
+            return []
 
-        for i in range(0, len(texts), self.max_batch_size):
-            batch = texts[i : i + self.max_batch_size]
-            try:
-                if isinstance(self.client, genai.Client):
-                    # Type cast needed due to genai type signature complexity
-                    response = await self.client.aio.models.embed_content(
-                        model=self.model,
-                        contents=batch,  # pyright: ignore[reportArgumentType]
-                        config={"output_dimensionality": 1536},
+        # Validate / cap per-input token limit and collect counts for batching
+        prepared_texts: list[str] = []
+        token_counts: list[int] = []
+        for idx, text in enumerate(texts):
+            token_ids = self.encoding.encode(text)
+            if len(token_ids) > self.max_embedding_tokens:
+                if on_oversize == "truncate":
+                    original_count = len(token_ids)
+                    text, tokens = self._truncate_to_token_limit(text)
+                    logger.warning(
+                        "truncated oversize embedding input at idx %d: %d->%d tokens",
+                        idx,
+                        original_count,
+                        tokens,
                     )
-                    if response.embeddings:
-                        for emb in response.embeddings:
-                            if emb.values:
-                                embeddings.append(emb.values)
-                else:  # openai
-                    response = await self.client.embeddings.create(
-                        input=batch,
-                        model=self.model,
+                else:
+                    raise EmbeddingTokenLimitError(
+                        f"Text at index {idx} exceeds maximum token limit of "
+                        + f"{self.max_embedding_tokens} tokens (got {len(token_ids)} tokens)"
                     )
-                    embeddings.extend([data.embedding for data in response.data])
-            except Exception as e:
-                # Check if it's a token limit error and re-raise as ValueError for consistency
-                if "token" in str(e).lower():
-                    raise ValueError(
-                        f"Text content exceeds maximum token limit of {self.max_embedding_tokens}."
-                    ) from e
-                raise
+            else:
+                tokens = len(token_ids)
+            prepared_texts.append(text)
+            token_counts.append(tokens)
 
-        return embeddings
+        # Use positional indices as text_ids so we can reassemble in input order.
+        text_chunks: dict[str, list[tuple[str, int]]] = {
+            str(i): [(prepared_texts[i], token_counts[i])]
+            for i in range(len(prepared_texts))
+        }
+
+        batches = self._create_batches(text_chunks)
+        batch_results = await asyncio.gather(
+            *[self._process_batch(batch) for batch in batches],
+        )
+
+        combined: dict[str, list[list[float]]] = self._accumulate_embeddings(
+            batch_results
+        )
+        return [combined[str(i)][0] for i in range(len(texts))]
+
+    def prepare_chunks(self, id_resource_dict: dict[str, str]) -> dict[str, list[str]]:
+        """
+        Public helper: tokenize and chunk texts using the same rules as
+        `batch_embed()`. Returns ordered chunk texts per input id.
+
+        Intended for callers that want to persist embeddable chunks
+        before later embedding them off the request path.
+        """
+        return {
+            text_id: [chunk_text for chunk_text, _ in chunks]
+            for text_id, chunks in self._prepare_chunks(id_resource_dict).items()
+        }
 
     async def batch_embed(
-        self, id_resource_dict: dict[str, tuple[str, list[int]]]
+        self, id_resource_dict: dict[str, str]
     ) -> dict[str, list[list[float]]]:
         """
         Embed multiple texts, chunking long ones and batching API calls.
 
         Args:
-            id_resource_dict: Maps text IDs to (text, encoded_tokens) tuples
+            id_resource_dict: Maps text IDs to text content
 
         Returns:
             Maps text IDs to lists of embedding vectors (one per chunk)
@@ -168,27 +475,29 @@ class _EmbeddingClient:
         return self._accumulate_embeddings(batch_results)
 
     def _prepare_chunks(
-        self, id_resource_dict: dict[str, tuple[str, list[int]]]
+        self, id_resource_dict: dict[str, str]
     ) -> dict[str, list[tuple[str, int]]]:
         """
         Chunk texts that exceed token limits.
 
         Args:
-            id_resource_dict: Maps text IDs to (text, encoded_tokens) tuples
+            id_resource_dict: Maps text IDs to text content. We tokenize with
+                the embedding client's own encoding so token IDs match the
+                decoder vocabulary used by the target embedding API.
 
         Returns:
             Maps text IDs to lists of (chunk_text, token_count) tuples
         """
-        return {
-            text_id: (
-                _chunk_text_with_tokens(
-                    text, encoded_tokens, self.max_embedding_tokens, self.encoding
+        out: dict[str, list[tuple[str, int]]] = {}
+        for text_id, text in id_resource_dict.items():
+            tokens = self.encoding.encode(text)
+            if len(tokens) > self.max_embedding_tokens:
+                out[text_id] = _chunk_text_with_tokens(
+                    text, tokens, self.max_embedding_tokens, self.encoding
                 )
-                if len(encoded_tokens) > self.max_embedding_tokens
-                else [(text, len(encoded_tokens))]
-            )
-            for text_id, (text, encoded_tokens) in id_resource_dict.items()
-        }
+            else:
+                out[text_id] = [(text, len(tokens))]
+        return out
 
     def _create_batches(
         self, text_chunks: dict[str, list[tuple[str, int]]]
@@ -220,7 +529,9 @@ class _EmbeddingClient:
                     current_batch = []
                     current_tokens = 0
 
-                current_batch.append(BatchItem(chunk_text, text_id, chunk_idx))
+                current_batch.append(
+                    BatchItem(chunk_text, text_id, chunk_idx, chunk_tokens)
+                )
                 current_tokens += chunk_tokens
 
         if current_batch:
@@ -243,34 +554,69 @@ class _EmbeddingClient:
         """
         last_exception: Exception | None = None
 
+        async def _call_provider() -> dict[str, dict[int, list[float]]]:
+            """One provider call. Lifted out of the retry loop so
+            _emit_embedding_call emits a separate event per attempt — each
+            attempt is a distinct provider hit and shows up as its own line
+            item in analytics."""
+            result: dict[str, dict[int, list[float]]] = defaultdict(dict)
+            if self.transport == "gemini":
+                from google.genai import types as genai_types
+
+                gemini_client = cast("genai.Client", self.client)
+                # The SDK's contents union includes optional Pillow types, which
+                # are unresolved without Pillow; this call only sends text.
+                response = await gemini_client.aio.models.embed_content(  # pyright: ignore[reportUnknownMemberType]
+                    model=self.model,
+                    # One Content per item: a list of bare strings is folded
+                    # into a single document by gemini-embedding-2*, which
+                    # returns one embedding for the whole batch (#745).
+                    contents=[
+                        genai_types.Content(parts=[genai_types.Part(text=item.text)])
+                        for item in batch
+                    ],
+                    config={"output_dimensionality": self.vector_dimensions},
+                )
+                if response.embeddings:
+                    for item, embedding in zip(batch, response.embeddings, strict=True):
+                        if embedding.values:
+                            result[item.text_id][item.chunk_index] = (
+                                self._validate_embedding_dimensions(embedding.values)
+                            )
+            else:  # openai
+                openai_kwargs: dict[str, Any] = {
+                    "model": self.model,
+                    "input": [item.text for item in batch],
+                }
+                self._apply_encoding_format(openai_kwargs)
+                if self.send_dimensions:
+                    openai_kwargs["dimensions"] = self.vector_dimensions
+                openai_client = cast("AsyncOpenAI", self.client)
+                response = await openai_client.embeddings.create(**openai_kwargs)
+                self._validate_embedding_count(len(batch), len(response.data))
+                for item, embedding_data in zip(batch, response.data, strict=True):
+                    result[item.text_id][item.chunk_index] = (
+                        self._validate_embedding_dimensions(embedding_data.embedding)
+                    )
+            return result
+
+        # Token counts were computed during chunk prep; reuse them here so the
+        # provider call doesn't re-encode every chunk just for the size proxy.
+        batch_tokens_estimate = sum(item.token_count for item in batch)
+        batch_texts = [item.text for item in batch]
+
         for attempt in range(max_retries):
             try:
-                # Organize embeddings by text_id and chunk_index
-                result: dict[str, dict[int, list[float]]] = defaultdict(dict)
-
-                if isinstance(self.client, genai.Client):
-                    response = await self.client.aio.models.embed_content(
-                        model=self.model,
-                        contents=[item.text for item in batch],
-                        config={"output_dimensionality": 1536},
-                    )
-                    if response.embeddings:
-                        for item, embedding in zip(
-                            batch, response.embeddings, strict=True
-                        ):
-                            if embedding.values:
-                                result[item.text_id][item.chunk_index] = (
-                                    embedding.values
-                                )
-                else:  # openai / openrouter
-                    response = await self.client.embeddings.create(
-                        model=self.model, input=[item.text for item in batch]
-                    )
-                    for item, embedding_data in zip(batch, response.data, strict=True):
-                        result[item.text_id][item.chunk_index] = (
-                            embedding_data.embedding
-                        )
-
+                result = await _emit_embedding_call(
+                    provider=self.transport,
+                    model=self.model,
+                    texts=batch_texts,
+                    input_tokens_estimate=batch_tokens_estimate,
+                    fn=_call_provider,
+                    is_final_attempt=(attempt >= max_retries - 1),
+                    attempt=attempt + 1,
+                    retry_attempts=max_retries,
+                )
                 return dict(result)
 
             except Exception as e:
@@ -357,9 +703,10 @@ class EmbeddingClient:
     and allowing the application to start even if API keys are not yet configured.
     """
 
-    _instance: "_EmbeddingClient | None" = None
+    _instance: _EmbeddingClient | None = None
+    _instance_signature: tuple[object, ...] | None = None
     _lock: threading.Lock = threading.Lock()
-    _wrapper_instance: "EmbeddingClient | None" = None
+    _wrapper_instance: EmbeddingClient | None = None
 
     def __new__(cls):
         """Ensure only one instance of EmbeddingClient exists."""
@@ -374,36 +721,67 @@ class EmbeddingClient:
 
         Uses double-checked locking for thread-safe lazy initialization.
         """
-        if self._instance is None:
+        signature = self._get_settings_signature()
+        if self._instance is None or self._instance_signature != signature:
             with self._lock:
-                if self._instance is None:
-                    provider = settings.LLM.EMBEDDING_PROVIDER
-                    if provider == "gemini":
-                        api_key = settings.LLM.GEMINI_API_KEY
-                    elif provider == "openrouter":
-                        api_key = settings.LLM.OPENAI_COMPATIBLE_API_KEY
-                    else:
-                        api_key = settings.LLM.OPENAI_API_KEY
-
+                if self._instance is None or self._instance_signature != signature:
+                    runtime_config = self._resolve_runtime_config()
                     self._instance = _EmbeddingClient(
-                        api_key=api_key, provider=provider
+                        runtime_config,
+                        vector_dimensions=settings.EMBEDDING.VECTOR_DIMENSIONS,
+                        max_input_tokens=settings.EMBEDDING.MAX_INPUT_TOKENS,
+                        max_tokens_per_request=settings.EMBEDDING.MAX_TOKENS_PER_REQUEST,
+                        send_dimensions=settings.EMBEDDING.resolve_send_dimensions(),
+                        encoding_format=settings.EMBEDDING.resolve_encoding_format(),
                     )
+                    self._instance_signature = signature
                     logger.debug(
-                        f"Initialized embedding client with provider: {provider}"
+                        "Initialized embedding client with transport: %s model: %s",
+                        runtime_config.transport,
+                        runtime_config.model,
                     )
 
         return self._instance
+
+    def _resolve_runtime_config(self) -> EmbeddingModelConfig:
+        return resolve_embedding_model_config(settings.EMBEDDING.MODEL_CONFIG)
+
+    def _get_settings_signature(self) -> tuple[object, ...]:
+        runtime_config = self._resolve_runtime_config()
+        return (
+            runtime_config.transport,
+            runtime_config.model,
+            runtime_config.api_key,
+            runtime_config.base_url,
+            runtime_config.max_batch_size,
+            settings.EMBEDDING.VECTOR_DIMENSIONS,
+            settings.EMBEDDING.MAX_INPUT_TOKENS,
+            settings.EMBEDDING.MAX_TOKENS_PER_REQUEST,
+            settings.EMBEDDING.resolve_send_dimensions(),
+            settings.EMBEDDING.resolve_encoding_format(),
+        )
 
     async def embed(self, query: str) -> list[float]:
         """Embed a single query string."""
         return await self._get_client().embed(query)
 
-    async def simple_batch_embed(self, texts: list[str]) -> list[list[float]]:
-        """Simple batch embedding for a list of text strings."""
-        return await self._get_client().simple_batch_embed(texts)
+    async def simple_batch_embed(
+        self,
+        texts: list[str],
+        *,
+        on_oversize: Literal["raise", "truncate"] = "raise",
+    ) -> list[list[float]]:
+        """Batch embed a list of text strings (each must fit token limit)."""
+        return await self._get_client().simple_batch_embed(
+            texts, on_oversize=on_oversize
+        )
+
+    def prepare_chunks(self, id_resource_dict: dict[str, str]) -> dict[str, list[str]]:
+        """Chunk texts using the same rules as `batch_embed` (no network)."""
+        return self._get_client().prepare_chunks(id_resource_dict)
 
     async def batch_embed(
-        self, id_resource_dict: dict[str, tuple[str, list[int]]]
+        self, id_resource_dict: dict[str, str]
     ) -> dict[str, list[list[float]]]:
         """Embed multiple texts, chunking long ones and batching API calls."""
         return await self._get_client().batch_embed(id_resource_dict)
@@ -419,14 +797,35 @@ class EmbeddingClient:
         return self._get_client().model
 
     @property
+    def transport(self) -> str:
+        """Get the transport name."""
+        return self._get_client().transport
+
+    @property
     def max_embedding_tokens(self) -> int:
         """Get the maximum embedding tokens."""
         return self._get_client().max_embedding_tokens
 
     @property
+    def vector_dimensions(self) -> int:
+        """Get the configured embedding dimensions."""
+        return self._get_client().vector_dimensions
+
+    @property
     def encoding(self) -> tiktoken.Encoding:
-        """Get the tiktoken encoding."""
-        return self._get_client().encoding
+        """Get the tiktoken encoding.
+
+        Resolved without constructing the underlying client: tiktoken needs no
+        API key, and token-counting callers (e.g. the document dedup tie-break)
+        must work in environments with no embedding credentials, such as CI for
+        pull requests from forks.
+        """
+        if self._instance is not None:
+            return self._instance.encoding
+        try:
+            return tiktoken.encoding_for_model(self._resolve_runtime_config().model)
+        except KeyError:
+            return tiktoken.get_encoding("cl100k_base")
 
 
 # Shared singleton embedding client instance

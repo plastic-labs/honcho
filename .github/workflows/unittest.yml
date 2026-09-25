@@ -11,6 +11,7 @@ on:
       - '**.jsx'
       - 'pyproject.toml'
       - 'uv.lock'
+      - '.python-version'
       - 'sdks/typescript/package.json'
       - 'sdks/typescript/bun.lock'
       - '.github/workflows/unittest.yml'
@@ -24,6 +25,7 @@ on:
       - '**.jsx'
       - 'pyproject.toml'
       - 'uv.lock'
+      - '.python-version'
       - 'sdks/typescript/package.json'
       - 'sdks/typescript/bun.lock'
       - '.github/workflows/unittest.yml'
@@ -48,6 +50,7 @@ jobs:
               - '**.py'
               - 'pyproject.toml'
               - 'uv.lock'
+              - '.python-version'
               - 'migrations/**'
               - 'sdks/typescript/**'
               - '.github/workflows/unittest.yml'
@@ -85,7 +88,7 @@ jobs:
       - name: "Set up Python"
         uses: actions/setup-python@v5
         with:
-          python-version-file: "pyproject.toml"
+          python-version-file: ".python-version"
 
       - name: Install bun
         uses: oven-sh/setup-bun@v2

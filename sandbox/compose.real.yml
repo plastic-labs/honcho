@@ -1,0 +1,22 @@
+# Provider overlay: a real, configured model provider.
+#
+# Non-deterministic and it costs money. Use it when you need something the mock
+# cannot give you — chiefly vector recall, since mock embeddings are hash-derived
+# and carry no semantic similarity, and the full conclusion level mix.
+#
+# Credentials come from sandbox/real.env (gitignored), never from ambient host
+# environment, so a real-mode run has one auditable input and the sandbox still does
+# not depend on whatever happens to be exported in your shell.
+#
+# Copy sandbox/real.env.example to sandbox/real.env to get started. sandbox.sh
+# refuses to start real mode if that file is missing or carries no key.
+#
+# No mock-provider service is defined here, so nothing depends on one.
+
+services:
+  api: &provider-wiring
+    env_file:
+      - path: real.env
+        required: true
+
+  deriver: *provider-wiring

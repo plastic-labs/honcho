@@ -1,5 +1,8 @@
+"""FastAPI routes for session resources and session-scoped operations."""
+
 import logging
 from contextlib import suppress
+from time import perf_counter
 
 from fastapi import APIRouter, Body, Depends, Path, Query, Response
 from fastapi_pagination import Page
@@ -8,8 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import config, crud, schemas
 from src.cache.client import safe_cache_delete
+from src.crud.message import get_peer_session_names
 from src.crud.session import session_cache_key
-from src.dependencies import db
+from src.dependencies import db, read_db
 from src.deriver.enqueue import enqueue_deletion
 from src.embedding_client import embedding_client
 from src.exceptions import (
@@ -18,16 +22,28 @@ from src.exceptions import (
     ValidationException,
 )
 from src.security import JWTParams, require_auth
+from src.telemetry.events import EmbeddingCallPurpose, GetContextEvent, emit
 from src.utils import summarizer
+from src.utils.filter import normalize_session_allowlist
 from src.utils.representation import Representation
 from src.utils.search import search
 from src.utils.tokens import estimate_tokens
+from src.utils.types import embedding_call_purpose
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/workspaces/{workspace_id}/sessions",
     tags=["sessions"],
+)
+
+# Guidance appended to guardrail errors when a scope peer is passed to the
+# generic session-peer surface. Scope membership is managed only through the
+# scopes facade so the observer mechanics stay internal.
+_SCOPES_ROUTE_GUIDANCE = (
+    "Scope membership is managed via the scopes routes "
+    "(/v3/workspaces/{workspace_id}/scopes/{scope_id}/sessions) or the `scopes` "
+    "field at session creation."
 )
 
 
@@ -38,7 +54,7 @@ async def _get_working_representation_task(
     *,
     observer: str,
     observed: str,
-    session_name: str | None,
+    session_allowlist: list[str] | None,
     search_top_k: int | None,
     search_max_distance: float | None,
     include_most_derived: bool,
@@ -54,7 +70,7 @@ async def _get_working_representation_task(
         last_message: Optional last message for semantic query
         observer: Name of the observer peer
         observed: Name of the observed peer
-        session_name: Optional session to filter by
+        session_allowlist: Optional session allowlist to filter by
         search_top_k: Number of semantic-search-retrieved observations to include in the representation
         search_max_distance: Maximum distance to search for semantically relevant observations
         include_most_derived: Whether to include the most derived observations in the representation
@@ -69,7 +85,7 @@ async def _get_working_representation_task(
         db=db,
         observer=observer,
         observed=observed,
-        session_name=session_name,
+        session_allowlist=session_allowlist,
         include_semantic_query=last_message,
         semantic_search_top_k=search_top_k,
         semantic_search_max_distance=search_max_distance,
@@ -78,6 +94,8 @@ async def _get_working_representation_task(
         max_observations=max_observations
         if max_observations is not None
         else config.settings.DERIVER.WORKING_REPRESENTATION_MAX_OBSERVATIONS,
+        parent_category="api",
+        embedding_purpose=EmbeddingCallPurpose.SESSION_CONTEXT_SEARCH,
     )
 
 
@@ -230,6 +248,19 @@ def _select_summary_for_context(
             token_limit - short_len,
         )
 
+    if short_summary or long_summary:
+        # A summary exists but none fits. The caller sees `summary: null`, which
+        # is indistinguishable from "this session has no summary", so say so.
+        # `token_limit` here is already net of the representation and peer card,
+        # which is usually why the budget is smaller than the request suggests.
+        logger.info(
+            "Summary dropped: budget %s too small (short=%s, long=%s, limit=%s)",
+            summary_budget,
+            short_len or None,
+            long_len or None,
+            token_limit,
+        )
+
     return None, 0, token_limit
 
 
@@ -243,7 +274,8 @@ async def get_sessions(
     options: schemas.SessionGet | None = Body(
         None, description="Filtering and pagination options for the sessions list"
     ),
-    db: AsyncSession = db,
+    reverse: bool = Query(False, description="Whether to reverse the order of results"),
+    db: AsyncSession = read_db,
 ):
     """Get all Sessions for a Workspace, paginated with optional filters."""
     filter_param = None
@@ -254,7 +286,12 @@ async def get_sessions(
             filter_param = None
 
     return await apaginate(
-        db, await crud.get_sessions(workspace_name=workspace_id, filters=filter_param)
+        db,
+        await crud.get_sessions(
+            workspace_name=workspace_id,
+            filters=filter_param,
+            reverse=reverse,
+        ),
     )
 
 
@@ -296,10 +333,38 @@ async def get_or_create_session(
             )
         session.name = jwt_params.s
 
+    # The `scopes` field does what the scopes routes do — create scope peers and
+    # attach memberships — so it needs their authorization: workspace-level or
+    # admin only. Checked here rather than through `require_auth(...)` because
+    # that closure only resolves path and query params, never the body, so a
+    # declarative gate cannot see this field.
+    if session.scopes and not (
+        jwt_params.ad or (jwt_params.p is None and jwt_params.s is None)
+    ):
+        raise AuthenticationException("Scope membership requires a workspace-level key")
+
+    # Scope peers may not be added through the generic peers mapping; use the
+    # `scopes` field (which handles scope-peer creation and observer config).
+    if session.peer_names:
+        await crud.reject_scope_peers(
+            db, workspace_id, session.peer_names.keys(), action=_SCOPES_ROUTE_GUIDANCE
+        )
+
+    # A peer-scoped key may only add its own peer. Membership grants read access
+    # to the session (`allow_member_read`), so naming another peer, or joining a
+    # session the caller is not already in, would hand out that access; the
+    # latter is enforced inside the CRUD call via `acting_peer`.
+    acting_peer = None if jwt_params.ad else jwt_params.p
+    if acting_peer is not None and set(session.peer_names or {}) - {acting_peer}:
+        raise AuthenticationException("Unauthorized access to resource")
+
     # Handle session creation with proper error handling
     try:
         result = await crud.get_or_create_session(
-            db, workspace_name=workspace_id, session=session
+            db,
+            workspace_name=workspace_id,
+            session=session,
+            acting_peer=acting_peer,
         )
         response.status_code = 201 if result.created else 200
         return result.resource
@@ -427,7 +492,13 @@ async def add_peers_to_session(
     ),
     db: AsyncSession = db,
 ):
-    """Add Peers to a Session. If a Peer does not yet exist, it will be created automatically."""
+    """Add Peers to a Session. If a Peer does not yet exist, it will be created automatically.
+
+    Scope peers cannot be added here; scope membership is managed via the scopes routes.
+    """
+    await crud.reject_scope_peers(
+        db, workspace_id, peers.keys(), action=_SCOPES_ROUTE_GUIDANCE
+    )
     try:
         result = await crud.get_or_create_session(
             db,
@@ -463,7 +534,12 @@ async def set_session_peers(
     Set the Peers in a Session. If a Peer does not yet exist, it will be created automatically.
 
     This will fully replace the current set of Peers in the Session.
+
+    Scope peers cannot be set here; scope membership is managed via the scopes routes.
     """
+    await crud.reject_scope_peers(
+        db, workspace_id, peers.keys(), action=_SCOPES_ROUTE_GUIDANCE
+    )
     try:
         await crud.set_peers_for_session(
             db,
@@ -499,7 +575,13 @@ async def remove_peers_from_session(
     ),
     db: AsyncSession = db,
 ):
-    """Remove Peers by ID from a Session."""
+    """Remove Peers by ID from a Session.
+
+    Scope peers cannot be removed here; scope membership is managed via the scopes routes.
+    """
+    await crud.reject_scope_peers(
+        db, workspace_id, peers, action=_SCOPES_ROUTE_GUIDANCE
+    )
     try:
         await crud.remove_peers_from_session(
             db,
@@ -523,17 +605,28 @@ async def remove_peers_from_session(
 @router.get(
     "/{session_id}/peers/{peer_id}/config",
     response_model=schemas.SessionPeerConfig,
-    dependencies=[
-        Depends(require_auth(workspace_name="workspace_id", session_name="session_id"))
-    ],
 )
 async def get_peer_config(
     workspace_id: str = Path(...),
     session_id: str = Path(...),
     peer_id: str = Path(...),
-    db: AsyncSession = db,
+    jwt_params: JWTParams = Depends(
+        require_auth(
+            workspace_name="workspace_id",
+            session_name="session_id",
+            allow_member_read=True,
+        )
+    ),
+    db: AsyncSession = read_db,
 ):
-    """Get the configuration for a Peer in a Session."""
+    """Get the configuration for a Peer in a Session.
+
+    Member-read lets a peer-scoped key reach this route, but a peer may only
+    read its own per-session config — not a co-member's. Workspace/admin and
+    session-scoped tokens (which already span the whole session) are unaffected.
+    """
+    if jwt_params.p is not None and jwt_params.p != peer_id:
+        raise AuthenticationException("JWT not permissioned for this resource")
     return await crud.get_peer_config(
         db,
         workspace_name=workspace_id,
@@ -580,13 +673,19 @@ async def set_peer_config(
     "/{session_id}/peers",
     response_model=Page[schemas.Peer],
     dependencies=[
-        Depends(require_auth(workspace_name="workspace_id", session_name="session_id"))
+        Depends(
+            require_auth(
+                workspace_name="workspace_id",
+                session_name="session_id",
+                allow_member_read=True,
+            )
+        )
     ],
 )
 async def get_session_peers(
     workspace_id: str = Path(...),
     session_id: str = Path(...),
-    db: AsyncSession = db,
+    db: AsyncSession = read_db,
 ):
     """Get all Peers in a Session. Results are paginated."""
     try:
@@ -602,14 +701,18 @@ async def get_session_peers(
 @router.get(
     "/{session_id}/context",
     response_model=schemas.SessionContext,
-    dependencies=[
-        Depends(require_auth(workspace_name="workspace_id", session_name="session_id"))
-    ],
 )
 async def get_session_context(
     workspace_id: str = Path(...),
     session_id: str = Path(...),
-    db: AsyncSession = db,
+    jwt_params: JWTParams = Depends(
+        require_auth(
+            workspace_name="workspace_id",
+            session_name="session_id",
+            allow_member_read=True,
+        )
+    ),
+    db: AsyncSession = read_db,
     tokens: int | None = Query(
         None,
         le=config.settings.GET_CONTEXT_MAX_TOKENS,
@@ -633,9 +736,31 @@ async def get_session_context(
         None,
         description="A peer to get context for. If given, response will attempt to include representation and card from the perspective of that peer. Must be provided with `peer_target`.",
     ),
+    scope: str | None = Query(
+        None,
+        description="An (unprefixed) scope name to use as the perspective source: the representation and peer card of `peer_target` are read from the scope's observations instead of the global (or `peer_perspective`) view. Must be provided with `peer_target`; mutually exclusive with `peer_perspective`. Requires a workspace- or admin-level key.",
+    ),
+    sessions: list[str] | None = Query(
+        None,
+        description=(
+            "Optional allowlist of session IDs confining the representation of "
+            "`peer_target` to those sessions. This session must be one of them. "
+            "Recall is restricted to conclusions stated directly in the allowed "
+            "sessions — conclusions synthesized across sessions are excluded, "
+            "since their provenance cannot be proven to sit inside the allowlist "
+            "— and the peer card is omitted for the same reason. Mutually "
+            "exclusive with `scope` and `limit_to_session`. A peer-scoped key "
+            "must be an active member of every session named. The 1,000-session "
+            "cap shared with the recall endpoints applies but is not reachable "
+            "here: these are repeated query parameters, so a long list exceeds "
+            "the request-line limit of the server or any proxy in front of it "
+            "(a 414/431, not a 422) at a few hundred entries. Use a named "
+            "`scope` for large or reusable session sets."
+        ),
+    ),
     limit_to_session: bool = Query(
         default=False,
-        description="Only used if `search_query` is provided. Whether to limit the representation to the session (as opposed to everything known about the target peer)",
+        description="Whether to limit the representation to the session (as opposed to everything known about the target peer). Narrows recall the same way `sessions` does, so the same restrictions apply: explicit-only conclusions, and the peer card is omitted because it carries no per-session provenance.",
     ),
     search_top_k: int | None = Query(
         None,
@@ -669,31 +794,172 @@ async def get_session_context(
     token_limit = (
         tokens if tokens is not None else config.settings.GET_CONTEXT_MAX_TOKENS
     )
+    context_started = perf_counter()
 
     if peer_perspective and not peer_target:
         raise ValidationException(
             "peer_target must be provided if peer_perspective is provided"
         )
 
+    # peer_target is the *observed* peer, and no representation or card is ever
+    # formed of a scope. Strict variant: an observed position that creates
+    # nothing, so a reserved name which does not exist yet must be refused too.
+    if peer_target is not None:
+        await crud.reject_scope_observed(
+            db,
+            workspace_id,
+            [peer_target],
+            action=(
+                "No representation is formed of a scope, so a scope cannot be a"
+                " context target."
+            ),
+        )
+
+    # peer_perspective is an observer position, where a scope is mechanically
+    # legitimate — but `scope` below is the supported way to ask for a scope's
+    # perspective, and routing through it is what keeps the observer mechanics
+    # hidden. Flag-based (not prefix-based) so a legacy peer merely occupying the
+    # reserved name keeps working, same as everywhere else.
+    if peer_perspective is not None:
+        await crud.reject_scope_peers(
+            db,
+            workspace_id,
+            [peer_perspective],
+            action="Use the `scope` parameter instead.",
+        )
+
+    if scope is not None:
+        if peer_perspective:
+            raise ValidationException(
+                "`scope` and `peer_perspective` are mutually exclusive"
+            )
+        if not peer_target:
+            raise ValidationException(
+                "peer_target must be provided if scope is provided"
+            )
+        # A scope's perspective spans sessions beyond this one, so scoped reads
+        # require a workspace- or admin-level key. 401, matching every other
+        # scope surface (see _validate_scope_option in routers/peers.py).
+        if jwt_params.p is not None or jwt_params.s is not None:
+            raise AuthenticationException(
+                "`scope` requires a workspace- or admin-level key"
+            )
+
+    # The session allowlist confines the representation to a set of sessions this
+    # one belongs to. `scope` already determines what can be seen and
+    # `limit_to_session` already pins the set to this session alone, so both are
+    # contradictions rather than further narrowings — refused rather than given a
+    # silent precedence order.
+    session_allowlist: list[str] | None = None
+    if sessions is not None:
+        if scope is not None:
+            raise ValidationException("`sessions` and `scope` are mutually exclusive")
+        if limit_to_session:
+            raise ValidationException(
+                "`sessions` and `limit_to_session` are mutually exclusive"
+            )
+        if not peer_target:
+            # The allowlist only reaches the representation, and there is no
+            # representation without a target. Refused rather than accepted and
+            # silently ignored, which would read as a scoped context.
+            raise ValidationException(
+                "peer_target must be provided if sessions is provided"
+            )
+        # `must_include` keeps the allowlist from contradicting the route's own
+        # session: this session's messages and summary are always part of the
+        # response, so an allowlist excluding it would describe a context that
+        # cannot be assembled.
+        session_allowlist = normalize_session_allowlist(
+            sessions, field="sessions", must_include=session_id
+        )
+        # A peer-scoped key may only name sessions its peer belongs to. Mirrors
+        # the chat route's gate (see routers/peers.py), including `active_only`,
+        # so both answer the same question for a peer that has left a session.
+        # Reuses the handler's session rather than opening its own: this is a
+        # DB-only read and the handler already holds a connection.
+        if jwt_params.p is not None:
+            member_sessions = set(
+                await get_peer_session_names(
+                    db, workspace_id, jwt_params.p, active_only=True
+                )
+            )
+            if not set(session_allowlist) <= member_sessions:
+                raise AuthenticationException("JWT not permissioned for this resource")
+
     if not peer_target:
         # No representation or card needed
         summary, messages = await _get_session_context_task(
             db, workspace_id, session_id, token_limit, include_summary
         )
-        return schemas.SessionContext(
+        response = schemas.SessionContext(
             name=session_id,
             messages=messages,
             summary=summary,
         )
+        emit(
+            GetContextEvent(
+                workspace_name=workspace_id,
+                context_scope="session",
+                session_name=session_id,
+                tokens_requested=tokens,
+                message_count=len(messages),
+                has_summary=summary is not None,
+                search_query_provided=search_query is not None,
+                search_top_k=search_top_k,
+                search_max_distance=search_max_distance,
+                include_most_frequent=include_most_frequent,
+                max_conclusions=max_conclusions,
+                include_summary=include_summary,
+                limit_to_session=limit_to_session,
+                total_duration_ms=(perf_counter() - context_started) * 1000,
+            )
+        )
+        return response
 
     observer = peer_perspective or peer_target
     observed = peer_target
 
+    # Member-read lets a peer-scoped key reach this route, but membership grants
+    # access to the *session*, not to a co-member's representation or peer card.
+    # The observer is whose knowledge is being read, so a peer-scoped key may only
+    # read from its own perspective — mirroring
+    # `POST /peers/{peer_id}/representation`, where require_auth pins the observer
+    # to the path peer and any `target` is that observer's own view. A bare
+    # `peer_target` naming another peer is the omniscient view of them, which is
+    # nobody's own perspective, so it is refused too. Workspace/admin and
+    # session-scoped tokens are unaffected.
+    if jwt_params.p is not None and jwt_params.p != observer:
+        raise AuthenticationException("JWT not permissioned for this resource")
+
+    # A scope swaps the perspective source: the scope peer becomes the
+    # observer for both the working representation and the peer card, so the
+    # scoped collection and scoped card are read instead of the global ones.
+    if scope is not None:
+        [observer] = await crud.resolve_scope_peers(db, workspace_id, [scope])
+
     # Pre-compute embedding outside the DB session (best-effort)
     embedding: list[float] | None = None
     if search_query:
-        with suppress(Exception):
+        with (
+            suppress(Exception),
+            embedding_call_purpose(
+                EmbeddingCallPurpose.SESSION_CONTEXT_SEARCH.value,
+                workspace_name=workspace_id,
+                parent_category="api",
+            ),
+        ):
             embedding = await embedding_client.embed(search_query)
+
+    # The allowlist recall must respect, whichever way the caller expressed it.
+    # `sessions` and `limit_to_session` are mutually exclusive (422 above), so at
+    # most one of these is set. `session_allowlist` is never an empty list here —
+    # `must_include=session_id` guarantees at least this session — so the
+    # None-check is the only distinction that matters.
+    effective_allowlist = (
+        session_allowlist
+        if session_allowlist is not None
+        else ([session_id] if limit_to_session else None)
+    )
 
     # Sequential calls on shared DB session
     representation = await _get_working_representation_task(
@@ -702,15 +968,34 @@ async def get_session_context(
         search_query,
         observer=observer,
         observed=observed,
-        session_name=session_id if limit_to_session else None,
+        session_allowlist=effective_allowlist,
         search_top_k=search_top_k,
         search_max_distance=search_max_distance,
         include_most_derived=include_most_frequent,
         max_observations=max_conclusions,
         embedding=embedding,
     )
-    card = await _get_peer_card_task(
-        db, workspace_id, observer=observer, observed=observed
+    # A peer card is keyed by (workspace, observer, observed) with no session
+    # dimension (crud/peer_card.py), so it is synthesized from everything the
+    # observer has ever seen and cannot be narrowed to an allowlist. Returning it
+    # would leak exactly what the allowlist exists to exclude, so it is dropped —
+    # the same fail-closed reasoning that limits allowlisted conclusion recall to
+    # ALLOWLIST_SAFE_LEVELS.
+    #
+    # Gated on the *effective* allowlist, not on `sessions` alone:
+    # `limit_to_session=true` narrows recall identically, so carving out only the
+    # newer parameter would leave a control that one parameter swap defeats.
+    # `scope` needs no carve-out at all — it swaps the observer to the scope peer
+    # above, so the card read below is the scope's own.
+    #
+    # POST /peers/{id}/chat still injects an unscoped card under an allowlist
+    # (src/dialectic/chat.py) — tracked in DEV-2201, not fixed here.
+    card = (
+        None
+        if effective_allowlist is not None
+        else await _get_peer_card_task(
+            db, workspace_id, observer=observer, observed=observed
+        )
     )
     short_summary, long_summary = await _get_both_summaries_task(
         db, workspace_id, session_id
@@ -731,26 +1016,56 @@ async def get_session_context(
         db, workspace_id, session_id, messages_start_id, messages_budget
     )
 
-    return schemas.SessionContext(
+    response = schemas.SessionContext(
         name=session_id,
         messages=messages,
         summary=summary,
         peer_representation=representation.format_as_markdown(),
         peer_card=card,
     )
+    emit(
+        GetContextEvent(
+            workspace_name=workspace_id,
+            context_scope="session",
+            session_name=session_id,
+            peer_name=observer,
+            target_name=observed,
+            tokens_requested=tokens,
+            message_count=len(messages),
+            has_summary=summary is not None,
+            has_representation=bool(response.peer_representation),
+            has_peer_card=card is not None,
+            search_query_provided=search_query is not None,
+            search_top_k=search_top_k,
+            search_max_distance=search_max_distance,
+            include_most_frequent=include_most_frequent,
+            max_conclusions=max_conclusions,
+            include_summary=include_summary,
+            limit_to_session=limit_to_session,
+            peer_perspective_provided=peer_perspective is not None,
+            total_duration_ms=(perf_counter() - context_started) * 1000,
+        )
+    )
+    return response
 
 
 @router.get(
     "/{session_id}/summaries",
     response_model=schemas.SessionSummaries,
     dependencies=[
-        Depends(require_auth(workspace_name="workspace_id", session_name="session_id"))
+        Depends(
+            require_auth(
+                workspace_name="workspace_id",
+                session_name="session_id",
+                allow_member_read=True,
+            )
+        )
     ],
 )
 async def get_session_summaries(
     workspace_id: str = Path(...),
     session_id: str = Path(...),
-    db: AsyncSession = db,
+    db: AsyncSession = read_db,
 ) -> schemas.SessionSummaries:
     """
     Get available summaries for a Session.
@@ -785,7 +1100,13 @@ async def get_session_summaries(
     "/{session_id}/search",
     response_model=list[schemas.Message],
     dependencies=[
-        Depends(require_auth(workspace_name="workspace_id", session_name="session_id"))
+        Depends(
+            require_auth(
+                workspace_name="workspace_id",
+                session_name="session_id",
+                allow_member_read=True,
+            )
+        )
     ],
 )
 async def search_session(

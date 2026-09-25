@@ -14,11 +14,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import models
 from src.config import settings
 from src.dependencies import tracked_db
-from src.embedding_client import embedding_client
+from src.embedding_client import EmbeddingTokenLimitError, embedding_client
 from src.exceptions import ValidationException
 from src.models import session_peers_table
+from src.telemetry.events import EmbeddingCallPurpose
 from src.utils.filter import apply_filter
 from src.utils.formatting import ILIKE_ESCAPE_CHAR, escape_ilike_pattern
+from src.utils.types import embedding_call_purpose
 from src.vector_store import get_external_vector_store
 
 T = TypeVar("T")
@@ -80,6 +82,9 @@ async def query_external_vector_message_ids(
     filters: dict[str, Any] | None = None,
 ) -> list[str]:
     """Query the external vector store and return ordered message IDs."""
+    if limit <= 0:
+        return []
+
     external_vector_store = get_external_vector_store()
     if external_vector_store is None:
         return []
@@ -100,6 +105,7 @@ async def query_external_vector_message_ids(
         embedding_query,
         top_k=limit * 3,
         filters=vector_filters if vector_filters else None,
+        include_attributes=["message_id"],
     )
 
     if not vector_results:
@@ -379,10 +385,15 @@ async def search(
 
     if settings.EMBED_MESSAGES and isinstance(workspace_name, str):
         try:
-            query_embedding = await embedding_client.embed(query)
-        except ValueError as e:
+            with embedding_call_purpose(
+                EmbeddingCallPurpose.SEARCH_MESSAGES.value,
+                workspace_name=workspace_name,
+                parent_category="api",
+            ):
+                query_embedding = await embedding_client.embed(query)
+        except EmbeddingTokenLimitError as e:
             raise ValidationException(
-                f"Query exceeds maximum token limit of {settings.MAX_EMBEDDING_TOKENS}."
+                f"Query exceeds maximum token limit of {settings.EMBEDDING.MAX_INPUT_TOKENS}."
             ) from e
 
         if not _uses_pgvector_message_search():
@@ -440,7 +451,7 @@ async def search(
             return search_results[0][:limit]
         return []
 
-    async with tracked_db("search.messages") as managed_db:
+    async with tracked_db("search.messages", read_only=True) as managed_db:
         combined_results = await _run_search(managed_db)
         for message in combined_results:
             managed_db.expunge(message)

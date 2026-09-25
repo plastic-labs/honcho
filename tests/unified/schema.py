@@ -1,7 +1,7 @@
 import datetime
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Self
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from src.config import ReasoningLevel
 from src.schemas import (
@@ -14,6 +14,8 @@ from src.schemas import (
 
 
 class TestStep(BaseModel):
+    model_config = ConfigDict(extra="forbid")  # pyright: ignore
+
     description: str | None = None
 
 
@@ -63,6 +65,22 @@ class AddMessagesAction(TestStep):
     messages: list[MessageItem]
 
 
+class CreateScopeAction(TestStep):
+    """Create a scope and optionally add member sessions.
+
+    Driven over raw HTTP rather than the SDK: scopes are a new API surface the
+    published SDK does not expose yet, and gating coverage on an SDK release
+    would leave the feature untested at exactly the point it needs testing.
+    """
+
+    step_type: Literal["create_scope"] = "create_scope"
+    scope_id: str = Field(..., description="Unprefixed scope name")
+    session_ids: list[str] = Field(
+        default_factory=list,
+        description="Existing sessions to add as members of the scope",
+    )
+
+
 # --- Wait Actions ---
 
 
@@ -73,10 +91,6 @@ class WaitAction(TestStep):
     )
     target: Literal["queue_empty"] = "queue_empty"
     timeout: int = 60
-    flush: bool = Field(
-        False,
-        description="Enable flush mode to bypass batch token threshold before waiting",
-    )
 
 
 # --- Dream Actions ---
@@ -128,12 +142,96 @@ class JsonMatchAssertion(Assertion):
     key_value_pairs: dict[str, Any] | None = None
 
 
+class EvidenceContainsAssertion(Assertion):
+    """Assert on what a chat run read, not on what it wrote.
+
+    Evaluated against the `evidence` a chat / workspace_chat query returns, so
+    it proves retrieval happened independently of how the answer was phrased.
+    Evidence over-reports (prefetched rows count as read), so this shows a row
+    was reached, not that the answer used it. Every field set must hold.
+    """
+
+    assertion_type: Literal["evidence_contains"] = "evidence_contains"
+    conclusions_match: str | None = Field(
+        default=None,
+        description=(
+            "Case-insensitive substring some evidence conclusion must contain."
+            " A peer card the run read through `get_peer_card` also counts;"
+            " cards that only arrived in a prefetch do not."
+        ),
+    )
+    conclusions_from_peers: list[str] | None = Field(
+        default=None,
+        description="Peers (by `observed_id`) that must each have a conclusion in evidence",
+    )
+    min_count: int | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "How many of `conclusions_from_peers` must be present; defaults to all"
+        ),
+    )
+    messages_match: str | None = Field(
+        default=None,
+        description=(
+            "Case-insensitive substring some evidence message must contain. Evidence"
+            " carries message ids only, so the runner fetches each message's content."
+        ),
+    )
+    not_from_sessions: list[str] | None = Field(
+        default=None,
+        description=(
+            "No evidence conclusion or message may belong to these sessions."
+            " Conclusions without a session id are not attributable and are skipped."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _validate(self) -> Self:
+        if (
+            self.conclusions_match is None
+            and self.conclusions_from_peers is None
+            and self.messages_match is None
+            and self.not_from_sessions is None
+        ):
+            raise ValueError("evidence_contains needs at least one condition")
+        for name in ("conclusions_match", "messages_match"):
+            value = getattr(self, name)
+            if value is not None and not value.strip():
+                raise ValueError(f"{name} must not be blank")
+        if self.not_from_sessions is not None and not self.not_from_sessions:
+            raise ValueError("not_from_sessions must not be empty")
+        if self.conclusions_from_peers is not None:
+            if not self.conclusions_from_peers:
+                raise ValueError("conclusions_from_peers must not be empty")
+            if len(set(self.conclusions_from_peers)) != len(
+                self.conclusions_from_peers
+            ):
+                raise ValueError("conclusions_from_peers must not contain duplicates")
+        if self.min_count is not None:
+            if self.conclusions_from_peers is None:
+                raise ValueError("min_count requires conclusions_from_peers")
+            if self.min_count > len(self.conclusions_from_peers):
+                raise ValueError("min_count exceeds len(conclusions_from_peers)")
+        return self
+
+    @property
+    def required_peer_count(self) -> int:
+        return self.min_count or len(self.conclusions_from_peers or [])
+
+
 # --- Query/Assertion Actions ---
 
 
 class QueryAction(TestStep):
     step_type: Literal["query"] = "query"
-    target: Literal["chat", "get_context", "get_peer_card", "get_representation"]
+    target: Literal[
+        "chat",
+        "get_context",
+        "get_peer_card",
+        "get_representation",
+        "workspace_chat",
+    ]
 
     session_id: str | None = None
 
@@ -149,12 +247,21 @@ class QueryAction(TestStep):
     # for chat - reasoning level
     reasoning_level: ReasoningLevel | None = None
 
+    # for chat - optional JSON Schema the response must conform to
+    response_format: dict[str, Any] | None = None
+
+    # Confine the read to one scope (observer swap on peer chat) or to the
+    # union of several scopes' member sessions. Peer-chat/representation/
+    # context go over raw HTTP; workspace_chat uses the SDK `scope` argument.
+    scope: str | list[str] | None = None
+
     assertions: list[
         LLMJudgeAssertion
         | ContainsAssertion
         | NotContainsAssertion
         | ExactMatchAssertion
         | JsonMatchAssertion
+        | EvidenceContainsAssertion
     ]
 
 
@@ -171,6 +278,7 @@ class TestDefinition(BaseModel):
             | CreateSessionAction
             | AddMessageAction
             | AddMessagesAction
+            | CreateScopeAction
             | WaitAction
             | ScheduleDreamAction
             | QueryAction,

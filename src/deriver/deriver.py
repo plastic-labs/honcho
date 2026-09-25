@@ -1,14 +1,20 @@
 import logging
 import time
 
+from nanoid import generate as generate_nanoid
+
 from src import crud
-from src.config import settings
+from src.config import ConfiguredModelSettings, settings
 from src.crud.representation import RepresentationManager
 from src.dependencies import tracked_db
+from src.exceptions import RepresentationSaveError
+from src.llm import honcho_llm_call
+from src.llm.types import LLMTelemetryContext
 from src.models import Message
 from src.schemas import ResolvedConfiguration
 from src.telemetry import prometheus_metrics
 from src.telemetry.events import RepresentationCompletedEvent, emit
+from src.telemetry.events.llm import CallPurpose
 from src.telemetry.logging import accumulate_metric, log_performance_metrics
 from src.telemetry.prometheus.metrics import (
     DeriverComponents,
@@ -16,15 +22,22 @@ from src.telemetry.prometheus.metrics import (
     TokenTypes,
 )
 from src.telemetry.sentry import with_sentry_transaction
-from src.utils.clients import honcho_llm_call
 from src.utils.config_helpers import get_configuration
-from src.utils.formatting import format_new_turn_with_timestamp
 from src.utils.representation import PromptRepresentation, Representation
+from src.utils.retryable_errors import is_retryable_error
 from src.utils.tokens import track_deriver_input_tokens
 
-from .prompts import estimate_minimal_deriver_prompt_tokens, minimal_deriver_prompt
+from .prompts import (
+    estimate_deriver_prompt_tokens,
+    format_deriver_message,
+    minimal_deriver_prompt,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _get_deriver_model_config() -> ConfiguredModelSettings:
+    return settings.DERIVER.MODEL_CONFIG
 
 
 @with_sentry_transaction("minimal_deriver_batch", op="deriver")
@@ -35,6 +48,11 @@ async def process_representation_tasks_batch(
     observers: list[str],
     observed: str,
     queue_item_message_ids: list[int],
+    session_id: str | None = None,
+    queue_item_ids: list[int] | None = None,
+    hit_batch_token_cap: bool = False,
+    was_flush_enabled: bool = False,
+    batch_max_tokens: int = 0,
 ) -> None:
     """
     Process messages with minimal overhead - single LLM call, save to multiple collections.
@@ -45,6 +63,11 @@ async def process_representation_tasks_batch(
         observers: List of observer peer IDs (collections to save to).
         observed: The observed peer ID.
         queue_item_message_ids: Message IDs from queue items being processed
+        session_id: Canonical Session.id from the queue, resolved if not provided.
+        queue_item_ids: Queue rows that triggered this batch, when available.
+        hit_batch_token_cap: queue batcher clamped this batch to fit
+        was_flush_enabled: DERIVER.FLUSH_ENABLED snapshot at batch time
+        batch_max_tokens: DERIVER.REPRESENTATION_BATCH_TARGET_INPUT_TOKENS snapshot
     """
     if not messages:
         return
@@ -55,24 +78,29 @@ async def process_representation_tasks_batch(
     latest_message = messages[-1]
     earliest_message = messages[0]
 
-    # Get configuration if not provided
+    # Reuse the queue's canonical session ID, resolving it for direct/legacy callers.
     # TODO: this appears to be a very rare edge case coming out of `get_queue_item_batch` in queue_manager.py,
     # possible that we can remove this and require configuration to come through with the payload.
-    if message_level_configuration is None:
+    if message_level_configuration is None or session_id is None:
         async with tracked_db("minimal_deriver.get_config") as db:
-            message_level_configuration = get_configuration(
-                None,
-                await crud.get_session(
-                    db, latest_message.session_name, latest_message.workspace_name
-                ),
-                await crud.get_workspace(
-                    db, workspace_name=latest_message.workspace_name
-                ),
+            session = await crud.get_session(
+                db, latest_message.session_name, latest_message.workspace_name
             )
+            session_id = session.id
+            if message_level_configuration is None:
+                message_level_configuration = get_configuration(
+                    None,
+                    session,
+                    await crud.get_workspace(
+                        db, workspace_name=latest_message.workspace_name
+                    ),
+                )
 
     # Skip if disabled
     if message_level_configuration.reasoning.enabled is False:
         return
+
+    custom_instructions = message_level_configuration.reasoning.custom_instructions
 
     accumulate_metric(
         f"minimal_deriver_{latest_message.id}_{observed}",
@@ -87,14 +115,15 @@ async def process_representation_tasks_batch(
         "id",
     )
 
-    # Format messages with timestamps
     formatted_messages = "\n".join(
-        format_new_turn_with_timestamp(msg.content, msg.created_at, msg.peer_name)
-        for msg in messages
+        format_deriver_message(
+            idx, msg.peer_name, observed, msg.created_at, msg.content
+        )
+        for idx, msg in enumerate(messages)
     )
 
     # Track token usage - count only tokens from messages being processed
-    prompt_tokens = estimate_minimal_deriver_prompt_tokens()
+    prompt_tokens = estimate_deriver_prompt_tokens(custom_instructions)
     queue_item_message_ids_set = set(queue_item_message_ids)
     messages_tokens = sum(
         msg.token_count for msg in messages if msg.id in queue_item_message_ids_set
@@ -108,7 +137,11 @@ async def process_representation_tasks_batch(
     )
 
     # Build prompt
-    prompt = minimal_deriver_prompt(peer_id=observed, messages=formatted_messages)
+    prompt = minimal_deriver_prompt(
+        peer_id=observed,
+        messages=formatted_messages,
+        custom_instructions=custom_instructions,
+    )
 
     context_prep_duration = (time.perf_counter() - overall_start) * 1000
     accumulate_metric(
@@ -119,25 +152,39 @@ async def process_representation_tasks_batch(
     )
 
     # validation on settings means max_tokens will always be > 0
-    max_tokens = settings.DERIVER.MAX_OUTPUT_TOKENS or settings.LLM.DEFAULT_MAX_TOKENS
+    base_model_config = _get_deriver_model_config()
+    max_tokens = base_model_config.max_output_tokens or settings.LLM.DEFAULT_MAX_TOKENS
+    model_config = base_model_config
 
     # Single LLM call
+    trace_id = generate_nanoid()
     llm_start = time.perf_counter()
     response = await honcho_llm_call(
-        llm_settings=settings.DERIVER,
+        model_config=model_config,
         prompt=prompt,
         max_tokens=max_tokens,
-        track_name="Minimal Deriver",
         response_model=PromptRepresentation,
         json_mode=True,
-        temperature=settings.DERIVER.TEMPERATURE,
-        stop_seqs=["   \n", "\n\n\n\n"],
-        thinking_budget_tokens=settings.DERIVER.THINKING_BUDGET_TOKENS,
         max_input_tokens=settings.DERIVER.MAX_INPUT_TOKENS,
-        reasoning_effort="minimal",
         enable_retry=True,
         retry_attempts=3,
         trace_name="minimal_deriver",
+        telemetry=LLMTelemetryContext(
+            workspace_name=latest_message.workspace_name,
+            session_id=session_id,
+            call_purpose=CallPurpose.DERIVER_REPRESENTATION.value,
+            parent_category="representation",
+            agent_type="deriver",
+            observers=observers,
+            observed=observed,
+            source_message_ids=[
+                m.public_id for m in messages if m.id in queue_item_message_ids_set
+            ],
+            queue_item_ids=queue_item_ids or [],
+            track_name="Minimal Deriver",
+            trace_id=trace_id,
+            span_id=trace_id,
+        ),
     )
     llm_duration = (time.perf_counter() - llm_start) * 1000
 
@@ -167,6 +214,9 @@ async def process_representation_tasks_batch(
         latest_message.created_at,
     )
 
+    agg_representation_result = crud.CreateDocumentsResult()
+    successful_observer_count = 0
+    save_errors: list[tuple[str, Exception]] = []
     if observations.is_empty() or not message_ids:
         logger.warning(
             "Deriver generated zero observations for messages %s:%s in %s/%s!",
@@ -185,17 +235,33 @@ async def process_representation_tasks_batch(
             )
 
             try:
-                await representation_manager.save_representation(
-                    observations,
-                    message_ids,
-                    latest_message.session_name,
-                    latest_message.created_at,
-                    message_level_configuration,
+                representation_result = (
+                    await representation_manager.save_representation(
+                        observations,
+                        message_ids,
+                        latest_message.session_name,
+                        latest_message.created_at,
+                        message_level_configuration,
+                    )
                 )
-            except Exception as e:
-                logger.error(
-                    "Failed to save representation for observer %s: %s", observer, e
+                agg_representation_result.exact_dup_existing_count += (
+                    representation_result.exact_dup_existing_count
                 )
+                agg_representation_result.exact_dup_in_batch_count += (
+                    representation_result.exact_dup_in_batch_count
+                )
+                agg_representation_result.semantic_dup_rejected_count += (
+                    representation_result.semantic_dup_rejected_count
+                )
+                agg_representation_result.semantic_dup_replaced_count += (
+                    representation_result.semantic_dup_replaced_count
+                )
+                successful_observer_count += 1
+            except Exception as e:  # noqa: BLE001
+                logger.exception(
+                    "Failed to save representation for observer %s", observer
+                )
+                save_errors.append((observer, e))
 
     # Log metrics
     overall_duration = (time.perf_counter() - overall_start) * 1000
@@ -226,11 +292,38 @@ async def process_representation_tasks_batch(
         accumulate_metric(
             f"minimal_deriver_{latest_message.id}_{observed}",
             "explicit_observations",
-            "\n".join(f"  • {obs}" for obs in observations.explicit),
+            "\n".join(f" • {obs}" for obs in observations.explicit),
             "blob",
         )
 
     log_performance_metrics("minimal_deriver", f"{latest_message.id}_{observed}")
+
+    # token-breakdown fields derived from messages + cap snapshots.
+    queued_message_count = len(queue_item_message_ids)
+    prompt_message_count = len(messages)
+    prompt_message_tokens = sum(msg.token_count for msg in messages)
+    extra_context_message_count = max(prompt_message_count - queued_message_count, 0)
+    extra_context_tokens = max(prompt_message_tokens - messages_tokens, 0)
+
+    # Data-quality invariants. Best-effort — telemetry never bleeds into the
+    # deriver path — but log loudly when violated so analytics alerting catches
+    # silent estimator failures (provider tokenization drift, scaffold helper
+    # returning 0) at the source instead of as drift in BigQuery later.
+    if response.input_tokens < messages_tokens:
+        logger.warning(
+            "token-breakdown invariant violated: response.input_tokens (%d) < messages_tokens (%d) for observed=%s, latest=%s — provider tokenization drift or wrong messages_tokens computation?",
+            response.input_tokens,
+            messages_tokens,
+            observed,
+            latest_message.public_id,
+        )
+    if prompt_tokens <= 0:
+        logger.warning(
+            "prompt_scaffold_tokens estimated as %d for observed=%s, latest=%s — estimate_deriver_prompt_tokens may have failed silently",
+            prompt_tokens,
+            observed,
+            latest_message.public_id,
+        )
 
     # Emit telemetry event
     emit(
@@ -247,6 +340,41 @@ async def process_representation_tasks_batch(
             llm_call_ms=llm_duration,
             total_duration_ms=overall_duration,
             input_tokens=messages_tokens,
+            total_input_tokens=response.input_tokens,
             output_tokens=response.output_tokens,
+            # additive fields
+            queued_message_count=queued_message_count,
+            prompt_message_count=prompt_message_count,
+            prompt_message_tokens=prompt_message_tokens,
+            extra_context_message_count=extra_context_message_count,
+            extra_context_tokens=extra_context_tokens,
+            prompt_scaffold_tokens=prompt_tokens,
+            batch_max_tokens=batch_max_tokens,
+            max_input_tokens=settings.DERIVER.MAX_INPUT_TOKENS,
+            was_flush_enabled=was_flush_enabled,
+            hit_batch_token_cap=hit_batch_token_cap,
+            hit_input_token_cap=response.hit_input_token_cap,
+            observer_count=successful_observer_count,
+            exact_dup_existing_count=agg_representation_result.exact_dup_existing_count,
+            exact_dup_in_batch_count=agg_representation_result.exact_dup_in_batch_count,
+            semantic_dup_rejected_count=agg_representation_result.semantic_dup_rejected_count,
+            semantic_dup_replaced_count=agg_representation_result.semantic_dup_replaced_count,
+            failed_observer_count=len(save_errors),
         )
     )
+
+    retryable = next(
+        (exc for _, exc in save_errors if is_retryable_error(exc)),
+        None,
+    )
+    if retryable is not None:
+        raise retryable
+    if save_errors and successful_observer_count == 0:
+        details = "; ".join(
+            f"{observer}: {exc.__class__.__name__}: {exc}"
+            for observer, exc in save_errors
+        )
+        raise RepresentationSaveError(
+            f"save_representation failed for all {len(save_errors)} observer(s): "
+            + details
+        ) from save_errors[0][1]

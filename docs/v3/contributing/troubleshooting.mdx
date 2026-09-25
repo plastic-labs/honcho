@@ -109,18 +109,17 @@ Messages are stored but no observations, summaries, or representations are being
    ```bash
    DERIVER_WORKERS=4
    ```
-5. **Representation Batch Max** — By default the deriver is set to buffer its operations until there are enough tokens for a given representation in a session. This is set via the `REPRESENTATION_BATCH_MAX_TOKENS` environment variable. If you aren't seeing tasks continue it may be that the batch size is set too high or enough data hasn't flowed into to the session yet. See [token batching](/v3/documentation/core-concepts/reasoning#token-batching) for more details
 
 ## Alternative Provider Issues
 
 ### OpenRouter / custom provider not working
 
-If you set `PROVIDER=custom` but calls fail:
+If calls to an OpenAI-compatible proxy fail:
 
-1. **Verify the endpoint and key are set:**
+1. **Verify the endpoint and key are set.** Use `transport = "openai"` with a base URL override:
    ```bash
-   LLM_OPENAI_COMPATIBLE_BASE_URL=https://openrouter.ai/api/v1
-   LLM_OPENAI_COMPATIBLE_API_KEY=sk-or-v1-...
+   LLM_OPENAI_API_KEY=sk-or-v1-...
+   DERIVER_MODEL_CONFIG__OVERRIDES__BASE_URL=https://openrouter.ai/api/v1
    ```
 
 2. **Check model names match the provider's format.** OpenRouter uses `vendor/model` format (e.g., `anthropic/claude-haiku-4-5`), not the raw model ID.
@@ -139,29 +138,42 @@ If you set `PROVIDER=custom` but calls fail:
 
 2. **In Docker**, `localhost` inside a container doesn't reach the host. Use `host.docker.internal` (macOS/Windows) or the host's network IP:
    ```bash
-   LLM_VLLM_BASE_URL=http://host.docker.internal:8000/v1
+   DERIVER_MODEL_CONFIG__OVERRIDES__BASE_URL=http://host.docker.internal:8000/v1
    ```
 
-3. **Structured output failures** — vLLM's structured output support is limited to certain response formats. If you see JSON parsing errors, check the deriver/dream logs for the raw response.
+3. **Structured output failures** — vLLM's structured output support is limited to certain response formats. If you see JSON parsing errors, check the deriver/dream logs for the raw response. See [Deriver produces no observations](#deriver-produces-no-observations) below.
+
+### Deriver produces no observations
+
+If messages are processed (the queue drains, no errors in logs) but peers never accumulate observations — and you're using an OpenAI-compatible provider — the likely cause is that the provider doesn't support OpenAI Structured Outputs (`json_schema`). The OpenAI backend requests `json_schema` by default; providers like **Z.AI GLM** and some **Ollama/vLLM** deployments either reject it or silently ignore it and return prose, which the deriver can't parse into observations.
+
+**Fix:** set `STRUCTURED_OUTPUT_MODE=json_object` on the deriver's model config to request loose JSON mode, which injects the schema into the prompt instead:
+
+```bash
+DERIVER_MODEL_CONFIG__STRUCTURED_OUTPUT_MODE=json_object
+```
+
+This is a per-model-config setting on the OpenAI transport; set it on whichever features use the affected provider (e.g. `DREAM_DEDUCTION_MODEL_CONFIG__STRUCTURED_OUTPUT_MODE`).
 
 ### Thinking budget errors with non-Anthropic providers
 
-If you see errors like `thinking budget not supported`, `invalid parameter`, or silent failures where agents produce no output, your `THINKING_BUDGET_TOKENS` is likely set to a value > 0 with a provider that doesn't support Anthropic-style extended thinking.
+If you see errors like `thinking budget not supported`, `invalid parameter`, or silent failures where agents produce no output, one of your per-component `*_MODEL_CONFIG__THINKING_BUDGET_TOKENS` overrides is likely set to a value > 0 with a provider that doesn't support Anthropic-style extended thinking. The built-in defaults do not set thinking budgets, so this only applies if you added those overrides yourself.
 
-**Fix:** Set `THINKING_BUDGET_TOKENS=0` for every component when using non-Anthropic providers:
+**Fix:** Set `*_MODEL_CONFIG__THINKING_BUDGET_TOKENS=0` for every component when using models that don't support thinking:
 
 ```bash
-DERIVER_THINKING_BUDGET_TOKENS=0
-SUMMARY_THINKING_BUDGET_TOKENS=0
-DREAM_THINKING_BUDGET_TOKENS=0
-DIALECTIC_LEVELS__minimal__THINKING_BUDGET_TOKENS=0
-DIALECTIC_LEVELS__low__THINKING_BUDGET_TOKENS=0
-DIALECTIC_LEVELS__medium__THINKING_BUDGET_TOKENS=0
-DIALECTIC_LEVELS__high__THINKING_BUDGET_TOKENS=0
-DIALECTIC_LEVELS__max__THINKING_BUDGET_TOKENS=0
+DERIVER_MODEL_CONFIG__THINKING_BUDGET_TOKENS=0
+SUMMARY_MODEL_CONFIG__THINKING_BUDGET_TOKENS=0
+DREAM_DEDUCTION_MODEL_CONFIG__THINKING_BUDGET_TOKENS=0
+DREAM_INDUCTION_MODEL_CONFIG__THINKING_BUDGET_TOKENS=0
+DIALECTIC_LEVELS__minimal__MODEL_CONFIG__THINKING_BUDGET_TOKENS=0
+DIALECTIC_LEVELS__low__MODEL_CONFIG__THINKING_BUDGET_TOKENS=0
+DIALECTIC_LEVELS__medium__MODEL_CONFIG__THINKING_BUDGET_TOKENS=0
+DIALECTIC_LEVELS__high__MODEL_CONFIG__THINKING_BUDGET_TOKENS=0
+DIALECTIC_LEVELS__max__MODEL_CONFIG__THINKING_BUDGET_TOKENS=0
 ```
 
-This applies to OpenRouter (with non-Anthropic models), vLLM, Ollama, Groq, Google, and OpenAI providers. Only Anthropic models support the thinking budget parameter.
+For OpenAI reasoning models, use `*_MODEL_CONFIG__THINKING_EFFORT` instead of `*_MODEL_CONFIG__THINKING_BUDGET_TOKENS`.
 
 ## Database Issues
 
@@ -190,6 +202,20 @@ uv run alembic history
 # Upgrade to latest
 uv run alembic upgrade head
 ```
+
+### "permission denied to create extension \"vector\""
+
+**Cause:** The role in `DB_CONNECTION_URI` is not a superuser and lacks privileges to create extensions. Honcho issues `CREATE EXTENSION IF NOT EXISTS vector` both before running migrations and again at server startup, so this fails in both places. `IF NOT EXISTS` does not help — Postgres checks the privilege before checking whether the extension exists.
+
+**Fix:** Preinstall pgvector once with a privileged role (superuser, or `rds_superuser` on RDS) in the Honcho database:
+
+```sql
+CREATE EXTENSION IF NOT EXISTS vector;
+```
+
+The `IF NOT EXISTS` calls then short-circuit and the application role needs no extension privileges. This is the supported path for deployments where the platform, not the application, owns extension management.
+
+You won't hit this with `docker compose` — the bundled stack connects as `postgres`, a superuser, and its database service also creates the extension from `database/init.sql` on first boot. It comes up on managed Postgres, Kubernetes operators, and other setups where you bring your own database and its role is deliberately not a superuser.
 
 ## Cache & Redis
 
@@ -289,11 +315,37 @@ docker compose build --no-cache
 docker compose up -d
 ```
 
+## CLI local stack (`honcho start`)
+
+The CLI local stack lives under `~/.honcho/profiles/` (default profile `local`) and uses the published image `ghcr.io/plastic-labs/honcho:latest`. Logs: `docker compose -p honcho-local logs`. Full flags: [CLI reference](/v3/documentation/reference/cli#local-stack).
+
+### `MISSING_LLM_KEY`
+
+**Cause:** No provider key in the environment or the profile `.env`.
+
+**Fix:** Export `LLM_OPENAI_API_KEY`, `LLM_ANTHROPIC_API_KEY`, or `LLM_GEMINI_API_KEY`, or run `honcho start --setup basic` in a TTY (not with `--json`).
+
+### Timed out waiting for `/health`
+
+**Cause:** The API container started but did not become ready within `--timeout` (default 180s).
+
+**Fix:** Check `docker compose -p honcho-local logs api` and `... logs deriver`. Increase `--timeout`. Confirm Docker is running. A first-time GHCR pull happens *before* this wait (during image pin) — if that step hung, look at Docker pull logs instead.
+
+### CLI still talks to `api.honcho.dev`
+
+**Cause:** `honcho start` does not rewrite `environmentUrl` in `~/.honcho/config.json`.
+
+**Fix:** Prefix commands with `HONCHO_BASE_URL=http://127.0.0.1:8000`, or run `honcho init --base-url http://127.0.0.1:8000` to persist local as the default. `honcho status` prints the one-shot hint.
+
+### Port already in use
+
+The CLI remaps 8000/5432/6379 automatically unless you pinned them with `--api-port` / `--db-port` / `--redis-port`. Pass those flags if you need a specific host port.
+
 ## Getting Help
 
 If your issue isn't covered here:
 
-- **Check the logs** — most issues are diagnosed from server or deriver logs
+- **Check the logs** — most issues are diagnosed from server or deriver logs (`docker compose logs` for from-source compose; `docker compose -p honcho-local logs` for `honcho start`)
 - **GitHub Issues** — [Report bugs](https://github.com/plastic-labs/honcho/issues)
 - **Discord** — [Join our community](https://discord.gg/plasticlabs)
 - **Configuration** — See the [Configuration Guide](./configuration) for all available settings
