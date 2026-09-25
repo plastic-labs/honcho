@@ -384,6 +384,7 @@ async def execute_tool_loop(
     # model that keeps dodging still gets to answer. With no gate, the first
     # successful round is enough.
     effective_tool_choice = tool_choice
+    disabled_tools: dict[str, str] = {}
     # An empty gate would be unsatisfiable, so it means no gate.
     gate = frozenset(force_tools_until or ()) or None
     forced_rounds = 0
@@ -412,6 +413,7 @@ async def execute_tool_loop(
                 | dict[str, Any]
                 | None = effective_tool_choice,
                 captured_messages: list[dict[str, Any]] = conversation_messages,
+                tools_for_call: list[dict[str, Any]] = tools,
                 iteration_for_call: int = iteration + 1,
             ) -> HonchoLLMCallResponse[Any]:
                 plan = get_attempt_plan()
@@ -429,8 +431,8 @@ async def execute_tool_loop(
                     plan.thinking_budget_tokens,
                     stream=False,
                     client_override=plan.client,
-                    tools=tools,
-                    tool_choice=tool_choice_for_call,
+                    tools=tools_for_call or None,
+                    tool_choice=tool_choice_for_call if tools_for_call else None,
                     messages=captured_messages,
                     selected_config=plan.selected_config,
                     plan=plan,
@@ -605,14 +607,31 @@ async def execute_tool_loop(
                 set_last_tool_error(False)
 
                 try:
-                    tool_result = await tool_executor(tool_name, tool_input)
+                    if tool_name in disabled_tools:
+                        tool_result = disabled_tools[tool_name]
+                        set_last_tool_metadata({"disable_tool": True})
+                    else:
+                        tool_result = await tool_executor(tool_name, tool_input)
                     # Stash ToolResult.metadata on all_tool_calls so
                     # specialist rollups can read created/deleted observation
                     # counts without round-tripping through the event store.
                     tool_result_metadata = get_last_tool_metadata()
+                    if tool_result_metadata.get("disable_tool") is True:
+                        # Rebind rather than mutate the caller's shared tool definitions.
+                        disabled_tools[tool_name] = tool_result
+                        tools = [tool for tool in tools if tool["name"] != tool_name]
+                        named_choice = effective_tool_choice
+                        if isinstance(named_choice, dict):
+                            named_choice = named_choice.get(
+                                "function", named_choice
+                            ).get("name")
+                        if not tools:
+                            effective_tool_choice = None
+                        elif named_choice == tool_name:
+                            effective_tool_choice = "auto"
                     # The executor reports handler failures as returned
                     # strings, so a normal return is not proof of success.
-                    if not get_last_tool_error():
+                    if not get_last_tool_error() and tool_name not in disabled_tools:
                         succeeded_tools.add(tool_name)
                     tool_results.append(
                         {

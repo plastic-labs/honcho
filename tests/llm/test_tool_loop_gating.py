@@ -184,3 +184,35 @@ async def test_empty_gate_behaves_like_no_gate() -> None:
     model = _ScriptedModel([["orient"], []])
     await _run(model, force_tools_until=set())
     assert model.choices == ["required", "auto"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("disabled_tool", ["orient", "recall"])
+async def test_disabled_tool_does_not_bypass_recall_gate(disabled_tool: str) -> None:
+    from src.utils.types import set_last_tool_metadata
+
+    required_choice = "required"
+    automatic_choice = "auto"
+    recall_tool = "recall"
+    disabled_result = "Tool disabled for this run."
+    successful_result = "Recall completed."
+    executed: list[str] = []
+
+    async def executor(name: str, _input: dict[str, Any]) -> str:
+        executed.append(name)
+        if name == disabled_tool:
+            set_last_tool_metadata({"disable_tool": True})
+            return disabled_result
+        return successful_result
+
+    model = _ScriptedModel([[disabled_tool], [recall_tool], []])
+    await _run(model, force_tools_until={recall_tool}, tool_executor=executor)
+
+    if disabled_tool == recall_tool:
+        expected_choices = [required_choice, required_choice, required_choice]
+        expected_executed = [disabled_tool]
+    else:
+        expected_choices = [required_choice, required_choice, automatic_choice]
+        expected_executed = [disabled_tool, recall_tool]
+    assert model.choices == expected_choices
+    assert executed == expected_executed

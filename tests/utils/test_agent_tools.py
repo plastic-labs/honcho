@@ -57,6 +57,7 @@ from src.utils.agent_tools import (
     get_recent_history,
 )
 from src.utils.evidence import EvidenceAccumulator
+from src.utils.types import ToolResult, get_last_tool_metadata
 
 # =============================================================================
 # Fixtures
@@ -1712,7 +1713,7 @@ class TestUpdatePeerCard:
         assert peer_card is not None
         assert "IDENTITY: Name: John" in peer_card
 
-    async def test_deduplicates_and_caps_peer_card(
+    async def test_deduplicates_and_normalizes_peer_card(
         self,
         db_session: AsyncSession,
         tool_test_data: Any,
@@ -1722,17 +1723,15 @@ class TestUpdatePeerCard:
         workspace, peer1, peer2, _, _, _ = tool_test_data
         ctx = make_tool_context()
 
-        oversized = [
+        messy = [
             "IDENTITY: Name: John",
             "  IDENTITY: Name: John  ",
             "",
             "   ",
         ]
-        oversized.extend(
-            [f"IDENTITY: Aliases: alias-{i}" for i in range(MAX_PEER_CARD_FACTS + 5)]
-        )
+        messy.extend([f"IDENTITY: Aliases: alias-{i}" for i in range(5)])
 
-        await _handle_update_peer_card(ctx, {"content": oversized})
+        await _handle_update_peer_card(ctx, {"content": messy})
 
         # Refresh the observer so the identity map picks up the committed update
         await db_session.refresh(peer1)
@@ -1743,9 +1742,163 @@ class TestUpdatePeerCard:
             observed=peer2.name,
         )
         assert peer_card is not None
-        assert len(peer_card) == MAX_PEER_CARD_FACTS
+        assert len(peer_card) == 6
         assert all(line.strip() for line in peer_card)
         assert peer_card.count("IDENTITY: Name: John") == 1
+
+    async def test_over_cap_update_is_refused_and_keeps_existing_card(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        """A full card plus one new marker is refused, not truncated.
+
+        Reproduces the observed failure: the dreamer sent MAX_PEER_CARD_FACTS + 1
+        entries against a card already at the cap, the surplus entry was cut
+        silently, and the tool still reported the update as successful — so the
+        model had no way to learn that the marker it just derived was dropped.
+        """
+        workspace, peer1, peer2, _, _, _ = tool_test_data
+        ctx = make_tool_context()
+
+        full_card = [
+            f"IDENTITY: Aliases: alias-{i}" for i in range(MAX_PEER_CARD_FACTS)
+        ]
+        await _handle_update_peer_card(ctx, {"content": full_card})
+
+        result = await _handle_update_peer_card(
+            ctx, {"content": [*full_card, "ATTRIBUTE: Timezone: Europe/Berlin"]}
+        )
+
+        assert "not updated" in result
+        assert str(MAX_PEER_CARD_FACTS + 1) in result
+        # Singular, so the model is told to free exactly one entry.
+        assert "1 entry " in result
+
+        await db_session.refresh(peer1)
+        peer_card = await crud.get_peer_card(
+            db_session,
+            workspace_name=workspace.name,
+            observer=peer1.name,
+            observed=peer2.name,
+        )
+        assert peer_card == full_card
+
+    async def test_two_over_cap_failures_disable_later_card_updates(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        caplog: pytest.LogCaptureFixture,
+    ):
+        """After two failures even a valid later write is blocked for this run."""
+        workspace, peer1, peer2, _, _, _ = tool_test_data
+        executor = await create_tool_executor(
+            workspace.name, peer1.name, peer2.name, run_id="card-cap-test"
+        )
+        full_card = [
+            f"IDENTITY: Aliases: alias-{i}" for i in range(MAX_PEER_CARD_FACTS)
+        ]
+        new_marker = "ATTRIBUTE: Timezone: Europe/Berlin"
+        await executor("update_peer_card", {"content": full_card})
+        for _ in range(2):
+            await executor("update_peer_card", {"content": [*full_card, new_marker]})
+
+        result = await executor("update_peer_card", {"content": [new_marker]})
+        await db_session.refresh(peer1)
+        stored_card = await crud.get_peer_card(
+            db_session,
+            workspace_name=workspace.name,
+            observer=peer1.name,
+            observed=peer2.name,
+        )
+        assert stored_card == full_card
+        disabled_feedback = "disabled for this run"
+        assert disabled_feedback in result
+        terminal_log = "Peer card updates disabled after 2 over-cap failures"
+        drop_records = [
+            record for record in caplog.records if terminal_log in record.getMessage()
+        ]
+        assert len(drop_records) == 1
+        for context_value in (workspace.name, peer1.name, peer2.name, "card-cap-test"):
+            assert context_value in drop_records[0].getMessage()
+        assert new_marker not in drop_records[0].getMessage()
+
+    async def test_over_cap_feedback_also_reports_rejected_entries(
+        self,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        """An over-cap list carrying invalid entries surfaces both problems."""
+        ctx = make_tool_context()
+
+        over_cap = [
+            f"IDENTITY: Aliases: alias-{i}" for i in range(MAX_PEER_CARD_FACTS + 1)
+        ]
+
+        result = await _handle_update_peer_card(
+            ctx, {"content": [*over_cap, "no prefix at all"]}
+        )
+
+        assert "not updated" in result
+        assert "structural validation" in result
+
+    async def test_consolidated_correction_is_saved_after_first_failure(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        """One over-cap rejection still allows a consolidated replacement."""
+        workspace, peer1, peer2, _, _, _ = tool_test_data
+        ctx = make_tool_context()
+        old_card = [f"IDENTITY: Aliases: alias-{i}" for i in range(MAX_PEER_CARD_FACTS)]
+        new_marker = "ATTRIBUTE: Timezone: Europe/Berlin"
+        await _handle_update_peer_card(ctx, {"content": old_card})
+        rejected = await _handle_update_peer_card(
+            ctx, {"content": [*old_card, new_marker]}
+        )
+        assert isinstance(rejected, ToolResult)
+        expected_rejection = {
+            "peer_card_updated": False,
+            "over_cap": True,
+            "over_cap_failures": 1,
+            "surplus": 1,
+            "rejected_count": 0,
+            "disable_tool": False,
+        }
+        assert rejected.metadata == expected_rejection
+        correction = [*old_card[:-1], new_marker]
+        saved = await _handle_update_peer_card(ctx, {"content": correction})
+        assert isinstance(saved, ToolResult)
+        assert saved.metadata["peer_card_updated"] is True
+        await db_session.refresh(peer1)
+        assert (
+            await crud.get_peer_card(
+                db_session,
+                workspace_name=workspace.name,
+                observer=peer1.name,
+                observed=peer2.name,
+            )
+            == correction
+        )
+
+    async def test_over_cap_budget_is_local_to_each_executor(self, tool_test_data: Any):
+        """Concurrent chains for the same peer do not share a failure budget."""
+        workspace, peer1, peer2, _, _, _ = tool_test_data
+        first = await create_tool_executor(workspace.name, peer1.name, peer2.name)
+        second = await create_tool_executor(workspace.name, peer1.name, peer2.name)
+        over_cap = [
+            f"IDENTITY: Aliases: alias-{i}" for i in range(MAX_PEER_CARD_FACTS + 1)
+        ]
+        for _ in range(2):
+            await first("update_peer_card", {"content": over_cap})
+        assert get_last_tool_metadata()["disable_tool"] is True
+        await second("update_peer_card", {"content": over_cap})
+        assert get_last_tool_metadata()["disable_tool"] is False
+        expected_failures = 1
+        assert get_last_tool_metadata()["over_cap_failures"] == expected_failures
+        await second("update_peer_card", {"content": over_cap[:MAX_PEER_CARD_FACTS]})
+        assert get_last_tool_metadata()["peer_card_updated"] is True
 
     async def test_none_content_preserves_existing_card(
         self,

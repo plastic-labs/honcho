@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- `update_peer_card` rejects over-cap lists without changing the stored card instead of silently truncating them. The first rejection gives consolidation guidance; the second disables card updates for the remaining tool chain and logs that the update was not applied. Disabled tools are removed from subsequent model requests, while other tools remain available. The failure budget is local to each run; no model fallback is introduced (#1144)
+
 ## [3.2.1] - 2026-09-22
 
 ### Added
