@@ -143,7 +143,7 @@ class PromptRepresentation(BaseModel):
     """
 
     explicit: list[ExplicitObservationBase] = Field(
-        description="Facts LITERALLY stated by the user - direct quotes or clear paraphrases only, no interpretation or inference. Example: ['The user is 25 years old', 'The user has a dog named Rover']",
+        description="Explicit facts about the target peer that are directly supported by the input messages; use direct statements or clear paraphrases only, with no interpretation or inference.",
         default_factory=list,
     )
 
@@ -326,7 +326,7 @@ class Representation(BaseModel):
     """
 
     explicit: list[ExplicitObservation] = Field(
-        description="Facts LITERALLY stated by the user - direct quotes or clear paraphrases only, no interpretation or inference. Example: ['The user is 25 years old', 'The user has a dog']",
+        description="Explicit facts about the observed peer that are directly supported by source messages; use direct statements or clear paraphrases only, with no interpretation or inference.",
         default_factory=list,
     )
     deductive: list[DeductiveObservation] = Field(

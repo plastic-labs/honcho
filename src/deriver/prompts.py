@@ -12,7 +12,14 @@ from inspect import cleandoc as c
 
 from src.utils.tokens import estimate_tokens
 
+DERIVER_EXAMPLE_SENTINEL = "__HONCHO_EXAMPLE_"
+
 _MESSAGE_TAG = re.compile(r"<(?=/?message\b)", re.IGNORECASE)
+
+
+def contains_deriver_example_sentinel(content: str) -> bool:
+    """Return whether model output contains the reserved few-shot marker."""
+    return DERIVER_EXAMPLE_SENTINEL.casefold() in content.casefold()
 
 
 def format_deriver_message(
@@ -82,7 +89,7 @@ Analyze messages to extract **explicit atomic facts** about the target peer.
 [EXPLICIT] DEFINITION: Facts about the target peer that can be derived directly from their messages.
    - Transform statements into one or multiple conclusions
    - Each conclusion must be self-contained with enough context
-   - Use absolute dates/times when possible (e.g. "June 26, 2025" not "yesterday")
+   - Use absolute dates/times when possible instead of relative references
 
 RULES:
 - The target peer is the peer identified below under `Target peer:`.
@@ -93,16 +100,18 @@ RULES:
 - Use the exact peer id from `Target peer:` in final observations, not the phrase "the target peer".
 - Properly attribute observations to the correct subject: if it is about the target peer, use the exact peer id as the subject. If the target peer is referencing someone or something else, make that clear.
 - Observations should make sense on their own. Each observation will be used in the future to better understand the target peer.
-- Contextualize each observation sufficiently (e.g. "Ann is nervous about the job interview at the pharmacy" not just "Ann is nervous")
+- Contextualize each observation sufficiently that it is useful on its own.
 
 <examples>
-These examples are fabricated illustrations of the output format. Never emit a conclusion for which content comes from these examples. Every conclusion must be supported by the <messages> block only.
+These examples are fabricated illustrations of the output format. Example-only
+entities contain the reserved marker `{DERIVER_EXAMPLE_SENTINEL}`. Never emit a
+conclusion containing that marker. Every conclusion must be supported by the
+<messages> block only.
 
-EXAMPLES (using `alice` as the target peer id):
-- EXPLICIT: <message idx="0" peer="alice" target="true">I just turned 25</message> → "alice is 25 years old"
-- EXPLICIT: <message idx="1" peer="alice" target="true">I took my dog for a walk in NYC</message> → "alice has a dog", "alice walked her dog in NYC"
-- EXPLICIT: <message idx="2" peer="alice" target="true">I've lived in NYC for six years</message> → "alice lives in NYC", "alice has lived in NYC for six years"
-- NO CONCLUSION: <message idx="3" peer="assistant" target="false">I read the config file and found the port is 8080</message> → nothing; the assistant acted, not alice
+EXAMPLES (using `example_peer` as the target peer id):
+- EXPLICIT: <message idx="0" peer="example_peer" target="true">I configured __HONCHO_EXAMPLE_SERVICE_ALPHA__ to use __HONCHO_EXAMPLE_MODE_BETA__</message> → "example_peer configured __HONCHO_EXAMPLE_SERVICE_ALPHA__ to use __HONCHO_EXAMPLE_MODE_BETA__"
+- EXPLICIT: <message idx="1" peer="example_peer" target="true">I enabled __HONCHO_EXAMPLE_FEATURE_GAMMA__ for __HONCHO_EXAMPLE_PROJECT_DELTA__. __HONCHO_EXAMPLE_PROJECT_DELTA__ uses __HONCHO_EXAMPLE_TIER_EPSILON__.</message> → "example_peer enabled __HONCHO_EXAMPLE_FEATURE_GAMMA__ for __HONCHO_EXAMPLE_PROJECT_DELTA__", "__HONCHO_EXAMPLE_PROJECT_DELTA__ uses __HONCHO_EXAMPLE_TIER_EPSILON__"
+- NO CONCLUSION: <message idx="2" peer="other_peer" target="false">I inspected __HONCHO_EXAMPLE_SERVICE_ZETA__</message> → nothing; the other peer acted, not example_peer
 </examples>
 
 {custom_instructions_section}
