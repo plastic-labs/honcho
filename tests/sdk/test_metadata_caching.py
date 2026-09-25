@@ -229,17 +229,17 @@ async def test_peer_list_with_metadata_and_config(
         peers = cast(list[Peer], peers_page.items)
         peer_map = {p.id: p for p in peers}
 
-        if "test-list-peer1" in peer_map:
-            p1 = peer_map["test-list-peer1"]
-            assert p1.metadata == {"name": "Alice"}
-            assert p1.configuration is not None
-            assert p1.configuration.observe_me is True
+        assert "test-list-peer1" in peer_map
+        p1 = peer_map["test-list-peer1"]
+        assert p1.metadata == {"name": "Alice"}
+        assert p1.configuration is not None
+        assert p1.configuration.observe_me is True
 
-        if "test-list-peer2" in peer_map:
-            p2 = peer_map["test-list-peer2"]
-            assert p2.metadata == {"name": "Bob"}
-            assert p2.configuration is not None
-            assert p2.configuration.observe_me is False
+        assert "test-list-peer2" in peer_map
+        p2 = peer_map["test-list-peer2"]
+        assert p2.metadata == {"name": "Bob"}
+        assert p2.configuration is not None
+        assert p2.configuration.observe_me is False
     else:
         # Create peers with metadata and config
         peer1 = honcho_client.peer(id="test-list-peer1")
@@ -257,17 +257,17 @@ async def test_peer_list_with_metadata_and_config(
         peers = cast(list[Peer], list(peers_page))
         peer_map = {p.id: p for p in peers}
 
-        if "test-list-peer1" in peer_map:
-            p1 = peer_map["test-list-peer1"]
-            assert p1.metadata == {"name": "Alice"}
-            assert p1.configuration is not None
-            assert p1.configuration.observe_me is True
+        assert "test-list-peer1" in peer_map
+        p1 = peer_map["test-list-peer1"]
+        assert p1.metadata == {"name": "Alice"}
+        assert p1.configuration is not None
+        assert p1.configuration.observe_me is True
 
-        if "test-list-peer2" in peer_map:
-            p2 = peer_map["test-list-peer2"]
-            assert p2.metadata == {"name": "Bob"}
-            assert p2.configuration is not None
-            assert p2.configuration.observe_me is False
+        assert "test-list-peer2" in peer_map
+        p2 = peer_map["test-list-peer2"]
+        assert p2.metadata == {"name": "Bob"}
+        assert p2.configuration is not None
+        assert p2.configuration.observe_me is False
 
 
 @pytest.mark.asyncio
@@ -443,15 +443,15 @@ async def test_session_list_with_metadata_and_config(
         sessions = cast(list[Session], sessions_page.items)
         session_map = {s.id: s for s in sessions}
 
-        if "test-list-session1" in session_map:
-            s1 = session_map["test-list-session1"]
-            assert s1.metadata == {"title": "Session 1"}
-            assert s1.configuration is not None
+        assert "test-list-session1" in session_map
+        s1 = session_map["test-list-session1"]
+        assert s1.metadata == {"title": "Session 1"}
+        assert s1.configuration is not None
 
-        if "test-list-session2" in session_map:
-            s2 = session_map["test-list-session2"]
-            assert s2.metadata == {"title": "Session 2"}
-            assert s2.configuration is not None
+        assert "test-list-session2" in session_map
+        s2 = session_map["test-list-session2"]
+        assert s2.metadata == {"title": "Session 2"}
+        assert s2.configuration is not None
     else:
         # Create sessions with metadata and config
         session1 = honcho_client.session(id="test-list-session1")
@@ -469,15 +469,15 @@ async def test_session_list_with_metadata_and_config(
         sessions = cast(list[Session], list(sessions_page))
         session_map = {s.id: s for s in sessions}
 
-        if "test-list-session1" in session_map:
-            s1 = session_map["test-list-session1"]
-            assert s1.metadata == {"title": "Session 1"}
-            assert s1.configuration is not None
+        assert "test-list-session1" in session_map
+        s1 = session_map["test-list-session1"]
+        assert s1.metadata == {"title": "Session 1"}
+        assert s1.configuration is not None
 
-        if "test-list-session2" in session_map:
-            s2 = session_map["test-list-session2"]
-            assert s2.metadata == {"title": "Session 2"}
-            assert s2.configuration is not None
+        assert "test-list-session2" in session_map
+        s2 = session_map["test-list-session2"]
+        assert s2.metadata == {"title": "Session 2"}
+        assert s2.configuration is not None
 
 
 @pytest.mark.asyncio
