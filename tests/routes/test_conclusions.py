@@ -1,8 +1,10 @@
 import datetime
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 from nanoid import generate as generate_nanoid
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
@@ -459,51 +461,85 @@ class TestConclusionRoutes:
         assert len(data) <= 2  # pyright: ignore
 
     @pytest.mark.asyncio
-    async def test_query_conclusions_with_distance_threshold(
+    async def test_query_conclusions_forwards_distance_threshold(
+        self,
+        client: TestClient,
+        sample_data: tuple[Workspace, Peer],
+    ):
+        """The request's `distance` reaches the search layer as `max_distance`"""
+        test_workspace, test_peer = sample_data
+
+        with patch(
+            "src.crud.query_documents", new=AsyncMock(return_value=[])
+        ) as mock_query:
+            response = client.post(
+                f"/v3/workspaces/{test_workspace.name}/conclusions/query",
+                json={
+                    "query": "test",
+                    "distance": 0.8,
+                    "filters": {"observer": test_peer.name, "observed": "other"},
+                },
+            )
+
+        assert response.status_code == 200
+        assert response.json() == []
+        mock_query.assert_awaited_once()
+        assert mock_query.await_args is not None
+        assert mock_query.await_args.kwargs["max_distance"] == 0.8
+
+    @pytest.mark.asyncio
+    async def test_query_conclusions_distance_threshold_excludes_far_conclusions(
         self,
         client: TestClient,
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
+        monkeypatch: pytest.MonkeyPatch,
     ):
-        """Test querying conclusions with distance threshold"""
+        """On the pgvector path, conclusions beyond `distance` are filtered out.
+
+        Test embeddings are a deterministic hash of the content, so a conclusion
+        whose content equals the query sits at cosine distance 0, while the
+        unrelated one sits at ~1.0.
+        """
+        from src.config import settings
+
+        monkeypatch.setattr(settings.VECTOR_STORE, "TYPE", "pgvector")
         test_workspace, test_peer = sample_data
 
-        # Create another peer
         test_peer2 = models.Peer(
             name=str(generate_nanoid()), workspace_name=test_workspace.name
         )
         db_session.add(test_peer2)
         await db_session.flush()
 
-        # Create a session
         test_session = models.Session(
             name=str(generate_nanoid()), workspace_name=test_workspace.name
         )
         db_session.add(test_session)
         await db_session.commit()
 
-        # Create test conclusion via API (ensures proper vector store integration)
+        near, far = "User prefers dark mode", "User enjoys hiking on weekends"
         create_response = client.post(
             f"/v3/workspaces/{test_workspace.name}/conclusions",
             json={
                 "conclusions": [
                     {
-                        "content": "Test conclusion",
+                        "content": content,
                         "observer_id": test_peer.name,
                         "observed_id": test_peer2.name,
                         "session_id": test_session.name,
                     }
+                    for content in (near, far)
                 ]
             },
         )
         assert create_response.status_code == 201
 
-        # Query with distance threshold
         response = client.post(
             f"/v3/workspaces/{test_workspace.name}/conclusions/query",
             json={
-                "query": "test",
-                "distance": 0.8,
+                "query": near,
+                "distance": 0.5,
                 "filters": {
                     "observer": test_peer.name,
                     "observed": test_peer2.name,
@@ -513,8 +549,7 @@ class TestConclusionRoutes:
         )
 
         assert response.status_code == 200
-        data = response.json()
-        assert isinstance(data, list)
+        assert [c["content"] for c in response.json()] == [near]
 
     @pytest.mark.asyncio
     async def test_query_conclusions_requires_observer_observed(
@@ -632,8 +667,6 @@ class TestConclusionRoutes:
         assert response.status_code == 204
 
         # Verify conclusion is deleted
-        from sqlalchemy import select
-
         stmt = select(models.Document).where(models.Document.id == conclusion_id)
         result = await db_session.execute(stmt)
         doc = result.scalar_one_or_none()
@@ -1080,6 +1113,14 @@ class TestConclusionRoutes:
         db_session.add(test_session)
         await db_session.commit()
 
+        collection_stmt = select(models.Collection).where(
+            models.Collection.workspace_name == test_workspace.name,
+            models.Collection.observer == test_peer.name,
+            models.Collection.observed == test_peer2.name,
+        )
+        before = await db_session.execute(collection_stmt)
+        assert before.scalar_one_or_none() is None
+
         # Create conclusion via API
         response = client.post(
             f"/v3/workspaces/{test_workspace.name}/conclusions",
@@ -1106,6 +1147,10 @@ class TestConclusionRoutes:
         assert conclusion["session_id"] == test_session.name
         assert "id" in conclusion
         assert "created_at" in conclusion
+
+        # The (observer, observed) collection is created on first write
+        after = await db_session.execute(collection_stmt)
+        assert after.scalar_one_or_none() is not None
 
     @pytest.mark.asyncio
     async def test_create_conclusions_batch(

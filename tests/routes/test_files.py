@@ -3,6 +3,7 @@ import io
 import json
 from datetime import UTC
 from typing import Any
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -426,8 +427,10 @@ async def test_file_upload_with_configuration(
     file_content = "Test file with configuration"
     file_data = io.BytesIO(file_content.encode("utf-8"))
 
-    # Prepare configuration
-    configuration = {"skip_deriver": True, "custom_flag": "test"}
+    # Non-default values so a silently dropped configuration would fail.
+    configuration = {
+        "reasoning": {"enabled": False, "custom_instructions": "Focus on dates."}
+    }
 
     files = {"file": ("test_config.txt", file_data, "text/plain")}
     form_data = {
@@ -436,7 +439,8 @@ async def test_file_upload_with_configuration(
     }
 
     url = _get_upload_url(test_workspace.name, session_name)
-    response = client.post(url, files=files, data=form_data)
+    with patch("src.routers.messages.enqueue", new=AsyncMock()) as mock_enqueue:
+        response = client.post(url, files=files, data=form_data)
 
     assert response.status_code == 201
     data = response.json()
@@ -446,8 +450,11 @@ async def test_file_upload_with_configuration(
     assert file_content in message["content"]
     assert message["peer_id"] == test_peer.name
     assert message["session_id"] == session_name
-    # Note: Configuration is used during processing, may not be directly stored
-    # This test confirms the endpoint accepts it without error
+    # Configuration isn't stored on the message; it is forwarded to the deriver
+    # queue with the created message.
+    assert mock_enqueue.await_args is not None
+    (payload,) = mock_enqueue.await_args.args[0]
+    assert payload["configuration"].model_dump(exclude_none=True) == configuration
 
 
 @pytest.mark.asyncio
@@ -516,7 +523,7 @@ async def test_file_upload_with_all_parameters(
 
     # Prepare all parameters
     metadata = {"source": "comprehensive_test", "version": "1.0"}
-    configuration = {"skip_deriver": False, "test_mode": True}
+    configuration = {"reasoning": {"enabled": False}}
     from datetime import datetime
 
     test_timestamp = datetime(2023, 6, 20, 14, 15, 30, tzinfo=UTC)
@@ -531,7 +538,8 @@ async def test_file_upload_with_all_parameters(
     }
 
     url = _get_upload_url(test_workspace.name, session_name)
-    response = client.post(url, files=files, data=form_data)
+    with patch("src.routers.messages.enqueue", new=AsyncMock()) as mock_enqueue:
+        response = client.post(url, files=files, data=form_data)
 
     assert response.status_code == 201
     data = response.json()
@@ -548,6 +556,10 @@ async def test_file_upload_with_all_parameters(
         message["created_at"].replace("Z", "+00:00")
     )
     assert abs((message_timestamp - test_timestamp).total_seconds()) < 1
+    # Check configuration was forwarded to the deriver queue
+    assert mock_enqueue.await_args is not None
+    (payload,) = mock_enqueue.await_args.args[0]
+    assert payload["configuration"].model_dump(exclude_none=True) == configuration
 
 
 @pytest.mark.asyncio
