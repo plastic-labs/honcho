@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import socket
+from collections.abc import Iterable
 from typing import Any, cast
 from urllib.parse import urlparse, urlunparse
 
@@ -12,6 +13,7 @@ from cashews.backends.redis.client import SafeRedisCluster
 from cashews.picklers import PicklerType
 from redis import exceptions as redis_exc
 from redis.asyncio import RedisCluster
+from redis.asyncio.connection import AbstractConnection
 from tenacity import (
     AsyncRetrying,
     retry_if_exception_type,
@@ -76,6 +78,28 @@ async def _safe_cluster_initialize(
 SafeRedisCluster.initialize = _safe_cluster_initialize
 SafeRedisCluster.__aenter__ = _safe_cluster_initialize
 # endregion
+
+_send_packed_command = AbstractConnection.send_packed_command
+
+
+async def _send_packed_command_or_connection_error(
+    self: AbstractConnection,
+    command: bytes | str | Iterable[bytes],
+    check_health: bool = True,
+) -> None:
+    writer = self._writer  # pyright: ignore[reportPrivateUsage]
+    transport = writer.transport if writer is not None else None
+    try:
+        await _send_packed_command(self, command, check_health)
+    except RuntimeError as e:
+        if transport is None or not transport.is_closing():
+            raise
+        raise redis_exc.ConnectionError(
+            f"Connection closed by peer while writing to socket: {e}"
+        ) from e
+
+
+AbstractConnection.send_packed_command = _send_packed_command_or_connection_error
 
 
 # Query parameters that carry secrets when configured via URL:
