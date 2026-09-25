@@ -655,6 +655,7 @@ async def test_openai_backend_passes_timeout_to_structured_parse_request() -> No
         "gpt-6",
         "gpt-6-sol",
         "gpt-6-luna",
+        "gpt-6-astra",
         "o1",
         "o1-mini",
         "o3",

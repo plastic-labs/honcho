@@ -61,7 +61,8 @@ def _uses_max_completion_tokens(model: str) -> bool:
     ``max_completion_tokens`` instead of the classic ``max_tokens`` parameter.
 
     Matches: gpt-5, gpt-5-anything, gpt-5.anything (incl. gpt-5.4, gpt-5.4-mini,
-    gpt-5.6-sol), gpt-6-anything (gpt-6-sol, gpt-6-luna), o1*, o3*, o4*.
+    gpt-5.6-sol), gpt-6, gpt-6-anything and gpt-6.anything (gpt-6-astra,
+    gpt-6-sol, gpt-6-luna), o1*, o3*, o4*.
     Anything else (gpt-4.x, gpt-4o, chat models on proxies) stays on
     ``max_tokens``.
     """
