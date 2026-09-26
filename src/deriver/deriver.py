@@ -1,5 +1,6 @@
 import logging
 import time
+from typing import Any
 
 from nanoid import generate as generate_nanoid
 
@@ -8,7 +9,7 @@ from src.config import ConfiguredModelSettings, settings
 from src.crud.representation import RepresentationManager
 from src.dependencies import tracked_db
 from src.exceptions import RepresentationSaveError
-from src.llm import honcho_llm_call
+from src.llm import HonchoLLMCallResponse, honcho_llm_call
 from src.llm.types import LLMTelemetryContext
 from src.models import Message
 from src.schemas import ResolvedConfiguration
@@ -38,6 +39,23 @@ logger = logging.getLogger(__name__)
 
 def _get_deriver_model_config() -> ConfiguredModelSettings:
     return settings.DERIVER.MODEL_CONFIG
+
+
+def _extraction_was_contentless(response: HonchoLLMCallResponse[Any]) -> bool:
+    """True when the model returned no usable content at all.
+
+    An empty representation has two very different causes, and only one of them is
+    normal. A truncated completion (`finish_reasons=["length"]`) means the model was
+    cut off before it emitted anything - what a reasoning model does when its
+    thinking is left on and it spends the whole output budget thinking. A response
+    with no output tokens at all means the provider returned nothing. Both are
+    operational faults an operator has to fix. A completed call that emits a valid
+    but empty extraction still spends output tokens and is NOT a fault: that model
+    simply found nothing worth recording.
+    """
+    reasons = {str(reason).lower() for reason in response.finish_reasons}
+    truncated = {"length", "max_tokens"} & reasons
+    return bool(truncated) or response.output_tokens == 0
 
 
 @with_sentry_transaction("minimal_deriver_batch", op="deriver")
@@ -218,13 +236,32 @@ async def process_representation_tasks_batch(
     successful_observer_count = 0
     save_errors: list[tuple[str, Exception]] = []
     if observations.is_empty() or not message_ids:
-        logger.warning(
-            "Deriver generated zero observations for messages %s:%s in %s/%s!",
-            earliest_message.id,
-            latest_message.id,
-            latest_message.workspace_name,
-            latest_message.session_name,
-        )
+        if _extraction_was_contentless(response):
+            # Not "the model found nothing" but "the model returned nothing" - and
+            # this one is silent damage: the run looks successful while nothing is
+            # recorded. A reasoning model with its thinking left on exhausts the
+            # output budget and emits empty content, which lands here.
+            logger.error(
+                "Deriver extraction returned no content for messages %s:%s in %s/%s "
+                "(finish_reasons=%s, output_tokens=%s), so nothing was recorded. This "
+                "is usually a reasoning model that spent the whole output budget "
+                "thinking - set that model's thinking effort to 'none', or raise its "
+                "max output tokens.",
+                earliest_message.id,
+                latest_message.id,
+                latest_message.workspace_name,
+                latest_message.session_name,
+                response.finish_reasons,
+                response.output_tokens,
+            )
+        else:
+            logger.warning(
+                "Deriver generated zero observations for messages %s:%s in %s/%s!",
+                earliest_message.id,
+                latest_message.id,
+                latest_message.workspace_name,
+                latest_message.session_name,
+            )
     else:
         # Save to all observer collections
         for observer in observers:
