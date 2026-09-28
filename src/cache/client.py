@@ -114,8 +114,10 @@ async def _send_packed_command_or_connection_error(
     # The health check can reconnect onto a new transport, so run it first and
     # snapshot the transport the write will actually use. Snapshot before
     # sending: the wrapped method disconnects (closing the transport) before
-    # re-raising, so checking afterwards is always true.
-    if check_health:
+    # re-raising, so checking afterwards is always true. Skipped when not yet
+    # connected: the connect handshake counts as a health check upstream, so
+    # checking first would add a PING to every new connection.
+    if check_health and self.is_connected:
         await self.check_health()
     writer = self._writer  # pyright: ignore[reportPrivateUsage]
     was_closing = writer is not None and writer.transport.is_closing()

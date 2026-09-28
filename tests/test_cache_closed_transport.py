@@ -125,3 +125,35 @@ async def _runtime_error_after_health_check_reconnect() -> None:
 def test_runtime_error_after_health_check_reconnect_is_not_relabeled():
     with pytest.raises(RuntimeError, match="unrelated bug"):
         uvloop.run(_runtime_error_after_health_check_reconnect())
+
+
+async def _count_pings_on_fresh_connection() -> int:
+    pings = 0
+
+    async def _counting_serve(
+        reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
+        nonlocal pings
+        while data := await reader.read(65536):
+            for command in data.split(b"*")[1:]:
+                pings += b"PING" in command.upper()
+                writer.write(b"+OK\r\n")
+            await writer.drain()
+
+    server = await asyncio.start_server(_counting_serve, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    connection = Connection(
+        host="127.0.0.1", port=port, socket_timeout=1, health_check_interval=10
+    )
+    try:
+        await connection.send_command("SET", "key", "value")
+        await connection.read_response()
+        return pings
+    finally:
+        await connection.disconnect()
+        server.close()
+        await server.wait_closed()
+
+
+def test_fresh_connection_skips_redundant_health_check():
+    assert uvloop.run(_count_pings_on_fresh_connection()) == 0
