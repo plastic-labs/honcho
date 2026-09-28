@@ -65,3 +65,26 @@ async def _ping_fresh_connection() -> None:
 
 def test_live_transport_still_sends():
     uvloop.run(_ping_fresh_connection())
+
+
+async def _raise_runtime_error_on_open_connection() -> None:
+    server = await asyncio.start_server(_serve, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    connection = Connection(host="127.0.0.1", port=port, socket_timeout=1)
+
+    async def _fail(_command: object) -> None:
+        raise RuntimeError("unrelated bug")
+
+    try:
+        await connection.connect()
+        connection._send_packed_command = _fail  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]
+        await connection.send_command("GET", "key")
+    finally:
+        await connection.disconnect()
+        server.close()
+        await server.wait_closed()
+
+
+def test_runtime_error_on_open_transport_is_not_relabeled():
+    with pytest.raises(RuntimeError, match="unrelated bug"):
+        uvloop.run(_raise_runtime_error_on_open_connection())

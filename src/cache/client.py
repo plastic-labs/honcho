@@ -81,6 +81,10 @@ SafeRedisCluster.initialize = _safe_cluster_initialize
 SafeRedisCluster.__aenter__ = _safe_cluster_initialize
 # endregion
 
+# uvloop raises RuntimeError when writing to a transport the peer already closed
+# (e.g. an idle pooled connection Redis dropped). redis-py only maps OSError to
+# ConnectionError, so relabel it; otherwise Retry won't reconnect and cashews
+# won't degrade gracefully.
 _send_packed_command = AbstractConnection.send_packed_command
 
 
@@ -89,12 +93,14 @@ async def _send_packed_command_or_connection_error(
     command: bytes | str | Iterable[bytes],
     check_health: bool = True,
 ) -> None:
+    # Snapshot before sending: the wrapped method disconnects (closing the
+    # transport) before re-raising, so checking afterwards is always true.
     writer = self._writer  # pyright: ignore[reportPrivateUsage]
-    transport = writer.transport if writer is not None else None
+    was_closing = writer is not None and writer.transport.is_closing()
     try:
         await _send_packed_command(self, command, check_health)
     except RuntimeError as e:
-        if transport is None or not transport.is_closing():
+        if not was_closing:
             raise
         raise redis_exc.ConnectionError(
             f"Connection closed by peer while writing to socket: {e}"
