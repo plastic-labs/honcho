@@ -14,6 +14,8 @@ from cashews.picklers import PicklerType
 from redis import exceptions as redis_exc
 from redis.asyncio import RedisCluster
 from redis.asyncio.connection import AbstractConnection
+from redis.asyncio.retry import Retry
+from redis.backoff import ExponentialBackoff
 from tenacity import (
     AsyncRetrying,
     retry_if_exception_type,
@@ -295,6 +297,11 @@ async def init_cache() -> None:
                 settings.CACHE.URL,
                 pickle_type=PicklerType.SQLALCHEMY,
                 cluster=settings.CACHE.CLUSTER,
+                socket_connect_timeout=settings.CACHE.CONNECT_TIMEOUT_SECONDS,
+                retry=Retry(
+                    ExponentialBackoff(cap=0.5, base=0.1),
+                    settings.CACHE.CONNECT_RETRIES,
+                ),
             )
 
         except Exception as setup_err:
