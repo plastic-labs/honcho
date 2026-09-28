@@ -10,10 +10,8 @@ Spans are keyed per branch (the `agent_type`) within a trace. The Dreamer's
 deduction and induction specialists share one trace but are separate sub-trees;
 without the branch key their iterations and generations would collide.
 
-Per trace, it holds each branch's run span id, the per-(branch, iteration) step
-span ids, and whether trace-level attrs have been stamped — so each is created
-once. The stamp decision is made inside `ensure_run_span` under the lock so it
-can't double-fire across branches.
+Per trace, it holds the trace root span id, each branch's run span id, and the
+per-(branch, iteration) step span ids, so each is created once.
 
 Bounded by an LRU over traces (`_MAX_TRACES`), lock-guarded, best-effort.
 """
@@ -40,7 +38,6 @@ class _TraceState:
     step_span_ids: dict[tuple[str, int], str] = field(
         default_factory=dict
     )  # (branch, iteration) -> span id
-    attrs_stamped: bool = False
 
 
 _traces: OrderedDict[str, _TraceState] = OrderedDict()
@@ -78,26 +75,19 @@ def ensure_trace_root(trace_key: str, create: Callable[[], str | None]) -> str |
 
 
 def ensure_run_span(
-    trace_key: str, branch: str, create: Callable[[bool], str | None]
+    trace_key: str, branch: str, create: Callable[[], str | None]
 ) -> str | None:
     """Return the run span id for `(trace_key, branch)`, creating it once.
 
-    `create` receives `should_stamp` — True exactly once per trace, on the first
-    branch's run span — and builds the Langfuse run span (stamping trace-level
-    attrs iff asked), returning its span id (or None on failure). The stamp
-    decision is computed here, under the lock, so it can't double-fire across the
-    Dreamer's two specialist branches; `create` must not re-enter this module.
+    `create` must not re-enter this module (it runs under the lock).
     """
     with _lock:
         state = _get_or_create_state(trace_key)
         existing = state.run_span_ids.get(branch)
         if existing is None:
-            should_stamp = not state.attrs_stamped
-            existing = create(should_stamp)
+            existing = create()
             if existing is not None:
                 state.run_span_ids[branch] = existing
-                if should_stamp:
-                    state.attrs_stamped = True
         return existing
 
 

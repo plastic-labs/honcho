@@ -9,6 +9,7 @@ user attributes, session-as-metadata) without a real Langfuse backend.
 from __future__ import annotations
 
 import time
+from typing import cast
 
 import pytest
 
@@ -21,10 +22,11 @@ from src.telemetry.langfuse_exporter import LangfuseExporter
 
 
 class FakeOtelSpan:
-    def __init__(self) -> None:
+    def __init__(self, parent: object) -> None:
         self.attributes: dict[str, object] = {}
         self._start_time: int | None = time.time_ns()
         self.end_time: int | None = None
+        self._parent: object | None = parent
 
     def set_attribute(self, key: str, value: object) -> None:
         self.attributes[key] = value
@@ -37,7 +39,12 @@ class FakeObs:
         FakeObs._counter += 1
         self.id = f"obs-{FakeObs._counter}"
         self.kwargs = kwargs
-        self._otel_span = FakeOtelSpan()
+        # Like the SDK: a trace_context span without a parent_span_id still gets
+        # a (placeholder) parent.
+        trace_context = cast(dict[str, str], kwargs.get("trace_context") or {})
+        self._otel_span = FakeOtelSpan(
+            trace_context.get("parent_span_id") or "sdk-placeholder"
+        )
         self.ended = False
 
     def end(self, *, end_time: int | None = None) -> None:
@@ -152,6 +159,7 @@ def test_single_shot_generation_is_trace_root(_exporter_env: FakeClient):
     # Trace attrs stamped on the root generation; no session (session_id None).
     assert gen._otel_span.attributes.get("user.id") == "tenant1"
     assert "session.id" not in gen._otel_span.attributes
+    assert gen._otel_span._parent is None
 
 
 def test_agentic_run_builds_run_step_generation(_exporter_env: FakeClient):
@@ -183,12 +191,13 @@ def test_agentic_run_builds_run_step_generation(_exporter_env: FakeClient):
         "trace_id": "lf-r1",
         "parent_span_id": step_span.id,
     }
-    # Trace attrs stamped once, on the run span (the root). The Honcho session is
-    # NOT a Langfuse session (one-shot queries aren't a conversation thread) — it
+    # Trace attrs ride on every observation. The Honcho session is NOT a
+    # Langfuse session (one-shot queries aren't a conversation thread) — it
     # rides in metadata as a correlation key instead.
-    assert "session.id" not in run_span._otel_span.attributes
-    assert run_span._otel_span.attributes["user.id"] == "tenant1"
-    assert run_span._otel_span.attributes["langfuse.trace.name"] == "Dialectic Agent"
+    for obs in client.observations:
+        assert "session.id" not in obs._otel_span.attributes
+        assert obs._otel_span.attributes["user.id"] == "tenant1"
+        assert obs._otel_span.attributes["langfuse.trace.name"] == "Dialectic Agent"
     assert run_span.kwargs["metadata"]["honcho_session"] == "sess_abc"
 
 
@@ -203,9 +212,8 @@ def test_run_span_created_once_across_iterations(_exporter_env: FakeClient):
     # One run span shared, one step span per iteration, one generation per call.
     assert len(gens) == 2
     assert len(spans) == 3  # 1 run + 2 step
-    # Trace attrs (user/name) stamped exactly once across the whole run.
     stamped = [o for o in client.observations if "user.id" in o._otel_span.attributes]
-    assert len(stamped) == 1
+    assert len(stamped) == len(client.observations)
 
 
 def test_langfuse_session_lru_evicts_least_recently_used(
@@ -216,20 +224,18 @@ def test_langfuse_session_lru_evicts_least_recently_used(
     langfuse_session.reset()
     monkeypatch.setattr(langfuse_session, "_MAX_TRACES", 2)
 
-    langfuse_session.ensure_run_span("t1", "b", lambda _s: "t1-span")
-    langfuse_session.ensure_run_span("t2", "b", lambda _s: "t2-span")
+    langfuse_session.ensure_run_span("t1", "b", lambda: "t1-span")
+    langfuse_session.ensure_run_span("t2", "b", lambda: "t2-span")
     # Touch t1 so t2 becomes the least-recently-used trace.
-    assert (
-        langfuse_session.ensure_run_span("t1", "b", lambda _s: "ignored") == "t1-span"
-    )
+    assert langfuse_session.ensure_run_span("t1", "b", lambda: "ignored") == "t1-span"
     # A third trace evicts the LRU trace (t2), keeping t1.
-    langfuse_session.ensure_run_span("t3", "b", lambda _s: "t3-span")
+    langfuse_session.ensure_run_span("t3", "b", lambda: "t3-span")
 
     created: list[str] = []
     # t1 still tracked → remembered span returned, create NOT re-invoked.
     assert (
         langfuse_session.ensure_run_span(
-            "t1", "b", lambda _s: created.append("t1") or "new"
+            "t1", "b", lambda: created.append("t1") or "new"
         )
         == "t1-span"
     )
@@ -237,7 +243,7 @@ def test_langfuse_session_lru_evicts_least_recently_used(
     # t2 was evicted → fresh state, create IS re-invoked.
     assert (
         langfuse_session.ensure_run_span(
-            "t2", "b", lambda _s: created.append("t2") or "t2-span2"
+            "t2", "b", lambda: created.append("t2") or "t2-span2"
         )
         == "t2-span2"
     )
@@ -334,9 +340,15 @@ def test_only_the_root_span_keeps_as_root(_exporter_env: FakeClient):
     gen = [o for o in client.observations if o.kwargs["as_type"] == "generation"][0]
     tools = [o for o in client.observations if o.kwargs["as_type"] == "tool"]
 
-    # Exactly one root: the run span is never demoted; everything with a real
-    # parent is.
+    # Exactly one root: the run span is never demoted and loses the SDK's
+    # placeholder parent; everything with a real parent is demoted.
     assert not is_demoted(run_span)
+    assert run_span._otel_span._parent is None
+    assert all(
+        o._otel_span._parent is not None
+        for o in client.observations
+        if o is not run_span
+    )
     assert is_demoted(step_span)
     assert is_demoted(gen)
     assert all(is_demoted(t) for t in tools)
@@ -354,6 +366,7 @@ def test_single_shot_generation_keeps_as_root(_exporter_env: FakeClient):
     )
     gen = client.observations[0]
     assert gen._otel_span.attributes.get(Attr.AS_ROOT) is not False
+    assert gen._otel_span._parent is None
 
 
 def test_single_shot_tool_calls_are_skipped(_exporter_env: FakeClient):
@@ -405,6 +418,9 @@ def test_dreamer_specialists_nest_under_one_dream_root(_exporter_env: FakeClient
     assert dream_root.kwargs["name"] == "Dream"
     assert dream_root.kwargs["as_type"] == "span"
     assert not is_demoted(dream_root)
+    assert [o for o in client.observations if o._otel_span._parent is None] == [
+        dream_root
+    ]
 
     # Both specialist run spans hang off the Dream root and are demoted.
     run_dd = by_name["Dreamer/deduction"][0]
@@ -433,16 +449,10 @@ def test_dreamer_specialists_nest_under_one_dream_root(_exporter_env: FakeClient
     # Each generation nests under its OWN specialist's step.
     assert len({g.kwargs["trace_context"]["parent_span_id"] for g in gens}) == 2
 
-    # Trace name is the branch-agnostic "Dream", stamped exactly once — on the
-    # Dream root, not on a specialist's run span.
-    named = [
-        o
-        for o in client.observations
-        if o._otel_span.attributes.get("langfuse.trace.name")
-    ]
-    assert len(named) == 1
-    assert named[0] is dream_root
-    assert named[0]._otel_span.attributes["langfuse.trace.name"] == "Dream"
+    # Trace name is the branch-agnostic "Dream" on every observation.
+    assert {
+        o._otel_span.attributes.get("langfuse.trace.name") for o in client.observations
+    } == {"Dream"}
 
 
 def _latency_ns(obs: FakeObs) -> int:

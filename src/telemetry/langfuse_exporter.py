@@ -20,8 +20,8 @@ generation at the trace root.
 The Dreamer runs two specialists (deduction + induction) under one run_id, so its
 branches hang off a single synthetic "Dream" root to keep the trace
 single-rooted; single-specialist agents (dialectic) let their run span be the
-root. Keeping exactly one root is also why child spans are demoted from the SDK's
-auto-root flag (see `_demote_from_root`).
+root. Every observation carries the trace-level user and name, and exactly one
+per trace is exported as a root (see `_attach`).
 
 Best-effort throughout: every export is wrapped so telemetry can never break the
 LLM call path.
@@ -86,15 +86,12 @@ class LangfuseExporter:
             run_span_id = langfuse_session.ensure_run_span(
                 lf_trace_id,
                 branch,
-                lambda should_stamp: self._create_span(
+                lambda: self._create_span(
                     client,
                     lf_trace_id,
                     parent_span_id=root_span_id,
                     name=call.track_name or "LLM run",
                     metadata=self._metadata(call),
-                    # The synthetic root stamps the trace attrs when present;
-                    # otherwise the first branch's run span does.
-                    stamp_trace=should_stamp and root_span_id is None,
                     call=call,
                     start_ns=start_ns,
                 ),
@@ -111,7 +108,6 @@ class LangfuseExporter:
                         parent_span_id=run_span_id,
                         name=self._step_name(call),
                         metadata=self._step_metadata(call),
-                        stamp_trace=False,
                         call=call,
                         start_ns=start_ns,
                     ),
@@ -121,9 +117,6 @@ class LangfuseExporter:
             client,
             lf_trace_id,
             parent_span_id=parent_span_id,
-            # Single-shot: the generation is the trace root, so it stamps the
-            # trace attrs. Agentic: the first branch's run span already did.
-            stamp_trace=call.run_id is None,
             call=call,
             start_ns=start_ns,
             end_ns=end_ns,
@@ -152,10 +145,10 @@ class LangfuseExporter:
         The Dreamer's deduction + induction specialists share one trace (same
         run_id) but each builds its own run span with no parent — so Langfuse
         sees two roots, races the trace name between them, and renders the
-        specialists as separate sub-traces. One synthetic "Dream" root (which
-        also stamps the trace attrs) gives the trace a single root with both
-        specialists nested beneath. Single-specialist agents (dialectic) return
-        None and let their run span be the root.
+        specialists as separate sub-traces. One synthetic "Dream" root gives the
+        trace a single root with both specialists nested beneath.
+        Single-specialist agents (dialectic) return None and let their run span
+        be the root.
         """
         if call.parent_category != "dream":
             return None
@@ -167,7 +160,6 @@ class LangfuseExporter:
                 parent_span_id=None,
                 name=self._trace_name(call) or "Dream",
                 metadata=self._root_metadata(call),
-                stamp_trace=True,
                 call=call,
                 start_ns=start_ns,
             ),
@@ -181,7 +173,6 @@ class LangfuseExporter:
         parent_span_id: str | None,
         name: str,
         metadata: dict[str, str],
-        stamp_trace: bool,
         call: CapturedLLMCall,
         start_ns: int | None,
     ) -> str | None:
@@ -199,10 +190,7 @@ class LangfuseExporter:
             metadata=metadata,
         )
         self._backdate_start(obs, start_ns)
-        if stamp_trace:
-            self._stamp_trace_attrs(obs, call)
-        if parent_span_id is not None:
-            self._demote_from_root(obs)
+        self._attach(obs, call, parent_span_id)
         obs.end()
         return getattr(obs, "id", None)
 
@@ -212,7 +200,6 @@ class LangfuseExporter:
         lf_trace_id: str,
         *,
         parent_span_id: str | None,
-        stamp_trace: bool,
         call: CapturedLLMCall,
         start_ns: int | None,
         end_ns: int,
@@ -230,10 +217,7 @@ class LangfuseExporter:
             level=level,
         )
         backdated = self._backdate_start(obs, start_ns)
-        if stamp_trace:
-            self._stamp_trace_attrs(obs, call)
-        if parent_span_id is not None:
-            self._demote_from_root(obs)
+        self._attach(obs, call, parent_span_id)
         # end_ns predates the SDK's own start stamp, so only pin it when backdated.
         obs.end(end_time=end_ns if backdated else None)
 
@@ -259,7 +243,7 @@ class LangfuseExporter:
             input=tool_call.get("input"),
             metadata=self._tool_metadata(call, seq),
         )
-        self._demote_from_root(obs)  # always a child of the step span
+        self._attach(obs, call, parent_span_id)
         obs.end()
 
     @staticmethod
@@ -281,21 +265,34 @@ class LangfuseExporter:
         span._start_time = start_ns
         return True
 
+    def _attach(
+        self, obs: Any, call: CapturedLLMCall, parent_span_id: str | None
+    ) -> None:
+        """Stamp trace attrs and export `obs` as the trace root or a plain child."""
+        self._stamp_trace_attrs(obs, call)
+        if parent_span_id is None:
+            self._detach_placeholder_parent(obs)
+        else:
+            self._demote_from_root(obs)
+
+    @staticmethod
+    def _detach_placeholder_parent(obs: Any) -> None:
+        """Export a parentless observation as a true root.
+
+        `start_observation(trace_context=...)` without a `parent_span_id` nests
+        the span under a random, never-exported span id. This clears the OTEL SDK
+        span's private `_parent` before `end()`.
+        """
+        span = getattr(obs, "_otel_span", None)
+        if span is not None and getattr(span, "_parent", None) is not None:
+            span._parent = None
+
     @staticmethod
     def _demote_from_root(obs: Any) -> None:
-        """Clear the AS_ROOT flag the SDK auto-stamps on a child observation.
+        """Clear the AS_ROOT flag the SDK stamps on every `trace_context` span.
 
-        `start_observation(trace_context={"trace_id": ...})` marks EVERY span it
-        mints with `AS_ROOT=True` (langfuse `_client/client.py`) — including the
-        step/generation/tool spans we link under a run span by id. With several
-        root-flagged spans in one trace, Langfuse resolves the trace's root (and
-        therefore its name) from whichever it ingests first: a race that names a
-        dialectic trace after a child ("... step"/"... generation") and renders
-        children as if each were its own trace. Demoting every span that has a
-        real parent leaves exactly one root, making name + nesting deterministic.
-        Verified empirically against Langfuse cloud (the dangling remote-parent
-        id on the surviving root is benign and unavoidable — it's present even
-        with native context nesting).
+        Several root-flagged spans in one trace make Langfuse pick the trace's
+        root and name from whichever it ingests first.
         """
         span = getattr(obs, "_otel_span", None)
         if span is None:
@@ -312,11 +309,7 @@ class LangfuseExporter:
         return ctx
 
     def _stamp_trace_attrs(self, obs: Any, call: CapturedLLMCall) -> None:
-        """Stamp user/name on the trace via the root observation's span.
-
-        Called once per trace, on the first branch's run span (decided by
-        `langfuse_session.ensure_run_span`) or, for single-shot calls, on the
-        generation (its own trace).
+        """Stamp the trace-level user and name; applied to every observation.
 
         Deliberately does NOT set a Langfuse session: no Honcho construct is a
         conversation thread. A dialectic chat is a one-shot query scoped to a
