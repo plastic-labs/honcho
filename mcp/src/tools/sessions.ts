@@ -22,16 +22,27 @@ export function register(server: McpServer, ctx: ToolContext) {
       description: [
         "Get or create a session with the given ID.",
         "Use this to create or get a session with the given ID.",
+        "Optionally join scopes at creation: each named scope is created if missing, and an existing session's messages are backfilled asynchronously (see get_scope_status).",
         "Returns the session ID.",
       ].join("\n"),
       inputSchema: {
         workspace_id: workspaceIdSchema(ctx),
         session_id: z.string().describe("Unique identifier for the session."),
+        scopes: z
+          .array(z.string())
+          .min(1)
+          .max(100)
+          .optional()
+          .describe(
+            "Optional: scope names this session should join (max 100). Equivalent to create_session followed by add_sessions_to_scope for each.",
+          ),
       },
     },
-    async ({ workspace_id, session_id }) => {
+    async ({ workspace_id, session_id, scopes }) => {
       try {
-        const session = await ctx.clientFor(workspace_id).session(session_id);
+        const session = await ctx
+          .clientFor(workspace_id)
+          .session(session_id, scopes ? { scopes } : undefined);
         return textResult({ session_id: session.id });
       } catch (e) {
         return errorResult(
@@ -457,8 +468,9 @@ export function register(server: McpServer, ctx: ToolContext) {
       description: [
         "Get optimized context for a session, suitable for LLM prompts.",
         "Includes recent messages and an optional summary of older ones.",
+        "Pass peer_target to also include that peer's representation and card, read from peer_perspective's view, from a scope's view (scope), or from the global view (neither).",
         "Use this to build a context window for the next LLM call.",
-        "Returns messages, summary, and session ID.",
+        "Returns messages, summary, session ID, and (with peer_target) peer_representation and peer_card.",
       ].join("\n"),
       inputSchema: {
         workspace_id: workspaceIdSchema(ctx),
@@ -471,16 +483,62 @@ export function register(server: McpServer, ctx: ToolContext) {
           .number()
           .optional()
           .describe("Target token budget for the context window."),
+        peer_target: z
+          .string()
+          .optional()
+          .describe(
+            "Optional: peer whose representation and card to include. Required by peer_perspective, scope, and limit_to_session.",
+          ),
+        peer_perspective: z
+          .string()
+          .optional()
+          .describe(
+            "Optional: read peer_target's representation from this observer peer's view. Mutually exclusive with scope.",
+          ),
+        scope: z
+          .string()
+          .optional()
+          .describe(
+            "Optional: read peer_target's representation and card from what this scope observed. Mutually exclusive with peer_perspective; requires a workspace-level key.",
+          ),
+        limit_to_session: z
+          .boolean()
+          .optional()
+          .describe(
+            "Optional: restrict peer_target's representation to conclusions from this session only.",
+          ),
       },
     },
-    async ({ workspace_id, session_id, summary, tokens }) => {
+    async ({
+      workspace_id,
+      session_id,
+      summary,
+      tokens,
+      peer_target,
+      peer_perspective,
+      scope,
+      limit_to_session,
+    }) => {
       try {
         const session = await ctx.clientFor(workspace_id).session(session_id);
-        const context = await session.context({ summary, tokens });
+        const context = await session.context({
+          summary,
+          tokens,
+          peerTarget: peer_target,
+          peerPerspective: peer_perspective,
+          scope,
+          limitToSession: limit_to_session,
+        });
         return textResult({
           session_id: context.sessionId,
           summary: context.summary,
           messages: formatMessages(context.messages),
+          ...(peer_target
+            ? {
+                peer_representation: context.peerRepresentation,
+                peer_card: context.peerCard,
+              }
+            : {}),
         });
       } catch (e) {
         return errorResult(
