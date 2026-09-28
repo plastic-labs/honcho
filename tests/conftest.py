@@ -95,7 +95,7 @@ _RUNTIME_MOCK_TEST_BLOCKLIST_PREFIXES = (
     # The mock provider is a standalone ASGI app with no database or LLM of its
     # own; the runtime mocks would patch the very seams it exists to replace.
     "tests/mock_provider/",
-    # Pure config unit tests — no DB or runtime mocks needed.
+    # HNSW iterative scan settings — no runtime mocks needed.
     "tests/test_hnsw_iterative_scan.py",
 )
 
