@@ -1056,7 +1056,6 @@ def mock_tracked_db(request: pytest.FixtureRequest):
         "src.reconciler.sync_vectors.service_db",
         "src.reconciler.embed_now.tracked_db",
         "src.routers.tenants.service_db",
-        "src.derivation_pause.service_db",
         "src.dialectic.core.tracked_db",
         "src.dreamer.specialists.tracked_db",
         "src.dreamer.surprisal.tracked_db",
@@ -1114,16 +1113,3 @@ def mock_crud_collection_operations(request: pytest.FixtureRequest):
         mock_get_or_create_collection,
     ):
         yield
-
-
-@pytest_asyncio.fixture(autouse=True)
-async def reset_derivation_pause_state() -> AsyncGenerator[None]:
-    """The paused-tenant set is process-global; no test may inherit another's,
-    and a refresher a test started must not outlive it."""
-    from src import derivation_pause
-    from src.derivation_pause import derivation_pause_refresher
-
-    derivation_pause.reset()
-    yield
-    await derivation_pause_refresher.shutdown()
-    derivation_pause.reset()

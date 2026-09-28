@@ -172,6 +172,12 @@ class TenantUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")  # pyright: ignore
 
 
+class TenantIdList(BaseModel):
+    """A filtered list of tenant ids from the registry."""
+
+    tenant_ids: list[str]
+
+
 class Tenant(BaseModel):
     tenant_id: str
     vector_correlation_id: str | None = None

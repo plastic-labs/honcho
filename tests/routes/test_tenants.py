@@ -400,3 +400,60 @@ def test_patch_requires_the_service_secret(client: TestClient, enabled: str):
         f"/v3/tenants/{generate_nanoid()}", json={"derivation_paused": True}
     )
     assert response.status_code == 401, response.text
+
+
+# ---------------------------------------------------------------------------
+# GET ?derivation_paused=true: the control plane's reconciliation read
+# ---------------------------------------------------------------------------
+
+
+def _paused_ids(client: TestClient, enabled: str) -> list[str]:
+    response = client.get(
+        "/v3/tenants",
+        params={"derivation_paused": "true"},
+        headers={HEADER: enabled},
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["tenant_ids"]
+
+
+def test_list_paused_tracks_the_patched_bit(client: TestClient, enabled: str):
+    # Other tests' tenants rows outlive them, so assert membership, not the whole list.
+    paused_id, live_id = generate_nanoid(), generate_nanoid()
+    _created(client, enabled, paused_id)
+    _created(client, enabled, live_id)
+    client.patch(
+        f"/v3/tenants/{paused_id}",
+        json={"derivation_paused": True},
+        headers={HEADER: enabled},
+    )
+
+    listed = _paused_ids(client, enabled)
+    assert paused_id in listed
+    assert live_id not in listed
+    assert listed == sorted(listed)
+
+    client.patch(
+        f"/v3/tenants/{paused_id}",
+        json={"derivation_paused": False},
+        headers={HEADER: enabled},
+    )
+    assert paused_id not in _paused_ids(client, enabled)
+
+
+@pytest.mark.parametrize(
+    "params",
+    [{}, {"derivation_paused": "false"}],
+    ids=["no-filter", "false"],
+)
+def test_list_requires_the_paused_filter(
+    client: TestClient, enabled: str, params: dict[str, str]
+):
+    """Not a general tenant listing: the one supported filter is required."""
+    response = client.get("/v3/tenants", params=params, headers={HEADER: enabled})
+    assert response.status_code == 422, response.text
+
+
+def test_list_requires_the_service_secret(client: TestClient, enabled: str):
+    response = client.get("/v3/tenants", params={"derivation_paused": "true"})
+    assert response.status_code == 401, response.text

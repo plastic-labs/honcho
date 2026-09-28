@@ -151,6 +151,8 @@ class DeriverMetrics(BaseModel):
     # The same units broken down by tenant — the number worth watching while a
     # tenant is paused. Sums to excluded_work_units.
     excluded_work_units_by_tenant: dict[str, int] = Field(default_factory=dict)
+    # Tenants with derivation paused in the registry. Always 0 flag-off.
+    paused_tenants: int = 0
     claimed_work_units: int = 0
     pending_items: int = 0
     oldest_pending_age_seconds: float = 0.0

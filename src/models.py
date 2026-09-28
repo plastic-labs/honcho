@@ -149,9 +149,9 @@ class Tenant(Base):
     # The effect, not the reason: "do not claim this tenant's work". The control
     # plane decides WHY (billing, a noisy-neighbour kill switch, a maintenance
     # freeze)
-    # and mirrors the result here through the registry's PATCH; the deriver's
-    # claim reads it via derivation_pause. Never consulted to decide whether to
-    # pause — only whether to claim.
+    # and mirrors the result here through the registry's PATCH; the deriver
+    # reads it in SQL wherever it takes work (crud.deriver.not_paused_clause).
+    # Never consulted to decide whether to pause — only whether to claim.
     # endregion
     derivation_paused: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("false")
@@ -161,9 +161,8 @@ class Tenant(Base):
     )
 
     __table_args__ = (
-        # ai: the claim-side refresh reads only the paused subset, on a timer, from
-        # every claiming process; the partial index keeps that scan small however
-        # large tenants grows.
+        # ai: the claim's NOT EXISTS probe and the paused-tenant list read only the
+        # paused subset; the partial index keeps both small however large tenants grows.
         Index(
             "ix_tenants_derivation_paused",
             "tenant_id",

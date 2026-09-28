@@ -11,7 +11,7 @@ import hmac
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, Path, Response
+from fastapi import APIRouter, Depends, Header, Path, Query, Response
 
 from src import schemas
 from src.config import settings
@@ -83,6 +83,19 @@ async def create_tenant(body: schemas.TenantCreate, response: Response):
         )
         response.status_code = 201 if result.created else 200
         return schemas.Tenant.model_validate(result.resource)
+
+
+@router.get("", response_model=schemas.TenantIdList)
+async def list_tenants(derivation_paused: Annotated[bool, Query()]):
+    """List the ids of tenants with derivation paused (the control plane's
+    reconciliation read against its own record). The filter is required and
+    must be true: this is not a general, unpaginated tenant listing."""
+    if not derivation_paused:
+        raise ValidationException("only derivation_paused=true is supported")
+    async with service_db("tenants.list", read_only=True) as db:
+        return schemas.TenantIdList(
+            tenant_ids=await tenant_crud.list_paused_tenant_ids(db)
+        )
 
 
 @router.get("/{tenant_id}", response_model=schemas.Tenant)
