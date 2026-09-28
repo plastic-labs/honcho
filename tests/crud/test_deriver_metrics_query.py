@@ -101,8 +101,17 @@ class TestDeriverMetrics:
         self,
         db_session: AsyncSession,
         sample_data: tuple[models.Workspace, models.Peer],
+        monkeypatch: pytest.MonkeyPatch,
     ):
-        """A small, fresh batch is real work that a deriver would not yet claim."""
+        """A small, fresh batch is real work that a deriver would not yet claim.
+
+        The accumulation gate is skipped entirely when DERIVER_FLUSH_ENABLED is
+        True, which makes every unprocessed work unit eligible, so this test
+        forces it False regardless of what the process env has set (benches
+        commonly enable flush mode for immediate processing).
+        """
+        monkeypatch.setattr(settings.DERIVER, "FLUSH_ENABLED", False)
+
         workspace, peer = sample_data
         session = await _make_session(db_session, workspace)
 

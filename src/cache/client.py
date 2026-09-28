@@ -221,19 +221,47 @@ def _tenant_scope_middleware() -> Any:
         # ai: deferred import keeps cache.client free of a load-time dependency on db.
         from src.db import tenant_context
 
-        prefix = f"t:{tenant_context.get() or 'default'}:"
+        tenant = tenant_context.get()
+
+        def _scope(key: str) -> str:
+            # region ai
+            # Fail closed instead of falling back to a shared 'default' bucket:
+            # 'default' is the real id of the bootstrap tenant (see the tenants
+            # seed migration), so a tenant-less caller reading/writing
+            # t:default:* would silently share that tenant's cache -- and since
+            # the cache is read before the DB, a cross-tenant hit here bypasses
+            # RLS entirely, the same class of bug tracked_db() and
+            # construct_work_unit_key() already fail closed on. Every reachable
+            # caller is tenant-bound before it can reach a cache command: those
+            # two raise first for every path that reaches this middleware
+            # (tracked_db() for every tracked_db-scoped call, and
+            # construct_work_unit_key() for the one service_db()-scoped cache
+            # write, the scope-task enqueue's cache invalidation). If this
+            # raises, some new caller reached the cache without going through
+            # either, and belongs on tracked_db(tenant_id=...) instead.
+            # endregion
+            if not tenant:
+                raise ValueError(
+                    f"cache {cmd.value} on key {key!r} requires a tenant when "
+                    + "MULTI_TENANT is on, but tenant_context is unset -- bind a "
+                    + "tenant (tracked_db(tenant_id=...), or an ambient "
+                    + "tenant_context set by the caller) before touching the "
+                    + "cache; cross-tenant cache access is not supported"
+                )
+            return f"t:{tenant}:" + key
+
         if cmd in (Command.GET_MANY, Command.DELETE_MANY):
-            return await call(*[prefix + key for key in args])
+            return await call(*[_scope(key) for key in args])
         if cmd == Command.SET_MANY:
-            kwargs["pairs"] = {prefix + k: v for k, v in kwargs["pairs"].items()}
+            kwargs["pairs"] = {_scope(k): v for k, v in kwargs["pairs"].items()}
             return await call(**kwargs)
         as_key = "pattern" if cmd in PATTERN_CMDS else "key"
         key = kwargs.get(as_key)
         if key:
-            kwargs[as_key] = prefix + key
+            kwargs[as_key] = _scope(key)
             return await call(**kwargs)
         if args:
-            return await call(prefix + args[0], *args[1:], **kwargs)
+            return await call(_scope(args[0]), *args[1:], **kwargs)
         return await call(*args, **kwargs)
 
     return _middleware
@@ -241,6 +269,57 @@ def _tenant_scope_middleware() -> Any:
 
 # ai: registered once at import; applies to every backend cache.setup() installs.
 cache.add_middleware(_tenant_scope_middleware())
+
+
+async def _release_default_node_connection() -> None:
+    """Drop the idle connection the startup PING leaves on the cluster's default node.
+
+    PING carries no key, so redis-py routes it to ``nodes_manager.default_node``
+    rather than to a shard. That node is the same one for every client in a
+    deployment: ``NodesManager.initialize`` fills ``nodes_cache`` in the order
+    CLUSTER SLOTS returns slot ranges -- ascending since Redis 6.2 -- and then
+    takes ``get_nodes_by_server_type(PRIMARY)[0]``, so everyone picks whichever
+    primary owns slot 0.
+
+    Nothing closes that connection afterwards. It is returned to the pool on
+    release, redis-py's cluster node pool does no idle reaping, and every later
+    cache call is keyed and hash-tagged to this instance's namespace, so it goes
+    to a data shard instead. The result is one permanently idle socket per
+    process, all of them on one node, while the keyed traffic spreads evenly.
+
+    At fleet scale that dominates the connection count: the slot-0 primary held
+    roughly 13x the connections of its peers, ~92% of them idle since their
+    PING, even though the three primaries' keyed traffic was within 13% of each
+    other. Enough to reach ``maxclients`` on that one node while the rest of the
+    cluster sat near a quarter of it, which fails new clients everywhere --
+    ``RedisCluster.initialize`` cannot complete if the default node refuses the
+    connection, so the client never reaches the shard holding its own keys.
+
+    Safe because it only disconnects free connections and leaves them in the
+    pool: redis-py re-establishes lazily if a keyless command is ever issued
+    again. A topology refresh re-opens one, since the refreshed client asks the
+    default node for the command table, but that is per-refresh rather than for
+    the life of the process.
+    """
+    if not settings.CACHE.CLUSTER:
+        return
+    try:
+        # No public accessor reaches the node objects, so this reads through
+        # cashews' backend to the redis-py client it wraps. Guarded below
+        # because a rename in either library must not break startup: the
+        # connection this releases is an optimisation, not a correctness need.
+        for backend in cache._backends.values():  # pyright: ignore[reportPrivateUsage]
+            default_node = getattr(
+                getattr(getattr(backend, "_client", None), "nodes_manager", None),
+                "default_node",
+                None,
+            )
+            if default_node is not None:
+                await default_node.disconnect_free_connections()
+    except Exception:
+        logger.debug(
+            "Could not release the cache default-node connection", exc_info=True
+        )
 
 
 async def init_cache() -> None:
@@ -267,8 +346,8 @@ async def init_cache() -> None:
             )
 
         except Exception as setup_err:
-            logger.warning(
-                "Cache setup failed for %s: %s. Falling back to in-memory cache",
+            logger.error(
+                "Cache setup failed for %s: %s. Falling back to a process-local in-memory cache; invalidations will not reach other processes",
                 _redact_cache_url(settings.CACHE.URL),
                 setup_err,
             )
@@ -302,8 +381,8 @@ async def init_cache() -> None:
                             _redact_cache_url(settings.CACHE.URL),
                         )
         except (redis_exc.TimeoutError, redis_exc.ConnectionError, TimeoutError) as e:
-            logger.warning(
-                "Failed to connect to cache at %s: %s. Falling back to in-memory cache",
+            logger.error(
+                "Failed to connect to cache at %s: %s. Falling back to a process-local in-memory cache; invalidations will not reach other processes",
                 _redact_cache_url(settings.CACHE.URL),
                 e,
             )
@@ -313,8 +392,8 @@ async def init_cache() -> None:
             await cache.close()
             cache.setup("mem://", pickle_type=PicklerType.SQLALCHEMY)
         except Exception as e:
-            logger.warning(
-                "Unexpected cache error at %s: %s. Falling back to in-memory cache",
+            logger.error(
+                "Unexpected cache error at %s: %s. Falling back to a process-local in-memory cache; invalidations will not reach other processes",
                 _redact_cache_url(settings.CACHE.URL),
                 e,
             )
@@ -323,6 +402,12 @@ async def init_cache() -> None:
             # Fallback to in-memory cache
             await cache.close()
             cache.setup("mem://", pickle_type=PicklerType.SQLALCHEMY)
+
+        # Outside the try above deliberately: its handlers fall back to the
+        # in-memory cache, and losing Redis caching process-wide is far worse
+        # than leaving one idle connection behind. A no-op on the fallback
+        # path, where there is no cluster client to read.
+        await _release_default_node_connection()
 
 
 _TRANSIENT_CACHE_ERRORS = (

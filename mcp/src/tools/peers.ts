@@ -79,6 +79,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         "Requires `peer_id`. Answers from that peer's representation only — not the rest of the workspace.",
         "For cross-peer themes or questions not tied to one peer, use `workspace_chat`.",
         "Returns a natural-language answer, or 'None' if no relevant information exists.",
+        "With `include_evidence`, returns an object instead: the answer plus what the agent read to produce it.",
       ].join("\n"),
       inputSchema: {
         workspace_id: workspaceIdSchema(ctx),
@@ -111,6 +112,12 @@ export function register(server: McpServer, ctx: ToolContext) {
           .enum(["minimal", "low", "medium", "high", "max"])
           .optional()
           .describe("Reasoning effort. Higher = more detailed but slower."),
+        include_evidence: z
+          .boolean()
+          .optional()
+          .describe(
+            "Return what the answer was built from: the conclusions and messages the agent read and the tools it called. Collated from what the agent accessed rather than reported by the model, so it over-reports — a listed conclusion was read, which is not proof the answer leaned on it. Costs no extra model tokens.",
+          ),
       },
     },
     async ({
@@ -122,17 +129,26 @@ export function register(server: McpServer, ctx: ToolContext) {
       scope,
       sessions,
       reasoning_level,
+      include_evidence,
     }) => {
       try {
         const peer = await ctx.clientFor(workspace_id).peer(peer_id);
-        const result = await peer.chat(query, {
+        const options = {
           target: target_peer_id,
           session: session_id,
           scope,
           sessions,
           reasoningLevel: reasoning_level,
+        };
+        if (!include_evidence) {
+          const result = await peer.chat(query, options);
+          return textResult(result ?? "None");
+        }
+        const { content, evidence } = await peer.chat(query, {
+          ...options,
+          includeEvidence: true,
         });
-        return textResult(result ?? "None");
+        return textResult({ content: content ?? "None", evidence });
       } catch (e) {
         return errorResult(
           `Chat failed: ${e instanceof Error ? e.message : String(e)}`,

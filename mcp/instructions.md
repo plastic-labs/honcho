@@ -106,7 +106,7 @@ The full API for advanced use cases.
 | `create_workspace` | Get or create a workspace when none of the listed ones fit |
 | `inspect_workspace` | Inspect a single workspace's details. Requires `workspace_id`. |
 | `search` | Semantic search across messages — scope with optional `peer_id` or `session_id` params |
-| `workspace_chat` | Ask Honcho a question about the whole workspace — reasons across all peers. Use for cross-peer themes or questions not about one peer; use `chat` for a single peer. Accepts optional `reasoning_level`, and `session_id` / `scope` to confine recall. |
+| `workspace_chat` | Ask Honcho a question about the whole workspace — reasons across all peers. Use for cross-peer themes or questions not about one peer; use `chat` for a single peer. Accepts optional `reasoning_level`, `session_id` / `scope` to confine recall, and `include_evidence` to see what the answer was built from. |
 | `get_metadata` | Read metadata for workspace, peer, or session (scope with optional `peer_id` or `session_id`) |
 | `set_metadata` | Store metadata for workspace, peer, or session (scope with optional `peer_id` or `session_id`) |
 
@@ -116,7 +116,7 @@ The full API for advanced use cases.
 | --- | --- |
 | `create_peer` | Register a new participant (user or agent) |
 | `list_peers` | See all participants in the workspace |
-| `chat` | Ask Honcho what it knows about one peer (`peer_id` required). Use `workspace_chat` for the whole workspace. Accepts optional `reasoning_level` (`minimal`–`max`) to control depth vs. speed. Confine recall with `session_id` (one session), `scope` (a scope name for that scope's reasoned view, or a list of names as an explicit-only allowlist), or `sessions` (an ad hoc session-ID allowlist, explicit-only). |
+| `chat` | Ask Honcho what it knows about one peer (`peer_id` required). Use `workspace_chat` for the whole workspace. Accepts optional `reasoning_level` (`minimal`–`max`) to control depth vs. speed. Confine recall with `session_id` (one session), `scope` (a scope name for that scope's reasoned view, or a list of names as an explicit-only allowlist), or `sessions` (an ad hoc session-ID allowlist, explicit-only). Set `include_evidence` to see what the answer was built from. |
 | `get_peer_card` | Get compact biographical facts about a peer |
 | `set_peer_card` | Manually set/correct facts about a peer |
 | `get_peer_context` | Get full context (representation + peer card) |
@@ -149,8 +149,10 @@ The full API for advanced use cases.
 
 | Tool | When to use |
 | --- | --- |
-| `list_conclusions` | See what Honcho has derived about a peer |
+| `list_conclusions` | See what Honcho has derived about a peer. Paginate with `page` / `size`, narrow with `session_id` or `filters` (e.g. `{"level": "inductive"}`) |
 | `query_conclusions` | Semantic search across derived facts |
+| `get_conclusions` | Fetch conclusions by ID from anywhere in the workspace. Pass a conclusion's `source_ids` to see its premises |
+| `get_derived_conclusions` | List what was built on top of a conclusion — the other direction of the same edge |
 | `create_conclusions` | Inject facts manually |
 | `delete_conclusion` | Remove incorrect or outdated facts |
 
@@ -176,6 +178,14 @@ A **session** is a conversation context. Sessions track message history, manage 
 ### Conclusions
 
 **Conclusions** are facts and observations that Honcho derives from conversations. They power the representation — Honcho's understanding of a peer.
+
+Every conclusion carries its own attribution. `level` says how it was reached: `explicit` conclusions are extracted straight from messages, while `deductive`, `inductive` and `contradiction` conclusions are derived while dreaming. `source_ids` names the conclusions a derived one was built from, and is null for explicit ones. `times_derived` counts how many times Honcho independently reached the same conclusion — a rough confidence signal.
+
+Those fields make the reasoning tree walkable in both directions: `get_conclusions` on a conclusion's `source_ids` steps down toward the explicit facts it rests on, and `get_derived_conclusions` steps up to whatever was built on top of it. Walk down before correcting a fact, and up before deleting one.
+
+### Evidence
+
+`chat` and `workspace_chat` accept `include_evidence`. With it, the answer arrives alongside the conclusions and messages the agent read and the tools it called. This is collated from what the agent actually accessed rather than reported by the model, so it over-reports — a listed conclusion was read, which is not proof the answer leaned on it. It costs no extra model tokens, so reach for it whenever an answer needs auditing.
 
 ### Representations
 

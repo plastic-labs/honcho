@@ -1,10 +1,11 @@
 """Startup validator for the multi-tenant isolation binding.
 
-Gates boot (API and deriver) when ``MULTI_TENANT`` is on, converting four silent
+Gates boot (API and deriver) when ``MULTI_TENANT`` is on, converting five silent
 half-states — where isolation looks enabled but cannot hold, or cannot serve — into
 a hard boot failure. Listed in check order: the first two are settings-only and need
-no connection; the last two introspect the database (with retry) and are skipped
-together when ``MULTI_TENANT_SKIP_RLS_ASSERT`` is set (migration window only).
+no connection; the last three are skipped together when
+``MULTI_TENANT_SKIP_RLS_ASSERT`` is set (migration window only), and (3) and (4)
+introspect the database (with retry).
 
 1. Flag vs auth (API processes only). ``MULTI_TENANT`` on with
    ``AUTH_USE_AUTH`` off means every request authenticates as a tenant-less admin,
@@ -25,7 +26,12 @@ together when ``MULTI_TENANT_SKIP_RLS_ASSERT`` is set (migration window only).
    enabled + forced means the binding is set but nothing enforces it — no
    isolation, no error.
 
-4. Flag vs service role. With RLS enforced, the cross-tenant service paths
+4. Role vs policies. Postgres does not enforce row-level security for a
+   superuser or a role with BYPASSRLS, so on such a role every check in (3)
+   passes vacuously while isolation is actually off. Refuse to boot if the
+   TENANT engine's connecting role (``DB_CONNECTION_URI``) is either.
+
+5. Flag vs service role. With RLS enforced, the cross-tenant service paths
    (deriver claim, reconciler, dreamer) must run on a role that bypasses it; with
    ``DB_SERVICE_CONNECTION_URI`` unset they would run on the RLS-enforced app role
    and silently read zero rows.
@@ -74,6 +80,7 @@ _RLS_REQUIRED_TABLES: tuple[str, ...] = (
     "message_embeddings",
     "collections",
     "documents",
+    "document_sources",
     "session_peers",
     "webhook_endpoints",
 )
@@ -118,6 +125,8 @@ async def validate_tenant_isolation(
 
     rls = await _introspect_rls_with_retry(engine, s.DB.SCHEMA)
     _assert_rls_enforced(rls, schema=s.DB.SCHEMA)
+    rolname, rolsuper, rolbypassrls = await _introspect_tenant_role_with_retry(engine)
+    _assert_tenant_role_cannot_bypass_rls(rolname, rolsuper, rolbypassrls)
     _assert_service_role_configured(s)
 
 
@@ -252,4 +261,78 @@ def _assert_rls_enforced(rls: dict[str, tuple[bool, bool]], *, schema: str) -> N
             + ". Apply the tenant-isolation policies (ENABLE + FORCE ROW LEVEL"
             + " SECURITY) before enabling the flag, or set"
             + " MULTI_TENANT_SKIP_RLS_ASSERT for the migration window."
+        )
+
+
+async def _introspect_tenant_role_with_retry(
+    engine: AsyncEngine,
+) -> tuple[str, bool, bool]:
+    """Return (rolname, rolsuper, rolbypassrls) for the TENANT engine's connecting role."""
+    # ai: fails closed on the last attempt — uncertainty is not a green light.
+    try:
+        async for attempt in AsyncRetrying(
+            stop=stop_after_attempt(_RETRY_ATTEMPTS),
+            wait=wait_fixed(_RETRY_BACKOFF_SECONDS),
+            retry=retry_if_exception_type(SQLAlchemyError),
+            before_sleep=before_sleep_log(logger, logging.WARNING),
+            reraise=False,
+        ):
+            with attempt:
+                return await _introspect_tenant_role_once(engine)
+    except RetryError as e:
+        underlying = e.last_attempt.exception()
+        raise StartupValidationError(
+            f"could not validate the tenant engine's connecting role: {underlying}"
+        ) from underlying
+    # ai: unreachable — AsyncRetrying either returns from inside the loop or raises.
+    raise StartupValidationError("tenant engine role introspection did not run")
+
+
+async def _introspect_tenant_role_once(engine: AsyncEngine) -> tuple[str, bool, bool]:
+    """Read whether the role the TENANT engine connects as can bypass RLS.
+
+    ``current_user`` (not ``session_user``) so this reflects the role RLS is
+    actually evaluated against; the app never issues ``SET ROLE``, so the two
+    coincide for every connection this engine hands out. Deliberately run on
+    ``engine`` (the TENANT engine — the one ``tracked_db``/request/deriver
+    sessions bind ``app.tenant`` on and RLS policies are meant to constrain),
+    never on ``service_engine``: the service role is REQUIRED to bypass RLS
+    (see ``_assert_service_role_configured``) and must not trip this check.
+    """
+    query = text(
+        "SELECT rolname, rolsuper, rolbypassrls FROM pg_roles"
+        + " WHERE rolname = current_user"
+    )
+    async with engine.connect() as conn:
+        row = (await conn.execute(query)).one()
+        return row.rolname, row.rolsuper, row.rolbypassrls
+
+
+def _assert_tenant_role_cannot_bypass_rls(
+    rolname: str, rolsuper: bool, rolbypassrls: bool
+) -> None:
+    # region ai
+    # Postgres bypasses row-level security entirely for a superuser or any role
+    # with BYPASSRLS, regardless of relrowsecurity/relforcerowsecurity on the
+    # tables (the checks _assert_rls_enforced just ran) — so on such a role
+    # every one of those checks passes vacuously while isolation is actually
+    # off. Do not special-case or soften this: there is no "skip if superuser"
+    # escape hatch, unlike MULTI_TENANT_SKIP_RLS_ASSERT above.
+    # endregion
+    reasons: list[str] = []
+    if rolsuper:
+        reasons.append("is a superuser")
+    if rolbypassrls:
+        reasons.append("has BYPASSRLS")
+    if reasons:
+        raise StartupValidationError(
+            "MULTI_TENANT is on but the TENANT engine's connecting role"
+            + f" {rolname!r} (DB_CONNECTION_URI) "
+            + " and ".join(reasons)
+            + ": Postgres does not enforce row-level security for a superuser or"
+            + " a BYPASSRLS role, so the RLS checks above pass vacuously while"
+            + " isolation is actually off for every query this role runs. Point"
+            + " DB_CONNECTION_URI at an ordinary role with RLS enforced;"
+            + " superuser/BYPASSRLS is reserved for the cross-tenant service role"
+            + " (DB_SERVICE_CONNECTION_URI)."
         )

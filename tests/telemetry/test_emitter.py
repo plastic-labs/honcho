@@ -1094,3 +1094,46 @@ class TestClientContextInjection:
             "plugin": "claude-honcho/0.2.11",
             "agent_model": "claude-sonnet-4-5",
         }
+
+    @pytest.mark.parametrize(
+        ("headers", "expected_host"),
+        [
+            # Raw REST client: no X-Honcho-Host, User-Agent stands in.
+            ({"User-Agent": "curl/8.4.0"}, "curl/8.4.0"),
+            # Identity header present: it wins over User-Agent.
+            (
+                {
+                    "User-Agent": "python-httpx/0.27.0",
+                    "X-Honcho-Host": "honcho-python/2.4.1",
+                },
+                "honcho-python/2.4.1",
+            ),
+            # Blank identity header is treated as absent.
+            ({"User-Agent": "undici", "X-Honcho-Host": "  "}, "undici"),
+        ],
+    )
+    def test_user_agent_is_host_fallback(
+        self, headers: dict[str, str], expected_host: str
+    ):
+        """A request without X-Honcho-Host records its User-Agent as the host,
+        so raw REST traffic is distinguishable from SDK and harness traffic."""
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from src.main import track_request
+
+        emitter = TelemetryEmitter(endpoint="http://test:8001/events")
+        emitter._running = True
+
+        app = FastAPI()
+        app.middleware("http")(track_request)
+
+        async def probe() -> dict[str, Any]:
+            return self._emit_and_capture_body(emitter)
+
+        app.get("/probe")(probe)
+
+        with TestClient(app) as client:
+            resp = client.get("/probe", headers=headers)
+
+        assert resp.json()["client"]["host"] == expected_host

@@ -1,6 +1,7 @@
 import datetime
+import re
 from logging import getLogger
-from typing import Any, final, override
+from typing import Any, cast, final, override
 
 from dotenv import load_dotenv
 from nanoid import generate as generate_nanoid
@@ -449,9 +450,11 @@ class MessageEmbedding(Base):
             ["peers.name", "peers.workspace_name", "peers.tenant_id"],
         ),
         # region ai
-        # message_id-leading: every lookup on message_id is cross-tenant (the
-        # reconciler / embed_now filter by message_id with no tenant_id in scope),
-        # so a tenant_id prefix would force a scan of all partitions.
+        # message_id-leading: the reconciler's lookups on message_id are
+        # cross-tenant (it sweeps every tenant and filters by message_id with no
+        # tenant_id in scope), so a tenant_id prefix would force a scan of all
+        # partitions. embed_now is NOT one of those callers — it is per-request
+        # and tenant-bound — but the reconciler alone settles the column order.
         # endregion
         Index("ix_message_embeddings_message_tenant", "message_id", "tenant_id"),
         # region ai
@@ -534,6 +537,10 @@ class Collection(Base):
     )
 
 
+# Shape of a document id; legacy linkage arrays occasionally hold other refs.
+SOURCE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{21}$")
+
+
 @final
 class Document(Base):
     __tablename__: str = "documents"
@@ -555,9 +562,6 @@ class Document(Base):
         Integer, nullable=False, server_default=text("1")
     )
     embedding: MappedColumn[Any] = mapped_column(Vector(_VECTOR_DIM), nullable=True)
-    source_ids: Mapped[list[str] | None] = mapped_column(
-        JSONB, nullable=True, server_default=text("NULL")
-    )
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
     )
@@ -582,6 +586,57 @@ class Document(Base):
     )
 
     collection = relationship("Collection", back_populates="documents")
+
+    # selectin (not lazy) is required: async lazy-loads raise MissingGreenlet.
+    source_links: Mapped[list["DocumentSource"]] = relationship(
+        "DocumentSource",
+        order_by="DocumentSource.position",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        lazy="selectin",
+    )
+
+    # Pre-document_sources linkage. Read-only: the reconciler drains it into
+    # document_sources and NULLs it; a follow-up migration drops the column.
+    legacy_source_ids: Mapped[list[str] | None] = mapped_column(
+        "source_ids", JSONB(none_as_null=True), nullable=True
+    )
+
+    @property
+    def source_ids(self) -> list[str] | None:
+        """Parent conclusion IDs in original order; None when unlinked.
+
+        Falls back to the legacy JSONB locations for rows the reconciler has
+        not drained yet, in the same precedence order as the drain.
+        """
+        if self.source_links:
+            return [link.source_id for link in self.source_links]
+        for candidate in (
+            self.legacy_source_ids,
+            self.internal_metadata.get("source_ids"),
+            self.internal_metadata.get("premise_ids"),
+        ):
+            if isinstance(candidate, list):
+                ids = [
+                    sid
+                    for sid in dict.fromkeys(cast(list[Any], candidate))
+                    if isinstance(sid, str) and SOURCE_ID_RE.match(sid)
+                ]
+                return ids or None
+        return None
+
+    @source_ids.setter
+    def source_ids(self, value: list[str] | None) -> None:
+        # Constructor convenience: kwargs apply in order, so workspace_name
+        # must be passed before source_ids. Dedupes (PK is (derived_id,
+        # source_id)); crud.build_source_links additionally drops malformed
+        # IDs from LLM output before they reach this point.
+        self.source_links = [
+            DocumentSource(
+                source_id=sid, position=i, workspace_name=self.workspace_name
+            )
+            for i, sid in enumerate(dict.fromkeys(value or []))
+        ]
 
     __table_args__ = (
         PrimaryKeyConstraint("tenant_id", "id"),
@@ -637,12 +692,6 @@ class Document(Base):
                 "embedding": "vector_cosine_ops"
             },  # Cosine distance operator
         ),
-        # GIN index for efficient tree traversal (finding children by source IDs)
-        Index(
-            "ix_documents_source_ids_gin",
-            "source_ids",
-            postgresql_using="gin",
-        ),
         # region ai
         # Reconciler scans this cross-tenant (sync_state='pending'), so NOT
         # tenant_id-leading. Also drops the redundant single-column sync_state index.
@@ -652,6 +701,68 @@ class Document(Base):
             "sync_state",
             "last_sync_at",
         ),
+        # Serves reverse traversal on undrained legacy rows; dropped with the
+        # column in the follow-up migration.
+        Index(
+            "ix_documents_source_ids_gin",
+            "source_ids",
+            postgresql_using="gin",
+        ),
+        # Rows the reconciler still has to drain; empty once the drain
+        # finishes. Dropped with the column in the follow-up migration.
+        Index(
+            "ix_documents_legacy_sources_pending",
+            "id",
+            postgresql_where=text(
+                "source_ids IS NOT NULL OR internal_metadata ?| ARRAY['source_ids', 'premise_ids']"  # noqa: E501
+            ),
+        ),
+        {"postgresql_partition_by": "HASH (tenant_id)"},
+    )
+
+
+@final
+class DocumentSource(Base):
+    """One reasoning-tree edge: derived_id was concluded from source_id."""
+
+    __tablename__: str = "document_sources"
+
+    tenant_id: Mapped[str] = mapped_column(
+        TEXT,
+        ForeignKey("tenants.tenant_id"),
+        nullable=False,
+        default=_default_tenant_id,
+    )
+    derived_id: Mapped[str] = mapped_column(TEXT, nullable=False)
+    # Deliberately not an FK: the dreamer can emit IDs that never resolve,
+    # and sources may be deleted independently of their children.
+    source_id: Mapped[str] = mapped_column(TEXT, nullable=False)
+    position: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
+    # Note: Foreign key relationships established via composite ForeignKeyConstraint below
+    workspace_name: Mapped[str] = mapped_column(TEXT, nullable=False)
+
+    __table_args__ = (
+        # ai: tenant_id leads the all-natural-key PK and is the HASH partition key.
+        PrimaryKeyConstraint("tenant_id", "derived_id", "source_id"),
+        # Composite foreign key constraint for the derived document. A partitioned
+        # parent cannot be referenced by `id` alone: every unique key on it must
+        # include the partition key.
+        ForeignKeyConstraint(
+            ["derived_id", "tenant_id"],
+            ["documents.id", "documents.tenant_id"],
+            ondelete="CASCADE",
+        ),
+        # Composite foreign key constraint for workspaces
+        ForeignKeyConstraint(
+            ["workspace_name", "tenant_id"],
+            ["workspaces.name", "workspaces.tenant_id"],
+        ),
+        # Reverse traversal ("who derived from me?") — replaces the old GIN index
+        Index("ix_document_sources_source_id", "source_id", "workspace_name"),
+        CheckConstraint("length(source_id) = 21", name="source_id_length"),
+        CheckConstraint("source_id ~ '^[A-Za-z0-9_-]+$'", name="source_id_format"),
         {"postgresql_partition_by": "HASH (tenant_id)"},
     )
 
@@ -772,6 +883,18 @@ class QueueItemBatch(Base):
     # code must never write it. pending_count is bookkeeping, not a claim
     # input; the claim gate reads task_type/total_tokens/oldest_created_at and
     # claims by row existence.
+    # endregion
+    # region ai
+    # work_unit_key alone is the primary key, not (tenant_id, work_unit_key):
+    # under MULTI_TENANT, construct_work_unit_key (src/utils/work_unit.py)
+    # prefixes every tenant-scoped key with its tenant_id, so the key is
+    # already tenant-scoped by construction and a composite key would be
+    # redundant. tenant_id below is a derived attribution column, not part of
+    # identity — it stays nullable because it is NULL both for the
+    # tenant-less reconciler lane (task_type "reconciler", which scans across
+    # tenants and never gets a tenant prefix) and for every row when
+    # MULTI_TENANT is off (src/deriver/enqueue.py's _stamp_tenant_id, which
+    # derives this column from the key prefix at every insert site).
     # endregion
     work_unit_key: Mapped[str] = mapped_column(TEXT, primary_key=True)
     # ai: Service table: tenant_id is plain attribution, no FK / RLS.

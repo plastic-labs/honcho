@@ -12,7 +12,7 @@ import hashlib
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Protocol, cast, runtime_checkable
+from typing import Any, Literal, Protocol, cast, runtime_checkable
 
 from src.config import settings
 
@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 ROLE_OUTPUT = "assistant"
 ROLE_TOOL_SCHEMA = "__tool_schema__"
 ROLE_THINKING = "__thinking__"
+ROLE_REASONING = "__reasoning__"
 
 
 def canonical_json(obj: Any) -> str:
@@ -143,6 +144,16 @@ class CapturedLLMCall:
     was_stream: bool
     # True when any input message was clipped to TRACE_MAX_BYTES.
     input_truncated: bool = False
+    observers: list[str] = field(default_factory=list)
+    source_message_ids: list[str] = field(default_factory=list)
+    queue_item_ids: list[int] = field(default_factory=list)
+    parent_event_id: str | None = None
+    duration_ms: float | None = None
+    outcome: Literal["success", "error", "cancelled"] | None = None
+    error_class: str | None = None
+    retry_attempts: int | None = None
+    is_final_attempt: bool | None = None
+    effective_max_output_tokens: int | None = None
 
 
 def _normalize_message(
@@ -279,6 +290,11 @@ def build_captured_call(
     was_fallback: bool,
     was_stream: bool,
     finish_reason: str | None,
+    duration_ms: float | None = None,
+    outcome: Literal["success", "error", "cancelled"] | None = None,
+    error_class: str | None = None,
+    retry_attempts: int | None = None,
+    effective_max_output_tokens: int | None = None,
 ) -> CapturedLLMCall:
     """Assemble a `CapturedLLMCall` from telemetry + the provider result."""
     memo = telemetry.hash_memo if telemetry is not None else None
@@ -326,6 +342,18 @@ def build_captured_call(
         cache_creation_tokens=result.cache_creation_input_tokens if result else 0,
         was_stream=was_stream,
         input_truncated=input_truncated,
+        observers=list(telemetry.observers) if telemetry else [],
+        source_message_ids=list(telemetry.source_message_ids) if telemetry else [],
+        queue_item_ids=list(telemetry.queue_item_ids) if telemetry else [],
+        parent_event_id=telemetry.parent_event_id if telemetry else None,
+        duration_ms=duration_ms,
+        outcome=outcome,
+        error_class=error_class,
+        retry_attempts=retry_attempts,
+        is_final_attempt=(
+            attempt >= retry_attempts if retry_attempts is not None else None
+        ),
+        effective_max_output_tokens=effective_max_output_tokens,
     )
 
 

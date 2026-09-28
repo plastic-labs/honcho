@@ -335,6 +335,18 @@ TYPESCRIPT_VERSION=
             json.dump(data, f, indent=2)
             f.write("\n")  # Add trailing newline
 
+        # Update the VERSION constant the SDK sends in X-Honcho-Host
+        version_ts = os.path.join(self.base_path, "sdks/typescript/src/api-version.ts")
+        with open(version_ts) as f:
+            content = f.read()
+        content = re.sub(
+            r"export const VERSION = '[^']*'",
+            f"export const VERSION = '{new_version}'",
+            content,
+        )
+        with open(version_ts, "w") as f:
+            f.write(content)
+
         # Update SDK's own CHANGELOG.md
         self._update_sdk_changelog(
             new_version, changelog, "sdks/typescript/CHANGELOG.md"

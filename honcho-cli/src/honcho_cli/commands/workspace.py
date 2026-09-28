@@ -16,12 +16,13 @@ from honcho import (
     ServerError,
 )
 
+from honcho_cli.config import identity_headers
 from honcho_cli.output import print_error, print_result, status, use_json
 from honcho_cli.recall import parse_csv_repeatable, reject_incompatible_recall, scope_for_sdk
 from honcho_cli.validation import validate_resource_id
 
 from honcho_cli._help import HonchoTyperGroup
-from honcho_cli.common import add_common_options, get_client, get_flag_overrides, get_resolved_config, handle_cmd_flags
+from honcho_cli.common import add_common_options, format_evidence, get_client, get_flag_overrides, get_resolved_config, handle_cmd_flags
 
 app = typer.Typer(cls=HonchoTyperGroup, help="List, create, inspect, chat, delete, and search workspaces.")
 add_common_options(app)
@@ -219,7 +220,12 @@ def chat(
     scope: Optional[list[str]] = typer.Option(
         None,
         "--scope",
-        help="Confine recall to a scope. One name answers from that scope's own view; several names (repeat or comma-separate) are an explicit-only allowlist of their sessions. Mutually exclusive with -s.",
+        help="Recall only from this scope. Repeat or comma-separate for several (explicit conclusions only). Excludes -s.",
+    ),
+    evidence: bool = typer.Option(
+        False,
+        "--evidence",
+        help="Also report what the answer was built from: the conclusions and messages read and the tools called.",
     ),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
     session: Optional[str] = typer.Option(None, "--session", "-s", help="Override session ID"),
@@ -252,8 +258,19 @@ def chat(
         chat_kwargs["scope"] = scope_arg
 
     try:
-        response = client.chat(query, **chat_kwargs)
-        print_result({"workspace_id": wid, "query": query, "response": response})
+        if not evidence:
+            response = client.chat(query, **chat_kwargs)
+            print_result({"workspace_id": wid, "query": query, "response": response})
+            return
+        result = client.chat(query, include_evidence=True, **chat_kwargs)
+        print_result(
+            {
+                "workspace_id": wid,
+                "query": query,
+                "response": result.content,
+                "evidence": format_evidence(result.evidence),
+            }
+        )
     except Exception as e:
         _handle_chat_error(e, "workspace", wid)
 
@@ -317,6 +334,7 @@ def _with_workspace(client, workspace_id: str):
         base_url=str(client.base_url),
         api_key=client._http.api_key if hasattr(client._http, "api_key") else None,
         workspace_id=workspace_id,
+        default_headers=identity_headers(),
     )
 
 

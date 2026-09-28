@@ -5,10 +5,32 @@ This module contains simplified prompt templates focused only on observation ext
 NO peer card instructions, NO working representation - just extract observations.
 """
 
+import re
+from datetime import datetime
 from functools import cache
 from inspect import cleandoc as c
 
 from src.utils.tokens import estimate_tokens
+
+_MESSAGE_TAG = re.compile(r"<(?=/?message\b)", re.IGNORECASE)
+
+
+def format_deriver_message(
+    idx: int, peer: str, target: str, created_at: datetime, content: str
+) -> str:
+    """Wrap one batch message in a tag carrying its index, author, and target flag.
+
+    Peer ids are restricted to ``[a-zA-Z0-9_-]`` upstream, so only the content
+    can carry markup; any ``<message``/``</message`` inside it is neutralized so
+    a message cannot forge its own tag boundary.
+    """
+    is_target = "true" if peer == target else "false"
+    time_str = created_at.strftime("%Y-%m-%d %H:%M:%S")
+    safe_content = _MESSAGE_TAG.sub("&lt;", content)
+    return (
+        f'<message idx="{idx}" peer="{peer}" target="{is_target}" time="{time_str}">'
+        f"{safe_content}</message>"
+    )
 
 
 def _normalized_custom_instructions(custom_instructions: str | None) -> str | None:
@@ -47,7 +69,7 @@ def minimal_deriver_prompt(
 
     Args:
         peer_id: The ID of the user being analyzed.
-        messages: All messages in the range (interleaving messages and new turns combined).
+        messages: Batch messages, each wrapped by ``format_deriver_message``.
 
     Returns:
         Formatted prompt string for observation extraction.
@@ -65,19 +87,22 @@ Analyze messages to extract **explicit atomic facts** about the target peer.
 RULES:
 - The target peer is the peer identified below under `Target peer:`.
 - A peer can be a human user, AI agent, bot, service, or other actor.
+- Each message is wrapped as `<message idx="N" peer="..." target="true|false" time="...">`. `target="true"` marks messages authored by the target peer; `target="false"` marks everyone else.
+- Extract ALL observations from `target="true"` messages. Use `target="false"` messages only as context to interpret them; never derive a fact about the target peer from what another peer said, did, or reported.
+- A batch may contain few or no `target="true"` messages, even when it holds many long messages from other peers (agent turns, tool output, system notices). In that case produce few or no conclusions.
 - Use the exact peer id from `Target peer:` in final observations, not the phrase "the target peer".
 - Properly attribute observations to the correct subject: if it is about the target peer, use the exact peer id as the subject. If the target peer is referencing someone or something else, make that clear.
 - Observations should make sense on their own. Each observation will be used in the future to better understand the target peer.
-- Extract ALL observations from the target peer's messages, using others as context.
 - Contextualize each observation sufficiently (e.g. "Ann is nervous about the job interview at the pharmacy" not just "Ann is nervous")
 
 <examples>
 These examples are fabricated illustrations of the output format. Never emit a conclusion for which content comes from these examples. Every conclusion must be supported by the <messages> block only.
 
 EXAMPLES (using `alice` as the target peer id):
-- EXPLICIT: "I just turned 25" → "alice is 25 years old"
-- EXPLICIT: "I took my dog for a walk in NYC" → "alice has a dog", "alice walked her dog in NYC"
-- EXPLICIT: "I've lived in NYC for six years" → "alice lives in NYC", "alice has lived in NYC for six years"
+- EXPLICIT: <message idx="0" peer="alice" target="true">I just turned 25</message> → "alice is 25 years old"
+- EXPLICIT: <message idx="1" peer="alice" target="true">I took my dog for a walk in NYC</message> → "alice has a dog", "alice walked her dog in NYC"
+- EXPLICIT: <message idx="2" peer="alice" target="true">I've lived in NYC for six years</message> → "alice lives in NYC", "alice has lived in NYC for six years"
+- NO CONCLUSION: <message idx="3" peer="assistant" target="false">I read the config file and found the port is 8080</message> → nothing; the assistant acted, not alice
 </examples>
 
 {custom_instructions_section}

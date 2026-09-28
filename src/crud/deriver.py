@@ -132,6 +132,37 @@ def active_queue_session_match(
     return match
 
 
+def queue_item_tenant_match() -> ColumnElement[bool] | None:
+    """Pin a QueueItem row to the ambient tenant, flag-aware; None flag-off (compose conditionally, as claim_rows_query does with batch_threshold_clause, so flag-off SQL is unchanged)."""
+    # region ai
+    # tenant_id is the authoritative tenant-scoped column for queue rows, not
+    # workspace_name or message_id: workspace_name is only unique per tenant
+    # (every tenant has a "default" workspace) and message ids are drawn from
+    # one global sequence, so either can collide across tenants. tenant_id
+    # does not — the queue_item_batches backfill (migration b7d2f4a81c39,
+    # the `UPDATE {schema}.queue SET tenant_id = split_part(work_unit_key,
+    # ':', 1) ...` step) derived it from the work_unit_key's tenant prefix for
+    # every row that predated the column, and every tenant-bound writer since
+    # (src/deriver/enqueue.py's _stamp_tenant_id, the reconciler scheduler,
+    # webhooks/events.py) sets it explicitly on insert. Rows with tenant_id
+    # IS NULL flag-on are the tenant-less reconciler lane (workspace_name is
+    # NULL there too, per the workspace_null_iff_reconciler check) and are
+    # left alone here, exactly as active_queue_session_match above leaves
+    # reconciler claim rows to the stale-claim GC that owns them. Fail closed
+    # flag-on with no ambient tenant, same shape as active_queue_session_match:
+    # every caller (API routes via require_auth, the deriver via
+    # process_work_unit) is tenant-bound when the flag is on.
+    # endregion
+    if not settings.MULTI_TENANT:
+        return None
+    tenant = tenant_context.get()
+    if not tenant:
+        raise ValueError(
+            "cannot match queue rows without a tenant when MULTI_TENANT is on"
+        )
+    return models.QueueItem.tenant_id == tenant
+
+
 def claim_rows_query(limit: int) -> Select[Any]:
     """The claim's locked candidate SELECT: the tenants holding least work in flight first, skipping rows a concurrent claimer holds."""
     # region ai

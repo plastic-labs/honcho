@@ -15,6 +15,9 @@ from src.deriver.scope_backfill import (
 from src.dreamer import process_dream
 from src.exceptions import ResourceNotFoundException, ValidationException
 from src.models import Message
+from src.reconciler.backfill_document_sources import (
+    run_document_sources_backfill_cycle,
+)
 from src.reconciler.queue_cleanup import cleanup_queue_items
 from src.reconciler.sync_vectors import run_vector_reconciliation_cycle
 from src.schemas import ReconcilerType, ResolvedConfiguration
@@ -132,6 +135,7 @@ async def process_item(queue_item: models.QueueItem) -> None:
                 validated.message_seq_in_session,
                 message_public_id,
                 validated.configuration,
+                queue_item_id=queue_item.id,
             )
             log_performance_metrics("summary", f"{workspace_name}_{message_id}")
 
@@ -146,7 +150,7 @@ async def process_item(queue_item: models.QueueItem) -> None:
                     queue_payload,
                 )
                 raise ValueError(f"Invalid payload structure: {str(e)}") from e
-            await process_dream(validated, workspace_name)
+            await process_dream(validated, workspace_name, queue_item_id=queue_item.id)
 
     elif task_type == "deletion":
         with sentry_sdk.start_transaction(name="process_deletion_task", op="deriver"):
@@ -202,6 +206,8 @@ async def process_representation_batch(
     observers: list[str] | None,
     observed: str | None,
     queue_item_message_ids: list[int],
+    session_id: str | None = None,
+    queue_item_ids: list[int] | None = None,
     hit_batch_token_cap: bool = False,
     was_flush_enabled: bool = False,
     batch_max_tokens: int = 0,
@@ -215,6 +221,8 @@ async def process_representation_batch(
         observers: List of observers for the messages
         observed: The observed of the messages
         queue_item_message_ids: Message IDs from queue items
+        session_id: Canonical Session.id from the queue.
+        queue_item_ids: Queue rows that triggered this batch, when available.
         hit_batch_token_cap: whether the queue batcher clamped this batch to fit
         was_flush_enabled: snapshot of DERIVER.FLUSH_ENABLED at fetch time
         batch_max_tokens: DERIVER.REPRESENTATION_BATCH_TARGET_INPUT_TOKENS snapshot
@@ -232,6 +240,8 @@ async def process_representation_batch(
         observers=observers,
         observed=observed,
         queue_item_message_ids=queue_item_message_ids,
+        session_id=session_id,
+        queue_item_ids=queue_item_ids,
         hit_batch_token_cap=hit_batch_token_cap,
         was_flush_enabled=was_flush_enabled,
         batch_max_tokens=batch_max_tokens,
@@ -382,6 +392,8 @@ async def process_reconciler(payload: ReconcilerPayload) -> None:
     - sync_vectors: Syncs pending documents/message embeddings to vector store
       and cleans up soft-deleted documents.
     - cleanup_queue: Removes old processed queue items.
+    - backfill_document_sources: Drains legacy JSONB source linkage into
+      the document_sources table.
 
     Args:
         payload: The reconciler payload containing the reconciler type
@@ -435,5 +447,9 @@ async def process_reconciler(payload: ReconcilerPayload) -> None:
                     total_duration_ms=duration_ms,
                 )
             )
+    elif reconciler_type == ReconcilerType.BACKFILL_DOCUMENT_SOURCES:
+        logger.debug("Processing backfill_document_sources task")
+        await run_document_sources_backfill_cycle()
+
     else:
         raise ValueError(f"Unsupported reconciler type: {reconciler_type}")

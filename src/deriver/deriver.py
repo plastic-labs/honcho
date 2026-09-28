@@ -23,12 +23,15 @@ from src.telemetry.prometheus.metrics import (
 )
 from src.telemetry.sentry import with_sentry_transaction
 from src.utils.config_helpers import get_configuration
-from src.utils.formatting import format_new_turn_with_timestamp
 from src.utils.representation import PromptRepresentation, Representation
 from src.utils.retryable_errors import is_retryable_error
 from src.utils.tokens import track_deriver_input_tokens
 
-from .prompts import estimate_deriver_prompt_tokens, minimal_deriver_prompt
+from .prompts import (
+    estimate_deriver_prompt_tokens,
+    format_deriver_message,
+    minimal_deriver_prompt,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +48,8 @@ async def process_representation_tasks_batch(
     observers: list[str],
     observed: str,
     queue_item_message_ids: list[int],
+    session_id: str | None = None,
+    queue_item_ids: list[int] | None = None,
     hit_batch_token_cap: bool = False,
     was_flush_enabled: bool = False,
     batch_max_tokens: int = 0,
@@ -58,6 +63,8 @@ async def process_representation_tasks_batch(
         observers: List of observer peer IDs (collections to save to).
         observed: The observed peer ID.
         queue_item_message_ids: Message IDs from queue items being processed
+        session_id: Canonical Session.id from the queue, resolved if not provided.
+        queue_item_ids: Queue rows that triggered this batch, when available.
         hit_batch_token_cap: queue batcher clamped this batch to fit
         was_flush_enabled: DERIVER.FLUSH_ENABLED snapshot at batch time
         batch_max_tokens: DERIVER.REPRESENTATION_BATCH_TARGET_INPUT_TOKENS snapshot
@@ -71,20 +78,23 @@ async def process_representation_tasks_batch(
     latest_message = messages[-1]
     earliest_message = messages[0]
 
-    # Get configuration if not provided
+    # Reuse the queue's canonical session ID, resolving it for direct/legacy callers.
     # TODO: this appears to be a very rare edge case coming out of `get_queue_item_batch` in queue_manager.py,
     # possible that we can remove this and require configuration to come through with the payload.
-    if message_level_configuration is None:
+    if message_level_configuration is None or session_id is None:
         async with tracked_db("minimal_deriver.get_config") as db:
-            message_level_configuration = get_configuration(
-                None,
-                await crud.get_session(
-                    db, latest_message.session_name, latest_message.workspace_name
-                ),
-                await crud.get_workspace(
-                    db, workspace_name=latest_message.workspace_name
-                ),
+            session = await crud.get_session(
+                db, latest_message.session_name, latest_message.workspace_name
             )
+            session_id = session.id
+            if message_level_configuration is None:
+                message_level_configuration = get_configuration(
+                    None,
+                    session,
+                    await crud.get_workspace(
+                        db, workspace_name=latest_message.workspace_name
+                    ),
+                )
 
     # Skip if disabled
     if message_level_configuration.reasoning.enabled is False:
@@ -105,10 +115,11 @@ async def process_representation_tasks_batch(
         "id",
     )
 
-    # Format messages with timestamps
     formatted_messages = "\n".join(
-        format_new_turn_with_timestamp(msg.content, msg.created_at, msg.peer_name)
-        for msg in messages
+        format_deriver_message(
+            idx, msg.peer_name, observed, msg.created_at, msg.content
+        )
+        for idx, msg in enumerate(messages)
     )
 
     # Track token usage - count only tokens from messages being processed
@@ -160,9 +171,16 @@ async def process_representation_tasks_batch(
         trace_name="minimal_deriver",
         telemetry=LLMTelemetryContext(
             workspace_name=latest_message.workspace_name,
+            session_id=session_id,
             call_purpose=CallPurpose.DERIVER_REPRESENTATION.value,
             parent_category="representation",
+            agent_type="deriver",
+            observers=observers,
             observed=observed,
+            source_message_ids=[
+                m.public_id for m in messages if m.id in queue_item_message_ids_set
+            ],
+            queue_item_ids=queue_item_ids or [],
             track_name="Minimal Deriver",
             trace_id=trace_id,
             span_id=trace_id,

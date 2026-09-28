@@ -1,5 +1,6 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, spyOn, test } from 'bun:test'
 import { ZodError } from 'zod'
+import { Honcho, NotFoundError } from '../src'
 import type { HonchoHTTPClient } from '../src/http/client'
 import { Peer } from '../src/peer'
 import { Scope } from '../src/scope'
@@ -7,15 +8,17 @@ import { Session } from '../src/session'
 import type { ScopeStatusResponse } from '../src/types/api'
 
 /**
- * Capture the body of the single request a call makes, so the wire shape the
- * server actually receives is asserted rather than the SDK's own options.
+ * Capture request details and every HTTP call, so tests can assert the wire
+ * shape and detect unexpected requests.
  */
 function capturingHttp(response: unknown): {
   http: HonchoHTTPClient
   body: () => Record<string, unknown> | undefined
   query: () => Record<string, unknown> | undefined
   path: () => string | undefined
+  calls: string[]
 } {
+  const calls: string[] = []
   let capturedBody: Record<string, unknown> | undefined
   let capturedQuery: Record<string, unknown> | undefined
   let capturedPath: string | undefined
@@ -24,6 +27,7 @@ function capturingHttp(response: unknown): {
       path: string,
       options?: { body?: Record<string, unknown> }
     ) => {
+      calls.push(`POST ${path}`)
       capturedPath = path
       capturedBody = options?.body
       return response
@@ -32,11 +36,13 @@ function capturingHttp(response: unknown): {
       path: string,
       options?: { query?: Record<string, unknown> }
     ) => {
+      calls.push(`GET ${path}`)
       capturedPath = path
       capturedQuery = options?.query
       return response
     },
     delete: async (path: string) => {
+      calls.push(`DELETE ${path}`)
       capturedPath = path
       return undefined
     },
@@ -46,6 +52,7 @@ function capturingHttp(response: unknown): {
     body: () => capturedBody,
     query: () => capturedQuery,
     path: () => capturedPath,
+    calls,
   }
 }
 
@@ -385,5 +392,58 @@ describe('Scope membership and status', () => {
     const status = await scope.status()
 
     expect(status.backfillStatus).toEqual({})
+  })
+})
+
+describe('getScope', () => {
+  test('GETs the scope route and never POSTs a get-or-create', async () => {
+    const honcho = new Honcho({ apiKey: 'test', workspaceId: 'ws' })
+    const captured = capturingHttp({
+      id: 'therapy',
+      metadata: { k: 'v' },
+      created_at: '2026-09-10T00:00:00Z',
+    })
+    ;(honcho as unknown as { _http: HonchoHTTPClient })._http = captured.http
+    ;(
+      honcho as unknown as { _ensureWorkspace: () => Promise<void> }
+    )._ensureWorkspace = async () => undefined
+
+    const scope = await honcho.getScope('therapy')
+
+    expect(captured.calls).toEqual(['GET /v3/workspaces/ws/scopes/therapy'])
+    expect(scope.id).toBe('therapy')
+    expect(scope.metadata).toEqual({ k: 'v' })
+    expect(scope.createdAt).toBe('2026-09-10T00:00:00Z')
+  })
+
+  test('failed lookup never POSTs to the scopes route', async () => {
+    const honcho = new Honcho({
+      apiKey: 'test',
+      workspaceId: 'ws',
+      baseURL: 'https://honcho.test',
+    })
+    // Keep workspace initialization real so the full request sequence is checked.
+    const fetchMock = spyOn(globalThis, 'fetch')
+      .mockRejectedValue(new Error('Unexpected request'))
+      .mockResolvedValueOnce(Response.json({ id: 'ws' }))
+      .mockResolvedValueOnce(
+        Response.json({ detail: 'Scope not found' }, { status: 404 })
+      )
+
+    try {
+      await expect(honcho.getScope('never-created')).rejects.toBeInstanceOf(
+        NotFoundError
+      )
+      const calls = fetchMock.mock.calls.map(
+        ([url, options]) =>
+          `${options?.method} ${new URL(String(url)).pathname}`
+      )
+      expect(calls).toEqual([
+        'POST /v3/workspaces',
+        'GET /v3/workspaces/ws/scopes/never-created',
+      ])
+    } finally {
+      fetchMock.mockRestore()
+    }
   })
 })

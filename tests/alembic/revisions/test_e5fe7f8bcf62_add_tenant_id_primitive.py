@@ -21,6 +21,7 @@ _TENANT_SCOPED = (
     "message_embeddings",
     "collections",
     "documents",
+    "document_sources",
     "webhook_endpoints",
     "session_peers",
 )
@@ -106,6 +107,21 @@ def verify_add_tenant_id_primitive(verifier: MigrationVerifier) -> None:
         "tenant_id",
         "id",
     ], f"workspaces PK is {pk['constrained_columns']}"
+
+    # document_sources arrives from a7c3e9f1b2d4 keyed on documents.id alone; it
+    # must leave keyed through the tenant, or its edges cannot reach a document
+    # whose key is now (tenant_id, id).
+    pk = verifier.get_inspector().get_pk_constraint("document_sources", schema=schema)
+    assert pk["constrained_columns"] == [
+        "tenant_id",
+        "derived_id",
+        "source_id",
+    ], f"document_sources PK is {pk['constrained_columns']}"
+    verifier.assert_constraint_exists(
+        "document_sources",
+        "fk_document_sources_derived_tenant_documents",
+        "foreign_key",
+    )
 
     # Tenant-scoped uniqueness replaced the global one.
     verifier.assert_constraint_exists(

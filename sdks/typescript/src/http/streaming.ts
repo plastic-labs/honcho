@@ -1,3 +1,5 @@
+import type { Evidence } from '../types/api'
+
 /**
  * Parse Server-Sent Events from a Response body.
  *
@@ -64,6 +66,8 @@ export interface DialecticStreamChunk {
   delta: {
     content?: string
   }
+  /** Set only on the terminal chunk, and only when it was requested. */
+  evidence?: Evidence | null
 }
 
 /**
@@ -76,9 +80,25 @@ export class DialecticStreamResponse implements AsyncIterable<string> {
   private generator: AsyncGenerator<string, void, undefined>
   private chunks: string[] = []
   private consumed = false
+  private evidenceSource?: () => Evidence | null
 
-  constructor(generator: AsyncGenerator<string, void, undefined>) {
+  constructor(
+    generator: AsyncGenerator<string, void, undefined>,
+    evidenceSource?: () => Evidence | null
+  ) {
     this.generator = generator
+    this.evidenceSource = evidenceSource
+  }
+
+  /**
+   * What the answer was built from, once the stream has finished.
+   *
+   * The server can only know this after the answer is complete, so it arrives
+   * on the stream's terminal chunk. Reading it before the stream is fully
+   * consumed returns null, as does a request that did not ask for evidence.
+   */
+  get evidence(): Evidence | null {
+    return this.evidenceSource?.() ?? null
   }
 
   /**
@@ -131,9 +151,13 @@ export class DialecticStreamResponse implements AsyncIterable<string> {
 export function createDialecticStream(
   response: Response
 ): DialecticStreamResponse {
+  // Captured from the terminal chunk, which is otherwise discarded.
+  let evidence: Evidence | null = null
+
   async function* streamContent(): AsyncGenerator<string, void, undefined> {
     for await (const chunk of parseSSE<DialecticStreamChunk>(response)) {
       if (chunk.done) {
+        evidence = chunk.evidence ?? null
         return
       }
       const content = chunk.delta?.content
@@ -143,5 +167,5 @@ export function createDialecticStream(
     }
   }
 
-  return new DialecticStreamResponse(streamContent())
+  return new DialecticStreamResponse(streamContent(), () => evidence)
 }

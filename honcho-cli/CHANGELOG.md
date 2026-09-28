@@ -7,10 +7,28 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-21
+
 ### Added
 
-- `honcho workspace chat` for reasoned questions across all peers (Honcho v3.1.0+)
-- `--scope` on `honcho workspace chat` and `honcho peer chat`, and `--sessions` on `honcho peer chat`, to confine recall (Honcho v3.1.0+)
+- CLI requests carry `X-Honcho-Host: honcho-cli/<version> (<platform>)` so telemetry counts them as CLI traffic rather than direct SDK use (#1181)
+- Conclusion attribution on `honcho conclusion list` and `honcho conclusion search` (Honcho v3.2.0+): every row now carries `level`, `source_ids` and `times_derived`, so an extracted fact is distinguishable from a dreamed one. Table output shows a premise count; `--json` keeps the full id list, ready to pipe into `honcho conclusion get` (#952)
+- `honcho conclusion get <id>...` fetches conclusions by ID from anywhere in the workspace, with no observer/observed pair required. Feed it a conclusion's `source_ids` to walk a reasoning chain down to the explicit facts underneath it; IDs that no longer exist are reported rather than failing the command (#952)
+- `honcho conclusion derived <id>` lists what was built on top of a conclusion — the same edge walked upward. Worth checking before deleting or correcting a fact (#952)
+- `--level` on `honcho conclusion list` and `honcho conclusion search`, and `--derived-from` on `honcho conclusion list` (#952)
+- `--evidence` on `honcho peer chat` and `honcho workspace chat` (Honcho v3.2.0+): reports the conclusions and messages the dialectic read and the tools it called. Evidence is collated from what the agent accessed rather than reported by the model, so it over-reports and costs no extra model tokens. Messages are summarised per session, since evidence carries their identity but not their text (#1129)
+
+### Changed
+
+- Requires `honcho-ai` 2.5.0 (was 2.4.0), which carries the attribution fields and the evidence-bearing chat response
+
+## [0.1.5] - 2026-09-09
+
+### Added
+
+- `honcho scope` command group: `list`, `create`, `inspect`, `sessions`, `add-sessions`, `remove-session`, `status` (Honcho v3.1.0+) (#1162)
+- `honcho workspace chat` for reasoned questions across all peers (Honcho v3.1.0+) (#1150)
+- `--scope` on `honcho workspace chat` and `honcho peer chat`, and `--sessions` on `honcho peer chat`, to confine recall (Honcho v3.1.0+) (#1151)
 
 ## [0.1.4] - 2026-08-26
 

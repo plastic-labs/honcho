@@ -1,7 +1,8 @@
 """Tenant registry API — the above-tenant provisioning surface.
 
-The control plane creates a tenant here before any tenant-scoped credential
-or write can exist. Authentication is a service secret, not a JWT — see
+The operator's provisioning system (a control plane in a hosted deployment)
+creates a tenant here before any tenant-scoped credential or write can
+exist. Authentication is a service secret, not a JWT — see
 ``require_tenant_api``.
 """
 
@@ -74,7 +75,7 @@ async def create_tenant(body: schemas.TenantCreate, response: Response):
 
 @router.get("/{tenant_id}", response_model=schemas.Tenant)
 async def get_tenant(tenant_id: Annotated[str, Path()]):
-    """Fetch a tenant row (the control plane's reconciliation read)."""
+    """Fetch a tenant row (the provisioner's reconciliation read)."""
     async with service_db("tenants.get", read_only=True) as db:
         return await tenant_crud.get_tenant(db, tenant_id)
 
