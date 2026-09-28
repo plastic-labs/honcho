@@ -6,7 +6,7 @@ import time
 import uuid
 from collections.abc import AsyncGenerator, Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import jwt
@@ -84,6 +84,25 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 _ALEMBIC_INI = _REPO_ROOT / "alembic.ini"
 _MIGRATIONS_DIR = _REPO_ROOT / "migrations"
 
+
+class _UntouchableEngine:
+    def __getattr__(self, name: str) -> object:
+        raise AssertionError(
+            f"validator touched the engine ({name!r}) when it should have been a no-op"
+        )
+
+
+def untouchable_engine() -> AsyncEngine:
+    """An engine stand-in for validators that must not reach the database.
+
+    Any attribute access — ``connect``, ``begin``, anything — fails the test, so a
+    validator that is supposed to be a no-op is proven not to open a connection.
+    Typed as ``AsyncEngine`` so call sites read like the real thing; the object
+    shares no structure with it, hence the cast through ``object``.
+    """
+    return cast(AsyncEngine, cast(object, _UntouchableEngine()))
+
+
 _RUNTIME_MOCK_TEST_BLOCKLIST_PREFIXES = (
     # Benchmarks and migration tests have their own execution/runtime constraints.
     "tests/bench/",
@@ -155,9 +174,12 @@ _RUN_ID_TIME_FORMAT = "%Y%m%d%H%M%S"
 # morning is gone by the afternoon.
 _STALE_DB_AGE_SECONDS = 2 * 60 * 60
 
-# test_db_<14-digit timestamp>_<4 hex>[_gwN] -- only names this function minted.
-# A pinned HONCHO_TEST_RUN_ID deliberately won't match, so it's never swept.
-_SWEEPABLE_DB_NAME = re.compile(r"^test_db_(\d{14})_[0-9a-f]{4}(?:_gw\d+)?$")
+# test_db_<14-digit timestamp>_<4 hex>[_tag][_gwN] -- only names _get_test_db_url
+# minted (the tag is a fixture's own throwaway database, e.g. "fresh"). A pinned
+# HONCHO_TEST_RUN_ID deliberately won't match, so it's never swept.
+_SWEEPABLE_DB_NAME = re.compile(
+    r"^test_db_(\d{14})_[0-9a-f]{4}(?:_[a-z]+)?(?:_gw\d+)?$"
+)
 
 
 def pytest_configure(config: pytest.Config) -> None:  # pyright: ignore[reportUnusedParameter]
@@ -183,12 +205,17 @@ def pytest_configure(config: pytest.Config) -> None:  # pyright: ignore[reportUn
         _sweep_stale_test_databases()
 
 
-def _get_test_db_url(worker_id: str) -> URL:
-    """Get a worker-specific test database URL for pytest-xdist parallelism."""
+def _get_test_db_url(worker_id: str, *, tag: str | None = None) -> URL:
+    """Get a worker-specific test database URL for pytest-xdist parallelism.
+
+    `tag` names a fixture's own throwaway database alongside the suite one (same
+    run id and worker suffix, so it is swept by the same rule if a run dies).
+    """
 
     run_id = os.environ.get(_RUN_ID_ENV_VAR, "local")
+    tagged = f"_{tag}" if tag else ""
     suffix = "" if worker_id == "master" else f"_{worker_id}"
-    return CONNECTION_URI.set(database=f"test_db_{run_id}{suffix}")
+    return CONNECTION_URI.set(database=f"test_db_{run_id}{tagged}{suffix}")
 
 
 def _drop_database(db_url: URL) -> None:

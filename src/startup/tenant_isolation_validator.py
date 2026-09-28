@@ -1,24 +1,40 @@
 """Startup validator for the multi-tenant isolation binding.
 
-Gates boot (API and deriver) when ``MULTI_TENANT`` is on, converting three silent
-half-states — where isolation looks enabled but isn't — into a hard boot failure:
+Gates boot (API and deriver) when ``MULTI_TENANT`` is on, converting five silent
+half-states — where isolation looks enabled but cannot hold, or cannot serve — into
+a hard boot failure. Listed in check order: the first two are settings-only and need
+no connection; the last three are skipped together when
+``MULTI_TENANT_SKIP_RLS_ASSERT`` is set (migration window only), and (3) and (4)
+introspect the database (with retry).
 
-1. Pooler vs read-path strategy. The read-path binding is a session-scoped
+1. Flag vs auth (API processes only). ``MULTI_TENANT`` on with
+   ``AUTH_USE_AUTH`` off means every request authenticates as a tenant-less admin,
+   so no tenant is ever bound and every tenant-scoped session fails closed — not a
+   leak, but a uniform outage on every data route that is hard to read from the
+   500s. Refuse to boot with one clear error instead. A deriver takes its tenant
+   from the claimed work unit's key, not a JWT, so a deriver process skips this
+   check. Each entrypoint names its own process type when it calls the validator.
+
+2. Pooler vs read-path strategy. The read-path binding is a session-scoped
    ``app.tenant`` set at checkout; it is safe under NullPool / session-mode, but a
    transaction/statement-mode pooler multiplexes backends below the SQLAlchemy
    session, so tenant A's GUC can be read by tenant B's next transaction — a
    cross-tenant read that fails OPEN (the dangerous direction). Refuse to boot in
    that combination.
 
-2. Flag vs policies. ``MULTI_TENANT`` on but the data tables lack RLS
+3. Flag vs policies. ``MULTI_TENANT`` on but the data tables lack RLS
    enabled + forced means the binding is set but nothing enforces it — no
-   isolation, no error. Refuse to boot unless ``MULTI_TENANT_SKIP_RLS_ASSERT`` is
-   set (migration window only).
+   isolation, no error.
 
-3. Role vs policies. Postgres does not enforce row-level security for a
-   superuser or a role with BYPASSRLS, so on such a role every check in (2)
+4. Role vs policies. Postgres does not enforce row-level security for a
+   superuser or a role with BYPASSRLS, so on such a role every check in (3)
    passes vacuously while isolation is actually off. Refuse to boot if the
    TENANT engine's connecting role (``DB_CONNECTION_URI``) is either.
+
+5. Flag vs service role. With RLS enforced, the cross-tenant service paths
+   (deriver claim, reconciler, dreamer) must run on a role that bypasses it; with
+   ``DB_SERVICE_CONNECTION_URI`` unset they would run on the RLS-enforced app role
+   and silently read zero rows.
 
 No-op when ``MULTI_TENANT`` is off: self-host runs on plain, RLS-free Postgres.
 
@@ -31,6 +47,7 @@ flag on without RLS in place.
 from __future__ import annotations
 
 import logging
+from typing import Literal
 
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
@@ -81,17 +98,21 @@ _RETRY_BACKOFF_SECONDS = 1.0
 async def validate_tenant_isolation(
     engine: AsyncEngine,
     *,
+    instance_type: Literal["api", "deriver"],
     app_settings: AppSettings | None = None,
 ) -> None:
     """Fail boot on a multi-tenant half-state. No-op unless MULTI_TENANT is on.
 
     Run after the DB pool is initialized and before serving traffic / processing
-    the queue — the same placement as ``validate_embedding_schema``.
+    the queue — the same placement as ``validate_embedding_schema``. The caller
+    passes its own ``instance_type`` (the API lifespan ``"api"``, the deriver
+    entrypoint ``"deriver"``), the same way both label their metrics.
     """
     s = app_settings if app_settings is not None else settings
     if not s.MULTI_TENANT:
         return
 
+    _assert_auth_enabled(s, instance_type)
     _assert_pooler_mode_safe(s.DB.POOLER_MODE)
 
     if s.MULTI_TENANT_SKIP_RLS_ASSERT:
@@ -124,6 +145,30 @@ def _assert_service_role_configured(s: AppSettings) -> None:
             + " unset: the cross-tenant service paths would run on the RLS-enforced"
             + " app role and read zero rows. Configure a service connection whose"
             + " role bypasses RLS."
+        )
+
+
+def _assert_auth_enabled(
+    s: AppSettings, instance_type: Literal["api", "deriver"]
+) -> None:
+    """API instances: require JWT auth under the flag; the claim is the tenant source."""
+    # region ai
+    # With AUTH_USE_AUTH off, auth() short-circuits every request to a tenant-less
+    # admin JWTParams and never reaches the tenant gate, so nothing binds
+    # tenant_context and the fail-closed tracked_db guard 500s every data route.
+    # No cross-tenant read is possible in that state — operability, not a security
+    # gap — but one boot error beats a storm of identical runtime errors. The
+    # deriver binds its tenant from the claimed work unit's key and verifies no
+    # JWT, so it is exempt rather than forced to carry the API's auth config.
+    # endregion
+    if instance_type != "api":
+        return
+    if not s.AUTH.USE_AUTH:
+        raise StartupValidationError(
+            "MULTI_TENANT is on but AUTH_USE_AUTH is off: with auth disabled no"
+            + " request carries a tenant claim, so no tenant is ever bound and every"
+            + " tenant-scoped request fails closed. Enable AUTH_USE_AUTH (with"
+            + " AUTH_JWT_SECRET) and issue tenant-bearing tokens."
         )
 
 
