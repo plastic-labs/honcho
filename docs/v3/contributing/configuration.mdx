@@ -574,6 +574,15 @@ DB_SQL_DEBUG=false
 DB_CONNECT_TIMEOUT_SECONDS=2
 # Seconds a migrator waits for another migrator's lock before failing
 DB_MIGRATION_LOCK_WAIT_SECONDS=300
+
+# pgvector HNSW iterative scan (requires pgvector >= 0.8.0)
+# When set, each new pool connection gets the GUC applied so filtered
+# HNSW queries scan additional candidates instead of silently
+# under-returning when out-of-scope rows consume the initial scan budget.
+# Note: pgvector may still stop before reaching top_k if hnsw.max_scan_tuples
+# or hnsw.scan_mem_multiplier thresholds are exceeded.
+# Valid values: "off", "strict_order", "relaxed_order", or unset (None).
+DB_HNSW_ITERATIVE_SCAN=strict_order
 ```
 
 ### Authentication
