@@ -581,7 +581,7 @@ DB_MIGRATION_LOCK_WAIT_SECONDS=300
 # under-returning when out-of-scope rows consume the initial scan budget.
 # Note: pgvector may still stop before reaching top_k if hnsw.max_scan_tuples
 # or hnsw.scan_mem_multiplier thresholds are exceeded.
-# Valid values: "off", "strict_order", "relaxed_order", or unset (None).
+# Valid values: "off", "strict_order" (default), "relaxed_order". Use "off" to disable.
 DB_HNSW_ITERATIVE_SCAN=strict_order
 ```
 

@@ -130,7 +130,7 @@ def _set_hnsw_iterative_scan_on_connect(
             if not previous_autocommit:
                 dbapi_connection.autocommit = False
     except Exception:
-        logger.debug("setting hnsw.iterative_scan on connect failed", exc_info=True)
+        logger.warning("setting hnsw.iterative_scan on connect failed", exc_info=True)
 
 
 if settings.DB.HNSW_ITERATIVE_SCAN:
