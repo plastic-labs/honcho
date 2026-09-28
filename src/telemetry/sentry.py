@@ -83,6 +83,7 @@ def default_before_send(event: Event, hint: Hint | None) -> Event | None:
         _is_llm_sdk_integration_event(event)
         and llm_errors.as_upstream_error(exc_value) is not None
     ):
+        # Failures will be retained and sent to Sentry later on after retries
         return None
 
     if isinstance(exc_value, HonchoException):
