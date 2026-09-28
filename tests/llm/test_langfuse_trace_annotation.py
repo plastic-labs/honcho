@@ -1,8 +1,8 @@
 # pyright: reportPrivateUsage=false, reportUnusedParameter=false
-"""Tests for the Langfuse session/trace wiring in `src/llm/runtime.py`.
+"""Tests for the Langfuse trace wiring in `src/llm/runtime.py`.
 
-One agentic run = one trace; `session_id = run_id` (globally unique, so it's
-conflict-free across tenants — unlike the Honcho session name). The run handle
+One agentic run = one trace, with no Langfuse session; the Honcho session rides
+in metadata as `honcho_session`. The run handle
 (`start_langfuse_agent_run`) opens an `as_type="span"` root and keeps it
 current via an ``ExitStack`` until `.end()`. Step spans + nested generations
 nest under the run while it's open. A single-call agent (deriver, summarizer)
@@ -151,13 +151,13 @@ class TestAnnotateInsideRun:
             "anthropic", "claude-x", telemetry=telemetry
         )
 
-        # Run handle owns user_id/session_id/trace_name — re-propagating here
-        # would clobber the run's session, so we don't propagate at all.
+        # Run handle owns user_id/trace_name — re-propagating here would
+        # clobber them, so we don't propagate at all.
         assert capture_propagate == {}
         # Per-call generation: name + model + step metadata stamped every
         # iteration (formerly only name was stamped, dropping provider/model).
         gen = langfuse_client["generation"]
-        assert gen["name"] == "Dialectic Agent LLM call"
+        assert gen["name"] == "Dialectic Agent generation"
         assert gen["model"] == "claude-x"
         assert gen["metadata"]["provider"] == "anthropic"
         assert gen["metadata"]["model"] == "claude-x"
@@ -186,13 +186,13 @@ class TestAnnotateOwnTraceRoot:
             "gemini", "gemini-x", telemetry=telemetry
         )
 
-        assert capture_propagate["session_id"] is None
+        assert "session_id" not in capture_propagate
         assert capture_propagate["user_id"] == "acme-tenant"
         # Single-call: this generation IS the trace root, so it names the trace.
         assert capture_propagate["trace_name"] == "Minimal Deriver"
         assert capture_propagate["metadata"]["observed"] == "bob"
         # The generation observation is still named per agent+action.
-        assert langfuse_client["generation"]["name"] == "Minimal Deriver LLM call"
+        assert langfuse_client["generation"]["name"] == "Minimal Deriver generation"
 
     def test_no_telemetry_still_stamps_user_id(
         self,
@@ -203,12 +203,12 @@ class TestAnnotateOwnTraceRoot:
         runtime.annotate_current_langfuse_trace("openai", "gpt-x", telemetry=None)
 
         assert capture_propagate["user_id"] == "acme-tenant"
-        assert capture_propagate["session_id"] is None
+        assert "session_id" not in capture_propagate
         assert capture_propagate["trace_name"] is None
         assert capture_propagate["metadata"]["provider"] == "openai"
-        # No telemetry → no per-agent generation name, but provider/model still set.
+        # No telemetry → the generic generation name, but provider/model still set.
         gen = langfuse_client["generation"]
-        assert gen["name"] is None
+        assert gen["name"] == "generation"
         assert gen["model"] == "gpt-x"
 
 
@@ -270,6 +270,7 @@ class TestAgentRun:
             call_purpose="dialectic.answer",
             agent_type="dialectic",
             run_id="run-abc",
+            session_id="sess-1",
             observed="bob",
             track_name="Dialectic Agent",
         )
@@ -282,16 +283,15 @@ class TestAgentRun:
             observation = langfuse_client["observation"]
             assert observation["as_type"] == "span"
             assert observation["name"] == "Dialectic Agent"
-            # Trace grouping: one Langfuse session per run, drillable per tenant.
-            assert capture_propagate["session_id"] == "run-abc"
+            # No Langfuse session; the Honcho session is a metadata key.
+            assert "session_id" not in capture_propagate
             assert capture_propagate["user_id"] == "acme-tenant"
             assert capture_propagate["trace_name"] == "Dialectic Agent"
             md = capture_propagate["metadata"]
             assert md["workspace_name"] == "ws1"
             assert md["agent_type"] == "dialectic"
             assert md["observed"] == "bob"
-            # Honcho's Session is deliberately NOT the grouping key.
-            assert "honcho_session_id" not in md
+            assert md["honcho_session"] == "sess-1"
         finally:
             handle.end()
 
@@ -323,7 +323,7 @@ class TestAgentRun:
             "claude-x",
             telemetry=LLMTelemetryContext(run_id="r2", span_id="r2"),
         )
-        assert capture_propagate.get("session_id") == "r2"
+        assert capture_propagate.get("user_id") == "acme-tenant"
 
         capture_propagate.clear()
         runtime.annotate_current_langfuse_trace(

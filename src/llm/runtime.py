@@ -49,7 +49,7 @@ def annotate_current_langfuse_trace(
     """Stamp provider/model + step metadata on the current Langfuse generation.
 
     Inside an active agent run, `propagate_attributes` already stamped
-    user_id/session_id/trace_name on the run span; this call only needs to
+    user_id/trace_name on the run span; this call only needs to
     decorate the per-iteration generation. Outside a run (single-shot
     callers — deriver, summarizer), this generation IS the trace root, so we
     also stamp the trace attrs.
@@ -68,13 +68,12 @@ def annotate_current_langfuse_trace(
         gen_metadata["provider"] = str(provider)
         gen_metadata["model"] = str(model)
         gen_name = (
-            f"{telemetry.track_name} LLM call"
+            f"{telemetry.track_name} generation"
             if telemetry is not None and telemetry.track_name
-            else None
+            else "generation"
         )
 
         if not inside_run:
-            session_id = telemetry.span_identity() if telemetry is not None else None
             trace_name = telemetry.track_name if telemetry is not None else None
             trace_metadata: dict[str, str] = dict(gen_metadata)
             if telemetry is None:
@@ -85,7 +84,6 @@ def annotate_current_langfuse_trace(
             # dead code — the enter-time side effect is the point.
             with propagate_attributes(
                 user_id=str(settings.NAMESPACE),
-                session_id=session_id,
                 trace_name=trace_name,
                 metadata=trace_metadata,
             ):
@@ -161,6 +159,7 @@ def _base_metadata(telemetry: LLMTelemetryContext) -> dict[str, str]:
         ("trace_id", telemetry.trace_id),
         ("span_id", telemetry.span_id),
         ("parent_span_id", telemetry.exported_parent_span_id()),
+        ("honcho_session", telemetry.session_id),
     ):
         if value is not None:
             metadata[key] = str(value)
@@ -316,10 +315,7 @@ def start_langfuse_agent_run(
     """
     if not settings.langfuse_inline_enabled:
         return start_captured_span("run", telemetry, input=input)
-    if telemetry is None:
-        return None
-    session_id = telemetry.span_identity()
-    if not session_id:
+    if telemetry is None or not telemetry.span_identity():
         return None
     stack = ExitStack()
     try:
@@ -331,7 +327,6 @@ def start_langfuse_agent_run(
         stack.enter_context(
             propagate_attributes(
                 user_id=str(settings.NAMESPACE),
-                session_id=session_id,
                 trace_name=name,
                 metadata=_base_metadata(telemetry),
             )
