@@ -35,7 +35,7 @@ from src.cache.client import (
     safe_cache_set,
 )
 from src.config import settings
-from src.crud.deriver import active_queue_session_match
+from src.crud.deriver import active_queue_session_match, queue_item_tenant_match
 from src.exceptions import (
     AuthenticationException,
     ConflictException,
@@ -624,12 +624,18 @@ async def delete_session(
             )
         )
 
-        # Delete QueueItem entries
-        await db.execute(
-            delete(models.QueueItem).where(
-                models.QueueItem.session_id == honcho_session.id
-            )
+        # Delete QueueItem entries. session_id is globally unique in practice,
+        # but pin to the ambient tenant, flag-aware, for defense in depth
+        # (rationale lives on the helper).
+        queue_item_match = queue_item_tenant_match()
+        session_queue_item_delete = delete(models.QueueItem).where(
+            models.QueueItem.session_id == honcho_session.id
         )
+        if queue_item_match is not None:
+            session_queue_item_delete = session_queue_item_delete.where(
+                queue_item_match
+            )
+        await db.execute(session_queue_item_delete)
 
         # Delete message vectors from vector store before deleting DB records
         # Vector IDs are {message_id}_{chunk_index}, where chunk_index is the 0-based

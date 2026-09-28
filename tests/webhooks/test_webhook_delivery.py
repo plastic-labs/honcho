@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
+from nanoid import generate as generate_nanoid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,6 +15,7 @@ from src.config import settings
 from src.db import tenant_context
 from src.models import QueueItem
 from src.utils.queue_payload import WebhookPayload
+from src.utils.work_unit import tenant_id_for_work_unit_key
 from src.webhooks import webhook_delivery
 from src.webhooks.events import QueueEmptyEvent, publish_webhook_event
 
@@ -296,3 +298,38 @@ async def test_publish_webhook_event_enqueues_nothing_without_tenant(
         tenant_context.reset(clear)
 
     assert await _webhook_keys(db_session, "ws-orphan") == []
+
+
+@pytest.mark.asyncio
+async def test_publish_webhook_event_uses_ambient_tenant_when_omitted(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A6 regression: the /test route (src/routers/webhooks.py) calls
+    # publish_webhook_event with no tenant_id, unlike the deriver's queue-drain
+    # caller. Under MULTI_TENANT with an ambient tenant (set by auth on the
+    # request), tracked_db and construct_work_unit_key both already fell back to
+    # tenant_context internally, so the work_unit_key got a tenant prefix — but
+    # QueueItem(tenant_id=tenant_id, ...) used the raw None, so the persisted row's
+    # column disagreed with its own key's prefix. The fix resolves the ambient
+    # tenant once, up front, so every use downstream agrees.
+    monkeypatch.setattr(settings, "MULTI_TENANT", True)
+    ambient_tenant_id = f"tenant-{generate_nanoid()}"
+
+    token = tenant_context.set(ambient_tenant_id)
+    try:
+        await publish_webhook_event(
+            QueueEmptyEvent(workspace_id="ws-ambient", queue_type="representation"),
+        )
+    finally:
+        tenant_context.reset(token)
+
+    result = await db_session.execute(
+        select(QueueItem).where(
+            QueueItem.task_type == "webhook",
+            QueueItem.workspace_name == "ws-ambient",
+        )
+    )
+    queue_item = result.scalar_one()
+    assert queue_item.tenant_id == ambient_tenant_id
+    assert tenant_id_for_work_unit_key(queue_item.work_unit_key) == ambient_tenant_id

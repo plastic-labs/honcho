@@ -32,7 +32,7 @@ def enabled(monkeypatch: pytest.MonkeyPatch) -> str:
 
 def _create_body(
     tenant_id: str,
-    tier: str = "pro",
+    tier: str = "shared",
     vector_correlation_id: str | None = None,
 ) -> dict[str, Any]:
     return {
@@ -122,13 +122,13 @@ def test_create_tenant(client: TestClient, enabled: str):
     tenant_id = generate_nanoid()
     response = client.post(
         "/v3/tenants",
-        json=_create_body(tenant_id, tier="enterprise", vector_correlation_id="vec-1"),
+        json=_create_body(tenant_id, tier="dedicated", vector_correlation_id="vec-1"),
         headers={HEADER: enabled},
     )
     assert response.status_code == 201, response.text
     data = response.json()
     assert data["tenant_id"] == tenant_id
-    assert data["tier"] == "enterprise"
+    assert data["tier"] == "dedicated"
     assert data["vector_correlation_id"] == "vec-1"
     assert "created_at" in data
 
@@ -136,7 +136,7 @@ def test_create_tenant(client: TestClient, enabled: str):
 def test_create_tenant_idempotent_identical(client: TestClient, enabled: str):
     """Re-POSTing identical fields returns the existing row with 200, not 201."""
     tenant_id = generate_nanoid()
-    body = _create_body(tenant_id, tier="pro", vector_correlation_id="vec-2")
+    body = _create_body(tenant_id, tier="shared", vector_correlation_id="vec-2")
 
     first = client.post("/v3/tenants", json=body, headers={HEADER: enabled})
     assert first.status_code == 201, first.text
@@ -153,14 +153,14 @@ def test_create_tenant_conflict_different_tier(client: TestClient, enabled: str)
 
     first = client.post(
         "/v3/tenants",
-        json=_create_body(tenant_id, tier="pro"),
+        json=_create_body(tenant_id, tier="shared"),
         headers={HEADER: enabled},
     )
     assert first.status_code == 201, first.text
 
     conflict = client.post(
         "/v3/tenants",
-        json=_create_body(tenant_id, tier="enterprise"),
+        json=_create_body(tenant_id, tier="dedicated"),
         headers={HEADER: enabled},
     )
     assert conflict.status_code == 409, conflict.text
@@ -176,6 +176,16 @@ def test_create_tenant_invalid_id(client: TestClient, enabled: str):
     assert response.status_code == 422, response.text
 
 
+def test_create_tenant_invalid_tier(client: TestClient, enabled: str):
+    """A tier outside the two-value contract ('shared'/'dedicated') is a 422."""
+    response = client.post(
+        "/v3/tenants",
+        json=_create_body(generate_nanoid(), tier="bogus"),
+        headers={HEADER: enabled},
+    )
+    assert response.status_code == 422, response.text
+
+
 # ---------------------------------------------------------------------------
 # Read
 # ---------------------------------------------------------------------------
@@ -186,7 +196,7 @@ def test_get_tenant(client: TestClient, enabled: str):
     tenant_id = generate_nanoid()
     created = client.post(
         "/v3/tenants",
-        json=_create_body(tenant_id, tier="pro", vector_correlation_id="vec-3"),
+        json=_create_body(tenant_id, tier="shared", vector_correlation_id="vec-3"),
         headers={HEADER: enabled},
     )
     assert created.status_code == 201, created.text
@@ -195,7 +205,7 @@ def test_get_tenant(client: TestClient, enabled: str):
     assert response.status_code == 200, response.text
     data = response.json()
     assert data["tenant_id"] == tenant_id
-    assert data["tier"] == "pro"
+    assert data["tier"] == "shared"
     assert data["vector_correlation_id"] == "vec-3"
 
 
@@ -253,7 +263,7 @@ async def test_delete_non_empty_tenant_conflict(
     so Postgres refuses the delete and the CRUD layer surfaces it as a conflict.
     """
     tenant_id = generate_nanoid()
-    db_session.add(models.Tenant(tenant_id=tenant_id, tier="pro"))
+    db_session.add(models.Tenant(tenant_id=tenant_id, tier="shared"))
     # Workspace.name is unique within a tenant; id defaults to a 21-char nanoid.
     db_session.add(models.Workspace(name=generate_nanoid(), tenant_id=tenant_id))
     await db_session.commit()

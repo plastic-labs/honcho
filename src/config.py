@@ -782,8 +782,9 @@ class TenantApiSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="TENANT_API_", extra="ignore")  # pyright: ignore
 
     # region ai
-    # The above-tenant auth plane: this secret authenticates the control plane to
-    # the tenant-registry API (/v3/tenants), never any tenant's data. It is
+    # The above-tenant auth plane: this secret authenticates the operator's
+    # provisioning system (a control plane in a hosted deployment) to the
+    # tenant-registry API (/v3/tenants), never any tenant's data. It is
     # deliberately not a JWT — under MULTI_TENANT every JWT must carry a tenant,
     # and at tenant-creation time the tenant does not exist to be claimed, so the
     # JWT plane cannot express this caller. Unset (the default) keeps the tenant
