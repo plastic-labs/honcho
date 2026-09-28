@@ -6,6 +6,7 @@ Verifies that:
 - The ``connect`` event listener is registered when the setting is enabled
 - The ``connect`` event listener is NOT registered when the setting is ``None``
 - ``_validate_pgvector_version`` raises for pgvector < 0.8.0 and passes for >= 0.8.0
+- A connection checked out from the app pool has ``hnsw.iterative_scan`` applied
 """
 
 import pytest
@@ -127,3 +128,14 @@ def test_validate_pgvector_version_accepts_new_versions() -> None:
 
     for new_version in ("0.8.0", "0.8.1", "0.9.0", "1.0.0"):
         _validate_pgvector_version(new_version)  # should not raise
+
+
+@pytest.mark.asyncio
+async def test_pool_connection_has_hnsw_iterative_scan_applied() -> None:
+    from sqlalchemy import text
+
+    from src.db import engine
+
+    async with engine.connect() as connection:
+        value = (await connection.execute(text("SHOW hnsw.iterative_scan"))).scalar()
+    assert value == "strict_order"
