@@ -1310,6 +1310,8 @@ class CacheSettings(HonchoSettings):
     # for Redis Cluster). A standalone client cannot follow the MOVED redirects
     # such deployments return for keys hashed to another shard.
     CLUSTER: bool = False
+    CONNECT_TIMEOUT_SECONDS: Annotated[float, Field(default=5.0, gt=0, le=60)] = 5.0
+    CONNECT_RETRIES: Annotated[int, Field(default=3, ge=0, le=10)] = 3
     NAMESPACE: str | None = None
     DEFAULT_TTL_SECONDS: Annotated[int, Field(default=300, ge=1, le=86_400)] = (
         300  # how long to keep items in cache

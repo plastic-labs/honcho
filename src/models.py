@@ -90,6 +90,13 @@ session_peers_table = Table(
         ["peer_name", "workspace_name"],
         ["peers.name", "peers.workspace_name"],
     ),
+    # Lets the peer-sessions list start from the peer's rows instead of walking every session
+    Index(
+        "ix_session_peers_workspace_peer",
+        "workspace_name",
+        "peer_name",
+        "session_name",
+    ),
 )
 
 
