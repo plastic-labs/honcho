@@ -39,7 +39,8 @@ async def test_prepare_query_opens_the_run_before_prefetch() -> None:
     order: list[str] = []
     run = FakeRun()
 
-    def start_run(name: str, telemetry: Any, *, input: Any = None) -> FakeRun:  # noqa: A002
+    def start_run(kind: str, telemetry: Any, *, input: Any = None) -> FakeRun:  # noqa: A002
+        assert kind == "run"
         order.append("run")
         assert input == "what does alice do?"
         return run
@@ -48,7 +49,7 @@ async def test_prepare_query_opens_the_run_before_prefetch() -> None:
         order.append("prefetch")
 
     with (
-        patch("src.dialectic.core.start_langfuse_agent_run", new=start_run),
+        patch("src.dialectic.core.start_captured_span", new=start_run),
         patch.object(agent, "_initialize_session_history", new=AsyncMock()),
         patch.object(agent, "_prefetch_relevant_observations", new=prefetch),
         patch.object(agent, "_create_tool_executor", new=AsyncMock()),
@@ -69,7 +70,7 @@ async def test_prepare_query_failure_ends_the_run_as_error() -> None:
     run = FakeRun()
 
     with (
-        patch("src.dialectic.core.start_langfuse_agent_run", return_value=run),
+        patch("src.dialectic.core.start_captured_span", return_value=run),
         patch.object(agent, "_initialize_session_history", new=AsyncMock()),
         patch.object(
             agent, "_prefetch_relevant_observations", new=AsyncMock(return_value=None)

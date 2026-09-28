@@ -38,10 +38,9 @@ from src.exceptions import HonchoException
 from src.models import Peer, Workspace
 from src.security import JWTParams, create_admin_jwt, create_jwt
 
-# Disable Langfuse for the whole suite before importing src.main: @conditional_observe
-# binds to settings.LANGFUSE_PUBLIC_KEY at import time, so blanking it here keeps mocked
-# test calls from emitting traces to a configured Langfuse backend. Tests that exercise
-# Langfuse patch settings.LANGFUSE_PUBLIC_KEY themselves.
+# Disable Langfuse for the whole suite before importing src.main so mocked test calls
+# never register the exporter against a configured Langfuse backend. Tests that
+# exercise Langfuse patch settings.LANGFUSE_PUBLIC_KEY themselves.
 settings.LANGFUSE_PUBLIC_KEY = None
 
 from src.main import app  # noqa: E402

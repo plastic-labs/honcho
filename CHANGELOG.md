@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [Unreleased]
+
+### Removed
+
+- Inline Langfuse instrumentation and the `LANGFUSE_EXPORTER_MODE` setting. Langfuse traces now come only from the exporter over the captured LLM call stream, which has been the default since 3.0.12. A leftover `LANGFUSE_EXPORTER_MODE=inline` is ignored. The exporter only registers when `TELEMETRY_ENABLED` is true, so deployments that set Langfuse keys with telemetry off no longer get traces
+
 ## [3.2.1] - 2026-09-22
 
 ### Added

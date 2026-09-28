@@ -1,7 +1,7 @@
 """Langfuse projection over the captured LLM trace stream.
 
 `LangfuseExporter` is an `LLMCallExporter` and a `SpanTreeExporter`, active when
-`LANGFUSE_EXPORTER_MODE == "exporter"`. It receives captured calls, run/step
+Langfuse keys are configured. It receives captured calls, run/step
 lifecycle records, and executed tool calls one at a time and rebuilds the
 Langfuse trace tree from their ids, since there is no live span nesting to
 inherit:

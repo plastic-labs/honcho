@@ -80,7 +80,7 @@ def _start_dream_trace(
     session_id: str | None,
     dream_type: str | None,
 ) -> CapturedAgentSpan | None:
-    """Open the dream's trace root for span-tree exporters (exporter mode only)."""
+    """Open the dream's trace root for span-tree exporters."""
     telemetry = LLMTelemetryContext(
         workspace_name=workspace_name,
         parent_category="dream",
