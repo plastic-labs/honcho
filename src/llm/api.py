@@ -25,6 +25,7 @@ from src.telemetry.reasoning_traces import log_reasoning_trace
 
 from .executor import honcho_llm_call_inner
 from .runtime import (
+    AgentRunHandle,
     AttemptPlan,
     current_attempt,
     effective_temperature,
@@ -75,6 +76,7 @@ async def honcho_llm_call(
     trace_name: str | None = None,
     iteration_callback: IterationCallback | None = None,
     telemetry: LLMTelemetryContext | None = None,
+    run: AgentRunHandle | None = None,
 ) -> HonchoLLMCallResponse[M]: ...
 
 
@@ -106,6 +108,7 @@ async def honcho_llm_call(
     trace_name: str | None = None,
     iteration_callback: IterationCallback | None = None,
     telemetry: LLMTelemetryContext | None = None,
+    run: AgentRunHandle | None = None,
 ) -> HonchoLLMCallResponse[str]: ...
 
 
@@ -137,6 +140,7 @@ async def honcho_llm_call(
     trace_name: str | None = None,
     iteration_callback: IterationCallback | None = None,
     telemetry: LLMTelemetryContext | None = None,
+    run: AgentRunHandle | None = None,
 ) -> AsyncIterator[HonchoLLMCallStreamChunk] | StreamingResponseWithMetadata: ...
 
 
@@ -167,6 +171,7 @@ async def honcho_llm_call(
     trace_name: str | None = None,
     iteration_callback: IterationCallback | None = None,
     telemetry: LLMTelemetryContext | None = None,
+    run: AgentRunHandle | None = None,
 ) -> (
     HonchoLLMCallResponse[Any]
     | AsyncIterator[HonchoLLMCallStreamChunk]
@@ -176,6 +181,9 @@ async def honcho_llm_call(
 
     Backup provider/model (if configured on the primary ModelConfig's
     `fallback`) is used on the final retry attempt, which is 3 by default.
+
+    A caller-supplied `run` stays owned by the caller; otherwise the call opens
+    and ends its own around the tool loop.
 
     Raises:
         ValidationException: If streaming and tool calling are combined
@@ -445,15 +453,14 @@ async def honcho_llm_call(
     # the trace's output instead of blank. Non-streaming results: we end in
     # the `finally`.
     run_label = (telemetry.track_name if telemetry else None) or "Agent"
-    run_handle = start_langfuse_agent_run(run_label, telemetry)
-    if run_handle is not None:
-        # Mirror execute_tool_loop's prompt-only handling: when messages is
-        # omitted it seeds the conversation with a single user message built
-        # from prompt. Record that same effective input so the run span isn't
-        # blank for prompt-only calls.
-        run_handle.update(
-            input=messages if messages else [{"role": "user", "content": prompt}]
-        )
+    owns_run = run is None
+    # Mirror execute_tool_loop's prompt-only handling: when messages is omitted
+    # it seeds the conversation with a single user message built from prompt.
+    run_handle = run or start_langfuse_agent_run(
+        run_label,
+        telemetry,
+        input=messages if messages else [{"role": "user", "content": prompt}],
+    )
     try:
         # execute_tool_loop raises ValidationException on out-of-range
         # max_tool_iterations; fail-fast is cheaper than silent clamping here.
@@ -480,16 +487,20 @@ async def honcho_llm_call(
             stream_final=stream_final_only,
             iteration_callback=iteration_callback,
             telemetry=telemetry,
-            langfuse_run_handle=run_handle,
+            langfuse_run_handle=run_handle if owns_run else None,
         )
     except BaseException:
-        if run_handle is not None:
-            run_handle.end()
+        if run_handle is not None and owns_run:
+            run_handle.end(is_error=True)
         raise
     # Streaming wrapper owns the handle and closes it after drain;
     # non-streaming paths (always a HonchoLLMCallResponse here) close it now
     # with the final content as output.
-    if run_handle is not None and isinstance(result, HonchoLLMCallResponse):
+    if (
+        run_handle is not None
+        and owns_run
+        and isinstance(result, HonchoLLMCallResponse)
+    ):
         run_handle.end(output=result.content)
     if trace_name and isinstance(result, HonchoLLMCallResponse):
         log_reasoning_trace(

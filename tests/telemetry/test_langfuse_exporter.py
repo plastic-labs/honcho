@@ -15,7 +15,7 @@ import pytest
 
 from src.config import settings
 from src.llm.backend import CompletionResult, ToolCallResult
-from src.llm.capture import build_captured_call
+from src.llm.capture import CapturedSpan, CapturedToolCall, build_captured_call
 from src.llm.types import LLMTelemetryContext
 from src.telemetry import langfuse_session
 from src.telemetry.langfuse_exporter import LangfuseExporter
@@ -45,7 +45,11 @@ class FakeObs:
         self._otel_span = FakeOtelSpan(
             trace_context.get("parent_span_id") or "sdk-placeholder"
         )
+        self.updates: dict[str, object] = {}
         self.ended = False
+
+    def update(self, **kwargs: object) -> None:
+        self.updates.update(kwargs)
 
     def end(self, *, end_time: int | None = None) -> None:
         self.ended = True
@@ -134,6 +138,66 @@ def _call(
         was_fallback=False,
         was_stream=False,
         finish_reason=finish_reason,
+        duration_ms=duration_ms,
+    )
+
+
+def _span(
+    kind: str,
+    phase: str,
+    *,
+    run_id: str = "r1",
+    agent_type: str | None = "dialectic",
+    parent_category: str = "dialectic",
+    track_name: str = "Dialectic Agent",
+    iteration: int | None = None,
+    input: object = None,
+    output: object = None,
+    is_error: bool = False,
+    time_ns: int | None = None,
+) -> CapturedSpan:
+    return CapturedSpan(
+        kind=kind,
+        phase=phase,
+        time_ns=time_ns or time.time_ns(),
+        trace_id=run_id,
+        run_id=run_id,
+        span_id=run_id,
+        iteration=iteration,
+        workspace_name="ws",
+        call_purpose="dialectic.answer",
+        parent_category=parent_category,
+        agent_type=agent_type,
+        session_id=None,
+        observer="obs",
+        observed="peer",
+        peer_name="peer",
+        track_name=track_name,
+        input=input,
+        output=output,
+        is_error=is_error,
+    )
+
+
+def _tool(
+    name: str,
+    *,
+    iteration: int | None,
+    run_id: str = "r1",
+    duration_ms: float = 250.0,
+    is_error: bool = False,
+) -> CapturedToolCall:
+    return CapturedToolCall(
+        run_id=run_id,
+        agent_type="dialectic",
+        workspace_name="ws",
+        iteration=iteration,
+        tool_call_seq=0,
+        tool_call_id="tc-0",
+        name=name,
+        input={"q": name},
+        output=f"{name} result",
+        is_error=is_error,
         duration_ms=duration_ms,
     )
 
@@ -289,9 +353,10 @@ def test_generation_name_uses_generation_suffix(_exporter_env: FakeClient):
     assert step.kwargs["name"] == "Dialectic Agent step"
 
 
-def test_tool_calls_become_spans_under_the_step(_exporter_env: FakeClient):
+def test_executed_tool_calls_become_spans_under_the_step(_exporter_env: FakeClient):
     client = _exporter_env
-    LangfuseExporter().export(
+    exporter = LangfuseExporter()
+    exporter.export(
         _call(
             run_id="r1",
             trace_id="r1",
@@ -300,6 +365,10 @@ def test_tool_calls_become_spans_under_the_step(_exporter_env: FakeClient):
             tool_names=["search_memory", "search_messages"],
         )
     )
+    # Requested tool calls alone don't make spans; executed ones do.
+    assert not [o for o in client.observations if o.kwargs["as_type"] == "tool"]
+    exporter.export_tool_call(_tool("search_memory", iteration=1, duration_ms=300.0))
+    exporter.export_tool_call(_tool("search_messages", iteration=1, is_error=True))
 
     spans = [o for o in client.observations if o.kwargs["as_type"] == "span"]
     gen = [o for o in client.observations if o.kwargs["as_type"] == "generation"][0]
@@ -311,8 +380,16 @@ def test_tool_calls_become_spans_under_the_step(_exporter_env: FakeClient):
     for t in tools:
         assert t.kwargs["trace_context"]["parent_span_id"] == step_span.id
     assert gen.kwargs["trace_context"]["parent_span_id"] == step_span.id
-    # The model's requested input args ride on the tool span.
     assert tools[0].kwargs["input"] == {"q": "search_memory"}
+    assert tools[0].kwargs["output"] == "search_memory result"
+    assert _latency_ns(tools[0]) == 300_000_000
+    assert tools[1].kwargs["level"] == "ERROR"
+    assert tools[0]._otel_span.attributes["langfuse.trace.name"] == "Dialectic Agent"
+
+
+def test_tool_call_without_a_run_is_skipped(_exporter_env: FakeClient):
+    LangfuseExporter().export_tool_call(_tool("search_memory", iteration=1))
+    assert _exporter_env.observations == []
 
 
 def test_only_the_root_span_keeps_as_root(_exporter_env: FakeClient):
@@ -322,7 +399,8 @@ def test_only_the_root_span_keeps_as_root(_exporter_env: FakeClient):
     from langfuse import LangfuseOtelSpanAttributes as Attr
 
     client = _exporter_env
-    LangfuseExporter().export(
+    exporter = LangfuseExporter()
+    exporter.export(
         _call(
             run_id="r1",
             trace_id="r1",
@@ -331,6 +409,7 @@ def test_only_the_root_span_keeps_as_root(_exporter_env: FakeClient):
             tool_names=["search_memory"],
         )
     )
+    exporter.export_tool_call(_tool("search_memory", iteration=1))
 
     def is_demoted(obs: FakeObs) -> bool:
         return obs._otel_span.attributes.get(Attr.AS_ROOT) is False
@@ -514,3 +593,142 @@ def test_non_recording_span_is_not_backdated(_exporter_env: FakeClient):
     (gen,) = client.observations
     assert not hasattr(gen._otel_span, "_start_time")
     assert gen.ended
+
+
+def test_lifecycle_run_spans_the_whole_run(_exporter_env: FakeClient):
+    client = _exporter_env
+    exporter = LangfuseExporter()
+    exporter.export_span(_span("run", "start", input="what does alice do?"))
+    exporter.export_span(_span("step", "start", iteration=1))
+    exporter.export(
+        _call(
+            run_id="r1",
+            trace_id="r1",
+            iteration=1,
+            track_name="Dialectic Agent",
+            duration_ms=800.0,
+        )
+    )
+    exporter.export_tool_call(_tool("search_memory", iteration=1))
+    exporter.export_span(_span("step", "end", iteration=1))
+    # Streamed tail: no step of its own.
+    exporter.export(
+        _call(
+            run_id="r1",
+            trace_id="r1",
+            iteration=3,
+            track_name="Dialectic Agent",
+            duration_ms=400.0,
+        )
+    )
+    run, step, gen, tool, tail = client.observations
+    assert not run.ended
+    end_ns = time.time_ns()
+    exporter.export_span(_span("run", "end", output="robots", time_ns=end_ns))
+
+    assert run.kwargs["input"] == "what does alice do?"
+    assert run.updates["output"] == "robots"
+    assert run._otel_span.end_time == end_ns
+    assert run._otel_span._parent is None
+    assert step.kwargs["trace_context"]["parent_span_id"] == run.id
+    assert gen.kwargs["trace_context"]["parent_span_id"] == step.id
+    assert tool.kwargs["trace_context"]["parent_span_id"] == step.id
+    assert tail.kwargs["trace_context"]["parent_span_id"] == run.id
+    # Run and step cover their children, not just the first generation.
+    tool_end, step_end = tool._otel_span.end_time, step._otel_span.end_time
+    assert tool_end is not None and step_end is not None
+    assert step_end >= tool_end
+    assert end_ns >= step_end
+    for obs in client.observations:
+        assert obs._otel_span.attributes["user.id"] == "tenant1"
+        assert obs._otel_span.attributes["langfuse.trace.name"] == "Dialectic Agent"
+
+
+def test_lifecycle_run_end_marks_errors(_exporter_env: FakeClient):
+    client = _exporter_env
+    exporter = LangfuseExporter()
+    exporter.export_span(_span("run", "start"))
+    exporter.export_span(_span("step", "start", iteration=1))
+    exporter.export_span(_span("run", "end", is_error=True))
+
+    run, step = client.observations
+    assert run.updates["level"] == "ERROR"
+    # A step left open when its run ends is closed with it.
+    assert step.ended
+
+
+def test_lifecycle_dream_root_spans_both_specialists(_exporter_env: FakeClient):
+    client = _exporter_env
+    exporter = LangfuseExporter()
+    dream = {"run_id": "d1", "parent_category": "dream"}
+    exporter.export_span(
+        _span("trace", "start", agent_type=None, track_name="Dream", **dream)
+    )
+    for agent in ("deduction", "induction"):
+        track = f"Dreamer/{agent}"
+        exporter.export_span(
+            _span("run", "start", agent_type=agent, track_name=track, **dream)
+        )
+        exporter.export(
+            _call(
+                run_id="d1",
+                trace_id="d1",
+                iteration=1,
+                agent_type=agent,
+                parent_category="dream",
+                track_name=track,
+            )
+        )
+        exporter.export_span(
+            _span("run", "end", agent_type=agent, track_name=track, **dream)
+        )
+    root = client.observations[0]
+    assert not root.ended
+    exporter.export_span(
+        _span(
+            "trace",
+            "end",
+            agent_type=None,
+            track_name="Dream",
+            output={"deduction": "ok"},
+            **dream,
+        )
+    )
+
+    assert root.kwargs["name"] == "Dream"
+    assert root.updates["output"] == {"deduction": "ok"}
+    assert [o for o in client.observations if o._otel_span._parent is None] == [root]
+    runs = [
+        o
+        for o in client.observations
+        if o.kwargs["as_type"] == "span"
+        and str(o.kwargs["name"]).startswith("Dreamer/")
+    ]
+    assert [r.kwargs["trace_context"]["parent_span_id"] for r in runs] == [
+        root.id,
+        root.id,
+    ]
+    assert all(r.ended for r in runs)
+    assert {
+        o._otel_span.attributes.get("langfuse.trace.name") for o in client.observations
+    } == {"Dream"}
+
+
+def test_reset_ends_open_lifecycle_spans(_exporter_env: FakeClient):
+    exporter = LangfuseExporter()
+    exporter.export_span(_span("run", "start"))
+    (run,) = _exporter_env.observations
+    langfuse_session.reset()
+    assert run.ended
+
+
+def test_eviction_ends_open_lifecycle_spans(
+    _exporter_env: FakeClient, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr(langfuse_session, "_MAX_TRACES", 1)
+    exporter = LangfuseExporter()
+    exporter.export_span(_span("run", "start", run_id="r1"))
+    exporter.export_span(_span("run", "start", run_id="r2"))
+    first, second = _exporter_env.observations
+    assert first.ended
+    assert not second.ended
