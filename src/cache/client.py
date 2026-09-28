@@ -81,10 +81,28 @@ SafeRedisCluster.initialize = _safe_cluster_initialize
 SafeRedisCluster.__aenter__ = _safe_cluster_initialize
 # endregion
 
+# region ai
+# Compatibility shim: redis-py 8.x `send_packed_command` under uvloop.
+#
+# REMOVE THIS once redis-py maps a write to a closed transport to
+# ConnectionError itself. Check `AbstractConnection.send_packed_command`
+# upstream: if it catches RuntimeError from a closing transport (or checks
+# `transport.is_closing()` before writing), this block is dead weight and should
+# go with the redis-py bump.
+#
+# Upstream: https://github.com/redis/redis-py/issues/4352
+#
 # uvloop raises RuntimeError when writing to a transport the peer already closed
-# (e.g. an idle pooled connection Redis dropped). redis-py only maps OSError to
-# ConnectionError, so relabel it; otherwise Retry won't reconnect and cashews
-# won't degrade gracefully.
+# (e.g. an idle pooled connection Redis dropped); the default asyncio loop does
+# not raise there, so redis-py only expects OSError and lets RuntimeError escape.
+# That matters because:
+#   * Retry only retries ConnectionError/TimeoutError, so it never reconnects.
+#   * RuntimeError is not in the tuple cashews catches, so it propagates into
+#     request handling instead of degrading.
+#
+# `connection_class=` would be the supported hook, but RedisCluster hard-codes
+# `Connection` (redis/asyncio/cluster.py in 8.1) and we run cluster in prod, so
+# this patches the base class globally.
 _send_packed_command = AbstractConnection.send_packed_command
 
 
@@ -93,12 +111,16 @@ async def _send_packed_command_or_connection_error(
     command: bytes | str | Iterable[bytes],
     check_health: bool = True,
 ) -> None:
-    # Snapshot before sending: the wrapped method disconnects (closing the
-    # transport) before re-raising, so checking afterwards is always true.
+    # The health check can reconnect onto a new transport, so run it first and
+    # snapshot the transport the write will actually use. Snapshot before
+    # sending: the wrapped method disconnects (closing the transport) before
+    # re-raising, so checking afterwards is always true.
+    if check_health:
+        await self.check_health()
     writer = self._writer  # pyright: ignore[reportPrivateUsage]
     was_closing = writer is not None and writer.transport.is_closing()
     try:
-        await _send_packed_command(self, command, check_health)
+        await _send_packed_command(self, command, False)
     except RuntimeError as e:
         if not was_closing:
             raise
@@ -108,6 +130,7 @@ async def _send_packed_command_or_connection_error(
 
 
 AbstractConnection.send_packed_command = _send_packed_command_or_connection_error
+# endregion
 
 
 # Query parameters that carry secrets when configured via URL:

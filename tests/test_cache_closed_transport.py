@@ -88,3 +88,40 @@ async def _raise_runtime_error_on_open_connection() -> None:
 def test_runtime_error_on_open_transport_is_not_relabeled():
     with pytest.raises(RuntimeError, match="unrelated bug"):
         uvloop.run(_raise_runtime_error_on_open_connection())
+
+
+async def _runtime_error_after_health_check_reconnect() -> None:
+    server = await asyncio.start_server(_serve, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    connection = Connection(
+        host="127.0.0.1",
+        port=port,
+        socket_timeout=1,
+        health_check_interval=30,
+        retry=Retry(NoBackoff(), 1, supported_errors=(redis_exc.ConnectionError,)),
+    )
+    send = connection._send_packed_command  # pyright: ignore[reportPrivateUsage]
+
+    async def _fail_get(command: list[bytes]) -> None:
+        if b"GET" in b"".join(command):
+            raise RuntimeError("unrelated bug")
+        await send(command)
+
+    try:
+        await connection.connect()
+        assert connection._writer is not None  # pyright: ignore[reportPrivateUsage]
+        connection._writer.transport.abort()  # pyright: ignore[reportPrivateUsage]
+        await asyncio.sleep(0.05)
+        connection.next_health_check = -1
+        # The health check reconnects onto a live transport before the write.
+        connection._send_packed_command = _fail_get  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]
+        await connection.send_command("GET", "key")
+    finally:
+        await connection.disconnect()
+        server.close()
+        await server.wait_closed()
+
+
+def test_runtime_error_after_health_check_reconnect_is_not_relabeled():
+    with pytest.raises(RuntimeError, match="unrelated bug"):
+        uvloop.run(_runtime_error_after_health_check_reconnect())
