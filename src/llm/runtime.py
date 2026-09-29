@@ -7,24 +7,29 @@ Owns:
 - Per-call effective config construction (applying caller kwarg overrides onto
   the selected ModelConfig).
 - Retry attempt tracking via a ContextVar, plus the temperature-bump heuristic.
+- Run/step lifecycle reporting to span-tree exporters (CapturedAgentSpan).
 """
 
 from __future__ import annotations
 
 import logging
-from contextlib import ExitStack
+import time
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 from src.config import (
     ConfiguredModelSettings,
     ModelConfig,
     ModelTransport,
     resolve_model_config,
-    settings,
 )
 
+from .capture import (
+    build_captured_span,
+    dispatch_captured_span,
+    has_span_tree_exporters,
+)
 from .registry import backend_for_provider, client_for_model_config
 from .types import LLMTelemetryContext, ProviderClient, ReasoningEffortType
 
@@ -34,316 +39,48 @@ logger = logging.getLogger(__name__)
 current_attempt: ContextVar[int] = ContextVar("current_attempt", default=0)
 
 
-def annotate_current_langfuse_trace(
-    provider: ModelTransport,
-    model: str,
-    *,
-    telemetry: LLMTelemetryContext | None = None,
-) -> None:
-    """Stamp provider/model + step metadata on the current Langfuse generation.
-
-    Inside an active agent run, `propagate_attributes` already stamped
-    user_id/session_id/trace_name on the run span; this call only needs to
-    decorate the per-iteration generation. Outside a run (single-shot
-    callers — deriver, summarizer), this generation IS the trace root, so we
-    also stamp the trace attrs.
-
-    `model`/`metadata` are set on every call regardless of `inside_run`, so
-    every multi-turn iteration carries provider/model attribution.
-    """
-    if not settings.langfuse_inline_enabled:
-        return
-
-    try:
-        from langfuse import get_client, propagate_attributes
-
-        inside_run = telemetry is not None and telemetry.parent_span_id is not None
-        gen_metadata = _step_metadata(telemetry) if telemetry is not None else {}
-        gen_metadata["provider"] = str(provider)
-        gen_metadata["model"] = str(model)
-        gen_name = (
-            f"{telemetry.track_name} LLM call"
-            if telemetry is not None and telemetry.track_name
-            else None
-        )
-
-        if not inside_run:
-            session_id = telemetry.span_identity() if telemetry is not None else None
-            trace_name = telemetry.track_name if telemetry is not None else None
-            trace_metadata: dict[str, str] = dict(gen_metadata)
-            if telemetry is None:
-                trace_metadata.setdefault("namespace", str(settings.NAMESPACE))
-            # Empty body is intentional: propagate_attributes stamps the active
-            # @observe generation (this trace root, for single-shot callers) at
-            # __enter__; there are no child spans to scope here. Don't delete as
-            # dead code — the enter-time side effect is the point.
-            with propagate_attributes(
-                user_id=str(settings.NAMESPACE),
-                session_id=session_id,
-                trace_name=trace_name,
-                metadata=trace_metadata,
-            ):
-                pass
-
-        get_client().update_current_generation(
-            name=gen_name,
-            model=str(model),
-            metadata=gen_metadata,
-        )
-    except Exception as exc:  # pragma: no cover - best-effort telemetry
-        logger.debug("Failed to update Langfuse trace metadata: %s", exc)
-
-
-def annotate_current_generation_io(
-    *,
-    input: Any = None,  # noqa: A002 - mirrors langfuse's `input` kwarg name
-    output: Any = None,
-    model_parameters: dict[str, Any] | None = None,
-    usage_details: dict[str, Any] | None = None,
-) -> None:
-    """Set explicit input/output/model_parameters/usage on the current generation.
-
-    Used in place of ``@observe``'s auto-capture (disabled on
-    ``honcho_llm_call_inner``) so the provider client and api-key-bearing
-    ``ModelConfig`` arguments are never serialized into traces. Auto-capture
-    deep-copies those args, producing half-constructed clients whose teardown
-    raised ``AsyncHttpxClientWrapper ... no attribute '_state'`` /
-    ``BaseApiClient ... no attribute '_http_options'`` (HONCHO-4HA) and leaked
-    ``ModelConfig.api_key``. We instead hand Langfuse curated, serializable
-    values: ``messages`` in, response out, and the call's tuning knobs as
-    ``model_parameters`` — preserving (and tidying) full trace fidelity.
-
-    Best-effort: telemetry must never fail the LLM call.
-    """
-    # Gated on inline mode (NOT just key presence): this writes to the *active*
-    # @observe generation span, which only exists in inline mode. In exporter
-    # mode `conditional_observe` applies no decorator.
-    if not settings.langfuse_inline_enabled:
-        return
-    payload: dict[str, Any] = {}
-    if input is not None:
-        payload["input"] = input
-    if output is not None:
-        payload["output"] = output
-    if model_parameters:
-        payload["model_parameters"] = model_parameters
-    if usage_details:
-        payload["usage_details"] = usage_details
-    if not payload:
-        return
-    try:
-        from langfuse import get_client
-
-        get_client().update_current_generation(**payload)
-    except Exception as exc:  # pragma: no cover - best-effort telemetry
-        logger.debug("Failed to set Langfuse generation IO: %s", exc)
-
-
-def _base_metadata(telemetry: LLMTelemetryContext) -> dict[str, str]:
-    """Static routing/attribution metadata (everything except ``iteration``).
-
-    Rebuilt per run (cheap); callers that need ``iteration`` copy and add it.
-    """
-    metadata: dict[str, str] = {"namespace": str(settings.NAMESPACE)}
-    for key, value in (
-        ("workspace_name", telemetry.workspace_name),
-        ("call_purpose", telemetry.call_purpose),
-        ("agent_type", telemetry.agent_type),
-        ("observer", telemetry.observer),
-        ("observed", telemetry.observed),
-        ("peer_name", telemetry.peer_name),
-        ("trace_id", telemetry.trace_id),
-        ("span_id", telemetry.span_id),
-        ("parent_span_id", telemetry.exported_parent_span_id()),
-    ):
-        if value is not None:
-            metadata[key] = str(value)
-    return metadata
-
-
-def _step_metadata(
-    telemetry: LLMTelemetryContext,
-    base: dict[str, str] | None = None,
-) -> dict[str, str]:
-    """Per-step metadata: ``base`` (or freshly computed) plus the per-step
-    ``iteration`` / ``step_seq`` / ``attempt`` counters."""
-    metadata = dict(base) if base is not None else _base_metadata(telemetry)
-    if telemetry.iteration is not None:
-        metadata["iteration"] = str(telemetry.iteration)
-    metadata["step_seq"] = str(telemetry.step_seq)
-    metadata["attempt"] = str(telemetry.attempt)
-    return metadata
-
-
 @dataclass
-class LangfuseAgentRun:
-    """Imperative handle for the run-level Langfuse span.
+class CapturedAgentSpan:
+    """Reports a trace root, run, or step's start and end to span-tree exporters."""
 
-    Owns an ``ExitStack`` that keeps ``start_as_current_observation`` and
-    ``propagate_attributes`` open until ``.end()``. This lets the run span
-    outlive the function that created it — streaming flows transfer the
-    handle to the response wrapper, which calls ``.end(output=...)`` after
-    the stream drains. While the handle is alive, the run span is the
-    current OTel observation, so step spans and auto-instrumented LLM
-    generations nest under it without any ContextVar choreography.
-
-    Use ``start_langfuse_agent_run`` to construct; never instantiate directly.
-    """
-
-    span: Any  # LangfuseSpan; opaque to keep src/llm/ free of langfuse imports.
-    _stack: ExitStack
+    telemetry: LLMTelemetryContext
+    kind: Literal["trace", "run", "step"]
     _ended: bool = field(default=False)
 
-    def update(self, **kwargs: Any) -> None:
-        """Set input/output/metadata on the run span (best-effort, no-op if ended)."""
-        if self._ended or self.span is None:
-            return
-        try:
-            self.span.update(**kwargs)
-        except Exception as exc:  # pragma: no cover - best-effort telemetry
-            logger.debug("Failed to update Langfuse run span: %s", exc)
-
-    def end(self, *, output: Any = None) -> None:
-        """Stamp final output (optional) and close the run span. Idempotent."""
+    def end(self, *, output: Any = None, is_error: bool = False) -> None:
+        """Report the end (with optional output). Idempotent."""
         if self._ended:
             return
         self._ended = True
-        try:
-            if self.span is not None and output is not None:
-                self.span.update(output=output)
-        except Exception as exc:  # pragma: no cover - best-effort telemetry
-            logger.debug("Failed to set Langfuse run output: %s", exc)
-        try:
-            self._stack.close()
-        except Exception as exc:  # pragma: no cover - best-effort telemetry
-            logger.debug("Failed to close Langfuse run span: %s", exc)
-
-
-def start_langfuse_agent_run(
-    name: str, telemetry: LLMTelemetryContext | None
-) -> LangfuseAgentRun | None:
-    """Open the one run-level Langfuse trace per agentic run, imperatively.
-
-    Returns ``None`` when Langfuse is disabled or there's no span identity
-    (single-shot callers without a ``span_id``/``run_id`` — those self-stamp
-    via ``annotate_current_langfuse_trace``). When non-None, the caller MUST
-    eventually call ``.end()`` — typically in a ``finally`` block, or by
-    transferring ownership to the streaming wrapper.
-    """
-    if not settings.langfuse_inline_enabled or telemetry is None:
-        return None
-    session_id = telemetry.span_identity()
-    if not session_id:
-        return None
-    stack = ExitStack()
-    try:
-        from langfuse import get_client, propagate_attributes
-
-        span = stack.enter_context(
-            get_client().start_as_current_observation(as_type="span", name=name)
-        )
-        stack.enter_context(
-            propagate_attributes(
-                user_id=str(settings.NAMESPACE),
-                session_id=session_id,
-                trace_name=name,
-                metadata=_base_metadata(telemetry),
+        dispatch_captured_span(
+            build_captured_span(
+                self.telemetry,
+                kind=self.kind,
+                phase="end",
+                time_ns=time.time_ns(),
+                output=output,
+                is_error=is_error,
             )
         )
-    except Exception as exc:  # pragma: no cover - best-effort telemetry
-        logger.debug("Failed to open Langfuse agent run: %s", exc)
-        stack.close()
+
+
+def start_captured_span(
+    kind: Literal["trace", "run", "step"],
+    telemetry: LLMTelemetryContext | None,
+    *,
+    input: Any = None,  # noqa: A002 - mirrors the observation field name
+) -> CapturedAgentSpan | None:
+    """Report a start to span-tree exporters. ``None`` when none are registered."""
+    if telemetry is None or not telemetry.span_identity():
         return None
-
-    return LangfuseAgentRun(span=span, _stack=stack)
-
-
-@dataclass
-class LangfuseAgentStep:
-    """Imperative handle for a per-iteration step span under the run root.
-
-    Owns an ``ExitStack`` holding ``start_as_current_observation`` open until
-    ``.end()``. While alive the step span is the current OTel observation,
-    so the LLM generation (auto-instrumented or otherwise) nests under it.
-    No trace attrs (the run root carries them); just the per-step
-    ``iteration`` metadata.
-    """
-
-    span: Any
-    _stack: ExitStack
-    _ended: bool = field(default=False)
-
-    def update(self, **kwargs: Any) -> None:
-        """Set input/output/metadata on the step span (best-effort, no-op if ended)."""
-        if self._ended or self.span is None:
-            return
-        try:
-            self.span.update(**kwargs)
-        except Exception as exc:  # pragma: no cover - best-effort telemetry
-            logger.debug("Failed to update Langfuse step span: %s", exc)
-
-    def annotate_io(
-        self,
-        messages: list[dict[str, Any]],
-        content: Any,
-        tool_calls: list[dict[str, Any]],
-    ) -> None:
-        """Stamp this turn's messages-in / content-or-tool-summary-out.
-
-        On a tool-calling turn the model returns no text yet, so we summarize
-        the tool calls for the step output preview; otherwise the assistant
-        text is used.
-        """
-        if self._ended or self.span is None:
-            return
-        if isinstance(content, str) and content.strip():
-            output: Any = content
-        elif tool_calls:
-            output = {"tool_calls": [tc.get("name") for tc in tool_calls]}
-        else:
-            output = content
-        self.update(input=messages, output=output)
-
-    def end(self, *, output: Any = None) -> None:
-        """Stamp final output (optional) and close the step span. Idempotent."""
-        if self._ended:
-            return
-        self._ended = True
-        try:
-            if self.span is not None and output is not None:
-                self.span.update(output=output)
-        except Exception as exc:  # pragma: no cover - best-effort telemetry
-            logger.debug("Failed to set Langfuse step output: %s", exc)
-        try:
-            self._stack.close()
-        except Exception as exc:  # pragma: no cover - best-effort telemetry
-            logger.debug("Failed to close Langfuse step span: %s", exc)
-
-
-def start_langfuse_agent_step(
-    name: str, telemetry: LLMTelemetryContext | None
-) -> LangfuseAgentStep | None:
-    """Open a per-iteration step span, imperatively. Returns ``None`` when
-    Langfuse is disabled or there's no span identity (no agent run to nest under).
-    """
-    if not settings.langfuse_inline_enabled or telemetry is None:
+    if not has_span_tree_exporters():
         return None
-    if not telemetry.span_identity():
-        return None
-    stack = ExitStack()
-    try:
-        from langfuse import get_client
-
-        span = stack.enter_context(
-            get_client().start_as_current_observation(
-                as_type="span", name=name, metadata=_step_metadata(telemetry)
-            )
+    dispatch_captured_span(
+        build_captured_span(
+            telemetry, kind=kind, phase="start", time_ns=time.time_ns(), input=input
         )
-    except Exception as exc:  # pragma: no cover - best-effort telemetry
-        logger.debug("Failed to open Langfuse agent step: %s", exc)
-        stack.close()
-        return None
-    return LangfuseAgentStep(span=span, _stack=stack)
+    )
+    return CapturedAgentSpan(telemetry=telemetry, kind=kind)
 
 
 @dataclass(frozen=True)
@@ -550,10 +287,7 @@ def resolve_backend_for_plan(plan: AttemptPlan) -> Any:
 
 __all__ = [
     "AttemptPlan",
-    "LangfuseAgentRun",
-    "LangfuseAgentStep",
-    "annotate_current_generation_io",
-    "annotate_current_langfuse_trace",
+    "CapturedAgentSpan",
     "current_attempt",
     "effective_config_for_call",
     "effective_temperature",
@@ -563,6 +297,5 @@ __all__ = [
     "resolve_backend_for_plan",
     "resolve_runtime_model_config",
     "select_model_config_for_attempt",
-    "start_langfuse_agent_run",
-    "start_langfuse_agent_step",
+    "start_captured_span",
 ]

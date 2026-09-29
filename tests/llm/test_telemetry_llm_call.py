@@ -688,9 +688,9 @@ class TestStreamingResponseTokenWriteBack:
 
 
 class TestStreamingResponseRunHandleClose:
-    """When a `langfuse_run_handle` is transferred to the streaming wrapper,
-    the wrapper owns it: the accumulated streamed text is stamped as the run
-    span's output and the span is closed exactly once when the stream drains.
+    """When a `run_span` is transferred to the streaming wrapper, the wrapper
+    owns it: the accumulated streamed text is stamped as the run span's output
+    and the span is closed exactly once when the stream drains.
     The close lives in a `finally`, so an early-exit caller still closes the
     span rather than leaking it.
     """
@@ -722,7 +722,7 @@ class TestStreamingResponseRunHandleClose:
             output_tokens=0,
             cache_creation_input_tokens=0,
             cache_read_input_tokens=0,
-            langfuse_run_handle=handle,
+            run_span=handle,
         )
 
         async for _ in wrapper:
@@ -731,7 +731,7 @@ class TestStreamingResponseRunHandleClose:
         # Closed exactly once, with the concatenated streamed text as output.
         assert handle.end_calls == ["hello"]
         # Ownership released so a second drain can't double-close.
-        assert wrapper._langfuse_run_handle is None
+        assert wrapper._run_span is None
 
     @pytest.mark.asyncio
     async def test_abandoned_stream_still_closes_via_finally(self):
@@ -745,7 +745,7 @@ class TestStreamingResponseRunHandleClose:
             output_tokens=0,
             cache_creation_input_tokens=0,
             cache_read_input_tokens=0,
-            langfuse_run_handle=handle,
+            run_span=handle,
         )
 
         # Consume one chunk, then abandon the stream. `aclose()` is what the
@@ -763,4 +763,4 @@ class TestStreamingResponseRunHandleClose:
         # Span closed once with only the text accumulated before abandonment —
         # the span is closed, not leaked.
         assert handle.end_calls == ["hel"]
-        assert wrapper._langfuse_run_handle is None
+        assert wrapper._run_span is None

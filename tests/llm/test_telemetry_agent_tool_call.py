@@ -353,3 +353,59 @@ class TestMaybeTruncatedResult:
         assert isinstance(ev, AgentToolCallCompletedEvent)
         assert ev.was_truncated is True
         assert ev.result_chars_before_truncation == 10_000
+
+
+class TestDispatchCapturedToolCall:
+    """Executed tool calls reach span-tree exporters with their result and timing."""
+
+    @pytest.fixture
+    def tool_calls(self, monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+        from src.llm import capture
+
+        received: list[Any] = []
+
+        class _Exporter:
+            def export(self, call: Any) -> None:
+                _ = call
+
+            def export_span(self, span: Any) -> None:
+                _ = span
+
+            def export_tool_call(self, tool_call: Any) -> None:
+                received.append(tool_call)
+
+        monkeypatch.setattr(capture, "_EXPORTERS", [_Exporter()])
+        return received
+
+    def _dispatch(self, ctx: _StubToolContext) -> None:
+        from src.utils.agent_tools import _dispatch_captured_tool_call
+
+        _dispatch_captured_tool_call(
+            ctx=ctx,
+            tool_name="search_memory",
+            tool_input={"query": "q"},
+            duration_ms=12.5,
+            result_str="3 results",
+            is_error=False,
+            iteration=2,
+            tool_call_seq=1,
+            provider_tool_call_id="call_1",
+        )
+
+    def test_dispatches_executed_call(self, tool_calls: list[Any]) -> None:
+        self._dispatch(_StubToolContext())
+
+        (tool_call,) = tool_calls
+        assert (tool_call.run_id, tool_call.agent_type, tool_call.iteration) == (
+            "run-1",
+            "dialectic",
+            2,
+        )
+        assert tool_call.input == {"query": "q"}
+        assert tool_call.output == "3 results"
+        assert tool_call.duration_ms == 12.5
+        assert tool_call.tool_call_id == "call_1"
+
+    def test_skipped_without_agent_identity(self, tool_calls: list[Any]) -> None:
+        self._dispatch(_StubToolContext(run_id=None))
+        assert tool_calls == []

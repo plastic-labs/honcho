@@ -42,9 +42,10 @@ from .executor import honcho_llm_call_inner
 from .registry import history_adapter_for_provider
 from .runtime import (
     AttemptPlan,
+    CapturedAgentSpan,
     current_attempt,
     effective_temperature,
-    start_langfuse_agent_step,
+    start_captured_span,
 )
 from .types import (
     HonchoLLMCallResponse,
@@ -75,17 +76,6 @@ def _with_iteration_scope(
             return await fn(*args, **kwargs)
 
     return wrapper
-
-
-def _step_label(base: LLMTelemetryContext | None) -> str:
-    """Stable per-agent step-span name, e.g. "Dialectic Agent step".
-
-    No step number — Langfuse aggregates by name; the index rides on the
-    ``iteration`` metadata. The " step" suffix distinguishes it from the bare
-    agent name, which names the enclosing run trace (see
-    `start_langfuse_agent_run`).
-    """
-    return f"{(base.track_name if base else None) or 'Agent'} step"
 
 
 def _telemetry_for_iteration(
@@ -243,13 +233,6 @@ async def stream_final_response(
     # value — telemetry can't tell the retry sequence apart.
     stream_attempt = 0
 
-    # No ContextVar gymnastics around `_in_agent_run` here: the run handle
-    # is alive for the lifetime of the stream (owned by
-    # `StreamingResponseWithMetadata` and closed on drain), so this streamed
-    # generation correctly nests under the run span as the current OTel
-    # observation. The previous code had to flip `_in_agent_run` to escape
-    # the run; with imperative handles the run isn't going anywhere.
-
     async def _setup_stream() -> AsyncIterator[HonchoLLMCallStreamChunk]:
         nonlocal stream_attempt
         stream_attempt += 1
@@ -335,7 +318,7 @@ async def execute_tool_loop(
     stream_final: bool = False,
     iteration_callback: IterationCallback | None = None,
     telemetry: LLMTelemetryContext | None = None,
-    langfuse_run_handle: Any | None = None,
+    run_span: CapturedAgentSpan | None = None,
     force_tools_until: Collection[str] | None = None,
     max_forced_iterations: int = 3,
 ) -> HonchoLLMCallResponse[Any] | StreamingResponseWithMetadata:
@@ -395,8 +378,8 @@ async def execute_tool_loop(
     forced_rounds = 0
 
     while iteration < max_tool_iterations:
-        step = start_langfuse_agent_step(
-            _step_label(telemetry),
+        step = start_captured_span(
+            "step",
             _telemetry_for_iteration(telemetry, iteration + 1, step_seq=iteration + 1),
         )
         try:
@@ -458,7 +441,7 @@ async def execute_tool_loop(
                     reraise=True,
                 )(_call_with_messages)
             else:
-                call_func = _call_with_messages  # pyright: ignore[reportGeneralTypeIssues]
+                call_func = _call_with_messages
 
             response = await call_func()
 
@@ -471,15 +454,6 @@ async def execute_tool_loop(
             # no-tool early return. The terminating iteration counts too — it has
             # an empty tool_calls list and is essential for cost calibration.
             _emit_agent_iteration(telemetry, iteration + 1, response)
-
-            # Step span is current again (the generation closed); stamp this
-            # turn's I/O so it isn't blank.
-            if step is not None:
-                step.annotate_io(
-                    conversation_messages,
-                    response.content,
-                    response.tool_calls_made,
-                )
 
             if not response.tool_calls_made:
                 logger.debug("No tool calls in response, finishing")
@@ -562,7 +536,7 @@ async def execute_tool_loop(
                         thinking_content=response.thinking_content,
                         iterations=iteration + 1,
                         hit_input_token_cap=hit_input_token_cap,
-                        langfuse_run_handle=langfuse_run_handle,
+                        run_span=run_span,
                     )
 
                 response.tool_calls_made = all_tool_calls
@@ -735,7 +709,7 @@ async def execute_tool_loop(
             thinking_content=None,
             iterations=iteration + 1,
             hit_input_token_cap=hit_input_token_cap,
-            langfuse_run_handle=langfuse_run_handle,
+            run_span=run_span,
         )
 
     current_attempt.set(1)
@@ -779,11 +753,9 @@ async def execute_tool_loop(
     else:
         final_call_func = _final_call
 
-    # Step span around the synthesis call — same shape as in-loop iterations
-    # so the generation nests under the run root instead of dangling at the
-    # trace. Imperative pair with a try/finally for the .end().
-    synthesis_step = start_langfuse_agent_step(
-        _step_label(telemetry),
+    # Step span around the synthesis call, same shape as in-loop iterations.
+    synthesis_step = start_captured_span(
+        "step",
         _telemetry_for_iteration(
             telemetry, synthesis_iteration, step_seq=synthesis_iteration
         ),

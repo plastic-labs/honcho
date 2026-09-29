@@ -26,13 +26,14 @@ from src.telemetry.reasoning_traces import log_reasoning_trace
 from .executor import honcho_llm_call_inner
 from .runtime import (
     AttemptPlan,
+    CapturedAgentSpan,
     current_attempt,
     effective_temperature,
     fallback_model_config,
     plan_attempt,
     plan_pinned_attempt,
     resolve_runtime_model_config,
-    start_langfuse_agent_run,
+    start_captured_span,
 )
 from .tool_loop import execute_tool_loop
 from .types import (
@@ -77,6 +78,7 @@ async def honcho_llm_call(
     trace_name: str | None = None,
     iteration_callback: IterationCallback | None = None,
     telemetry: LLMTelemetryContext | None = None,
+    run: CapturedAgentSpan | None = None,
 ) -> HonchoLLMCallResponse[M]: ...
 
 
@@ -108,6 +110,7 @@ async def honcho_llm_call(
     trace_name: str | None = None,
     iteration_callback: IterationCallback | None = None,
     telemetry: LLMTelemetryContext | None = None,
+    run: CapturedAgentSpan | None = None,
 ) -> HonchoLLMCallResponse[str]: ...
 
 
@@ -139,6 +142,7 @@ async def honcho_llm_call(
     trace_name: str | None = None,
     iteration_callback: IterationCallback | None = None,
     telemetry: LLMTelemetryContext | None = None,
+    run: CapturedAgentSpan | None = None,
 ) -> AsyncIterator[HonchoLLMCallStreamChunk] | StreamingResponseWithMetadata: ...
 
 
@@ -169,6 +173,7 @@ async def honcho_llm_call(
     trace_name: str | None = None,
     iteration_callback: IterationCallback | None = None,
     telemetry: LLMTelemetryContext | None = None,
+    run: CapturedAgentSpan | None = None,
 ) -> (
     HonchoLLMCallResponse[Any]
     | AsyncIterator[HonchoLLMCallStreamChunk]
@@ -180,6 +185,9 @@ async def honcho_llm_call(
     `fallback`) is used on the final retry attempt, which is 3 by default.
     When a tool loop exhausts its retries on the primary the whole
     run is restarted on the fallback.
+
+    A caller-supplied `run` stays owned by the caller; otherwise the call opens
+    and ends its own around the tool loop.
 
     Raises:
         ValidationException: If streaming and tool calling are combined
@@ -441,24 +449,17 @@ async def honcho_llm_call(
             )
         return result
 
-    # One run-level Langfuse trace wraps the whole run; step/LLM/tool spans
-    # nest under it (the run handle keeps `start_as_current_observation` open
-    # via ExitStack, so the run span stays current OTel-wise even though we
-    # never use a `with` block here). The handle is passed into
-    # `execute_tool_loop` so streaming results own it from construction and
-    # close the span after drain — that's how the streamed text shows up as
-    # the trace's output instead of blank. Non-streaming results: we end in
-    # the `finally`.
-    run_label = (telemetry.track_name if telemetry else None) or "Agent"
-    run_handle = start_langfuse_agent_run(run_label, telemetry)
-    if run_handle is not None:
-        # Mirror execute_tool_loop's prompt-only handling: when messages is
-        # omitted it seeds the conversation with a single user message built
-        # from prompt. Record that same effective input so the run span isn't
-        # blank for prompt-only calls.
-        run_handle.update(
-            input=messages if messages else [{"role": "user", "content": prompt}]
-        )
+    # One run span wraps the whole run. A streaming result takes ownership and
+    # ends it after drain so the streamed text becomes the run's output;
+    # otherwise it ends below.
+    owns_run = run is None
+    # Mirror execute_tool_loop's prompt-only handling: when messages is omitted
+    # it seeds the conversation with a single user message built from prompt.
+    run_handle = run or start_captured_span(
+        "run",
+        telemetry,
+        input=messages if messages else [{"role": "user", "content": prompt}],
+    )
 
     async def run_tool_loop(
         get_plan: Callable[[], AttemptPlan],
@@ -490,7 +491,7 @@ async def honcho_llm_call(
             stream_final=stream_final_only,
             iteration_callback=iteration_callback,
             telemetry=telemetry,
-            langfuse_run_handle=run_handle,
+            run_span=run_handle if owns_run else None,
         )
 
     def primary_run_plan() -> AttemptPlan:
@@ -531,13 +532,17 @@ async def honcho_llm_call(
                 _fallback_run_plan, before_retry_for_model(fallback_config)
             )
     except BaseException:
-        if run_handle is not None:
-            run_handle.end()
+        if run_handle is not None and owns_run:
+            run_handle.end(is_error=True)
         raise
     # Streaming wrapper owns the handle and closes it after drain;
     # non-streaming paths (always a HonchoLLMCallResponse here) close it now
     # with the final content as output.
-    if run_handle is not None and isinstance(result, HonchoLLMCallResponse):
+    if (
+        run_handle is not None
+        and owns_run
+        and isinstance(result, HonchoLLMCallResponse)
+    ):
         run_handle.end(output=result.content)
     if trace_name and isinstance(result, HonchoLLMCallResponse):
         log_reasoning_trace(
