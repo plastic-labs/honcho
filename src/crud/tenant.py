@@ -3,10 +3,15 @@
 Callers hold a service session (``service_db``): the registry sits above
 row-level security by design, and ``tracked_db`` would fail closed because no
 tenant is bound while the tenant is being created.
+
+Create never mutates (same id + different fields is a conflict); the only
+mutation door is ``update_tenant``, and what it may touch is the allowlist on
+``schemas.TenantUpdate``.
 """
 
 import logging
 
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -82,6 +87,40 @@ async def get_or_create_tenant(
         )
     logger.info("Created tenant %s (tier=%s)", tenant_id, tier)
     return GetOrCreateResult(resource=tenant, created=True)
+
+
+async def list_paused_tenant_ids(db: AsyncSession) -> list[str]:
+    """Ids of the tenants whose derivation is paused, sorted."""
+    result = await db.execute(
+        select(models.Tenant.tenant_id)
+        # ai: bare column, not IS TRUE — matches the partial index predicate exactly.
+        .where(models.Tenant.derivation_paused)
+        .order_by(models.Tenant.tenant_id)
+    )
+    return list(result.scalars().all())
+
+
+async def update_tenant(
+    db: AsyncSession, tenant_id: str, *, derivation_paused: bool | None
+) -> models.Tenant:
+    """Apply the allowlisted mutable fields to an existing tenant; 404 if unknown.
+
+    Additive to the create contract: ``get_or_create_tenant`` still never
+    mutates, so a provisioning retry keeps its same-fields-or-409 guarantee.
+    Idempotent — re-asserting the value a row already holds is a 200, so a
+    control plane that retries never trips a conflict.
+    """
+    tenant = await get_tenant(db, tenant_id)
+    if derivation_paused is not None and tenant.derivation_paused != derivation_paused:
+        logger.info(
+            "Tenant %s derivation_paused %s -> %s",
+            tenant_id,
+            tenant.derivation_paused,
+            derivation_paused,
+        )
+        tenant.derivation_paused = derivation_paused
+        await db.commit()
+    return tenant
 
 
 async def delete_tenant(db: AsyncSession, tenant_id: str) -> None:

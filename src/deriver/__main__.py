@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import sys
 
 import uvloop
 from prometheus_client import start_http_server
@@ -112,5 +113,7 @@ if __name__ == "__main__":
         logger.info("Shutdown initiated via KeyboardInterrupt")
     except Exception as e:
         logger.exception("Error in main process: %s", e)
+        # ai: a refused boot must be a failed boot — exit 0 would hide it from the orchestrator
+        sys.exit(1)
     finally:
         logger.info("Deriver process exiting")

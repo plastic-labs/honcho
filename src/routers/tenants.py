@@ -2,15 +2,16 @@
 
 The operator's provisioning system (a control plane in a hosted deployment)
 creates a tenant here before any tenant-scoped credential or write can
-exist. Authentication is a service secret, not a JWT — see
-``require_tenant_api``.
+exist, and flips the few per-tenant facts honcho mirrors for it (``PATCH``,
+allowlisted in ``schemas.TenantUpdate``). Authentication is a service secret,
+not a JWT — see ``require_tenant_api``.
 """
 
 import hmac
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, Path, Response
+from fastapi import APIRouter, Depends, Header, Path, Query, Response
 
 from src import schemas
 from src.config import settings
@@ -58,6 +59,17 @@ router = APIRouter(
 )
 
 
+# region ai
+# Every route that returns a row validates it into the response schema INSIDE
+# the session block. service_db's teardown rolls back and closes: the rollback
+# expires the ORM instance and the close detaches it, and FastAPI serializes
+# only after the block has exited — so returning the ORM object raised
+# DetachedInstanceError as a 500 on every path that had a transaction open at
+# exit (get, the create retry, update). The test harness's session stand-in
+# mirrors that teardown so this stays pinned.
+# endregion
+
+
 @router.post("", response_model=schemas.Tenant)
 async def create_tenant(body: schemas.TenantCreate, response: Response):
     """Idempotently create a tenant: 201 created, 200 already-exists-identical,
@@ -70,14 +82,44 @@ async def create_tenant(body: schemas.TenantCreate, response: Response):
             tier=body.tier,
         )
         response.status_code = 201 if result.created else 200
-        return result.resource
+        return schemas.Tenant.model_validate(result.resource)
+
+
+@router.get("", response_model=schemas.TenantIdList)
+async def list_tenants(derivation_paused: Annotated[bool, Query()]):
+    """List the ids of tenants with derivation paused (the control plane's
+    reconciliation read against its own record). The filter is required and
+    must be true: this is not a general, unpaginated tenant listing."""
+    if not derivation_paused:
+        raise ValidationException("only derivation_paused=true is supported")
+    async with service_db("tenants.list", read_only=True) as db:
+        return schemas.TenantIdList(
+            tenant_ids=await tenant_crud.list_paused_tenant_ids(db)
+        )
 
 
 @router.get("/{tenant_id}", response_model=schemas.Tenant)
 async def get_tenant(tenant_id: Annotated[str, Path()]):
     """Fetch a tenant row (the provisioner's reconciliation read)."""
     async with service_db("tenants.get", read_only=True) as db:
-        return await tenant_crud.get_tenant(db, tenant_id)
+        return schemas.Tenant.model_validate(
+            await tenant_crud.get_tenant(db, tenant_id)
+        )
+
+
+@router.patch("/{tenant_id}", response_model=schemas.Tenant)
+async def update_tenant(tenant_id: Annotated[str, Path()], body: schemas.TenantUpdate):
+    """Set an allowlisted mutable field: 200 (idempotent), 404 unknown tenant,
+    422 for any field outside the allowlist, an empty body, or a null value."""
+    # ai: exclude_none too — `{"derivation_paused": null}` names the field but sets nothing.
+    if not body.model_dump(exclude_unset=True, exclude_none=True):
+        raise ValidationException("PATCH body names no mutable field")
+    async with service_db("tenants.update") as db:
+        return schemas.Tenant.model_validate(
+            await tenant_crud.update_tenant(
+                db, tenant_id, derivation_paused=body.derivation_paused
+            )
+        )
 
 
 @router.delete("/{tenant_id}", status_code=204)

@@ -24,7 +24,10 @@ from sqlalchemy.sql import func
 from src import models
 from src.cache.client import close_cache, init_cache
 from src.config import settings
-from src.crud.deriver import claim_rows_query
+from src.crud.deriver import (
+    claim_rows_query,
+    not_paused_clause,
+)
 from src.crud.deriver import (
     cleanup_stale_work_units as crud_cleanup_stale_work_units,
 )
@@ -858,6 +861,10 @@ class QueueManager:
                 .order_by(models.QueueItem.id)
                 .limit(1)
             )
+            # ai: a pause that lands while this unit is held takes effect here: no item, so the loop releases the unit
+            pause_clause = not_paused_clause(models.QueueItem.tenant_id, task_type)
+            if pause_clause is not None:
+                query = query.where(pause_clause)
             result = await db.execute(query)
             queue_item = result.scalar_one_or_none()
 
@@ -913,12 +920,20 @@ class QueueManager:
 
         async with service_db("get_queue_item_batch") as db:
             # For batch tasks, get messages based on token limit.
-            # Step 1: Verify worker still owns the work_unit_key.
-            ownership_check = await db.execute(
+            # Step 1: Verify worker still owns the work_unit_key, and that its
+            # tenant has not been paused since the claim. Either failing returns
+            # an empty batch, which ends the loop and releases the unit.
+            ownership_query = (
                 select(models.ActiveQueueSession.id)
                 .where(models.ActiveQueueSession.work_unit_key == work_unit_key)
                 .where(models.ActiveQueueSession.id == aqs_id)
             )
+            pause_clause = not_paused_clause(
+                models.ActiveQueueSession.tenant_id, task_type
+            )
+            if pause_clause is not None:
+                ownership_query = ownership_query.where(pause_clause)
+            ownership_check = await db.execute(ownership_query)
             if not ownership_check.scalar_one_or_none():
                 return QueueBatchResult(
                     was_flush_enabled=was_flush_enabled,
@@ -1314,8 +1329,10 @@ async def main():
     try:
         await manager.initialize()
     except Exception as e:
-        logger.error(f"Error in main: {str(e)}")
+        # ai: re-raised so a refused boot (the startup validators) exits non-zero
+        logger.exception("Error in main")
         sentry_sdk.capture_exception(e)
+        raise
     finally:
         await close_cache()
         logger.debug("Main function exiting")

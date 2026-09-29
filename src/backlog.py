@@ -151,12 +151,15 @@ class DeriverMetricsPoller:
         metrics.set_deriver_metrics(
             eligible_work_units=stats.eligible_work_units,
             excluded_work_units=stats.excluded_work_units,
+            excluded_work_units_by_tenant=stats.excluded_work_units_by_tenant,
             claimed_work_units=stats.claimed_work_units,
             pending_items=stats.pending_items,
             oldest_pending_age_seconds=stats.oldest_pending_age_seconds,
             embeddings_pending=stats.embeddings_pending,
             embeddings_pending_due=stats.embeddings_pending_due,
         )
+        if settings.MULTI_TENANT:
+            metrics.set_paused_tenants(count=stats.paused_tenants)
         metrics.set_dreams_due(count=len(self._due_dreams))
         metrics.set_deriver_outstanding_work(seconds=signal)
         metrics.set_deriver_metrics_last_success(timestamp=measured_at)
