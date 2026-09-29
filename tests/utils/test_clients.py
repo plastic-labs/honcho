@@ -956,14 +956,14 @@ class TestMainLLMCallFunction:
             # No run_id → this single call IS the trace root: it names the trace
             # and stamps metadata via propagate_attributes...
             assert captured["trace_name"] == "Dialectic Agent"
-            assert captured["session_id"] is None
+            assert "session_id" not in captured
             assert captured["metadata"]["namespace"] == settings.NAMESPACE
             assert captured["metadata"]["provider"] == "anthropic"
             assert captured["metadata"]["model"] == "claude-4-sonnet"
             # ...and the generation is named + carries per-call model/metadata.
             gen_calls = mock_langfuse_client.update_current_generation.call_args_list
             meta_kwargs = next(c.kwargs for c in gen_calls if "model" in c.kwargs)
-            assert meta_kwargs["name"] == "Dialectic Agent LLM call"
+            assert meta_kwargs["name"] == "Dialectic Agent generation"
             assert meta_kwargs["model"] == "claude-4-sonnet"
             assert meta_kwargs["metadata"]["provider"] == "anthropic"
             # Input/output are stamped explicitly: @observe auto-capture is
@@ -1028,11 +1028,11 @@ class TestMainLLMCallFunction:
             assert captured["trace_name"] is None
             assert captured["metadata"]["namespace"] == settings.NAMESPACE
             assert captured["metadata"]["provider"] == "anthropic"
-            # Generation gets model + metadata even without a track_name — only
-            # the name kwarg stays None.
+            # Generation gets model + metadata even without a track_name, under
+            # the generic name.
             gen_calls = mock_langfuse_client.update_current_generation.call_args_list
             meta_kwargs = next(c.kwargs for c in gen_calls if "model" in c.kwargs)
-            assert meta_kwargs["name"] is None
+            assert meta_kwargs["name"] == "generation"
             assert meta_kwargs["model"] == "claude-4-sonnet"
             # Input/output stamped explicitly (auto-capture disabled; HONCHO-4HA).
             input_kwargs = next(c.kwargs for c in gen_calls if "input" in c.kwargs)

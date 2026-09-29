@@ -1,8 +1,8 @@
 # pyright: reportPrivateUsage=false, reportUnusedParameter=false
-"""Tests for the Langfuse session/trace wiring in `src/llm/runtime.py`.
+"""Tests for the Langfuse trace wiring in `src/llm/runtime.py`.
 
-One agentic run = one trace; `session_id = run_id` (globally unique, so it's
-conflict-free across tenants — unlike the Honcho session name). The run handle
+One agentic run = one trace, with no Langfuse session; the Honcho session rides
+in metadata as `honcho_session`. The run handle
 (`start_langfuse_agent_run`) opens an `as_type="span"` root and keeps it
 current via an ``ExitStack`` until `.end()`. Step spans + nested generations
 nest under the run while it's open. A single-call agent (deriver, summarizer)
@@ -151,13 +151,13 @@ class TestAnnotateInsideRun:
             "anthropic", "claude-x", telemetry=telemetry
         )
 
-        # Run handle owns user_id/session_id/trace_name — re-propagating here
-        # would clobber the run's session, so we don't propagate at all.
+        # Run handle owns user_id/trace_name — re-propagating here would
+        # clobber them, so we don't propagate at all.
         assert capture_propagate == {}
         # Per-call generation: name + model + step metadata stamped every
         # iteration (formerly only name was stamped, dropping provider/model).
         gen = langfuse_client["generation"]
-        assert gen["name"] == "Dialectic Agent LLM call"
+        assert gen["name"] == "Dialectic Agent generation"
         assert gen["model"] == "claude-x"
         assert gen["metadata"]["provider"] == "anthropic"
         assert gen["metadata"]["model"] == "claude-x"
@@ -186,13 +186,13 @@ class TestAnnotateOwnTraceRoot:
             "gemini", "gemini-x", telemetry=telemetry
         )
 
-        assert capture_propagate["session_id"] is None
+        assert "session_id" not in capture_propagate
         assert capture_propagate["user_id"] == "acme-tenant"
         # Single-call: this generation IS the trace root, so it names the trace.
         assert capture_propagate["trace_name"] == "Minimal Deriver"
         assert capture_propagate["metadata"]["observed"] == "bob"
         # The generation observation is still named per agent+action.
-        assert langfuse_client["generation"]["name"] == "Minimal Deriver LLM call"
+        assert langfuse_client["generation"]["name"] == "Minimal Deriver generation"
 
     def test_no_telemetry_still_stamps_user_id(
         self,
@@ -203,12 +203,12 @@ class TestAnnotateOwnTraceRoot:
         runtime.annotate_current_langfuse_trace("openai", "gpt-x", telemetry=None)
 
         assert capture_propagate["user_id"] == "acme-tenant"
-        assert capture_propagate["session_id"] is None
+        assert "session_id" not in capture_propagate
         assert capture_propagate["trace_name"] is None
         assert capture_propagate["metadata"]["provider"] == "openai"
-        # No telemetry → no per-agent generation name, but provider/model still set.
+        # No telemetry → the generic generation name, but provider/model still set.
         gen = langfuse_client["generation"]
-        assert gen["name"] is None
+        assert gen["name"] == "generation"
         assert gen["model"] == "gpt-x"
 
 
@@ -270,6 +270,7 @@ class TestAgentRun:
             call_purpose="dialectic.answer",
             agent_type="dialectic",
             run_id="run-abc",
+            session_id="sess-1",
             observed="bob",
             track_name="Dialectic Agent",
         )
@@ -282,16 +283,15 @@ class TestAgentRun:
             observation = langfuse_client["observation"]
             assert observation["as_type"] == "span"
             assert observation["name"] == "Dialectic Agent"
-            # Trace grouping: one Langfuse session per run, drillable per tenant.
-            assert capture_propagate["session_id"] == "run-abc"
+            # No Langfuse session; the Honcho session is a metadata key.
+            assert "session_id" not in capture_propagate
             assert capture_propagate["user_id"] == "acme-tenant"
             assert capture_propagate["trace_name"] == "Dialectic Agent"
             md = capture_propagate["metadata"]
             assert md["workspace_name"] == "ws1"
             assert md["agent_type"] == "dialectic"
             assert md["observed"] == "bob"
-            # Honcho's Session is deliberately NOT the grouping key.
-            assert "honcho_session_id" not in md
+            assert md["honcho_session"] == "sess-1"
         finally:
             handle.end()
 
@@ -323,7 +323,7 @@ class TestAgentRun:
             "claude-x",
             telemetry=LLMTelemetryContext(run_id="r2", span_id="r2"),
         )
-        assert capture_propagate.get("session_id") == "r2"
+        assert capture_propagate.get("user_id") == "acme-tenant"
 
         capture_propagate.clear()
         runtime.annotate_current_langfuse_trace(
@@ -352,9 +352,8 @@ class TestAgentRun:
 
 
 class TestAgentRunIO:
-    """The run handle exposes `.update(input=..., output=...)` for stamping
-    the run-root span — the trace's input/output preview in the Langfuse UI.
-    A second call merges into the first (Langfuse's update semantics)."""
+    """The run handle stamps `input` at open and `output` at `.end()` on the
+    run-root span — the trace's input/output preview in the Langfuse UI."""
 
     def test_sets_input_then_output_on_handle(
         self,
@@ -364,13 +363,10 @@ class TestAgentRunIO:
     ):
         messages = [{"role": "user", "content": "How many coffees?"}]
         handle = runtime.start_langfuse_agent_run(
-            "Dialectic Agent", LLMTelemetryContext(run_id="run-abc")
+            "Dialectic Agent", LLMTelemetryContext(run_id="run-abc"), input=messages
         )
         assert handle is not None
-        try:
-            handle.update(input=messages)
-        finally:
-            handle.end(output="You bought 4 coffees.")
+        handle.end(output="You bought 4 coffees.")
 
         assert langfuse_client["run_span"]["input"] == messages
         assert langfuse_client["run_span"]["output"] == "You bought 4 coffees."
@@ -382,10 +378,11 @@ class TestAgentRunIO:
         capture_propagate: dict[str, Any],
     ):
         handle = runtime.start_langfuse_agent_run(
-            "Dialectic Agent", LLMTelemetryContext(run_id="run-abc")
+            "Dialectic Agent",
+            LLMTelemetryContext(run_id="run-abc"),
+            input=[{"role": "user"}],
         )
         assert handle is not None
-        handle.update(input=[{"role": "user"}])
         handle.end()
 
         assert "input" in langfuse_client["run_span"]
@@ -560,3 +557,82 @@ class TestAnnotateGenerationIOGating:
         assert gen["input"] == messages
         assert gen["output"] == "hello"
         assert gen["usage_details"] == {"input": 1, "output": 1}
+
+
+class _RecordingSpanExporter:
+    def __init__(self) -> None:
+        self.spans: list[Any] = []
+
+    def export(self, call: Any) -> None:
+        pass
+
+    def export_span(self, span: Any) -> None:
+        self.spans.append(span)
+
+    def export_tool_call(self, tool_call: Any) -> None:
+        pass
+
+
+class _CallOnlyExporter:
+    def export(self, call: Any) -> None:
+        pass
+
+
+class TestCapturedHandles:
+    """Exporter mode: run/step handles report their lifecycle to span-tree
+    exporters instead of opening live spans."""
+
+    @pytest.fixture
+    def exporter(self, monkeypatch: pytest.MonkeyPatch) -> _RecordingSpanExporter:
+        from src.llm import capture
+
+        monkeypatch.setattr(settings, "LANGFUSE_PUBLIC_KEY", "pk-test")
+        monkeypatch.setattr(settings, "LANGFUSE_EXPORTER_MODE", "exporter")
+        recording = _RecordingSpanExporter()
+        monkeypatch.setattr(capture, "_EXPORTERS", [recording])
+        return recording
+
+    def test_run_reports_start_and_end_once(
+        self, exporter: _RecordingSpanExporter
+    ) -> None:
+        tele = LLMTelemetryContext(run_id="r1", trace_id="r1", track_name="Agent")
+        handle = runtime.start_langfuse_agent_run("Agent", tele, input="q")
+        assert handle is not None
+        handle.end(output="a", is_error=True)
+        handle.end(output="ignored")
+
+        start, end = exporter.spans
+        assert (start.kind, start.phase, start.input) == ("run", "start", "q")
+        assert (end.kind, end.phase, end.output, end.is_error) == (
+            "run",
+            "end",
+            "a",
+            True,
+        )
+        assert end.time_ns >= start.time_ns
+
+    def test_step_reports_its_iteration(self, exporter: _RecordingSpanExporter) -> None:
+        tele = LLMTelemetryContext(run_id="r1", iteration=2)
+        step = runtime.start_langfuse_agent_step("Agent step", tele)
+        assert step is not None
+        step.end()
+
+        assert [(s.kind, s.phase, s.iteration) for s in exporter.spans] == [
+            ("step", "start", 2),
+            ("step", "end", 2),
+        ]
+
+    def test_noop_without_span_identity(self, exporter: _RecordingSpanExporter) -> None:
+        assert runtime.start_langfuse_agent_run("Agent", LLMTelemetryContext()) is None
+        assert exporter.spans == []
+
+    def test_noop_without_a_span_tree_exporter(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from src.llm import capture
+
+        monkeypatch.setattr(settings, "LANGFUSE_EXPORTER_MODE", "exporter")
+        monkeypatch.setattr(capture, "_EXPORTERS", [_CallOnlyExporter()])
+        tele = LLMTelemetryContext(run_id="r1")
+        assert runtime.start_langfuse_agent_run("Agent", tele) is None
+        assert runtime.start_langfuse_agent_step("Agent step", tele) is None

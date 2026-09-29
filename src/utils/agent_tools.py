@@ -2993,6 +2993,17 @@ async def create_tool_executor(
                 tool_call_seq=get_current_tool_call_seq(),
                 provider_tool_call_id=get_current_provider_tool_call_id(),
             )
+            _dispatch_captured_tool_call(
+                ctx=ctx,
+                tool_name=tool_name,
+                tool_input=tool_input,
+                duration_ms=duration_ms,
+                result_str=result_str,
+                is_error=is_error,
+                iteration=get_current_iteration(),
+                tool_call_seq=get_current_tool_call_seq(),
+                provider_tool_call_id=get_current_provider_tool_call_id(),
+            )
 
             _finish_tool_observation(tool_obs, result_str, is_error)
 
@@ -3035,6 +3046,49 @@ def _finish_tool_observation(tool_obs: Any, result_str: str, is_error: bool) -> 
         tool_obs.end()
     except Exception:  # pragma: no cover - best-effort telemetry
         logger.debug("Failed to close Langfuse tool observation", exc_info=True)
+
+
+def _dispatch_captured_tool_call(
+    *,
+    ctx: "ToolContext",
+    tool_name: str,
+    tool_input: dict[str, Any],
+    duration_ms: float,
+    result_str: str,
+    is_error: bool,
+    iteration: int,
+    tool_call_seq: int,
+    provider_tool_call_id: str | None,
+) -> None:
+    """Report an executed tool call to span-tree exporters. Best-effort."""
+    if not (ctx.run_id and ctx.agent_type):
+        return
+    try:
+        from src.llm.capture import (
+            CapturedToolCall,
+            dispatch_captured_tool_call,
+            has_span_tree_exporters,
+        )
+
+        if not has_span_tree_exporters():
+            return
+        dispatch_captured_tool_call(
+            CapturedToolCall(
+                run_id=ctx.run_id,
+                agent_type=ctx.agent_type,
+                workspace_name=ctx.workspace_name,
+                iteration=iteration,
+                tool_call_seq=tool_call_seq,
+                tool_call_id=provider_tool_call_id,
+                name=tool_name,
+                input=tool_input,
+                output=result_str,
+                is_error=is_error,
+                duration_ms=duration_ms,
+            )
+        )
+    except Exception:  # pragma: no cover - telemetry must not raise
+        logger.debug("Failed to dispatch captured tool call", exc_info=True)
 
 
 def _emit_agent_tool_call_completed(
