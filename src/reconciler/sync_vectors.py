@@ -8,8 +8,10 @@ embeddings to the vector store on a rolling basis, healing any missed writes.
 import datetime
 import logging
 import time
+from collections.abc import Generator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any, Protocol, TypeVar, cast
 
 import sentry_sdk
 from sqlalchemy import and_, delete, or_, select, update
@@ -20,6 +22,7 @@ from sqlalchemy.sql.functions import func
 
 from src import models
 from src.config import settings
+from src.db import tenant_context
 from src.dependencies import service_db
 from src.embedding_client import embedding_client
 from src.exceptions import VectorStoreError
@@ -286,6 +289,42 @@ def build_message_vector_record(
     )
 
 
+class _TenantRow(Protocol):
+    tenant_id: Any
+
+
+_RowT = TypeVar("_RowT", bound=_TenantRow)
+
+
+def _tenant_groups(rows: Sequence[_RowT]) -> list[tuple[str | None, list[_RowT]]]:
+    """Split rows into per-tenant groups, in first-seen order; one group flag-off."""
+    # region ai
+    # The reconciler works across tenants, but an embedding call is billable to
+    # one. Grouping lets each call run with its tenant bound, so the telemetry it
+    # emits carries that tenant instead of arriving untenanted. Flag-off there is
+    # one tenant and the call stays a single batch, exactly as before.
+    # endregion
+    if not settings.MULTI_TENANT:
+        return [(None, list(rows))]
+    groups: dict[str, list[_RowT]] = {}
+    for row in rows:
+        groups.setdefault(row.tenant_id, []).append(row)
+    return list(groups.items())
+
+
+@contextmanager
+def _bound_tenant(tenant_id: str | None) -> Generator[None]:
+    """Bind ``tenant_context`` for the block; a no-op for ``None``."""
+    if tenant_id is None:
+        yield
+        return
+    token = tenant_context.set(tenant_id)
+    try:
+        yield
+    finally:
+        tenant_context.reset(token)
+
+
 async def _sync_documents(
     db: AsyncSession,
     documents: list[models.Document],
@@ -318,30 +357,33 @@ async def _sync_documents(
     ]
     freshly_embedded: dict[str, list[float]] = {}
 
-    if docs_needing_embed:
+    for tenant_id, group in _tenant_groups(docs_needing_embed):
         try:
-            contents = [doc.content for doc in docs_needing_embed]
-            with embedding_call_purpose(
-                EmbeddingCallPurpose.VECTOR_SYNC.value,
-                parent_category="reconciliation",
+            contents = [doc.content for doc in group]
+            with (
+                _bound_tenant(tenant_id),
+                embedding_call_purpose(
+                    EmbeddingCallPurpose.VECTOR_SYNC.value,
+                    parent_category="reconciliation",
+                ),
             ):
                 new_embeddings = await embedding_client.simple_batch_embed(
                     contents, on_oversize="truncate"
                 )
 
-            if len(new_embeddings) != len(docs_needing_embed):
+            if len(new_embeddings) != len(group):
                 logger.warning(
                     "Re-embedded %s/%s documents; remaining will be retried",
                     len(new_embeddings),
-                    len(docs_needing_embed),
+                    len(group),
                 )
 
-            for doc, emb in zip(docs_needing_embed, new_embeddings, strict=False):
+            for doc, emb in zip(group, new_embeddings, strict=False):
                 freshly_embedded[doc.id] = emb
                 if store_in_postgres:
                     doc.embedding = emb
         except Exception:
-            logger.exception("Failed to re-embed %s documents", len(docs_needing_embed))
+            logger.exception("Failed to re-embed %s documents", len(group))
 
     # Mark documents that failed to get an embedding
     failed_to_embed = [
@@ -450,34 +492,35 @@ async def _sync_message_embeddings(
     ]
     freshly_embedded: dict[int, list[float]] = {}
 
-    if embs_needing_embed:
+    for tenant_id, group in _tenant_groups(embs_needing_embed):
         try:
-            contents = [emb.content for emb in embs_needing_embed]
+            contents = [emb.content for emb in group]
             # MESSAGE_CREATE (not VECTOR_SYNC): these rows come from create_messages
             # as pending chunks; document re-embeds stay on VECTOR_SYNC below.
-            workspaces = {emb.workspace_name for emb in embs_needing_embed}
-            with embedding_call_purpose(
-                EmbeddingCallPurpose.MESSAGE_CREATE.value,
-                workspace_name=workspaces.pop() if len(workspaces) == 1 else None,
-                parent_category="reconciliation",
+            workspaces = {emb.workspace_name for emb in group}
+            with (
+                _bound_tenant(tenant_id),
+                embedding_call_purpose(
+                    EmbeddingCallPurpose.MESSAGE_CREATE.value,
+                    workspace_name=workspaces.pop() if len(workspaces) == 1 else None,
+                    parent_category="reconciliation",
+                ),
             ):
                 new_embeddings = await embedding_client.simple_batch_embed(contents)
 
-            if len(new_embeddings) != len(embs_needing_embed):
+            if len(new_embeddings) != len(group):
                 logger.warning(
                     "Re-embedded %s/%s message embeddings; remaining will be retried",
                     len(new_embeddings),
-                    len(embs_needing_embed),
+                    len(group),
                 )
 
-            for emb, new_emb in zip(embs_needing_embed, new_embeddings, strict=False):
+            for emb, new_emb in zip(group, new_embeddings, strict=False):
                 freshly_embedded[emb.id] = new_emb
                 if store_in_postgres:
                     emb.embedding = new_emb
         except Exception:
-            logger.exception(
-                "Failed to re-embed %s message embeddings", len(embs_needing_embed)
-            )
+            logger.exception("Failed to re-embed %s message embeddings", len(group))
 
     # Mark embeddings that failed to get a vector
     failed_to_embed: list[models.MessageEmbedding] = [
