@@ -73,7 +73,6 @@ class FakeClient:
 def _exporter_env(monkeypatch: pytest.MonkeyPatch):
     """Enable the exporter and install a fake langfuse client + clean registry."""
     monkeypatch.setattr(settings, "LANGFUSE_PUBLIC_KEY", "pk-test")
-    monkeypatch.setattr(settings, "LANGFUSE_EXPORTER_MODE", "exporter")
     monkeypatch.setattr(settings, "NAMESPACE", "tenant1")
     client = FakeClient()
     import langfuse
@@ -323,21 +322,12 @@ def test_error_finish_marks_generation_level(_exporter_env: FakeClient):
     assert gen.kwargs["level"] == "ERROR"
 
 
-@pytest.mark.parametrize(
-    ("attr", "value"),
-    [
-        ("LANGFUSE_EXPORTER_MODE", "inline"),  # exporter off in inline mode
-        ("LANGFUSE_PUBLIC_KEY", None),  # exporter off without a public key
-    ],
-)
-def test_exporter_disabled_emits_nothing(
+def test_exporter_disabled_without_public_key_emits_nothing(
     _exporter_env: FakeClient,
     monkeypatch: pytest.MonkeyPatch,
-    attr: str,
-    value: object,
 ):
     client = _exporter_env
-    monkeypatch.setattr(settings, attr, value)
+    monkeypatch.setattr(settings, "LANGFUSE_PUBLIC_KEY", None)
     LangfuseExporter().export(_call(run_id="r1", trace_id="r1", iteration=1))
     assert client.observations == []
 

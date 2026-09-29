@@ -28,7 +28,7 @@ from src.llm import (
     StreamingResponseWithMetadata,
     honcho_llm_call,
 )
-from src.llm.runtime import AgentRunHandle, start_langfuse_agent_run
+from src.llm.runtime import CapturedAgentSpan, start_captured_span
 from src.llm.types import LLMTelemetryContext
 from src.telemetry import prometheus_metrics
 from src.telemetry.events import DialecticCompletedEvent, EmbeddingCallPurpose, emit
@@ -323,13 +323,13 @@ class DialecticAgent:
         str,
         str | None,
         float,
-        AgentRunHandle | None,
+        CapturedAgentSpan | None,
     ]:
         """
         Prepare common state for answering a query.
 
         Handles session history initialization, metrics setup, observation prefetching,
-        user message construction, and tool executor creation. Opens the Langfuse run
+        user message construction, and tool executor creation. Opens the run span
         before prefetch; the caller ends it.
 
         Args:
@@ -348,9 +348,7 @@ class DialecticAgent:
             run_id = generate_nanoid()
             task_name = f"dialectic_chat_{run_id}"
         start_time = time.perf_counter()
-        run = start_langfuse_agent_run(
-            telemetry.track_name or "Agent", telemetry, input=query
-        )
+        run = start_captured_span("run", telemetry, input=query)
         try:
             tool_executor = await self._prepare_messages(query, task_name)
         except BaseException:
@@ -429,7 +427,7 @@ class DialecticAgent:
         Carries the instance's `_run_id` (always set in __init__) + workspace +
         peer identifiers so LLMCallCompletedEvent and 's
         AgentIterationEvent can attribute every per-iteration LLM call back to
-        this dialectic invocation. `track_name` names the Langfuse trace/step
+        this dialectic invocation. `track_name` names the trace/step
         (e.g. "Dialectic Agent" vs "Dialectic Agent Stream").
         """
         return LLMTelemetryContext(

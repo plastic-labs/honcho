@@ -225,7 +225,7 @@ class WorkspaceDialecticAgent(DialecticAgent):
             evidence=self.evidence,
         )
 
-    # Workspace chat shares the base "dialectic_chat" Langfuse trace name;
+    # Workspace chat shares the base "dialectic_chat" reasoning-trace name;
     # scope is distinguished by the agent_type/track_name below.
 
     def _telemetry_context(self, track_name: str | None = None) -> LLMTelemetryContext:

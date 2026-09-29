@@ -293,7 +293,7 @@ async def initialize_telemetry_events() -> None:
         from src.telemetry.langfuse_exporter import LangfuseExporter
 
         register_exporter(LangfuseExporter())
-        logger.info("Langfuse exporter registered (LANGFUSE_EXPORTER_MODE=exporter)")
+        logger.info("Langfuse exporter registered")
 
     await initialize_emitter(
         endpoint=settings.TELEMETRY.ENDPOINT,

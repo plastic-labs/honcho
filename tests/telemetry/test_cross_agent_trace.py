@@ -171,7 +171,6 @@ def test_same_call_reaches_both_exporters(
 ):
     """A dispatched call fans out to the CloudEvents spy AND the LangfuseExporter."""
     monkeypatch.setattr(settings, "LANGFUSE_PUBLIC_KEY", "pk-test")
-    monkeypatch.setattr(settings, "LANGFUSE_EXPORTER_MODE", "exporter")
     monkeypatch.setattr(settings, "NAMESPACE", "tenant1")
 
     created: list[dict[str, object]] = []

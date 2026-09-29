@@ -1522,29 +1522,11 @@ class AppSettings(HonchoSettings):
     EMBED_MESSAGES: bool = True
     LANGFUSE_HOST: str | None = None
     LANGFUSE_PUBLIC_KEY: str | None = None
-    # How Langfuse traces are produced:
-    #   "exporter" (default) — Langfuse is a projection over the captured
-    #     CapturedLLMCall stream (LangfuseExporter), the same source of truth as
-    #     the CloudEvents trace stream.
-    #   "inline" — legacy live instrumentation (@observe + propagate_attributes
-    #     spans during execution). Kept one release for side-by-side validation.
-    LANGFUSE_EXPORTER_MODE: Literal["inline", "exporter"] = "exporter"
-
-    @property
-    def langfuse_inline_enabled(self) -> bool:
-        """True when the legacy inline Langfuse instrumentation is active
-        (keys configured + ``LANGFUSE_EXPORTER_MODE == "inline"``)."""
-        return (
-            bool(self.LANGFUSE_PUBLIC_KEY) and self.LANGFUSE_EXPORTER_MODE == "inline"
-        )
 
     @property
     def langfuse_exporter_enabled(self) -> bool:
-        """True when the Langfuse exporter (a projection over the captured call
-        stream) is active (keys configured + ``LANGFUSE_EXPORTER_MODE == "exporter"``)."""
-        return (
-            bool(self.LANGFUSE_PUBLIC_KEY) and self.LANGFUSE_EXPORTER_MODE == "exporter"
-        )
+        """True when Langfuse keys are configured."""
+        return bool(self.LANGFUSE_PUBLIC_KEY)
 
     # Origins allowed by the FastAPI CORSMiddleware
     CORS_ORIGINS: list[str] = [
