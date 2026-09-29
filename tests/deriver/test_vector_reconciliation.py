@@ -12,10 +12,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from nanoid import generate as generate_nanoid
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
+from src.embedding_client import EmbeddingTokenLimitError
 from src.reconciler.sync_vectors import (
     MAX_SYNC_ATTEMPTS,
     ReconciliationMetrics,
@@ -24,7 +25,6 @@ from src.reconciler.sync_vectors import (
     _reconcile_documents_batch,  # pyright: ignore[reportPrivateUsage]
     _reconcile_message_embeddings_batch,  # pyright: ignore[reportPrivateUsage]
     _sync_documents,  # pyright: ignore[reportPrivateUsage]
-    _sync_message_embeddings,  # pyright: ignore[reportPrivateUsage]
     build_message_vector_record,
     compute_chunk_positions,
     run_vector_reconciliation_cycle,
@@ -804,14 +804,15 @@ class TestMessageEmbeddings:
             db_session, workspace, peer
         )
 
-        synced, failed = await _sync_message_embeddings(
-            db_session, [pending_emb], mock_vector_store
-        )
+        metrics = ReconciliationMetrics()
+        worked = await _reconcile_message_embeddings_batch(mock_vector_store, metrics)
+
+        assert worked is True
+        assert metrics.message_embeddings_synced == 1
+        assert metrics.message_embeddings_failed == 0
 
         await db_session.refresh(pending_emb)
 
-        assert synced == 1
-        assert failed == 0
         assert pending_emb.sync_state == "synced"
         assert pending_emb.sync_attempts == 0
 
@@ -840,14 +841,15 @@ class TestMessageEmbeddings:
         upsert_mock: AsyncMock = cast(AsyncMock, mock_vector_store.upsert_many)
         upsert_mock.side_effect = Exception("boom")
 
-        synced, failed = await _sync_message_embeddings(
-            db_session, [pending_emb], mock_vector_store
-        )
+        metrics = ReconciliationMetrics()
+        worked = await _reconcile_message_embeddings_batch(mock_vector_store, metrics)
+
+        assert worked is True
+        assert metrics.message_embeddings_synced == 0
+        assert metrics.message_embeddings_failed == 1
 
         await db_session.refresh(pending_emb)
 
-        assert synced == 0
-        assert failed == 1
         assert pending_emb.sync_state in {"pending", "failed"}
         assert pending_emb.sync_attempts == 1
 
@@ -866,7 +868,7 @@ class TestMessageEmbeddings:
         metrics = ReconciliationMetrics()
         with (
             patch(
-                "src.reconciler.sync_vectors._sync_message_embeddings",
+                "src.reconciler.sync_vectors._embed_claimed",
                 side_effect=RuntimeError("unexpected"),
             ),
             pytest.raises(RuntimeError, match="unexpected"),
@@ -874,9 +876,9 @@ class TestMessageEmbeddings:
             await _reconcile_message_embeddings_batch(mock_vector_store, metrics)
 
         await db_session.refresh(pending_emb)
+        # No failure accounting: the row is still pending with zero attempts.
         assert pending_emb.sync_state == "pending"
         assert pending_emb.sync_attempts == 0
-        assert pending_emb.last_sync_at is None
 
     async def test_pgvector_only_mode_embeds_and_marks_synced(
         self,
@@ -891,16 +893,117 @@ class TestMessageEmbeddings:
 
         # external_vector_store=None == pgvector-only mode. The reconciler should
         # re-embed the pending row, write the vector to postgres, and mark synced.
-        synced, failed = await _sync_message_embeddings(db_session, [pending_emb], None)
+        metrics = ReconciliationMetrics()
+        worked = await _reconcile_message_embeddings_batch(None, metrics)
 
-        await db_session.commit()
+        assert worked is True
+        assert metrics.message_embeddings_synced == 1
+        assert metrics.message_embeddings_failed == 0
+
         await db_session.refresh(pending_emb)
 
-        assert synced == 1
-        assert failed == 0
         assert pending_emb.sync_state == "synced"
         assert pending_emb.sync_attempts == 0
         assert pending_emb.embedding is not None
+
+    async def test_oversized_input_marks_permanently_failed(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ) -> None:
+        """EmbeddingTokenLimitError (oversized input) is a permanent failure."""
+        workspace, peer = sample_data
+        pending_emb = await self._create_pending_message_embedding(
+            db_session, workspace, peer
+        )
+
+        with patch(
+            "src.reconciler.sync_vectors.embedding_client.simple_batch_embed",
+            side_effect=EmbeddingTokenLimitError("text too long"),
+        ):
+            metrics = ReconciliationMetrics()
+            worked = await _reconcile_message_embeddings_batch(None, metrics)
+
+        assert worked is True
+        assert metrics.message_embeddings_failed == 1
+
+        await db_session.refresh(pending_emb)
+        assert pending_emb.sync_state == "failed"
+        assert pending_emb.embedding is None
+
+    async def test_transient_value_error_stays_retryable(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ) -> None:
+        """A plain ValueError (provider response error) must not permanently
+        fail a message — the row stays pending and is retried."""
+        workspace, peer = sample_data
+        pending_emb = await self._create_pending_message_embedding(
+            db_session, workspace, peer
+        )
+
+        with patch(
+            "src.reconciler.sync_vectors.embedding_client.simple_batch_embed",
+            side_effect=ValueError("provider returned no embeddings"),
+        ):
+            metrics = ReconciliationMetrics()
+            worked = await _reconcile_message_embeddings_batch(None, metrics)
+
+        assert worked is True
+        assert metrics.message_embeddings_failed == 1
+
+        await db_session.refresh(pending_emb)
+        assert pending_emb.sync_state == "pending"  # NOT "failed"
+        assert pending_emb.sync_attempts == 1
+        assert pending_emb.embedding is None
+
+    async def test_late_failure_does_not_regress_synced_row(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ) -> None:
+        """A late failure write (retry bump) must not regress a row a second
+        worker already synced (the claim lease lapsed mid-embed)."""
+        workspace, peer = sample_data
+        pending_emb = await self._create_pending_message_embedding(
+            db_session, workspace, peer
+        )
+
+        # Simulate the race: embedding fails transiently (no fresh vectors, no
+        # permanent failures — exactly what the real _embed_claimed returns
+        # after a ValueError), AND a second worker syncs the row in the same
+        # window (claim lease lapsed). Our late retry-bump is fenced with
+        # sync_state == "pending", so it must no-op instead of dragging the row
+        # back to "pending".
+        async def embed_fails_and_second_worker_syncs(claimed):
+            del claimed  # not inspected here
+            await db_session.execute(
+                update(models.MessageEmbedding)
+                .where(models.MessageEmbedding.id == pending_emb.id)
+                .values(
+                    sync_state="synced",
+                    last_sync_at=func.now(),
+                    embedding=[1.0] * 1536,
+                )
+            )
+            await db_session.commit()
+            # Transient failure outcome: retryable, nothing permanent.
+            return ({}, set())
+
+        with patch(
+            "src.reconciler.sync_vectors._embed_claimed",
+            side_effect=embed_fails_and_second_worker_syncs,
+        ):
+            metrics = ReconciliationMetrics()
+            worked = await _reconcile_message_embeddings_batch(None, metrics)
+
+        assert worked is True
+
+        await db_session.refresh(pending_emb)
+        # The second worker's "synced" state must survive our late failure write.
+        assert pending_emb.sync_state == "synced"
+        assert pending_emb.sync_attempts == 0
 
     async def test_all_chunks_of_a_message_claimed_together(
         self,
@@ -1041,12 +1144,17 @@ class TestReconcilerTracing:
                 self._fake_tracked_db(AsyncMock()),
             ),
             patch(
-                "src.reconciler.sync_vectors._get_message_embeddings_needing_sync",
+                "src.reconciler.sync_vectors._claim_and_lease_message_embeddings",
                 new_callable=AsyncMock,
                 return_value=[MagicMock()],
             ),
             patch(
-                "src.reconciler.sync_vectors._sync_message_embeddings",
+                "src.reconciler.sync_vectors._embed_claimed",
+                new_callable=AsyncMock,
+                return_value=({}, set()),
+            ),
+            patch(
+                "src.reconciler.sync_vectors._persist_message_embeddings",
                 new_callable=AsyncMock,
                 return_value=(1, 0),
             ),
