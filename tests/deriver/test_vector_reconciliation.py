@@ -1471,7 +1471,7 @@ class TestReEmbedTenantAttribution:
     @staticmethod
     def _store() -> MagicMock:
         store = MagicMock(spec=VectorStore)
-        store.get_vector_namespace = MagicMock(return_value="honcho.doc.x")
+        store.get_vector_namespace = AsyncMock(return_value="honcho.doc.x")
         store.upsert_many = AsyncMock(return_value=None)
         return store
 
@@ -1514,6 +1514,11 @@ class TestReEmbedTenantAttribution:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(settings, "MULTI_TENANT", True)
+        # Namespace resolution is not under test here; these tenants have no registry row.
+        monkeypatch.setattr(
+            "src.reconciler.sync_vectors.prefix_for_tenant",
+            AsyncMock(return_value="prefix"),
+        )
         docs = self._docs(["t-a", "t-b"])
 
         async def fail_for_a(
