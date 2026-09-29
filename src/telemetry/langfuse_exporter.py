@@ -575,7 +575,7 @@ class LangfuseExporter:
                     "type": "function",
                     "function": {
                         "name": tc.get("name"),
-                        "arguments": json.dumps(tc.get("input"), default=str),
+                        "arguments": json.dumps(tc.get("input") or {}, default=str),
                     },
                 }
                 for tc in call.output_tool_calls

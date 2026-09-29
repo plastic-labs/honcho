@@ -385,6 +385,16 @@ def test_tool_call_output_is_an_assistant_message_with_arguments(
     }
 
 
+def test_tool_call_without_input_has_empty_object_arguments(
+    _exporter_env: FakeClient,
+):
+    call = _call(run_id="r1", trace_id="r1", iteration=1, tool_names=["list"])
+    call.output_tool_calls[0]["input"] = None
+    LangfuseExporter().export(call)
+    output = _generation(_exporter_env).kwargs["output"]
+    assert output["tool_calls"][0]["function"]["arguments"] == "{}"
+
+
 def test_thinking_is_exported_with_the_output(_exporter_env: FakeClient):
     LangfuseExporter().export(
         _call(run_id=None, trace_id="t1", content="answer", thinking="hmm")
