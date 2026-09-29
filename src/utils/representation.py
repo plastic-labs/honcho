@@ -364,6 +364,36 @@ class Representation(BaseModel):
             + len(self.contradiction)
         )
 
+    def keep_top(self, n: int, ranked_ids: Sequence[str] = ()) -> "Representation":
+        """
+        Return a copy holding only the `n` highest-ranked observations, counted
+        across all levels. Each level keeps its original order.
+
+        Observations are ranked by the position of their id in `ranked_ids`
+        (best first); any not listed there follow, newest first. With no
+        `ranked_ids` this keeps the `n` most recent observations.
+        """
+        if n <= 0:
+            return Representation()
+        observations: list[
+            ExplicitObservation
+            | DeductiveObservation
+            | InductiveObservation
+            | ContradictionObservation
+        ] = [*self.explicit, *self.deductive, *self.inductive, *self.contradiction]
+        rank = {doc_id: i for i, doc_id in enumerate(ranked_ids)}
+        # Two stable sorts: newest first, then by rank, so recency breaks ties
+        # among the observations `ranked_ids` does not cover.
+        observations.sort(key=lambda o: o.created_at, reverse=True)
+        observations.sort(key=lambda o: rank.get(o.id, len(rank)))
+        kept = {id(o) for o in observations[:n]}
+        return Representation(
+            explicit=[o for o in self.explicit if id(o) in kept],
+            deductive=[o for o in self.deductive if id(o) in kept],
+            inductive=[o for o in self.inductive if id(o) in kept],
+            contradiction=[o for o in self.contradiction if id(o) in kept],
+        )
+
     def diff_representation(self, other: "Representation") -> "Representation":
         """
         Given this and another representation, return a new representation with only observations that are unique to the other.

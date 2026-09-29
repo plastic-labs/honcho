@@ -1,6 +1,7 @@
 """FastAPI routes for session resources and session-scoped operations."""
 
 import logging
+from collections.abc import Sequence
 from contextlib import suppress
 from time import perf_counter
 
@@ -60,7 +61,7 @@ async def _get_working_representation_task(
     include_most_derived: bool,
     max_observations: int | None,
     embedding: list[float] | None = None,
-) -> Representation:
+) -> crud.RankedRepresentation:
     """
     Get working representation using an externally-provided DB session.
 
@@ -78,9 +79,9 @@ async def _get_working_representation_task(
         embedding: Pre-computed embedding for the semantic query
 
     Returns:
-        The working representation
+        The working representation and the order its observations were selected in
     """
-    return await crud.get_working_representation(
+    return await crud.get_ranked_working_representation(
         workspace_name=workspace_id,
         db=db,
         observer=observer,
@@ -251,8 +252,6 @@ def _select_summary_for_context(
     if short_summary or long_summary:
         # A summary exists but none fits. The caller sees `summary: null`, which
         # is indistinguishable from "this session has no summary", so say so.
-        # `token_limit` here is already net of the representation and peer card,
-        # which is usually why the budget is smaller than the request suggests.
         logger.info(
             "Summary dropped: budget %s too small (short=%s, long=%s, limit=%s)",
             summary_budget,
@@ -262,6 +261,53 @@ def _select_summary_for_context(
         )
 
     return None, 0, token_limit
+
+
+def _fit_representation_to_budget(
+    representation: Representation,
+    token_limit: int,
+    ranked_ids: Sequence[str] = (),
+) -> Representation:
+    """
+    Trim a representation to fit a token budget, keeping its best observations.
+
+    Tokens are measured on the markdown the response serves. Observations are
+    dropped in reverse selection order: the recent ones that only filled spare
+    capacity go first, oldest first (the FIFO order a representation already
+    uses when it is capped by observation count), and semantic matches for a
+    search_query go last.
+
+    Args:
+        representation: The working representation
+        token_limit: Token budget for the rendered representation
+        ranked_ids: Observation ids, highest priority first
+
+    Returns:
+        The representation itself if it fits, otherwise the largest set of
+        top-ranked observations that does (possibly empty)
+    """
+    if estimate_tokens(representation.format_as_markdown()) <= token_limit:
+        return representation
+
+    # Rendered size only grows with each observation kept, so binary search for
+    # the largest count that fits instead of re-rendering once per observation.
+    low, high = 0, representation.len() - 1
+    while low < high:
+        mid = (low + high + 1) // 2
+        rendered = representation.keep_top(mid, ranked_ids).format_as_markdown()
+        if estimate_tokens(rendered) <= token_limit:
+            low = mid
+        else:
+            high = mid - 1
+
+    # The caller only sees a shorter representation, so say why.
+    logger.info(
+        "Representation trimmed: kept %s of %s observations to fit %s tokens",
+        low,
+        representation.len(),
+        token_limit,
+    )
+    return representation.keep_top(low, ranked_ids)
 
 
 @router.post(
@@ -790,6 +836,9 @@ async def get_session_context(
     If not provided, the context will be exhaustive (within configured max tokens). To do this, we allocate 40% of the token limit
     to the summary, and 60% to recent messages -- as many as can fit. Note that the summary will usually take up less space than
     this. If the caller does not want a summary, we allocate all the tokens to recent messages.
+    If `peer_target` is given, the peer card and representation are taken from the tokens left after the
+    summary, ahead of recent messages. A representation that does not fit keeps conclusions in the order it
+    selected them: `search_query` matches, then the most frequent if requested, then the most recent.
     """
     token_limit = (
         tokens if tokens is not None else config.settings.GET_CONTEXT_MAX_TOKENS
@@ -962,7 +1011,7 @@ async def get_session_context(
     )
 
     # Sequential calls on shared DB session
-    representation = await _get_working_representation_task(
+    representation, ranked_ids = await _get_working_representation_task(
         db,
         workspace_id,
         search_query,
@@ -1001,15 +1050,28 @@ async def get_session_context(
         db, workspace_id, session_id
     )
 
-    # Adjust token budget after accounting for representation + card tokens
-    adjusted_limit = (
-        token_limit - estimate_tokens(str(representation)) - estimate_tokens(card)
+    # `tokens` bounds the whole response. The summary takes its 40% share of it
+    # first, as on the path without a peer_target, so a large representation
+    # cannot starve it. The card and then the representation get what is left,
+    # the representation trimmed in reverse selection order (search matches
+    # last), and messages fill the remainder.
+    summary, messages_start_id, remaining = _select_summary_for_context(
+        short_summary, long_summary, token_limit, include_summary
     )
-
-    # Pick best summary with 40/60 allocation against the adjusted budget
-    summary, messages_start_id, messages_budget = _select_summary_for_context(
-        short_summary, long_summary, adjusted_limit, include_summary
+    card_tokens = estimate_tokens(card)
+    if card_tokens > remaining:
+        logger.info(
+            "Peer card dropped: %s tokens exceed the remaining budget of %s",
+            card_tokens,
+            remaining,
+        )
+        card, card_tokens = None, 0
+    remaining -= card_tokens
+    representation = _fit_representation_to_budget(
+        representation, remaining, ranked_ids
     )
+    peer_representation = representation.format_as_markdown()
+    messages_budget = remaining - estimate_tokens(peer_representation)
 
     # Fetch messages with the correct start_id and budget
     messages = await _get_messages_for_context_task(
@@ -1020,7 +1082,7 @@ async def get_session_context(
         name=session_id,
         messages=messages,
         summary=summary,
-        peer_representation=representation.format_as_markdown(),
+        peer_representation=peer_representation,
         peer_card=card,
     )
     emit(

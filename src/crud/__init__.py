@@ -50,6 +50,8 @@ from .peer import (
 )
 from .peer_card import get_peer_card, set_peer_card
 from .representation import (
+    RankedRepresentation,
+    get_ranked_working_representation,
     get_working_representation,
 )
 from .scope import (
@@ -154,6 +156,8 @@ __all__ = [
     "get_peer_card",
     "set_peer_card",
     # Representation
+    "RankedRepresentation",
+    "get_ranked_working_representation",
     "get_working_representation",
     # Scope
     "add_sessions_to_scope",

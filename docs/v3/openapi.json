@@ -2283,7 +2283,7 @@
           "sessions"
         ],
         "summary": "Get Session Context",
-        "description": "Produce a context object from the Session. The caller provides an optional token limit which the entire context must fit into.\nIf not provided, the context will be exhaustive (within configured max tokens). To do this, we allocate 40% of the token limit\nto the summary, and 60% to recent messages -- as many as can fit. Note that the summary will usually take up less space than\nthis. If the caller does not want a summary, we allocate all the tokens to recent messages.",
+        "description": "Produce a context object from the Session. The caller provides an optional token limit which the entire context must fit into.\nIf not provided, the context will be exhaustive (within configured max tokens). To do this, we allocate 40% of the token limit\nto the summary, and 60% to recent messages -- as many as can fit. Note that the summary will usually take up less space than\nthis. If the caller does not want a summary, we allocate all the tokens to recent messages.\nIf `peer_target` is given, the peer card and representation are taken from the tokens left after the\nsummary, ahead of recent messages. A representation that does not fit keeps conclusions in the order it\nselected them: `search_query` matches, then the most frequent if requested, then the most recent.",
         "operationId": "get_session_context_v3_workspaces__workspace_id__sessions__session_id__context_get",
         "security": [
           {

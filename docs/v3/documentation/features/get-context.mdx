@@ -101,6 +101,8 @@ context = session.context(summary=False, tokens=2000)
 
 You can include a peer's [representation](/v3/documentation/core-concepts/representation) and peer card in the context by specifying `peer_target`. This is useful for providing the LLM with knowledge about a specific peer. Pass `scope` with `peer_target` to use a [named scope](/v3/documentation/features/advanced/scopes) as the perspective source (`scope` is mutually exclusive with `peer_perspective` and requires a workspace-level or admin-level key).
 
+The representation and peer card count toward `tokens`. The summary keeps its share of the limit, the peer card and representation come next, and recent messages fill what is left. If the representation does not fit, it keeps conclusions in the order it selected them: those matching `search_query`, then the most frequent if requested, then the most recent.
+
 <CodeGroup>
 ```python Python
 # Get context with peer representation included

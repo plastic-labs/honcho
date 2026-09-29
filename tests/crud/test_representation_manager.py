@@ -953,7 +953,10 @@ class TestVectorQueryTopKFloor:
                 new=AsyncMock(return_value=[recent_doc]),
             ) as mock_recent,
         ):
-            representation = await manager._get_working_representation_internal(  # pyright: ignore[reportPrivateUsage]
+            (
+                representation,
+                ranked_ids,
+            ) = await manager._get_working_representation_internal(  # pyright: ignore[reportPrivateUsage]
                 db_session,
                 include_semantic_query="what do they like?",
                 embedding=[0.1],
@@ -967,6 +970,7 @@ class TestVectorQueryTopKFloor:
             "semantic result",
             "recent result",
         ]
+        assert ranked_ids == [semantic_doc.id, recent_doc.id]
 
     @pytest.mark.asyncio
     async def test_reclaims_unused_derived_budget_for_recent_observations(
@@ -1008,7 +1012,10 @@ class TestVectorQueryTopKFloor:
                 new=AsyncMock(return_value=[recent_doc]),
             ) as mock_recent,
         ):
-            representation = await manager._get_working_representation_internal(  # pyright: ignore[reportPrivateUsage]
+            (
+                representation,
+                ranked_ids,
+            ) = await manager._get_working_representation_internal(  # pyright: ignore[reportPrivateUsage]
                 db_session,
                 include_most_derived=True,
                 max_observations=6,
@@ -1022,6 +1029,7 @@ class TestVectorQueryTopKFloor:
             "derived result",
             "recent result",
         ]
+        assert ranked_ids == [derived_doc.id, recent_doc.id]
 
     @pytest.mark.asyncio
     async def test_recent_results_fill_capacity_after_semantic_overlap(self) -> None:
@@ -1064,7 +1072,10 @@ class TestVectorQueryTopKFloor:
             ),
             patch.object(manager, "_query_documents_recent", new=recent_documents),
         ):
-            representation = await manager._get_working_representation_internal(  # pyright: ignore[reportPrivateUsage]
+            (
+                representation,
+                ranked_ids,
+            ) = await manager._get_working_representation_internal(  # pyright: ignore[reportPrivateUsage]
                 db_session,
                 include_semantic_query="what do they like?",
                 embedding=[0.1],
@@ -1076,6 +1087,8 @@ class TestVectorQueryTopKFloor:
         assert [observation.id for observation in representation.explicit] == [
             document.id for document in documents
         ]
+        # The semantic match ranks first even though it is the oldest.
+        assert ranked_ids == [document.id for document in documents]
 
     async def test_search_messages_external_returns_empty_without_querying_on_zero_limit(
         self,
