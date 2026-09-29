@@ -98,6 +98,7 @@ def _call(
     tool_names: list[str] | None = None,
     finish_reason: str = "stop",
     content: str = "answer",
+    thinking: str | None = None,
     duration_ms: float | None = None,
 ):
     telemetry = LLMTelemetryContext(
@@ -123,6 +124,7 @@ def _call(
             ToolCallResult(id=f"tc-{i}", name=name, input={"q": name})
             for i, name in enumerate(tool_names or [])
         ],
+        thinking_content=thinking,
     )
     return build_captured_call(
         telemetry=telemetry,
@@ -240,10 +242,11 @@ def test_agentic_run_builds_run_step_generation(_exporter_env: FakeClient):
     by_type: dict[str, list[FakeObs]] = {}
     for obs in client.observations:
         by_type.setdefault(str(obs.kwargs["as_type"]), []).append(obs)
-    assert len(by_type["span"]) == 2  # run span + step span
+    assert len(by_type["agent"]) == 1
+    assert len(by_type["span"]) == 1  # step span
     assert len(by_type["generation"]) == 1
 
-    run_span, step_span = by_type["span"]
+    run_span, step_span = by_type["agent"][0], by_type["span"][0]
     gen = by_type["generation"][0]
     assert run_span.kwargs["trace_context"] == {"trace_id": "lf-r1"}
     assert step_span.kwargs["trace_context"] == {
@@ -270,11 +273,13 @@ def test_run_span_created_once_across_iterations(_exporter_env: FakeClient):
     exporter.export(_call(run_id="r1", trace_id="r1", iteration=1, session_id="s"))
     exporter.export(_call(run_id="r1", trace_id="r1", iteration=2, session_id="s"))
 
+    runs = [o for o in client.observations if o.kwargs["as_type"] == "agent"]
     spans = [o for o in client.observations if o.kwargs["as_type"] == "span"]
     gens = [o for o in client.observations if o.kwargs["as_type"] == "generation"]
     # One run span shared, one step span per iteration, one generation per call.
     assert len(gens) == 2
-    assert len(spans) == 3  # 1 run + 2 step
+    assert len(runs) == 1
+    assert len(spans) == 2
     stamped = [o for o in client.observations if "user.id" in o._otel_span.attributes]
     assert len(stamped) == len(client.observations)
 
@@ -339,8 +344,66 @@ def test_generation_name_uses_generation_suffix(_exporter_env: FakeClient):
     )
     gen = [o for o in client.observations if o.kwargs["as_type"] == "generation"][0]
     assert gen.kwargs["name"] == "Dialectic Agent generation"
-    step = [o for o in client.observations if o.kwargs["as_type"] == "span"][1]
+    step = [o for o in client.observations if o.kwargs["as_type"] == "span"][0]
     assert step.kwargs["name"] == "Dialectic Agent step"
+
+
+def _generation(client: FakeClient) -> FakeObs:
+    return [o for o in client.observations if o.kwargs["as_type"] == "generation"][0]
+
+
+def test_text_only_output_stays_a_string(_exporter_env: FakeClient):
+    LangfuseExporter().export(_call(run_id=None, trace_id="t1", content="hi"))
+    assert _generation(_exporter_env).kwargs["output"] == "hi"
+
+
+def test_tool_call_output_is_an_assistant_message_with_arguments(
+    _exporter_env: FakeClient,
+):
+    LangfuseExporter().export(
+        _call(
+            run_id="r1",
+            trace_id="r1",
+            iteration=1,
+            content="let me look",
+            tool_names=["search_memory"],
+        )
+    )
+    assert _generation(_exporter_env).kwargs["output"] == {
+        "role": "assistant",
+        "content": "let me look",
+        "tool_calls": [
+            {
+                "id": "tc-0",
+                "type": "function",
+                "function": {
+                    "name": "search_memory",
+                    "arguments": '{"q": "search_memory"}',
+                },
+            }
+        ],
+    }
+
+
+def test_tool_call_without_input_has_empty_object_arguments(
+    _exporter_env: FakeClient,
+):
+    call = _call(run_id="r1", trace_id="r1", iteration=1, tool_names=["list"])
+    call.output_tool_calls[0]["input"] = None
+    LangfuseExporter().export(call)
+    output = _generation(_exporter_env).kwargs["output"]
+    assert output["tool_calls"][0]["function"]["arguments"] == "{}"
+
+
+def test_thinking_is_exported_with_the_output(_exporter_env: FakeClient):
+    LangfuseExporter().export(
+        _call(run_id=None, trace_id="t1", content="answer", thinking="hmm")
+    )
+    assert _generation(_exporter_env).kwargs["output"] == {
+        "role": "assistant",
+        "content": "answer",
+        "thinking": "hmm",
+    }
 
 
 def test_executed_tool_calls_become_spans_under_the_step(_exporter_env: FakeClient):
@@ -360,10 +423,9 @@ def test_executed_tool_calls_become_spans_under_the_step(_exporter_env: FakeClie
     exporter.export_tool_call(_tool("search_memory", iteration=1, duration_ms=300.0))
     exporter.export_tool_call(_tool("search_messages", iteration=1, is_error=True))
 
-    spans = [o for o in client.observations if o.kwargs["as_type"] == "span"]
+    step_span = [o for o in client.observations if o.kwargs["as_type"] == "span"][0]
     gen = [o for o in client.observations if o.kwargs["as_type"] == "generation"][0]
     tools = [o for o in client.observations if o.kwargs["as_type"] == "tool"]
-    step_span = spans[1]  # run span, then step span
 
     assert [t.kwargs["name"] for t in tools] == ["search_memory", "search_messages"]
     # Tool spans are siblings of the generation: same parent (the step span).
@@ -404,8 +466,8 @@ def test_only_the_root_span_keeps_as_root(_exporter_env: FakeClient):
     def is_demoted(obs: FakeObs) -> bool:
         return obs._otel_span.attributes.get(Attr.AS_ROOT) is False
 
-    spans = [o for o in client.observations if o.kwargs["as_type"] == "span"]
-    run_span, step_span = spans[0], spans[1]
+    run_span = [o for o in client.observations if o.kwargs["as_type"] == "agent"][0]
+    step_span = [o for o in client.observations if o.kwargs["as_type"] == "span"][0]
     gen = [o for o in client.observations if o.kwargs["as_type"] == "generation"][0]
     tools = [o for o in client.observations if o.kwargs["as_type"] == "tool"]
 
@@ -691,7 +753,7 @@ def test_lifecycle_dream_root_spans_both_specialists(_exporter_env: FakeClient):
     runs = [
         o
         for o in client.observations
-        if o.kwargs["as_type"] == "span"
+        if o.kwargs["as_type"] == "agent"
         and str(o.kwargs["name"]).startswith("Dreamer/")
     ]
     assert [r.kwargs["trace_context"]["parent_span_id"] for r in runs] == [

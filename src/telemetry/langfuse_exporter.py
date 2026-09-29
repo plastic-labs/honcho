@@ -8,7 +8,7 @@ inherit:
 
     Trace (id = create_trace_id(seed=honcho trace_id))
      └─ [dream root]  (multi-specialist agents only — one "Dream" span per trace)
-         └─ run span    (one per (run_id, agent_type); name = track_name)
+         └─ run agent   (one per (run_id, agent_type); name = track_name)
             └─ step span (one per (agent_type, iteration); name = "<track> step")
                ├─ generation (one per CapturedLLMCall; name = "<track> generation")
                └─ tool span  (one per executed tool call; sibling of generation)
@@ -32,6 +32,7 @@ LLM call path.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from typing import Any
@@ -117,6 +118,7 @@ class LangfuseExporter:
                     metadata=self._metadata(call),
                     call=call,
                     start_ns=start_ns,
+                    as_type="agent",
                 ),
             )
             parent_span_id = run_span_id
@@ -189,6 +191,7 @@ class LangfuseExporter:
                 name=span.track_name or "LLM run",
                 metadata=self._metadata(span),
                 span=span,
+                as_type="agent",
             )
             if obs.id is not None:
                 langfuse_session.register_run(lf_trace_id, branch, obs.id, obs)
@@ -308,6 +311,7 @@ class LangfuseExporter:
         metadata: dict[str, str],
         call: _Traced,
         start_ns: int | None,
+        as_type: str = "span",
     ) -> str | None:
         """Create a (run or step) span, returning its OTEL span id.
 
@@ -319,7 +323,7 @@ class LangfuseExporter:
         obs = client.start_observation(
             trace_context=self._trace_context(lf_trace_id, parent_span_id),
             name=name,
-            as_type="span",
+            as_type=as_type,
             metadata=metadata,
         )
         self._backdate_start(obs, start_ns)
@@ -336,12 +340,13 @@ class LangfuseExporter:
         name: str,
         metadata: dict[str, str],
         span: CapturedSpan,
+        as_type: str = "span",
     ) -> Any:
         """Start a span that stays open until its lifecycle end record."""
         obs = client.start_observation(
             trace_context=self._trace_context(lf_trace_id, parent_span_id),
             name=name,
-            as_type="span",
+            as_type=as_type,
             input=span.input,
             metadata=metadata,
         )
@@ -557,11 +562,25 @@ class LangfuseExporter:
 
     @staticmethod
     def _output(call: CapturedLLMCall) -> Any:
-        if isinstance(call.output_content, str) and call.output_content.strip():
+        """Plain text when that's all there is, else one assistant message."""
+        if not call.output_tool_calls and not call.thinking_content:
             return call.output_content
+        message: dict[str, Any] = {"role": "assistant", "content": call.output_content}
+        if call.thinking_content:
+            message["thinking"] = call.thinking_content
         if call.output_tool_calls:
-            return {"tool_calls": [tc.get("name") for tc in call.output_tool_calls]}
-        return call.output_content
+            message["tool_calls"] = [
+                {
+                    "id": tc.get("id"),
+                    "type": "function",
+                    "function": {
+                        "name": tc.get("name"),
+                        "arguments": json.dumps(tc.get("input") or {}, default=str),
+                    },
+                }
+                for tc in call.output_tool_calls
+            ]
+        return message
 
     @staticmethod
     def _usage(call: CapturedLLMCall) -> dict[str, int]:
