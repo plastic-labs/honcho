@@ -197,7 +197,7 @@ telemetry_events_dropped_counter = NamespacedCounter(
 # region ai
 # Emitted under MULTI_TENANT with no tenant bound, outside the categories that are
 # tenant-less by construction. Non-zero means an emit site runs outside its bind
-# scope; the event still ships, so the consumer can quarantine billable ones.
+# scope. The event still ships, without a tenant attribute.
 # endregion
 telemetry_events_untenanted_counter = NamespacedCounter(
     "telemetry_events_untenanted",
@@ -616,19 +616,21 @@ class PrometheusMetrics:
         for event_type in HIGH_VOLUME_EVENT_TYPES:
             self._touch(telemetry_events_sampled_out_counter, type=event_type)
         # region ai
-        # Untenanted: every type that CAN carry a tenant. The tenant-less categories
-        # are excluded on purpose — a permanently-0 series for an event that never
-        # increments it would be the fabrication the docstring above rules out.
+        # Untenanted: every type that CAN carry a tenant, and only under MULTI_TENANT,
+        # the one mode that can increment it. Flag-off instances and the tenant-less
+        # categories are excluded on purpose: a permanently-0 series for a counter
+        # that never increments would be the fabrication the docstring above rules out.
         # endregion
-        from src.telemetry.events.base import BaseEvent
+        if settings.MULTI_TENANT:
+            from src.telemetry.events.base import BaseEvent
 
-        for event_cls in walk_subclasses(BaseEvent):
-            event_type_value = getattr(event_cls, "_event_type", None)
-            if event_type_value is None:
-                continue
-            if event_cls.category() in TENANTLESS_CATEGORIES:
-                continue
-            self._touch(telemetry_events_untenanted_counter, type=event_type_value)
+            for event_cls in walk_subclasses(BaseEvent):
+                event_type_value = getattr(event_cls, "_event_type", None)
+                if event_type_value is None:
+                    continue
+                if event_cls.category() in TENANTLESS_CATEGORIES:
+                    continue
+                self._touch(telemetry_events_untenanted_counter, type=event_type_value)
         self.set_telemetry_buffer_size(size=0)
 
         if instance_type == "api":

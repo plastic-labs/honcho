@@ -13,7 +13,7 @@ Asserts that:
 # endregion
 
 from collections.abc import Iterator
-from typing import cast
+from typing import Literal, cast
 from uuid import uuid4
 
 import pytest
@@ -432,13 +432,16 @@ def _reconciliation_event_types() -> set[str]:
 
 
 @pytest.mark.usefixtures("metrics_enabled")
-def test_api_init_materializes_untenanted_for_every_non_reconciliation_event_type():
-    """telemetry_events_untenanted is zero-inited for every BaseEvent subclass whose
+def test_api_init_materializes_untenanted_for_every_non_reconciliation_event_type(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Flag-on, telemetry_events_untenanted is zero-inited for every BaseEvent subclass whose
     category is not in TENANTLESS_CATEGORIES, and NOT for the reconciliation types --
     a permanently-0 series for an event that can never increment it would be exactly
     the fabrication initialize_bounded_metrics's docstring rules out. Fails if a new
     BaseEvent subclass or a TENANTLESS_CATEGORIES change falls out of sync with the
     initializer."""
+    monkeypatch.setattr("src.config.settings.MULTI_TENANT", True)
     prometheus_metrics.initialize_bounded_metrics(instance_type="api")
     reconciliation_types = _reconciliation_event_types()
     assert reconciliation_types, (
@@ -453,10 +456,13 @@ def test_api_init_materializes_untenanted_for_every_non_reconciliation_event_typ
 
 
 @pytest.mark.usefixtures("metrics_enabled")
-def test_deriver_init_materializes_untenanted_for_every_non_reconciliation_event_type():
+def test_deriver_init_materializes_untenanted_for_every_non_reconciliation_event_type(
+    monkeypatch: pytest.MonkeyPatch,
+):
     """The same drift guard as the api-process test above, for the deriver process --
     the untenanted zero-init runs in the "common" section of initialize_bounded_metrics,
     shared by both instance types."""
+    monkeypatch.setattr("src.config.settings.MULTI_TENANT", True)
     prometheus_metrics.initialize_bounded_metrics(instance_type="deriver")
     reconciliation_types = _reconciliation_event_types()
     for event_type in ALL_EVENT_TYPES:
@@ -465,6 +471,20 @@ def test_deriver_init_materializes_untenanted_for_every_non_reconciliation_event
             assert value is None, f"{event_type} is tenant-less and must stay absent"
         else:
             assert value is not None, f"{event_type} should be zero-inited"
+
+
+@pytest.mark.usefixtures("metrics_enabled")
+@pytest.mark.parametrize("instance_type", ["api", "deriver"])
+def test_flag_off_init_materializes_no_untenanted_series(
+    monkeypatch: pytest.MonkeyPatch, instance_type: Literal["api", "deriver"]
+):
+    """Flag-off the counter can never increment (the emitter only records under
+    MULTI_TENANT), so a self-host or dedicated instance must not carry a
+    permanently-0 series per event type."""
+    monkeypatch.setattr("src.config.settings.MULTI_TENANT", False)
+    prometheus_metrics.initialize_bounded_metrics(instance_type=instance_type)
+    for event_type in ALL_EVENT_TYPES:
+        assert sample("telemetry_events_untenanted_total", type=event_type) is None
 
 
 # ---------------------------------------------------------------------------

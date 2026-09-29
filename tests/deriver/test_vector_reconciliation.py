@@ -16,6 +16,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
+from src.config import settings
+from src.db import tenant_context
 from src.reconciler.sync_vectors import (
     MAX_SYNC_ATTEMPTS,
     ReconciliationMetrics,
@@ -1167,3 +1169,88 @@ class TestComputeChunkPositions:
         assert positions[a0] == 0
         assert positions[a1] == 1
         assert positions[b0] == 0
+
+
+@pytest.mark.asyncio
+class TestReEmbedTenantAttribution:
+    """Each re-embed call runs with its rows' tenant bound, so its telemetry is attributed."""
+
+    @staticmethod
+    def _docs(tenant_ids: list[str]) -> list[models.Document]:
+        return [
+            models.Document(
+                id=generate_nanoid(),
+                tenant_id=tenant_id,
+                content=f"doc_{index}",
+                workspace_name="ws",
+                observer="peer",
+                observed="peer",
+                session_name="s",
+                sync_state="pending",
+                sync_attempts=0,
+                embedding=None,
+            )
+            for index, tenant_id in enumerate(tenant_ids)
+        ]
+
+    @staticmethod
+    def _store() -> MagicMock:
+        store = MagicMock(spec=VectorStore)
+        store.get_vector_namespace = MagicMock(return_value="honcho.doc.x")
+        store.upsert_many = AsyncMock(return_value=None)
+        return store
+
+    async def test_flag_on_embeds_once_per_tenant_with_that_tenant_bound(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(settings, "MULTI_TENANT", True)
+        docs = self._docs(["t-a", "t-b", "t-a"])
+        calls: list[tuple[str | None, list[str]]] = []
+
+        async def record(contents: list[str], **_kwargs: object) -> list[list[float]]:
+            calls.append((tenant_context.get(), contents))
+            return [[0.0] * 1536 for _ in contents]
+
+        with patch("src.reconciler.sync_vectors.embedding_client") as client:
+            client.simple_batch_embed = record
+            await _sync_documents(AsyncMock(), docs, self._store())
+
+        assert calls == [("t-a", ["doc_0", "doc_2"]), ("t-b", ["doc_1"])]
+        assert tenant_context.get() is None
+
+    async def test_flag_off_keeps_a_single_unbound_batch(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(settings, "MULTI_TENANT", False)
+        docs = self._docs(["default", "default"])
+        calls: list[tuple[str | None, int]] = []
+
+        async def record(contents: list[str], **_kwargs: object) -> list[list[float]]:
+            calls.append((tenant_context.get(), len(contents)))
+            return [[0.0] * 1536 for _ in contents]
+
+        with patch("src.reconciler.sync_vectors.embedding_client") as client:
+            client.simple_batch_embed = record
+            await _sync_documents(AsyncMock(), docs, self._store())
+
+        assert calls == [(None, 2)]
+
+    async def test_one_tenants_failure_does_not_fail_the_others(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(settings, "MULTI_TENANT", True)
+        docs = self._docs(["t-a", "t-b"])
+
+        async def fail_for_a(
+            contents: list[str], **_kwargs: object
+        ) -> list[list[float]]:
+            if tenant_context.get() == "t-a":
+                raise RuntimeError("provider blip")
+            return [[0.0] * 1536 for _ in contents]
+
+        with patch("src.reconciler.sync_vectors.embedding_client") as client:
+            client.simple_batch_embed = fail_for_a
+            _synced, failed = await _sync_documents(AsyncMock(), docs, self._store())
+
+        assert failed == 1
+        assert docs[1].embedding is not None

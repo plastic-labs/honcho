@@ -225,17 +225,18 @@ def require_auth(
             if tenant_token is not None:
                 # region ai
                 # Errors from this request are filterable by tenant; the global
-                # `namespace` tag keeps naming the instance. The Starlette/FastAPI
-                # integration forks the isolation scope per request, so the tag lives
-                # exactly as long as the bind; removed in the finally with the
-                # ContextVar reset, inside the same try so the two cleanups pair.
+                # `namespace` tag keeps naming the instance. Deliberately NOT removed
+                # in the finally: this dependency's teardown runs before the app's
+                # exception handlers, so removing it here would strip the tag from
+                # exactly the unhandled errors global_exception_handler reports. The
+                # tag dies with the request instead: sentry's ASGI middleware opens a
+                # fresh isolation scope per request, so it never reaches the next one.
                 # endregion
                 sentry_sdk.set_tag("tenant_id", jwt_params.tn)
             yield jwt_params
         finally:
             if tenant_token is not None:
                 tenant_context.reset(tenant_token)
-                sentry_sdk.get_isolation_scope().remove_tag("tenant_id")
 
     # Tag the closure so route-policy tests can introspect which routes opt into
     # member read without re-deriving it from HTTP method (an unreliable

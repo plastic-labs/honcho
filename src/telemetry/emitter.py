@@ -310,9 +310,9 @@ class TelemetryEmitter:
         # because this runs in the emitting request's or work unit's context; the
         # flush loop that serializes the buffer later does not.
         # A flag-on emit with no tenant bound is an emit site outside its bind
-        # scope. The event still ships (the consumer quarantines billable ones) and
-        # the counter makes it visible; reconciliation events are exempt because
-        # they are tenant-less by construction.
+        # scope. The event still ships, without `tenantid`, so a downstream consumer
+        # can tell it apart, and the counter makes it visible; reconciliation events
+        # are exempt because they are tenant-less by construction.
         # endregion
         tenant_id = current_tenant_id()
         if tenant_id:

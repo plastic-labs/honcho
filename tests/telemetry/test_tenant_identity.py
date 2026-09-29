@@ -315,25 +315,48 @@ def _bare_request() -> Request:
 
 class TestRequireAuthSentryTenantTag:
     @pytest.mark.asyncio
-    async def test_tag_set_for_the_bind_and_removed_on_teardown_when_flag_on(
+    async def test_tag_outlives_the_dependency_for_the_error_handler_when_flag_on(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """flag-on: the isolation scope's `tenant_id` tag is set to the bound
-        tenant for exactly the lifetime of the yield-dependency's bind, mirroring
-        the `tenant_context` ContextVar it lives and dies with."""
+        """flag-on: the tag is set for the bind and deliberately kept after the
+        dependency's teardown, which runs before the app's exception handlers, so
+        the unhandled error global_exception_handler reports still names the tenant.
+        The ContextVar bind itself is reset, as before."""
         monkeypatch.setattr(settings, "MULTI_TENANT", True)
         monkeypatch.setattr(settings.AUTH, "USE_AUTH", True)
         monkeypatch.setattr(settings.AUTH, "JWT_SECRET", "test-secret")
-        dependency = require_auth()(
-            request=_bare_request(), credentials=_acme_credentials()
-        )
-        params = await dependency.__anext__()
-        try:
-            assert params.tn == "acme"
+        # The request's own isolation scope, as sentry's ASGI middleware opens it.
+        with sentry_sdk.isolation_scope():
+            dependency = require_auth()(
+                request=_bare_request(), credentials=_acme_credentials()
+            )
+            params = await dependency.__anext__()
+            try:
+                assert params.tn == "acme"
+                assert sentry_sdk.get_isolation_scope()._tags.get("tenant_id") == "acme"
+            finally:
+                with pytest.raises(RuntimeError):
+                    await dependency.athrow(RuntimeError("route blew up"))
+            assert tenant_context.get() is None
             assert sentry_sdk.get_isolation_scope()._tags.get("tenant_id") == "acme"
-        finally:
+
+    @pytest.mark.asyncio
+    async def test_tag_does_not_outlive_the_request_scope(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The tag dies with the request's isolation scope, so the next request (a
+        fresh scope) never inherits the previous tenant's tag."""
+        monkeypatch.setattr(settings, "MULTI_TENANT", True)
+        monkeypatch.setattr(settings.AUTH, "USE_AUTH", True)
+        monkeypatch.setattr(settings.AUTH, "JWT_SECRET", "test-secret")
+        with sentry_sdk.isolation_scope():
+            dependency = require_auth()(
+                request=_bare_request(), credentials=_acme_credentials()
+            )
+            await dependency.__anext__()
             await dependency.aclose()
-        assert "tenant_id" not in sentry_sdk.get_isolation_scope()._tags
+        with sentry_sdk.isolation_scope():
+            assert "tenant_id" not in sentry_sdk.get_isolation_scope()._tags
 
     @pytest.mark.asyncio
     async def test_tag_never_set_when_flag_off(
