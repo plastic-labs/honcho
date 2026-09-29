@@ -602,6 +602,10 @@ def mock_openai_embeddings(request: pytest.FixtureRequest):
             "src.embedding_client.embedding_client.prepare_chunks"
         ) as mock_prepare_chunks,
         patch("src.embedding_client.embedding_client.batch_embed") as mock_batch_embed,
+        patch(
+            "src.embedding_client.embedding_client.truncate_to_token_limit",
+            side_effect=lambda text: text,  # pyright: ignore[reportUnknownLambdaType]
+        ) as mock_truncate,
     ):
         # Mock the embed method to return content-dependent embedding
         def embed_side_effect(content: str) -> list[float]:
@@ -640,6 +644,7 @@ def mock_openai_embeddings(request: pytest.FixtureRequest):
             "simple_batch_embed": mock_simple_batch_embed,
             "prepare_chunks": mock_prepare_chunks,
             "batch_embed": mock_batch_embed,
+            "truncate_to_token_limit": mock_truncate,
         }
 
 
