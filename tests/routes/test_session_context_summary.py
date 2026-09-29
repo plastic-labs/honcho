@@ -254,6 +254,52 @@ async def test_tokens_bounds_the_representation_and_keeps_the_summary(
     assert "Observation number 0:" not in representation
 
 
+async def test_messages_fill_only_what_the_representation_leaves(
+    client: TestClient,
+    sample_data: tuple[Workspace, Peer],
+    db_session: AsyncSession,
+) -> None:
+    """Messages share `tokens` with the representation instead of adding to it.
+
+    The representation fits whole and the messages alone exceed `tokens`, so
+    only the message budget decides whether the response stays in bounds.
+    """
+    workspace, peer = sample_data
+    session_id = str(generate_nanoid())
+    client.post(
+        f"/v3/workspaces/{workspace.name}/sessions",
+        json={"id": session_id, "peers": {peer.name: {}}},
+    )
+    await _seed_observations(db_session, workspace, peer, session_id, 10)
+    response = client.post(
+        f"/v3/workspaces/{workspace.name}/sessions/{session_id}/messages",
+        json={
+            "messages": [
+                {
+                    "content": (
+                        f"Message number {i}: the peer walked through a long "
+                        "and detailed plan for migrating their build pipeline"
+                    ),
+                    "peer_id": peer.name,
+                }
+                for i in range(80)
+            ]
+        },
+    )
+    assert response.status_code == 201
+    tokens = 1000
+    assert sum(m["token_count"] for m in response.json()) > tokens
+
+    url = f"/v3/workspaces/{workspace.name}/sessions/{session_id}/context"
+    data = client.get(f"{url}?peer_target={peer.name}&tokens={tokens}").json()
+
+    assert _context_tokens(data) <= tokens
+    for i in range(10):
+        assert f"Observation number {i}:" in data["peer_representation"]
+    assert data["messages"]
+    assert data["messages"][-1]["content"].startswith("Message number 79:")
+
+
 async def test_representation_within_budget_is_served_whole(
     client: TestClient,
     sample_data: tuple[Workspace, Peer],
