@@ -9,6 +9,17 @@ This package versions independently of the Honcho API, `@honcho-ai/sdk`, and hos
 
 ## [Unreleased]
 
+## [3.0.2] - 2026-09-29
+
+### Added
+
+- The remaining read tools take the scope options the API and SDKs accept,
+  so a client can use scopes end to end over MCP. `create_session` takes
+  `scopes`, `get_representation` takes `scope` or `sessions`, and `search`
+  takes `scope` (rejected alongside `session_id`). `get_session_context`
+  takes `peer_target`, `peer_perspective`, `scope`, and `limit_to_session`,
+  and returns `peer_representation` and `peer_card` when a target is given.
+
 ## [3.0.1] - 2026-09-22
 
 ### Added
