@@ -4,7 +4,7 @@ import datetime
 import logging
 import time
 from contextlib import suppress
-from typing import Any
+from typing import Any, NamedTuple
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,6 +29,15 @@ from src.utils.sanitization import strip_nul
 from src.utils.types import embedding_call_purpose
 
 logger = logging.getLogger(__name__)
+
+
+class RankedRepresentation(NamedTuple):
+    """A working representation and the order its observations were chosen in."""
+
+    representation: Representation
+    # Document ids, highest priority first: semantic matches by relevance, then
+    # the most derived, then the most recent.
+    ranked_ids: list[str]
 
 
 def _observation_text(obs: ExplicitObservation | DeductiveObservation) -> str:
@@ -245,6 +254,40 @@ class RepresentationManager:
         """
         Get working representation with flexible query options.
 
+        See `get_ranked_working_representation` for the arguments.
+        """
+        ranked = await self.get_ranked_working_representation(
+            db=db,
+            session_allowlist=session_allowlist,
+            include_semantic_query=include_semantic_query,
+            embedding=embedding,
+            semantic_search_top_k=semantic_search_top_k,
+            semantic_search_max_distance=semantic_search_max_distance,
+            include_most_derived=include_most_derived,
+            max_observations=max_observations,
+            parent_category=parent_category,
+            embedding_purpose=embedding_purpose,
+        )
+        return ranked.representation
+
+    async def get_ranked_working_representation(
+        self,
+        *,
+        db: AsyncSession | None = None,
+        session_allowlist: list[str] | None = None,
+        include_semantic_query: str | None = None,
+        embedding: list[float] | None = None,
+        semantic_search_top_k: int | None = None,
+        semantic_search_max_distance: float | None = None,
+        include_most_derived: bool = False,
+        max_observations: int = settings.DERIVER.WORKING_REPRESENTATION_MAX_OBSERVATIONS,
+        parent_category: str | None = None,
+        embedding_purpose: EmbeddingCallPurpose = EmbeddingCallPurpose.SEARCH_MEMORY,
+    ) -> RankedRepresentation:
+        """
+        Get working representation with flexible query options, and the order
+        its observations were selected in (semantic, most derived, recent).
+
         Args:
             db: Optional database session. If provided, uses it directly;
                 otherwise creates a new session via tracked_db.
@@ -269,7 +312,8 @@ class RepresentationManager:
                 fallback path lands in the same analytics bucket.
 
         Returns:
-            Representation combining various query strategies
+            Representation combining various query strategies, with the ids of
+            its observations in the order they were selected
         """
         if include_semantic_query and embedding is None:
             # Best-effort precompute when caller didn't supply one (or their
@@ -325,13 +369,13 @@ class RepresentationManager:
         semantic_search_max_distance: float | None = None,
         include_most_derived: bool = False,
         max_observations: int = settings.DERIVER.WORKING_REPRESENTATION_MAX_OBSERVATIONS,
-    ) -> Representation:
-        """Internal implementation of get_working_representation."""
+    ) -> RankedRepresentation:
+        """Internal implementation of get_ranked_working_representation."""
         # Fail closed on an empty allowlist. This must short-circuit before
         # any query: downstream stores drop an `IN ()` clause with an empty
         # list (lancedb), which would silently widen the scope instead.
         if session_allowlist is not None and not session_allowlist:
-            return Representation()
+            return RankedRepresentation(Representation(), [])
 
         total = max_observations
 
@@ -362,7 +406,8 @@ class RepresentationManager:
             top_observations = 0
 
         representation = Representation()
-        selected_document_ids: set[str] = set()
+        # Insertion-ordered, so it doubles as the selection order.
+        selected_document_ids: dict[str, None] = {}
 
         # Get semantic observations if requested
         if include_semantic_query:
@@ -377,7 +422,9 @@ class RepresentationManager:
             representation.merge_representation(
                 Representation.from_documents(semantic_docs)
             )
-            selected_document_ids.update(document.id for document in semantic_docs)
+            selected_document_ids.update(
+                dict.fromkeys(document.id for document in semantic_docs)
+            )
 
         # Get most derived observations if requested. The semantic query may
         # return fewer documents than requested, so cap this query by the
@@ -393,7 +440,9 @@ class RepresentationManager:
             representation.merge_representation(
                 Representation.from_documents(derived_docs)
             )
-            selected_document_ids.update(document.id for document in derived_docs)
+            selected_document_ids.update(
+                dict.fromkeys(document.id for document in derived_docs)
+            )
 
         # Reclaim any capacity left by queries that returned fewer unique
         # documents than requested. This keeps the final representation from
@@ -403,12 +452,15 @@ class RepresentationManager:
             db,
             top_k=recent_observations,
             session_allowlist=session_allowlist,
-            excluded_document_ids=selected_document_ids,
+            excluded_document_ids=set(selected_document_ids),
         )
 
         representation.merge_representation(Representation.from_documents(recent_docs))
+        selected_document_ids.update(
+            dict.fromkeys(document.id for document in recent_docs)
+        )
 
-        return representation
+        return RankedRepresentation(representation, list(selected_document_ids))
 
     async def _query_documents_semantic(
         self,
@@ -648,6 +700,58 @@ async def get_working_representation(
         observed=observed,
     )
     return await manager.get_working_representation(
+        db=db,
+        session_allowlist=session_allowlist,
+        include_semantic_query=include_semantic_query,
+        embedding=embedding,
+        semantic_search_top_k=semantic_search_top_k,
+        semantic_search_max_distance=semantic_search_max_distance,
+        include_most_derived=include_most_derived,
+        max_observations=max_observations,
+        parent_category=parent_category,
+        embedding_purpose=embedding_purpose,
+    )
+
+
+async def get_ranked_working_representation(
+    workspace_name: str,
+    *,
+    db: AsyncSession | None = None,
+    observer: str,
+    observed: str,
+    session_allowlist: list[str] | None = None,
+    include_semantic_query: str | None = None,
+    embedding: list[float] | None = None,
+    semantic_search_top_k: int | None = None,
+    semantic_search_max_distance: float | None = None,
+    include_most_derived: bool = False,
+    max_observations: int = settings.DERIVER.WORKING_REPRESENTATION_MAX_OBSERVATIONS,
+    parent_category: str | None = None,
+    embedding_purpose: EmbeddingCallPurpose = EmbeddingCallPurpose.SEARCH_MEMORY,
+) -> RankedRepresentation:
+    """
+    Get a working representation together with the order its observations were
+    selected in, so a caller that has to shorten it can drop the least relevant.
+
+    This is a convenience function that creates a RepresentationManager and calls
+    get_ranked_working_representation on it.
+
+    Args:
+        db: Optional database session. If provided, uses it directly;
+            otherwise creates a new session via tracked_db.
+        embedding: Pre-computed embedding for the semantic query.
+        parent_category: Workflow attribution forwarded to the fallback
+            embedding call when no pre-computed embedding was supplied.
+        embedding_purpose: Embedding call_purpose for the fallback embed;
+            callers should match it to whatever purpose their route-level
+            precompute used so failure/retry paths stay in the same bucket.
+    """
+    manager = RepresentationManager(
+        workspace_name=workspace_name,
+        observer=observer,
+        observed=observed,
+    )
+    return await manager.get_ranked_working_representation(
         db=db,
         session_allowlist=session_allowlist,
         include_semantic_query=include_semantic_query,
