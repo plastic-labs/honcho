@@ -940,6 +940,10 @@ async def get_session_context(
     # Pre-compute embedding outside the DB session (best-effort)
     embedding: list[float] | None = None
     if search_query:
+        # Return any connection the checks above checked out (scope resolution,
+        # allowlist membership) before the external call. The session stays
+        # usable: its next query checks out a fresh connection.
+        await db.close()
         with (
             suppress(Exception),
             embedding_call_purpose(
