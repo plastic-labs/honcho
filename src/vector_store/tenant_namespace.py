@@ -122,24 +122,27 @@ async def _load_prefix(tenant_id: str) -> str:
     try:
         async with service_db("vector_namespace_prefix", read_only=True) as db:
             tenant = await db.get(models.Tenant, tenant_id)
+            # ai: read inside the block — service_db's teardown rolls back (expiring the instance) and closes it, so an attribute read after exit raises DetachedInstanceError
+            registered = tenant is not None
+            key = tenant.vector_correlation_id if tenant is not None else None
     except Exception as exc:
         raise VectorStoreError(
             f"Could not read the vector namespace key for tenant {tenant_id}."
         ) from exc
 
-    if tenant is None:
+    if not registered:
         raise VectorNamespaceUnresolved(
             f"Tenant {tenant_id} is bound but not registered, so its vector namespace "
             + "cannot be resolved."
         )
-    if not tenant.vector_correlation_id:
+    if not key:
         raise VectorNamespaceUnresolved(
             f"Tenant {tenant_id} has no vector_correlation_id. The control plane sets "
             + "one for every tenant it registers — a tenant's historical app name if it "
             + "had its own instance, its tenant id otherwise. Refusing rather than "
             + "guessing: guessing would orphan an existing corpus behind an empty search."
         )
-    return tenant.vector_correlation_id
+    return key
 
 
 def reset_prefix_cache() -> None:
