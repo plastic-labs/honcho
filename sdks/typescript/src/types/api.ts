@@ -85,6 +85,10 @@ export interface EvidenceObservation {
   content: string
   created_at: string
   session_id: string | null
+  /** The peer who made the conclusion. */
+  observer_id: string
+  /** The peer the conclusion is about. */
+  observed_id: string
   /** Conclusions this one was derived from; empty for explicit conclusions. */
   source_ids: string[]
 }

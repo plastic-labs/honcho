@@ -377,11 +377,96 @@ def _tool_call_to_dict(tool_call: ToolCallResult) -> dict[str, Any]:
     return out
 
 
+@dataclass(slots=True)
+class CapturedSpan:
+    """Start or end of a trace root, an agent run, or one tool-loop step."""
+
+    kind: Literal["trace", "run", "step"]
+    phase: Literal["start", "end"]
+    time_ns: int
+    trace_id: str | None
+    run_id: str | None
+    span_id: str | None
+    iteration: int | None
+    workspace_name: str | None
+    call_purpose: str | None
+    parent_category: str | None
+    agent_type: str | None
+    session_id: str | None
+    observer: str | None
+    observed: str | None
+    peer_name: str | None
+    track_name: str | None
+    input: Any = None
+    output: Any = None
+    is_error: bool = False
+
+
+@dataclass(slots=True)
+class CapturedToolCall:
+    """One executed tool call, captured when it finishes."""
+
+    run_id: str
+    agent_type: str
+    workspace_name: str | None
+    iteration: int | None
+    tool_call_seq: int
+    tool_call_id: str | None
+    name: str
+    input: Any
+    output: str
+    is_error: bool
+    duration_ms: float
+
+
+def build_captured_span(
+    telemetry: LLMTelemetryContext,
+    *,
+    kind: Literal["trace", "run", "step"],
+    phase: Literal["start", "end"],
+    time_ns: int,
+    input: Any = None,  # noqa: A002 - mirrors the observation field name
+    output: Any = None,
+    is_error: bool = False,
+) -> CapturedSpan:
+    """Build a `CapturedSpan` from the run's telemetry context."""
+    return CapturedSpan(
+        kind=kind,
+        phase=phase,
+        time_ns=time_ns,
+        trace_id=telemetry.trace_id,
+        run_id=telemetry.run_id,
+        span_id=telemetry.span_id,
+        iteration=telemetry.iteration,
+        workspace_name=telemetry.workspace_name,
+        call_purpose=telemetry.call_purpose,
+        parent_category=telemetry.parent_category,
+        agent_type=telemetry.agent_type,
+        session_id=telemetry.session_id,
+        observer=telemetry.observer,
+        observed=telemetry.observed,
+        peer_name=telemetry.peer_name,
+        track_name=telemetry.track_name,
+        input=input,
+        output=output,
+        is_error=is_error,
+    )
+
+
 @runtime_checkable
 class LLMCallExporter(Protocol):
     """A sink that consumes a `CapturedLLMCall`"""
 
     def export(self, call: CapturedLLMCall) -> None: ...
+
+
+@runtime_checkable
+class SpanTreeExporter(Protocol):
+    """An exporter that also consumes run/step lifecycle and executed tool calls."""
+
+    def export_span(self, span: CapturedSpan) -> None: ...
+
+    def export_tool_call(self, tool_call: CapturedToolCall) -> None: ...
 
 
 _EXPORTERS: list[LLMCallExporter] = []
@@ -403,6 +488,11 @@ def has_exporters() -> bool:
     return bool(_EXPORTERS)
 
 
+def has_span_tree_exporters() -> bool:
+    """True when at least one registered exporter is a `SpanTreeExporter`."""
+    return any(isinstance(exporter, SpanTreeExporter) for exporter in _EXPORTERS)
+
+
 def dispatch_captured_call(call: CapturedLLMCall) -> None:
     """Fan a captured call out to every exporter."""
     for exporter in _EXPORTERS:
@@ -412,20 +502,49 @@ def dispatch_captured_call(call: CapturedLLMCall) -> None:
             logger.debug("LLM call exporter failed", exc_info=True)
 
 
+def dispatch_captured_span(span: CapturedSpan) -> None:
+    """Fan a span lifecycle record out to every `SpanTreeExporter`."""
+    for exporter in _EXPORTERS:
+        if not isinstance(exporter, SpanTreeExporter):
+            continue
+        try:
+            exporter.export_span(span)
+        except Exception:  # pragma: no cover - best-effort telemetry
+            logger.debug("Span exporter failed", exc_info=True)
+
+
+def dispatch_captured_tool_call(tool_call: CapturedToolCall) -> None:
+    """Fan an executed tool call out to every `SpanTreeExporter`."""
+    for exporter in _EXPORTERS:
+        if not isinstance(exporter, SpanTreeExporter):
+            continue
+        try:
+            exporter.export_tool_call(tool_call)
+        except Exception:  # pragma: no cover - best-effort telemetry
+            logger.debug("Tool call exporter failed", exc_info=True)
+
+
 __all__ = [
     "ROLE_OUTPUT",
     "ROLE_THINKING",
     "ROLE_TOOL_SCHEMA",
     "CapturedLLMCall",
     "CapturedMessage",
+    "CapturedSpan",
+    "CapturedToolCall",
     "LLMCallExporter",
+    "SpanTreeExporter",
     "build_captured_call",
     "build_captured_messages",
+    "build_captured_span",
     "canonical_json",
     "clear_exporters",
     "clip_for_trace",
     "compute_content_hash",
     "dispatch_captured_call",
+    "dispatch_captured_span",
+    "dispatch_captured_tool_call",
     "has_exporters",
+    "has_span_tree_exporters",
     "register_exporter",
 ]

@@ -491,6 +491,11 @@ async def get_representation(
         embedding: list[float] | None = None
         if options.search_query:
             try:
+                # Truncate oversized user queries instead of dropping semantic
+                # search; embed() stays strict so agent queries still fail.
+                options.search_query = embedding_client.truncate_to_token_limit(
+                    options.search_query
+                )
                 with embedding_call_purpose(
                     EmbeddingCallPurpose.SEARCH_MEMORY.value,
                     workspace_name=workspace_id,
@@ -726,6 +731,9 @@ async def get_peer_context(
                     parent_category="api",
                 ),
             ):
+                # Truncate oversized user queries instead of dropping semantic
+                # search; embed() stays strict so agent queries still fail.
+                search_query = embedding_client.truncate_to_token_limit(search_query)
                 embedding = await embedding_client.embed(search_query)
 
         # Get the working representation
@@ -734,7 +742,9 @@ async def get_peer_context(
             observer=peer_id,
             observed=observed,
             session_allowlist=None,  # Peer context is global, not session-scoped
-            include_semantic_query=search_query,
+            # Semantic search only with an embedding; otherwise the downstream
+            # fallback re-embeds a query that already failed.
+            include_semantic_query=search_query if embedding is not None else None,
             embedding=embedding,
             semantic_search_top_k=search_top_k,
             semantic_search_max_distance=search_max_distance,

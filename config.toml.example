@@ -276,6 +276,8 @@ URL = "redis://localhost:6379/0?suppress=true"
 # NAMESPACE = "honcho"  # Inherits from app.NAMESPACE if not set
 DEFAULT_TTL_SECONDS = 300
 DEFAULT_LOCK_TTL_SECONDS = 5
+CONNECT_TIMEOUT_SECONDS = 5.0
+CONNECT_RETRIES = 3
 
 # Vector store settings
 [vector_store]

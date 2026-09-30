@@ -5,6 +5,49 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [3.2.2] - 2026-09-29
+
+### Added
+
+- `CACHE_CONNECT_TIMEOUT_SECONDS` (default 5) and `CACHE_CONNECT_RETRIES` (default 3). The Redis client retries a failed connect with exponential backoff (0.1s base, 0.5s cap), so an instance that boots alongside several others no longer fails on a single `Timeout connecting to server` (#1234)
+
+### Changed
+
+- Listing a peer's sessions uses a new `session_peers (workspace_name, peer_name, session_name)` index and starts from that peer's rows instead of walking every session in the workspace (28.9ms to 0.15ms on a 326k-row test table). This release includes a migration. The index is not built `CONCURRENTLY`, so writes to `session_peers` wait while it builds (#1237)
+- LLM provider 5xx and connection errors are no longer sent to Sentry on every attempt by the Anthropic, OpenAI, and Google GenAI SDK integrations. Honcho reports the final error once its retries are exhausted, so an outage that recovers on retry no longer alerts. Client errors (400, 401, 404, 429) are still reported (#1242)
+- Dialectic and dreamer runs are typed `agent` in Langfuse, so they appear in the Agent Graph. Generation output with tool calls is an OpenAI-style assistant message carrying the tool arguments and any thinking, instead of just the tool names. The `langfuse` floor rises to `>=4.6.1` (#1258)
+
+### Removed
+
+- Inline Langfuse instrumentation and the `LANGFUSE_EXPORTER_MODE` setting. Langfuse traces now come only from the exporter over the captured LLM call stream, which has been the default since 3.0.12. A leftover `LANGFUSE_EXPORTER_MODE=inline` is ignored. The exporter only registers when `TELEMETRY_ENABLED` is true, so deployments that set Langfuse keys with telemetry off no longer get traces (#1253)
+
+### Fixed
+
+- Context routes (`GET /peers/{id}/context`, `POST /peers/{id}/representation`, `GET /sessions/{id}/context`) truncate a `search_query` longer than `EMBEDDING.MAX_INPUT_TOKENS` (8192) before embedding it. Before, the embed failed and the route returned a 200 with semantic results silently dropped. Session context also releases its DB connection before the embedding call (#1255)
+- Langfuse traces reflect what happened: generations show the call's real latency, every trace has one root observation, `user_id` and the trace name sit on every observation, run and step spans stay open until the run ends, and tool spans carry the result and real duration (#1235)
+- A Redis connection dropped while idle is reconnected and the command retried, instead of failing the request. uvloop raised a `RuntimeError` on the closed transport, which redis-py did not treat as a connection error (#1245)
+
+## [3.2.1] - 2026-09-22
+
+### Added
+
+- Chat evidence conclusions carry `observer_id` and `observed_id`, matching the Conclusions response. Workspace chat reads across every peer into one evidence list, so each row now says which pair it belongs to without re-fetching it (#1193)
+- `thinking_tool_choice_conflict` provider param for Anthropic model configs, which decides what happens when extended thinking meets a forced tool choice (Anthropic rejects the combination): `throw` (default, raises a validation error before the request is sent), `override_thinking` (drops thinking for that call), or `override_tool` (relaxes the tool choice to `auto`). Set it per model config, e.g. `DIALECTIC_LEVELS__medium__MODEL_CONFIG__OVERRIDES__PROVIDER_PARAMS__THINKING_TOOL_CHOICE_CONFLICT=override_thinking` (#1211)
+
+### Changed
+
+- `source_ids` is `[]` rather than `null` for explicit conclusions on the Conclusions response, matching chat evidence. Clients that checked for `null` should check for an empty list (#1193)
+- Workspace chat keeps its forced tool choice until a recall tool runs cleanly, capped at 3 forced rounds, so an answer always rests on at least one search instead of the prefetched overview. A tool that returns an error does not count. `get_workspace_stats` is removed from the workspace toolset, since the prefetch already supplies the same overview (#1210)
+- The deriver wraps each batch message in a tag carrying its peer and whether it is a target, and derives only from target messages, instead of relying on the model to match a name prefix. Message content that imitates the tag is escaped so it cannot claim target attribution (#1192)
+- Smaller runtime footprint: the Docker image drops from 627MB to 426MB. PDF extraction uses pypdf instead of pdfplumber, provider SDKs import only for the configured backend, and scikit-learn moves behind a new optional `surprisal` extra. Self-hosted deployments that enable `DREAM.SURPRISAL.ENABLED` with an sklearn-backed tree type need the extra; `rptree`, `covertree`, and `lsh` still work without it (#1201)
+
+### Fixed
+
+- Chat with `include_evidence` no longer fails with "Instance is not bound to a Session" when evidence is read after its DB session closes (#1212)
+- On Redis Cluster, each process releases the idle connection its startup PING leaves on the default node. Every client picks the same slot-0 primary, so these sockets piled up there (92% of that node's connections in one observed cluster) and could hit `maxclients`, which stops every new client from initialising (#1198)
+- Dreamer tools return an actionable error for malformed arguments (a string instead of a list, non-object items) instead of raising a `TypeError` mid-loop. Valid sibling observations in the same call still land (#1217)
+- Deleting a session no longer loads the content of every embedding chunk to rebuild vector IDs; chunk counts are aggregated in SQL (#1206)
+
 ## [3.2.0] - 2026-09-15
 
 ### Added

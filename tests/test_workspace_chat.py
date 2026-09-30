@@ -21,15 +21,14 @@ from src import crud, models
 from src.dialectic.chat import workspace_chat, workspace_chat_stream
 from src.models import Peer, Workspace
 from src.utils.agent_tools import (
+    _WORKSPACE_SEARCH_FANOUT_LIMIT,  # pyright: ignore[reportPrivateUsage]
     ToolContext,
     _handle_get_observation_context,  # pyright: ignore[reportPrivateUsage]
     _handle_get_peer_card_by_name,  # pyright: ignore[reportPrivateUsage]
     _handle_get_reasoning_chain,  # pyright: ignore[reportPrivateUsage]
-    _handle_get_workspace_stats,  # pyright: ignore[reportPrivateUsage]
     _handle_search_memory_workspace,  # pyright: ignore[reportPrivateUsage]
     create_workspace_tool_executor,
 )
-from src.utils.scopes import SCOPE_KIND, scope_peer_name
 
 # =============================================================================
 # Fixtures
@@ -469,24 +468,24 @@ async def test_workspace_chat_stream_releases_preflight_session_before_stream(
 class TestSearchMemoryWorkspace:
     """Tests for _handle_search_memory_workspace (representation-scoped)."""
 
-    async def test_requires_observer_and_observed(
+    async def test_requires_observed(
         self,
         make_workspace_ctx: Callable[..., ToolContext],
     ):
-        """Returns error when observer/observed params are missing."""
+        """Returns error when no peer is named."""
         ctx = make_workspace_ctx()
 
         result = _tool_text(
             await _handle_search_memory_workspace(ctx, {"query": "coffee preferences"})
         )
         assert "ERROR" in result
-        assert "observer" in result
+        assert "observed" in result
 
-    async def test_missing_observer_returns_error(
+    async def test_observer_defaults_to_observed(
         self,
         make_workspace_ctx: Callable[..., ToolContext],
     ):
-        """Returns error when only observed is provided."""
+        """Omitting observer searches each peer's own representation."""
         ctx = make_workspace_ctx()
 
         result = _tool_text(
@@ -494,7 +493,8 @@ class TestSearchMemoryWorkspace:
                 ctx, {"query": "test", "observed": "someone"}
             )
         )
-        assert "ERROR" in result
+        assert "ERROR" not in result
+        assert "[someone->someone]" in result
 
     async def test_missing_observed_returns_error(
         self,
@@ -648,105 +648,113 @@ class TestSearchMemoryWorkspace:
 
         assert isinstance(result, str)
 
-
-@pytest.mark.asyncio
-class TestGetWorkspaceStats:
-    """Tests for _handle_get_workspace_stats."""
-
-    async def test_returns_stats(
+    async def test_fans_out_over_several_peers(
         self,
         make_workspace_ctx: Callable[..., ToolContext],
         workspace_test_data: Any,
+        monkeypatch: pytest.MonkeyPatch,
     ):
-        """Returns workspace statistics."""
-        _ = workspace_test_data
+        """One call searches every peer named, each section attributed."""
+        monkeypatch.setattr("src.config.settings.VECTOR_STORE.MIGRATED", False)
+        _, peer1, peer2, peer3, _, _, _, _ = workspace_test_data
         ctx = make_workspace_ctx()
 
-        result = await _handle_get_workspace_stats(ctx, {})
-
-        assert "Workspace stats" in result
-        assert "Peers: 3" in result
-        assert "Sessions: 1" in result
-        assert "Messages: 6" in result
-        assert "Date range" in result
-
-    async def test_lists_most_active_peers(
-        self,
-        make_workspace_ctx: Callable[..., ToolContext],
-        workspace_test_data: Any,
-    ):
-        """Includes the most active peers with message counts."""
-        _, peer1, peer2, peer3, *_ = workspace_test_data
-        ctx = make_workspace_ctx()
-
-        result = await _handle_get_workspace_stats(ctx, {})
-
-        assert "Most active peers" in result
-        assert peer1.name in result
-        assert peer2.name in result
-        assert peer3.name in result
-        assert "messages" in result
-
-    async def test_empty_workspace(
-        self,
-        db_session: AsyncSession,
-    ):
-        """Returns zero counts for an empty workspace."""
-        workspace = models.Workspace(name=str(generate_nanoid()))
-        db_session.add(workspace)
-        await db_session.flush()
-
-        ctx = ToolContext(
-            observer="",
-            observed="",
-            current_messages=None,
-            workspace_name=workspace.name,
-            session_name=None,
-            include_observation_ids=False,
-            history_token_limit=8192,
-            db_lock=asyncio.Lock(),
-        )
-
-        result = await _handle_get_workspace_stats(ctx, {})
-
-        assert "Peers: 0" in result
-        assert "Messages: 0" in result
-
-    async def test_excludes_scope_peers(
-        self,
-        db_session: AsyncSession,
-        make_workspace_ctx: Callable[..., ToolContext],
-        workspace_test_data: Any,
-    ):
-        workspace, *_ = workspace_test_data
-        db_session.add(
-            models.Peer(
-                name=scope_peer_name("therapy"),
-                workspace_name=workspace.name,
-                internal_metadata={"kind": SCOPE_KIND},
-                configuration={"observe_me": False},
+        result = _tool_text(
+            await _handle_search_memory_workspace(
+                ctx,
+                {
+                    "query": "coffee",
+                    "observer": peer1.name,
+                    "observed": [peer2.name, peer3.name],
+                },
             )
         )
-        await db_session.commit()
 
-        result = await _handle_get_workspace_stats(make_workspace_ctx(), {})
+        assert f"[{peer1.name}->{peer2.name}]" in result
+        assert f"[{peer1.name}->{peer3.name}]" in result
 
-        assert "Peers: 3" in result
-        assert "scope.therapy" not in result
-
-    async def test_empty_session_allowlist_is_zero(
+    async def test_rejects_more_peers_than_the_fanout_limit(
         self,
         make_workspace_ctx: Callable[..., ToolContext],
-        workspace_test_data: Any,
     ):
-        _ = workspace_test_data
-        result = await _handle_get_workspace_stats(
-            make_workspace_ctx(session_allowlist=[]), {}
+        """Refuses an unbounded fan-out and tells the model to narrow."""
+        ctx = make_workspace_ctx()
+
+        result = _tool_text(
+            await _handle_search_memory_workspace(
+                ctx,
+                {
+                    "query": "test",
+                    "observed": [f"peer{i}" for i in range(6)],
+                },
+            )
         )
 
-        assert "Peers: 0" in result
-        assert "Sessions: 0" in result
-        assert "Messages: 0" in result
+        assert "ERROR" in result
+        assert str(_WORKSPACE_SEARCH_FANOUT_LIMIT) in result
+
+    async def test_splits_top_k_across_peers(
+        self,
+        make_workspace_ctx: Callable[..., ToolContext],
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """top_k is the budget for the whole call, not per peer."""
+        seen: list[int] = []
+
+        async def _capture(_ctx: ToolContext, tool_input: dict[str, Any]) -> str:
+            seen.append(tool_input["top_k"])
+            return "ok"
+
+        monkeypatch.setattr("src.utils.agent_tools._handle_search_memory", _capture)
+        ctx = make_workspace_ctx()
+
+        await _handle_search_memory_workspace(
+            ctx, {"query": "test", "top_k": 30, "observed": ["a", "b", "c"]}
+        )
+
+        assert seen == [10, 10, 10]
+
+    async def test_a_failure_on_every_peer_is_reported_as_an_error(
+        self,
+        make_workspace_ctx: Callable[..., ToolContext],
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """A search that read nothing must not pass for recall."""
+
+        async def _fail(_ctx: ToolContext, _tool_input: dict[str, Any]) -> str:
+            return "ERROR: Embedding the query failed: no provider"
+
+        monkeypatch.setattr("src.utils.agent_tools._handle_search_memory", _fail)
+        ctx = make_workspace_ctx()
+
+        result = await _handle_search_memory_workspace(
+            ctx, {"query": "test", "observed": ["a", "b"]}
+        )
+
+        assert isinstance(result, str)
+        assert result.startswith("ERROR:")
+
+    async def test_a_partial_failure_still_returns_what_succeeded(
+        self,
+        make_workspace_ctx: Callable[..., ToolContext],
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """One bad peer does not discard the others' results."""
+
+        async def _one_bad(ctx: ToolContext, _tool_input: dict[str, Any]) -> str:
+            return "ERROR: nope" if ctx.observed == "a" else "found something"
+
+        monkeypatch.setattr("src.utils.agent_tools._handle_search_memory", _one_bad)
+        ctx = make_workspace_ctx()
+
+        result = _tool_text(
+            await _handle_search_memory_workspace(
+                ctx, {"query": "test", "observed": ["a", "b"]}
+            )
+        )
+
+        assert not result.startswith("ERROR:")
+        assert "found something" in result
 
 
 @pytest.mark.asyncio
@@ -1054,16 +1062,17 @@ class TestWorkspaceToolExecutor:
         workspace_test_data: Any,
     ):
         """Workspace-specific tools are routed to workspace handlers."""
-        workspace, *_ = workspace_test_data
+        workspace, peer1, peer2, *_ = workspace_test_data
 
         executor = await create_workspace_tool_executor(
             workspace_name=workspace.name,
         )
 
-        stats_result = await executor("get_workspace_stats", {})
-        assert isinstance(stats_result, str)
-        assert "Workspace stats" in stats_result
-        assert "Most active peers" in stats_result
+        card_result = await executor(
+            "get_peer_card", {"observer": peer1.name, "observed": peer2.name}
+        )
+        assert isinstance(card_result, str)
+        assert "peer card" in card_result.lower()
 
     async def test_falls_through_to_standard_handlers(
         self,
@@ -1313,3 +1322,67 @@ class TestWorkspaceToolChoice:
             TOOL_CHOICE="none",
         )
         assert agent._tool_choice(pinned) == "none"  # pyright: ignore[reportPrivateUsage]
+
+    def test_forced_turn_is_satisfied_only_by_recall_tools(self) -> None:
+        from src.dialectic.core import DialecticAgent
+        from src.dialectic.workspace import WorkspaceDialecticAgent
+        from src.utils.agent_tools import (
+            WORKSPACE_DIALECTIC_TOOLS,
+            WORKSPACE_RECALL_TOOLS,
+        )
+
+        gate = WorkspaceDialecticAgent(workspace_name="w")._force_tools_until()  # pyright: ignore[reportPrivateUsage]
+        assert gate is not None and gate == WORKSPACE_RECALL_TOOLS
+        loadout = {t["name"] for t in WORKSPACE_DIALECTIC_TOOLS}
+        assert gate <= loadout
+        assert {"get_peer_card", "get_reasoning_chain"}.isdisjoint(gate)
+        pair = DialecticAgent(
+            workspace_name="w", session_name=None, observer="a", observed="a"
+        )
+        assert pair._force_tools_until() is None  # pyright: ignore[reportPrivateUsage]
+
+    @pytest.mark.parametrize("level", ["low", "medium", "high", "max"])
+    def test_workspace_gets_extra_tool_rounds(self, level: str) -> None:
+        from src.config import settings
+        from src.dialectic.core import DialecticAgent
+        from src.dialectic.workspace import WorkspaceDialecticAgent
+
+        level_settings = settings.DIALECTIC.LEVELS[level]  # pyright: ignore[reportArgumentType]
+        agent = WorkspaceDialecticAgent(workspace_name="w", reasoning_level=level)  # pyright: ignore[reportArgumentType]
+        assert agent._max_tool_iterations(level_settings) == (  # pyright: ignore[reportPrivateUsage]
+            level_settings.MAX_TOOL_ITERATIONS
+            + settings.DIALECTIC.WORKSPACE_EXTRA_TOOL_ITERATIONS
+        )
+        pair = DialecticAgent(
+            workspace_name="w",
+            session_name=None,
+            observer="a",
+            observed="a",
+            reasoning_level=level,  # pyright: ignore[reportArgumentType]
+        )
+        assert (
+            pair._max_tool_iterations(level_settings)  # pyright: ignore[reportPrivateUsage]
+            == level_settings.MAX_TOOL_ITERATIONS
+        )
+
+    def test_minimal_keeps_its_single_round(self) -> None:
+        from src.config import settings
+        from src.dialectic.workspace import WorkspaceDialecticAgent
+
+        level_settings = settings.DIALECTIC.LEVELS["minimal"]
+        agent = WorkspaceDialecticAgent(workspace_name="w", reasoning_level="minimal")
+        assert (
+            agent._max_tool_iterations(level_settings)  # pyright: ignore[reportPrivateUsage]
+            == level_settings.MAX_TOOL_ITERATIONS
+        )
+
+    def test_workspace_loadouts_carry_no_orientation_stats_tool(self) -> None:
+        from src.utils.agent_tools import (
+            TOOLS,
+            WORKSPACE_DIALECTIC_TOOLS,
+            WORKSPACE_TOOLS_MINIMAL,
+        )
+
+        assert "get_workspace_stats" not in TOOLS
+        for loadout in (WORKSPACE_DIALECTIC_TOOLS, WORKSPACE_TOOLS_MINIMAL):
+            assert all(t["name"] != "get_workspace_stats" for t in loadout)

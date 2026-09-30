@@ -8,4 +8,4 @@ export const API_VERSION = 'v3'
  * package.json by scripts/update_version.py; importing package.json instead would
  * make bundlers inline the whole manifest into shipped code.
  */
-export const VERSION = '2.5.0'
+export const VERSION = '2.5.1'

@@ -5,7 +5,8 @@ place that has to know what a provider outage looks like across the three SDKs.
 They do not share a base class, but they split failures the same two ways:
 
 * the request never got a response -- each SDK has its own connection-error
-  class (timeouts subclass it), and google-genai surfaces raw httpx errors;
+  class (timeouts subclass it), and google-genai surfaces raw httpx errors, or
+  a bare `TimeoutError` on its aiohttp transport;
 * the request got a response carrying a server-side status -- anthropic and
   openai expose it as `status_code`, google-genai as `code`.
 """
@@ -25,12 +26,13 @@ from src.exceptions import UpstreamLLMError
 _SERVER_ERROR_FLOOR = 500
 
 # "Never reached the provider." Neither anthropic's nor openai's class derives
-# from httpx's, so each must be named; httpx itself covers google-genai, which
-# surfaces transport failures unwrapped.
+# from httpx's, so each must be named; httpx and `TimeoutError` cover
+# google-genai, which surfaces transport failures unwrapped.
 _CONNECTION_ERRORS = (
     anthropic.APIConnectionError,
     openai.APIConnectionError,
     httpx.TransportError,
+    TimeoutError,
 )
 
 

@@ -1102,6 +1102,12 @@ class DialecticSettings(HonchoSettings):
     # Token limit for get_recent_history tool within the agent
     HISTORY_TOKEN_LIMIT: Annotated[int, Field(default=8192, gt=0, le=100_000)] = 8192
 
+    # Extra tool rounds workspace chat gets on top of its level's limit. A
+    # workspace query fans out over peers where a pair query reads one
+    # representation, so it needs room to route and then recall. Not applied at
+    # "minimal", whose single round is the point of the level.
+    WORKSPACE_EXTRA_TOOL_ITERATIONS: Annotated[int, Field(default=3, ge=0, le=20)] = 3
+
     # Session history injection: max tokens of recent messages to include when session_id is specified.
     # Set to 0 to disable automatic session history injection.
     SESSION_HISTORY_MAX_TOKENS: Annotated[
@@ -1304,6 +1310,8 @@ class CacheSettings(HonchoSettings):
     # for Redis Cluster). A standalone client cannot follow the MOVED redirects
     # such deployments return for keys hashed to another shard.
     CLUSTER: bool = False
+    CONNECT_TIMEOUT_SECONDS: Annotated[float, Field(default=5.0, gt=0, le=60)] = 5.0
+    CONNECT_RETRIES: Annotated[int, Field(default=3, ge=0, le=10)] = 3
     NAMESPACE: str | None = None
     DEFAULT_TTL_SECONDS: Annotated[int, Field(default=300, ge=1, le=86_400)] = (
         300  # how long to keep items in cache
@@ -1555,29 +1563,11 @@ class AppSettings(HonchoSettings):
     EMBED_MESSAGES: bool = True
     LANGFUSE_HOST: str | None = None
     LANGFUSE_PUBLIC_KEY: str | None = None
-    # How Langfuse traces are produced:
-    #   "exporter" (default) — Langfuse is a projection over the captured
-    #     CapturedLLMCall stream (LangfuseExporter), the same source of truth as
-    #     the CloudEvents trace stream.
-    #   "inline" — legacy live instrumentation (@observe + propagate_attributes
-    #     spans during execution). Kept one release for side-by-side validation.
-    LANGFUSE_EXPORTER_MODE: Literal["inline", "exporter"] = "exporter"
-
-    @property
-    def langfuse_inline_enabled(self) -> bool:
-        """True when the legacy inline Langfuse instrumentation is active
-        (keys configured + ``LANGFUSE_EXPORTER_MODE == "inline"``)."""
-        return (
-            bool(self.LANGFUSE_PUBLIC_KEY) and self.LANGFUSE_EXPORTER_MODE == "inline"
-        )
 
     @property
     def langfuse_exporter_enabled(self) -> bool:
-        """True when the Langfuse exporter (a projection over the captured call
-        stream) is active (keys configured + ``LANGFUSE_EXPORTER_MODE == "exporter"``)."""
-        return (
-            bool(self.LANGFUSE_PUBLIC_KEY) and self.LANGFUSE_EXPORTER_MODE == "exporter"
-        )
+        """True when Langfuse keys are configured."""
+        return bool(self.LANGFUSE_PUBLIC_KEY)
 
     # Origins allowed by the FastAPI CORSMiddleware
     CORS_ORIGINS: list[str] = [

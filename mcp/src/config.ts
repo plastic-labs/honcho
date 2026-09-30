@@ -4,6 +4,9 @@ import pkg from "../package.json";
 export const HEADER_HOST = "X-Honcho-Host";
 export const HEADER_PLUGIN = "X-Honcho-Plugin";
 
+/** Chat runs a tool-using agent that can outlast the SDK's 60s default. */
+const DEFAULT_TIMEOUT_MS = 300_000;
+
 /** Honcho's API caps client header values at 256 chars; match it. */
 const MAX_PLUGIN_LEN = 256;
 
@@ -30,10 +33,13 @@ export interface HonchoConfig {
   baseUrl: string;
   /** From X-Honcho-Workspace-ID (HTTP) or HONCHO_WORKSPACE_ID (stdio). */
   workspaceId?: string;
+  /** Honcho API request timeout, from HONCHO_TIMEOUT_MS. */
+  timeoutMs?: number;
 }
 
 export interface Env {
   HONCHO_API_URL?: string;
+  HONCHO_TIMEOUT_MS?: string;
   ALERT_WEBHOOK_URL?: string;
 }
 
@@ -41,6 +47,12 @@ export interface EnvConfig {
   HONCHO_API_KEY?: string;
   HONCHO_API_URL?: string;
   HONCHO_WORKSPACE_ID?: string;
+  HONCHO_TIMEOUT_MS?: string;
+}
+
+function parseTimeoutMs(value?: string): number | undefined {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
 }
 
 /**
@@ -76,6 +88,7 @@ export function parseConfig(request: Request, env: Env = {}): HonchoConfig {
     apiKey,
     baseUrl: env.HONCHO_API_URL?.trim() || "https://api.honcho.dev",
     workspaceId,
+    timeoutMs: parseTimeoutMs(env.HONCHO_TIMEOUT_MS),
   };
 }
 
@@ -91,6 +104,7 @@ export function parseEnvConfig(env: EnvConfig): HonchoConfig {
     apiKey,
     baseUrl: env.HONCHO_API_URL?.trim() || "https://api.honcho.dev",
     workspaceId: env.HONCHO_WORKSPACE_ID?.trim() || undefined,
+    timeoutMs: parseTimeoutMs(env.HONCHO_TIMEOUT_MS),
   };
 }
 
@@ -117,6 +131,7 @@ export function createClient(
     apiKey: config.apiKey,
     baseURL: config.baseUrl,
     workspaceId,
+    timeout: config.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     defaultHeaders: headers,
   });
 }
@@ -129,6 +144,7 @@ export function createUnscopedClient(
   return new Honcho({
     apiKey: config.apiKey,
     baseURL: config.baseUrl,
+    timeout: config.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     defaultHeaders: headers,
   });
 }
