@@ -2660,6 +2660,17 @@ async def _handle_extract_preferences(
     return "\n\n".join(output_parts)
 
 
+def _omission_notice(shown: int, total: int) -> str:
+    """Notice appended when whole-snippet truncation drops some snippets."""
+    omitted = total - shown
+    if omitted <= 0:
+        return ""
+    return (
+        f"\n\n[{shown} of {total} snippets shown"
+        f" - {omitted} omitted to fit output budget]"
+    )
+
+
 def _format_message_snippets(
     snippets: list[tuple[list[models.Message], list[models.Message]]], desc: str
 ) -> tuple[str, bool, int]:
@@ -2701,13 +2712,15 @@ def _format_message_snippets(
     if original_chars <= max_chars:
         return full_output, False, original_chars
 
-    # Whole-snippet truncation. Reserve room for the trailing notice so the
-    # final string never overshoots the budget.
-    notice_reserve = 80
+    # Whole-snippet truncation. For each retained prefix, compute the actual
+    # omission notice length (not a fixed reserve) so a snippet is never
+    # rejected for a notice that is actually shorter than the reservation.
     shown_texts: list[str] = []
     for text in snippet_texts:
         candidate = header + "\n\n".join([*shown_texts, text])
-        if len(candidate) + notice_reserve <= max_chars:
+        remaining = len(snippet_texts) - len(shown_texts) - 1
+        notice = _omission_notice(len(shown_texts) + 1, len(snippet_texts))
+        if len(candidate) + (len(notice) if remaining else 0) <= max_chars:
             shown_texts.append(text)
         else:
             break
@@ -2721,10 +2734,7 @@ def _format_message_snippets(
     content = header + "\n\n".join(shown_texts)
     omitted = len(snippet_texts) - len(shown_texts)
     if omitted:
-        content += (
-            f"\n\n[{len(shown_texts)} of {len(snippet_texts)} snippets shown"
-            f" - {omitted} omitted to fit output budget]"
-        )
+        content += _omission_notice(len(shown_texts), len(snippet_texts))
     return content, True, original_chars
 
 
