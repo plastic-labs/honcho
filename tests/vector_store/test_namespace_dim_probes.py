@@ -1,18 +1,22 @@
 """Per-store namespace dim probe tests.
 
 LanceDB has an embedded driver we can spin up in a tmp dir, so we exercise
-the real probe end-to-end. Turbopuffer needs a network + API key, so it is
-covered only by static analysis + the parsing test below.
+the real probe end-to-end. Turbopuffer needs a network + API key, so its
+real probe runs against a faked namespace.
 """
 
 from __future__ import annotations
 
-import re
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import pyarrow as pa
 import pytest
 
+from src.config import settings
+from src.exceptions import VectorStoreError
 from src.vector_store.lancedb import LanceDBVectorStore
+from src.vector_store.turbopuffer import TurbopufferVectorStore
 
 
 @pytest.mark.asyncio
@@ -54,19 +58,53 @@ async def test_lancedb_probe_returns_none_for_missing_namespace(
         await store.close()
 
 
-def test_turbopuffer_vector_dim_regex_extracts_dim_from_type_string() -> None:
-    """Turbopuffer's attribute type for a vector column is a bracket-prefixed
-    dim with a width suffix: ``[768]f32``, ``[1536]f16``, ``[256]i8``. The
-    probe extracts the integer inside the brackets. Lock the format here so
-    an SDK change is loud."""
-    pattern = re.compile(r"\[(\d+)\]")
-    cases = {
-        "[768]f32": "768",
-        "[1536]f16": "1536",
-        "[256]i8": "256",
-    }
-    for type_str, expected in cases.items():
-        match = pattern.search(type_str)
-        assert match is not None, f"failed to match {type_str!r}"
-        assert match.group(1) == expected
-    assert pattern.search("string") is None
+def _turbopuffer_store(
+    monkeypatch: pytest.MonkeyPatch, *, exists: bool, schema: dict[str, object]
+) -> TurbopufferVectorStore:
+    monkeypatch.setattr(settings.VECTOR_STORE, "TURBOPUFFER_API_KEY", "test-key")
+    store = TurbopufferVectorStore()
+    namespace = MagicMock()
+    namespace.exists = AsyncMock(return_value=exists)
+    namespace.schema = AsyncMock(return_value=schema)
+    store._get_namespace = MagicMock(return_value=namespace)  # pyright: ignore[reportPrivateUsage]
+    return store
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("type_str", "expected"),
+    [("[768]f32", 768), ("[1536]f16", 1536), ("[256]i8", 256)],
+)
+async def test_turbopuffer_probe_parses_vector_dim(
+    monkeypatch: pytest.MonkeyPatch, type_str: str, expected: int
+) -> None:
+    """Turbopuffer reports a vector column's type as ``[<dim>]<width>``. Lock
+    the format through the real probe so an SDK change is loud."""
+    store = _turbopuffer_store(
+        monkeypatch, exists=True, schema={"vector": SimpleNamespace(type=type_str)}
+    )
+    assert await store.probe_namespace_dim("ns") == expected
+
+
+@pytest.mark.asyncio
+async def test_turbopuffer_probe_returns_none_for_missing_namespace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _turbopuffer_store(monkeypatch, exists=False, schema={})
+    assert await store.probe_namespace_dim("ns") is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "schema",
+    [{}, {"vector": SimpleNamespace(type="string")}],
+    ids=["no-vector-attribute", "unparseable-type"],
+)
+async def test_turbopuffer_probe_rejects_invalid_schema(
+    monkeypatch: pytest.MonkeyPatch, schema: dict[str, object]
+) -> None:
+    """An existing namespace with an unusable schema must fail loudly, not be
+    bucketed as missing."""
+    store = _turbopuffer_store(monkeypatch, exists=True, schema=schema)
+    with pytest.raises(VectorStoreError):
+        await store.probe_namespace_dim("ns")

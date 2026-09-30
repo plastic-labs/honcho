@@ -1,5 +1,6 @@
 import datetime
 from typing import Any
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -10,6 +11,7 @@ from src import models
 from src.config import settings
 from src.models import Peer, Workspace
 from src.security import JWTParams, create_jwt
+from src.utils.representation import Representation
 
 
 def test_get_or_create_session(client: TestClient, sample_data: tuple[Workspace, Peer]):
@@ -1468,10 +1470,10 @@ def test_get_session_context_with_include_most_frequent(
     assert "peer_representation" in data
 
 
-def test_get_session_context_with_max_observations(
+def test_get_session_context_forwards_max_conclusions(
     client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
-    """Test session context with max_observations parameter"""
+    """max_conclusions is forwarded to the representation query as its cap"""
     test_workspace, test_peer = sample_data
     session_id = str(generate_nanoid())
 
@@ -1481,18 +1483,70 @@ def test_get_session_context_with_max_observations(
         json={"id": session_id, "peers": {test_peer.name: {}}},
     )
 
-    # Get context with max_observations
-    response = client.get(
-        f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/context",
-        params={
-            "peer_target": test_peer.name,
-            "search_query": "Test query",
-            "max_observations": 10,
-        },
-    )
+    with patch(
+        "src.crud.get_working_representation",
+        new=AsyncMock(return_value=Representation()),
+    ) as mock_get:
+        response = client.get(
+            f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/context",
+            params={
+                "peer_target": test_peer.name,
+                "search_query": "Test query",
+                "max_conclusions": 10,
+            },
+        )
     assert response.status_code == 200
     data = response.json()
     assert "peer_representation" in data
+    assert mock_get.await_args is not None
+    assert mock_get.await_args.kwargs["max_observations"] == 10
+
+
+@pytest.mark.asyncio
+async def test_get_session_context_max_conclusions_caps_results(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    """With more stored conclusions than the cap, only max_conclusions are returned"""
+    test_workspace, test_peer = sample_data
+    session_id = str(generate_nanoid())
+    response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions",
+        json={"id": session_id, "peers": {test_peer.name: {}}},
+    )
+    assert response.status_code == 201
+
+    db_session.add(
+        models.Collection(
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer.name,
+        )
+    )
+    await db_session.flush()
+    contents = [f"cap-conclusion-{i}" for i in range(5)]
+    db_session.add_all(
+        models.Document(
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer.name,
+            content=content,
+        )
+        for content in contents
+    )
+    await db_session.commit()
+
+    def returned(max_conclusions: int) -> list[str]:
+        response = client.get(
+            f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/context",
+            params={"peer_target": test_peer.name, "max_conclusions": max_conclusions},
+        )
+        assert response.status_code == 200
+        representation = response.json()["peer_representation"]
+        return [c for c in contents if c in representation]
+
+    # Oracle: an uncapped request sees every seeded conclusion.
+    assert len(returned(10)) == 5
+    assert len(returned(2)) == 2
 
 
 def test_get_session_context_with_all_representation_params(
@@ -1528,7 +1582,7 @@ def test_get_session_context_with_all_representation_params(
             "search_top_k": 10,
             "search_max_distance": 0.9,  # float value (semantic distance 0.0-1.0)
             "include_most_frequent": True,
-            "max_observations": 15,
+            "max_conclusions": 15,
             "summary": True,
         },
     )

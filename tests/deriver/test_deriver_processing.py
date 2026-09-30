@@ -9,6 +9,7 @@ from src import crud, models
 from src.config import settings
 from src.crud.representation import RepresentationManager
 from src.deriver.deriver import process_representation_tasks_batch
+from src.deriver.queue_manager import QueueBatchResult, QueueManager, WorkerOwnership
 from src.exceptions import RepresentationSaveError
 from src.llm import HonchoLLMCallResponse
 from src.utils.representation import (
@@ -612,49 +613,71 @@ class TestBackwardsCompatibility:
         with pytest.raises(ValueError):
             parse_work_unit_key("representation:a:b:c:d:e")
 
-    def test_legacy_payload_observer_converted_to_observers_list(self):
-        """Test that legacy payloads with singular 'observer' are handled correctly."""
-        legacy_payload: dict[str, Any] = {
-            "observer": "peer_observer",
-            "observed": "peer_observed",
-            "task_type": "representation",
-        }
+    @staticmethod
+    async def _observers_passed_downstream(payload: dict[str, Any]) -> list[str]:
+        """Run the real process_work_unit on one queue item with ``payload`` and
+        return the observers it hands to process_representation_batch."""
+        work_unit_key = "representation:workspace_1:session_1:peer_observed"
+        worker_id = "test_worker"
+        queue_item = models.QueueItem(
+            id=1,
+            session_id="session_id_1",
+            task_type="representation",
+            work_unit_key=work_unit_key,
+            payload=payload,
+            processed=False,
+            workspace_name="workspace_1",
+            message_id=1,
+        )
 
-        # This mirrors the logic in queue_manager.py process_work_unit
-        observers = legacy_payload.get("observers")
-        if observers is None:
-            legacy_observer = legacy_payload.get("observer")
-            observers = [legacy_observer] if legacy_observer else []
+        qm = QueueManager()
+        qm.worker_ownership[worker_id] = WorkerOwnership(
+            work_unit_key=work_unit_key, aqs_id="aqs_1"
+        )
+        batches = [QueueBatchResult(items_to_process=[queue_item]), QueueBatchResult()]
+        process_batch = AsyncMock()
 
+        with (
+            patch.object(qm, "get_queue_item_batch", side_effect=batches),
+            patch.object(qm, "mark_queue_items_as_processed", AsyncMock()),
+            patch.object(qm, "_cleanup_work_unit", AsyncMock(return_value=False)),
+            patch(
+                "src.deriver.queue_manager.process_representation_batch",
+                process_batch,
+            ),
+        ):
+            await qm.process_work_unit(work_unit_key, worker_id)
+
+        process_batch.assert_awaited_once()
+        assert process_batch.await_args is not None
+        return process_batch.await_args.kwargs["observers"]
+
+    async def test_legacy_payload_observer_converted_to_observers_list(self):
+        """Legacy payloads with a singular 'observer' become a one-item list."""
+        observers = await self._observers_passed_downstream(
+            {"observer": "peer_observer", "observed": "peer_observed"}
+        )
         assert observers == ["peer_observer"]
 
-    def test_new_payload_observers_list_used_directly(self):
-        """Test that new payloads with 'observers' list are used directly."""
-        new_payload: dict[str, Any] = {
-            "observers": ["peer1", "peer2"],
-            "observed": "peer3",
-            "task_type": "representation",
-        }
-
-        observers = new_payload.get("observers")
-        if observers is None:
-            legacy_observer = new_payload.get("observer")
-            observers = [legacy_observer] if legacy_observer else []
-
+    async def test_new_payload_observers_list_used_directly(self):
+        """New payloads with an 'observers' list are passed through unchanged."""
+        observers = await self._observers_passed_downstream(
+            {"observers": ["peer1", "peer2"], "observed": "peer_observed"}
+        )
         assert observers == ["peer1", "peer2"]
 
-    def test_empty_payload_results_in_empty_observers_list(self):
-        """Test that payloads with neither observer nor observers return empty list."""
-        empty_payload: dict[str, Any] = {
-            "observed": "peer_observed",
-            "task_type": "representation",
-        }
+    async def test_empty_payload_results_in_empty_observers_list(self):
+        """Payloads with neither 'observer' nor 'observers' yield an empty list."""
+        observers = await self._observers_passed_downstream(
+            {"observed": "peer_observed"}
+        )
+        assert observers == []
 
-        observers = empty_payload.get("observers")
-        if observers is None:
-            legacy_observer = empty_payload.get("observer")
-            observers = [legacy_observer] if legacy_observer else []
-
+    async def test_explicit_empty_observers_list_wins_over_legacy_observer(self):
+        """An explicit empty 'observers' list is not replaced by 'observer'."""
+        observers = await self._observers_passed_downstream(
+            {"observers": [], "observer": "peer_observer", "observed": "peer_observed"}
+        )
         assert observers == []
 
     # async def test_representation_batch_uses_earliest_cutoff(

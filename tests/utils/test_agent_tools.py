@@ -2210,7 +2210,7 @@ class TestToolExecutor:
         self, tool_test_data: Any
     ):
         """Dreamer context (include_observation_ids=True) shows IDs in output."""
-        workspace, peer1, peer2, session, _, _ = tool_test_data
+        workspace, peer1, peer2, session, _, documents = tool_test_data
 
         executor = await create_tool_executor(
             workspace_name=workspace.name,
@@ -2222,13 +2222,9 @@ class TestToolExecutor:
 
         result = await executor("get_recent_observations", {"limit": 10})
 
-        # When include_observation_ids is True, output should contain IDs
-        # The format is [id:xxx]
-        assert isinstance(result, str)
-        # Should show observations if any exist
-        if "Found" in result and "observations" in result:
-            # IDs should be included in the output
-            assert "[id:" in result or "observations" in result
+        assert result.startswith("Found 3 recent observations")
+        for doc in documents:
+            assert f"[id:{doc.id}]" in result
 
 
 # =============================================================================

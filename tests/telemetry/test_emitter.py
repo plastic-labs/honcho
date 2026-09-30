@@ -530,21 +530,10 @@ class TestHttpErrorScenarios:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        "status_code,should_retry",
-        [
-            (400, True),  # Bad Request - still retries
-            (401, True),  # Unauthorized
-            (403, True),  # Forbidden
-            (404, True),  # Not Found
-            (429, True),  # Too Many Requests
-            (500, True),  # Internal Server Error
-            (502, True),  # Bad Gateway
-            (503, True),  # Service Unavailable
-            (504, True),  # Gateway Timeout
-        ],
+        "status_code", [400, 401, 403, 404, 429, 500, 502, 503, 504]
     )
-    async def test_http_status_codes(self, status_code: int, should_retry: bool):
-        """Various HTTP status codes trigger retry behavior."""
+    async def test_http_status_codes(self, status_code: int):
+        """Every HTTP error status is retried, 4xx included."""
         emitter = TelemetryEmitter(
             endpoint="http://test:8001/events",
             max_retries=2,
@@ -573,8 +562,7 @@ class TestHttpErrorScenarios:
             emitter.emit(event)
             await emitter.flush()
 
-        if should_retry:
-            assert mock_client.post.call_count == 2  # max_retries
+        assert mock_client.post.call_count == 2  # max_retries
 
 
 # =============================================================================
