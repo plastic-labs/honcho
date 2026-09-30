@@ -281,7 +281,7 @@ CONNECT_RETRIES = 3
 
 # Vector store settings
 [vector_store]
-# Vector store type: "pgvector", "turbopuffer", "lancedb", or "qdrant"
+# Vector store type: "pgvector", "turbopuffer", "lancedb", "qdrant", or "chromadb"
 TYPE = "pgvector"
 # Migration flag: set to true when migration from pgvector is complete
 MIGRATED = false
@@ -297,4 +297,15 @@ LANCEDB_PATH = "./lancedb_data"
 # QDRANT_HTTPS = false
 # QDRANT_PREFIX = ""
 # QDRANT_TIMEOUT = 30
+
+# ChromaDB settings (requires the chromadb extra: uv sync --extra chromadb)
+# CHROMA_CLIENT_MODE: "http" (self-hosted server),
+# or "cloud" (Chroma Cloud; requires API key)
+CHROMA_CLIENT_MODE = "http"
+# CHROMA_HOST = "localhost"
+# CHROMA_PORT = 8000
+# CHROMA_SSL = false
+# CHROMA_API_KEY = "your-chroma-api-key"
+# CHROMA_TENANT = "your-tenant-id"
+# CHROMA_DATABASE = "your-database"
 RECONCILIATION_INTERVAL_SECONDS = 300
