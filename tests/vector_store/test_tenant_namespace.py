@@ -262,3 +262,33 @@ async def test_prefix_for_tenant_reads_the_database_only_once_per_tenant(
 
     assert first == second == "cached-app"
     assert load_count == 1
+
+
+@pytest.mark.asyncio
+async def test_a_key_set_by_patch_resolves_without_resetting_the_cache(
+    monkeypatch: pytest.MonkeyPatch, db_session: AsyncSession
+) -> None:
+    """NULL -> PATCH -> resolve, with no reset_prefix_cache in between.
+
+    This is the premise the set-once PATCH rests on: a missing key is never cached, so
+    the one transition the registry allows (NULL to a value) needs no invalidation in
+    any process. A regression that cached the refusal would leave a repaired tenant
+    unresolvable until every replica restarted.
+    """
+    from src.crud import tenant as tenant_crud
+
+    monkeypatch.setattr(settings, "MULTI_TENANT", True)
+    tenant_id = await _create_tenant(db_session, vector_correlation_id=None)
+
+    with pytest.raises(VectorNamespaceUnresolved):
+        await prefix_for_tenant(tenant_id)
+
+    await tenant_crud.update_tenant(
+        db_session,
+        tenant_id,
+        derivation_paused=None,
+        vector_correlation_id="hchrepairedkey",
+    )
+    await db_session.commit()
+
+    assert await prefix_for_tenant(tenant_id) == "hchrepairedkey"
