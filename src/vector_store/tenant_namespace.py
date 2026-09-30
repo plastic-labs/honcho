@@ -27,14 +27,18 @@ from src.exceptions import VectorNamespaceUnresolved, VectorStoreError
 # auth boundary has no database session (`src/security.py` auth_dependency takes only the
 # request and credentials), so resolving there would open one on every authenticated
 # request, including the large majority that never touch the vector store. Cached for the
-# life of the process because the registry refuses to mutate an existing tenant, so the
-# read happens once per tenant per process and the session-free read path stays
-# session-free on every warm call.
+# life of the process, so the read happens once per tenant per process and the
+# session-free read path stays session-free on every warm call.
 #
-# The one way a cached value goes stale: deleting an empty tenant and recreating the same
-# id with a different key. There is no eviction for that — a warm process keeps the old
-# prefix until it restarts — and no in-process fix would be complete anyway, since every
-# replica caches independently. Call reset_prefix_cache() if it ever happens.
+# Safe because the registry's PATCH treats the key as set-once (schemas.TenantUpdate,
+# enforced under a row lock in src/crud/tenant.py): NULL may become a value, and a value
+# may never change. A NULL key is never cached (_load_prefix raises before the write
+# below), so the one transition the API allows is one no process holds.
+#
+# There is no TTL, so any change outside that path takes effect only after every replica
+# restarts: deleting an empty tenant and recreating the same id with a different key, or
+# re-keying tenants wholesale. No in-process fix would be complete anyway, since every
+# replica caches independently. reset_prefix_cache() clears one process.
 # endregion
 _prefix_cache: dict[str, str] = {}
 
