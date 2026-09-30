@@ -72,3 +72,23 @@ jobs:
       # neither, so this needs no services.
       - name: check docs/v3/openapi.json matches the app
         run: uv run python -m scripts.generate_openapi --check
+
+  alembic-heads:
+    runs-on: ubuntu-latest
+    # On pull_request the default checkout is refs/pull/N/merge, so this checks
+    # the PR merged into main, not the PR head. Don't set `ref`.
+    steps:
+      - uses: actions/checkout@v4
+      - name: "Set up Python"
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: ".python-version"
+      - name: Install uv
+        uses: astral-sh/setup-uv@v2
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+      - name: Install the project
+        run: uv sync --all-extras --dev
+      - name: check migrations have a single alembic head
+        run: uv run python scripts/check_alembic_heads.py
