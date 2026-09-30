@@ -17,6 +17,7 @@ export function register(server: McpServer, ctx: ToolContext) {
     {
       annotations: {
         title: "Create Session",
+        readOnlyHint: false,
         destructiveHint: false,
       },
       description: [
@@ -97,6 +98,7 @@ export function register(server: McpServer, ctx: ToolContext) {
     {
       annotations: {
         title: "Delete Session",
+        readOnlyHint: false,
         destructiveHint: true,
       },
       description: [
@@ -127,6 +129,7 @@ export function register(server: McpServer, ctx: ToolContext) {
     {
       annotations: {
         title: "Clone Session",
+        readOnlyHint: false,
         destructiveHint: false,
       },
       description: [
@@ -164,6 +167,7 @@ export function register(server: McpServer, ctx: ToolContext) {
     {
       annotations: {
         title: "Add Peers to Session",
+        readOnlyHint: false,
         destructiveHint: false,
       },
       description: [
@@ -224,6 +228,7 @@ export function register(server: McpServer, ctx: ToolContext) {
     {
       annotations: {
         title: "Remove Peers from Session",
+        readOnlyHint: false,
         destructiveHint: true,
       },
       description: [
@@ -330,12 +335,12 @@ export function register(server: McpServer, ctx: ToolContext) {
     {
       annotations: {
         title: "Add Messages to Session",
+        readOnlyHint: false,
         destructiveHint: false,
       },
       description: [
         "Add messages to a session from specific peers.",
         "Use this to record conversation turns. Each message must specify the peer_id of the author.",
-        "Each message must specify the peer_id of the author.",
       ].join("\n"),
       inputSchema: {
         workspace_id: workspaceIdSchema(ctx),
