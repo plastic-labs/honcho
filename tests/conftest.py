@@ -6,7 +6,7 @@ import time
 import uuid
 from collections.abc import AsyncGenerator, Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import jwt
@@ -84,6 +84,25 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 _ALEMBIC_INI = _REPO_ROOT / "alembic.ini"
 _MIGRATIONS_DIR = _REPO_ROOT / "migrations"
 
+
+class _UntouchableEngine:
+    def __getattr__(self, name: str) -> object:
+        raise AssertionError(
+            f"validator touched the engine ({name!r}) when it should have been a no-op"
+        )
+
+
+def untouchable_engine() -> AsyncEngine:
+    """An engine stand-in for validators that must not reach the database.
+
+    Any attribute access — ``connect``, ``begin``, anything — fails the test, so a
+    validator that is supposed to be a no-op is proven not to open a connection.
+    Typed as ``AsyncEngine`` so call sites read like the real thing; the object
+    shares no structure with it, hence the cast through ``object``.
+    """
+    return cast(AsyncEngine, cast(object, _UntouchableEngine()))
+
+
 _RUNTIME_MOCK_TEST_BLOCKLIST_PREFIXES = (
     # Benchmarks and migration tests have their own execution/runtime constraints.
     "tests/bench/",
@@ -155,9 +174,12 @@ _RUN_ID_TIME_FORMAT = "%Y%m%d%H%M%S"
 # morning is gone by the afternoon.
 _STALE_DB_AGE_SECONDS = 2 * 60 * 60
 
-# test_db_<14-digit timestamp>_<4 hex>[_gwN] -- only names this function minted.
-# A pinned HONCHO_TEST_RUN_ID deliberately won't match, so it's never swept.
-_SWEEPABLE_DB_NAME = re.compile(r"^test_db_(\d{14})_[0-9a-f]{4}(?:_gw\d+)?$")
+# test_db_<14-digit timestamp>_<4 hex>[_tag][_gwN] -- only names _get_test_db_url
+# minted (the tag is a fixture's own throwaway database, e.g. "fresh"). A pinned
+# HONCHO_TEST_RUN_ID deliberately won't match, so it's never swept.
+_SWEEPABLE_DB_NAME = re.compile(
+    r"^test_db_(\d{14})_[0-9a-f]{4}(?:_[a-z]+)?(?:_gw\d+)?$"
+)
 
 
 def pytest_configure(config: pytest.Config) -> None:  # pyright: ignore[reportUnusedParameter]
@@ -183,12 +205,17 @@ def pytest_configure(config: pytest.Config) -> None:  # pyright: ignore[reportUn
         _sweep_stale_test_databases()
 
 
-def _get_test_db_url(worker_id: str) -> URL:
-    """Get a worker-specific test database URL for pytest-xdist parallelism."""
+def _get_test_db_url(worker_id: str, *, tag: str | None = None) -> URL:
+    """Get a worker-specific test database URL for pytest-xdist parallelism.
+
+    `tag` names a fixture's own throwaway database alongside the suite one (same
+    run id and worker suffix, so it is swept by the same rule if a run dies).
+    """
 
     run_id = os.environ.get(_RUN_ID_ENV_VAR, "local")
+    tagged = f"_{tag}" if tag else ""
     suffix = "" if worker_id == "master" else f"_{worker_id}"
-    return CONNECTION_URI.set(database=f"test_db_{run_id}{suffix}")
+    return CONNECTION_URI.set(database=f"test_db_{run_id}{tagged}{suffix}")
 
 
 def _drop_database(db_url: URL) -> None:
@@ -579,6 +606,22 @@ async def sample_data(
 
 
 @pytest.fixture(autouse=True)
+def _reset_vector_namespace_cache():  # pyright: ignore[reportUnusedFunction]
+    """Drop every memoized tenant namespace prefix around each test.
+
+    The cache is process-global and never expires, so one test's resolved prefix
+    would otherwise satisfy or contradict another's assertion depending on run
+    order. Several modules outside tests/vector_store/ now resolve real prefixes,
+    so this belongs here rather than in any one of them.
+    """
+    from src.vector_store.tenant_namespace import reset_prefix_cache
+
+    reset_prefix_cache()
+    yield
+    reset_prefix_cache()
+
+
+@pytest.fixture(autouse=True)
 def mock_langfuse():
     """Mock Langfuse decorator and context during tests"""
     with (
@@ -745,13 +788,20 @@ def mock_vector_store(request: pytest.FixtureRequest):
     mock_vs.delete_many = AsyncMock(side_effect=mock_delete_many)
     mock_vs.delete_namespace = AsyncMock(side_effect=mock_delete_namespace)
 
-    def mock_get_vector_namespace(
+    async def mock_get_vector_namespace(
         namespace_type: str,
         workspace_name: str,
         observer: str | None = None,
         observed: str | None = None,
+        *,
+        prefix: str | None = None,
     ) -> str:
-        # Uses real hash function for consistency with production
+        # Uses real hash function for consistency with production. `prefix` is
+        # accepted (and ignored) because production call sites now pass it -- the
+        # cross-tenant background paths resolve it via prefix_for_tenant -- but this
+        # fixture keeps every test's namespace deterministically "honcho2345",
+        # independent of tenancy.
+        del prefix
         if namespace_type == "document":
             if observer is None or observed is None:
                 raise ValueError(
@@ -1008,6 +1058,12 @@ def mock_tracked_db(request: pytest.FixtureRequest):
     # 20-statically-nested-block limit as this list grows.
     tracked_db_targets = [
         "src.dependencies.tracked_db",
+        # `src.vector_store.tenant_namespace` does `from src.dependencies import
+        # service_db` lazily inside its loader (see its module docstring), the same
+        # deferred-import shape `src.security.auth()` uses for `tracked_db` above --
+        # so patching the definition site here is what reaches it, not a per-module
+        # import-site entry.
+        "src.dependencies.service_db",
         "src.deriver.queue_manager.service_db",
         "src.deriver.consumer.tracked_db",
         "src.deriver.deriver.tracked_db",
@@ -1027,9 +1083,8 @@ def mock_tracked_db(request: pytest.FixtureRequest):
         "src.crud.document.tracked_db",
         "src.crud.message.tracked_db",
         "src.reconciler.sync_vectors.service_db",
-        "src.reconciler.embed_now.service_db",
+        "src.reconciler.embed_now.tracked_db",
         "src.routers.tenants.service_db",
-        "src.derivation_pause.service_db",
         "src.dialectic.core.tracked_db",
         "src.dreamer.specialists.tracked_db",
         "src.dreamer.surprisal.tracked_db",
@@ -1087,16 +1142,3 @@ def mock_crud_collection_operations(request: pytest.FixtureRequest):
         mock_get_or_create_collection,
     ):
         yield
-
-
-@pytest_asyncio.fixture(autouse=True)
-async def reset_derivation_pause_state() -> AsyncGenerator[None]:
-    """The paused-tenant set is process-global; no test may inherit another's,
-    and a refresher a test started must not outlive it."""
-    from src import derivation_pause
-    from src.derivation_pause import derivation_pause_refresher
-
-    derivation_pause.reset()
-    yield
-    await derivation_pause_refresher.shutdown()
-    derivation_pause.reset()

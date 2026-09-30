@@ -221,19 +221,47 @@ def _tenant_scope_middleware() -> Any:
         # ai: deferred import keeps cache.client free of a load-time dependency on db.
         from src.db import tenant_context
 
-        prefix = f"t:{tenant_context.get() or 'default'}:"
+        tenant = tenant_context.get()
+
+        def _scope(key: str) -> str:
+            # region ai
+            # Fail closed instead of falling back to a shared 'default' bucket:
+            # 'default' is the real id of the bootstrap tenant (see the tenants
+            # seed migration), so a tenant-less caller reading/writing
+            # t:default:* would silently share that tenant's cache -- and since
+            # the cache is read before the DB, a cross-tenant hit here bypasses
+            # RLS entirely, the same class of bug tracked_db() and
+            # construct_work_unit_key() already fail closed on. Every reachable
+            # caller is tenant-bound before it can reach a cache command: those
+            # two raise first for every path that reaches this middleware
+            # (tracked_db() for every tracked_db-scoped call, and
+            # construct_work_unit_key() for the one service_db()-scoped cache
+            # write, the scope-task enqueue's cache invalidation). If this
+            # raises, some new caller reached the cache without going through
+            # either, and belongs on tracked_db(tenant_id=...) instead.
+            # endregion
+            if not tenant:
+                raise ValueError(
+                    f"cache {cmd.value} on key {key!r} requires a tenant when "
+                    + "MULTI_TENANT is on, but tenant_context is unset -- bind a "
+                    + "tenant (tracked_db(tenant_id=...), or an ambient "
+                    + "tenant_context set by the caller) before touching the "
+                    + "cache; cross-tenant cache access is not supported"
+                )
+            return f"t:{tenant}:" + key
+
         if cmd in (Command.GET_MANY, Command.DELETE_MANY):
-            return await call(*[prefix + key for key in args])
+            return await call(*[_scope(key) for key in args])
         if cmd == Command.SET_MANY:
-            kwargs["pairs"] = {prefix + k: v for k, v in kwargs["pairs"].items()}
+            kwargs["pairs"] = {_scope(k): v for k, v in kwargs["pairs"].items()}
             return await call(**kwargs)
         as_key = "pattern" if cmd in PATTERN_CMDS else "key"
         key = kwargs.get(as_key)
         if key:
-            kwargs[as_key] = prefix + key
+            kwargs[as_key] = _scope(key)
             return await call(**kwargs)
         if args:
-            return await call(prefix + args[0], *args[1:], **kwargs)
+            return await call(_scope(args[0]), *args[1:], **kwargs)
         return await call(*args, **kwargs)
 
     return _middleware

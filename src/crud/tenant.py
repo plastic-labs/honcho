@@ -11,6 +11,7 @@ mutation door is ``update_tenant``, and what it may touch is the allowlist on
 
 import logging
 
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -88,6 +89,17 @@ async def get_or_create_tenant(
         )
     logger.info("Created tenant %s (tier=%s)", tenant_id, tier)
     return GetOrCreateResult(resource=tenant, created=True)
+
+
+async def list_paused_tenant_ids(db: AsyncSession) -> list[str]:
+    """Ids of the tenants whose derivation is paused, sorted."""
+    result = await db.execute(
+        select(models.Tenant.tenant_id)
+        # ai: bare column, not IS TRUE — matches the partial index predicate exactly.
+        .where(models.Tenant.derivation_paused)
+        .order_by(models.Tenant.tenant_id)
+    )
+    return list(result.scalars().all())
 
 
 async def update_tenant(

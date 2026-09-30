@@ -18,6 +18,7 @@ from src.config import settings
 from src.startup.embedding_validator import (
     StartupValidationError,
     _assert_pgvector_dims_match,  # pyright: ignore[reportPrivateUsage]
+    _sample_external_namespaces,  # pyright: ignore[reportPrivateUsage]
     validate_embedding_schema,
 )
 
@@ -215,3 +216,63 @@ def test_non_1536_pgvector_without_migrated_no_longer_raises_at_config_time() ->
     )
     last_line = result.stdout.strip().splitlines()[-1]
     assert last_line == "768 pgvector False"
+
+
+# ---------------------------------------------------------------------------
+# Sampling a tenant that has no vector namespace key
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_external_sample_skips_tenants_without_a_namespace_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A tenant with no key is dropped from the sample instead of resolved.
+
+    Its namespace cannot be named, so there is nothing to probe. Passing the null
+    onward would read as "no prefix given" and send the resolver looking for an
+    ambient tenant, which startup does not have — a best-effort dim check would
+    then take the process down over a provisioning gap.
+    """
+    monkeypatch.setattr(settings, "MULTI_TENANT", True)
+    monkeypatch.setattr(settings.VECTOR_STORE, "TYPE", "turbopuffer")
+
+    probed: list[str] = []
+
+    class _Store:
+        async def get_vector_namespace(
+            self,
+            namespace_type: str,
+            workspace_name: str,
+            observer: str | None = None,
+            observed: str | None = None,
+            *,
+            prefix: str | None = None,
+        ) -> str:
+            assert prefix, "an unkeyed tenant must never reach the resolver"
+            return f"{prefix}.{namespace_type[:3]}.{workspace_name}"
+
+    async def _workspaces(_engine: object, _limit: int) -> list[tuple[str, str | None]]:
+        return [("keyed-ws", "hch-old-app"), ("unkeyed-ws", None)]
+
+    async def _collections(
+        _engine: object, _limit: int
+    ) -> list[tuple[str, str, str, str | None]]:
+        return [("keyed-ws", "alice", "bob", "hch-old-app"), ("u", "a", "b", None)]
+
+    async def _probe(_store: object, namespace: str) -> int | None:
+        probed.append(namespace)
+        return None
+
+    monkeypatch.setattr(
+        "src.startup.embedding_validator._sample_workspace_names", _workspaces
+    )
+    monkeypatch.setattr(
+        "src.startup.embedding_validator._sample_collection_keys", _collections
+    )
+    monkeypatch.setattr("src.startup.embedding_validator._probe_namespace_dim", _probe)
+    monkeypatch.setattr("src.vector_store.get_external_vector_store", lambda: _Store())
+
+    await _sample_external_namespaces(AsyncMock(), target_dim=1536)
+
+    assert probed == ["hch-old-app.mes.keyed-ws", "hch-old-app.doc.keyed-ws"]

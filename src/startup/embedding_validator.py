@@ -29,7 +29,7 @@ from tenacity import (
 
 from src.config import AppSettings, settings
 from src.exceptions import HonchoException
-from src.models import Collection, Workspace
+from src.models import Collection, Tenant, Workspace
 from src.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
@@ -200,16 +200,45 @@ async def _sample_external_namespaces(engine: AsyncEngine, *, target_dim: int) -
         # That is its own problem and not for this validator to swallow.
         return
 
+    # region ai
+    # Each sample carries its own tenant's namespace prefix, because under MULTI_TENANT
+    # the prefix varies per tenant and this validator runs at startup with no tenant
+    # bound. Flag-off the prefix is ignored in favor of the configured namespace, so the
+    # sampled set is exactly what it was before tenancy.
+    #
+    # Flag-on, a tenant with no key is dropped from the sample rather than resolved. Its
+    # namespace cannot be named, so there is nothing here to probe, and passing the null
+    # through would read as "no override given" and send the resolver looking for an
+    # ambient tenant that startup does not have — turning a best-effort check into a
+    # boot failure. The key's absence is a provisioning problem, and the isolation
+    # validator is what refuses to serve traffic over it.
+    # endregion
+    if settings.MULTI_TENANT:
+        unkeyed = sum(1 for _, prefix in workspace_names if not prefix) + sum(
+            1 for *_, prefix in collection_keys if not prefix
+        )
+        if unkeyed:
+            logger.info(
+                "External-store validator: skipping %d sample(s) whose tenant has no"
+                + " vector_correlation_id",
+                unkeyed,
+            )
+        workspace_names = [(name, p) for name, p in workspace_names if p]
+        collection_keys = [(w, ob, od, p) for w, ob, od, p in collection_keys if p]
+
     candidates: list[str] = []
-    for workspace_name in workspace_names:
-        candidates.append(store.get_vector_namespace("message", workspace_name))
-    for workspace_name, observer, observed in collection_keys:
+    for workspace_name, prefix in workspace_names:
         candidates.append(
-            store.get_vector_namespace(
+            await store.get_vector_namespace("message", workspace_name, prefix=prefix)
+        )
+    for workspace_name, observer, observed, prefix in collection_keys:
+        candidates.append(
+            await store.get_vector_namespace(
                 "document",
                 workspace_name,
                 observer=observer,
                 observed=observed,
+                prefix=prefix,
             )
         )
 
@@ -228,33 +257,48 @@ async def _sample_external_namespaces(engine: AsyncEngine, *, target_dim: int) -
         )
 
 
-async def _sample_workspace_names(engine: AsyncEngine, limit: int) -> list[str]:
-    """Pull up to ``limit`` workspace names ordered by creation time.
+async def _sample_workspace_names(
+    engine: AsyncEngine, limit: int
+) -> list[tuple[str, str | None]]:
+    """Pull up to ``limit`` ``(workspace_name, namespace_prefix)`` pairs, newest first.
 
     Uses the ORM ``Workspace`` model so ``Base.metadata.schema`` (configured
     from ``settings.DB.SCHEMA`` in ``src/db.py``) is honored automatically —
     a non-public schema deployment must not silently sample the wrong table.
+    The prefix is the workspace's tenant's key, so a sample taken with no tenant
+    bound still names the namespace that tenant's vectors actually live in.
     """
-    stmt = select(Workspace.name).order_by(Workspace.created_at.desc()).limit(limit)
+    stmt = (
+        select(Workspace.name, Tenant.vector_correlation_id)
+        .join(Tenant, Tenant.tenant_id == Workspace.tenant_id)
+        .order_by(Workspace.created_at.desc())
+        .limit(limit)
+    )
     async with engine.connect() as conn:
         result = await conn.execute(stmt)
-        return [row[0] for row in result]
+        return [(row[0], row[1]) for row in result]
 
 
 async def _sample_collection_keys(
     engine: AsyncEngine, limit: int
-) -> list[tuple[str, str, str]]:
-    """Pull up to ``limit`` ``(workspace_name, observer, observed)`` triples,
-    one per existing collection row. Each triple corresponds to a document
-    namespace that may exist in the external store."""
+) -> list[tuple[str, str, str, str | None]]:
+    """Pull up to ``limit`` ``(workspace_name, observer, observed, namespace_prefix)``
+    tuples, one per existing collection row. Each corresponds to a document namespace
+    that may exist in the external store; the prefix is that row's tenant's key."""
     stmt = (
-        select(Collection.workspace_name, Collection.observer, Collection.observed)
+        select(
+            Collection.workspace_name,
+            Collection.observer,
+            Collection.observed,
+            Tenant.vector_correlation_id,
+        )
+        .join(Tenant, Tenant.tenant_id == Collection.tenant_id)
         .order_by(Collection.created_at.desc())
         .limit(limit)
     )
     async with engine.connect() as conn:
         result = await conn.execute(stmt)
-        return [(row[0], row[1], row[2]) for row in result]
+        return [(row[0], row[1], row[2], row[3]) for row in result]
 
 
 async def _probe_namespace_dim(store: VectorStore, namespace: str) -> int | None:

@@ -1,16 +1,17 @@
 """Tenant registry API — the above-tenant provisioning surface.
 
-The control plane creates a tenant here before any tenant-scoped credential
-or write can exist, and flips the few per-tenant facts honcho mirrors for it
-(``PATCH``, allowlisted in ``schemas.TenantUpdate``). Authentication is a
-service secret, not a JWT — see ``require_tenant_api``.
+The operator's provisioning system (a control plane in a hosted deployment)
+creates a tenant here before any tenant-scoped credential or write can
+exist, and flips the few per-tenant facts honcho mirrors for it (``PATCH``,
+allowlisted in ``schemas.TenantUpdate``). Authentication is a service secret,
+not a JWT — see ``require_tenant_api``.
 """
 
 import hmac
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, Path, Response
+from fastapi import APIRouter, Depends, Header, Path, Query, Response
 
 from src import schemas
 from src.config import settings
@@ -84,9 +85,22 @@ async def create_tenant(body: schemas.TenantCreate, response: Response):
         return schemas.Tenant.model_validate(result.resource)
 
 
+@router.get("", response_model=schemas.TenantIdList)
+async def list_tenants(derivation_paused: Annotated[bool, Query()]):
+    """List the ids of tenants with derivation paused (the control plane's
+    reconciliation read against its own record). The filter is required and
+    must be true: this is not a general, unpaginated tenant listing."""
+    if not derivation_paused:
+        raise ValidationException("only derivation_paused=true is supported")
+    async with service_db("tenants.list", read_only=True) as db:
+        return schemas.TenantIdList(
+            tenant_ids=await tenant_crud.list_paused_tenant_ids(db)
+        )
+
+
 @router.get("/{tenant_id}", response_model=schemas.Tenant)
 async def get_tenant(tenant_id: Annotated[str, Path()]):
-    """Fetch a tenant row (the control plane's reconciliation read)."""
+    """Fetch a tenant row (the provisioner's reconciliation read)."""
     async with service_db("tenants.get", read_only=True) as db:
         return schemas.Tenant.model_validate(
             await tenant_crud.get_tenant(db, tenant_id)

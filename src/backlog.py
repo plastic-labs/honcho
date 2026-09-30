@@ -158,6 +158,8 @@ class DeriverMetricsPoller:
             embeddings_pending=stats.embeddings_pending,
             embeddings_pending_due=stats.embeddings_pending_due,
         )
+        if settings.MULTI_TENANT:
+            metrics.set_paused_tenants(count=stats.paused_tenants)
         metrics.set_dreams_due(count=len(self._due_dreams))
         metrics.set_deriver_outstanding_work(seconds=signal)
         metrics.set_deriver_metrics_last_success(timestamp=measured_at)

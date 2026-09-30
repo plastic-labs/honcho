@@ -99,3 +99,90 @@ async def test_cache_isolates_tenants_under_multi_tenant(
         assert await cache.get(key) == "value-a"  # tenant-a still reads its own
     finally:
         tenant_context.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_tenant_scope_prefixes_the_key_actually_written(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The prefix lands on the key the backend stores, not just on read-back.
+
+    Complements test_cache_isolates_tenants_under_multi_tenant (which infers the
+    prefix from isolation behavior) by scanning the backend directly.
+    """
+    monkeypatch.setattr(settings, "MULTI_TENANT", True)
+    key = session_cache_key("w1", "s1")
+
+    token = tenant_context.set("tenant-prefix-check")
+    try:
+        await cache.set(key, "value", expire=60)
+        written = [k async for k in cache.scan("*")]
+    finally:
+        tenant_context.reset(token)
+
+    assert f"t:tenant-prefix-check:{key}" in written
+
+
+@pytest.mark.asyncio
+async def test_tenant_scope_raises_without_tenant_for_get(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fail closed, not 't:default:...': 'default' is the bootstrap tenant's real
+    id, so falling back to it would silently share that tenant's cache entries
+    with every tenant-less caller."""
+    monkeypatch.setattr(settings, "MULTI_TENANT", True)
+    assert tenant_context.get() is None
+
+    with pytest.raises(ValueError, match="requires a tenant"):
+        await cache.get(session_cache_key("w1", "s1"))
+
+
+@pytest.mark.asyncio
+async def test_tenant_scope_raises_without_tenant_for_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "MULTI_TENANT", True)
+    assert tenant_context.get() is None
+
+    with pytest.raises(ValueError, match="requires a tenant"):
+        await cache.set(session_cache_key("w1", "s1"), "value", expire=60)
+
+
+@pytest.mark.asyncio
+async def test_tenant_scope_raises_without_tenant_for_delete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "MULTI_TENANT", True)
+    assert tenant_context.get() is None
+
+    with pytest.raises(ValueError, match="requires a tenant"):
+        await cache.delete(session_cache_key("w1", "s1"))
+
+
+@pytest.mark.asyncio
+async def test_tenant_scope_raises_without_tenant_for_delete_many(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """*_many commands are scoped per key, same as the singular commands."""
+    monkeypatch.setattr(settings, "MULTI_TENANT", True)
+    assert tenant_context.get() is None
+
+    with pytest.raises(ValueError, match="requires a tenant"):
+        await cache.delete_many(
+            session_cache_key("w1", "s1"), session_cache_key("w2", "s2")
+        )
+
+
+@pytest.mark.asyncio
+async def test_tenant_scope_flag_off_no_prefix_and_no_raise() -> None:
+    """MULTI_TENANT off: no tenant is required, and self-host keys stay unprefixed."""
+    assert settings.MULTI_TENANT is False
+    assert tenant_context.get() is None
+    key = session_cache_key("w1", "s1")
+
+    await cache.set(key, "value", expire=60)
+    assert await cache.get(key) == "value"
+    await cache.delete_many(key)
+
+    written = [k async for k in cache.scan("*")]
+    assert not any(k.startswith("t:") for k in written)

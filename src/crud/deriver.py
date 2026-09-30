@@ -17,7 +17,7 @@ from sqlalchemy import (
 from sqlalchemy.engine import Row
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src import derivation_pause, models, schemas
+from src import models, schemas
 from src.config import settings
 from src.db import tenant_context
 
@@ -52,21 +52,55 @@ def batch_threshold_clause() -> ColumnElement[bool] | None:
     return or_(models.QueueItemBatch.task_type != "representation", threshold)
 
 
-def claim_excluded_tenant_ids() -> Sequence[str] | None:
-    """Tenant ids the claim must skip, or None when no exclusion applies."""
+# region ai
+# Task types that keep running for a tenant whose derivation is paused. The
+# pause exists to stop billable (LLM) work, so everything else is exempt:
+# deletion (a customer's delete must not wait on billing), webhooks, scope
+# maintenance (row copies plus embedding lookups; the dreams it enqueues are
+# themselves paused), and the tenant-less reconciler. An exemption list, not
+# a pausable list, so a task type added later is paused until someone decides
+# otherwise — the safe direction for billing. tests/deriver/test_derivation_pause.py
+# pins that every task type is classified.
+# endregion
+PAUSE_EXEMPT_TASK_TYPES: frozenset[str] = frozenset(
+    {"deletion", "webhook", "scope_backfill", "scope_removal", "reconciler"}
+)
+
+
+def not_paused_clause(
+    tenant_id: SQLColumnExpression[str | None],
+    task_type: SQLColumnExpression[str] | str,
+) -> ColumnElement[bool] | None:
+    """Rows whose work may run despite tenant pauses, or None when nothing is excluded."""
     # region ai
-    # The suspension seam: excluding a tenant means filtering its batch rows
-    # out of the claim's eligible set before ranking, so an excluded whale
-    # contributes nothing to any round. The source is derivation_pause's
-    # in-process mirror of tenants.derivation_paused (refreshed on a timer in
-    # the deriver, and on the metrics poll in the API); the seam returns ids
-    # rather than a clause so no source can reintroduce the NULL footgun — the
-    # claim composes `tenant_id IS NULL OR tenant_id NOT IN (ids)` itself,
-    # keeping the tenant-less (reconciler) lane in rotation by construction
-    # (a bare NOT IN is NULL-false and would silently starve it). None both
-    # flag-off and when nobody is paused, so the claim SQL is unchanged then.
+    # The pause seam, applied in SQL wherever the deriver takes work: the claim
+    # (before ranking, so a paused whale contributes nothing to any round), the
+    # in-unit fetches (so a unit held when the pause lands is released at its
+    # next fetch), and the backlog metrics (so KEDA's eligible count and the
+    # claim cannot disagree). Read live from tenants.derivation_paused, which
+    # the control plane sets through the registry's PATCH: no in-process copy,
+    # so no staleness window and no refresh to fail.
+    #
+    # NOT EXISTS rather than NOT IN: a tenant-less (reconciler) row matches no
+    # tenants row and stays eligible by construction, where a bare NOT IN is
+    # NULL-false and would silently starve that lane. The probe is served by the
+    # partial index ix_tenants_derivation_paused, and the paused set is nearly
+    # always empty. Flag-off returns None, so single-tenant SQL is unchanged.
     # endregion
-    return derivation_pause.excluded_tenant_ids()
+    if not settings.MULTI_TENANT:
+        return None
+    paused_tenant = (
+        select(models.Tenant.tenant_id)
+        .where(
+            models.Tenant.tenant_id == tenant_id,
+            # ai: bare column, not IS TRUE — matches the partial index predicate exactly.
+            models.Tenant.derivation_paused,
+        )
+        .exists()
+    )
+    if isinstance(task_type, str):
+        return None if task_type in PAUSE_EXEMPT_TASK_TYPES else ~paused_tenant
+    return or_(task_type.in_(PAUSE_EXEMPT_TASK_TYPES), ~paused_tenant)
 
 
 def unclaimed_work_unit_clause(
@@ -132,6 +166,37 @@ def active_queue_session_match(
     if tenant_match is not None:
         match = and_(tenant_match, match)
     return match
+
+
+def queue_item_tenant_match() -> ColumnElement[bool] | None:
+    """Pin a QueueItem row to the ambient tenant, flag-aware; None flag-off (compose conditionally, as claim_rows_query does with batch_threshold_clause, so flag-off SQL is unchanged)."""
+    # region ai
+    # tenant_id is the authoritative tenant-scoped column for queue rows, not
+    # workspace_name or message_id: workspace_name is only unique per tenant
+    # (every tenant has a "default" workspace) and message ids are drawn from
+    # one global sequence, so either can collide across tenants. tenant_id
+    # does not — the queue_item_batches backfill (migration b7d2f4a81c39,
+    # the `UPDATE {schema}.queue SET tenant_id = split_part(work_unit_key,
+    # ':', 1) ...` step) derived it from the work_unit_key's tenant prefix for
+    # every row that predated the column, and every tenant-bound writer since
+    # (src/deriver/enqueue.py's _stamp_tenant_id, the reconciler scheduler,
+    # webhooks/events.py) sets it explicitly on insert. Rows with tenant_id
+    # IS NULL flag-on are the tenant-less reconciler lane (workspace_name is
+    # NULL there too, per the workspace_null_iff_reconciler check) and are
+    # left alone here, exactly as active_queue_session_match above leaves
+    # reconciler claim rows to the stale-claim GC that owns them. Fail closed
+    # flag-on with no ambient tenant, same shape as active_queue_session_match:
+    # every caller (API routes via require_auth, the deriver via
+    # process_work_unit) is tenant-bound when the flag is on.
+    # endregion
+    if not settings.MULTI_TENANT:
+        return None
+    tenant = tenant_context.get()
+    if not tenant:
+        raise ValueError(
+            "cannot match queue rows without a tenant when MULTI_TENANT is on"
+        )
+    return models.QueueItem.tenant_id == tenant
 
 
 def claim_rows_query(limit: int) -> Select[Any]:
@@ -211,14 +276,11 @@ def claim_rows_query(limit: int) -> Select[Any]:
     threshold_clause = batch_threshold_clause()
     if threshold_clause is not None:
         eligible = eligible.where(threshold_clause)
-    excluded_tenant_ids = claim_excluded_tenant_ids()
-    if excluded_tenant_ids:
-        eligible = eligible.where(
-            or_(
-                models.QueueItemBatch.tenant_id.is_(None),
-                models.QueueItemBatch.tenant_id.notin_(excluded_tenant_ids),
-            )
-        )
+    pause_clause = not_paused_clause(
+        models.QueueItemBatch.tenant_id, models.QueueItemBatch.task_type
+    )
+    if pause_clause is not None:
+        eligible = eligible.where(pause_clause)
     eligible_subq = eligible.subquery()
 
     return (
@@ -291,16 +353,6 @@ async def get_deriver_metrics(db: AsyncSession) -> schemas.DeriverMetrics:
     from src.reconciler.sync_vectors import backoff_eligible  # noqa: PLC0415
 
     # region ai
-    # The API process runs no paused-set refresher; this poll is its cadence.
-    # Refreshing here, on the same read-only service session, keeps the gauges
-    # KEDA scales on and the deriver's claim reading the same bit — otherwise a
-    # paused tenant's backlog would count as eligible and scale up workers that
-    # find nothing to claim. Flag-off the set is never loaded and stays None.
-    # endregion
-    if settings.MULTI_TENANT:
-        await derivation_pause.refresh(db)
-
-    # region ai
     # Reads the trigger-maintained queue_item_batches, not the queue: this poller
     # ran the same two GROUP BYs as the old claim path on every backlog-metrics
     # poll, the identical ~O(depth²) cost. sum(pending_count) equals the old
@@ -328,30 +380,32 @@ async def get_deriver_metrics(db: AsyncSession) -> schemas.DeriverMetrics:
     # bug. They are counted on their own gauge rather than dropped, so
     # suspended depth stays visible.
     #
-    # Same NULL-safe shape as the claim's filter: a bare NOT IN is NULL-false
-    # and would silently drop the tenant-less reconciler lane from both counts.
+    # The claim's own clause, so the two cannot drift apart.
     # endregion
-    excluded_tenant_ids = claim_excluded_tenant_ids()
+    claimable_tenant_clause = not_paused_clause(
+        models.QueueItemBatch.tenant_id, models.QueueItemBatch.task_type
+    )
     excluded: Select[Any] | None = None
-    claimable_tenant_clause: ColumnElement[bool] | None = None
-    if excluded_tenant_ids:
-        claimable_tenant_clause = or_(
-            models.QueueItemBatch.tenant_id.is_(None),
-            models.QueueItemBatch.tenant_id.notin_(excluded_tenant_ids),
-        )
+    paused_tenants: Select[Any] | None = None
+    if claimable_tenant_clause is not None:
         # ai: grouped by tenant — the total is the sum; per-tenant depth is what an operator watches while a tenant is paused
         excluded = (
             select(models.QueueItemBatch.tenant_id, func.count())
             .select_from(models.QueueItemBatch)
             .where(
                 not_live_claimed_work_unit_clause(models.QueueItemBatch.work_unit_key),
-                models.QueueItemBatch.tenant_id.in_(excluded_tenant_ids),
+                ~claimable_tenant_clause,
             )
             .group_by(models.QueueItemBatch.tenant_id)
         )
         if threshold_clause is not None:
             excluded = excluded.where(threshold_clause)
         eligible = eligible.where(claimable_tenant_clause)
+        paused_tenants = (
+            select(func.count())
+            .select_from(models.Tenant)
+            .where(models.Tenant.derivation_paused)
+        )
 
     claimed = (
         select(func.count())
@@ -392,6 +446,11 @@ async def get_deriver_metrics(db: AsyncSession) -> schemas.DeriverMetrics:
         else {}
     )
     excluded_count = sum(excluded_by_tenant.values())
+    paused_count = (
+        (await db.execute(paused_tenants)).scalar_one()
+        if paused_tenants is not None
+        else 0
+    )
     claimed_count = (await db.execute(claimed)).scalar_one()
     pending_count, oldest_age = (await db.execute(pending)).one()
     embeddings_pending, embeddings_due = (await db.execute(embeddings)).one()
@@ -400,6 +459,7 @@ async def get_deriver_metrics(db: AsyncSession) -> schemas.DeriverMetrics:
         eligible_work_units=int(eligible_count),
         excluded_work_units=int(excluded_count),
         excluded_work_units_by_tenant=excluded_by_tenant,
+        paused_tenants=int(paused_count),
         claimed_work_units=int(claimed_count),
         pending_items=int(pending_count),
         oldest_pending_age_seconds=float(oldest_age),

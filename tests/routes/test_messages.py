@@ -74,7 +74,7 @@ async def test_create_message_schedules_immediate_embed(
         )
     assert response.status_code == 201
     public_id = response.json()[0]["id"]
-    mock_embed_now.assert_awaited_once_with([public_id])
+    mock_embed_now.assert_awaited_once_with([public_id], tenant_id=None)
 
 
 @pytest.mark.asyncio
@@ -161,7 +161,7 @@ async def test_file_upload_schedules_immediate_embed(
         )
     assert response.status_code == 201
     expected_ids = [m["id"] for m in response.json()]
-    mock_embed_now.assert_awaited_once_with(expected_ids)
+    mock_embed_now.assert_awaited_once_with(expected_ids, tenant_id=None)
 
 
 @pytest.mark.asyncio

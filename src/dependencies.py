@@ -84,8 +84,9 @@ async def tracked_db(
     # the duration so the connection-checkout hook applies the `app.tenant` GUC
     # (see src/db.py) and the RLS policies resolve. A tenant may instead be
     # inherited from an ambient tenant_context already set by an outer scope
-    # (today, the deriver binding a claimed work unit's tenant; a per-request API
-    # binding is not yet wired), so nested sessions need not re-pass it. When
+    # (the deriver binding a claimed work unit's tenant, or require_auth binding
+    # the JWT's tenant claim for the request — see src/security.py), so nested
+    # sessions need not re-pass it. When
     # MULTI_TENANT is enabled a tenant is REQUIRED from one of those two sources —
     # if neither is present we raise here, before any query executes, so a
     # tenant-scoped session can never run unbound (fail-closed). Legitimately
@@ -121,9 +122,9 @@ async def tracked_db(
         # read_only/AUTOCOMMIT it is a wire-level no-op.)
         await db.rollback()
         await db.close()
-        if token:  # Only reset if we set it
+        if token is not None:  # Only reset if we set it
             request_context.reset(token)
-        if tenant_token:  # Only reset if we set it
+        if tenant_token is not None:  # Only reset if we set it
             tenant_context.reset(tenant_token)
 
 
@@ -167,7 +168,7 @@ async def service_db(operation_name: str | None = None, *, read_only: bool = Fal
         # endregion
         await db.rollback()
         await db.close()
-        if token:  # Only reset if we set it
+        if token is not None:  # Only reset if we set it
             request_context.reset(token)
 
 

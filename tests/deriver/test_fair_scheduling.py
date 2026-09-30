@@ -26,10 +26,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import src.crud.deriver as crud_deriver_module
-from src import derivation_pause, models
+from src import models
 from src.backlog import outstanding_work_seconds
 from src.config import settings
-from src.crud.deriver import claim_excluded_tenant_ids
+from src.crud.deriver import not_paused_clause
 from src.deriver import queue_manager as queue_manager_module
 from src.deriver.enqueue import _stamp_tenant_id
 from src.deriver.queue_manager import QueueManager
@@ -544,25 +544,39 @@ class TestWorkInFlightChargesItsTenant:
         assert recorded_claim_order == [whale_waiting_key, other_tenant_key]
 
 
+async def register_tenant(db: AsyncSession, *, paused: bool) -> str:
+    """Commit a tenants row with a fresh id and return the id.
+
+    The pause clause reads the real registry table, and tenants rows outlive the
+    per-test table clear, so every test mints its own ids.
+    """
+    tenant_id = f"{PAUSED_TENANT if paused else LIVE_TENANT}-{generate_nanoid(size=6)}"
+    db.add(models.Tenant(tenant_id=tenant_id, tier="shared", derivation_paused=paused))
+    await db.commit()
+    return tenant_id
+
+
 @pytest.mark.asyncio
 class TestThePauseSeam:
-    """The exclusion hook a tenant suspension will hang off, and what it does to a claim."""
+    """tenants.derivation_paused, read in the claim's SQL, and what it does to a claim."""
 
-    async def test_the_seam_excludes_nothing_with_no_source_wired(
+    async def test_flag_off_the_seam_excludes_nothing(
         self,
+        db_session: AsyncSession,
         seed_work_unit: SeedWorkUnit,
         batch_gate_settings: Callable[..., None],
     ) -> None:
-        """With no paused-tenant source wired in, every bucket claims as usual."""
+        """Single-tenant, even a paused row is ignored: the clause is never built."""
         batch_gate_settings(
             target_tokens=512, max_age_seconds=AGE_FLUSH_SECONDS, workers=5
         )
-        paused_key = representation_key(PAUSED_TENANT, "would-be-paused")
+        paused_tenant = await register_tenant(db_session, paused=True)
+        paused_key = representation_key(paused_tenant, "would-be-paused")
         live_key = representation_key(LIVE_TENANT, "always-live")
         reconciler_key = "reconciler:sync_vectors"
         await seed_work_unit(
             paused_key,
-            tenant_id=PAUSED_TENANT,
+            tenant_id=paused_tenant,
             token_counts=(1,),
             ages_seconds=(300,),
         )
@@ -580,70 +594,15 @@ class TestThePauseSeam:
 
         claimed_work_units = await QueueManager().get_and_claim_work_units()
 
-        assert claim_excluded_tenant_ids() is None
+        assert (
+            not_paused_clause(
+                models.QueueItemBatch.tenant_id, models.QueueItemBatch.task_type
+            )
+            is None
+        )
         assert set(claimed_work_units) == {paused_key, live_key, reconciler_key}
 
-    async def test_an_exclusion_clause_skips_the_paused_tenant_and_nobody_else(
-        self,
-        db_session: AsyncSession,
-        seed_work_unit: SeedWorkUnit,
-        batch_gate_settings: Callable[..., None],
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """A clause wired into the seam filters before ranking, leaving the rest untouched.
-
-        The paused tenant's units stay in the backlog — they are skipped, not
-        drained — so unpausing needs nothing but dropping the clause again.
-        """
-        batch_gate_settings(
-            target_tokens=512, max_age_seconds=AGE_FLUSH_SECONDS, workers=10
-        )
-
-        # region ai
-        # The seam hands back ids, not a clause: the claim composes the
-        # NULL-safe predicate itself, so a wired source cannot accidentally
-        # exclude the tenant-less reconciler lane (a bare NOT IN is NULL-false).
-        # Patched where the claim builder resolves it.
-        # endregion
-        monkeypatch.setattr(
-            crud_deriver_module,
-            "claim_excluded_tenant_ids",
-            lambda: [PAUSED_TENANT],
-        )
-        paused_keys = [
-            representation_key(PAUSED_TENANT, f"paused-{index}") for index in range(2)
-        ]
-        live_key = representation_key(LIVE_TENANT, "still-running")
-        reconciler_key = "reconciler:sync_vectors"
-        for work_unit_key, age_seconds in zip(paused_keys, (900, 800), strict=True):
-            await seed_work_unit(
-                work_unit_key,
-                tenant_id=PAUSED_TENANT,
-                token_counts=(1,),
-                ages_seconds=(age_seconds,),
-            )
-        await seed_work_unit(
-            live_key, tenant_id=LIVE_TENANT, token_counts=(1,), ages_seconds=(200,)
-        )
-        await seed_work_unit(
-            reconciler_key,
-            task_type="reconciler",
-            tenant_id=None,
-            token_counts=(0,),
-            ages_seconds=(100,),
-            with_messages=False,
-        )
-
-        claimed_work_units = await QueueManager().get_and_claim_work_units()
-
-        assert set(claimed_work_units) == {live_key, reconciler_key}
-        assert await _read_batch_keys(db_session) == {
-            *paused_keys,
-            live_key,
-            reconciler_key,
-        }
-
-    async def test_the_registrys_paused_bit_is_the_seams_source(
+    async def test_a_paused_tenant_is_skipped_until_its_row_flips_back(
         self,
         db_session: AsyncSession,
         seed_work_unit: SeedWorkUnit,
@@ -652,24 +611,13 @@ class TestThePauseSeam:
     ) -> None:
         """End to end, no patching: a paused tenants row keeps its units unclaimed,
         its neighbour and the reconciler lane claim as usual, and flipping the
-        row back releases the backlog on the next refresh."""
+        row back releases the backlog on the very next claim."""
         monkeypatch.setattr(settings, "MULTI_TENANT", True)
         batch_gate_settings(
             target_tokens=512, max_age_seconds=AGE_FLUSH_SECONDS, workers=10
         )
-        # Real tenants rows outlive the per-test table clear, so their ids are unique.
-        suffix = generate_nanoid(size=6)
-        paused_tenant = f"{PAUSED_TENANT}-{suffix}"
-        live_tenant = f"{LIVE_TENANT}-{suffix}"
-        db_session.add_all(
-            [
-                models.Tenant(
-                    tenant_id=paused_tenant, tier="shared", derivation_paused=True
-                ),
-                models.Tenant(tenant_id=live_tenant, tier="shared"),
-            ]
-        )
-        await db_session.commit()
+        paused_tenant = await register_tenant(db_session, paused=True)
+        live_tenant = await register_tenant(db_session, paused=False)
         paused_keys = [
             representation_key(paused_tenant, f"paused-{index}") for index in range(2)
         ]
@@ -685,6 +633,7 @@ class TestThePauseSeam:
         await seed_work_unit(
             live_key, tenant_id=live_tenant, token_counts=(1,), ages_seconds=(200,)
         )
+        # The tenant-less lane matches no tenants row, so NOT EXISTS keeps it.
         await seed_work_unit(
             reconciler_key,
             task_type="reconciler",
@@ -694,16 +643,13 @@ class TestThePauseSeam:
             with_messages=False,
         )
 
-        # What the deriver's refresher does on its timer.
-        await derivation_pause.refresh(db_session)
-        assert claim_excluded_tenant_ids() == (paused_tenant,)
-
-        # The metrics poll (the API's refresh path) splits the backlog the same way,
-        # and names the paused tenant's depth.
+        # The metrics poll splits the backlog with the claim's own clause.
         stats = await crud_deriver_module.get_deriver_metrics(db_session)
         assert stats.eligible_work_units == 2
         assert stats.excluded_work_units == 2
         assert stats.excluded_work_units_by_tenant == {paused_tenant: 2}
+        # Other tests' paused rows outlive them, so compare by difference.
+        assert stats.paused_tenants >= 1
 
         first_claim = await QueueManager().get_and_claim_work_units()
         assert set(first_claim) == {live_key, reconciler_key}
@@ -718,73 +664,23 @@ class TestThePauseSeam:
         assert tenant is not None
         tenant.derivation_paused = False
         await db_session.commit()
-        await derivation_pause.refresh(db_session)
-        assert claim_excluded_tenant_ids() is None
 
         second_claim = await QueueManager().get_and_claim_work_units()
         assert set(second_claim) == set(paused_keys)
-        stats = await crud_deriver_module.get_deriver_metrics(db_session)
-        assert stats.excluded_work_units == 0
-        assert stats.excluded_work_units_by_tenant == {}
+        resumed = await crud_deriver_module.get_deriver_metrics(db_session)
+        assert resumed.excluded_work_units == 0
+        assert resumed.excluded_work_units_by_tenant == {}
+        assert resumed.paused_tenants == stats.paused_tenants - 1
 
-    async def test_excluded_units_leave_the_eligible_gauge_for_their_own(
+    async def test_nothing_is_excluded_from_the_gauges_with_nobody_paused(
         self,
         db_session: AsyncSession,
         seed_work_unit: SeedWorkUnit,
         batch_gate_settings: Callable[..., None],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """What the claim will not take must not read as backlog waiting for a worker.
-
-        ``eligible_work_units`` drives deriver autoscaling, so counting units no
-        claim can take asks for workers that would find nothing to do. They are
-        reported on their own gauge instead of disappearing — an excluded
-        tenant's depth is exactly the number worth watching while it is paused.
-        """
-        batch_gate_settings(
-            target_tokens=512, max_age_seconds=AGE_FLUSH_SECONDS, workers=10
-        )
-        monkeypatch.setattr(
-            crud_deriver_module,
-            "claim_excluded_tenant_ids",
-            lambda: [PAUSED_TENANT],
-        )
-        for index, age_seconds in enumerate((900, 800)):
-            await seed_work_unit(
-                representation_key(PAUSED_TENANT, f"paused-{index}"),
-                tenant_id=PAUSED_TENANT,
-                token_counts=(1,),
-                ages_seconds=(age_seconds,),
-            )
-        await seed_work_unit(
-            representation_key(LIVE_TENANT, "still-running"),
-            tenant_id=LIVE_TENANT,
-            token_counts=(1,),
-            ages_seconds=(200,),
-        )
-        # The tenant-less lane is never excluded, and NULL never matches IN —
-        # it has to keep counting as eligible.
-        await seed_work_unit(
-            "reconciler:sync_vectors",
-            task_type="reconciler",
-            tenant_id=None,
-            token_counts=(0,),
-            ages_seconds=(100,),
-            with_messages=False,
-        )
-
-        stats = await crud_deriver_module.get_deriver_metrics(db_session)
-
-        assert stats.eligible_work_units == 2
-        assert stats.excluded_work_units == 2
-
-    async def test_nothing_is_excluded_from_the_gauges_with_no_source_wired(
-        self,
-        db_session: AsyncSession,
-        seed_work_unit: SeedWorkUnit,
-        batch_gate_settings: Callable[..., None],
-    ) -> None:
-        """With nothing paused the seam reads None, so the eligible gauge reads as it always did."""
+        """Flag on, no paused tenant among these: the eligible gauge reads as it always did."""
+        monkeypatch.setattr(settings, "MULTI_TENANT", True)
         batch_gate_settings(
             target_tokens=512, max_age_seconds=AGE_FLUSH_SECONDS, workers=10
         )
@@ -821,18 +717,15 @@ class TestThePauseSeam:
         outstanding and hold the deriver fleet up for units no claim can take.
         Every gauge that answers "is there anything to do" has to agree.
         """
+        monkeypatch.setattr(settings, "MULTI_TENANT", True)
         batch_gate_settings(
             target_tokens=512, max_age_seconds=AGE_FLUSH_SECONDS, workers=10
         )
-        monkeypatch.setattr(
-            crud_deriver_module,
-            "claim_excluded_tenant_ids",
-            lambda: [PAUSED_TENANT],
-        )
+        paused_tenant = await register_tenant(db_session, paused=True)
         for index, age_seconds in enumerate((900, 800)):
             await seed_work_unit(
-                representation_key(PAUSED_TENANT, f"paused-{index}"),
-                tenant_id=PAUSED_TENANT,
+                representation_key(paused_tenant, f"paused-{index}"),
+                tenant_id=paused_tenant,
                 token_counts=(1,),
                 ages_seconds=(age_seconds,),
             )

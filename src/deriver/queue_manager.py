@@ -24,13 +24,15 @@ from sqlalchemy.sql import func
 from src import models
 from src.cache.client import close_cache, init_cache
 from src.config import settings
-from src.crud.deriver import claim_rows_query
+from src.crud.deriver import (
+    claim_rows_query,
+    not_paused_clause,
+)
 from src.crud.deriver import (
     cleanup_stale_work_units as crud_cleanup_stale_work_units,
 )
 from src.db import tenant_context
 from src.dependencies import service_db
-from src.derivation_pause import derivation_pause_refresher
 from src.deriver.consumer import (
     process_item,
     process_representation_batch,
@@ -259,14 +261,6 @@ class QueueManager:
             )
         logger.debug("Signal handlers registered")
 
-        # region ai
-        # Deliberately NOT wrapped like the scheduler start below: a process that
-        # cannot read which tenants are paused must not begin claiming, or every
-        # paused tenant derives. No-op flag-off. Later refreshes fail open inside
-        # the refresher itself.
-        # endregion
-        await derivation_pause_refresher.start()
-
         if settings.DERIVER.SCHEDULER == "deriver":
             try:
                 await self.reconciler_scheduler.start()
@@ -301,12 +295,6 @@ class QueueManager:
 
     async def cleanup(self) -> None:
         """Clean up owned work units"""
-        # ai: stopped here (not in shutdown(sig)) so non-signal exits cover it too;
-        # guarded so a failing stop cannot skip the claim release below.
-        try:
-            await derivation_pause_refresher.shutdown()
-        except Exception as e:
-            logger.warning("Error stopping the paused-tenant refresher: %s", e)
         total_work_units = self.get_total_owned_work_units()
         if total_work_units > 0:
             logger.debug(f"Cleaning up {total_work_units} owned work units...")
@@ -684,6 +672,15 @@ class QueueManager:
                 else None
             )
             try:
+                if tenant_token is not None:
+                    # region ai
+                    # Errors from this work unit are filterable by tenant. Each unit
+                    # runs in its own task and AsyncioIntegration forks the isolation
+                    # scope per task, so the tag lives as long as the bind; removed in
+                    # the finally with the ContextVar reset, inside the same try so
+                    # the two cleanups pair.
+                    # endregion
+                    sentry_sdk.set_tag("tenant_id", work_unit.tenant_id)
                 while not self.shutdown_event.is_set():
                     # Get worker ownership info for verification
                     ownership = self.worker_ownership.get(worker_id)
@@ -805,6 +802,7 @@ class QueueManager:
             finally:
                 if tenant_token is not None:
                     tenant_context.reset(tenant_token)
+                    sentry_sdk.get_isolation_scope().remove_tag("tenant_id")
                 # Remove work unit from active_queue_sessions when done
                 ownership: WorkerOwnership | None = self.worker_ownership.get(worker_id)
                 if ownership and ownership.work_unit_key == work_unit_key:
@@ -873,6 +871,10 @@ class QueueManager:
                 .order_by(models.QueueItem.id)
                 .limit(1)
             )
+            # ai: a pause that lands while this unit is held takes effect here: no item, so the loop releases the unit
+            pause_clause = not_paused_clause(models.QueueItem.tenant_id, task_type)
+            if pause_clause is not None:
+                query = query.where(pause_clause)
             result = await db.execute(query)
             queue_item = result.scalar_one_or_none()
 
@@ -928,12 +930,20 @@ class QueueManager:
 
         async with service_db("get_queue_item_batch") as db:
             # For batch tasks, get messages based on token limit.
-            # Step 1: Verify worker still owns the work_unit_key.
-            ownership_check = await db.execute(
+            # Step 1: Verify worker still owns the work_unit_key, and that its
+            # tenant has not been paused since the claim. Either failing returns
+            # an empty batch, which ends the loop and releases the unit.
+            ownership_query = (
                 select(models.ActiveQueueSession.id)
                 .where(models.ActiveQueueSession.work_unit_key == work_unit_key)
                 .where(models.ActiveQueueSession.id == aqs_id)
             )
+            pause_clause = not_paused_clause(
+                models.ActiveQueueSession.tenant_id, task_type
+            )
+            if pause_clause is not None:
+                ownership_query = ownership_query.where(pause_clause)
+            ownership_check = await db.execute(ownership_query)
             if not ownership_check.scalar_one_or_none():
                 return QueueBatchResult(
                     was_flush_enabled=was_flush_enabled,
@@ -1329,7 +1339,7 @@ async def main():
     try:
         await manager.initialize()
     except Exception as e:
-        # ai: re-raised so a refused boot (validators, the paused-set first load) exits non-zero
+        # ai: re-raised so a refused boot (the startup validators) exits non-zero
         logger.exception("Error in main")
         sentry_sdk.capture_exception(e)
         raise

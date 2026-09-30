@@ -3,6 +3,7 @@ import logging
 from typing import Annotated
 
 import jwt
+import sentry_sdk
 from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
@@ -221,6 +222,17 @@ def require_auth(
             else None
         )
         try:
+            if tenant_token is not None:
+                # region ai
+                # Errors from this request are filterable by tenant; the global
+                # `namespace` tag keeps naming the instance. Deliberately NOT removed
+                # in the finally: this dependency's teardown runs before the app's
+                # exception handlers, so removing it here would strip the tag from
+                # exactly the unhandled errors global_exception_handler reports. The
+                # tag dies with the request instead: sentry's ASGI middleware opens a
+                # fresh isolation scope per request, so it never reaches the next one.
+                # endregion
+                sentry_sdk.set_tag("tenant_id", jwt_params.tn)
             yield jwt_params
         finally:
             if tenant_token is not None:

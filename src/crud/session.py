@@ -35,7 +35,7 @@ from src.cache.client import (
     safe_cache_set,
 )
 from src.config import settings
-from src.crud.deriver import active_queue_session_match
+from src.crud.deriver import active_queue_session_match, queue_item_tenant_match
 from src.exceptions import (
     AuthenticationException,
     ConflictException,
@@ -624,12 +624,18 @@ async def delete_session(
             )
         )
 
-        # Delete QueueItem entries
-        await db.execute(
-            delete(models.QueueItem).where(
-                models.QueueItem.session_id == honcho_session.id
-            )
+        # Delete QueueItem entries. session_id is globally unique in practice,
+        # but pin to the ambient tenant, flag-aware, for defense in depth
+        # (rationale lives on the helper).
+        queue_item_match = queue_item_tenant_match()
+        session_queue_item_delete = delete(models.QueueItem).where(
+            models.QueueItem.session_id == honcho_session.id
         )
+        if queue_item_match is not None:
+            session_queue_item_delete = session_queue_item_delete.where(
+                queue_item_match
+            )
+        await db.execute(session_queue_item_delete)
 
         # Delete message vectors from vector store before deleting DB records
         # Vector IDs are {message_id}_{chunk_index}, where chunk_index is the 0-based
@@ -659,7 +665,7 @@ async def delete_session(
 
             # Try to delete from external vector store (best effort)
             try:
-                namespace = external_vector_store.get_vector_namespace(
+                namespace = await external_vector_store.get_vector_namespace(
                     "message", workspace_name
                 )
                 await external_vector_store.delete_many(namespace, vector_ids)
@@ -702,7 +708,7 @@ async def delete_session(
             # Group document IDs by namespace (observer/observed)
             docs_by_namespace: dict[str, list[str]] = {}
             for doc in documents:
-                namespace = external_vector_store.get_vector_namespace(
+                namespace = await external_vector_store.get_vector_namespace(
                     "document",
                     workspace_name,
                     doc.observer,

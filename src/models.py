@@ -149,9 +149,9 @@ class Tenant(Base):
     # The effect, not the reason: "do not claim this tenant's work". The control
     # plane decides WHY (billing, a noisy-neighbour kill switch, a maintenance
     # freeze)
-    # and mirrors the result here through the registry's PATCH; the deriver's
-    # claim reads it via derivation_pause. Never consulted to decide whether to
-    # pause — only whether to claim.
+    # and mirrors the result here through the registry's PATCH; the deriver
+    # reads it in SQL wherever it takes work (crud.deriver.not_paused_clause).
+    # Never consulted to decide whether to pause — only whether to claim.
     # endregion
     derivation_paused: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("false")
@@ -161,9 +161,8 @@ class Tenant(Base):
     )
 
     __table_args__ = (
-        # ai: the claim-side refresh reads only the paused subset, on a timer, from
-        # every claiming process; the partial index keeps that scan small however
-        # large tenants grows.
+        # ai: the claim's NOT EXISTS probe and the paused-tenant list read only the
+        # paused subset; the partial index keeps both small however large tenants grows.
         Index(
             "ix_tenants_derivation_paused",
             "tenant_id",
@@ -472,9 +471,11 @@ class MessageEmbedding(Base):
             ["peers.name", "peers.workspace_name", "peers.tenant_id"],
         ),
         # region ai
-        # message_id-leading: every lookup on message_id is cross-tenant (the
-        # reconciler / embed_now filter by message_id with no tenant_id in scope),
-        # so a tenant_id prefix would force a scan of all partitions.
+        # message_id-leading: the reconciler's lookups on message_id are
+        # cross-tenant (it sweeps every tenant and filters by message_id with no
+        # tenant_id in scope), so a tenant_id prefix would force a scan of all
+        # partitions. embed_now is NOT one of those callers — it is per-request
+        # and tenant-bound — but the reconciler alone settles the column order.
         # endregion
         Index("ix_message_embeddings_message_tenant", "message_id", "tenant_id"),
         # region ai
@@ -903,6 +904,18 @@ class QueueItemBatch(Base):
     # code must never write it. pending_count is bookkeeping, not a claim
     # input; the claim gate reads task_type/total_tokens/oldest_created_at and
     # claims by row existence.
+    # endregion
+    # region ai
+    # work_unit_key alone is the primary key, not (tenant_id, work_unit_key):
+    # under MULTI_TENANT, construct_work_unit_key (src/utils/work_unit.py)
+    # prefixes every tenant-scoped key with its tenant_id, so the key is
+    # already tenant-scoped by construction and a composite key would be
+    # redundant. tenant_id below is a derived attribution column, not part of
+    # identity — it stays nullable because it is NULL both for the
+    # tenant-less reconciler lane (task_type "reconciler", which scans across
+    # tenants and never gets a tenant prefix) and for every row when
+    # MULTI_TENANT is off (src/deriver/enqueue.py's _stamp_tenant_id, which
+    # derives this column from the key prefix at every insert site).
     # endregion
     work_unit_key: Mapped[str] = mapped_column(TEXT, primary_key=True)
     # ai: Service table: tenant_id is plain attribution, no FK / RLS.

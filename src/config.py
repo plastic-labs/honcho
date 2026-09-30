@@ -782,8 +782,9 @@ class TenantApiSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="TENANT_API_", extra="ignore")  # pyright: ignore
 
     # region ai
-    # The above-tenant auth plane: this secret authenticates the control plane to
-    # the tenant-registry API (/v3/tenants), never any tenant's data. It is
+    # The above-tenant auth plane: this secret authenticates the operator's
+    # provisioning system (a control plane in a hosted deployment) to the
+    # tenant-registry API (/v3/tenants), never any tenant's data. It is
     # deliberately not a JWT — under MULTI_TENANT every JWT must carry a tenant,
     # and at tenant-creation time the tenant does not exist to be claimed, so the
     # JWT plane cannot express this caller. Unset (the default) keeps the tenant
@@ -1025,9 +1026,6 @@ class DeriverSettings(HonchoSettings):
     FLUSH_ENABLED: bool = False
 
     BACKLOG_METRICS_POLL_INTERVAL_SECONDS: Annotated[int, Field(default=30, ge=1)] = 30
-    # How often a claiming process re-reads which tenants are paused
-    # (tenants.derivation_paused). Bounds pause-to-effect and resume-to-effect.
-    PAUSED_TENANTS_REFRESH_SECONDS: Annotated[int, Field(default=30, ge=1)] = 30
 
     SCHEDULER: Literal["api", "deriver"] = "deriver"
 
