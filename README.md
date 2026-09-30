@@ -490,6 +490,8 @@ uv run alembic upgrade head
 This will create all tables for Honcho including workspaces, peers, sessions,
 messages, and the queue system.
 
+Migrations hold a session-level advisory lock, so they need a session-mode connection (direct Postgres or a session pooler), not a transaction-mode pooler. A Supabase-style `:6543` port is rewritten to `:5432` automatically.
+
 6. **Launch Honcho**
 
 With everything set up, you can now launch a local instance of Honcho. In addition to the database, two
