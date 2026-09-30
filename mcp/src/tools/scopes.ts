@@ -77,6 +77,7 @@ export function register(server: McpServer, ctx: ToolContext) {
     {
       annotations: {
         title: "Create Scope",
+        readOnlyHint: false,
         destructiveHint: false,
       },
       description: [
@@ -119,6 +120,7 @@ export function register(server: McpServer, ctx: ToolContext) {
     {
       annotations: {
         title: "Add Sessions to Scope",
+        readOnlyHint: false,
         destructiveHint: false,
       },
       description: [
@@ -155,6 +157,7 @@ export function register(server: McpServer, ctx: ToolContext) {
     {
       annotations: {
         title: "Remove Session from Scope",
+        readOnlyHint: false,
         destructiveHint: true,
       },
       description: [

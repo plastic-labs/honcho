@@ -37,6 +37,14 @@ test("every tool declares a title and a read/write hint", async () => {
   );
   expect(unhinted.map((t) => t.name)).toEqual([]);
 
+  // readOnlyHint defaults to false, so omitting it on a write tool is
+  // semantically correct — but the directory submission portal flags every
+  // tool that doesn't state it. Declare it explicitly on all of them.
+  const implicitReadOnly = tools.filter(
+    (t) => typeof t.annotations?.readOnlyHint !== "boolean",
+  );
+  expect(implicitReadOnly.map((t) => t.name)).toEqual([]);
+
   // A read-only tool must not also claim to destroy anything.
   const contradictory = tools.filter(
     (t) => t.annotations?.readOnlyHint === true && t.annotations?.destructiveHint,

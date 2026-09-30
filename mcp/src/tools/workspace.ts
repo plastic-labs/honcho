@@ -134,6 +134,7 @@ export function register(server: McpServer, ctx: ToolContext) {
     {
       annotations: {
         title: "Create Workspace",
+        readOnlyHint: false,
         destructiveHint: false,
       },
       description: [
@@ -447,6 +448,7 @@ export function register(server: McpServer, ctx: ToolContext) {
     {
       annotations: {
         title: "Set Metadata",
+        readOnlyHint: false,
         destructiveHint: true,
       },
       description: [

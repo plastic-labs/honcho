@@ -10,6 +10,7 @@ export function register(server: McpServer, ctx: ToolContext) {
     {
       annotations: {
         title: "Create Peer",
+        readOnlyHint: false,
         destructiveHint: false,
       },
       description: [
@@ -217,6 +218,7 @@ export function register(server: McpServer, ctx: ToolContext) {
     {
       annotations: {
         title: "Set Peer Card",
+        readOnlyHint: false,
         destructiveHint: true,
       },
       description: [
