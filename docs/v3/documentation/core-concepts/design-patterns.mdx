@@ -24,6 +24,7 @@ Ready to add Honcho to your codebase? The **`/honcho-integration` skill** applie
 | Should I set `observe_me: false`? | Yes, for deterministic peers Honcho does not need to model, like bots or tool agents. Still save their messages so other peers have session context. Keep it enabled for users and evolving agents. |
 | Do I need `observe_others`? | Only when a peer needs its own perspective on another participant, such as in games, multi-agent systems, or parent/subagent workflows. |
 | When do I need a scope? | When one peer's history spans contexts that must not leak into each other's recall — but you still want one workspace and one unified peer. Group the confidential sessions into a [scope](/v3/documentation/features/advanced/scopes) and pass it at query time. |
+| Peer chat or workspace chat? | `peer.chat()` for one peer's perspective (personalization, what one agent knows about another). [`honcho.chat()`](/v3/documentation/features/chat#workspace-chat) when the question spans peers: team digests, cross-agent themes, or you don't know which peer holds the answer. |
 | Perspectives or scopes? | `observe_others` gives a *participant* its own view of another peer. A scope bounds recall to *where things were said*, for a reader that isn't a participant. If the reader is in the session, use perspectives; if you're fencing off a set of sessions, use a scope. |
 
 ## Workspace Design
@@ -117,7 +118,7 @@ Two things scopes are **not**:
     Bound recall to named sets of sessions
   </Card>
   <Card title="Chat Endpoint" icon="comments" href="/v3/documentation/features/chat">
-    Query Honcho about your peers with natural language
+    Query Honcho about one peer, or across the whole workspace
   </Card>
   <Card title="Reasoning Configuration" icon="wrench" href="/v3/documentation/features/advanced/reasoning-configuration">
     Fine-tune what gets reasoned about and how

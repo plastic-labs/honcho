@@ -87,11 +87,13 @@ from honcho_cli.commands.config_cmd import app as config_app
 from honcho_cli.commands.conclusion import app as conclusion_app
 from honcho_cli.commands.message import app as message_app
 from honcho_cli.commands.peer import app as peer_app
+from honcho_cli.commands.scope import app as scope_app
 from honcho_cli.commands.session import app as session_app
 from honcho_cli.commands.workspace import app as workspace_app
 
 app.add_typer(peer_app,       name="peer")
 app.add_typer(session_app,    name="session")
+app.add_typer(scope_app,      name="scope")
 app.add_typer(message_app,    name="message")
 app.add_typer(conclusion_app, name="conclusion")
 app.add_typer(workspace_app,  name="workspace")

@@ -3,7 +3,7 @@ Tests for advanced filter functionality including logical operators,
 comparison operators, and wildcards across multiple models.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any, TypedDict
 
 import pytest
@@ -111,21 +111,21 @@ async def test_logical_operators_and_filters(
     found_names = [item["id"] for item in data["items"]]
     expected_names = [peer_names[i] for i in expected_peer_indices]
 
-    assert len(found_names) == len(
-        expected_names
-    ), f"Expected {len(expected_names)} peers for {description}, got {len(found_names)}"
+    assert len(found_names) == len(expected_names), (
+        f"Expected {len(expected_names)} peers for {description}, got {len(found_names)}"
+    )
 
     for expected_name in expected_names:
-        assert (
-            expected_name in found_names
-        ), f"Expected peer {expected_name} in results for {description}"
+        assert expected_name in found_names, (
+            f"Expected peer {expected_name} in results for {description}"
+        )
 
     # Verify unexpected peers are not included
     for i, peer_name in enumerate(peer_names):
         if i not in expected_peer_indices:
-            assert (
-                peer_name not in found_names
-            ), f"Unexpected peer {peer_name} found in results for {description}"
+            assert peer_name not in found_names, (
+                f"Unexpected peer {peer_name} found in results for {description}"
+            )
 
 
 @pytest.mark.parametrize(
@@ -224,21 +224,21 @@ async def test_comparison_operators_filters(
     ]
     found_contents = [item["content"] for item in data["items"]]
 
-    assert (
-        len(found_contents) == len(expected_contents)
-    ), f"Expected {len(expected_contents)} messages for {description}, got {len(found_contents)}"
+    assert len(found_contents) == len(expected_contents), (
+        f"Expected {len(expected_contents)} messages for {description}, got {len(found_contents)}"
+    )
 
     for expected_content in expected_contents:
-        assert (
-            expected_content in found_contents
-        ), f"Expected message '{expected_content}' in results for {description}"
+        assert expected_content in found_contents, (
+            f"Expected message '{expected_content}' in results for {description}"
+        )
 
     # Verify unexpected messages are not included
     for i, message_config in enumerate(message_configs):
         if i not in expected_message_indices:
-            assert (
-                message_config["content"] not in found_contents
-            ), f"Unexpected message '{message_config['content']}' found in results for {description}"
+            assert message_config["content"] not in found_contents, (
+                f"Unexpected message '{message_config['content']}' found in results for {description}"
+            )
 
 
 @pytest.mark.asyncio
@@ -1645,7 +1645,7 @@ async def test_real_datetime_column_filtering(
     )
 
     # Test datetime filtering with various formats
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     one_minute_ago = now - timedelta(minutes=1)
 
     # Test ISO format
@@ -1660,7 +1660,7 @@ async def test_real_datetime_column_filtering(
     assert peer2_name in found_names
 
     # Test date-only format
-    today = datetime.now(timezone.utc).date().isoformat()
+    today = datetime.now(UTC).date().isoformat()
     response = client.post(
         f"/v3/workspaces/{test_workspace.name}/peers/list",
         json={"filters": {"created_at": {"gte": today}}},

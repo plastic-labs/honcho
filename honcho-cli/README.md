@@ -75,6 +75,7 @@ honcho stop --wipe     # also delete volumes
 | `honcho workspace list` | List accessible workspaces |
 | `honcho workspace create <id>` | Create or get a workspace |
 | `honcho workspace inspect` | Peers, sessions, config for a workspace |
+| `honcho workspace chat <query>` | Query the dialectic across all peers (optional `-s` / `--scope` / `--reasoning`) |
 | `honcho workspace search <query>` | Search messages across workspace |
 | `honcho workspace queue-status` | Deriver queue status (filter with `--observer` / `--sender`) |
 | `honcho workspace delete <id>` | Delete a workspace. Use `--dry-run` to preview, `--cascade` to also delete sessions, `--yes` to skip the confirm prompt |
@@ -87,7 +88,7 @@ honcho stop --wipe     # also delete volumes
 | `honcho peer create <id>` | Create or get a peer |
 | `honcho peer inspect <id>` | Card, session count, recent conclusions |
 | `honcho peer card <id>` | Raw peer card content |
-| `honcho peer chat <query>` | Query the dialectic about a peer (peer via `-p` / `HONCHO_PEER_ID`) |
+| `honcho peer chat <query>` | Query the dialectic about a peer (peer via `-p` / `HONCHO_PEER_ID`; optional `--scope` / `--sessions`) |
 | `honcho peer representation <id>` | Formatted representation |
 | `honcho peer search <query>` | Search a peer's messages (peer via `-p` / `HONCHO_PEER_ID`) |
 | `honcho peer get-metadata <id>` / `set-metadata` | Metadata operations |
@@ -107,6 +108,17 @@ honcho stop --wipe     # also delete volumes
 | `honcho session representation <id>` | Peer representation in a session |
 | `honcho session get-metadata <id>` / `set-metadata` | Metadata operations |
 | `honcho session delete <id>` | Destructive; requires `--yes` |
+
+### Scopes
+
+| Command | Description |
+|---------|-------------|
+| `honcho scope list` | List scopes in the workspace |
+| `honcho scope create <name>` | Create or get a scope (`--sessions id,...` to add members, `--metadata`) |
+| `honcho scope inspect <name>` | Metadata, member sessions, backfill summary. Never creates a missing scope |
+| `honcho scope sessions <name>` | Member sessions, longest-standing first |
+| `honcho scope add-sessions <name> <ids...>` / `remove-session <name> <id>` | Membership; history backfills asynchronously |
+| `honcho scope status <name>` | Per-session backfill state — recall is complete once nothing is `pending` |
 
 ### Messages
 

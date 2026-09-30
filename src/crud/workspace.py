@@ -2,7 +2,7 @@
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from logging import getLogger
 from typing import Any
 
@@ -675,7 +675,7 @@ async def get_active_peers(
         return []
     limit = min(limit, 50)
 
-    window_start = datetime.now(timezone.utc) - timedelta(days=ACTIVE_PEER_WINDOW_DAYS)
+    window_start = datetime.now(UTC) - timedelta(days=ACTIVE_PEER_WINDOW_DAYS)
 
     msg_filters = [
         models.Message.workspace_name == workspace_name,

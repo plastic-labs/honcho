@@ -30,11 +30,13 @@ Every workspace-scoped tool takes a `workspace_id` argument. If you set `X-Honch
 
 ## Available Tools
 
-**Workspace:** `list_workspaces` (id, metadata, created_at), `create_workspace` (get-or-create with optional metadata), `inspect_workspace` (aggregates metadata, configuration, and peer/session IDs), `search` (semantic search scoped by optional peer/session params), `get_metadata`, `set_metadata`
+**Workspace:** `list_workspaces` (id, metadata, created_at), `create_workspace` (get-or-create with optional metadata), `inspect_workspace` (aggregates metadata, configuration, and peer/session IDs), `search` (semantic search scoped by optional peer/session/scope params), `workspace_chat` (reasoned answer across all peers; optional session / scope recall bounds), `get_metadata`, `set_metadata`
 
-**Peers:** `create_peer`, `list_peers`, `chat`, `get_peer_card`, `set_peer_card`, `get_peer_context`, `get_representation`
+**Peers:** `create_peer`, `list_peers`, `chat` (reasoned answer about one peer; optional session / scope / sessions recall bounds), `get_peer_card`, `set_peer_card`, `get_peer_context`, `get_representation` (optional session / scope / sessions recall bounds)
 
-**Sessions:** `create_session`, `list_sessions`, `delete_session`, `clone_session`, `add_peers_to_session`, `remove_peers_from_session`, `get_session_peers`, `inspect_session`, `add_messages_to_session`, `get_session_messages`, `get_session_message`, `get_session_context`
+**Sessions:** `create_session` (optional `scopes` to join at creation), `list_sessions`, `delete_session`, `clone_session`, `add_peers_to_session`, `remove_peers_from_session`, `get_session_peers`, `inspect_session`, `add_messages_to_session`, `get_session_messages`, `get_session_message`, `get_session_context` (optional `peer_target` with `peer_perspective` / `scope` / `limit_to_session` to include a peer's representation and card)
+
+**Scopes:** `list_scopes`, `get_scope_sessions`, `create_scope` (get-or-create with optional metadata), `add_sessions_to_scope`, `remove_session_from_scope`, `get_scope_status` (backfill progress per session)
 
 **Conclusions:** `list_conclusions`, `query_conclusions`, `create_conclusions`, `delete_conclusion`
 
@@ -48,11 +50,12 @@ src/
   stdio.ts              # Local stdio host (bun src/stdio.ts)
   http.ts               # Streamable HTTP host (bun src/http.ts / Docker)
   server.ts             # createServer() — registers all tools on an McpServer
-  config.ts             # HonchoConfig, parseConfig(), createClientFactory()
+  config.ts             # HonchoConfig, parseConfig(), Honcho clients + X-Honcho-* headers
   types.ts              # ToolContext, result helpers
   tools/
-    workspace.ts        # inspect, list, search, metadata
-    peers.ts            # CRUD, chat, card, context, representation
+    workspace.ts        # inspect, list, search, workspace_chat, metadata
+    peers.ts            # CRUD, chat (session / scope / sessions recall bounds), card, context, representation
+    scopes.ts           # list/create scopes, scope membership, backfill status
     sessions.ts         # CRUD, peers, messages, inspect, context, clone
     conclusions.ts      # list, query, create, delete
     system.ts           # dream, queue status
@@ -68,6 +71,10 @@ Built on:
 
 If you run Honcho yourself, point this server at it with `HONCHO_API_URL`.
 When unset, requests go to `https://api.honcho.dev`.
+
+`HONCHO_TIMEOUT_MS` caps each Honcho API request (default 300000, 5 minutes).
+Raise it if `chat` runs longer than that on your model. A reverse proxy in
+front of the HTTP host needs a read timeout at least this long.
 
 **Cloudflare Worker (`bun run dev` / `bun run deploy`):** create `mcp/.dev.vars`:
 

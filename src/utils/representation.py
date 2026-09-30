@@ -143,7 +143,7 @@ class PromptRepresentation(BaseModel):
     """
 
     explicit: list[ExplicitObservationBase] = Field(
-        description="Facts LITERALLY stated by the user - direct quotes or clear paraphrases only, no interpretation or inference. Example: ['The user is 25 years old', 'The user has a dog named Rover']",
+        description="Facts LITERALLY stated by the user - direct quotes or clear paraphrases only, no interpretation or inference.",
         default_factory=list,
     )
 
@@ -326,7 +326,7 @@ class Representation(BaseModel):
     """
 
     explicit: list[ExplicitObservation] = Field(
-        description="Facts LITERALLY stated by the user - direct quotes or clear paraphrases only, no interpretation or inference. Example: ['The user is 25 years old', 'The user has a dog']",
+        description="Facts LITERALLY stated by the user - direct quotes or clear paraphrases only, no interpretation or inference.",
         default_factory=list,
     )
     deductive: list[DeductiveObservation] = Field(
@@ -637,9 +637,7 @@ class Representation(BaseModel):
                         doc.internal_metadata.get("message_ids", [])
                     ),
                     session_name=doc.session_name,
-                    # Support both top-level and metadata locations for backward compatibility
-                    source_ids=doc.source_ids
-                    or doc.internal_metadata.get("premise_ids", []),
+                    source_ids=doc.source_ids or [],
                     premises=doc.internal_metadata.get("premises", []),
                 )
                 for doc in documents
@@ -654,9 +652,7 @@ class Representation(BaseModel):
                     conclusion=doc.content,
                     message_ids=doc.internal_metadata.get("message_ids", []),
                     session_name=doc.session_name,
-                    # Support both top-level and metadata locations for backward compatibility
-                    source_ids=doc.source_ids
-                    or doc.internal_metadata.get("source_ids", []),
+                    source_ids=doc.source_ids or [],
                     sources=doc.internal_metadata.get("sources", []),
                     pattern_type=doc.internal_metadata.get("pattern_type", "pattern"),
                     confidence=doc.internal_metadata.get("confidence", "medium"),
@@ -673,9 +669,7 @@ class Representation(BaseModel):
                     content=doc.content,
                     message_ids=doc.internal_metadata.get("message_ids", []),
                     session_name=doc.session_name,
-                    # Support both top-level and metadata locations for backward compatibility
-                    source_ids=doc.source_ids
-                    or doc.internal_metadata.get("source_ids", []),
+                    source_ids=doc.source_ids or [],
                     sources=doc.internal_metadata.get("sources", []),
                 )
                 for doc in documents

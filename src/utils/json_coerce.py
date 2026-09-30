@@ -28,7 +28,7 @@ def as_str(value: object) -> str | None:
 def as_int(value: object) -> int | None:
     """The value as a JSON integer, or None if it is not one.
 
-    ``bool`` is excluded: it is an ``int`` subclass, and a JSON ``true`` reaching
-    a size or dimension field is a malformed request, not the number one.
+    ``bool`` is excluded: it is an ``int`` subclass, so without the guard a JSON
+    ``true`` silently arrives at a numeric field as the number one.
     """
     return value if isinstance(value, int) and not isinstance(value, bool) else None

@@ -575,6 +575,9 @@ class PrometheusMetrics:
             self.set_deriver_outstanding_work(seconds=0)
             self.set_dreams_due(count=0)
 
+            if settings.DERIVER.SCHEDULER == "api":
+                self.set_message_embeddings_pending(count=0)
+
         elif instance_type == "deriver":
             # deriver tokens: only the valid (token_type, component) tuples per
             # task_type (see _DERIVER_TOKEN_COMBOS_BY_TASK).

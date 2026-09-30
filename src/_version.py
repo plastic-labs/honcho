@@ -11,11 +11,10 @@ Used by:
 
 from __future__ import annotations
 
+import tomllib
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _pkg_version
 from pathlib import Path
-
-import tomllib
 
 
 def _read_version() -> str:

@@ -84,6 +84,20 @@ def get_last_tool_metadata() -> dict[str, Any]:
     return _last_tool_metadata.get() or {}
 
 
+# Whether the just-finished tool call failed. The executor returns errors to
+# the model as strings rather than raising, so the loop cannot tell from the
+# return path; it reads this to decide what counts as a successful call.
+_last_tool_error: ContextVar[bool] = ContextVar("last_tool_error", default=False)
+
+
+def set_last_tool_error(is_error: bool) -> None:
+    _last_tool_error.set(is_error)
+
+
+def get_last_tool_error() -> bool:
+    return _last_tool_error.get()
+
+
 @contextmanager
 def iteration_scope() -> Generator[None]:
     """Reset per-tool-loop ContextVars on exit.
@@ -99,6 +113,7 @@ def iteration_scope() -> Generator[None]:
     seq_token = _current_tool_call_seq.set(0)
     pid_token = _current_provider_tool_call_id.set(None)
     meta_token = _last_tool_metadata.set(None)
+    error_token = _last_tool_error.set(False)
     try:
         yield
     finally:
@@ -106,6 +121,7 @@ def iteration_scope() -> Generator[None]:
         _current_tool_call_seq.reset(seq_token)
         _current_provider_tool_call_id.reset(pid_token)
         _last_tool_metadata.reset(meta_token)
+        _last_tool_error.reset(error_token)
 
 
 # embedding-call purpose ContextVar. Callers wrap embedding-driving

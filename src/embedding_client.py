@@ -37,6 +37,8 @@ async def _emit_embedding_call(
     input_tokens_estimate: int,
     fn: Callable[[], Awaitable[_T]],
     is_final_attempt: bool = True,
+    attempt: int = 1,
+    retry_attempts: int = 1,
 ) -> _T:
     """time a single embedding-provider call, emit
     `embedding.call.completed` on both success and exception, and return the
@@ -74,6 +76,8 @@ async def _emit_embedding_call(
             outcome=outcome,
             error=error,
             is_final_attempt=is_final_attempt,
+            attempt=attempt,
+            retry_attempts=retry_attempts,
         )
 
 
@@ -87,6 +91,8 @@ def _publish_embedding_event(
     outcome: Literal["success", "error", "cancelled"],
     error: BaseException | None,
     is_final_attempt: bool,
+    attempt: int = 1,
+    retry_attempts: int = 1,
 ) -> None:
     """Build and emit the EmbeddingCallCompletedEvent. Best-effort."""
     try:
@@ -148,6 +154,14 @@ def _publish_embedding_event(
                     span_id=span_id,
                     parent_span_id=run_id,
                     session_id=get_embedding_session_id(),
+                    workspace_name=get_embedding_workspace_name(),
+                    run_id=run_id,
+                    attempt=attempt,
+                    retry_attempts=retry_attempts,
+                    is_final_attempt=is_final_attempt,
+                    duration_ms=duration_ms,
+                    outcome=outcome,
+                    error_class=type(error).__name__ if error is not None else None,
                     call_purpose=purpose_slug,
                     parent_category=get_embedding_parent_category(),
                     provider=provider,
@@ -417,7 +431,9 @@ class _EmbeddingClient:
             gemini_client = cast("genai.Client", self.client)
 
             async def _call_gemini() -> list[float]:
-                response = await gemini_client.aio.models.embed_content(
+                # The SDK's contents union includes optional Pillow types, which
+                # are unresolved without Pillow; this call only sends text.
+                response = await gemini_client.aio.models.embed_content(  # pyright: ignore[reportUnknownMemberType]
                     model=self.model,
                     contents=query,
                     config={"output_dimensionality": self.vector_dimensions},
@@ -455,7 +471,7 @@ class _EmbeddingClient:
             fn=_call_openai,
         )
 
-    def _truncate_to_token_limit(self, text: str) -> tuple[str, int]:
+    def truncate_to_token_limit(self, text: str) -> tuple[str, int]:
         """Return a prefix of `text` whose re-encoded token count fits the cap.
 
         Decode/re-encode after slicing: BPE boundaries can re-expand past the cap.
@@ -506,7 +522,7 @@ class _EmbeddingClient:
             if len(token_ids) > self.max_embedding_tokens:
                 if on_oversize == "truncate":
                     original_count = len(token_ids)
-                    text, tokens = self._truncate_to_token_limit(text)
+                    text, tokens = self.truncate_to_token_limit(text)
                     logger.warning(
                         "truncated oversize embedding input at idx %d: %d->%d tokens",
                         idx,
@@ -671,7 +687,9 @@ class _EmbeddingClient:
                 from google.genai import types as genai_types
 
                 gemini_client = cast("genai.Client", self.client)
-                response = await gemini_client.aio.models.embed_content(
+                # The SDK's contents union includes optional Pillow types, which
+                # are unresolved without Pillow; this call only sends text.
+                response = await gemini_client.aio.models.embed_content(  # pyright: ignore[reportUnknownMemberType]
                     model=self.model,
                     # One Content per item: a list of bare strings is folded
                     # into a single document by gemini-embedding-2*, which
@@ -719,6 +737,8 @@ class _EmbeddingClient:
                     input_tokens_estimate=batch_tokens_estimate,
                     fn=_call_provider,
                     is_final_attempt=(attempt >= max_retries - 1),
+                    attempt=attempt + 1,
+                    retry_attempts=max_retries,
                 )
                 return dict(result)
 
@@ -907,6 +927,10 @@ class EmbeddingClient:
     def prepare_chunks(self, id_resource_dict: dict[str, str]) -> dict[str, list[str]]:
         """Chunk texts using the same rules as `batch_embed` (no network)."""
         return self._get_client().prepare_chunks(id_resource_dict)
+
+    def truncate_to_token_limit(self, text: str) -> str:
+        """Truncate text to the embedding token cap (no network)."""
+        return self._get_client().truncate_to_token_limit(text)[0]
 
     async def batch_embed(
         self, id_resource_dict: dict[str, str]

@@ -2,6 +2,7 @@
 title: "Honcho Reasoning"
 icon: "gears"
 sidebarTitle: "Reasoning"
+description: "How Honcho reasons over stored messages in the background to build memory, and how to tune reasoning depth, cost and latency for your agent."
 ---
 
 Honcho is a memory system that *reasons*. You can read more on the philosophy behind the approach [here](https://blog.plasticlabs.ai/blog/Memory-as-Reasoning), but practically speaking, the system runs inference on data in the background to produce the highest quality context for simulating statefulness. This document explains why reasoning is necessary and how Honcho implements it.

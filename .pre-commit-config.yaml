@@ -24,15 +24,15 @@ repos:
 
   # Python code formatting and linting with ruff
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.8.4
+    rev: v0.15.12
     hooks:
       # Linter - only on Python directories
-      - id: ruff
+      - id: ruff-check
         args: [--fix]
-        files: ^(src/|tests/|scripts/|migrations/|sdks/python/).*\.py$
+        files: ^(src/|tests/|scripts/|migrations/|sdks/python/|sandbox/).*\.py$
       # Formatter - only on Python directories
       - id: ruff-format
-        files: ^(src/|tests/|scripts/|migrations/|sdks/python/).*\.py$
+        files: ^(src/|tests/|scripts/|migrations/|sdks/python/|sandbox/).*\.py$
 
   # Security checks - only on main src code (not tests/scripts)
   - repo: https://github.com/PyCQA/bandit
@@ -87,6 +87,15 @@ repos:
         entry: uv run python scripts/ensure_alembic_tests.py
         language: system
         files: ^(migrations/versions/.*\.py|tests/alembic/revisions/.*\.py)$
+        stages: [pre-push]
+        pass_filenames: false
+
+      # Ensure the alembic migration graph has a single head
+      - id: check-alembic-heads
+        name: check alembic migrations have a single head
+        entry: uv run python scripts/check_alembic_heads.py
+        language: system
+        files: ^migrations/versions/.*\.py$
         stages: [pre-push]
         pass_filenames: false
 

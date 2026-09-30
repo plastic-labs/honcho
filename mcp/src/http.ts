@@ -1,8 +1,8 @@
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import {
-  createClientFactory,
-  createUnscopedClient,
+  honchoClients,
+  identityHeaders,
   parseConfig,
   type Env,
   type HonchoConfig,
@@ -14,11 +14,13 @@ declare const process: {
   env: Record<string, string | undefined>;
 };
 
+type BunServer = { timeout(request: Request, seconds: number): void };
+
 declare const Bun: {
   serve(options: {
     hostname: string;
     port: number;
-    fetch(request: Request): Response | Promise<Response>;
+    fetch(request: Request, server: BunServer): Response | Promise<Response>;
   }): { hostname: string; port: number };
 };
 
@@ -70,7 +72,10 @@ function sweepSessions(): void {
 }
 
 function envBindings(): Env {
-  return { HONCHO_API_URL: process.env.HONCHO_API_URL };
+  return {
+    HONCHO_API_URL: process.env.HONCHO_API_URL,
+    HONCHO_TIMEOUT_MS: process.env.HONCHO_TIMEOUT_MS,
+  };
 }
 
 function authorizationServer(): string {
@@ -195,8 +200,10 @@ async function handleMcp(request: Request): Promise<Response> {
 
   const server = createServer({
     config,
-    clientFor: createClientFactory(config),
-    unscoped: createUnscopedClient(config),
+    ...honchoClients(
+      config,
+      identityHeaders(request.headers.get("User-Agent")),
+    ),
   });
 
   const maxSessions = envInt("MCP_SESSION_MAX", DEFAULT_SESSION_MAX);
@@ -236,7 +243,10 @@ async function handleMcp(request: Request): Promise<Response> {
   );
 }
 
-export async function fetch(request: Request): Promise<Response> {
+export async function fetch(
+  request: Request,
+  server?: BunServer,
+): Promise<Response> {
   if (request.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: CORS_HEADERS });
   }
@@ -262,6 +272,10 @@ export async function fetch(request: Request): Promise<Response> {
   if (!MCP_PATHS.has(pathname)) {
     return jsonResponse({ error: "Not Found" }, 404);
   }
+
+  // A tool call writes nothing until it finishes, so Bun's 10s idle timeout
+  // would drop any call slower than that.
+  server?.timeout(request, 0);
 
   try {
     return await handleMcp(request);

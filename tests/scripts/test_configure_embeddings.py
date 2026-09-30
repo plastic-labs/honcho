@@ -121,9 +121,9 @@ async def test_apply_alters_dims_and_recreates_hnsw_indexes(
         assert after_dims == {"documents": target, "message_embeddings": target}
 
         after_indexes = await _hnsw_indexes(db_engine)
-        assert (
-            after_indexes == before_indexes
-        ), "HNSW indexes should be recreated with the same names"
+        assert after_indexes == before_indexes, (
+            "HNSW indexes should be recreated with the same names"
+        )
 
 
 @pytest.mark.asyncio

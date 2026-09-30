@@ -14,13 +14,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 from typing import Any, Literal, TypeVar, overload
 
 from pydantic import BaseModel
 
-from src.config import ModelConfig, ModelTransport, settings
-from src.telemetry.logging import conditional_observe
+from src.config import ModelConfig, ModelTransport
 
 from .backend import CompletionResult as BackendCompletionResult
 from .backend import StreamChunk as BackendStreamChunk
@@ -28,12 +27,7 @@ from .backend import ToolCallResult
 from .capture import build_captured_call, dispatch_captured_call, has_exporters
 from .registry import backend_for_provider, default_client
 from .request_builder import execute_completion, execute_stream
-from .runtime import (
-    AttemptPlan,
-    annotate_current_generation_io,
-    annotate_current_langfuse_trace,
-    effective_config_for_call,
-)
+from .runtime import AttemptPlan, effective_config_for_call
 from .types import (
     HonchoLLMCallResponse,
     HonchoLLMCallStreamChunk,
@@ -47,82 +41,6 @@ logger = logging.getLogger(__name__)
 M = TypeVar("M", bound=BaseModel)
 
 
-# ModelConfig fields that must NEVER reach a trace: secrets and nested holders
-# of secrets. Everything else on the config is a safe tuning knob and is dumped
-# automatically — so new knobs get traced without touching this code. Keep this
-# a deny-list (small, stable) rather than an allow-list (drifts with the model).
-_UNSAFE_CONFIG_FIELDS = frozenset(
-    {
-        "api_key",  # provider secret
-        "base_url",  # may embed credentials / private host
-        "fallback",  # ResolvedFallbackConfig carries its own api_key/base_url
-        "provider_params",  # opaque dict; can carry auth headers/keys
-    }
-)
-
-
-def _langfuse_model_parameters(
-    *,
-    max_tokens: int,
-    config: ModelConfig,
-    json_mode: bool,
-    verbosity: str | None,
-    stream: bool,
-    tools: list[dict[str, Any]] | None,
-    tool_choice: str | dict[str, Any] | None,
-    response_model: type[BaseModel] | None,
-) -> dict[str, Any]:
-    """Serializable tuning knobs for the Langfuse generation.
-
-    Surfaces everything @observe auto-capture used to show (temperature, tools,
-    ...) MINUS the live client and the secret-bearing config fields. We dump the
-    resolved `effective_config` and deny-list only `_UNSAFE_CONFIG_FIELDS`, so a
-    new ModelConfig knob is traced automatically — no allow-list to keep in sync.
-    `mode="json"` coerces enums/sub-models to JSON-safe values. See HONCHO-4HA.
-    """
-    params: dict[str, Any] = config.model_dump(
-        exclude=set(_UNSAFE_CONFIG_FIELDS), exclude_none=True, mode="json"
-    )
-    # Per-call extras that live outside ModelConfig.
-    params["max_tokens"] = max_tokens
-    params["stream"] = stream
-    params["json_mode"] = json_mode
-    if verbosity is not None:
-        params["verbosity"] = verbosity
-    if response_model is not None:
-        params["response_format"] = response_model.__name__
-    if tools:
-        params["tools"] = [
-            t.get("name") or t.get("function", {}).get("name") or "unknown"
-            for t in tools
-        ]
-    if tool_choice is not None:
-        params["tool_choice"] = (
-            tool_choice if isinstance(tool_choice, str) else str(tool_choice)
-        )
-    return params
-
-
-def _langfuse_usage_details(response: HonchoLLMCallResponse[Any]) -> dict[str, int]:
-    """Token usage duplicated onto the Langfuse generation.
-
-    These counts are also emitted via CloudEvents (LLMCallCompletedEvent), but
-    we mirror them here so Langfuse renders per-call tokens + cost natively,
-    including Anthropic-style prompt-cache reads/writes. Zero-valued cache keys
-    are dropped so non-cached calls stay tidy. Stream calls don't surface token
-    totals at this layer, so usage is set only on the non-stream path.
-    """
-    usage: dict[str, int] = {
-        "input": response.input_tokens,
-        "output": response.output_tokens,
-    }
-    if response.cache_read_input_tokens:
-        usage["cache_read_input_tokens"] = response.cache_read_input_tokens
-    if response.cache_creation_input_tokens:
-        usage["cache_creation_input_tokens"] = response.cache_creation_input_tokens
-    return usage
-
-
 def _outcome_from_error(
     err: BaseException | None,
 ) -> Literal["success", "error", "cancelled"]:
@@ -133,7 +51,7 @@ def _outcome_from_error(
     """
     if err is None:
         return "success"
-    if isinstance(err, asyncio.CancelledError):
+    if isinstance(err, asyncio.CancelledError | GeneratorExit):
         return "cancelled"
     return "error"
 
@@ -244,29 +162,45 @@ def infer_provider_label(
     return None
 
 
-def _maybe_dispatch_capture(
+def _emit_call_telemetry(
     *,
     plan: AttemptPlan | None,
     telemetry: LLMTelemetryContext | None,
     provider: ModelTransport,
     model: str,
+    max_tokens: int,
+    started_at: float,
     messages: list[dict[str, Any]],
     tools: list[dict[str, Any]] | None,
     tool_choice: Any,
+    was_stream: bool,
     result: BackendCompletionResult | None,
     error: BaseException | None,
 ) -> None:
-    """Build a CapturedLLMCall and fan it out to registered exporters.
+    """Record one provider attempt in both telemetry streams from the same facts.
 
-    No-op when payload capture is off
-    `has_exporters()` is checked BEFORE building.
-    Best-effort: never raises into the call path.
+    The captured-payload half is skipped entirely when no exporter is
+    registered, and both halves are best-effort: telemetry never raises into
+    the call path.
     """
+    duration_ms = (time.perf_counter() - started_at) * 1000
+    outcome = _outcome_from_error(error)
+    _emit_llm_call_completed(
+        plan=plan,
+        telemetry=telemetry,
+        provider=provider,
+        model=model,
+        max_tokens=max_tokens,
+        duration_ms=duration_ms,
+        has_tools=bool(tools),
+        was_stream=was_stream,
+        outcome=outcome,
+        result=result,
+        error=error,
+    )
     if not has_exporters():
         return
     try:
-        outcome = _outcome_from_error(error)
-        finish_reason = result.finish_reason if result is not None else outcome
         dispatch_captured_call(
             build_captured_call(
                 telemetry=telemetry,
@@ -279,8 +213,17 @@ def _maybe_dispatch_capture(
                 result=result,
                 attempt=plan.attempt if plan is not None else 1,
                 was_fallback=plan.is_fallback if plan is not None else False,
-                was_stream=False,
-                finish_reason=finish_reason,
+                was_stream=was_stream,
+                finish_reason=(
+                    result.finish_reason
+                    if result is not None and error is None
+                    else outcome
+                ),
+                duration_ms=duration_ms,
+                outcome=outcome,
+                error_class=type(error).__name__ if error is not None else None,
+                retry_attempts=plan.retry_attempts if plan is not None else 1,
+                effective_max_output_tokens=max_tokens,
             )
         )
     except Exception:  # pragma: no cover - best-effort telemetry
@@ -387,18 +330,6 @@ async def honcho_llm_call_inner(
 ) -> AsyncIterator[HonchoLLMCallStreamChunk]: ...
 
 
-@conditional_observe(
-    name="LLM Call",
-    as_type="generation",
-    # Disable @observe auto-capture: it would serialize `client_override` (a
-    # live AsyncOpenAI/genai client) and `selected_config` (carries api_key)
-    # into the span. Auto-capture deep-copies the client into a half-built
-    # object whose teardown raises `_state`/`_http_options` AttributeErrors
-    # (HONCHO-4HA) and leaks the key. We set curated input/output explicitly
-    # below via `annotate_current_generation_io`, preserving full fidelity.
-    capture_input=False,
-    capture_output=False,
-)
 async def honcho_llm_call_inner(
     provider: ModelTransport,
     model: str,
@@ -422,32 +353,18 @@ async def honcho_llm_call_inner(
 ) -> HonchoLLMCallResponse[Any] | AsyncIterator[HonchoLLMCallStreamChunk]:
     """One backend call. No retry, no fallback, no tool loop.
 
-    This is the Langfuse trace boundary (``@conditional_observe``): every
-    provider call is its own trace. Multi-turn agents thread a shared
-    ``run_id`` through ``telemetry`` so their per-iteration traces roll up into
-    one Langfuse session (see ``annotate_current_langfuse_trace``).
-
     The outer src/llm/api.py `honcho_llm_call` handles retry + fallback +
     tool orchestration on top of this.
 
-    Emits one LLMCallCompletedEvent per call. On the stream path, setup
-    runs inside the awaited coroutine (so it sits inside any outer retry
-    wrapper) and emits its own event on failure; the wrapping generator
-    emits a second event from its finally block after drain completes or
-    raises. `was_stream` is True for streamed calls. Token counts are
-    zero on the stream path because provider token totals aren't surfaced
-    post-stream at this layer; aggregate envelopes (DialecticCompletedEvent
-    etc.) carry the accurate totals.
+    Emits one completed event and, when enabled, one captured trace per
+    provider attempt. Stream setup failures are recorded inside the awaited
+    coroutine, within the retry boundary. Successfully opened streams are
+    recorded when drained or interrupted, preserving partial output and any
+    output token count reported by the backend.
     """
     client = client_override or default_client(provider)
     if client is None:
         raise ValueError(f"Missing client for {provider}")
-
-    # Stamp this trace (user_id/session_id/metadata) now that the @observe
-    # span is open and the resolved provider/model are known. Set early so the
-    # annotation lands even on the stream path, where the span closes once the
-    # generator is returned (before chunks drain).
-    annotate_current_langfuse_trace(provider, model, telemetry=telemetry)
 
     if messages is None:
         messages = [{"role": "user", "content": prompt}]
@@ -464,26 +381,6 @@ async def honcho_llm_call_inner(
         reasoning_effort=reasoning_effort,
     )
 
-    # Explicit generation input + tuning knobs (replaces @observe auto-capture,
-    # which would serialize the live client / api key). Set before the stream
-    # branch so it lands on the generation span for both paths. Guard on inline
-    # mode (matching annotate_current_generation_io's own gate) so we don't
-    # build the (model_dump-backed) payload when the helper would no-op — in
-    # exporter mode there's no active generation span to stamp.
-    if settings.langfuse_inline_enabled:
-        annotate_current_generation_io(
-            input=messages,
-            model_parameters=_langfuse_model_parameters(
-                max_tokens=max_tokens,
-                config=effective_config,
-                json_mode=json_mode,
-                verbosity=verbosity,
-                stream=stream,
-                tools=tools,
-                tool_choice=tool_choice,
-                response_model=response_model,
-            ),
-        )
     # json_mode + verbosity are per-call transport toggles, not ModelConfig
     # knobs — they pass through extra_params. execute_completion merges
     # build_config_extra_params(effective_config) on top for top_p/seed/etc.
@@ -499,7 +396,7 @@ async def honcho_llm_call_inner(
         #
         # Drain failures stay unretried by design (chunks may have already
         # been sent to the client) and report via the wrapper's finally.
-        # Token counts are 0 on this path; aggregate envelopes carry totals.
+        # Only output token counts are available from normalized stream chunks.
         stream_start = time.perf_counter()
         try:
             stream_iter = await execute_stream(
@@ -514,16 +411,17 @@ async def honcho_llm_call_inner(
                 extra_params=call_extras,
             )
         except BaseException as exc:
-            _emit_llm_call_completed(
+            _emit_call_telemetry(
                 plan=plan,
                 telemetry=telemetry,
                 provider=provider,
                 model=model,
                 max_tokens=max_tokens,
-                duration_ms=(time.perf_counter() - stream_start) * 1000,
-                has_tools=bool(tools),
+                started_at=stream_start,
+                messages=messages,
+                tools=tools,
+                tool_choice=tool_choice,
                 was_stream=True,
-                outcome=_outcome_from_error(exc),
                 result=None,
                 error=exc,
             )
@@ -531,24 +429,39 @@ async def honcho_llm_call_inner(
 
         async def _wrap_stream() -> AsyncIterator[HonchoLLMCallStreamChunk]:
             stream_error: BaseException | None = None
+            capture_output = has_exporters()
+            parts: list[str] = []
+            result = BackendCompletionResult(finish_reason=None)
             try:
-                async for chunk in stream_iter:
-                    yield stream_chunk_to_response_chunk(chunk)
+                try:
+                    async for chunk in stream_iter:
+                        if capture_output and chunk.content:
+                            parts.append(chunk.content)
+                        if chunk.output_tokens is not None:
+                            result.output_tokens = chunk.output_tokens
+                        if chunk.finish_reason is not None:
+                            result.finish_reason = chunk.finish_reason
+                        yield stream_chunk_to_response_chunk(chunk)
+                finally:
+                    if isinstance(stream_iter, AsyncGenerator):
+                        await stream_iter.aclose()
             except BaseException as exc:
                 stream_error = exc
                 raise
             finally:
-                _emit_llm_call_completed(
+                result.content = "".join(parts)
+                _emit_call_telemetry(
                     plan=plan,
                     telemetry=telemetry,
                     provider=provider,
                     model=model,
                     max_tokens=max_tokens,
-                    duration_ms=(time.perf_counter() - stream_start) * 1000,
-                    has_tools=bool(tools),
+                    started_at=stream_start,
+                    messages=messages,
+                    tools=tools,
+                    tool_choice=tool_choice,
                     was_stream=True,
-                    outcome=_outcome_from_error(stream_error),
-                    result=None,
+                    result=result,
                     error=stream_error,
                 )
 
@@ -569,41 +482,22 @@ async def honcho_llm_call_inner(
             cache_policy=effective_config.cache_policy,
             extra_params=call_extras,
         )
-        response = completion_result_to_response(backend_result)
-        # Explicit generation output + token usage (replaces @observe
-        # auto-capture). The stream path closes this span before drain, so its
-        # output is stamped on the run-level span instead
-        if settings.langfuse_inline_enabled:
-            annotate_current_generation_io(
-                output=response,
-                usage_details=_langfuse_usage_details(response),
-            )
-        return response
+        return completion_result_to_response(backend_result)
     except BaseException as exc:
         error = exc
         raise
     finally:
-        _emit_llm_call_completed(
+        _emit_call_telemetry(
             plan=plan,
             telemetry=telemetry,
             provider=provider,
             model=model,
             max_tokens=max_tokens,
-            duration_ms=(time.perf_counter() - start) * 1000,
-            has_tools=bool(tools),
-            was_stream=False,
-            outcome=_outcome_from_error(error),
-            result=backend_result,
-            error=error,
-        )
-        _maybe_dispatch_capture(
-            plan=plan,
-            telemetry=telemetry,
-            provider=provider,
-            model=model,
+            started_at=start,
             messages=messages,
             tools=tools,
             tool_choice=tool_choice,
+            was_stream=False,
             result=backend_result,
             error=error,
         )
