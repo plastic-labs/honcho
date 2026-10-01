@@ -9,6 +9,44 @@ This package versions independently of the Honcho API, `@honcho-ai/sdk`, and hos
 
 ## [Unreleased]
 
+## [3.0.2] - 2026-09-29
+
+### Added
+
+- The remaining read tools take the scope options the API and SDKs accept
+  (Honcho v3.1.0+), so a client can use scopes end to end over MCP.
+  `create_session` takes `scopes`, `get_representation` takes `scope` or
+  `sessions`, and `search` takes `scope` (rejected alongside `session_id`).
+  `get_session_context` takes `peer_target`, `peer_perspective`, `scope`, and
+  `limit_to_session`, and returns `peer_representation` and `peer_card` when a
+  target is given.
+
+## [3.0.1] - 2026-09-22
+
+### Added
+
+- `list_peers` takes `page`, `size` (max 100) and `reverse`, so a client can
+  walk past the first page of peers.
+- Every tool carries MCP annotations: a title, and `readOnlyHint` or
+  `destructiveHint`, so hosts can label tools and tell reads from writes.
+
+### Changed
+
+- The server instructions describe two modes. Recall mode only reads
+  (`chat`, `workspace_chat`, `search`, and the other read tools) and is the
+  default. Memory-store mode sets up sessions and records messages, and agents
+  are told to use it only when the user asks for the conversation to be
+  recorded. The per-tool listings are gone, since tool descriptions already
+  carry them.
+
+### Fixed
+
+- `chat` and `workspace_chat` no longer fail when the answer takes more than
+  10 seconds on the HTTP host (Bun's idle timeout dropped the connection) or
+  more than 60 seconds on any host (the SDK timed out and retried the chat).
+  Honcho API requests now time out after 5 minutes, configurable with
+  `HONCHO_TIMEOUT_MS`.
+
 ## [0.2.0] - 2026-09-17
 
 ### Added

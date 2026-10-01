@@ -37,6 +37,10 @@ export function register(server: McpServer, ctx: ToolContext) {
   server.registerTool(
     "inspect_workspace",
     {
+      annotations: {
+        title: "Inspect Workspace",
+        readOnlyHint: true,
+      },
       description: [
         "Inspect a workspace at a glance.",
         "Aggregates workspace metadata, configuration, peer IDs, and session IDs.",
@@ -78,6 +82,10 @@ export function register(server: McpServer, ctx: ToolContext) {
   server.registerTool(
     "list_workspaces",
     {
+      annotations: {
+        title: "List Workspaces",
+        readOnlyHint: true,
+      },
       description: [
         "List workspaces accessible to the current credentials (paginated).",
         "Skip this if the connection already set X-Honcho-Workspace-ID — that header is the workspace; omit workspace_id on other tools.",
@@ -124,6 +132,11 @@ export function register(server: McpServer, ctx: ToolContext) {
   server.registerTool(
     "create_workspace",
     {
+      annotations: {
+        title: "Create Workspace",
+        readOnlyHint: false,
+        destructiveHint: false,
+      },
       description: [
         "Get or create a workspace with the given ID.",
         "Skip this if the connection already set X-Honcho-Workspace-ID — that header pins the workspace without a create call.",
@@ -134,7 +147,7 @@ export function register(server: McpServer, ctx: ToolContext) {
       inputSchema: {
         workspace_id: workspaceIdSchema(ctx),
         metadata: z
-          .record(z.string(), z.unknown())
+          .looseObject({})
           .optional()
           .describe(
             "Optional key-value metadata to store on the workspace (e.g. project, purpose).",
@@ -164,12 +177,17 @@ export function register(server: McpServer, ctx: ToolContext) {
   server.registerTool(
     "search",
     {
+      annotations: {
+        title: "Search Workspace",
+        readOnlyHint: true,
+      },
       description: [
         "Semantic search across messages and, when peer_id is given, that peer's saved conclusions.",
         "Message scope is determined by which optional params are provided:",
         "- No scope params: search all messages in the workspace.",
         "- peer_id only: search messages authored by that peer across all sessions.",
         "- session_id only: search messages within that session.",
+        "- scope: search messages in that scope's member sessions (optionally narrowed to peer_id's messages). Not combinable with session_id.",
         "Conclusions require peer_id (self-conclusions are searched; conclusion IDs are usable with delete_conclusion).",
         "Returns {messages, conclusions}.",
       ].join("\n"),
@@ -184,12 +202,18 @@ export function register(server: McpServer, ctx: ToolContext) {
           .string()
           .optional()
           .describe("Optional: scope search to messages in this session."),
+        scope: z
+          .string()
+          .optional()
+          .describe(
+            "Optional: restrict message search to this scope's member sessions. A scope with no members matches nothing. Mutually exclusive with session_id.",
+          ),
         message_limit: z
           .number()
           .optional()
           .describe("Optional: max message results (1-100, default 10)."),
         message_filters: z
-          .record(z.string(), z.unknown())
+          .looseObject({})
           .optional()
           .describe(
             'Optional: filters for the message search, e.g. {"created_at": {"gte": "2026-01-01"}}. See https://honcho.dev/docs/v3/documentation/features/advanced/using-filters',
@@ -199,7 +223,7 @@ export function register(server: McpServer, ctx: ToolContext) {
           .optional()
           .describe("Optional: max conclusion results (default 10)."),
         conclusion_filters: z
-          .record(z.string(), z.unknown())
+          .looseObject({})
           .optional()
           .describe(
             'Optional: filters for the conclusion search, e.g. {"level": ["deductive", "inductive"]} to only return conclusions derived during dreaming. Levels: explicit (extracted directly from messages), deductive, inductive, contradiction. The session_id param does not scope conclusions; use {"session_id": ...} here for that.',
@@ -211,11 +235,17 @@ export function register(server: McpServer, ctx: ToolContext) {
       query,
       peer_id,
       session_id,
+      scope,
       message_limit,
       message_filters,
       conclusion_top_k,
       conclusion_filters,
     }) => {
+      if (scope !== undefined && session_id) {
+        return errorResult(
+          "Search failed: `scope` and `session_id` are mutually exclusive — a scope already names a set of sessions.",
+        );
+      }
       try {
         const honcho = ctx.clientFor(workspace_id);
         const peer = peer_id ? await honcho.peer(peer_id) : null;
@@ -225,6 +255,17 @@ export function register(server: McpServer, ctx: ToolContext) {
         };
 
         const searchMessages = async () => {
+          if (scope !== undefined) {
+            // The scope-aware route is workspace-level; a peer narrows it via
+            // the message filter rather than the peer-level search route.
+            return honcho.search(query, {
+              ...messageOptions,
+              scope,
+              filters: peer_id
+                ? { ...message_filters, peer_id }
+                : message_filters,
+            });
+          }
           if (session_id) {
             const session = await honcho.session(session_id);
             return session.search(query, messageOptions);
@@ -285,6 +326,10 @@ export function register(server: McpServer, ctx: ToolContext) {
   server.registerTool(
     "workspace_chat",
     {
+      annotations: {
+        title: "Ask About a Workspace",
+        readOnlyHint: true,
+      },
       description: [
         "Ask a natural-language question about the whole workspace and get an answer from Honcho's reasoning system.",
         "Reasons across ALL peers and their conclusions — use for cross-peer analysis, common themes, or questions not tied to one peer.",
@@ -353,6 +398,10 @@ export function register(server: McpServer, ctx: ToolContext) {
   server.registerTool(
     "get_metadata",
     {
+      annotations: {
+        title: "Get Metadata",
+        readOnlyHint: true,
+      },
       description: [
         "Get metadata for a resource. Scope is determined by which optional params are provided:",
         "- No scope params: get workspace metadata.",
@@ -397,6 +446,11 @@ export function register(server: McpServer, ctx: ToolContext) {
   server.registerTool(
     "set_metadata",
     {
+      annotations: {
+        title: "Set Metadata",
+        readOnlyHint: false,
+        destructiveHint: true,
+      },
       description: [
         "Set metadata for a resource. Overwrites existing metadata.",
         "Scope is determined by which optional params are provided:",
@@ -407,7 +461,7 @@ export function register(server: McpServer, ctx: ToolContext) {
       inputSchema: {
         workspace_id: workspaceIdSchema(ctx),
         metadata: z
-          .record(z.string(), z.unknown())
+          .looseObject({})
           .describe("Key-value pairs to set as metadata."),
         peer_id: z
           .string()

@@ -12,6 +12,7 @@ try {
     HONCHO_API_KEY: process.env.HONCHO_API_KEY,
     HONCHO_API_URL: process.env.HONCHO_API_URL,
     HONCHO_WORKSPACE_ID: process.env.HONCHO_WORKSPACE_ID,
+    HONCHO_TIMEOUT_MS: process.env.HONCHO_TIMEOUT_MS,
   });
   // No HTTP caller on stdio, so only X-Honcho-Host is sent.
   const server = createServer({ config, ...honchoClients(config) });

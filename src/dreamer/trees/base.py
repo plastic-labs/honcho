@@ -8,6 +8,22 @@ from dataclasses import dataclass, field
 import numpy as np
 
 
+def sklearn_import_error(tree_types: str, exc: ImportError) -> RuntimeError:
+    """Build an actionable error for a tree type that needs scikit-learn.
+
+    scikit-learn lives behind Honcho's optional ``surprisal`` extra: it drags in
+    scipy (~199MB installed on Linux) to serve a feature that is disabled by
+    default (``DREAM.SURPRISAL.ENABLED``).
+    """
+    return RuntimeError(
+        f"DREAM.SURPRISAL.TREE_TYPE is set to {tree_types}, which requires "
+        + "scikit-learn, but the package could not be imported. Install Honcho's "
+        + "'surprisal' extra (for example, `uv sync --extra surprisal`), or pick a "
+        + "TREE_TYPE with no scikit-learn dependency ('rptree', 'covertree', 'lsh'). "
+        + f"Original import error: {exc}"
+    )
+
+
 @dataclass
 class TreeNode:
     """Base node for tree structures."""

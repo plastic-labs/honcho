@@ -30,15 +30,15 @@ class PDFProcessor:
         return content_type == "application/pdf"
 
     async def extract_text(self, content: bytes) -> str:
-        import pdfplumber
+        from pypdf import PdfReader
 
-        with pdfplumber.open(BytesIO(content)) as pdf_reader:
-            text_parts: list[str] = []
-            for page_num, page in enumerate(pdf_reader.pages):
-                text = page.extract_text()
-                if text and text.strip():
-                    text_parts.append(f"[Page {page_num + 1}]\n{text}")
-            return "\n\n".join(text_parts)
+        reader = PdfReader(BytesIO(content))
+        text_parts: list[str] = []
+        for page_num, page in enumerate(reader.pages):
+            text = page.extract_text()
+            if text and text.strip():
+                text_parts.append(f"[Page {page_num + 1}]\n{text}")
+        return "\n\n".join(text_parts)
 
 
 class TextProcessor:
