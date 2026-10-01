@@ -41,6 +41,8 @@ export interface Env {
   HONCHO_API_URL?: string;
   HONCHO_TIMEOUT_MS?: string;
   ALERT_WEBHOOK_URL?: string;
+  /** Domain-verification token from the OpenAI plugin dashboard. */
+  OPENAI_APPS_CHALLENGE?: string;
 }
 
 export interface EnvConfig {

@@ -20,6 +20,7 @@ const CORS_HEADERS = {
 };
 
 const PROTECTED_RESOURCE_PATH = "/.well-known/oauth-protected-resource";
+const OPENAI_APPS_CHALLENGE_PATH = "/.well-known/openai-apps-challenge";
 const HEALTHCHECK_TIMEOUT_MS = 15_000;
 
 function resourceUrl(request: Request): string {
@@ -73,6 +74,15 @@ export default {
   ): Promise<Response> {
     if (request.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: CORS_HEADERS });
+    }
+
+    // OpenAI plugin directory domain verification: the exact token, as plain
+    // text. Unset outside production, so it 404s there.
+    if (new URL(request.url).pathname === OPENAI_APPS_CHALLENGE_PATH) {
+      const token = env.OPENAI_APPS_CHALLENGE?.trim();
+      return token
+        ? new Response(token, { headers: { "Content-Type": "text/plain" } })
+        : new Response("Not Found", { status: 404 });
     }
 
     // Protected Resource Metadata (RFC 9728) — served without auth so clients
