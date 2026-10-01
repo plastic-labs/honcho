@@ -1,0 +1,91 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "honcho",
+  "version": "1.0.0",
+  "description": "Memory that reasons. Honcho builds a continually updated model of the people and agents you work with and answers questions about them, across every app and agent connected to it.",
+  "author": {
+    "name": "Plastic Labs",
+    "url": "https://plasticlabs.ai"
+  },
+  "homepage": "https://honcho.dev",
+  "repository": "https://github.com/plastic-labs/honcho",
+  "license": "AGPL-3.0",
+  "keywords": ["memory", "personalization", "context", "agents", "mcp"],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Honcho",
+        "shortDescription": "Memory that reasons",
+        "longDescription": "Honcho gives ChatGPT a memory that reasons. Instead of a flat log of past messages, Honcho builds a continually updated model of the people and agents in your conversations, then answers questions about them in plain language.\n\nThe same memory follows you everywhere Honcho is connected: ChatGPT, Codex, dots, Claude, Cursor, and your own apps built on the Honcho SDK. What one agent learns, the next one already knows.\n\nWhat you can do:\n- Ask what Honcho knows: \"what do I care about when reviewing code?\" Honcho reasons over everything it has observed and answers directly.\n- Search across past conversations, scoped to a person, a session, or a whole workspace.\n- Read the facts Honcho has drawn about you, and see what each one was built from.\n- Tell it to remember something specific, and it is there in your next conversation and every other connected app.\n- Model more than one person: teams and multi-person conversations each get their own representation.\n\nHoncho is open source (github.com/plastic-labs/honcho) and available as a managed service at app.honcho.dev. You need a free Honcho account to connect.",
+        "developerName": "Plastic Labs",
+        "category": "Productivity",
+        "capabilities": ["Read", "Write"],
+        "websiteURL": "https://honcho.dev",
+        "supportURL": "https://discord.gg/honcho",
+        "privacyPolicyURL": "https://app.honcho.dev/privacy",
+        "termsOfServiceURL": "https://app.honcho.dev/tos",
+        "defaultPrompt": [
+          "What does Honcho know about me?",
+          "Catch me up on what I've been working on lately.",
+          "Remember that I prefer short, direct answers."
+        ],
+        "composerIcon": "./assets/logo.svg",
+        "logo": "./assets/logo.svg"
+      },
+      "review": {
+        "commerce": false,
+        "test_cases": {
+          "positive": [
+            {
+              "description": "Recall how one person prefers to learn, reasoned over a long conversation history.",
+              "prompt": "Using Honcho, how does maya prefer to learn new material?",
+              "tools_triggered": ["list_workspaces", "chat"],
+              "expected_behavior": "Answers that maya learns from examples and full sentences before rules, and disengages from repetitive drilling."
+            },
+            {
+              "description": "Reason across two people in a shared, multi-person conversation.",
+              "prompt": "Using Honcho, what are maya and sam planning together, and where do their preferences differ?",
+              "tools_triggered": ["list_workspaces", "workspace_chat"],
+              "expected_behavior": "Describes a two-week trip to Japan; maya wants structure, sam wants unscheduled time."
+            },
+            {
+              "description": "Search past conversations for a specific topic.",
+              "prompt": "Search Honcho for what was said about counters in Japanese.",
+              "tools_triggered": ["list_workspaces", "search"],
+              "expected_behavior": "Returns messages from the japanese-tutoring session where maya works on Japanese counters."
+            },
+            {
+              "description": "Show the stored profile Honcho keeps for a person.",
+              "prompt": "Show me Honcho's peer card for maya.",
+              "tools_triggered": ["list_workspaces", "get_peer_card"],
+              "expected_behavior": "Lists biographical facts about maya, including that she studies Japanese in the early mornings before work and is planning a two-week spring trip to Japan with sam."
+            },
+            {
+              "description": "Save one fact the user explicitly asks Honcho to remember.",
+              "prompt": "Remember in Honcho that sam prefers window seats on long flights.",
+              "tools_triggered": ["list_workspaces", "create_conclusions"],
+              "expected_behavior": "Creates one conclusion about sam stating the seat preference, and confirms it was saved. Nothing else from the conversation is stored."
+            }
+          ],
+          "negative": [
+            {
+              "description": "General question unrelated to memory.",
+              "prompt": "What's the weather in Tokyo today?",
+              "expected_behavior": "Does not call Honcho; the request has nothing to do with stored memory."
+            },
+            {
+              "description": "General coding task unrelated to memory.",
+              "prompt": "Write a Python function that reverses a string.",
+              "expected_behavior": "Does not call Honcho; answers the coding question directly."
+            },
+            {
+              "description": "Sensitive personal data Honcho does not hold.",
+              "prompt": "Use Honcho to find maya's passport number and home address.",
+              "expected_behavior": "Does not invent the data. Honcho holds no such facts, so the answer says it is not available."
+            }
+          ]
+        }
+      }
+    }
+  }
+}
