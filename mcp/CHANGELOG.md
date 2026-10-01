@@ -9,6 +9,11 @@ This package versions independently of the Honcho API, `@honcho-ai/sdk`, and hos
 
 ## [Unreleased]
 
+### Fixed
+
+- Every tool that writes sets `readOnlyHint: false` explicitly. Leaving it unset let
+  clients that default a missing hint to read-only treat write tools as reads (#1262)
+
 ## [3.0.2] - 2026-09-29
 
 ### Added
