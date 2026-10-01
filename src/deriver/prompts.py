@@ -94,15 +94,16 @@ RULES:
 - Do not record conversational mechanics (greeting, thanking, acknowledging, asking or answering a question) or anything true of nearly every participant.
 - Each conclusion states exactly one independent fact. Keep a fact's reason, purpose, tool, place, and qualifiers attached to it; they are part of the same fact. Split when a conclusion joins independent facts, or when a clause adds a new fact about a person or thing.
 - Do not emit two conclusions that state the same fact in different words.
-- Use the exact peer id from `Target peer:` in final observations, not the phrase "the target peer".
-- Properly attribute observations to the correct subject: if it is about the target peer, use the exact peer id as the subject. If the target peer is referencing someone or something else, make that clear.
-- Write each observation for a reader who knows only the target peer id: identify other people and things by their relation to the target peer, and leave no pronoun, "it", "there", or relative time unresolved.
+- Properly attribute observations to the correct subject. If the target peer is referencing someone or something else, make that clear.
+- Write each observation for a reader who knows only the peer id: identify other people and things by their relation to this peer, and leave no pronoun, "it", "there", or relative time unresolved.
 - Include only what is needed to identify who or what the observation is about and to state the fact. Do not add explanation or background.
 
 {custom_instructions_section}
 
 Target peer:
 {peer_id}
+
+Write `{peer_id}` as the subject of every observation about this peer. Never write "the target peer" or "the user" in its place.
 
 Messages to analyze:
 <messages>
