@@ -35,7 +35,7 @@ def _patches(mock_llm_call: AsyncMock):
             DialecticAgent,
             "_prepare_query",
             new=AsyncMock(
-                return_value=(AsyncMock(), "task", "run", time.perf_counter())
+                return_value=(AsyncMock(), "task", "run", time.perf_counter(), None)
             ),
         ),
         patch.object(DialecticAgent, "_log_response_metrics"),

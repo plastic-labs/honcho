@@ -2970,10 +2970,6 @@ async def create_tool_executor(
         metadata: dict[str, Any] = {}
         is_error: bool = False
 
-        # Langfuse tool observation; auto-parents under the active step span.
-        # Closed in the finally below with output + level.
-        tool_obs = _begin_tool_observation(tool_name, tool_input)
-
         try:
             handler = (handler_resolver or _TOOL_HANDLERS.get)(tool_name)
             if handler:
@@ -3055,48 +3051,64 @@ async def create_tool_executor(
                 tool_call_seq=get_current_tool_call_seq(),
                 provider_tool_call_id=get_current_provider_tool_call_id(),
             )
-
-            _finish_tool_observation(tool_obs, result_str, is_error)
+            _dispatch_captured_tool_call(
+                ctx=ctx,
+                tool_name=tool_name,
+                tool_input=tool_input,
+                duration_ms=duration_ms,
+                result_str=result_str,
+                is_error=is_error,
+                iteration=get_current_iteration(),
+                tool_call_seq=get_current_tool_call_seq(),
+                provider_tool_call_id=get_current_provider_tool_call_id(),
+            )
 
         return result_str
 
     return execute_tool
 
 
-def _begin_tool_observation(tool_name: str, tool_input: dict[str, Any]) -> Any:
-    """Open a non-current Langfuse "tool" observation for one tool execution.
-
-    Auto-parents under the active step span (else standalone). Returns a handle
-    (closed by `_finish_tool_observation`) or None when disabled/setup fails.
-    All tools are ``as_type="tool"`` — they share one generic dispatcher.
-
-    Only fires in legacy *inline* mode. In exporter mode there's no live span
-    context to parent under, so this would emit a rootless tool trace per call;
-    the LangfuseExporter already projects tool spans (from ``output_tool_calls``)
-    nested under the step span, so a live observation here just double-emits.
-    """
-    if not settings.langfuse_inline_enabled:
-        return None
-    try:
-        from langfuse import get_client
-
-        return get_client().start_observation(
-            as_type="tool", name=tool_name, input=tool_input
-        )
-    except Exception:  # pragma: no cover - best-effort telemetry
-        logger.debug("Failed to open Langfuse tool observation", exc_info=True)
-        return None
-
-
-def _finish_tool_observation(tool_obs: Any, result_str: str, is_error: bool) -> None:
-    """Close a Langfuse tool observation opened by `_begin_tool_observation`."""
-    if tool_obs is None:
+def _dispatch_captured_tool_call(
+    *,
+    ctx: "ToolContext",
+    tool_name: str,
+    tool_input: dict[str, Any],
+    duration_ms: float,
+    result_str: str,
+    is_error: bool,
+    iteration: int,
+    tool_call_seq: int,
+    provider_tool_call_id: str | None,
+) -> None:
+    """Report an executed tool call to span-tree exporters. Best-effort."""
+    if not (ctx.run_id and ctx.agent_type):
         return
     try:
-        tool_obs.update(output=result_str, level="ERROR" if is_error else None)
-        tool_obs.end()
-    except Exception:  # pragma: no cover - best-effort telemetry
-        logger.debug("Failed to close Langfuse tool observation", exc_info=True)
+        from src.llm.capture import (
+            CapturedToolCall,
+            dispatch_captured_tool_call,
+            has_span_tree_exporters,
+        )
+
+        if not has_span_tree_exporters():
+            return
+        dispatch_captured_tool_call(
+            CapturedToolCall(
+                run_id=ctx.run_id,
+                agent_type=ctx.agent_type,
+                workspace_name=ctx.workspace_name,
+                iteration=iteration,
+                tool_call_seq=tool_call_seq,
+                tool_call_id=provider_tool_call_id,
+                name=tool_name,
+                input=tool_input,
+                output=result_str,
+                is_error=is_error,
+                duration_ms=duration_ms,
+            )
+        )
+    except Exception:  # pragma: no cover - telemetry must not raise
+        logger.debug("Failed to dispatch captured tool call", exc_info=True)
 
 
 def _emit_agent_tool_call_completed(

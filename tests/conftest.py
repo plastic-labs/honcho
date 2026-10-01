@@ -38,10 +38,9 @@ from src.exceptions import HonchoException
 from src.models import Peer, Workspace
 from src.security import JWTParams, create_admin_jwt, create_jwt
 
-# Disable Langfuse for the whole suite before importing src.main: @conditional_observe
-# binds to settings.LANGFUSE_PUBLIC_KEY at import time, so blanking it here keeps mocked
-# test calls from emitting traces to a configured Langfuse backend. Tests that exercise
-# Langfuse patch settings.LANGFUSE_PUBLIC_KEY themselves.
+# Disable Langfuse for the whole suite before importing src.main so mocked test calls
+# never register the exporter against a configured Langfuse backend. Tests that
+# exercise Langfuse patch settings.LANGFUSE_PUBLIC_KEY themselves.
 settings.LANGFUSE_PUBLIC_KEY = None
 
 from src.main import app  # noqa: E402
@@ -88,6 +87,8 @@ _RUNTIME_MOCK_TEST_BLOCKLIST_PREFIXES = (
     "tests/utils/test_clients.py",
     # Session-scope SQL shape — asserts on compiled statements, never executes one.
     "tests/crud/test_session_scope_clauses.py",
+    # Pure prompt-rendering tests — string assembly only, no DB needed.
+    "tests/deriver/test_prompts.py",
     # Pure JWT scope tests — operate on src.security directly, no DB needed.
     "tests/test_security.py",
     "tests/test_generate_jwt_script.py",
@@ -602,6 +603,10 @@ def mock_openai_embeddings(request: pytest.FixtureRequest):
             "src.embedding_client.embedding_client.prepare_chunks"
         ) as mock_prepare_chunks,
         patch("src.embedding_client.embedding_client.batch_embed") as mock_batch_embed,
+        patch(
+            "src.embedding_client.embedding_client.truncate_to_token_limit",
+            side_effect=lambda text: text,  # pyright: ignore[reportUnknownLambdaType]
+        ) as mock_truncate,
     ):
         # Mock the embed method to return content-dependent embedding
         def embed_side_effect(content: str) -> list[float]:
@@ -640,6 +645,7 @@ def mock_openai_embeddings(request: pytest.FixtureRequest):
             "simple_batch_embed": mock_simple_batch_embed,
             "prepare_chunks": mock_prepare_chunks,
             "batch_embed": mock_batch_embed,
+            "truncate_to_token_limit": mock_truncate,
         }
 
 
