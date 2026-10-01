@@ -38,6 +38,8 @@ export function register(server: McpServer, ctx: ToolContext) {
       annotations: {
         title: "List Scopes",
         readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
       },
       description: [
         "List the scopes in a workspace (paginated).",
@@ -79,6 +81,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         title: "Create Scope",
         readOnlyHint: false,
         destructiveHint: false,
+        openWorldHint: false,
       },
       description: [
         "Get or create a scope with the given ID.",
@@ -122,6 +125,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         title: "Add Sessions to Scope",
         readOnlyHint: false,
         destructiveHint: false,
+        openWorldHint: false,
       },
       description: [
         "Add sessions to a scope. Every session must already exist; re-adding a member is a no-op.",
@@ -159,6 +163,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         title: "Remove Session from Scope",
         readOnlyHint: false,
         destructiveHint: true,
+        openWorldHint: false,
       },
       description: [
         "Remove a session from a scope.",
@@ -190,6 +195,8 @@ export function register(server: McpServer, ctx: ToolContext) {
       annotations: {
         title: "Get Scope Status",
         readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
       },
       description: [
         "Get backfill progress for a scope, keyed by session ID.",
@@ -231,6 +238,8 @@ export function register(server: McpServer, ctx: ToolContext) {
       annotations: {
         title: "Get Scope Sessions",
         readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
       },
       description: [
         "List the sessions that belong to a scope (paginated).",
