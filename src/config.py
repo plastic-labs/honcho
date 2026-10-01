@@ -723,8 +723,26 @@ class DBSettings(HonchoSettings):
     CONNECTION_URI: str = (
         "postgresql+psycopg://postgres:postgres@localhost:5432/postgres"
     )
+    # The BYPASSRLS service role's connection URI, used by service_db() for the
+    # cross-tenant service paths (deriver claim, reconciler, dreamer, enqueue).
+    # region ai
+    # Unset → service_db() uses CONNECTION_URI (single-role), which is correct when
+    # MULTI_TENANT is off. When MULTI_TENANT is on the role split is required, so
+    # row-level security is enforced on the app role while service work can bypass
+    # it (a session that merely lacks a tenant would otherwise see zero rows).
+    # endregion
+    SERVICE_CONNECTION_URI: str | None = None
     SCHEMA: str = "public"
     POOL_CLASS: str = "default"
+    # The pooling mode the deployment's connection path actually runs — hand-set
+    # (not probed) so it is auditable.
+    # region ai
+    # Only consulted when MULTI_TENANT is on: the session-scoped read-path binding
+    # LEAKS across tenants under a transaction/statement-mode pooler (backends are
+    # multiplexed below the session), so the startup tenant-isolation validator
+    # refuses to boot in that combination.
+    # endregion
+    POOLER_MODE: Literal["none", "session", "transaction", "statement"] = "session"
     POOL_PRE_PING: bool = True
     POOL_SIZE: Annotated[int, Field(default=10, gt=0, le=1000)] = 10
     MAX_OVERFLOW: Annotated[int, Field(default=20, ge=0, le=1000)] = 20
@@ -758,6 +776,23 @@ class AuthSettings(HonchoSettings):
         if self.USE_AUTH and not self.JWT_SECRET:
             raise ValueError("JWT_SECRET must be set if USE_AUTH is true")
         return self
+
+
+class TenantApiSettings(HonchoSettings):
+    model_config = SettingsConfigDict(env_prefix="TENANT_API_", extra="ignore")  # pyright: ignore
+
+    # region ai
+    # The above-tenant auth plane: this secret authenticates the operator's
+    # provisioning system (a control plane in a hosted deployment) to the
+    # tenant-registry API (/v3/tenants), never any tenant's data. It is
+    # deliberately not a JWT — under MULTI_TENANT every JWT must carry a tenant,
+    # and at tenant-creation time the tenant does not exist to be claimed, so the
+    # JWT plane cannot express this caller. Unset (the default) keeps the tenant
+    # API disabled; it is also disabled whenever MULTI_TENANT is off.
+    # Exactly one secret is accepted, so rotation under a rolling restart is a
+    # brief auth brownout — sequence the caller's secret update last.
+    # endregion
+    SECRET: str | None = None
 
 
 class SentrySettings(HonchoSettings):
@@ -880,7 +915,25 @@ class DeriverSettings(HonchoSettings):
 
     ENABLED: bool = True
 
-    WORKERS: Annotated[int, Field(default=1, gt=0, le=100)] = 1
+    # Concurrency within a single deriver process. Total worker count across a
+    # deployment is processes x WORKERS.
+    WORKERS: Annotated[int, Field(default=1, gt=0, le=512)] = 1
+    # region ai
+    # Bounds the DB-pool headroom the claim may assume per configured worker:
+    # effective concurrency = min(WORKERS, max(1, floor(ratio * (POOL_SIZE +
+    # MAX_OVERFLOW)))). Each in-flight work unit opens several SEQUENTIAL,
+    # short-lived sessions, so one pooled connection services several units —
+    # a 1:1 cap would waste real capacity, and no cap at all lets WORKERS
+    # exhaust the pool under load. The default is deliberately conservative
+    # until the sessions-per-unit ratio is measured (tracked in DEV-2744);
+    # derivation only ever LOWERS the configured WORKERS, and the queue
+    # manager logs and gauges the derived cap at boot. Deployments on
+    # NullPool (DB_POOL_CLASS="null") have no pool to protect, so the
+    # derivation is skipped there.
+    # endregion
+    WORKERS_PER_POOL_CONNECTION: Annotated[
+        float, Field(default=4.0, gt=0.0, le=64.0)
+    ] = 4.0
     POLLING_SLEEP_INTERVAL_SECONDS: Annotated[
         float, Field(default=1.0, gt=0.0, le=60.0)
     ] = 1.0
@@ -1582,9 +1635,28 @@ class AppSettings(HonchoSettings):
 
     NAMESPACE: str = "honcho"  # Top-level namespace for all settings, can be overridden by nested-model settings
 
+    # Multi-tenant isolation toggle (default off = single-tenant).
+    # region ai
+    # When on, tenant-scoped DB sessions carry a request-scoped `app.tenant` GUC
+    # so Postgres row-level-security policies resolve, and `tracked_db` requires a
+    # tenant_id (failing closed if it is absent). When off, no tenant is bound and
+    # Honcho runs as a plain single-tenant app on RLS-free Postgres. The RLS
+    # policies are provisioned on the database out of band, not by this app.
+    # endregion
+    MULTI_TENANT: bool = False
+
+    # Escape hatch for the migration window ONLY: skip the startup assertion that
+    # RLS is enabled+forced on the data tables when MULTI_TENANT is on.
+    # region ai
+    # Lets the app boot after the flag flips but before the cloud RLS policies land.
+    # Off in steady state — leaving it on defeats the isolation guarantee.
+    # endregion
+    MULTI_TENANT_SKIP_RLS_ASSERT: bool = False
+
     # Nested settings models
     DB: DBSettings = Field(default_factory=DBSettings)
     AUTH: AuthSettings = Field(default_factory=AuthSettings)
+    TENANT_API: TenantApiSettings = Field(default_factory=TenantApiSettings)
     SENTRY: SentrySettings = Field(default_factory=SentrySettings)
     LLM: LLMSettings = Field(default_factory=LLMSettings)
     EMBEDDING: EmbeddingSettings = Field(default_factory=EmbeddingSettings)

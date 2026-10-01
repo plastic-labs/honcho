@@ -21,6 +21,7 @@ from src.cache.client import (
     safe_cache_set,
 )
 from src.config import settings
+from src.crud.deriver import active_queue_session_match, queue_item_tenant_match
 from src.exceptions import ConflictException, ResourceNotFoundException
 from src.utils.filter import apply_filter
 from src.utils.types import GetOrCreateResult
@@ -75,6 +76,11 @@ async def _fetch_workspace(
     if obj is None:
         return None
     return {
+        # region ai
+        # tenant_id leads the composite PK; without it the reconstructed object
+        # has an incomplete identity and merge/update can't locate its row.
+        # endregion
+        "tenant_id": obj.tenant_id,
         "id": obj.id,
         "name": obj.name,
         "h_metadata": obj.h_metadata,
@@ -132,6 +138,7 @@ async def get_or_create_workspace(
         # Capture cache data eagerly so the closure holds a plain dict, not the ORM object
         _cache_key = workspace_cache_key(workspace.name)
         _cache_data = {
+            "tenant_id": honcho_workspace.tenant_id,
             "id": honcho_workspace.id,
             "name": honcho_workspace.name,
             "h_metadata": honcho_workspace.h_metadata,
@@ -394,34 +401,41 @@ async def delete_workspace(
     # then peers
     # then workspace
 
-    # Delete ActiveQueueSession entries first
-    # Work unit keys have format: {task_type}:{workspace_name}:{...}
-    # Extract workspace_name from position 2 (second component after splitting by ':')
+    # Delete ActiveQueueSession entries first, matching on the work_unit_key
+    # (flag-aware position + tenant pinning; rationale lives on the helper).
+    active_queue_match = active_queue_session_match(workspace_name)
     try:
-        await db.execute(
-            delete(models.ActiveQueueSession).where(
-                func.split_part(models.ActiveQueueSession.work_unit_key, ":", 2)
-                == workspace_name
-            )
-        )
+        await db.execute(delete(models.ActiveQueueSession).where(active_queue_match))
 
-        # Then delete QueueItem entries
-        await db.execute(
-            delete(models.QueueItem).where(
-                models.QueueItem.workspace_name == workspace_name
-            )
+        # Then delete QueueItem entries. workspace_name is only unique per
+        # tenant (every tenant has a "default" workspace) and queue is
+        # deliberately not under RLS (see _RLS_REQUIRED_TABLES), so a
+        # tenant-blind match here would delete another tenant's same-named
+        # workspace's queue rows too; pin to the ambient tenant, flag-aware.
+        queue_item_match = queue_item_tenant_match()
+        queue_item_delete = delete(models.QueueItem).where(
+            models.QueueItem.workspace_name == workspace_name
         )
+        if queue_item_match is not None:
+            queue_item_delete = queue_item_delete.where(queue_item_match)
+        await db.execute(queue_item_delete)
 
         # Also delete any queue items that reference messages in this workspace
-        # (handles race condition where deriver creates new queue items)
+        # (handles race condition where deriver creates new queue items).
+        # messages is under RLS so this subquery is already tenant-scoped, and
+        # message ids are drawn from one global sequence, but pin tenant_id
+        # here too for defense in depth.
         message_ids_subquery = select(models.Message.id).where(
             models.Message.workspace_name == workspace_name
         )
-        await db.execute(
-            delete(models.QueueItem).where(
-                models.QueueItem.message_id.in_(message_ids_subquery)
-            )
+        message_queue_item_delete = delete(models.QueueItem).where(
+            models.QueueItem.message_id.in_(message_ids_subquery)
         )
+        if queue_item_match is not None:
+            message_queue_item_delete = message_queue_item_delete.where(
+                queue_item_match
+            )
+        await db.execute(message_queue_item_delete)
 
         # Get all collections for this workspace to delete their vector namespaces
         collections_result = await db.execute(
@@ -478,7 +492,7 @@ async def delete_workspace(
 
         # Delete message embeddings namespace for this workspace
         if external_vector_store:
-            message_namespace = external_vector_store.get_vector_namespace(
+            message_namespace = await external_vector_store.get_vector_namespace(
                 "message", workspace_name
             )
             try:
@@ -497,7 +511,7 @@ async def delete_workspace(
 
             # Delete document embeddings namespaces for each collection
             for collection in collections:
-                doc_namespace = external_vector_store.get_vector_namespace(
+                doc_namespace = await external_vector_store.get_vector_namespace(
                     "document",
                     workspace_name,
                     collection.observer,

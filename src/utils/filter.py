@@ -541,6 +541,7 @@ def _build_source_ids_condition(
         linked = (
             select(literal(1))
             .where(
+                DocumentSource.tenant_id == model_class.tenant_id,
                 DocumentSource.derived_id == model_class.id,
                 DocumentSource.source_id == sid,
             )

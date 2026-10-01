@@ -109,7 +109,7 @@ async def test_enqueue_gated_on_pending_work(
     async def _db(_: str | None = None) -> AsyncGenerator[AsyncSession]:
         yield db_session
 
-    monkeypatch.setattr(scheduler_module, "tracked_db", _db)
+    monkeypatch.setattr(scheduler_module, "service_db", _db)
     monkeypatch.setattr(
         scheduler_module, "has_pending_work", AsyncMock(return_value=has_work)
     )
@@ -140,7 +140,7 @@ async def test_cleanup_queue_is_not_gated(
     async def _db(_: str | None = None) -> AsyncGenerator[AsyncSession]:
         yield db_session
 
-    monkeypatch.setattr(scheduler_module, "tracked_db", _db)
+    monkeypatch.setattr(scheduler_module, "service_db", _db)
     gate = AsyncMock(return_value=False)
     monkeypatch.setattr(scheduler_module, "has_pending_work", gate)
 

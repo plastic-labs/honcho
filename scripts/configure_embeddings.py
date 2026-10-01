@@ -43,7 +43,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine  # noqa: E402
 
 from src.config import settings  # noqa: E402
 from src.db import engine  # noqa: E402
-from src.models import Collection, Workspace  # noqa: E402
+from src.models import Collection, Tenant, Workspace  # noqa: E402
 from src.vector_store import VectorStore  # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -248,24 +248,37 @@ async def _apply_pgvector_alter(engine: AsyncEngine, plan: _PgvectorPlan) -> Non
 # ---------------------------------------------------------------------------
 
 
-async def _enumerate_workspaces(conn: AsyncConnection) -> list[str]:
-    """All workspace names, ordered by creation. Uses the ORM so
-    ``Base.metadata.schema`` (configured from ``DB.SCHEMA``) is honored —
-    non-public schema deployments must not sample the wrong table."""
-    stmt = select(Workspace.name).order_by(Workspace.created_at)
+async def _enumerate_workspaces(
+    conn: AsyncConnection,
+) -> list[tuple[str, str | None]]:
+    """Every ``(workspace_name, namespace_prefix)`` pair, ordered by creation. Uses the
+    ORM so ``Base.metadata.schema`` (configured from ``DB.SCHEMA``) is honored —
+    non-public schema deployments must not sample the wrong table. The prefix is the
+    workspace's tenant's key, so the inventory names the namespace each tenant's
+    vectors actually live in rather than assuming one prefix for the whole instance."""
+    stmt = (
+        select(Workspace.name, Tenant.vector_correlation_id)
+        .join(Tenant, Tenant.tenant_id == Workspace.tenant_id)
+        .order_by(Workspace.created_at)
+    )
     result = await conn.execute(stmt)
-    return [row[0] for row in result]
+    return [(row[0], row[1]) for row in result]
 
 
 async def _enumerate_collections(
     conn: AsyncConnection,
-) -> list[tuple[str, str, str]]:
-    """Every (workspace_name, observer, observed) triple that has a row in
-    the collections table — these are the document namespaces that could
-    exist in an external store."""
-    stmt = select(Collection.workspace_name, Collection.observer, Collection.observed)
+) -> list[tuple[str, str, str, str | None]]:
+    """Every ``(workspace_name, observer, observed, namespace_prefix)`` tuple that has a
+    row in the collections table — these are the document namespaces that could exist in
+    an external store, each under its own tenant's prefix."""
+    stmt = select(
+        Collection.workspace_name,
+        Collection.observer,
+        Collection.observed,
+        Tenant.vector_correlation_id,
+    ).join(Tenant, Tenant.tenant_id == Collection.tenant_id)
     result = await conn.execute(stmt)
-    return [(row[0], row[1], row[2]) for row in result]
+    return [(row[0], row[1], row[2], row[3]) for row in result]
 
 
 async def _build_external_namespace_inventory(
@@ -285,15 +298,31 @@ async def _build_external_namespace_inventory(
         workspace_names = await _enumerate_workspaces(conn)
         collection_keys = await _enumerate_collections(conn)
 
+    # ai: a tenant with no key has no nameable namespace to inventory; skip it rather than pass a null through as "no override"
+    if settings.MULTI_TENANT:
+        workspace_names = [(name, p) for name, p in workspace_names if p]
+        collection_keys = [(w, ob, od, p) for w, ob, od, p in collection_keys if p]
+
     pairs: list[tuple[str, str]] = []
-    for workspace_name in workspace_names:
-        pairs.append(("message", store.get_vector_namespace("message", workspace_name)))
-    for workspace_name, observer, observed in collection_keys:
+    for workspace_name, prefix in workspace_names:
+        pairs.append(
+            (
+                "message",
+                await store.get_vector_namespace(
+                    "message", workspace_name, prefix=prefix
+                ),
+            )
+        )
+    for workspace_name, observer, observed, prefix in collection_keys:
         pairs.append(
             (
                 "document",
-                store.get_vector_namespace(
-                    "document", workspace_name, observer=observer, observed=observed
+                await store.get_vector_namespace(
+                    "document",
+                    workspace_name,
+                    observer=observer,
+                    observed=observed,
+                    prefix=prefix,
                 ),
             )
         )

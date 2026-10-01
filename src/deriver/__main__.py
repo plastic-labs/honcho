@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import sys
 
 import uvloop
 from prometheus_client import start_http_server
@@ -11,7 +12,11 @@ from src.db import (
     register_db_connection_instrumentation,
     register_db_query_instrumentation,
 )
-from src.startup import validate_embedding_schema
+from src.startup import (
+    validate_embedding_schema,
+    validate_queue_item_batches,
+    validate_tenant_isolation,
+)
 from src.telemetry import (
     initialize_telemetry_async,
     prometheus_metrics,
@@ -79,10 +84,12 @@ async def run_deriver():
     await initialize_telemetry_async()
 
     try:
-        # Fail fast if the embedding schema does not match settings — same
-        # gate the API runs in its lifespan. Inside the try block so the
+        # Run the three startup validators before claiming any work — the same
+        # gates the API runs in its lifespan. Inside the try block so the
         # telemetry buffer is still flushed if validation raises.
         await validate_embedding_schema(engine)
+        await validate_tenant_isolation(engine, instance_type="deriver")
+        await validate_queue_item_batches(engine)
         await main()
     finally:
         # Shutdown telemetry (flush CloudEvents buffer)
@@ -106,5 +113,7 @@ if __name__ == "__main__":
         logger.info("Shutdown initiated via KeyboardInterrupt")
     except Exception as e:
         logger.exception("Error in main process: %s", e)
+        # ai: a refused boot must be a failed boot — exit 0 would hide it from the orchestrator
+        sys.exit(1)
     finally:
         logger.info("Deriver process exiting")

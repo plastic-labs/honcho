@@ -34,10 +34,15 @@ from src.routers import (
     peers,
     scopes,
     sessions,
+    tenants,
     webhooks,
     workspaces,
 )
-from src.startup import validate_embedding_schema
+from src.startup import (
+    validate_embedding_schema,
+    validate_queue_item_batches,
+    validate_tenant_isolation,
+)
 from src.telemetry import (
     initialize_telemetry_async,
     metrics_endpoint,
@@ -138,6 +143,13 @@ async def lifespan(_: FastAPI):
     # pgvector columns, the process refuses to start rather than silently
     # writing wrong-dim vectors.
     await validate_embedding_schema(engine)
+    # Fail closed on a multi-tenant half-state (no-op unless MULTI_TENANT is on);
+    # the validator's module docstring lists the four it refuses.
+    await validate_tenant_isolation(engine, instance_type="api")
+    # Fail closed if the deriver claim's trigger-maintained aggregate is not
+    # wired: missing or disabled queue_item_batches triggers would leave
+    # enqueued work invisible to every deriver, with no error anywhere.
+    await validate_queue_item_batches(engine)
 
     try:
         await init_cache()
@@ -220,6 +232,7 @@ app.include_router(scopes.router, prefix="/v3")
 app.include_router(messages.router, prefix="/v3")
 app.include_router(conclusions.router, prefix="/v3")
 app.include_router(keys.router, prefix="/v3")
+app.include_router(tenants.router, prefix="/v3")
 app.include_router(webhooks.router, prefix="/v3")
 app.include_router(deriver_metrics.router)
 

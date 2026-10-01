@@ -16,6 +16,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
+from src.config import settings
+from src.db import tenant_context
 from src.reconciler.sync_vectors import (
     MAX_SYNC_ATTEMPTS,
     ReconciliationMetrics,
@@ -30,10 +32,48 @@ from src.reconciler.sync_vectors import (
     run_vector_reconciliation_cycle,
 )
 from src.vector_store import (
+    VectorQueryResult,
     VectorRecord,
     VectorStore,
     _hash_namespace_components,
 )
+from src.vector_store.tenant_namespace import reset_prefix_cache
+
+
+class _NamespaceRecordingVectorStore(VectorStore):
+    """A real VectorStore -- get_vector_namespace runs unmodified -- that records
+    every upsert_many call by the namespace it targeted, for pinning that a batch
+    resolves each row's namespace independently rather than once per batch."""
+
+    def __init__(self) -> None:
+        self.upserts_by_namespace: dict[str, list[VectorRecord]] = {}
+
+    async def upsert_many(self, namespace: str, vectors: list[VectorRecord]) -> None:
+        self.upserts_by_namespace.setdefault(namespace, []).extend(vectors)
+
+    async def query(
+        self,
+        namespace: str,
+        embedding: list[float],
+        *,
+        top_k: int = 10,
+        filters: dict[str, object] | None = None,
+        max_distance: float | None = None,
+        include_attributes: bool | list[str] = True,
+    ) -> list[VectorQueryResult]:
+        return []
+
+    async def delete_many(self, namespace: str, ids: list[str]) -> None:
+        return None
+
+    async def delete_namespace(self, namespace: str) -> None:
+        return None
+
+    async def close(self) -> None:
+        return None
+
+    async def probe_namespace_dim(self, namespace: str) -> int | None:
+        return None
 
 
 @pytest.mark.asyncio
@@ -85,7 +125,7 @@ class TestStateTransitions:
 
         # Mock vector store to succeed
         mock_vector_store = MagicMock(spec=VectorStore)
-        mock_vector_store.get_vector_namespace = MagicMock(
+        mock_vector_store.get_vector_namespace = AsyncMock(
             return_value=f"honcho.doc.{_hash_namespace_components(workspace.name, peer1.name, peer1.name)}"
         )
         mock_vector_store.upsert_many = AsyncMock(return_value=None)
@@ -145,7 +185,7 @@ class TestStateTransitions:
 
         # Mock vector store to fail with exception
         mock_vector_store = MagicMock(spec=VectorStore)
-        mock_vector_store.get_vector_namespace = MagicMock(
+        mock_vector_store.get_vector_namespace = AsyncMock(
             return_value=f"honcho.doc.{_hash_namespace_components(workspace.name, peer1.name, peer1.name)}"
         )
         mock_vector_store.upsert_many = AsyncMock(
@@ -206,7 +246,7 @@ class TestStateTransitions:
 
         # Mock vector store to fail with exception
         mock_vector_store = MagicMock(spec=VectorStore)
-        mock_vector_store.get_vector_namespace = MagicMock(
+        mock_vector_store.get_vector_namespace = AsyncMock(
             return_value=f"honcho.doc.{_hash_namespace_components(workspace.name, peer1.name, peer1.name)}"
         )
         mock_vector_store.upsert_many = AsyncMock(
@@ -306,9 +346,15 @@ class TestBatchProcessing:
         mock_vector_store = MagicMock(spec=VectorStore)
         namespace_calls: dict[str, list[VectorRecord]] = {}
 
-        def mock_get_namespace(
-            _namespace_type: str, workspace: str, observer: str, observed: str
+        async def mock_get_namespace(
+            _namespace_type: str,
+            workspace: str,
+            observer: str,
+            observed: str,
+            *,
+            prefix: str | None = None,
         ) -> str:
+            del prefix  # ignored: this test only cares about observer/observed grouping
             return f"honcho.doc.{_hash_namespace_components(workspace, observer, observed)}"
 
         async def mock_upsert(namespace: str, vectors: list[VectorRecord]) -> None:
@@ -438,6 +484,237 @@ class TestBatchProcessing:
 
 
 @pytest.mark.asyncio
+class TestBackgroundPathPerTenantNamespaces:
+    """The cross-tenant background paths resolve a namespace per row, not per batch."""
+
+    async def _create_tenant_scoped_document(
+        self, db_session: AsyncSession, *, vector_correlation_id: str | None
+    ) -> tuple[models.Document, models.Workspace, models.Peer]:
+        """Commit a fresh tenant with its own workspace, peer, collection, and one
+        pending document -- everything one row of a cross-tenant batch needs."""
+        tenant_id = str(generate_nanoid())
+        db_session.add(
+            models.Tenant(
+                tenant_id=tenant_id, vector_correlation_id=vector_correlation_id
+            )
+        )
+        workspace = models.Workspace(name=str(generate_nanoid()), tenant_id=tenant_id)
+        db_session.add(workspace)
+        await db_session.commit()
+
+        peer = models.Peer(
+            name=str(generate_nanoid()),
+            workspace_name=workspace.name,
+            tenant_id=tenant_id,
+        )
+        db_session.add(peer)
+        await db_session.commit()
+
+        db_session.add(
+            models.Collection(
+                workspace_name=workspace.name,
+                observer=peer.name,
+                observed=peer.name,
+                tenant_id=tenant_id,
+            )
+        )
+        doc = models.Document(
+            content="content",
+            workspace_name=workspace.name,
+            observer=peer.name,
+            observed=peer.name,
+            tenant_id=tenant_id,
+            sync_state="pending",
+            embedding=[1.0] * 1536,
+        )
+        db_session.add(doc)
+        await db_session.commit()
+        await db_session.refresh(doc)
+        return doc, workspace, peer
+
+    async def test_document_batch_spanning_two_tenants_writes_each_to_its_own_namespace(
+        self, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A single _sync_documents batch holding two tenants' rows resolves
+        prefix_for_tenant per row, landing each document in its own tenant's
+        namespace rather than one shared prefix for the whole batch."""
+        monkeypatch.setattr(settings, "MULTI_TENANT", True)
+        reset_prefix_cache()
+
+        doc_a, workspace_a, peer_a = await self._create_tenant_scoped_document(
+            db_session, vector_correlation_id="tenant-a-app"
+        )
+        doc_b, workspace_b, peer_b = await self._create_tenant_scoped_document(
+            db_session, vector_correlation_id="tenant-b-app"
+        )
+
+        store = _NamespaceRecordingVectorStore()
+        synced, failed = await _sync_documents(db_session, [doc_a, doc_b], store)
+
+        assert synced == 2
+        assert failed == 0
+
+        expected_namespace_a = (
+            f"tenant-a-app.doc."
+            f"{_hash_namespace_components(workspace_a.name, peer_a.name, peer_a.name)}"
+        )
+        expected_namespace_b = (
+            f"tenant-b-app.doc."
+            f"{_hash_namespace_components(workspace_b.name, peer_b.name, peer_b.name)}"
+        )
+
+        assert set(store.upserts_by_namespace) == {
+            expected_namespace_a,
+            expected_namespace_b,
+        }
+        assert {r.id for r in store.upserts_by_namespace[expected_namespace_a]} == {
+            doc_a.id
+        }
+        assert {r.id for r in store.upserts_by_namespace[expected_namespace_b]} == {
+            doc_b.id
+        }
+
+    async def test_document_batch_with_one_unresolvable_tenant_does_not_abort_the_rest(
+        self, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A tenant with no vector_correlation_id must not roll back or block a
+        co-batched tenant's documents, and its own rows get their sync_attempts
+        bumped rather than being left untouched."""
+        monkeypatch.setattr(settings, "MULTI_TENANT", True)
+
+        good_doc, good_workspace, good_peer = await self._create_tenant_scoped_document(
+            db_session, vector_correlation_id="tenant-good-app"
+        )
+        bad_doc, _bad_workspace, _bad_peer = await self._create_tenant_scoped_document(
+            db_session, vector_correlation_id=None
+        )
+        assert bad_doc.sync_attempts == 0
+
+        store = _NamespaceRecordingVectorStore()
+        synced, failed = await _sync_documents(db_session, [good_doc, bad_doc], store)
+
+        assert synced == 1
+        assert failed == 1
+
+        expected_namespace = (
+            f"tenant-good-app.doc."
+            f"{_hash_namespace_components(good_workspace.name, good_peer.name, good_peer.name)}"
+        )
+        assert set(store.upserts_by_namespace) == {expected_namespace}
+        assert {r.id for r in store.upserts_by_namespace[expected_namespace]} == {
+            good_doc.id
+        }
+
+        await db_session.refresh(bad_doc)
+        assert bad_doc.sync_state == "pending"
+        assert bad_doc.sync_attempts == 1
+
+    async def _create_tenant_scoped_message_embedding(
+        self, db_session: AsyncSession, *, vector_correlation_id: str | None
+    ) -> tuple[models.MessageEmbedding, models.Workspace, models.Peer]:
+        """Commit a fresh tenant with its own workspace, peer, session, message,
+        and one pending message embedding -- everything one row of a cross-tenant
+        batch needs."""
+        tenant_id = str(generate_nanoid())
+        db_session.add(
+            models.Tenant(
+                tenant_id=tenant_id, vector_correlation_id=vector_correlation_id
+            )
+        )
+        workspace = models.Workspace(name=str(generate_nanoid()), tenant_id=tenant_id)
+        db_session.add(workspace)
+        await db_session.commit()
+
+        peer = models.Peer(
+            name=str(generate_nanoid()),
+            workspace_name=workspace.name,
+            tenant_id=tenant_id,
+        )
+        db_session.add(peer)
+        await db_session.commit()
+
+        session = models.Session(
+            name=str(generate_nanoid()),
+            workspace_name=workspace.name,
+            tenant_id=tenant_id,
+        )
+        db_session.add(session)
+        await db_session.commit()
+
+        message = models.Message(
+            public_id=str(generate_nanoid()),
+            session_name=session.name,
+            workspace_name=workspace.name,
+            peer_name=peer.name,
+            tenant_id=tenant_id,
+            content="hello world",
+            seq_in_session=1,
+        )
+        db_session.add(message)
+        await db_session.commit()
+
+        emb = models.MessageEmbedding(
+            content=message.content,
+            message_id=message.public_id,
+            workspace_name=workspace.name,
+            session_name=session.name,
+            peer_name=peer.name,
+            tenant_id=tenant_id,
+            sync_state="pending",
+            embedding=[1.0] * 1536,
+        )
+        db_session.add(emb)
+        await db_session.commit()
+        await db_session.refresh(emb)
+        return emb, workspace, peer
+
+    async def test_message_embedding_batch_with_one_unresolvable_tenant_does_not_abort_the_rest(
+        self, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A tenant with no vector_correlation_id must not roll back or block a
+        co-batched tenant's message embeddings, and its own rows get their
+        sync_attempts bumped rather than being left untouched."""
+        monkeypatch.setattr(settings, "MULTI_TENANT", True)
+
+        (
+            good_emb,
+            good_workspace,
+            _good_peer,
+        ) = await self._create_tenant_scoped_message_embedding(
+            db_session, vector_correlation_id="tenant-good-app"
+        )
+        (
+            bad_emb,
+            _bad_workspace,
+            _bad_peer,
+        ) = await self._create_tenant_scoped_message_embedding(
+            db_session, vector_correlation_id=None
+        )
+        assert bad_emb.sync_attempts == 0
+
+        store = _NamespaceRecordingVectorStore()
+        synced, failed = await _sync_message_embeddings(
+            db_session, [good_emb, bad_emb], store
+        )
+
+        assert synced == 1
+        assert failed == 1
+
+        expected_namespace = (
+            f"tenant-good-app.msg.{_hash_namespace_components(good_workspace.name)}"
+        )
+        assert set(store.upserts_by_namespace) == {expected_namespace}
+        assert {
+            r.metadata["message_id"]
+            for r in store.upserts_by_namespace[expected_namespace]
+        } == {good_emb.message_id}
+
+        await db_session.refresh(bad_emb)
+        assert bad_emb.sync_state == "pending"
+        assert bad_emb.sync_attempts == 1
+
+
+@pytest.mark.asyncio
 class TestReEmbedding:
     """Test re-embedding logic for documents with NULL embeddings."""
 
@@ -491,7 +768,7 @@ class TestReEmbedding:
 
             # Mock vector store
             mock_vector_store = MagicMock(spec=VectorStore)
-            mock_vector_store.get_vector_namespace = MagicMock(
+            mock_vector_store.get_vector_namespace = AsyncMock(
                 return_value=f"honcho.doc.{_hash_namespace_components(workspace.name, peer1.name, peer1.name)}"
             )
             mock_vector_store.upsert_many = AsyncMock(return_value=None)
@@ -564,7 +841,7 @@ class TestReEmbedding:
 
             # Mock vector store
             mock_vector_store = MagicMock(spec=VectorStore)
-            mock_vector_store.get_vector_namespace = MagicMock(
+            mock_vector_store.get_vector_namespace = AsyncMock(
                 return_value=f"honcho.doc.{_hash_namespace_components(workspace.name, peer1.name, peer1.name)}"
             )
             mock_vector_store.upsert_many = AsyncMock(return_value=None)
@@ -1017,7 +1294,7 @@ class TestReconcilerTracing:
         metrics = ReconciliationMetrics()
         with (
             patch(
-                "src.reconciler.sync_vectors.tracked_db",
+                "src.reconciler.sync_vectors.service_db",
                 self._fake_tracked_db(AsyncMock()),
             ),
             patch(
@@ -1037,7 +1314,7 @@ class TestReconcilerTracing:
         metrics = ReconciliationMetrics()
         with (
             patch(
-                "src.reconciler.sync_vectors.tracked_db",
+                "src.reconciler.sync_vectors.service_db",
                 self._fake_tracked_db(AsyncMock()),
             ),
             patch(
@@ -1064,7 +1341,7 @@ class TestReconcilerTracing:
         metrics = ReconciliationMetrics()
         with (
             patch(
-                "src.reconciler.sync_vectors.tracked_db",
+                "src.reconciler.sync_vectors.service_db",
                 self._fake_tracked_db(AsyncMock()),
             ),
             patch(
@@ -1167,3 +1444,93 @@ class TestComputeChunkPositions:
         assert positions[a0] == 0
         assert positions[a1] == 1
         assert positions[b0] == 0
+
+
+@pytest.mark.asyncio
+class TestReEmbedTenantAttribution:
+    """Each re-embed call runs with its rows' tenant bound, so its telemetry is attributed."""
+
+    @staticmethod
+    def _docs(tenant_ids: list[str]) -> list[models.Document]:
+        return [
+            models.Document(
+                id=generate_nanoid(),
+                tenant_id=tenant_id,
+                content=f"doc_{index}",
+                workspace_name="ws",
+                observer="peer",
+                observed="peer",
+                session_name="s",
+                sync_state="pending",
+                sync_attempts=0,
+                embedding=None,
+            )
+            for index, tenant_id in enumerate(tenant_ids)
+        ]
+
+    @staticmethod
+    def _store() -> MagicMock:
+        store = MagicMock(spec=VectorStore)
+        store.get_vector_namespace = AsyncMock(return_value="honcho.doc.x")
+        store.upsert_many = AsyncMock(return_value=None)
+        return store
+
+    async def test_flag_on_embeds_once_per_tenant_with_that_tenant_bound(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(settings, "MULTI_TENANT", True)
+        docs = self._docs(["t-a", "t-b", "t-a"])
+        calls: list[tuple[str | None, list[str]]] = []
+
+        async def record(contents: list[str], **_kwargs: object) -> list[list[float]]:
+            calls.append((tenant_context.get(), contents))
+            return [[0.0] * 1536 for _ in contents]
+
+        with patch("src.reconciler.sync_vectors.embedding_client") as client:
+            client.simple_batch_embed = record
+            await _sync_documents(AsyncMock(), docs, self._store())
+
+        assert calls == [("t-a", ["doc_0", "doc_2"]), ("t-b", ["doc_1"])]
+        assert tenant_context.get() is None
+
+    async def test_flag_off_keeps_a_single_unbound_batch(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(settings, "MULTI_TENANT", False)
+        docs = self._docs(["default", "default"])
+        calls: list[tuple[str | None, int]] = []
+
+        async def record(contents: list[str], **_kwargs: object) -> list[list[float]]:
+            calls.append((tenant_context.get(), len(contents)))
+            return [[0.0] * 1536 for _ in contents]
+
+        with patch("src.reconciler.sync_vectors.embedding_client") as client:
+            client.simple_batch_embed = record
+            await _sync_documents(AsyncMock(), docs, self._store())
+
+        assert calls == [(None, 2)]
+
+    async def test_one_tenants_failure_does_not_fail_the_others(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(settings, "MULTI_TENANT", True)
+        # Namespace resolution is not under test here; these tenants have no registry row.
+        monkeypatch.setattr(
+            "src.reconciler.sync_vectors.prefix_for_tenant",
+            AsyncMock(return_value="prefix"),
+        )
+        docs = self._docs(["t-a", "t-b"])
+
+        async def fail_for_a(
+            contents: list[str], **_kwargs: object
+        ) -> list[list[float]]:
+            if tenant_context.get() == "t-a":
+                raise RuntimeError("provider blip")
+            return [[0.0] * 1536 for _ in contents]
+
+        with patch("src.reconciler.sync_vectors.embedding_client") as client:
+            client.simple_batch_embed = fail_for_a
+            _synced, failed = await _sync_documents(AsyncMock(), docs, self._store())
+
+        assert failed == 1
+        assert docs[1].embedding is not None

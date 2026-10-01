@@ -7,13 +7,15 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
+from src.config import settings
+from src.db import tenant_context
 from src.dreamer.dream_scheduler import (
     DreamScheduler,
     check_and_schedule_dream,
     set_dream_scheduler,
 )
 from src.schemas import DreamType
-from src.utils.work_unit import construct_work_unit_key
+from src.utils.work_unit import construct_work_unit_key, parse_work_unit_key
 
 
 @pytest.fixture
@@ -284,6 +286,122 @@ class TestCancelDreamsForObserved:
             assert key_ws2 not in cancelled
             assert key_ws2 in dream_scheduler.pending_dreams
 
+    @pytest.mark.asyncio
+    async def test_cancel_is_scoped_to_tenant_under_multi_tenant(
+        self, dream_scheduler: DreamScheduler, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Regression: a tenant-blind match let one tenant's activity cancel another's.
+
+        Two dreams share the same (workspace, observer, observed) but belong to
+        different tenants. Cancelling for tenant-a must cancel ONLY tenant-a's key;
+        tenant-b's identically-shaped dream must survive.
+        """
+        monkeypatch.setattr(settings, "MULTI_TENANT", True)
+        workspace_name = "test_workspace"
+        observed = "bob"
+
+        key_a = construct_work_unit_key(
+            workspace_name,
+            {
+                "task_type": "dream",
+                "observer": "alice",
+                "observed": observed,
+                "dream_type": "omni",
+            },
+            tenant_id="tenant-a",
+        )
+        key_b = construct_work_unit_key(
+            workspace_name,
+            {
+                "task_type": "dream",
+                "observer": "alice",
+                "observed": observed,
+                "dream_type": "omni",
+            },
+            tenant_id="tenant-b",
+        )
+        assert key_a != key_b  # the tenant prefix makes them distinct keys
+
+        with patch.object(dream_scheduler, "execute_dream", new_callable=AsyncMock):
+            await dream_scheduler.schedule_dream(
+                key_a,
+                workspace_name,
+                delay_minutes=60,
+                dream_type=DreamType.OMNI,
+                observer="alice",
+                observed=observed,
+            )
+            await dream_scheduler.schedule_dream(
+                key_b,
+                workspace_name,
+                delay_minutes=60,
+                dream_type=DreamType.OMNI,
+                observer="alice",
+                observed=observed,
+            )
+            assert len(dream_scheduler.pending_dreams) == 2
+
+            cancelled = await dream_scheduler.cancel_dreams_for_observed(
+                workspace_name, observed, tenant_id="tenant-a"
+            )
+
+            assert cancelled == {key_a}
+            assert key_a not in dream_scheduler.pending_dreams
+            assert key_b in dream_scheduler.pending_dreams  # tenant-b survives
+
+    @pytest.mark.asyncio
+    async def test_cancel_requires_tenant_under_multi_tenant(
+        self, dream_scheduler: DreamScheduler, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Fail closed: MULTI_TENANT on, no tenant_id arg and no ambient tenant.
+
+        Silently matching nothing would leak un-cancelled dreams, so the resolver
+        raises rather than run a tenant-blind pass.
+        """
+        monkeypatch.setattr(settings, "MULTI_TENANT", True)
+        assert tenant_context.get() is None  # no ambient tenant to fall back on
+        with pytest.raises(ValueError):
+            await dream_scheduler.cancel_dreams_for_observed("test_workspace", "bob")
+
+    @pytest.mark.asyncio
+    async def test_cancel_flag_off_matches_unprefixed_key(
+        self, dream_scheduler: DreamScheduler, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Guard: flag off, the un-prefixed key is still cancelled with no tenant arg.
+
+        Under flag-off the key carries no tenant prefix and the parsed tenant_id is
+        None, which must still line up with the (None) tenant the resolver uses.
+        """
+        monkeypatch.setattr(settings, "MULTI_TENANT", False)
+        workspace_name = "test_workspace"
+        observed = "bob"
+        key = construct_work_unit_key(
+            workspace_name,
+            {
+                "task_type": "dream",
+                "observer": "alice",
+                "observed": observed,
+                "dream_type": "omni",
+            },
+        )
+        assert parse_work_unit_key(key).tenant_id is None
+
+        with patch.object(dream_scheduler, "execute_dream", new_callable=AsyncMock):
+            await dream_scheduler.schedule_dream(
+                key,
+                workspace_name,
+                delay_minutes=60,
+                dream_type=DreamType.OMNI,
+                observer="alice",
+                observed=observed,
+            )
+            cancelled = await dream_scheduler.cancel_dreams_for_observed(
+                workspace_name, observed
+            )
+
+            assert cancelled == {key}
+            assert key not in dream_scheduler.pending_dreams
+
 
 class TestThresholdFilter:
     """Regression tests for Finding 2: threshold must count only explicit-level docs.
@@ -396,6 +514,39 @@ class TestThresholdFilter:
         assert mock_schedule.called, "schedule_dream should fire when threshold met"
 
     @pytest.mark.asyncio
+    async def test_scheduled_key_is_tenant_namespaced_from_ambient(
+        self,
+        dream_scheduler: DreamScheduler,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        # The dreamer no longer threads tenant_id: under MULTI_TENANT the scheduled
+        # work_unit_key is namespaced from the ambient tenant_context that the
+        # deriver's process_work_unit binds (here simulated by setting it around the
+        # call). This pins the collapse-to-the-global decision — the key must still
+        # come out tenant-scoped without any explicit tenant_id being passed.
+        collection = await self._make_collection(db_session, sample_data)
+        for _ in range(60):
+            await self._insert_doc(db_session, collection, "explicit")
+        await db_session.commit()
+
+        monkeypatch.setattr(settings, "MULTI_TENANT", True)
+        ambient = tenant_context.set("tenant-x")
+        try:
+            with patch.object(
+                dream_scheduler, "schedule_dream", new_callable=AsyncMock
+            ) as mock_schedule:
+                scheduled = await check_and_schedule_dream(db_session, collection)
+        finally:
+            tenant_context.reset(ambient)
+
+        assert scheduled is True
+        scheduled_key = mock_schedule.call_args.args[0]
+        assert scheduled_key.startswith("tenant-x:dream:")
+        assert parse_work_unit_key(scheduled_key).tenant_id == "tenant-x"
+
+    @pytest.mark.asyncio
     async def test_contradiction_excluded_from_count(
         self,
         dream_scheduler: DreamScheduler,
@@ -460,7 +611,7 @@ class TestEnqueueCancelsDreamsCorrectly:
         assert len(dream_scheduler.pending_dreams) == 3
 
         # Mock the database operations in enqueue
-        with patch("src.deriver.enqueue.tracked_db"):
+        with patch("src.deriver.enqueue.service_db"):
             # The enqueue function should cancel dreams via cancel_dreams_for_observed
             # We just test that the scheduler method was called correctly
             cancelled = await dream_scheduler.cancel_dreams_for_observed(

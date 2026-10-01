@@ -29,7 +29,7 @@ class TestEnqueueDreamMetadataShape:
                 new_callable=AsyncMock,
             ) as mock_get_collection,
             patch(
-                "src.deriver.enqueue.tracked_db",
+                "src.deriver.enqueue.service_db",
             ) as mock_db_ctx,
         ):
             mock_session = AsyncMock()

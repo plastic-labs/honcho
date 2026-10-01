@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Any, Literal
 
@@ -7,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
 from src.config import settings
-from src.dependencies import tracked_db
+from src.dependencies import service_db, tracked_db
 from src.dreamer.dream_scheduler import get_dream_scheduler
 from src.exceptions import ValidationException
 from src.models import QueueItem
@@ -19,7 +20,11 @@ from src.utils.queue_payload import (
     create_payload,
     create_scope_task_payload,
 )
-from src.utils.work_unit import construct_work_unit_key
+from src.utils.retryable_errors import is_retryable_error
+from src.utils.work_unit import (
+    construct_work_unit_key,
+    tenant_id_for_work_unit_key,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +57,13 @@ async def enqueue(payload: list[dict[str, Any]]) -> None:
                 f"Cancelled {len(cancelled_dreams)} pending dreams due to new activity"
             )
 
+    # region ai
+    # Per-tenant work: the payload is a single session's messages (one workspace +
+    # session, below), so the session/workspace/peer resolution in handle_session
+    # must be RLS-scoped to the caller's tenant, not run on the cross-tenant service
+    # session. tracked_db inherits the ambient tenant; the queue table has no RLS,
+    # so the insert is fine on it too.
+    # endregion
     async with tracked_db("message_enqueue") as db_session:
         try:
             # Determine if batch or single processing
@@ -68,16 +80,72 @@ async def enqueue(payload: list[dict[str, Any]]) -> None:
             )
 
             if queue_records:
-                stmt = insert(QueueItem).returning(QueueItem)
-                await db_session.execute(stmt, queue_records)
-                await db_session.commit()
+                await _insert_queue_records(db_session, queue_records)
 
         except Exception as e:
+            # Reached only after _insert_queue_records has exhausted its
+            # transient-error retries; enqueue stays fire-and-forget by
+            # contract, so the failure surfaces here rather than to a caller.
             logger.exception("Failed to enqueue message(s)!")
             if settings.SENTRY.ENABLED:
                 import sentry_sdk
 
                 sentry_sdk.capture_exception(e)
+
+
+async def _insert_queue_records(
+    db_session: AsyncSession, queue_records: list[dict[str, Any]]
+) -> None:
+    """Insert a stamped, key-sorted batch of queue records, retrying transient failures."""
+    # region ai
+    # Sorted by work_unit_key so the insert trigger's batch upserts acquire
+    # row locks in canonical key order — the same order the claim's lock step
+    # and the statement-trigger recomputes use — making trigger-vs-claim
+    # deadlock by lock-order inversion impossible. The bounded retry covers
+    # residual transient failures (deadlock, serialization, lost connection):
+    # before it, a deadlock-victim enqueue was swallowed by the caller's
+    # catch-all and the batch was silently never derived.
+    # endregion
+    records = sorted(
+        _stamp_tenant_id(queue_records), key=lambda record: record["work_unit_key"]
+    )
+    stmt = insert(QueueItem).returning(QueueItem)
+    last_attempt = 2
+    for attempt in range(last_attempt + 1):
+        try:
+            await db_session.execute(stmt, records)
+            await db_session.commit()
+            return
+        except Exception as exc:
+            await db_session.rollback()
+            if attempt == last_attempt or not is_retryable_error(exc):
+                raise
+            await asyncio.sleep(0.1 * (attempt + 1))
+
+
+def _stamp_tenant_id(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Set each queue record's tenant_id from its work_unit_key's tenant prefix."""
+    # region ai
+    # queue.tenant_id is the fair-scheduling column the claim path partitions on;
+    # deriving it from the already-namespaced key keeps the column and the key
+    # prefix identical by construction at every insert site. Flag-off keys (and
+    # the tenant-less reconciler) have no prefix, so the column stays NULL — the
+    # tenant-less lane.
+    # endregion
+    for record in records:
+        record["tenant_id"] = tenant_id_for_work_unit_key(record["work_unit_key"])
+        if settings.MULTI_TENANT and record["tenant_id"] is None:
+            # region ai
+            # Looks unreachable and is deliberately defensive: tenant-scoped
+            # types raise at key construction before reaching here, so this
+            # guards the invariant only against a future record builder that
+            # skips construct_work_unit_key.
+            # endregion
+            raise ValueError(
+                f"queue record for task_type {record['task_type']!r} carries "
+                + "no tenant under MULTI_TENANT"
+            )
+    return records
 
 
 async def handle_session(
@@ -478,7 +546,7 @@ async def enqueue_dream(
         session_name: Name of the session to scope the dream to if specified
         rebuild: card_refresh only — rebuild the card without the prior card
     """
-    async with tracked_db("dream_enqueue") as db_session:
+    async with service_db("dream_enqueue") as db_session:
         # Authoritative scope check, in the same transaction as the queue insert.
         # A route-level precheck cannot be relied on: it runs in its own session,
         # and a *missing* reserved name passes it (nothing has flagged that peer
@@ -551,7 +619,7 @@ async def enqueue_dream(
                 return
 
             stmt = insert(QueueItem).returning(QueueItem)
-            await db_session.execute(stmt, [dream_record])
+            await db_session.execute(stmt, _stamp_tenant_id([dream_record]))
             await db_session.commit()
 
             logger.info(
@@ -630,7 +698,7 @@ async def _enqueue_scope_task(
     to "pending" in the same transaction as the queue insert, so the status
     surface never claims a job exists that was never enqueued (or vice versa).
     """
-    async with tracked_db("scope_task_enqueue") as db_session:
+    async with service_db("scope_task_enqueue") as db_session:
         try:
             record = create_scope_task_record(
                 workspace_name,
@@ -674,7 +742,7 @@ async def _enqueue_scope_task(
                 return
 
             stmt = insert(QueueItem).returning(QueueItem)
-            await db_session.execute(stmt, [record])
+            await db_session.execute(stmt, _stamp_tenant_id([record]))
 
             if task_type == "scope_backfill":
                 await crud.update_scope_backfill_status(
@@ -800,7 +868,7 @@ async def enqueue_deletion(
         )
 
         stmt = insert(QueueItem).returning(QueueItem)
-        await session.execute(stmt, [deletion_record])
+        await session.execute(stmt, _stamp_tenant_id([deletion_record]))
 
         if should_commit:
             await session.commit()
@@ -818,7 +886,7 @@ async def enqueue_deletion(
             await _do_enqueue(db_session, should_commit=False)
         else:
             # Create a new session and commit
-            async with tracked_db("deletion_enqueue") as new_session:
+            async with service_db("deletion_enqueue") as new_session:
                 await _do_enqueue(new_session, should_commit=True)
 
     except Exception as e:

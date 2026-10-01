@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from src import models
 from src.config import settings
+from src.db import tenant_context
 from src.reconciler.embed_now import (
     embed_messages_now,
     embed_task_gate,
@@ -99,8 +100,29 @@ class TestEmbedTaskGate:
             assert embed_task_gate.try_schedule(tasks, ["msg_1"]) is True
             assert embed_task_gate.in_flight == 1
             await tasks()
-        mock_embed.assert_awaited_once_with(["msg_1"])
+        mock_embed.assert_awaited_once_with(["msg_1"], tenant_id=None)
         assert embed_task_gate.in_flight == 0
+
+    async def test_tenant_is_captured_at_schedule_time(self) -> None:
+        """The gate snapshots the request's tenant when it schedules, not when the
+        task runs: the task must stay correct even if the ambient tenant_context is
+        gone by then (require_auth's teardown ordering relative to background tasks
+        is a FastAPI implementation detail)."""
+        tasks = BackgroundTasks()
+        with (
+            patch.object(settings.EMBEDDING, "MAX_PENDING_EMBED_TASKS", 2),
+            patch(
+                "src.reconciler.embed_now.embed_messages_now", new=AsyncMock()
+            ) as mock_embed,
+        ):
+            token = tenant_context.set("acme")
+            try:
+                assert embed_task_gate.try_schedule(tasks, ["msg_1"]) is True
+            finally:
+                tenant_context.reset(token)
+            assert tenant_context.get() is None
+            await tasks()
+        mock_embed.assert_awaited_once_with(["msg_1"], tenant_id="acme")
 
     async def test_rejects_at_cap_without_scheduling(self) -> None:
         """At the cap, nothing is scheduled and False is returned."""
@@ -171,7 +193,9 @@ class TestEmbedMessagesNow:
         await embed_messages_now([message_id])
 
         for emb_id in emb_ids:
-            row = await db_session.get(models.MessageEmbedding, emb_id)
+            row = await db_session.get(
+                models.MessageEmbedding, (models.DEFAULT_TENANT_ID, emb_id)
+            )
             assert row is not None
             await db_session.refresh(row)
             assert row.sync_state == "synced"
@@ -223,7 +247,9 @@ class TestEmbedMessagesNow:
             await embed_messages_now([message_id])
 
         for emb_id in emb_ids:
-            row = await db_session.get(models.MessageEmbedding, emb_id)
+            row = await db_session.get(
+                models.MessageEmbedding, (models.DEFAULT_TENANT_ID, emb_id)
+            )
             assert row is not None
             await db_session.refresh(row)
             assert row.sync_state == "pending"
@@ -262,7 +288,9 @@ class TestEmbedMessagesNow:
         }
 
         for emb_id in emb_ids:
-            row = await db_session.get(models.MessageEmbedding, emb_id)
+            row = await db_session.get(
+                models.MessageEmbedding, (models.DEFAULT_TENANT_ID, emb_id)
+            )
             assert row is not None
             await db_session.refresh(row)
             assert row.sync_state == "synced"
@@ -308,12 +336,16 @@ class TestEmbedMessagesNow:
         assert upserted_ids == {f"{message_id}_0", f"{message_id}_2"}
 
         # The locked chunk stays pending; the other two are synced.
-        locked_row = await db_session.get(models.MessageEmbedding, locked_id)
+        locked_row = await db_session.get(
+            models.MessageEmbedding, (models.DEFAULT_TENANT_ID, locked_id)
+        )
         assert locked_row is not None
         await db_session.refresh(locked_row)
         assert locked_row.sync_state == "pending"
         for emb_id in (emb_ids[0], emb_ids[2]):
-            row = await db_session.get(models.MessageEmbedding, emb_id)
+            row = await db_session.get(
+                models.MessageEmbedding, (models.DEFAULT_TENANT_ID, emb_id)
+            )
             assert row is not None
             await db_session.refresh(row)
             assert row.sync_state == "synced"
@@ -344,7 +376,9 @@ class TestEmbedMessagesNow:
             await embed_messages_now([message_id])
 
         for emb_id in emb_ids:
-            row = await db_session.get(models.MessageEmbedding, emb_id)
+            row = await db_session.get(
+                models.MessageEmbedding, (models.DEFAULT_TENANT_ID, emb_id)
+            )
             assert row is not None
             await db_session.refresh(row)
             assert row.sync_state == "pending"

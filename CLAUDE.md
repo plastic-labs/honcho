@@ -46,6 +46,7 @@ All API routes follow the pattern: `/v3/{resource}/{id}/{action}`. Most "list/se
 - **Messages**: Create (batch up to 100), upload (file), list, get, update
 - **Conclusions**: Create, list, query (semantic search), delete — the API-facing name for observations stored in `(observer, observed)` collections
 - **Keys**: Create scoped JWTs
+- **Tenants**: Create (idempotent), get, update (`PATCH`, `derivation_paused` only), delete — the above-tenant provisioning surface for control-plane use; authenticated by a service secret, not a JWT (see Tenant isolation)
 - **Webhooks**: Register endpoint, list, delete, test
 
 ### Key Features
@@ -72,7 +73,7 @@ All API routes follow the pattern: `/v3/{resource}/{id}/{action}`. Most "list/se
 - Database settings with connection pooling
 - Multiple LLM provider support
 - Background worker (deriver) settings
-- Authentication can be toggled on/off
+- Authentication can be toggled on/off (`AUTH_USE_AUTH`); under `MULTI_TENANT` it must be on for API instances — the startup validator refuses the combination
 
 ## Development Guide
 
@@ -117,20 +118,25 @@ cd sdks/typescript && bun run tsc --noEmit
 - Docstrings: Use Google style docstrings
 - **Never hold a DB session during external calls** (LLM, embedding, HTTP). If a function needs both a DB session and an external call result, compute the external result first and pass it as a parameter. This avoids tying up DB connections during slow network I/O. Use `tracked_db` for short-lived, DB-only operations; pass a shared session when multiple DB-only calls can reuse one connection.
 - **Never write through a read-only session** (`tracked_db(..., read_only=True)`, `get_read_db`, `ReadSessionLocal`). These run in AUTOCOMMIT mode with no transaction: writes are NOT blocked by the database — they silently commit immediately, and `begin_nested()` savepoints break. There is no runtime guard; this is enforced by convention only. Use `read_only=True` strictly for SELECT-only windows; anything that mutates (including get-or-create paths) must use a regular write session.
+- **Tenant isolation (`MULTI_TENANT`, default off).** When enabled, every DB session carries a request-scoped `app.tenant` GUC so row-level-security policies scope reads and writes to a single tenant. `tracked_db` is then the per-tenant path and is fail-closed — it raises before any query if no tenant is in scope (a passed `tenant_id` or an ambient `tenant_context`). `service_db` is the explicit RLS-bypass path for the legitimately cross-tenant work (the deriver's queue claim, the reconciler, the dreamer); never do per-tenant writes on it. For an HTTP request, the ambient `tenant_context` is bound once, in `require_auth` (`src/security.py`), from the tenant claim on the caller's JWT, and reset when the request completes — never do a per-tenant write outside a request without threading `tenant_id` explicitly. A startup validator (`src/startup/tenant_isolation_validator.py`) refuses to boot on half-states where isolation cannot hold (a transaction-mode pooler, RLS not enforced, no service role) or cannot serve (auth disabled on an API instance: with `AUTH_USE_AUTH` off every request is a tenant-less admin, no tenant is ever bound, and every `tracked_db` fails closed — an outage, not a leak; the deriver takes its tenant from the claimed work unit's key, so the deriver entrypoint skips that check). Off (the default, self-host), all of this is inert and honcho runs single-tenant on plain Postgres. Enforced by `tests/test_single_tenant_mode.py` (flag off with every subordinate setting — `MULTI_TENANT_SKIP_RLS_ASSERT`, `DB_SERVICE_CONNECTION_URI`, `DB_POOLER_MODE`, `TENANT_API_SECRET` — set to a value flag-on would act on, nothing changes; add any new tenant-subordinate setting to `_SUBORDINATES` there) and `tests/startup/test_fresh_single_tenant_deploy.py` (empty database → `alembic upgrade head` → all three validators → first write and first claim, under the shipped defaults).
+- **Tenant registry (`/v3/tenants`).** A third auth plane sits above the two in the previous bullet: the registry provisions tenants before any JWT for that tenant can exist, so it cannot use `require_auth` at all — it is guarded by a constant-time-compared service secret (`TENANT_API_SECRET`), disabled by default and inert unless `MULTI_TENANT` is also on. That plane authenticates the caller as the control plane, never as a tenant, and the two planes are enforced never to mix on the same route. `vector_correlation_id` (the tenant's vector-store namespace key) is required on create, `min_length=1, max_length=128`, `RESOURCE_NAME_PATTERN` — a tenant registered without one must not be served under `MULTI_TENANT` (the namespace resolver, `src/vector_store/tenant_namespace.py`, fails closed rather than substitute a default), so a missing or malformed key is a 422 at the control plane's first allocation rather than a `NULL` discovered later. Create never mutates a tenant (same id + different fields is a 409, which is what makes the control plane's provisioning retries safe); the one mutation door is `PATCH /v3/tenants/{id}`, whose allowlist is `schemas.TenantUpdate` (`extra="forbid"`) and has two entries with different semantics: `derivation_paused`, the control plane's mirrored "do not claim this tenant's billable work" bit, is fully mutable and idempotent, and `GET /v3/tenants?derivation_paused=true` lists the tenants that carry it; `vector_correlation_id` is set-once — a `NULL` row accepts a value, an equal value is a no-op, and a row that already holds a different value is a 409. Set-once is what keeps the resolver's process-lifetime memoization of the key safe without cross-process invalidation: it never caches a missing key (it refuses to serve instead), so the only transition the verb allows is one nothing has cached; the check runs under a row lock so two concurrent PATCHes cannot both see `NULL`. The deriver honours the bit in SQL, not in process state: `crud.deriver.not_paused_clause` is a `NOT EXISTS` against `tenants.derivation_paused` (served by the partial index `ix_tenants_derivation_paused`) that the claim, the in-unit fetches and the backlog metrics all apply, so a pause lands on the next claim or batch fetch with no staleness window, and KEDA's eligible count and the claim cannot disagree. It pauses only billable work: task types in `crud.deriver.PAUSE_EXEMPT_TASK_TYPES` (deletion, webhooks, scope maintenance, the tenant-less reconciler) keep running, and any new task type is paused until it is added there. Excluded units stay in the backlog (skipped, not drained) and are reported on their own gauges, per tenant. Like the previous bullet, all of this is inert with the flag off.
+- **Startup validators (`src/startup/`).** Both the API lifespan and the deriver entrypoint run them before serving traffic or claiming work, and each fails closed: `validate_embedding_schema` (pgvector column dims vs settings), `validate_tenant_isolation` (above), and `validate_queue_item_batches` — the deriver claim reads only the trigger-maintained `queue_item_batches` aggregate, so the process refuses to boot unless that table exists and its three `queue` triggers are present and enabled; otherwise enqueued work would be invisible to every deriver with no error anywhere.
 
 #### Multi-row locking and deadlocks
 
-Tables written concurrently by more than one worker — `documents` (deriver, dreamer, scope backfill/removal, reconciler) and `queue` (every deriver replica) — deadlock when two writers touch an overlapping row set in different orders. Rules:
+Tables written concurrently by more than one worker — `documents` (deriver, dreamer, scope backfill/removal, reconciler), `queue` (every deriver replica), and `queue_item_batches` (trigger-maintained from every `queue` write, and claimed `FOR UPDATE SKIP LOCKED` by every deriver replica) — deadlock when two writers touch an overlapping row set in different orders. Rules:
 
 - **A multi-row `SELECT ... FOR UPDATE` MUST carry an explicit `ORDER BY <pk>`.** Without it Postgres locks in scan order, which differs per plan, so two writers with overlapping sets can cycle. `_apply_document_row_updates` in `src/crud/document.py` is the reference implementation.
 - **`WHERE id IN (...)` does NOT impose an order**, so sorting the Python list is a no-op — the list order is discarded and the planner picks `Bitmap Heap Scan` (ctid order), `Index Scan` (id order), or `Seq Scan` per invocation. Deterministic ordering requires either a preceding `SELECT ... ORDER BY id FOR UPDATE` or `WHERE id IN (SELECT id ... ORDER BY id FOR UPDATE)`.
 - **`Document.id` is a random nanoid** (`models.py`), so id order is uncorrelated with physical order — an unordered predicate `UPDATE`/`DELETE` is roughly a coin flip against an id-ordered locker per row pair, not a rare edge case. (`QueueItem.id` is an integer identity, so there id order is also chronological.)
 - **Prefer no lock at all.** A single `UPDATE ... WHERE <predicate>` acquires row locks as it writes and has no separate lock phase to get wrong. Reach for `FOR UPDATE` only when a value must be read, computed in Python, and written back — that read-modify-write is the only reason `_apply_document_row_updates` locks (it replaced a server-side `func.greatest()`), and `populate_existing=True` is required with it so the identity map doesn't serve a stale pre-lock value. Server-side expressions (`func.greatest`, the JSONB `-` operator) avoid the lock entirely; see `_clear_work_unit_retry_attempts` in `src/deriver/queue_manager.py`.
-- `FOR UPDATE SKIP LOCKED` (the reconciler's claim pattern) never waits, so it cannot be a deadlock partner — but holding those locks across an external call still stalls other writers. See the "never hold a DB session during external calls" rule above.
+- `FOR UPDATE SKIP LOCKED` (the reconciler's claim pattern, and the deriver's own work-unit claim over `queue_item_batches` — `claim_rows_query` in `src/crud/deriver.py`) never waits, so it cannot be a deadlock partner for other SKIP LOCKED lockers — but it still locks in output order, its held locks can be the partner a blocking locker deadlocks against (the backlog triggers retry for exactly this), and holding those locks across an external call still stalls other writers. See the "never hold a DB session during external calls" rule above.
 
 #### Auth scoping
 
 - **`allow_member_read=True` (in `require_auth(...)`) is read-only — NEVER set it on a route that mutates state.** It lets a peer-scoped key reach a session route when its peer is an active member of the session, so on a mutating route it would hand any session member write access (message injection, config mutation, deletion). HTTP method is not a reliable read/write signal here (some read routes use POST for a richer body), so this is enforced by an explicit allowlist in `tests/routes/test_auth_route_policy.py` — adding the flag to a new route fails that test until you consciously add the route to `EXPECTED_MEMBER_READ_ROUTES`, and you must never add a mutating method there.
+- **Under `MULTI_TENANT`, the tenant-claim check in `auth()` must run before the admin short-circuit.** An admin JWT (`ad: true`) is admin only within its own tenant; if the tenant gate moved after the admin check, a tenant-less admin token would bypass tenant scoping entirely.
+- **The tenant-registry API (`/v3/tenants`) uses `require_tenant_api`, never `require_auth`.** It is a separate, above-tenant auth plane authenticated by a service secret; a route must not carry both dependencies. Enforced by `test_tenant_api_routes_use_their_own_auth_plane` in `tests/routes/test_auth_route_policy.py`.
 - **When a member-read route is keyed by another sub-resource** (e.g. `peers/{peer_id}/config`), the handler must additionally confirm a peer-scoped caller only reads its OWN resource (`jwt_params.p == peer_id`, else raise `AuthenticationException`). Membership grants session access, not access to a co-member's data. See `get_peer_config` in `src/routers/sessions.py`.
 
 ### Runtime Architecture
@@ -138,7 +144,7 @@ Tables written concurrently by more than one worker — `documents` (deriver, dr
 Honcho runs as two cooperating processes that share a Postgres database and Redis cache:
 
 - **API server** (`uv run fastapi dev src/main.py`) — handles HTTP, enqueues background work, returns immediately. Hosts the **Dialectic** agent inline (synchronous tool loop during chat requests).
-- **Deriver worker** (`uv run python -m src.deriver`) — long-running queue consumer (uvloop). Runs the **Deriver**, **Summarizer**, and **Dreamer** off the queue. Can run multiple instances (`DERIVER_WORKERS`). Also hosts an in-process **Reconciler scheduler** (`src/reconciler/`) that periodically embeds messages with `sync_state='pending'` in `MessageEmbedding` and cleans up stale queue items — embedding generation is decoupled from message creation by design.
+- **Deriver worker** (`uv run python -m src.deriver`) — long-running queue consumer (uvloop). Runs the **Deriver**, **Summarizer**, and **Dreamer** off the queue. Can run multiple process replicas (a deployment concern, orthogonal to config); within one process, `DERIVER_WORKERS` (≤512) sets concurrent work-unit tasks, further capped by DB-pool headroom via `DERIVER_WORKERS_PER_POOL_CONNECTION` — when the pool is the binding cap, the process logs it at boot and exports `deriver_effective_worker_cap`. Also hosts an in-process **Reconciler scheduler** (`src/reconciler/`) that periodically embeds messages with `sync_state='pending'` in `MessageEmbedding` and cleans up stale queue items — embedding generation is decoupled from message creation by design.
 
 ### Agent Architecture
 
@@ -153,6 +159,7 @@ Honcho uses several specialized LLM agents. They share tool definitions and the 
 The Deriver processes batches of incoming messages and extracts conclusions about peers. The current architecture is "minimal deriver" — a **single LLM call** per batch using structured output, not an agentic tool loop. This trades flexibility for cost and predictability.
 
 - **Trigger**: Messages enqueued by `src/deriver/enqueue.py` on message create; consumed by `src/deriver/queue_manager.py` → `consumer.process_item()` → `deriver.process_representation_tasks_batch()`.
+- **Claim**: workers claim whole work units from `queue_item_batches` — a database-trigger-maintained aggregate (one row per pending unit: tenant, task type, token sum, oldest age) — via `FOR UPDATE SKIP LOCKED`, round-robin over `tenant_id` so no tenant starves another within a claim; a claimed unit is marked by an `ActiveQueueSession` row for the processing duration. Single-tenant deployments (every `tenant_id` NULL) get plain oldest-first ordering, unchanged.
 - **Output**: Explicit conclusions (direct facts) and deductive conclusions (inferences) saved to `(observer, observed)` collections.
 - **Entry point**: `src/deriver/__main__.py` → `queue_manager.main()`.
 - **Prompts**: `src/deriver/prompts.py` (`minimal_deriver_prompt`).
@@ -200,6 +207,10 @@ The Dreamer is an orchestrated multi-specialist system that runs during schedule
 - **Prometheus metrics** (`src/telemetry/prometheus/`): every metric carries a `namespace` label and every recorder is fail-soft (a metrics error never propagates into a request or a worker loop). Counter children with a *bounded* label domain are zero-initialized per process at startup — `initialize_bounded_metrics(instance_type=...)`, called from the `src/main.py` lifespan (`api`) and `src/deriver/__main__.py` (`deriver`) — so an absent series means a broken scrape rather than "nothing happened". Two consequences worth knowing before touching telemetry:
   - **Adding a `BaseEvent` subclass requires adding its `_event_type` to `ALL_EVENT_TYPES`** in `src/telemetry/events/__init__.py` (and to `HIGH_VOLUME_EVENT_TYPES` if `_volume_class == "high_volume"`). Enforced by the drift guards in `tests/telemetry/test_metric_zero_init.py`, which assert set-equality against the discovered subclasses.
   - **A service-wide, non-additive gauge must be refreshed by every replica on its own timer**, and aggregated with `max()`/`avg()`, never `sum()`. `message_embeddings_pending` is the example: it reports a DB-global count, so it is driven from `ReconcilerScheduler._scheduler_loop` (runs on all replicas) rather than from the work-unit-deduped reconciliation cycle — otherwise, combined with the zero-init, every replica that never won the work unit would export a confident permanent `0`.
+- **Vector-store namespaces are per tenant** (`src/vector_store/tenant_namespace.py`): a namespace is `{prefix}.{doc|msg}.{hash(workspace[, observer, observed])}` and the hash carries no tenant, so the prefix is the only thing separating one tenant's vectors from another's — and `workspace.name` is unique only *within* a tenant, so two tenants on the SDK-default `"default"` workspace would otherwise share a namespace. `get_vector_namespace` is therefore **async** and resolves the prefix per call: `settings.VECTOR_STORE.NAMESPACE` when `MULTI_TENANT` is off (byte-identical to pre-tenancy output, and this beats an explicit `prefix=`), otherwise the bound tenant's `vector_correlation_id`, memoized per process. **The control plane is expected to set `vector_correlation_id` for every tenant it registers; nothing in this repo enforces that, so it is a precondition of turning the flag on rather than a guarantee.** Two consequences worth knowing before touching the vector store:
+  - **It fails closed and never falls back to `tenant_id`.** A tenant registered without a `vector_correlation_id` raises `VectorNamespaceUnresolved` rather than getting a fresh namespace, because a fresh namespace silently orphans whatever that tenant already had — the symptom would be an empty search, not an error. That exception is deliberately **not** a `VectorStoreError`: several callers catch `VectorStoreError` to mean "the backend is briefly unavailable, retry later", which would absorb a permanent provisioning failure as a transient one. A failed *read* of the key is still a `VectorStoreError`, because that one really is retryable.
+  - **Cross-tenant paths pass the row's prefix explicitly, and contain the failure per row.** The reconciler, immediate embedding and the soft-delete sweep run across all tenants on `service_db` with no ambient tenant, so they call `prefix_for_tenant(row.tenant_id)` and hand the result to `get_vector_namespace(..., prefix=...)`. Each resolves inside a per-row `try`: one unresolvable tenant must degrade into the existing sync-attempt backoff, never abort a batch its co-tenants are in — an aborted batch rolls back before any attempt counter moves, so the offending row returns to the front of the next batch forever.
+- **Tenant identity in telemetry** (`src/telemetry/tenant.py`): under `MULTI_TENANT` the ambient `tenant_context` (bound per request in `src/security.py`, per work unit in `src/deriver/queue_manager.py`) is read at four chokepoints — the CloudEvents emitter adds a `tenantid` extension attribute to the envelope (`source` still names the instance), the six attribution counters (`messages_created`, `dialectic_calls`, `deriver_queue_items_processed`, `deriver_tokens_processed`, `dialectic_tokens_processed`, `dreamer_tokens_processed`) carry a `tenant_id` label via `TenantScopedCounter`, the Sentry isolation scope gets a `tenant_id` tag at both bind sites, and Langfuse's `user.id` is the tenant. Flag-off every surface is byte-identical to pre-tenancy output: no attribute, `tenant_id=""` (which Prometheus treats as absent, so zero-init and dashboards are unchanged), no tag, `user.id` = namespace. A flag-on emit with no tenant bound increments `telemetry_events_untenanted{type}` (reconciliation events exempt, they are tenant-less by construction) — non-zero means an emit site runs outside its bind scope. A cross-tenant path that makes a billable call binds that call's tenant instead of joining the exempt list: the reconciler groups its re-embeds by tenant and binds each group. Nothing threads a tenant through event classes or emit sites; do not add one.
 
 ### Project Structure
 
@@ -207,7 +218,8 @@ The Dreamer is an orchestrated multi-specialist system that runs during schedule
 src/
 ├── main.py              # FastAPI app: middleware, routers, lifespan, exception handlers
 ├── models.py            # SQLAlchemy ORM models (Workspace/Peer/Session/Message/
-│                        #   MessageEmbedding/Collection/Document/QueueItem/...)
+│                        #   MessageEmbedding/Collection/Document/QueueItem/
+│                        #   QueueItemBatch/...)
 ├── config.py            # Pydantic-settings configuration (very large; see README)
 ├── db.py                # Engine + session/context management (request_context var)
 ├── dependencies.py      # FastAPI DI (tracked_db, etc.)
@@ -222,10 +234,10 @@ src/
 ├── crud/                # Per-resource DB operations
 │   ├── collection.py, deriver.py, document.py, message.py
 │   ├── peer.py, peer_card.py, representation.py  (RepresentationManager)
-│   ├── session.py, webhook.py, workspace.py
+│   ├── session.py, tenant.py, webhook.py, workspace.py
 ├── routers/             # FastAPI route handlers (all under /v3)
 │   ├── workspaces.py, peers.py (dialectic /chat lives here), sessions.py
-│   ├── messages.py, conclusions.py, keys.py, webhooks.py
+│   ├── messages.py, conclusions.py, keys.py, tenants.py, webhooks.py
 ├── dialectic/           # Dialectic agent — runs inline per chat request
 │   ├── chat.py           # agentic_chat() / agentic_chat_stream()
 │   ├── core.py           # DialecticAgent (the tool-loop driver)
@@ -257,11 +269,12 @@ src/
 ├── vector_store/        # Optional external vector stores (pgvector is default,
 │   │                    #   implemented via MessageEmbedding/Document in models+crud)
 │   ├── lancedb.py
+│   ├── tenant_namespace.py  # Per-tenant namespace prefix (MULTI_TENANT)
 │   └── turbopuffer.py
 ├── telemetry/           # Observability
 │   ├── emitter.py        # CloudEvents emitter
 │   ├── logging.py        # Logging helpers + route-template extraction
-│   ├── metrics_collector.py, reasoning_traces.py, sentry.py
+│   ├── client_context.py, metrics_collector.py, reasoning_traces.py, sentry.py, tenant.py
 │   ├── events/           # Event type definitions
 │   └── prometheus/       # Prometheus metric definitions
 ├── utils/               # Cross-cutting utilities
@@ -283,7 +296,7 @@ src/
 
 ### Database Design
 
-- All tables use text IDs (nanoid format) as primary keys
+- All tables use text IDs (nanoid format) as primary keys, except service tables with no FK/RLS surface: `queue.id` is an integer identity (see the locking section) and `queue_item_batches.work_unit_key` is the unit's own derived key
 - Composite foreign keys for multi-tenant relationships
 - Feature flags on workspace, peer, and session levels
 - Token counting on messages for usage tracking
@@ -301,7 +314,7 @@ src/
 7. **Hybrid search**: Postgres FTS (GIN index on `to_tsvector('english', content)`) + vector similarity (HNSW on `MessageEmbedding.embedding`). `MessageEmbedding` is a separate table from `Message` with its own `sync_state` so embedding is decoupled from message creation.
 8. **Pluggable external vector stores**: defaults to pgvector inline; can swap to turbopuffer or lancedb (`VECTOR_STORE_*` config; `src/vector_store/`).
 9. **Composite-FK multi-tenancy**: `workspace_name` participates in nearly every composite FK. Cross-workspace data leakage is structurally impossible at the schema level.
-10. **Scoped Authentication**: JWTs can be scoped to workspace, peer, or session level.
+10. **Scoped Authentication**: JWTs can be scoped to tenant, workspace, peer, or session level. Under `MULTI_TENANT`, every JWT must carry a tenant claim (`tn`), checked before any admin/workspace/peer/session scope logic — an admin token is admin only within its own tenant. The tenant registry itself (creating/updating/deleting tenants) sits above this scoping and is authenticated separately by a service secret rather than a JWT, since a JWT cannot carry a claim for a tenant that does not exist yet.
 11. **Batch Operations**: Bulk message creation up to 100 messages per request.
 12. **Session History**: Two-tier summarization — short every `SUMMARY_MESSAGES_PER_SHORT_SUMMARY` (default 20), long every `SUMMARY_MESSAGES_PER_LONG_SUMMARY` (default 60).
 

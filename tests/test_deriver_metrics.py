@@ -15,6 +15,7 @@ from src.backlog import (
 )
 from src.config import settings
 from src.dreamer.dream_due import DueDream
+from src.models import DEFAULT_TENANT_ID
 from src.routers import deriver_metrics
 
 
@@ -26,6 +27,7 @@ def _due_dreams(count: int) -> list[DueDream]:
             observed=f"peer-{i}",
             dream_type=schemas.DreamType.OMNI,
             session_name=f"session-{i}",
+            tenant_id=DEFAULT_TENANT_ID,
         )
         for i in range(count)
     ]
@@ -335,6 +337,7 @@ class TestLifespanScheduler:
             patch.object(main_module, "register_db_query_instrumentation"),
             patch.object(main_module, "register_db_connection_instrumentation"),
             patch.object(main_module, "validate_embedding_schema", AsyncMock()),
+            patch.object(main_module, "validate_queue_item_batches", AsyncMock()),
             patch.object(main_module, "init_cache", AsyncMock()),
             patch.object(main_module, "close_cache", AsyncMock()),
             patch.object(main_module, "shutdown_telemetry", AsyncMock()),

@@ -3,25 +3,35 @@ from datetime import UTC, datetime, timedelta
 from logging import getLogger
 from typing import Any
 
-from sqlalchemy import ColumnElement, Select, case, delete, func, or_, select
+from sqlalchemy import (
+    ColumnElement,
+    Select,
+    SQLColumnExpression,
+    and_,
+    case,
+    delete,
+    func,
+    or_,
+    select,
+)
 from sqlalchemy.engine import Row
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models, schemas
 from src.config import settings
+from src.db import tenant_context
 
 logger = getLogger(__name__)
 
-REPRESENTATION_WORK_UNIT_PREFIX = "representation:"
 
-
-def representation_batch_threshold_clause(
-    *,
-    work_unit_key: ColumnElement[str],
-    total_tokens: ColumnElement[Any],
-    oldest_created_at: ColumnElement[Any],
-) -> ColumnElement[bool] | None:
-    """The batch gate a representation work unit passes before it is claimable, or None when no gate applies."""
+def batch_threshold_clause() -> ColumnElement[bool] | None:
+    """The token-or-age gate a batch row passes before its unit is claimable, or None when no gate applies."""
+    # region ai
+    # Typed by task_type on the batch row, never by key prefix — a
+    # startswith("representation:") test here silently disabled the gate for
+    # every tenant-prefixed key. Non-representation units are always eligible;
+    # representation units wait for the token target or the age flush.
+    # endregion
     if settings.DERIVER.FLUSH_ENABLED:
         return None
 
@@ -29,29 +39,268 @@ def representation_batch_threshold_clause(
     if target_tokens <= 0:
         return None
 
-    threshold: ColumnElement[bool] = func.coalesce(total_tokens, 0) >= target_tokens
+    threshold: ColumnElement[bool] = models.QueueItemBatch.total_tokens >= target_tokens
 
     max_age_seconds = settings.DERIVER.REPRESENTATION_BATCH_MAX_AGE_SECONDS
     if max_age_seconds > 0:
         threshold = or_(
             threshold,
-            oldest_created_at <= func.now() - timedelta(seconds=max_age_seconds),
+            models.QueueItemBatch.oldest_created_at
+            <= func.now() - timedelta(seconds=max_age_seconds),
         )
 
-    return or_(
-        ~work_unit_key.startswith(REPRESENTATION_WORK_UNIT_PREFIX),
-        threshold,
+    return or_(models.QueueItemBatch.task_type != "representation", threshold)
+
+
+# region ai
+# Task types that keep running for a tenant whose derivation is paused. The
+# pause exists to stop billable (LLM) work, so everything else is exempt:
+# deletion (a customer's delete must not wait on billing), webhooks, scope
+# maintenance (row copies plus embedding lookups; the dreams it enqueues are
+# themselves paused), and the tenant-less reconciler. An exemption list, not
+# a pausable list, so a task type added later is paused until someone decides
+# otherwise — the safe direction for billing. tests/deriver/test_derivation_pause.py
+# pins that every task type is classified.
+# endregion
+PAUSE_EXEMPT_TASK_TYPES: frozenset[str] = frozenset(
+    {"deletion", "webhook", "scope_backfill", "scope_removal", "reconciler"}
+)
+
+
+def not_paused_clause(
+    tenant_id: SQLColumnExpression[str | None],
+    task_type: SQLColumnExpression[str] | str,
+) -> ColumnElement[bool] | None:
+    """Rows whose work may run despite tenant pauses, or None when nothing is excluded."""
+    # region ai
+    # The pause seam, applied in SQL wherever the deriver takes work: the claim
+    # (before ranking, so a paused whale contributes nothing to any round), the
+    # in-unit fetches (so a unit held when the pause lands is released at its
+    # next fetch), and the backlog metrics (so KEDA's eligible count and the
+    # claim cannot disagree). Read live from tenants.derivation_paused, which
+    # the control plane sets through the registry's PATCH: no in-process copy,
+    # so no staleness window and no refresh to fail.
+    #
+    # NOT EXISTS rather than NOT IN: a tenant-less (reconciler) row matches no
+    # tenants row and stays eligible by construction, where a bare NOT IN is
+    # NULL-false and would silently starve that lane. The probe is served by the
+    # partial index ix_tenants_derivation_paused, and the paused set is nearly
+    # always empty. Flag-off returns None, so single-tenant SQL is unchanged.
+    # endregion
+    if not settings.MULTI_TENANT:
+        return None
+    paused_tenant = (
+        select(models.Tenant.tenant_id)
+        .where(
+            models.Tenant.tenant_id == tenant_id,
+            # ai: bare column, not IS TRUE — matches the partial index predicate exactly.
+            models.Tenant.derivation_paused,
+        )
+        .exists()
     )
+    if isinstance(task_type, str):
+        return None if task_type in PAUSE_EXEMPT_TASK_TYPES else ~paused_tenant
+    return or_(task_type.in_(PAUSE_EXEMPT_TASK_TYPES), ~paused_tenant)
 
 
 def unclaimed_work_unit_clause(
-    work_unit_key: ColumnElement[str],
+    work_unit_key: SQLColumnExpression[str],
 ) -> ColumnElement[bool]:
     """No claim row exists for this work unit, stale ones included."""
     return (
         ~select(models.ActiveQueueSession.id)
         .where(models.ActiveQueueSession.work_unit_key == work_unit_key)
         .exists()
+    )
+
+
+def active_queue_session_match(
+    workspace_name: str,
+    session_name: str | None = None,
+) -> ColumnElement[bool]:
+    """Match claim rows whose work unit belongs to this workspace (and session), flag-aware."""
+    # region ai
+    # Flag-off keys are {task_type}:{workspace}:{session?}:... — workspace at
+    # split position 2, session at position 3. Under MULTI_TENANT tenant-scoped
+    # keys gain a {tenant_id}: prefix, shifting both positions by one; rows are
+    # additionally pinned to the ambient tenant via the tenant_id attribution
+    # column (a position match alone would hit other tenants' rows for a
+    # same-named workspace), and tenant-less (reconciler) rows are left to the
+    # stale-claim GC that owns them. Fail closed flag-on with no ambient tenant —
+    # every caller (API routes via require_auth, the deriver via
+    # process_work_unit) is tenant-bound when the flag is on.
+    # Known, pre-existing wrinkle both branches inherit: dream keys carry
+    # workspace one position deeper ({task}:{dream_type}:{workspace}:...) and
+    # scope keys carry session at the peer's position + 1, so those units are
+    # missed here and swept by the stale-claim GC instead — unchanged behavior.
+    # endregion
+    if settings.MULTI_TENANT:
+        tenant = tenant_context.get()
+        if not tenant:
+            raise ValueError(
+                f"cannot match claim rows for workspace {workspace_name!r} "
+                + "without a tenant when MULTI_TENANT is on"
+            )
+        workspace_position, session_position = 3, 4
+        tenant_match: ColumnElement[bool] | None = (
+            models.ActiveQueueSession.tenant_id == tenant
+        )
+    else:
+        workspace_position, session_position = 2, 3
+        tenant_match = None
+
+    match: ColumnElement[bool] = (
+        func.split_part(
+            models.ActiveQueueSession.work_unit_key, ":", workspace_position
+        )
+        == workspace_name
+    )
+    if session_name is not None:
+        match = and_(
+            match,
+            func.split_part(
+                models.ActiveQueueSession.work_unit_key, ":", session_position
+            )
+            == session_name,
+        )
+    if tenant_match is not None:
+        match = and_(tenant_match, match)
+    return match
+
+
+def queue_item_tenant_match() -> ColumnElement[bool] | None:
+    """Pin a QueueItem row to the ambient tenant, flag-aware; None flag-off (compose conditionally, as claim_rows_query does with batch_threshold_clause, so flag-off SQL is unchanged)."""
+    # region ai
+    # tenant_id is the authoritative tenant-scoped column for queue rows, not
+    # workspace_name or message_id: workspace_name is only unique per tenant
+    # (every tenant has a "default" workspace) and message ids are drawn from
+    # one global sequence, so either can collide across tenants. tenant_id
+    # does not — the queue_item_batches backfill (migration b7d2f4a81c39,
+    # the `UPDATE {schema}.queue SET tenant_id = split_part(work_unit_key,
+    # ':', 1) ...` step) derived it from the work_unit_key's tenant prefix for
+    # every row that predated the column, and every tenant-bound writer since
+    # (src/deriver/enqueue.py's _stamp_tenant_id, the reconciler scheduler,
+    # webhooks/events.py) sets it explicitly on insert. Rows with tenant_id
+    # IS NULL flag-on are the tenant-less reconciler lane (workspace_name is
+    # NULL there too, per the workspace_null_iff_reconciler check) and are
+    # left alone here, exactly as active_queue_session_match above leaves
+    # reconciler claim rows to the stale-claim GC that owns them. Fail closed
+    # flag-on with no ambient tenant, same shape as active_queue_session_match:
+    # every caller (API routes via require_auth, the deriver via
+    # process_work_unit) is tenant-bound when the flag is on.
+    # endregion
+    if not settings.MULTI_TENANT:
+        return None
+    tenant = tenant_context.get()
+    if not tenant:
+        raise ValueError(
+            "cannot match queue rows without a tenant when MULTI_TENANT is on"
+        )
+    return models.QueueItem.tenant_id == tenant
+
+
+def claim_rows_query(limit: int) -> Select[Any]:
+    """The claim's locked candidate SELECT: the tenants holding least work in flight first, skipping rows a concurrent claimer holds."""
+    # region ai
+    # Fairness = round-robin over tenant_id, weighted by the concurrency a
+    # tenant already holds. Ranks number each tenant's ELIGIBLE units
+    # oldest-first, and the tenant's LIVE claim count is ADDED to that rank, so
+    # the ordering key reads "how many units deep is this for its tenant,
+    # counting what it is already running". A tenant with two units in flight
+    # starts its next one at effective rank 3 and yields to every idle tenant's
+    # rank 1 — fairness conserves granted concurrency, not queue position,
+    # which is what stops a whale from holding every worker.
+    #
+    # Ranking over eligible rows ALONE lets a tenant already being processed
+    # re-enter at rank 1 every round (it is charged nothing for the unit it
+    # holds); moving eligibility OUTSIDE the subquery instead over-charges it,
+    # because a claimed rank-1 unit would shadow its tenant's rank-2 and sink
+    # it behind every other tenant regardless of how little that tenant holds.
+    # The offset is the middle: a tenant is charged for what it holds and
+    # nothing else. Stale claims are deliberately not counted — a crashed
+    # worker's abandoned claim would otherwise penalize its tenant until the
+    # GC reaps it.
+    #
+    # NULLs group as one partition, so the tenant-less reconciler lane is a
+    # bucket in the rotation (its offset joins NULL-safely, hence IS NOT
+    # DISTINCT FROM) and a flag-off deployment (every tenant_id NULL) adds one
+    # constant offset to every row, leaving plain oldest-first — the ordering
+    # is identical to the pre-fairness one. The window function cannot combine
+    # with FOR UPDATE, hence the rank-then-join shape.
+    #
+    # One locking statement on purpose: FOR UPDATE SKIP LOCKED locks rows in
+    # output order below the LIMIT, so a concurrent claimer's locked rows are
+    # skipped and BACKFILLED from the sorted stream — both claimers fill their
+    # batch, disjointly, with zero wasted claims. A two-step select-then-lock
+    # variant loses that backfill (the loser picks the same blind candidates,
+    # skips them all, and claims nothing for the poll). The cost of locking in
+    # scheduling order is that a rare lock-order inversion against the enqueue
+    # trigger's batch upserts can deadlock; Postgres's detector breaks it
+    # and both sides retry — the enqueue in _insert_queue_records, the claim
+    # on its next poll (the polling loop's catch-all backs off and continues).
+    # endregion
+    # The concurrency each tenant already holds. Sized by the fleet's live
+    # workers, not by queue depth, so it stays a small aggregate.
+    inflight = (
+        select(
+            models.ActiveQueueSession.tenant_id.label("tenant_id"),
+            func.count().label("inflight_units"),
+        )
+        .where(models.ActiveQueueSession.last_updated >= stale_claim_cutoff())
+        .group_by(models.ActiveQueueSession.tenant_id)
+        .subquery()
+    )
+
+    eligible = (
+        select(
+            models.QueueItemBatch.work_unit_key,
+            models.QueueItemBatch.oldest_created_at,
+            (
+                func.coalesce(inflight.c.inflight_units, 0)
+                + func.row_number().over(
+                    partition_by=models.QueueItemBatch.tenant_id,
+                    order_by=(
+                        models.QueueItemBatch.oldest_created_at.asc(),
+                        models.QueueItemBatch.work_unit_key.asc(),
+                    ),
+                )
+            ).label("tenant_fair_rank"),
+        )
+        .outerjoin(
+            inflight,
+            models.QueueItemBatch.tenant_id.is_not_distinct_from(inflight.c.tenant_id),
+        )
+        .where(unclaimed_work_unit_clause(models.QueueItemBatch.work_unit_key))
+    )
+
+    threshold_clause = batch_threshold_clause()
+    if threshold_clause is not None:
+        eligible = eligible.where(threshold_clause)
+    pause_clause = not_paused_clause(
+        models.QueueItemBatch.tenant_id, models.QueueItemBatch.task_type
+    )
+    if pause_clause is not None:
+        eligible = eligible.where(pause_clause)
+    eligible_subq = eligible.subquery()
+
+    return (
+        select(
+            models.QueueItemBatch.work_unit_key,
+            models.QueueItemBatch.task_type,
+            models.QueueItemBatch.total_tokens,
+            models.QueueItemBatch.oldest_created_at,
+        )
+        .join(
+            eligible_subq,
+            models.QueueItemBatch.work_unit_key == eligible_subq.c.work_unit_key,
+        )
+        .order_by(
+            eligible_subq.c.tenant_fair_rank.asc(),
+            eligible_subq.c.oldest_created_at.asc(),
+            models.QueueItemBatch.work_unit_key.asc(),
+        )
+        .limit(limit)
+        .with_for_update(skip_locked=True, of=models.QueueItemBatch)
     )
 
 
@@ -62,7 +311,7 @@ def stale_claim_cutoff() -> datetime:
 
 
 def not_live_claimed_work_unit_clause(
-    work_unit_key: ColumnElement[str],
+    work_unit_key: SQLColumnExpression[str],
 ) -> ColumnElement[bool]:
     """No claim refreshed inside the stale timeout exists, so a stale claim leaves its work unit claimable."""
     return (
@@ -103,45 +352,60 @@ async def get_deriver_metrics(db: AsyncSession) -> schemas.DeriverMetrics:
     """Count the outstanding deriver work in the whole database, read-only."""
     from src.reconciler.sync_vectors import backoff_eligible  # noqa: PLC0415
 
-    token_stats = (
-        select(
-            models.QueueItem.work_unit_key,
-            func.sum(models.Message.token_count).label("total_tokens"),
-            func.min(models.QueueItem.created_at).label("oldest_created_at"),
-        )
-        .join(models.Message, models.QueueItem.message_id == models.Message.id)
-        .where(~models.QueueItem.processed)
-        .where(
-            models.QueueItem.work_unit_key.startswith(REPRESENTATION_WORK_UNIT_PREFIX)
-        )
-        .group_by(models.QueueItem.work_unit_key)
-        .subquery()
-    )
-
-    work_units = (
-        select(models.QueueItem.work_unit_key)
-        .where(~models.QueueItem.processed)
-        .group_by(models.QueueItem.work_unit_key)
-        .subquery()
-    )
-
+    # region ai
+    # Reads the trigger-maintained queue_item_batches, not the queue: this poller
+    # ran the same two GROUP BYs as the old claim path on every backlog-metrics
+    # poll, the identical ~O(depth²) cost. sum(pending_count) equals the old
+    # per-item count and min(oldest_created_at) the old per-item min by
+    # construction of the triggers (see the queue_item_batches migration).
+    # endregion
     eligible = (
         select(func.count())
-        .select_from(work_units)
-        .outerjoin(
-            token_stats,
-            work_units.c.work_unit_key == token_stats.c.work_unit_key,
-        )
-        .where(not_live_claimed_work_unit_clause(work_units.c.work_unit_key))
+        .select_from(models.QueueItemBatch)
+        .where(not_live_claimed_work_unit_clause(models.QueueItemBatch.work_unit_key))
     )
 
-    threshold_clause = representation_batch_threshold_clause(
-        work_unit_key=work_units.c.work_unit_key,
-        total_tokens=token_stats.c.total_tokens,
-        oldest_created_at=token_stats.c.oldest_created_at,
-    )
+    threshold_clause = batch_threshold_clause()
     if threshold_clause is not None:
         eligible = eligible.where(threshold_clause)
+
+    # region ai
+    # An excluded tenant's rows are filtered out of the claim, so nothing will
+    # pick them up and they must not read as work waiting for a worker. Every
+    # gauge that answers "is there anything to do" therefore drops them: KEDA
+    # scales the deriver fleet off eligible_work_units, and outstanding-work
+    # falls back to the pending count and the oldest pending age when eligible
+    # and claimed are both zero — so leaving them in pending would hold the
+    # fleet up for a backlog no worker can take, one level down from the same
+    # bug. They are counted on their own gauge rather than dropped, so
+    # suspended depth stays visible.
+    #
+    # The claim's own clause, so the two cannot drift apart.
+    # endregion
+    claimable_tenant_clause = not_paused_clause(
+        models.QueueItemBatch.tenant_id, models.QueueItemBatch.task_type
+    )
+    excluded: Select[Any] | None = None
+    paused_tenants: Select[Any] | None = None
+    if claimable_tenant_clause is not None:
+        # ai: grouped by tenant — the total is the sum; per-tenant depth is what an operator watches while a tenant is paused
+        excluded = (
+            select(models.QueueItemBatch.tenant_id, func.count())
+            .select_from(models.QueueItemBatch)
+            .where(
+                not_live_claimed_work_unit_clause(models.QueueItemBatch.work_unit_key),
+                ~claimable_tenant_clause,
+            )
+            .group_by(models.QueueItemBatch.tenant_id)
+        )
+        if threshold_clause is not None:
+            excluded = excluded.where(threshold_clause)
+        eligible = eligible.where(claimable_tenant_clause)
+        paused_tenants = (
+            select(func.count())
+            .select_from(models.Tenant)
+            .where(models.Tenant.derivation_paused)
+        )
 
     claimed = (
         select(func.count())
@@ -150,12 +414,17 @@ async def get_deriver_metrics(db: AsyncSession) -> schemas.DeriverMetrics:
     )
 
     pending = select(
-        func.count(models.QueueItem.id),
+        func.coalesce(func.sum(models.QueueItemBatch.pending_count), 0),
         func.coalesce(
-            func.extract("epoch", func.now() - func.min(models.QueueItem.created_at)),
+            func.extract(
+                "epoch",
+                func.now() - func.min(models.QueueItemBatch.oldest_created_at),
+            ),
             0,
         ),
-    ).where(~models.QueueItem.processed)
+    )
+    if claimable_tenant_clause is not None:
+        pending = pending.where(claimable_tenant_clause)
 
     embeddings = select(
         func.count(),
@@ -171,12 +440,26 @@ async def get_deriver_metrics(db: AsyncSession) -> schemas.DeriverMetrics:
     ).where(models.MessageEmbedding.sync_state == "pending")
 
     eligible_count = (await db.execute(eligible)).scalar_one()
+    excluded_by_tenant: dict[str, int] = (
+        {str(tenant_id): int(count) for tenant_id, count in await db.execute(excluded)}
+        if excluded is not None
+        else {}
+    )
+    excluded_count = sum(excluded_by_tenant.values())
+    paused_count = (
+        (await db.execute(paused_tenants)).scalar_one()
+        if paused_tenants is not None
+        else 0
+    )
     claimed_count = (await db.execute(claimed)).scalar_one()
     pending_count, oldest_age = (await db.execute(pending)).one()
     embeddings_pending, embeddings_due = (await db.execute(embeddings)).one()
 
     return schemas.DeriverMetrics(
         eligible_work_units=int(eligible_count),
+        excluded_work_units=int(excluded_count),
+        excluded_work_units_by_tenant=excluded_by_tenant,
+        paused_tenants=int(paused_count),
         claimed_work_units=int(claimed_count),
         pending_items=int(pending_count),
         oldest_pending_age_seconds=float(oldest_age),

@@ -754,7 +754,9 @@ async def _search_messages_external(
     if external_vector_store is None:
         return []
 
-    namespace = external_vector_store.get_vector_namespace("message", workspace_name)
+    namespace = await external_vector_store.get_vector_namespace(
+        "message", workspace_name
+    )
 
     vector_filters: dict[str, Any] = {}
     if session_name:
