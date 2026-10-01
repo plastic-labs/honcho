@@ -1,6 +1,7 @@
 """Locked Alembic upgrades; run as ``python -m src.migrate [revision]``."""
 
 import argparse
+import hashlib
 import logging
 import random
 import time
@@ -18,6 +19,7 @@ __all__ = [
     "MIGRATION_LOCK_KEY",
     "MigrationLockTimeout",
     "acquire_migration_lock",
+    "advisory_lock_key",
     "main",
     "release_migration_lock",
     "run_with_lock_retry",
@@ -26,8 +28,14 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
-# ASCII "honcho"
-MIGRATION_LOCK_KEY = 0x686F6E63686F
+
+def advisory_lock_key(name: str) -> int:
+    """Stable signed 64-bit advisory lock key for a namespaced lock name."""
+    digest = hashlib.sha256(name.encode()).digest()
+    return int.from_bytes(digest[:8], "big", signed=True)
+
+
+MIGRATION_LOCK_KEY = advisory_lock_key("honcho:alembic-migrations")
 LOCK_NOT_AVAILABLE = "55P03"
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -42,7 +50,10 @@ def _lock_holder_pid(connection: Connection) -> int | None:
             "SELECT pid FROM pg_locks WHERE locktype = 'advisory' AND granted"
             + " AND classid::bigint = :hi AND objid::bigint = :lo AND objsubid = 1"
         ),
-        {"hi": MIGRATION_LOCK_KEY >> 32, "lo": MIGRATION_LOCK_KEY & 0xFFFFFFFF},
+        {
+            "hi": (MIGRATION_LOCK_KEY >> 32) & 0xFFFFFFFF,
+            "lo": MIGRATION_LOCK_KEY & 0xFFFFFFFF,
+        },
     )
 
 
@@ -69,6 +80,8 @@ def acquire_migration_lock(
         text(f"SELECT {try_lock}(:key)"), {"key": MIGRATION_LOCK_KEY}
     ):
         holder = _lock_holder_pid(connection)
+        if not transaction_scoped:
+            connection.commit()
         if time.monotonic() >= deadline:
             raise MigrationLockTimeout(
                 f"Timed out after {wait_seconds}s waiting for the migration lock"
@@ -78,6 +91,8 @@ def acquire_migration_lock(
             logger.warning("Waiting for migration lock held by pid %s", holder)
             waiting = True
         time.sleep(poll_interval)
+    if not transaction_scoped:
+        connection.commit()
 
 
 def release_migration_lock(connection: Connection) -> None:

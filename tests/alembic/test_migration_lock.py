@@ -100,9 +100,11 @@ def test_lock_wait_times_out(alembic_engine: Engine) -> None:
             text("SELECT pg_advisory_lock(:key)"), {"key": MIGRATION_LOCK_KEY}
         )
         holder_pid = holder.scalar(text("SELECT pg_backend_pid()"))
+        waiter.execute(text("SET idle_in_transaction_session_timeout = '300ms'"))
+        waiter.commit()
         try:
             with pytest.raises(MigrationLockTimeout, match=f"pid {holder_pid}"):
-                acquire_migration_lock(waiter, wait_seconds=1, poll_interval=0.2)
+                acquire_migration_lock(waiter, wait_seconds=1.5, poll_interval=0.5)
         finally:
             holder.execute(
                 text("SELECT pg_advisory_unlock(:key)"), {"key": MIGRATION_LOCK_KEY}
