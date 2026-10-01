@@ -396,6 +396,7 @@ class ConfiguredEmbeddingModelSettings(BaseModel):
     max_batch_size: Annotated[int, Field(gt=0)] | None = None
     # Client HTTP timeout in seconds. OpenAI receives seconds; Gemini converts to ms.
     timeout: float | None = None
+    tokenizer: str | None = None
 
     @field_validator("timeout", mode="before")
     @classmethod
@@ -442,6 +443,7 @@ class EmbeddingModelConfig(BaseModel):
     max_batch_size: Annotated[int, Field(gt=0)] | None = None
     # Client HTTP timeout in seconds. OpenAI receives seconds; Gemini converts to ms.
     timeout: float | None = None
+    tokenizer: str | None = None
 
     @field_validator("timeout", mode="before")
     @classmethod
@@ -575,6 +577,7 @@ def resolve_embedding_model_config(
         base_url=configured.overrides.base_url,
         max_batch_size=configured.max_batch_size,
         timeout=configured.timeout,
+        tokenizer=configured.tokenizer,
     )
 
 

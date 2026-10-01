@@ -7,7 +7,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-09-13T14:25:27.462633Z"
+exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
 exclude-newer-span = "P5D"
 
 [manifest]
@@ -1091,6 +1091,9 @@ qdrant = [
 surprisal = [
     { name = "scikit-learn" },
 ]
+tokenizers = [
+    { name = "tokenizers" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -1145,10 +1148,11 @@ requires-dist = [
     { name = "sqlalchemy", specifier = ">=2.0.30" },
     { name = "tenacity", specifier = ">=9.1.2" },
     { name = "tiktoken", specifier = ">=0.9.0" },
+    { name = "tokenizers", marker = "extra == 'tokenizers'", specifier = ">=0.22.0" },
     { name = "turbopuffer", specifier = ">=1.8.1" },
     { name = "typing-extensions", specifier = ">=4.11.0" },
 ]
-provides-extras = ["surprisal", "lancedb", "qdrant", "chromadb"]
+provides-extras = ["surprisal", "lancedb", "tokenizers", "qdrant", "chromadb"]
 
 [package.metadata.requires-dev]
 dev = [
