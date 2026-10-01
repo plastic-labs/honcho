@@ -154,6 +154,8 @@ class CapturedLLMCall:
     retry_attempts: int | None = None
     is_final_attempt: bool | None = None
     effective_max_output_tokens: int | None = None
+    tags: list[str] = field(default_factory=list)
+    metadata: dict[str, str] = field(default_factory=dict)
 
 
 def _normalize_message(
@@ -354,6 +356,8 @@ def build_captured_call(
             attempt >= retry_attempts if retry_attempts is not None else None
         ),
         effective_max_output_tokens=effective_max_output_tokens,
+        tags=list(telemetry.tags) if telemetry else [],
+        metadata=dict(telemetry.metadata) if telemetry else {},
     )
 
 
@@ -400,6 +404,8 @@ class CapturedSpan:
     input: Any = None
     output: Any = None
     is_error: bool = False
+    tags: list[str] = field(default_factory=list)
+    metadata: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -450,6 +456,8 @@ def build_captured_span(
         input=input,
         output=output,
         is_error=is_error,
+        tags=list(telemetry.tags),
+        metadata=dict(telemetry.metadata),
     )
 
 

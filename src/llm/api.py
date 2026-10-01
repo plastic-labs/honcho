@@ -11,6 +11,7 @@ Orchestrates:
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 from collections.abc import AsyncIterator, Callable, Collection
 from typing import Any, Literal, TypeVar, cast, overload
@@ -42,6 +43,7 @@ from .types import (
     IterationCallback,
     LLMTelemetryContext,
     ReasoningEffortType,
+    RunUsage,
     StreamingResponseWithMetadata,
 )
 
@@ -79,6 +81,7 @@ async def honcho_llm_call(
     iteration_callback: IterationCallback | None = None,
     telemetry: LLMTelemetryContext | None = None,
     run: CapturedAgentSpan | None = None,
+    restart_blocked_by: Collection[str] | None = None,
 ) -> HonchoLLMCallResponse[M]: ...
 
 
@@ -111,6 +114,7 @@ async def honcho_llm_call(
     iteration_callback: IterationCallback | None = None,
     telemetry: LLMTelemetryContext | None = None,
     run: CapturedAgentSpan | None = None,
+    restart_blocked_by: Collection[str] | None = None,
 ) -> HonchoLLMCallResponse[str]: ...
 
 
@@ -143,6 +147,7 @@ async def honcho_llm_call(
     iteration_callback: IterationCallback | None = None,
     telemetry: LLMTelemetryContext | None = None,
     run: CapturedAgentSpan | None = None,
+    restart_blocked_by: Collection[str] | None = None,
 ) -> AsyncIterator[HonchoLLMCallStreamChunk] | StreamingResponseWithMetadata: ...
 
 
@@ -174,6 +179,7 @@ async def honcho_llm_call(
     iteration_callback: IterationCallback | None = None,
     telemetry: LLMTelemetryContext | None = None,
     run: CapturedAgentSpan | None = None,
+    restart_blocked_by: Collection[str] | None = None,
 ) -> (
     HonchoLLMCallResponse[Any]
     | AsyncIterator[HonchoLLMCallStreamChunk]
@@ -181,10 +187,13 @@ async def honcho_llm_call(
 ):
     """Make an LLM call with retry, optional backup failover, and optional tool loop.
 
-    Backup provider/model (if configured on the primary ModelConfig's
-    `fallback`) is used on the final retry attempt, which is 3 by default.
-    When a tool loop exhausts its retries on the primary the whole
-    run is restarted on the fallback.
+    For a single call, the backup provider/model (if configured on the primary
+    ModelConfig's `fallback`) is used on the final retry attempt, which is 3 by
+    default. A tool loop instead stays on the primary for every call and, when
+    one exhausts its retries, restarts the whole run on the fallback from the
+    original messages. The restart is skipped, and the primary's error raised,
+    when the failure is a `ValidationException` or when a tool named in
+    `restart_blocked_by` already ran, since its side effects would repeat.
 
     A caller-supplied `run` stays owned by the caller; otherwise the call opens
     and ends its own around the tool loop.
@@ -464,6 +473,8 @@ async def honcho_llm_call(
     async def run_tool_loop(
         get_plan: Callable[[], AttemptPlan],
         before_retry: Callable[[Any], None],
+        run_telemetry: LLMTelemetryContext | None,
+        usage: RunUsage,
     ) -> HonchoLLMCallResponse[Any] | StreamingResponseWithMetadata:
         current_attempt.set(1)
         # execute_tool_loop raises ValidationException on out-of-range
@@ -490,8 +501,9 @@ async def honcho_llm_call(
             before_retry_callback=before_retry,
             stream_final=stream_final_only,
             iteration_callback=iteration_callback,
-            telemetry=telemetry,
+            telemetry=run_telemetry,
             run_span=run_handle if owns_run else None,
+            usage=usage,
         )
 
     def primary_run_plan() -> AttemptPlan:
@@ -504,18 +516,53 @@ async def honcho_llm_call(
             is_fallback=False,
         )
 
+    primary_usage = RunUsage()
     try:
         try:
-            result = await run_tool_loop(primary_run_plan, before_retry_callback)
+            result = await run_tool_loop(
+                primary_run_plan, before_retry_callback, telemetry, primary_usage
+            )
         except Exception as primary_exc:
             fallback_config = fallback_model_config(runtime_model_config)
-            if fallback_config is None:
+            if fallback_config is None or isinstance(primary_exc, ValidationException):
+                raise
+            primary_label = (
+                f"{runtime_model_config.transport}/{runtime_model_config.model}"
+            )
+            blocked = frozenset(restart_blocked_by or ())
+            committed = sorted(
+                {
+                    tc["tool_name"]
+                    for tc in primary_usage.tool_calls_made
+                    if tc["tool_name"] in blocked
+                }
+            )
+            if committed:
+                logger.warning(
+                    f"Tool loop on {primary_label} failed after {retry_attempts} "
+                    + f"attempts ({type(primary_exc).__name__}: {primary_exc}) but "
+                    + f"{', '.join(committed)} already ran; not restarting on "
+                    + f"backup {fallback_config.transport}/{fallback_config.model}"
+                )
                 raise
             logger.warning(
-                f"Tool loop on {runtime_model_config.transport}/"
-                + f"{runtime_model_config.model} failed after {retry_attempts} "
-                + f"attempts ({primary_exc}); restarting the run on backup "
-                + f"{fallback_config.transport}/{fallback_config.model}"
+                f"Tool loop on {primary_label} failed after {retry_attempts} "
+                + f"attempts ({type(primary_exc).__name__}: {primary_exc}); "
+                + f"restarting run {telemetry.run_id if telemetry else None} on "
+                + f"backup {fallback_config.transport}/{fallback_config.model}"
+            )
+            fallback_telemetry = (
+                dataclasses.replace(
+                    telemetry,
+                    tags=[*telemetry.tags, "fallback_restart"],
+                    metadata={
+                        **telemetry.metadata,
+                        "fallback_from": primary_label,
+                        "fallback_reason": type(primary_exc).__name__,
+                    },
+                )
+                if telemetry is not None
+                else None
             )
 
             def _fallback_run_plan() -> AttemptPlan:
@@ -528,9 +575,15 @@ async def honcho_llm_call(
                     is_fallback=True,
                 )
 
+            if run_handle is not None and fallback_telemetry is not None:
+                run_handle.telemetry = fallback_telemetry
             result = await run_tool_loop(
-                _fallback_run_plan, before_retry_for_model(fallback_config)
+                _fallback_run_plan,
+                before_retry_for_model(fallback_config),
+                fallback_telemetry,
+                RunUsage(),
             )
+            primary_usage.fold_into(result)
     except BaseException:
         if run_handle is not None and owns_run:
             run_handle.end(is_error=True)

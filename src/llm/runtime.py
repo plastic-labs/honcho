@@ -123,12 +123,9 @@ def select_model_config_for_attempt(
     Primary config on all attempts except the last, which swaps to the
     resolved fallback (if any).
     """
-    if attempt != retry_attempts or model_config.fallback is None:
+    if attempt != retry_attempts:
         return model_config
-    fallback = fallback_model_config(model_config)
-    if fallback is None:  # pragma: no cover - guarded above
-        return model_config
-    return fallback
+    return fallback_model_config(model_config) or model_config
 
 
 def fallback_model_config(model_config: ModelConfig) -> ModelConfig | None:

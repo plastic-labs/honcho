@@ -784,3 +784,108 @@ def test_eviction_ends_open_lifecycle_spans(
     first, second = _exporter_env.observations
     assert first.ended
     assert not second.ended
+
+
+def _tagged_call(tags: list[str], metadata: dict[str, str]):
+    telemetry = LLMTelemetryContext(
+        workspace_name="ws",
+        call_purpose="dialectic.answer",
+        parent_category="dialectic",
+        agent_type="dialectic",
+        run_id="r1",
+        trace_id="r1",
+        span_id="r1",
+        track_name="Dialectic Agent",
+        iteration=1,
+        tags=tags,
+        metadata=metadata,
+    )
+    return build_captured_call(
+        telemetry=telemetry,
+        transport="openai",
+        provider_label=None,
+        model="gpt-x",
+        messages=[{"role": "user", "content": "q"}],
+        tools=None,
+        tool_choice=None,
+        result=CompletionResult(content="answer", input_tokens=1, output_tokens=1),
+        attempt=1,
+        was_fallback=True,
+        was_stream=False,
+        finish_reason="stop",
+    )
+
+
+def test_context_tags_and_metadata_reach_every_observation(_exporter_env: FakeClient):
+    """A fallback restart tags its observations so the trace is filterable."""
+    client = _exporter_env
+    exporter = LangfuseExporter()
+    exporter.export(
+        _tagged_call(
+            ["fallback_restart"],
+            {
+                "fallback_from": "anthropic/claude-x",
+                "fallback_reason": "UpstreamLLMError",
+            },
+        )
+    )
+
+    run, step, gen = client.observations
+    for obs in (run, step, gen):
+        assert obs._otel_span.attributes["langfuse.trace.tags"] == ["fallback_restart"]
+        assert obs.kwargs["metadata"]["fallback_from"] == "anthropic/claude-x"
+        assert obs.kwargs["metadata"]["fallback_reason"] == "UpstreamLLMError"
+
+
+def test_untagged_calls_carry_no_tag_attribute(_exporter_env: FakeClient):
+    client = _exporter_env
+    exporter = LangfuseExporter()
+    exporter.export(_call(run_id="r1", trace_id="r1", iteration=1))
+
+    for obs in client.observations:
+        assert "langfuse.trace.tags" not in obs._otel_span.attributes
+        assert "fallback_from" not in cast(dict[str, str], obs.kwargs["metadata"])
+
+
+def test_lifecycle_spans_carry_context_tags(_exporter_env: FakeClient):
+    client = _exporter_env
+    exporter = LangfuseExporter()
+    exporter.export_span(_span("run", "start"))
+    step = _span("step", "start", iteration=1)
+    step.tags = ["fallback_restart"]
+    step.metadata = {"fallback_from": "anthropic/claude-x"}
+    exporter.export_span(step)
+
+    run, step_obs = client.observations
+    assert "langfuse.trace.tags" not in run._otel_span.attributes
+    assert step_obs._otel_span.attributes["langfuse.trace.tags"] == ["fallback_restart"]
+    assert step_obs.kwargs["metadata"]["fallback_from"] == "anthropic/claude-x"
+
+
+def test_streamed_tail_does_not_nest_under_a_closed_step(_exporter_env: FakeClient):
+    """A restarted run's tail reuses an iteration number the failed run closed."""
+    client = _exporter_env
+    exporter = LangfuseExporter()
+    exporter.export_span(_span("run", "start"))
+    exporter.export_span(_span("step", "start", iteration=2))
+    exporter.export_span(_span("step", "end", iteration=2))
+    exporter.export(_call(run_id="r1", trace_id="r1", iteration=2))
+
+    run, _step, tail = client.observations
+    assert tail.kwargs["trace_context"]["parent_span_id"] == run.id
+
+
+def test_run_end_record_stamps_tags_and_metadata(_exporter_env: FakeClient):
+    """A fallback restart marks the run span at close, after it was opened plain."""
+    client = _exporter_env
+    exporter = LangfuseExporter()
+    exporter.export_span(_span("run", "start"))
+    end = _span("run", "end", output="answer")
+    end.tags = ["fallback_restart"]
+    end.metadata = {"fallback_from": "anthropic/claude-x"}
+    exporter.export_span(end)
+
+    (run,) = client.observations
+    assert run.ended
+    assert run.updates["metadata"] == {"fallback_from": "anthropic/claude-x"}
+    assert run._otel_span.attributes["langfuse.trace.tags"] == ["fallback_restart"]

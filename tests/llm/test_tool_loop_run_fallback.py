@@ -17,22 +17,42 @@ import pytest
 from tenacity import wait_fixed
 
 from src.config import ModelConfig, ResolvedFallbackConfig
-from src.exceptions import UpstreamLLMError
+from src.exceptions import UpstreamLLMError, ValidationException
 from src.llm import api as api_module
 from src.llm import tool_loop as tool_loop_module
+from src.llm.runtime import CapturedAgentSpan
 from src.llm.types import (
     HonchoLLMCallResponse,
     HonchoLLMCallStreamChunk,
+    LLMTelemetryContext,
     StreamingResponseWithMetadata,
 )
 
 TOOLS = [{"name": "noop", "description": "no-op", "input_schema": {"type": "object"}}]
 QUERY = [{"role": "user", "content": "hi"}]
+TELEMETRY = LLMTelemetryContext(
+    workspace_name="ws",
+    call_purpose="dialectic.answer",
+    parent_category="dialectic",
+    agent_type="dialectic",
+    run_id="run-1",
+    trace_id="run-1",
+    span_id="run-1",
+    track_name="Dialectic Agent",
+    tags=["existing"],
+)
 
 
-def _config(with_fallback: bool = True) -> ModelConfig:
+def _config(
+    with_fallback: bool = True, fallback_thinking_budget: int | None = None
+) -> ModelConfig:
     fallback = (
-        ResolvedFallbackConfig(model="gpt-5", transport="openai", api_key="test-key")
+        ResolvedFallbackConfig(
+            model="gpt-5",
+            transport="openai",
+            api_key="test-key",
+            thinking_budget_tokens=fallback_thinking_budget,
+        )
         if with_fallback
         else None
     )
@@ -53,9 +73,14 @@ def _tool_call_response(provider: str = "anthropic") -> HonchoLLMCallResponse[st
     )
 
 
-def _answer(content: str) -> HonchoLLMCallResponse[str]:
+def _answer(
+    content: str, *, input_tokens: int = 0, output_tokens: int = 1
+) -> HonchoLLMCallResponse[str]:
     return HonchoLLMCallResponse(
-        content=content, output_tokens=1, finish_reasons=["stop"]
+        content=content,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        finish_reasons=["stop"],
     )
 
 
@@ -73,6 +98,9 @@ class Recorder:
             "attempt": plan.attempt,
             "messages": [dict(m) for m in kwargs["messages"]],
             "stream": kwargs["stream"],
+            "telemetry": kwargs["telemetry"],
+            "tools": kwargs["tools"],
+            "thinking_budget_tokens": plan.thinking_budget_tokens,
         }
         self.calls.append(call)
         return call
@@ -85,12 +113,23 @@ def _no_wait(**_kw: Any) -> wait_fixed:
     return wait_fixed(0)
 
 
+async def _run_tool(_name: str, _input: dict[str, Any]) -> str:
+    return "tool output"
+
+
 def _no_backoff() -> Any:
     return patch.object(tool_loop_module, "wait_exponential", _no_wait)
 
 
 async def _call(
-    recorder_fn: Any, *, config: ModelConfig, retry_attempts: int = 1
+    recorder_fn: Any,
+    *,
+    config: ModelConfig,
+    retry_attempts: int = 1,
+    max_tool_iterations: int = 5,
+    thinking_budget_tokens: int | None = None,
+    restart_blocked_by: set[str] | None = None,
+    run: CapturedAgentSpan | None = None,
 ) -> Any:
     with (
         patch.object(tool_loop_module, "honcho_llm_call_inner", new=recorder_fn),
@@ -102,12 +141,28 @@ async def _call(
             max_tokens=64,
             tools=TOOLS,
             tool_choice="auto",
-            tool_executor=lambda _name, _input: "tool output",
-            max_tool_iterations=5,
+            tool_executor=_run_tool,
+            max_tool_iterations=max_tool_iterations,
             messages=QUERY,
             enable_retry=True,
             retry_attempts=retry_attempts,
+            thinking_budget_tokens=thinking_budget_tokens,
+            telemetry=TELEMETRY,
+            run=run,
+            restart_blocked_by=restart_blocked_by,
         )
+
+
+def _primary_dies_after_one_tool_round(recorder: "Recorder") -> Any:
+    async def fake(*_args: Any, **kwargs: Any) -> HonchoLLMCallResponse[str]:
+        call = recorder.record(kwargs)
+        if call["provider"] == "anthropic":
+            if len(call["messages"]) == 1:
+                return _tool_call_response()
+            raise UpstreamLLMError("Model provider returned HTTP 529")
+        return _answer("from-fallback")
+
+    return fake
 
 
 @pytest.mark.asyncio
@@ -130,11 +185,8 @@ async def test_run_restarts_on_fallback_from_the_original_messages() -> None:
 
     primary = recorder.by_provider("anthropic")
     fallback = recorder.by_provider("openai")
-    # Iteration 1 succeeded, iteration 2 burned the whole retry budget.
     assert [c["attempt"] for c in primary] == [1, 1, 2]
     assert all(not c["is_fallback"] for c in primary)
-    # The fallback owns the run from the first message: nothing the primary
-    # wrote is in its history, and it never sees an attempt it did not make.
     assert fallback[0]["messages"] == QUERY
     assert [c["attempt"] for c in fallback] == [1]
     assert all(c["is_fallback"] for c in fallback)
@@ -157,12 +209,35 @@ async def test_no_provider_sees_another_providers_turns() -> None:
 
     await _call(fake, config=_config())
 
-    # Tool-call ids are tagged with the provider that issued them, so a
-    # history that names the other provider's tag was spliced together.
     for call in recorder.calls:
         other = "openai" if call["provider"] == "anthropic" else "anthropic"
         assert f"{other}-call" not in json.dumps(call["messages"]), call
     assert len(recorder.by_provider("openai")) == 2
+
+
+@pytest.mark.asyncio
+async def test_fallback_run_is_tagged_for_langfuse() -> None:
+    """The restarted run's telemetry names the tag and what it fell back from."""
+    recorder = Recorder()
+
+    async def fake(*_args: Any, **kwargs: Any) -> HonchoLLMCallResponse[str]:
+        call = recorder.record(kwargs)
+        if call["provider"] == "anthropic":
+            raise UpstreamLLMError("Model provider returned HTTP 529")
+        return _answer("from-fallback")
+
+    await _call(fake, config=_config())
+
+    (primary,) = recorder.by_provider("anthropic")
+    (fallback,) = recorder.by_provider("openai")
+    assert primary["telemetry"].tags == ["existing"]
+    assert "fallback_from" not in primary["telemetry"].metadata
+    assert fallback["telemetry"].tags == ["existing", "fallback_restart"]
+    assert fallback["telemetry"].metadata == {
+        "fallback_from": "anthropic/claude-haiku-4-5",
+        "fallback_reason": "UpstreamLLMError",
+    }
+    assert fallback["telemetry"].run_id == "run-1"
 
 
 @pytest.mark.asyncio
@@ -233,7 +308,7 @@ async def _stream_call(
             stream_final_only=True,
             tools=TOOLS,
             tool_choice="auto",
-            tool_executor=lambda _name, _input: "tool output",
+            tool_executor=_run_tool,
             max_tool_iterations=5,
             messages=QUERY,
             enable_retry=True,
@@ -260,7 +335,6 @@ async def test_final_stream_that_cannot_open_restarts_the_run_on_fallback() -> N
     streamed = "".join([chunk.content async for chunk in result])
 
     assert streamed == "from fallback"
-    # The fallback re-ran the tool phase, not just the stream.
     assert [c["stream"] for c in recorder.by_provider("openai")] == [False, True]
 
 
@@ -287,3 +361,137 @@ async def test_failure_after_the_first_chunk_is_not_restarted() -> None:
 
     assert received == ["partial"]
     assert recorder.by_provider("openai") == []
+
+
+@pytest.mark.asyncio
+async def test_fallback_calls_get_the_full_retry_budget() -> None:
+    recorder = Recorder()
+
+    async def fake(*_args: Any, **kwargs: Any) -> HonchoLLMCallResponse[str]:
+        call = recorder.record(kwargs)
+        if call["provider"] == "anthropic" or call["attempt"] < 3:
+            raise UpstreamLLMError(f"{call['provider']} is busy")
+        return _answer("third time lucky")
+
+    result = await _call(fake, config=_config(), retry_attempts=3)
+
+    assert cast(str, result.content) == "third time lucky"
+    assert [c["attempt"] for c in recorder.by_provider("anthropic")] == [1, 2, 3]
+    assert [c["attempt"] for c in recorder.by_provider("openai")] == [1, 2, 3]
+
+
+@pytest.mark.asyncio
+async def test_synthesis_after_max_iterations_restarts_on_fallback() -> None:
+    recorder = Recorder()
+
+    async def fake(*_args: Any, **kwargs: Any) -> HonchoLLMCallResponse[str]:
+        call = recorder.record(kwargs)
+        if call["tools"]:
+            return _tool_call_response(call["provider"])
+        if call["provider"] == "anthropic":
+            raise UpstreamLLMError("anthropic cannot synthesize")
+        return _answer("synthesized")
+
+    result = await _call(fake, config=_config(), max_tool_iterations=1)
+
+    assert cast(str, result.content) == "synthesized"
+    assert [bool(c["tools"]) for c in recorder.by_provider("anthropic")] == [
+        True,
+        False,
+    ]
+    assert [bool(c["tools"]) for c in recorder.by_provider("openai")] == [True, False]
+    assert result.iterations == 2
+
+
+@pytest.mark.asyncio
+async def test_caller_owned_run_span_is_left_open_and_marked() -> None:
+    recorder = Recorder()
+    run = CapturedAgentSpan(telemetry=TELEMETRY, kind="run")
+
+    await _call(_primary_dies_after_one_tool_round(recorder), config=_config(), run=run)
+
+    assert run._ended is False  # pyright: ignore[reportPrivateUsage]
+    assert run.telemetry.tags == ["existing", "fallback_restart"]
+    assert run.telemetry.metadata["fallback_from"] == "anthropic/claude-haiku-4-5"
+    assert len(recorder.by_provider("openai")) == 1
+
+
+@pytest.mark.asyncio
+async def test_fallback_run_uses_its_own_thinking_budget() -> None:
+    recorder = Recorder()
+
+    await _call(
+        _primary_dies_after_one_tool_round(recorder),
+        config=_config(fallback_thinking_budget=512),
+        thinking_budget_tokens=2048,
+    )
+
+    assert {c["thinking_budget_tokens"] for c in recorder.by_provider("anthropic")} == {
+        2048
+    }
+    assert {c["thinking_budget_tokens"] for c in recorder.by_provider("openai")} == {
+        512
+    }
+
+
+@pytest.mark.asyncio
+async def test_validation_errors_are_not_restarted() -> None:
+    recorder = Recorder()
+
+    async def fake(*_args: Any, **kwargs: Any) -> HonchoLLMCallResponse[str]:
+        recorder.record(kwargs)
+        raise ValidationException("thinking cannot be forced with tool_choice")
+
+    with pytest.raises(ValidationException):
+        await _call(fake, config=_config())
+
+    assert recorder.by_provider("openai") == []
+
+
+@pytest.mark.asyncio
+async def test_primary_spend_is_folded_into_the_fallback_result() -> None:
+    recorder = Recorder()
+
+    async def fake(*_args: Any, **kwargs: Any) -> HonchoLLMCallResponse[str]:
+        call = recorder.record(kwargs)
+        if call["provider"] == "anthropic":
+            if len(call["messages"]) == 1:
+                response = _tool_call_response()
+                response.input_tokens = 10
+                response.output_tokens = 5
+                return response
+            raise UpstreamLLMError("Model provider returned HTTP 529")
+        return _answer("from-fallback", input_tokens=7, output_tokens=3)
+
+    result = await _call(fake, config=_config())
+
+    assert result.input_tokens == 17
+    assert result.output_tokens == 8
+    assert [tc["tool_name"] for tc in result.tool_calls_made] == ["noop"]
+
+
+@pytest.mark.asyncio
+async def test_a_run_that_already_wrote_is_not_restarted() -> None:
+    recorder = Recorder()
+
+    with pytest.raises(UpstreamLLMError, match="529"):
+        await _call(
+            _primary_dies_after_one_tool_round(recorder),
+            config=_config(),
+            restart_blocked_by={"noop"},
+        )
+
+    assert recorder.by_provider("openai") == []
+
+
+@pytest.mark.asyncio
+async def test_blocked_tools_that_never_ran_do_not_prevent_a_restart() -> None:
+    recorder = Recorder()
+
+    result = await _call(
+        _primary_dies_after_one_tool_round(recorder),
+        config=_config(),
+        restart_blocked_by={"delete_observations"},
+    )
+
+    assert cast(str, result.content) == "from-fallback"

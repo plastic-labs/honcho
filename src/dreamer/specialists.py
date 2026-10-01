@@ -35,6 +35,7 @@ from src.utils.agent_tools import (
     CARD_REFRESH_SPECIALIST_TOOLS,
     DEDUCTION_SPECIALIST_TOOLS,
     INDUCTION_SPECIALIST_TOOLS,
+    MUTATING_TOOLS,
     create_tool_executor,
 )
 
@@ -359,6 +360,7 @@ If you update it, send the full deduplicated list and remove stale entries.
                 tool_executor=tool_executor,
                 max_tool_iterations=self.get_max_iterations(),
                 messages=messages,
+                restart_blocked_by=MUTATING_TOOLS,
                 telemetry=LLMTelemetryContext(
                     workspace_name=workspace_name,
                     call_purpose=call_purpose_slug,
