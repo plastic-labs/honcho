@@ -35,6 +35,8 @@ TRACING = false
 # Per-connection establish timeout (seconds) so a single connection attempt
 # fails fast instead of hanging when the server/pooler is unreachable.
 CONNECT_TIMEOUT_SECONDS = 2
+# Seconds a migrator waits for another migrator's lock before failing.
+MIGRATION_LOCK_WAIT_SECONDS = 300
 
 # Authentication settings
 [auth]

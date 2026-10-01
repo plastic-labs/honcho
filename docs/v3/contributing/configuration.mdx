@@ -572,6 +572,8 @@ DB_SQL_DEBUG=false
 # Per-connection establish timeout (seconds) so a single connection attempt
 # fails fast instead of hanging when the server/pooler is unreachable.
 DB_CONNECT_TIMEOUT_SECONDS=2
+# Seconds a migrator waits for another migrator's lock before failing
+DB_MIGRATION_LOCK_WAIT_SECONDS=300
 ```
 
 ### Authentication
@@ -843,6 +845,8 @@ uv run alembic upgrade head     # Upgrade to latest
 uv run alembic downgrade <rev>  # Downgrade to specific revision
 uv run alembic revision --autogenerate -m "Description"  # Create new migration
 ```
+
+Migrations hold a session-level advisory lock, so they need a session-mode connection (direct Postgres or a session pooler), not a transaction-mode pooler. A Supabase-style `:6543` port is rewritten to `:5432` automatically.
 
 ## Troubleshooting
 

@@ -746,6 +746,9 @@ class DBSettings(HonchoSettings):
     # deriver backs off and retries on a later poll).
     CONNECT_TIMEOUT_SECONDS: Annotated[int, Field(default=2, gt=0, le=60)] = 2
 
+    # Seconds a migrator waits for another migrator's advisory lock before failing
+    MIGRATION_LOCK_WAIT_SECONDS: Annotated[int, Field(default=300, gt=0, le=3600)] = 300
+
 
 class AuthSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="AUTH_", extra="ignore")  # pyright: ignore
