@@ -14,7 +14,8 @@ from pydantic import ValidationError
 from sqlalchemy.exc import OperationalError
 
 from src.config import settings
-from src.exceptions import HonchoException
+from src.exceptions import HonchoException, SentryPolicy
+from src.llm import errors as llm_errors
 
 P = ParamSpec("P")
 T = TypeVar("T")
@@ -26,10 +27,49 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# DB connection-pool checkout timeouts are a fleet-wide saturation symptom, not a
+# per-transaction bug. Collapse every occurrence into one issue (Sentry would otherwise
+# split by transaction/endpoint) and drop to warning so it stops tripping error alerts.
+# Watch it via a rate/spike metric alert instead.
+_DB_CONNECTION_TIMEOUT_POLICY = SentryPolicy(
+    level="warning",
+    fingerprint="honcho-db-connection-timeout",
+)
+
+
+def _apply_policy(event: Event, policy: SentryPolicy | None) -> Event | None:
+    """Regroup and re-level `event` per `policy`, or drop it when there is none."""
+    if policy is None:
+        return None
+
+    if policy.fingerprint is not None:
+        event["fingerprint"] = [policy.fingerprint]
+    event["level"] = policy.level
+    return event
+
+
+_LLM_SDK_INTEGRATION_MECHANISMS = frozenset({"google_genai", "openai", "anthropic"})
+
+
+def _is_llm_sdk_integration_event(event: Event) -> bool:
+    values = event.get("exception", {}).get("values") or []
+    for value in values:
+        mechanism: dict[str, Any] = value.get("mechanism") or {}
+        if mechanism.get("type") in _LLM_SDK_INTEGRATION_MECHANISMS:
+            return True
+    return False
+
+
 def default_before_send(event: Event, hint: Hint | None) -> Event | None:
     """Filter/regroup known non-actionable events before Sentry ingests them.
 
     Shared by every entrypoint (API + deriver) so filtering is process-agnostic.
+
+    Honcho's own exceptions carry their disposition as a ``SentryPolicy`` class
+    attribute, so a new exception type opts into visibility where it is defined
+    instead of by being matched here -- and, crucially, without having to land
+    above the blanket drop below. Third-party types have no such hook and are
+    still matched explicitly.
     """
     if not hint:
         return event
@@ -39,24 +79,25 @@ def default_before_send(event: Event, hint: Hint | None) -> Event | None:
         return event
 
     _, exc_value, _ = exc_info
-    if isinstance(exc_value, HonchoException):
+    if (
+        _is_llm_sdk_integration_event(event)
+        and llm_errors.as_upstream_error(exc_value) is not None
+    ):
+        # Failures will be retained and sent to Sentry later on after retries
         return None
+
+    if isinstance(exc_value, HonchoException):
+        return _apply_policy(event, type(exc_value).sentry_policy)
 
     # Filters out ValidationErrors and RequestValidationErrors (typically from Pydantic)
     if isinstance(exc_value, ValidationError | RequestValidationError):
         logger.info(f"Filtering out validation error from Sentry: {exc_value}")
         return None
 
-    # DB connection-pool checkout timeouts are a fleet-wide saturation symptom, not a
-    # per-transaction bug. Collapse every occurrence into one issue (Sentry would otherwise
-    # split by transaction/endpoint) and drop to warning so it stops tripping error alerts.
-    # Watch it via a rate/spike metric alert instead. Root cause tracked in DEV-1852.
     if isinstance(exc_value, OperationalError) and "connection timeout expired" in str(
         exc_value
     ):
-        event["fingerprint"] = ["honcho-db-connection-timeout"]
-        event["level"] = "warning"
-        return event
+        return _apply_policy(event, _DB_CONNECTION_TIMEOUT_POLICY)
 
     return event
 

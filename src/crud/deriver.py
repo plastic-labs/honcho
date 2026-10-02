@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 from logging import getLogger
 from typing import Any
 
-from sqlalchemy import ColumnElement, Select, case, func, or_, select
+from sqlalchemy import ColumnElement, Select, case, delete, func, or_, select
 from sqlalchemy.engine import Row
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -73,6 +73,30 @@ def not_live_claimed_work_unit_clause(
         )
         .exists()
     )
+
+
+async def cleanup_stale_work_units(db: AsyncSession) -> None:
+    """Delete claim rows whose last update is older than the stale timeout."""
+    stale_ids = (
+        (
+            await db.execute(
+                select(models.ActiveQueueSession.id)
+                .where(models.ActiveQueueSession.last_updated < stale_claim_cutoff())
+                .order_by(models.ActiveQueueSession.last_updated)
+                .with_for_update(skip_locked=True)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    if stale_ids:
+        await db.execute(
+            delete(models.ActiveQueueSession).where(
+                models.ActiveQueueSession.id.in_(stale_ids)
+            )
+        )
+    await db.commit()
 
 
 async def get_deriver_metrics(db: AsyncSession) -> schemas.DeriverMetrics:

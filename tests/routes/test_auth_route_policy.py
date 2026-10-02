@@ -103,6 +103,6 @@ def test_every_message_route_requires_auth():
     ]
     assert message_routes, "expected to find message routes mounted under the prefix"
     for route in message_routes:
-        assert any(
-            _auth_dependency_calls(route)
-        ), f"{route.methods} {route.path} has no auth dependency"
+        assert any(_auth_dependency_calls(route)), (
+            f"{route.methods} {route.path} has no auth dependency"
+        )

@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -83,8 +84,10 @@ def test_deduction_specialist_can_update_peer_card() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("session_id", [None, "canonical-session"])
 async def test_deduction_specialist_uses_nested_model_config(
     monkeypatch: pytest.MonkeyPatch,
+    session_id: str | None,
 ) -> None:
     monkeypatch.setattr(settings.METRICS, "ENABLED", False)
     specialist = DeductionSpecialist()
@@ -96,6 +99,10 @@ async def test_deduction_specialist_uses_nested_model_config(
     )
 
     with (
+        patch(
+            "src.dreamer.specialists.crud.get_session",
+            new=AsyncMock(return_value=SimpleNamespace(id="canonical-session")),
+        ) as get_session,
         patch(
             "src.dreamer.specialists.crud.get_peer",
             new=AsyncMock(),
@@ -118,12 +125,28 @@ async def test_deduction_specialist_uses_nested_model_config(
             observer="alice",
             observed="alice",
             session_name="session",
+            session_id=session_id,
+            queue_item_id=42,
         )
 
     await_args = mock_llm_call.await_args
     if await_args is None:
         raise AssertionError("Expected dreamer LLM call")
     kwargs = await_args.kwargs
+    telemetry = kwargs["telemetry"]
+    assert telemetry.session_id == "canonical-session"
+    assert telemetry.queue_item_ids == [42]
+    assert telemetry.observer == telemetry.observed == "alice"
+    assert telemetry.observers == ["alice"]
+    if session_id is None:
+        get_session.assert_awaited_once()
+        assert get_session.await_args is not None
+        assert get_session.await_args.kwargs == {
+            "workspace_name": "workspace",
+            "session_name": "session",
+        }
+    else:
+        get_session.assert_not_awaited()
     expected_config = settings.DREAM.DEDUCTION_MODEL_CONFIG
 
     assert result.content == "done"

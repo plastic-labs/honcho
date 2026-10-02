@@ -28,7 +28,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import exists, or_, select, update
 from sqlalchemy.dialects.postgresql import array
 from sqlalchemy.orm import load_only
 from sqlalchemy.sql.functions import func
@@ -189,7 +189,8 @@ async def _run_backfill(
                     models.Document.times_derived,
                     models.Document.internal_metadata,
                     models.Document.session_name,
-                    models.Document.source_ids,
+                    # source_ids falls back to this column for undrained rows.
+                    models.Document.legacy_source_ids,
                     models.Document.deleted_at,
                 )
             )
@@ -525,7 +526,7 @@ async def process_scope_removal(
             all_removed = list(frontier)
 
             # Fail-closed cascade: soft-delete derived documents whose support
-            # (source_ids) intersects anything removed, transitively — a
+            # (document_sources) intersects anything removed, transitively — a
             # deduction resting on removed evidence must leave with it, and so
             # must an induction resting on that deduction.
             while frontier:
@@ -537,7 +538,15 @@ async def process_scope_removal(
                         models.Document.observed == observed,
                         models.Document.level != "explicit",
                         models.Document.deleted_at.is_(None),
-                        models.Document.source_ids.has_any(array(frontier)),
+                        or_(
+                            exists().where(
+                                models.DocumentSource.derived_id == models.Document.id,
+                                models.DocumentSource.source_id.in_(frontier),
+                                models.DocumentSource.workspace_name == workspace_name,
+                            ),
+                            # Undrained rows still link through the legacy column.
+                            models.Document.legacy_source_ids.has_any(array(frontier)),
+                        ),
                     )
                     .values(deleted_at=func.now())
                     .returning(models.Document.id)

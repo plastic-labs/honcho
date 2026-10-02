@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import sentry_sdk
@@ -33,6 +33,8 @@ from src.dreamer.specialists import (
 )
 from src.dreamer.surprisal import SurprisalScore  # type: ignore
 from src.exceptions import SurprisalError
+from src.llm.runtime import CapturedAgentSpan, start_captured_span
+from src.llm.types import LLMTelemetryContext
 from src.schemas import DreamType
 from src.telemetry.events import DreamRunEvent, emit
 from src.telemetry.logging import (
@@ -68,6 +70,41 @@ class DreamResult:
     output_tokens: int
 
 
+def _start_dream_trace(
+    run_id: str,
+    *,
+    workspace_name: str,
+    observer: str,
+    observed: str,
+    session_name: str | None,
+    session_id: str | None,
+    dream_type: str | None,
+) -> CapturedAgentSpan | None:
+    """Open the dream's trace root for span-tree exporters."""
+    telemetry = LLMTelemetryContext(
+        workspace_name=workspace_name,
+        parent_category="dream",
+        run_id=run_id,
+        trace_id=run_id,
+        span_id=run_id,
+        session_id=session_id,
+        observer=observer,
+        observed=observed,
+        peer_name=observed,
+        track_name="Dream",
+    )
+    return start_captured_span(
+        "trace",
+        telemetry,
+        input={
+            "observer": observer,
+            "observed": observed,
+            "session_name": session_name,
+            "dream_type": dream_type,
+        },
+    )
+
+
 async def run_dream(
     workspace_name: str,
     observer: str,
@@ -79,6 +116,7 @@ async def run_dream(
     delay_reason: str | None = None,
     documents_since_last_dream_at_schedule: int | None = None,
     document_threshold: int | None = None,
+    queue_item_id: int | None = None,
 ) -> DreamResult | None:
     """
     Run a full dream cycle with optional surprisal-based sampling.
@@ -118,6 +156,7 @@ async def run_dream(
 
         workspace = await crud.get_workspace(db, workspace_name=workspace_name)
         configuration = get_configuration(None, session, workspace)
+        resolved_session_id = session.id if session else None
     if not configuration.dream.enabled:
         logger.info(
             f"[{run_id}] Dreams disabled for {workspace_name}/{session_name}, skipping dream"
@@ -130,6 +169,16 @@ async def run_dream(
     surprisal_observation_count = 0
     deduction_result: SpecialistResult | None = None
     induction_result: SpecialistResult | None = None
+
+    dream_trace = _start_dream_trace(
+        run_id,
+        workspace_name=workspace_name,
+        observer=observer,
+        observed=observed,
+        session_name=session_name,
+        session_id=resolved_session_id,
+        dream_type=dream_type,
+    )
 
     # Surprisal-based sampling (if enabled)
     # Specialists are self-directed by default - hints are optional suggestions
@@ -204,6 +253,8 @@ async def run_dream(
                 hints=exploration_hints,
                 configuration=configuration,
                 parent_run_id=run_id,
+                session_id=resolved_session_id,
+                queue_item_id=queue_item_id,
             )
             logger.info(
                 f"[{run_id}] Deduction completed: {deduction_result.content[:200]}..."
@@ -232,6 +283,8 @@ async def run_dream(
                 hints=exploration_hints,
                 configuration=configuration,
                 parent_run_id=run_id,
+                session_id=resolved_session_id,
+                queue_item_id=queue_item_id,
             )
             logger.info(
                 f"[{run_id}] Induction completed: {induction_result.content[:200]}..."
@@ -258,6 +311,14 @@ async def run_dream(
         # schema-validation surprises during partial state.
         if duration_ms == 0.0:
             duration_ms = (time.perf_counter() - start_time) * 1000
+        if dream_trace is not None:
+            dream_trace.end(
+                output={
+                    "deduction": deduction_result.content if deduction_result else None,
+                    "induction": induction_result.content if induction_result else None,
+                },
+                is_error=not (deduction_success and induction_success),
+            )
         try:
             total_iterations = (
                 deduction_result.iterations if deduction_result else 0
@@ -321,6 +382,7 @@ async def run_card_refresh_dream(
     dream_type: str | None = None,
     trigger_reason: str | None = None,
     delay_reason: str | None = None,
+    queue_item_id: int | None = None,
 ) -> DreamResult | None:
     """
     Run a lightweight card-only refresh dream.
@@ -360,6 +422,7 @@ async def run_card_refresh_dream(
 
         workspace = await crud.get_workspace(db, workspace_name=workspace_name)
         configuration = get_configuration(None, session, workspace)
+        resolved_session_id = session.id if session else None
     if not configuration.dream.enabled:
         logger.info(
             f"[{run_id}] Dreams disabled for {workspace_name}/{session_name}, skipping card refresh"
@@ -374,6 +437,15 @@ async def run_card_refresh_dream(
     specialist_success = False
     specialist_result: SpecialistResult | None = None
     duration_ms = 0.0
+    dream_trace = _start_dream_trace(
+        run_id,
+        workspace_name=workspace_name,
+        observer=observer,
+        observed=observed,
+        session_name=session_name,
+        session_id=resolved_session_id,
+        dream_type=dream_type,
+    )
     try:
         specialist = CardRefreshSpecialist(rebuild=rebuild)
         try:
@@ -384,6 +456,8 @@ async def run_card_refresh_dream(
                 session_name=session_name,
                 configuration=configuration,
                 parent_run_id=run_id,
+                session_id=resolved_session_id,
+                queue_item_id=queue_item_id,
             )
             logger.info(
                 f"[{run_id}] Card refresh completed: {specialist_result.content[:200]}..."
@@ -410,6 +484,11 @@ async def run_card_refresh_dream(
         # deduction-family run, so its outcome rides on deduction_success.
         if duration_ms == 0.0:
             duration_ms = (time.perf_counter() - start_time) * 1000
+        if dream_trace is not None:
+            dream_trace.end(
+                output=specialist_result.content if specialist_result else None,
+                is_error=not specialist_success,
+            )
         try:
             emit(
                 DreamRunEvent(
@@ -484,6 +563,8 @@ def _create_queries_from_surprisal(
 async def process_dream(
     payload: DreamPayload,
     workspace_name: str,
+    *,
+    queue_item_id: int | None = None,
 ) -> None:
     """
     Process a dream task by performing collection maintenance operations.
@@ -512,6 +593,7 @@ DREAM: {payload.dream_type} documents for {workspace_name}/{payload.observer}/{p
                     delay_reason=payload.delay_reason,
                     documents_since_last_dream_at_schedule=payload.documents_since_last_dream_at_schedule,
                     document_threshold=payload.document_threshold,
+                    queue_item_id=queue_item_id,
                 )
 
                 # Log completion (telemetry event already emitted in run_dream)
@@ -523,7 +605,7 @@ DREAM: {payload.dream_type} documents for {workspace_name}/{payload.observer}/{p
                     )
 
                     # Both guard fields advance together only on successful consolidation.
-                    now_iso = datetime.now(timezone.utc).isoformat()
+                    now_iso = datetime.now(UTC).isoformat()
                     async with tracked_db("dream.guard_pair_write") as db:
                         collection = await crud.get_collection(
                             db,
@@ -561,6 +643,7 @@ DREAM: {payload.dream_type} documents for {workspace_name}/{payload.observer}/{p
                     observed=payload.observed,
                     session_name=payload.session_name,
                     rebuild=payload.rebuild,
+                    queue_item_id=queue_item_id,
                     dream_type=payload.dream_type.value,
                     trigger_reason=payload.trigger_reason,
                     delay_reason=payload.delay_reason,

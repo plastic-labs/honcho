@@ -200,6 +200,10 @@ sessions = honcho.sessions()
 # Search across all content in workspace
 results = honcho.search(query)
 
+# Ask a question across every peer in the workspace
+answer = honcho.chat(query)
+stream = honcho.chat_stream(query)
+
 # Workspace metadata management
 metadata = honcho.get_metadata()
 honcho.set_metadata(dict)
@@ -235,6 +239,10 @@ const sessions = await honcho.sessions();
 // Search across all content in workspace (returns Page<any>)
 const results = await honcho.search(query);
 
+// Ask a question across every peer in the workspace
+const answer = await honcho.chat(query);
+const stream = await honcho.chatStream(query);
+
 // Workspace metadata management
 const metadata = await honcho.getMetadata();
 await honcho.setMetadata(metadata);
@@ -250,6 +258,77 @@ await honcho.deleteWorkspace(workspaceId);
 <Info>
 `peer()` and `session()` always make a get-or-create API call, returning objects with cached metadata, configuration, and timestamps.
 </Info>
+
+### Workspace Chat
+
+`honcho.chat()` asks a question of the whole workspace rather than one peer's representation. It lives on the client, not on `Peer`, and takes no `target`: the agent works out which peers are relevant and reads their memory pair by pair. See [Workspace Chat](/v3/documentation/features/chat#workspace-chat) for when to use it over `peer.chat()`.
+
+<CodeGroup>
+```python Python
+# Cross-peer question
+answer = honcho.chat("What themes appear across all peers this week?")
+
+# Narrow message tools to one session
+answer = honcho.chat("What was decided in this thread?", session="session-1")
+
+# Restrict recall to a scope's member sessions (always an allowlist; mutually exclusive with session)
+answer = honcho.chat("What came up in therapy sessions?", scope="therapy")
+answer = honcho.chat("What came up at intake?", scope=["therapy", "intake"])
+
+# Deeper reasoning
+answer = honcho.chat("Where do peers disagree?", reasoning_level="high")
+
+# Structured output: a Pydantic model returns a parsed instance, a JSON Schema dict returns a JSON string
+result = honcho.chat("List recurring themes", response_format=Themes)
+
+# Streaming
+for chunk in honcho.chat_stream("Summarize the workspace"):
+    print(chunk, end="", flush=True)
+
+# Async mirrors
+answer = await honcho.aio.chat("What themes appear across all peers?")
+async for chunk in await honcho.aio.chat_stream("Summarize the workspace"):
+    print(chunk, end="", flush=True)
+```
+
+```typescript TypeScript
+// Cross-peer question
+const answer = await honcho.chat("What themes appear across all peers this week?");
+
+// Narrow message tools to one session
+const threadAnswer = await honcho.chat("What was decided in this thread?", {
+  session: "session-1"
+});
+
+// Restrict recall to a scope's member sessions (always an allowlist; mutually exclusive with session)
+const scoped = await honcho.chat("What came up in therapy sessions?", { scope: "therapy" });
+const union = await honcho.chat("What came up at intake?", { scope: ["therapy", "intake"] });
+
+// Deeper reasoning
+const deeper = await honcho.chat("Where do peers disagree?", { reasoningLevel: "high" });
+
+// Structured output: pass a JSON Schema object, receive a JSON string
+const raw = await honcho.chat("List recurring themes", {
+  responseFormat: { type: "object", properties: { themes: { type: "array", items: { type: "string" } } }, required: ["themes"] }
+});
+
+// Streaming
+const stream = await honcho.chatStream("Summarize the workspace");
+for await (const chunk of stream) {
+  process.stdout.write(chunk);
+}
+```
+</CodeGroup>
+
+| Option | Python | TypeScript | Notes |
+|--------|--------|------------|-------|
+| Query | `query` (positional) | `query` (positional) | Required, 1 to 10,000 characters |
+| Session | `session=` | `session` | Session ID or object. Narrows message tools only |
+| Scope | `scope=` | `scope` | One name or a list. Always an allowlist; mutually exclusive with session |
+| Reasoning level | `reasoning_level=` | `reasoningLevel` | `minimal`, `low` (default), `medium`, `high`, `max` |
+| Response format | `response_format=` | `responseFormat` | Pydantic model or JSON Schema (Python); JSON Schema (TypeScript) |
+
+Workspace chat requires a workspace- or admin-level key. There is no `target` or `filters` option.
 
 ### Peer
 

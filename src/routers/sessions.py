@@ -350,10 +350,21 @@ async def get_or_create_session(
             db, workspace_id, session.peer_names.keys(), action=_SCOPES_ROUTE_GUIDANCE
         )
 
+    # A peer-scoped key may only add its own peer. Membership grants read access
+    # to the session (`allow_member_read`), so naming another peer, or joining a
+    # session the caller is not already in, would hand out that access; the
+    # latter is enforced inside the CRUD call via `acting_peer`.
+    acting_peer = None if jwt_params.ad else jwt_params.p
+    if acting_peer is not None and set(session.peer_names or {}) - {acting_peer}:
+        raise AuthenticationException("Unauthorized access to resource")
+
     # Handle session creation with proper error handling
     try:
         result = await crud.get_or_create_session(
-            db, workspace_name=workspace_id, session=session
+            db,
+            workspace_name=workspace_id,
+            session=session,
+            acting_peer=acting_peer,
         )
         response.status_code = 201 if result.created else 200
         return result.resource
@@ -929,6 +940,10 @@ async def get_session_context(
     # Pre-compute embedding outside the DB session (best-effort)
     embedding: list[float] | None = None
     if search_query:
+        # Return any connection the checks above checked out (scope resolution,
+        # allowlist membership) before the external call. The session stays
+        # usable: its next query checks out a fresh connection.
+        await db.close()
         with (
             suppress(Exception),
             embedding_call_purpose(
@@ -937,6 +952,9 @@ async def get_session_context(
                 parent_category="api",
             ),
         ):
+            # Truncate oversized user queries instead of dropping semantic
+            # search; embed() stays strict so agent queries still fail.
+            search_query = embedding_client.truncate_to_token_limit(search_query)
             embedding = await embedding_client.embed(search_query)
 
     # The allowlist recall must respect, whichever way the caller expressed it.
@@ -954,7 +972,9 @@ async def get_session_context(
     representation = await _get_working_representation_task(
         db,
         workspace_id,
-        search_query,
+        # Semantic search only with an embedding; otherwise the downstream
+        # fallback would re-embed while holding this request's DB session.
+        search_query if embedding is not None else None,
         observer=observer,
         observed=observed,
         session_allowlist=effective_allowlist,

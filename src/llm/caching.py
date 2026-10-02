@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections import OrderedDict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from threading import Lock
 from typing import Any
 
@@ -74,7 +74,7 @@ class InMemoryGeminiCacheStore:
             handle = self._handles.get(key)
             if handle is None:
                 return None
-            if handle.expires_at <= datetime.now(timezone.utc):
+            if handle.expires_at <= datetime.now(UTC):
                 self._handles.pop(key, None)
                 return None
             self._handles.move_to_end(key)
@@ -82,7 +82,7 @@ class InMemoryGeminiCacheStore:
 
     def set(self, handle: GeminiCacheHandle) -> GeminiCacheHandle:
         with self._lock:
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             expired = [k for k, h in self._handles.items() if h.expires_at <= now]
             for k in expired:
                 self._handles.pop(k, None)

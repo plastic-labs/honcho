@@ -1,6 +1,5 @@
 """DB-free unit tests for src/utils/retryable_errors.py."""
 
-import asyncio
 from typing import cast
 
 import httpx
@@ -90,7 +89,7 @@ def test_non_db_exceptions_are_not_db_retryable():
         (httpx.ReadTimeout("timed out"), True),
         (httpx.ConnectError("connection refused"), True),
         (ConnectionResetError("reset"), True),
-        (asyncio.TimeoutError(), True),
+        (TimeoutError(), True),
         (TimeoutError(), True),
         (ValueError("bad input"), False),
         (httpx.HTTPStatusError("401", request=None, response=None), False),  # pyright: ignore[reportArgumentType]

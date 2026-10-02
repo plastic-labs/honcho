@@ -40,9 +40,9 @@ def prepare_add_server_defaults(verifier: MigrationVerifier) -> None:
     ]:
         columns = inspector.get_columns(table, schema=schema)
         col_info = next((c for c in columns if c["name"] == column), None)
-        assert (
-            col_info is not None
-        ), f"Column {table}.{column} should exist before migration"
+        assert col_info is not None, (
+            f"Column {table}.{column} should exist before migration"
+        )
 
     # Create test data to ensure existing rows work after migration
     conn.execute(
@@ -118,9 +118,9 @@ def verify_add_server_defaults(verifier: MigrationVerifier) -> None:
     for table, column in timestamp_columns:
         columns = inspector.get_columns(table, schema=schema)
         col_info = next((c for c in columns if c["name"] == column), None)
-        assert (
-            col_info is not None
-        ), f"Column {table}.{column} not found after migration"
+        assert col_info is not None, (
+            f"Column {table}.{column} not found after migration"
+        )
 
         # Check that a server default exists
         default = col_info.get("default")
@@ -152,9 +152,9 @@ def verify_add_server_defaults(verifier: MigrationVerifier) -> None:
     for table, column in jsonb_columns:
         columns = inspector.get_columns(table, schema=schema)
         col_info = next((c for c in columns if c["name"] == column), None)
-        assert (
-            col_info is not None
-        ), f"Column {table}.{column} not found after migration"
+        assert col_info is not None, (
+            f"Column {table}.{column} not found after migration"
+        )
 
         # Check that a server default exists
         default = col_info.get("default")
@@ -172,9 +172,9 @@ def verify_add_server_defaults(verifier: MigrationVerifier) -> None:
     for table, column, expected_default in boolean_columns:
         columns = inspector.get_columns(table, schema=schema)
         col_info = next((c for c in columns if c["name"] == column), None)
-        assert (
-            col_info is not None
-        ), f"Column {table}.{column} not found after migration"
+        assert col_info is not None, (
+            f"Column {table}.{column} not found after migration"
+        )
 
         # Check that a server default exists
         default = col_info.get("default")
@@ -183,9 +183,9 @@ def verify_add_server_defaults(verifier: MigrationVerifier) -> None:
             f"but default is None"
         )
 
-        assert (
-            default == expected_default
-        ), f"Column {table}.{column} should have a server default of {expected_default} after migration, but default is {default}"
+        assert default == expected_default, (
+            f"Column {table}.{column} should have a server default of {expected_default} after migration, but default is {default}"
+        )
 
     # Test that defaults actually work by inserting rows without explicit values
     test_workspace_id = generate_nanoid()
@@ -208,9 +208,9 @@ def verify_add_server_defaults(verifier: MigrationVerifier) -> None:
 
     assert workspace.created_at is not None, "created_at should be auto-populated"
     assert workspace.metadata == {}, "metadata should default to empty object"
-    assert (
-        workspace.internal_metadata == {}
-    ), "internal_metadata should default to empty object"
+    assert workspace.internal_metadata == {}, (
+        "internal_metadata should default to empty object"
+    )
     assert workspace.configuration == {}, "configuration should default to empty object"
 
     # Test peer defaults
@@ -237,9 +237,9 @@ def verify_add_server_defaults(verifier: MigrationVerifier) -> None:
 
     assert peer.created_at is not None, "peer created_at should be auto-populated"
     assert peer.metadata == {}, "peer metadata should default to empty object"
-    assert (
-        peer.internal_metadata == {}
-    ), "peer internal_metadata should default to empty object"
+    assert peer.internal_metadata == {}, (
+        "peer internal_metadata should default to empty object"
+    )
     assert peer.configuration == {}, "peer configuration should default to empty object"
 
     # Test session defaults (including boolean is_active)
@@ -267,18 +267,18 @@ def verify_add_server_defaults(verifier: MigrationVerifier) -> None:
     assert session.created_at is not None, "session created_at should be auto-populated"
     assert session.is_active is True, "session is_active should default to true"
     assert session.metadata == {}, "session metadata should default to empty object"
-    assert (
-        session.internal_metadata == {}
-    ), "session internal_metadata should default to empty object"
-    assert (
-        session.configuration == {}
-    ), "session configuration should default to empty object"
+    assert session.internal_metadata == {}, (
+        "session internal_metadata should default to empty object"
+    )
+    assert session.configuration == {}, (
+        "session configuration should default to empty object"
+    )
 
     # Verify pre-existing data still exists
     existing_workspace = conn.execute(
         text(f'SELECT "id" FROM "{schema}"."workspaces" WHERE "id" = :id'),
         {"id": WORKSPACE_ID},
     ).one_or_none()
-    assert (
-        existing_workspace is not None
-    ), "Pre-existing workspace should still exist after migration"
+    assert existing_workspace is not None, (
+        "Pre-existing workspace should still exist after migration"
+    )

@@ -2,6 +2,7 @@
 title: "Quickstart"
 icon: "bolt"
 sidebarTitle: "Quickstart"
+description: "Give an AI agent persistent memory of its users in minutes: create a workspace and peers, ingest messages across sessions, and pull reasoned context back with one call."
 ---
 
 Let's get started with Honcho. In this quickstart, you will:
@@ -228,6 +229,18 @@ print(response)
 user.chat("What should I know about this user? 3 sentences max").then((response) => {
   console.log(response);
 })
+```
+</CodeGroup>
+
+Peer chat answers about one peer. Once a workspace has several, `honcho.chat()` asks across all of them:
+
+<CodeGroup>
+```python Python
+response = honcho.chat("What themes appear across every peer in this workspace?")
+```
+
+```typescript TypeScript
+const response = await honcho.chat("What themes appear across every peer in this workspace?");
 ```
 </CodeGroup>
 

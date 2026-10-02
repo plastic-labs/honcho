@@ -8,7 +8,7 @@
 
 ---
 
-![Static Badge](https://img.shields.io/badge/Server-3.1.1-blue)
+![Static Badge](https://img.shields.io/badge/Server-3.2.2-blue)
 [![PyPI version](https://img.shields.io/pypi/v/honcho-ai.svg)](https://pypi.org/project/honcho-ai/)
 [![NPM version](https://img.shields.io/npm/v/@honcho-ai/sdk.svg)](https://npmjs.org/package/@honcho-ai/sdk)
 [![CLI](https://img.shields.io/pypi/v/honcho-cli.svg?label=honcho-cli)](https://pypi.org/project/honcho-cli/)
@@ -163,6 +163,7 @@ const completion = await openai.chat.completions.create({
 | ---------------------------------- | --------------------------------------------------------------- |
 | Save interaction history           | `session.add_messages(...)`                                     |
 | Ask what Honcho knows about a peer | `peer.chat(...)`                                                |
+| Ask across the whole workspace     | `honcho.chat(...)` / `honcho.chat_stream(...)`                  |
 | Get prompt-ready context           | `session.context(...).to_openai(...)` / `.to_anthropic(...)`    |
 | Hybrid search (BM25 + vector)      | `peer.search(...)`, `session.search(...)`, `honcho.search(...)` |
 | Low-latency static representations | `peer.representation(...)`, `session.representation(...)`       |
@@ -488,6 +489,8 @@ uv run alembic upgrade head
 
 This will create all tables for Honcho including workspaces, peers, sessions,
 messages, and the queue system.
+
+Migrations hold a session-level advisory lock, so they need a session-mode connection (direct Postgres or a session pooler), not a transaction-mode pooler. A Supabase-style `:6543` port is rewritten to `:5432` automatically.
 
 6. **Launch Honcho**
 

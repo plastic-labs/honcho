@@ -20,10 +20,10 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import BaseModel, Field
 
-from src.mock_provider.coerce import as_dict
 from src.mock_provider.embeddings import content_to_embedding
 from src.mock_provider.main import app
 from src.mock_provider.schema_gen import HARD_MAX_DEPTH, MAX_DEPTH, generate
+from src.utils.json_coerce import as_dict
 from src.utils.representation import PromptRepresentation
 
 # A $ref/$defs schema, which is what Pydantic emits for any nested model and the

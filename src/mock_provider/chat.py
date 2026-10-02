@@ -11,9 +11,9 @@ from typing import Any
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
-from src.mock_provider.coerce import as_dict, as_str
 from src.mock_provider.schema_gen import generate
 from src.mock_provider.schemas import ChatCompletionRequest, ChatMessage
+from src.utils.json_coerce import as_dict, as_str
 
 router = APIRouter(tags=["mock-provider"])
 
