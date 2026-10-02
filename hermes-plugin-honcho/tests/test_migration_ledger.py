@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import threading
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -49,7 +50,14 @@ def _manager(
         honcho_session_id=session_key.replace(":", "-"),
     )
     remote_session = MagicMock()
+    remote_session.get_peer_configuration.return_value = SimpleNamespace(
+        observe_me=None
+    )
     remote_marker_session = MagicMock()
+    remote_marker_session.get_peers.return_value = []
+    remote_marker_session.get_peer_configuration.return_value = SimpleNamespace(
+        observe_me=None
+    )
 
     def resolve_remote_session(session_id, **kwargs):
         if session_id == session.honcho_session_id:
@@ -62,6 +70,8 @@ def _manager(
     manager._sessions_cache[session.honcho_session_id] = remote_session
     manager._peers_cache[user_peer_id] = MagicMock(name=f"peer-{user_peer_id}")
     manager._peers_cache[ai_peer_id] = MagicMock(name=f"peer-{ai_peer_id}")
+    for peer in manager._peers_cache.values():
+        peer.get_configuration.return_value = SimpleNamespace(observe_me=None)
     return manager, remote_marker_session
 
 
@@ -91,13 +101,13 @@ def test_same_destination_uploads_each_file_once(tmp_path, monkeypatch):
         "user_profile.md",
         "agent_soul.md",
     ]
-    marker_peer_configs = first_remote.creation_kwargs["peers"]
+    marker_peer_configs = first_remote.add_peers.call_args.args[0]
     assert first_remote.creation_kwargs["metadata"]["source"] == (
         "hermes_memory_migration"
     )
     assert {peer_id for peer_id, _ in marker_peer_configs} == {"user", "assistant"}
     assert all(
-        config.observe_me is True and config.observe_others is False
+        config.observe_me is None and config.observe_others is False
         for _, config in marker_peer_configs
     )
     second_remote.upload_file.assert_not_called()
