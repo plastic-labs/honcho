@@ -1,6 +1,6 @@
 {
   "name": "honcho-mcp",
-  "version": "3.0.1",
+  "version": "3.0.2",
   "description": "Honcho MCP Server",
   "main": "src/index.ts",
   "packageManager": "bun@1.2.0",

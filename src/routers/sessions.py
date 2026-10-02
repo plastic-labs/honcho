@@ -945,6 +945,10 @@ async def get_session_context(
     # Pre-compute embedding outside the DB session (best-effort)
     embedding: list[float] | None = None
     if search_query:
+        # Return any connection the checks above checked out (scope resolution,
+        # allowlist membership) before the external call. The session stays
+        # usable: its next query checks out a fresh connection.
+        await db.close()
         with (
             suppress(Exception),
             embedding_call_purpose(
@@ -953,6 +957,9 @@ async def get_session_context(
                 parent_category="api",
             ),
         ):
+            # Truncate oversized user queries instead of dropping semantic
+            # search; embed() stays strict so agent queries still fail.
+            search_query = embedding_client.truncate_to_token_limit(search_query)
             embedding = await embedding_client.embed(search_query)
 
     # The allowlist recall must respect, whichever way the caller expressed it.
@@ -970,7 +977,9 @@ async def get_session_context(
     representation = await _get_working_representation_task(
         db,
         workspace_id,
-        search_query,
+        # Semantic search only with an embedding; otherwise the downstream
+        # fallback would re-embed while holding this request's DB session.
+        search_query if embedding is not None else None,
         observer=observer,
         observed=observed,
         session_allowlist=effective_allowlist,

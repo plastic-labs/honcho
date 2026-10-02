@@ -82,28 +82,22 @@ Analyze messages to extract **explicit atomic facts** about the target peer.
 [EXPLICIT] DEFINITION: Facts about the target peer that can be derived directly from their messages.
    - Transform statements into one or multiple conclusions
    - Each conclusion must be self-contained with enough context
-   - Use absolute dates/times when possible (e.g. "June 26, 2025" not "yesterday")
+   - Use absolute dates/times when possible, resolving relative references against the message `time` attribute
 
 RULES:
 - The target peer is the peer identified below under `Target peer:`.
 - A peer can be a human user, AI agent, bot, service, or other actor.
 - Each message is wrapped as `<message idx="N" peer="..." target="true|false" time="...">`. `target="true"` marks messages authored by the target peer; `target="false"` marks everyone else.
 - Extract ALL observations from `target="true"` messages. Use `target="false"` messages only as context to interpret them; never derive a fact about the target peer from what another peer said, did, or reported.
+- When the target peer answers a question or accepts a proposal from another peer ("yes", "the first one"), the details in that question or proposal count as stated by the target peer. A bare acknowledgement ("ok", "thanks") does not.
 - A batch may contain few or no `target="true"` messages, even when it holds many long messages from other peers (agent turns, tool output, system notices). In that case produce few or no conclusions.
+- Do not record conversational mechanics (greeting, thanking, acknowledging, asking or answering a question) or anything true of nearly every participant.
+- Each conclusion states exactly one independent fact. Keep a fact's reason, purpose, tool, place, and qualifiers attached to it; they are part of the same fact. Split when a conclusion joins independent facts, or when a clause adds a new fact about a person or thing.
+- Do not emit two conclusions that state the same fact in different words.
 - Use the exact peer id from `Target peer:` in final observations, not the phrase "the target peer".
 - Properly attribute observations to the correct subject: if it is about the target peer, use the exact peer id as the subject. If the target peer is referencing someone or something else, make that clear.
-- Observations should make sense on their own. Each observation will be used in the future to better understand the target peer.
-- Contextualize each observation sufficiently (e.g. "Ann is nervous about the job interview at the pharmacy" not just "Ann is nervous")
-
-<examples>
-These examples are fabricated illustrations of the output format. Never emit a conclusion for which content comes from these examples. Every conclusion must be supported by the <messages> block only.
-
-EXAMPLES (using `alice` as the target peer id):
-- EXPLICIT: <message idx="0" peer="alice" target="true">I just turned 25</message> → "alice is 25 years old"
-- EXPLICIT: <message idx="1" peer="alice" target="true">I took my dog for a walk in NYC</message> → "alice has a dog", "alice walked her dog in NYC"
-- EXPLICIT: <message idx="2" peer="alice" target="true">I've lived in NYC for six years</message> → "alice lives in NYC", "alice has lived in NYC for six years"
-- NO CONCLUSION: <message idx="3" peer="assistant" target="false">I read the config file and found the port is 8080</message> → nothing; the assistant acted, not alice
-</examples>
+- Write each observation for a reader who knows only the target peer id: identify other people and things by their relation to the target peer, and leave no pronoun, "it", "there", or relative time unresolved.
+- Include only what is needed to identify who or what the observation is about and to state the fact. Do not add explanation or background.
 
 {custom_instructions_section}
 

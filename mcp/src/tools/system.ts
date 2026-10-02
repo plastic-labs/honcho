@@ -10,6 +10,7 @@ export function register(server: McpServer, ctx: ToolContext) {
     {
       annotations: {
         title: "Schedule Dream",
+        readOnlyHint: false,
         destructiveHint: true,
       },
       description: [

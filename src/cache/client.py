@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import socket
+from collections.abc import Iterable
 from typing import Any, cast
 from urllib.parse import urlparse, urlunparse
 
@@ -12,6 +13,9 @@ from cashews.backends.redis.client import SafeRedisCluster
 from cashews.picklers import PicklerType
 from redis import exceptions as redis_exc
 from redis.asyncio import RedisCluster
+from redis.asyncio.connection import AbstractConnection
+from redis.asyncio.retry import Retry
+from redis.backoff import ExponentialBackoff
 from tenacity import (
     AsyncRetrying,
     retry_if_exception_type,
@@ -75,6 +79,59 @@ async def _safe_cluster_initialize(
 # leave the async-context-manager path broken.
 SafeRedisCluster.initialize = _safe_cluster_initialize
 SafeRedisCluster.__aenter__ = _safe_cluster_initialize
+# endregion
+
+# region ai
+# Compatibility shim: redis-py 8.x `send_packed_command` under uvloop.
+#
+# REMOVE THIS once redis-py maps a write to a closed transport to
+# ConnectionError itself. Check `AbstractConnection.send_packed_command`
+# upstream: if it catches RuntimeError from a closing transport (or checks
+# `transport.is_closing()` before writing), this block is dead weight and should
+# go with the redis-py bump.
+#
+# Upstream: https://github.com/redis/redis-py/issues/4352
+#
+# uvloop raises RuntimeError when writing to a transport the peer already closed
+# (e.g. an idle pooled connection Redis dropped); the default asyncio loop does
+# not raise there, so redis-py only expects OSError and lets RuntimeError escape.
+# That matters because:
+#   * Retry only retries ConnectionError/TimeoutError, so it never reconnects.
+#   * RuntimeError is not in the tuple cashews catches, so it propagates into
+#     request handling instead of degrading.
+#
+# `connection_class=` would be the supported hook, but RedisCluster hard-codes
+# `Connection` (redis/asyncio/cluster.py in 8.1) and we run cluster in prod, so
+# this patches the base class globally.
+_send_packed_command = AbstractConnection.send_packed_command
+
+
+async def _send_packed_command_or_connection_error(
+    self: AbstractConnection,
+    command: bytes | str | Iterable[bytes],
+    check_health: bool = True,
+) -> None:
+    # The health check can reconnect onto a new transport, so run it first and
+    # snapshot the transport the write will actually use. Snapshot before
+    # sending: the wrapped method disconnects (closing the transport) before
+    # re-raising, so checking afterwards is always true. Skipped when not yet
+    # connected: the connect handshake counts as a health check upstream, so
+    # checking first would add a PING to every new connection.
+    if check_health and self.is_connected:
+        await self.check_health()
+    writer = self._writer  # pyright: ignore[reportPrivateUsage]
+    was_closing = writer is not None and writer.transport.is_closing()
+    try:
+        await _send_packed_command(self, command, False)
+    except RuntimeError as e:
+        if not was_closing:
+            raise
+        raise redis_exc.ConnectionError(
+            f"Connection closed by peer while writing to socket: {e}"
+        ) from e
+
+
+AbstractConnection.send_packed_command = _send_packed_command_or_connection_error
 # endregion
 
 
@@ -271,6 +328,11 @@ async def init_cache() -> None:
                 settings.CACHE.URL,
                 pickle_type=PicklerType.SQLALCHEMY,
                 cluster=settings.CACHE.CLUSTER,
+                socket_connect_timeout=settings.CACHE.CONNECT_TIMEOUT_SECONDS,
+                retry=Retry(
+                    ExponentialBackoff(cap=0.5, base=0.1),
+                    settings.CACHE.CONNECT_RETRIES,
+                ),
             )
 
         except Exception as setup_err:

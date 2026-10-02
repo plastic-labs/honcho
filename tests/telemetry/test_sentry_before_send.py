@@ -8,6 +8,7 @@ single issue each, so they stop spawning a fresh one per transaction.
 
 from typing import TYPE_CHECKING, cast, final
 
+import httpx
 import pytest
 import sentry_sdk
 from fastapi.exceptions import RequestValidationError
@@ -141,3 +142,50 @@ def test_initialize_sentry_explicit_none_bypasses_shared_filter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     assert _captured_before_send(monkeypatch, before_send=None) is None
+
+
+def _llm_integration_event(mechanism_type: str) -> "Event":
+    return _event(
+        level="error",
+        exception={
+            "values": [
+                {
+                    "type": "ServerError",
+                    "value": "The service is currently unavailable.",
+                    "mechanism": {"type": mechanism_type, "handled": False},
+                }
+            ]
+        },
+    )
+
+
+class _ProviderError(Exception):
+    def __init__(self, status_code: int) -> None:
+        super().__init__(f"HTTP {status_code}")
+        self.status_code: int = status_code
+
+
+@pytest.mark.parametrize("mechanism_type", ["google_genai", "openai", "anthropic"])
+@pytest.mark.parametrize(
+    "exc",
+    [_ProviderError(503), _ProviderError(500), httpx.ConnectError("refused")],
+)
+def test_llm_sdk_integration_outage_attempts_are_dropped(
+    mechanism_type: str, exc: Exception
+) -> None:
+    event = _llm_integration_event(mechanism_type)
+    assert default_before_send(event, _hint(exc)) is None
+
+
+@pytest.mark.parametrize("mechanism_type", ["google_genai", "openai", "anthropic"])
+@pytest.mark.parametrize("status_code", [400, 401, 404, 429])
+def test_llm_sdk_integration_client_errors_pass_through(
+    mechanism_type: str, status_code: int
+) -> None:
+    event = _llm_integration_event(mechanism_type)
+    assert default_before_send(event, _hint(_ProviderError(status_code))) is event
+
+
+def test_outage_from_other_mechanisms_passes_through() -> None:
+    event = _llm_integration_event("starlette")
+    assert default_before_send(event, _hint(_ProviderError(503))) is event

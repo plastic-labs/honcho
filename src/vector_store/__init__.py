@@ -226,6 +226,17 @@ def _create_store_by_type(store_type: str) -> VectorStore:
             ) from exc
 
         return QdrantVectorStore()
+
+    elif store_type == "chromadb":
+        try:
+            from src.vector_store.chroma import ChromaVectorStore
+        except ImportError as e:
+            raise ValueError(
+                "VECTOR_STORE_TYPE=chromadb requires the chromadb extra."
+                + " Install it with: uv sync --extra chromadb"
+            ) from e
+
+        return ChromaVectorStore()
     else:
         raise ValueError(f"Unknown vector store type: {store_type}")
 
