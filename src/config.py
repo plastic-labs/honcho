@@ -745,7 +745,10 @@ class DBSettings(HonchoSettings):
     # silently under-returning when out-of-scope rows consume the initial scan
     # budget. Note: pgvector may still stop before reaching top_k if
     # hnsw.max_scan_tuples or hnsw.scan_mem_multiplier thresholds are exceeded.
-    # Requires pgvector >= 0.8.0.
+    # Requires pgvector >= 0.8.0. Needs a session-mode connection (direct
+    # Postgres or a session pooler), not a transaction-mode pooler — same
+    # constraint as migration advisory locks; a transaction pooler drops
+    # session GUCs between checkouts.
     # See: https://github.com/pgvector/pgvector#iterative-index-scans
     HNSW_ITERATIVE_SCAN: Literal["off", "strict_order", "relaxed_order"] | None = (
         "strict_order"
