@@ -194,10 +194,14 @@ class _EmbeddingClient:
             # Gemini's embedding models have model-specific input token caps
             # (shared across all modalities):
             #   - gemini-embedding-001: 2048 tokens
-            #   - gemini-embedding-2: 8192 tokens
+            #   - gemini-embedding-2 (and its -preview): 8192 tokens
             # Unknown models default conservatively to 2048.
             model_id = self.model.removeprefix("models/")
-            gemini_model_token_cap = 8192 if model_id == "gemini-embedding-2" else 2048
+            gemini_model_token_cap = (
+                8192
+                if model_id in {"gemini-embedding-2", "gemini-embedding-2-preview"}
+                else 2048
+            )
             self.max_embedding_tokens: int = min(
                 max_input_tokens, gemini_model_token_cap
             )

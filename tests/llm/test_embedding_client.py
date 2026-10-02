@@ -172,11 +172,19 @@ def test_gemini_embedding_client_gemini_2_caps_at_8192(
     assert client_below_cap.max_embedding_tokens == 4096
 
 
+@pytest.mark.parametrize(
+    "model",
+    [
+        "models/gemini-embedding-2",
+        "gemini-embedding-2-preview",
+        "models/gemini-embedding-2-preview",
+    ],
+)
 def test_gemini_embedding_client_models_prefixed_gemini_2_caps_at_8192(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, model: str
 ) -> None:
-    """The canonical 'models/gemini-embedding-2' form (as returned by Gemini's
-    API) must still be recognized and granted the 8192 cap."""
+    """The canonical 'models/' form (as returned by Gemini's API) and the
+    -preview alias must still be recognized and granted the 8192 cap."""
 
     class FakeGeminiClient:
         def __init__(self, *, api_key: str, http_options: Any) -> None:
@@ -187,7 +195,7 @@ def test_gemini_embedding_client_models_prefixed_gemini_2_caps_at_8192(
     client = _EmbeddingClient(
         EmbeddingModelConfig(
             transport="gemini",
-            model="models/gemini-embedding-2",
+            model=model,
             api_key="test-key",
         ),
         vector_dimensions=8,
