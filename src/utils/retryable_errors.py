@@ -1,7 +1,8 @@
 """Classify exceptions as transient (safe to retry) or terminal.
 
-Imports only exception taxonomies, so it is importable from anywhere and
-unit-testable without a DB.
+Imports only exception taxonomies (plus the Honcho exception types, which are
+themselves config-only), so it is importable from anywhere and unit-testable
+without a DB.
 """
 
 import asyncio
@@ -10,7 +11,9 @@ from collections.abc import Iterator
 import httpx
 from sqlalchemy.exc import DBAPIError
 
-__all__ = ["is_retryable_db_error", "is_retryable_error"]
+from src.exceptions import EmptyRepresentationError, EmptySummaryError
+
+__all__ = ["is_empty_response_error", "is_retryable_db_error", "is_retryable_error"]
 
 _RETRYABLE_SQLSTATES = frozenset(
     {
@@ -34,6 +37,13 @@ _TRANSPORT_ERRORS = (
     asyncio.TimeoutError,
     TimeoutError,
 )
+
+# Degraded-but-successful LLM responses: the call returned, the parse produced
+# an empty structured model. Nothing is wrong with the DB or the transport, so
+# these are classified here rather than by the taxonomy chain -- but they carry
+# the same consequence (a work unit with no derived facts) and the same remedy
+# (re-claim and try again with a bounded budget).
+_EMPTY_RESPONSE_ERRORS = (EmptyRepresentationError, EmptySummaryError)
 
 
 def _iter_cause_chain(exc: BaseException) -> Iterator[BaseException]:
@@ -72,14 +82,32 @@ def is_retryable_db_error(exc: BaseException) -> bool:
     return False
 
 
+def is_empty_response_error(exc: BaseException) -> bool:
+    """True when ``exc`` -- or any wrapper it chains to via ``__cause__`` -- is
+    a degraded-but-successful empty structured response.
+
+    These are *batch-scope*: the empty parse saw every item in the batch, so the
+    terminal attempt marks the whole batch errored. Classifying on the outer
+    exception alone would miss a wrapped error and mark only the first item,
+    handing the rest of the batch a fresh retry budget.
+    """
+    return any(
+        isinstance(current, _EMPTY_RESPONSE_ERRORS)
+        for current in _iter_cause_chain(exc)
+    )
+
+
 def is_retryable_error(exc: BaseException) -> bool:
     """Superset of ``is_retryable_db_error``: also transient network/provider
-    transport failures (timeouts, connection refused/reset).
+    transport failures (timeouts, connection refused/reset) and empty structured
+    responses (see ``_EMPTY_RESPONSE_ERRORS``).
 
     Auth failures (401 from a rotated key) are deliberately terminal: they
     never self-heal, so retrying only delays the burn.
     """
     if is_retryable_db_error(exc):
+        return True
+    if is_empty_response_error(exc):
         return True
     return any(
         isinstance(current, _TRANSPORT_ERRORS) for current in _iter_cause_chain(exc)
