@@ -13,7 +13,10 @@ import pytest
 from src.config import DBSettings
 
 
-def test_hnsw_iterative_scan_defaults_to_strict_order() -> None:
+def test_hnsw_iterative_scan_defaults_to_strict_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("DB_HNSW_ITERATIVE_SCAN", raising=False)
     settings = DBSettings()
     assert settings.HNSW_ITERATIVE_SCAN == "strict_order"
 
@@ -111,12 +114,15 @@ def test_connect_listener_not_registered_when_disabled(
     _listener(dummy_conn, None)
     assert execute_calls == [], "No SQL should execute when HNSW_ITERATIVE_SCAN is None"
 
+
 @pytest.mark.asyncio
 async def test_pool_connection_has_hnsw_iterative_scan_applied() -> None:
     from sqlalchemy import text
 
+    from src.config import settings
     from src.db import engine
 
+    expected = settings.DB.HNSW_ITERATIVE_SCAN
     async with engine.connect() as connection:
         value = (await connection.execute(text("SHOW hnsw.iterative_scan"))).scalar()
-    assert value == "strict_order"
+    assert value == expected

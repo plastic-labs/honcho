@@ -582,6 +582,9 @@ DB_MIGRATION_LOCK_WAIT_SECONDS=300
 # Note: pgvector may still stop before reaching top_k if hnsw.max_scan_tuples
 # or hnsw.scan_mem_multiplier thresholds are exceeded.
 # Valid values: "off", "strict_order" (default), "relaxed_order". Use "off" to disable.
+# Needs a session-mode connection (direct Postgres or a session pooler), not a
+# transaction-mode pooler — same as migration advisory locks; transaction
+# poolers drop session GUCs between checkouts.
 DB_HNSW_ITERATIVE_SCAN=strict_order
 ```
 
