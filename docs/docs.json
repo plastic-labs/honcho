@@ -98,61 +98,49 @@
           },
           {
             "tab": "Integrations",
-            "groups": [
+            "pages": [
+              "v3/guides/overview",
+              "v3/guides/integrations/mcp",
               {
-                "group": "Universal",
+                "group": "General Agents",
                 "pages": [
-                  "v3/guides/integrations/mcp"
+                  "v3/guides/integrations/hermes",
+                  "v3/guides/integrations/openclaw"
                 ]
               },
               {
-                "group": "Integrations",
-                "root": "v3/guides/overview",
+                "group": "Coding Agents",
                 "pages": [
-                  {
-                    "group": "General Agents",
-                    "expanded": true,
-                    "pages": [
-                      "v3/guides/integrations/hermes",
-                      "v3/guides/integrations/openclaw"
-                    ]
-                  },
-                  {
-                    "group": "Coding Agents",
-                    "expanded": true,
-                    "pages": [
-                      "v3/guides/integrations/claude-code",
-                      "v3/guides/community/pi-honcho-memory",
-                      "v3/guides/integrations/codex",
-                      "v3/guides/integrations/opencode",
-                      "v3/guides/integrations/deepseek-harness"
-                    ]
-                  },
-                  {
-                    "group": "SDKs & Frameworks",
-                    "pages": [
-                      "v3/guides/integrations/vercel-ai-sdk",
-                      "v3/guides/integrations/langgraph",
-                      "v3/guides/integrations/crewai",
-                      "v3/guides/community/agent0",
-                      "v3/guides/integrations/paperclip"
-                    ]
-                  },
-                  {
-                    "group": "Apps & Workflows",
-                    "pages": [
-                      "v3/guides/integrations/sillytavern",
-                      "v3/guides/integrations/n8n",
-                      "v3/guides/integrations/zo-computer"
-                    ]
-                  },
-                  {
-                    "group": "Data Sources",
-                    "pages": [
-                      "v3/guides/gmail",
-                      "v3/guides/granola"
-                    ]
-                  }
+                  "v3/guides/integrations/claude-code",
+                  "v3/guides/community/pi-honcho-memory",
+                  "v3/guides/integrations/codex",
+                  "v3/guides/integrations/opencode",
+                  "v3/guides/integrations/deepseek-harness"
+                ]
+              },
+              {
+                "group": "Frameworks & SDKs",
+                "pages": [
+                  "v3/guides/integrations/vercel-ai-sdk",
+                  "v3/guides/integrations/langgraph",
+                  "v3/guides/integrations/crewai",
+                  "v3/guides/community/agent0",
+                  "v3/guides/integrations/paperclip"
+                ]
+              },
+              {
+                "group": "Apps & Workflows",
+                "pages": [
+                  "v3/guides/integrations/sillytavern",
+                  "v3/guides/integrations/n8n",
+                  "v3/guides/integrations/zo-computer"
+                ]
+              },
+              {
+                "group": "Data Sources",
+                "pages": [
+                  "v3/guides/gmail",
+                  "v3/guides/granola"
                 ]
               },
               {
