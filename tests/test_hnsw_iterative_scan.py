@@ -5,7 +5,6 @@ Verifies that:
 - An invalid value is rejected at config-load time (fail-closed)
 - The ``connect`` event listener is registered when the setting is enabled
 - The ``connect`` event listener is NOT registered when the setting is ``None``
-- ``_validate_pgvector_version`` raises for pgvector < 0.8.0 and passes for >= 0.8.0
 - A connection checked out from the app pool has ``hnsw.iterative_scan`` applied
 """
 
@@ -111,24 +110,6 @@ def test_connect_listener_not_registered_when_disabled(
     # so with monkeypatch it should return early without executing SQL.
     _listener(dummy_conn, None)
     assert execute_calls == [], "No SQL should execute when HNSW_ITERATIVE_SCAN is None"
-
-
-def test_validate_pgvector_version_rejects_old_versions() -> None:
-    """_validate_pgvector_version raises RuntimeError for pgvector < 0.8.0."""
-    from src.db import _validate_pgvector_version  # pyright: ignore[reportPrivateUsage]
-
-    for old_version in ("0.7.0", "0.6.1", "0.5.0"):
-        with pytest.raises(RuntimeError, match=r"requires pgvector >= 0\.8\.0"):
-            _validate_pgvector_version(old_version)
-
-
-def test_validate_pgvector_version_accepts_new_versions() -> None:
-    """_validate_pgvector_version passes silently for pgvector >= 0.8.0."""
-    from src.db import _validate_pgvector_version  # pyright: ignore[reportPrivateUsage]
-
-    for new_version in ("0.8.0", "0.8.1", "0.9.0", "1.0.0"):
-        _validate_pgvector_version(new_version)  # should not raise
-
 
 @pytest.mark.asyncio
 async def test_pool_connection_has_hnsw_iterative_scan_applied() -> None:

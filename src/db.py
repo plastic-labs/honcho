@@ -362,22 +362,3 @@ table_schema = settings.DB.SCHEMA
 meta = MetaData(naming_convention=convention)
 meta.schema = table_schema
 Base = declarative_base(metadata=meta)
-
-
-def _validate_pgvector_version(version_str: str) -> None:
-    """Check that the installed pgvector version supports HNSW iterative scan.
-
-    Raises ``RuntimeError`` if pgvector < 0.8.0.  Kept as a pure helper
-    so unit tests can exercise it without importing alembic/migrate.
-    """
-    version_parts = version_str.split(".")
-    major = int(version_parts[0]) if len(version_parts) > 0 else 0
-    minor = int(version_parts[1]) if len(version_parts) > 1 else 0
-    if (major, minor) < (0, 8):
-        raise RuntimeError(
-            "pgvector version "
-            + version_str
-            + " is installed but HNSW_ITERATIVE_SCAN"
-            + " requires pgvector >= 0.8.0."
-            + " Upgrade pgvector or set HNSW_ITERATIVE_SCAN=off."
-        )
