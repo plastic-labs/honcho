@@ -290,3 +290,51 @@ def test_failed_opt_out_configuration_sends_nothing_and_keeps_message_unsynced(
     assert manager._flush_session(session) is False
     honcho_session.add_messages.assert_not_called()
     assert session.messages[0].get("_synced") is False
+
+
+def test_successful_opt_out_batch_builds_real_sdk_messages_and_syncs_cursor(
+    plugin: Any,
+) -> None:
+    from honcho import Peer
+
+    manager = plugin.session_api.HonchoSessionManager()
+    session = plugin.session_api.HonchoSession(
+        key="k", user_peer_id="u", assistant_peer_id="a", honcho_session_id="s"
+    )
+    session.add_message("user", "private user", no_observe=True)
+    session.add_message("assistant", "private assistant", no_observe=True)
+    session.add_message("user", "ordinary authored user", author_peer_id="author")
+    session.add_message("assistant", "ordinary assistant")
+    peers = {
+        peer_id: Peer(
+            peer_id=peer_id, honcho=SimpleNamespace(workspace_id="test-workspace")
+        )
+        for peer_id in ("u", "a", "author")
+    }
+    uploaded: list[list[Any]] = []
+    joined: list[Any] = []
+    honcho_session = SimpleNamespace(
+        add_messages=lambda messages: uploaded.append(messages),
+        add_peers=lambda peers_and_configs: joined.extend(peers_and_configs),
+    )
+    manager._get_or_create_peer = lambda peer_id: peers[peer_id]
+    manager._authed_call = lambda _label, fn: fn()
+    manager._sessions_cache["s"] = honcho_session
+
+    assert manager._flush_session(session) is True
+
+    assert len(uploaded) == 1
+    batch = uploaded[0]
+    assert [(message.peer_id, message.content) for message in batch] == [
+        ("u", "private user"),
+        ("a", "private assistant"),
+        ("author", "ordinary authored user"),
+        ("a", "ordinary assistant"),
+    ]
+    assert batch[0].configuration.reasoning.enabled is False
+    assert batch[1].configuration.reasoning.enabled is False
+    assert batch[2].configuration is None
+    assert batch[3].configuration is None
+    assert len(joined) == 1 and joined[0][0].id == "author"
+    assert manager._joined_author_peers["s"] == {"author"}
+    assert all(message["_synced"] is True for message in session.messages)
