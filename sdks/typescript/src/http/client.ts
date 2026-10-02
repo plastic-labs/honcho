@@ -1,3 +1,4 @@
+import { VERSION } from '../api-version'
 import {
   ConnectionError,
   createErrorFromResponse,
@@ -6,18 +7,27 @@ import {
   TimeoutError,
 } from './errors'
 
+/**
+ * Query parameters for a request. An array value is sent as repeated
+ * parameters (`?k=a&k=b`), which is how the API reads list-valued parameters.
+ */
+export type QueryParams = Record<
+  string,
+  string | number | boolean | readonly (string | number | boolean)[] | undefined
+>
+
 export interface HonchoHTTPClientConfig {
   baseURL: string
   apiKey?: string
   timeout?: number
   maxRetries?: number
   defaultHeaders?: Record<string, string>
-  defaultQuery?: Record<string, string | number | boolean | undefined>
+  defaultQuery?: QueryParams
 }
 
 export interface RequestOptions {
   body?: unknown
-  query?: Record<string, string | number | boolean | undefined>
+  query?: QueryParams
   headers?: Record<string, string>
   timeout?: number
   signal?: AbortSignal
@@ -28,6 +38,22 @@ const DEFAULT_MAX_RETRIES = 2
 const RETRY_STATUS_CODES = [429, 500, 502, 503, 504]
 const INITIAL_RETRY_DELAY = 500 // 500ms
 
+export const HOST_HEADER = 'X-Honcho-Host'
+
+/**
+ * Default `X-Honcho-Host`, e.g. `honcho-typescript/2.4.0 (darwin)`. Harness plugins
+ * override it with their own host identity. The platform is dropped in browser and
+ * edge runtimes, where `process` is unavailable.
+ */
+export function defaultHostHeader(): string {
+  const product = `honcho-typescript/${VERSION}`
+  const platform =
+    typeof process !== 'undefined' && typeof process.platform === 'string'
+      ? process.platform
+      : undefined
+  return platform ? `${product} (${platform})` : product
+}
+
 /**
  * Minimal HTTP client for the Honcho API with retry logic and timeout support.
  */
@@ -37,7 +63,7 @@ export class HonchoHTTPClient {
   readonly timeout: number
   readonly maxRetries: number
   readonly defaultHeaders: Record<string, string>
-  readonly defaultQuery?: Record<string, string | number | boolean | undefined>
+  readonly defaultQuery?: QueryParams
 
   constructor(config: HonchoHTTPClientConfig) {
     // Remove trailing slash from baseURL
@@ -47,6 +73,7 @@ export class HonchoHTTPClient {
     this.maxRetries = config.maxRetries ?? DEFAULT_MAX_RETRIES
     this.defaultHeaders = {
       'Content-Type': 'application/json',
+      [HOST_HEADER]: defaultHostHeader(),
       ...config.defaultHeaders,
     }
     this.defaultQuery = config.defaultQuery
@@ -273,21 +300,28 @@ export class HonchoHTTPClient {
     return JSON.parse(text) as T
   }
 
-  private buildURL(
-    path: string,
-    query?: Record<string, string | number | boolean | undefined>
-  ): string {
+  private buildURL(path: string, query?: QueryParams): string {
     const url = new URL(path, this.baseURL)
 
-    const mergedQuery: Record<string, string | number | boolean | undefined> = {
+    const mergedQuery: QueryParams = {
       ...(this.defaultQuery ?? {}),
       ...(query ?? {}),
     }
 
     for (const [key, value] of Object.entries(mergedQuery)) {
-      if (value !== undefined) {
-        url.searchParams.set(key, String(value))
+      if (value === undefined) {
+        continue
       }
+      if (Array.isArray(value)) {
+        // Repeated params, not a comma-joined value: the API reads list-valued
+        // query parameters as `?k=a&k=b`, and String([a, b]) would arrive as a
+        // single malformed entry.
+        for (const entry of value) {
+          url.searchParams.append(key, String(entry))
+        }
+        continue
+      }
+      url.searchParams.set(key, String(value))
     }
 
     return url.toString()

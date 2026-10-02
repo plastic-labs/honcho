@@ -278,6 +278,40 @@ async def test_peer_chat_non_streaming(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("timeout", [None, 2.5])
+async def test_peer_chat_forwards_per_call_timeout(
+    client_fixture: tuple[Honcho, str],
+    timeout: float | None,
+) -> None:
+    honcho_client, client_type = client_fixture
+    timeout_label = "default" if timeout is None else "override"
+
+    if client_type == "async":
+        peer = await honcho_client.aio.peer(id=f"test-timeout-{timeout_label}-async")
+
+        async def mock_post(*args: object, **kwargs: object) -> dict[str, str]:  # pyright: ignore[reportUnusedParameter]
+            return {"content": "ok"}
+
+        with patch.object(
+            peer._honcho._async_http_client,  # pyright: ignore[reportPrivateUsage]
+            "post",
+            side_effect=mock_post,
+        ) as mock:
+            result = await peer.aio.chat("What do I like?", timeout=timeout)
+    else:
+        peer = honcho_client.peer(id=f"test-timeout-{timeout_label}-sync")
+        with patch.object(
+            peer._honcho._http,  # pyright: ignore[reportPrivateUsage]
+            "post",
+            return_value={"content": "ok"},
+        ) as mock:
+            result = peer.chat("What do I like?", timeout=timeout)
+
+    assert result == "ok"
+    assert mock.call_args.kwargs["timeout"] == timeout
+
+
+@pytest.mark.asyncio
 async def test_peer_representation_no_params(
     client_fixture: tuple[Honcho, str],
 ):

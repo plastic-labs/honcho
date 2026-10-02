@@ -45,8 +45,7 @@
     {
       "step_type": "wait",
       "target": "queue_empty",
-      "timeout": 120,
-      "flush": true
+      "timeout": 120
     },
     {
       "step_type": "query",

@@ -214,6 +214,9 @@ class LanceDBVectorStore(VectorStore):
         Returns:
             List of VectorQueryResult objects, ordered by similarity (most similar first)
         """
+        if top_k <= 0:
+            return []
+
         table = await self._get_table(namespace)
         if table is None:
             logger.debug(f"Table {namespace} does not exist, returning empty results")
@@ -298,10 +301,15 @@ class LanceDBVectorStore(VectorStore):
             if not _VALID_IDENTIFIER_PATTERN.match(key):
                 raise ValueError(f"Invalid filter key: {key!r}")
 
-            # Check if value is a dict with "in" operator
-            if isinstance(value, dict) and "in" in value:
-                # IN clause for list membership
-                in_values = cast(Sequence[Any], value["in"])
+            # Membership: dict form {"in": [...]} or bare-list sugar
+            if (isinstance(value, dict) and "in" in value) or isinstance(
+                value, list | tuple | set
+            ):
+                in_values = (
+                    cast(Sequence[Any], value["in"])
+                    if isinstance(value, dict)
+                    else list(cast(Sequence[Any], value))
+                )
                 if in_values:
                     escaped_values = [
                         f"'{str(v).replace(chr(39), chr(39) + chr(39))}'"
@@ -310,6 +318,11 @@ class LanceDBVectorStore(VectorStore):
                         for v in in_values
                     ]
                     conditions.append(f"{key} IN ({', '.join(escaped_values)})")
+                else:
+                    # An empty membership list matches nothing. Emitting no
+                    # condition would silently widen the result set
+                    # (fail-open); force an always-false condition instead.
+                    conditions.append("1 = 0")
             # Handle string values with proper quoting
             elif isinstance(value, str):
                 # Escape single quotes in the value

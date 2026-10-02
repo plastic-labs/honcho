@@ -10,7 +10,7 @@ import typer
 
 from honcho.api_types import MessageCreateParams
 
-from honcho_cli.commands.session import _get_session_id
+from honcho_cli.commands.session import _fetch_recent_messages, _get_session_id
 from honcho_cli.commands.workspace import _handle_error
 from honcho_cli.output import print_error, print_result, status
 from honcho_cli.validation import validate_resource_id
@@ -37,15 +37,18 @@ def list_messages(
 
     handle_cmd_flags(json_output=json_output, workspace=workspace, peer=peer, session=session)
     sid = _get_session_id(session_id)
+    if last < 1:
+        print_error("INVALID_FLAGS", "--last must be >= 1", {"last": last})
+        raise typer.Exit(1)
     client, config = get_client()
     sess = client.session(sid)
 
     try:
         filters = {"peer_id": config.peer_id} if config.peer_id else None
-        # Fetch newest-first so [:last] always gives the most recent N messages,
-        # then flip to oldest-at-top / newest-at-bottom for readable display.
+        # Fetch newest-first so we always get the most recent N messages, then
+        # flip to oldest-at-top / newest-at-bottom for readable display.
         # --reverse keeps the raw server order (oldest first, descending in table).
-        msgs = sess.messages(filters=filters, reverse=True).items[:last]
+        msgs, _ = _fetch_recent_messages(sess, filters, last)
         if not reverse:
             msgs = list(reversed(msgs))
 

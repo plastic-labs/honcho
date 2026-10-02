@@ -105,6 +105,60 @@ curl -X POST "$HONCHO_URL/v3/workspaces/my-app/peers/user-123/chat" \
 
 At the API level, `content` in the response is always a string. When `response_format` is set, it is a JSON-encoded object conforming to your schema.
 
+## Workspace Chat
+
+`response_format` is accepted on [workspace chat](/v3/documentation/features/chat#workspace-chat) too. The Python client parses a Pydantic model for you; the TypeScript client takes a JSON Schema object and returns the JSON string.
+
+<CodeGroup>
+```python Python
+class Theme(BaseModel):
+    name: str
+    peers: list[str]
+
+class Themes(BaseModel):
+    themes: list[Theme]
+
+result = honcho.chat("What themes recur across peers?", response_format=Themes)
+# result is a Themes instance (or None)
+```
+
+```typescript TypeScript
+const raw = await honcho.chat("What themes recur across peers?", {
+  responseFormat: {
+    type: "object",
+    properties: {
+      themes: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: { name: { type: "string" }, peers: { type: "array", items: { type: "string" } } },
+          required: ["name", "peers"],
+        },
+      },
+    },
+    required: ["themes"],
+  },
+});
+const result = raw ? JSON.parse(raw) : null;
+```
+
+```bash cURL
+curl -X POST "$HONCHO_URL/v3/workspaces/my-app/chat" \
+  -H "Authorization: Bearer $HONCHO_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "What themes recur across peers?",
+    "response_format": {
+      "type": "object",
+      "properties": {
+        "themes": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["themes"]
+    }
+  }'
+```
+</CodeGroup>
+
 ## Streaming
 
 `response_format` works with streaming. The stream emits the JSON answer incrementally as raw text chunks; the accumulated text is a valid JSON string once the stream completes. To enable streaming the SDKs cannot parse streamed responses for you, you parse the final string yourself:

@@ -37,6 +37,27 @@ def store() -> LanceDBVectorStore:
     return LanceDBVectorStore()
 
 
+def test_build_where_clause_membership(store: LanceDBVectorStore) -> None:
+    """Both the dict `in` form and the bare-list sugar produce an IN clause."""
+    assert (
+        store._build_where_clause({"session_name": {"in": ["s1", "s2"]}})  # pyright: ignore[reportPrivateUsage]
+        == "session_name IN ('s1', 's2')"
+    )
+    assert (
+        store._build_where_clause({"session_name": ["s1", "s2"]})  # pyright: ignore[reportPrivateUsage]
+        == "session_name IN ('s1', 's2')"
+    )
+
+
+def test_build_where_clause_empty_membership_fails_closed(
+    store: LanceDBVectorStore,
+) -> None:
+    """An empty membership list must emit an always-false predicate, never an
+    omitted condition that would widen scope (fail-open)."""
+    assert store._build_where_clause({"session_name": {"in": []}}) == "1 = 0"  # pyright: ignore[reportPrivateUsage]
+    assert store._build_where_clause({"session_name": []}) == "1 = 0"  # pyright: ignore[reportPrivateUsage]
+
+
 @pytest.mark.asyncio
 async def test_query_returns_empty_when_table_missing(
     store: LanceDBVectorStore,
@@ -149,3 +170,24 @@ async def test_query_filters_by_max_distance(store: LanceDBVectorStore) -> None:
     )
 
     assert [r.id for r in results] == ["vec_close"]
+
+
+@pytest.mark.asyncio
+async def test_query_returns_empty_without_opening_table_on_nonpositive_top_k(
+    store: LanceDBVectorStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    get_table = AsyncMock(return_value=MagicMock())
+    monkeypatch.setattr(store, "_get_table", get_table)
+
+    for top_k in (0, -1):
+        assert (
+            await store.query(
+                "honcho.msg.test",
+                [0.1, 0.2, 0.3, 0.4],
+                top_k=top_k,
+            )
+            == []
+        )
+
+    get_table.assert_not_awaited()

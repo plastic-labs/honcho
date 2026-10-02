@@ -13,16 +13,19 @@ from src import crud, exceptions, models, schemas
 from src.config import settings
 from src.dependencies import tracked_db
 from src.dreamer.dream_scheduler import check_and_schedule_dream
-from src.embedding_client import embedding_client
+from src.embedding_client import EmbeddingTokenLimitError, embedding_client
 from src.schemas import ResolvedConfiguration
 from src.telemetry.events import EmbeddingCallPurpose
 from src.telemetry.logging import accumulate_metric
 from src.utils.formatting import format_datetime_utc
 from src.utils.representation import (
+    ALLOWLIST_SAFE_LEVELS,
     DeductiveObservation,
     ExplicitObservation,
     Representation,
+    allowlist_safe_levels,
 )
+from src.utils.sanitization import strip_nul
 from src.utils.types import embedding_call_purpose
 
 logger = logging.getLogger(__name__)
@@ -36,10 +39,21 @@ def _observation_text(obs: ExplicitObservation | DeductiveObservation) -> str:
 def _normalized_observation(
     obs: ExplicitObservation | DeductiveObservation,
 ) -> ExplicitObservation | DeductiveObservation:
-    """Return an observation with its persisted/embed text normalized."""
-    text = _observation_text(obs).strip()
+    """Return an observation with its persisted/embed text normalized.
+
+    NUL bytes are removed here rather than closer to the database so that the
+    text that gets embedded is the same text that gets stored.
+    """
+    text = strip_nul(_observation_text(obs)).strip()
     if isinstance(obs, DeductiveObservation):
-        return obs.model_copy(update={"conclusion": text})
+        return obs.model_copy(
+            update={
+                "conclusion": text,
+                # Premises ride along in internal_metadata, and jsonb rejects
+                # NUL in strings just as text columns do.
+                "premises": strip_nul(obs.premises),
+            }
+        )
     return obs.model_copy(update={"content": text})
 
 
@@ -85,10 +99,15 @@ class RepresentationManager:
             logger.debug("No observations to save")
             return empty_result
 
+        # Normalize before the emptiness check: str.strip() does not remove
+        # NUL, so content that normalizes away has to be dropped afterwards.
         all_observations = [
-            _normalized_observation(obs)
-            for obs in representation.deductive + representation.explicit
-            if _observation_text(obs).strip()
+            normalized
+            for normalized in (
+                _normalized_observation(obs)
+                for obs in representation.deductive + representation.explicit
+            )
+            if _observation_text(normalized)
         ]
         if not all_observations:
             logger.debug("No non-empty observations to save")
@@ -105,9 +124,9 @@ class RepresentationManager:
                 parent_category="representation",
             ):
                 embeddings = await embedding_client.simple_batch_embed(
-                    observation_texts
+                    observation_texts, on_oversize="truncate"
                 )
-        except ValueError as e:
+        except EmbeddingTokenLimitError as e:
             raise exceptions.ValidationException(
                 "Observation content exceeds maximum token limit of "
                 + f"{settings.EMBEDDING.MAX_INPUT_TOKENS}."
@@ -213,7 +232,7 @@ class RepresentationManager:
         self,
         *,
         db: AsyncSession | None = None,
-        session_name: str | None = None,
+        session_allowlist: list[str] | None = None,
         include_semantic_query: str | None = None,
         embedding: list[float] | None = None,
         semantic_search_top_k: int | None = None,
@@ -229,7 +248,10 @@ class RepresentationManager:
         Args:
             db: Optional database session. If provided, uses it directly;
                 otherwise creates a new session via tracked_db.
-            session_name: Optional session to filter by
+            session_allowlist: Optional session allowlist to filter by. Applied
+                uniformly to every query path (semantic, most-derived, and
+                recent). None means no session restriction; an empty list
+                fail-closes to an empty representation.
             include_semantic_query: Query for semantic search
             embedding: Pre-computed embedding for the semantic query.
             semantic_search_top_k: Number of semantic results
@@ -267,7 +289,7 @@ class RepresentationManager:
         if db is not None:
             return await self._get_working_representation_internal(
                 db,
-                session_name=session_name,
+                session_allowlist=session_allowlist,
                 include_semantic_query=include_semantic_query,
                 embedding=embedding,
                 semantic_search_top_k=semantic_search_top_k,
@@ -281,7 +303,7 @@ class RepresentationManager:
         ) as new_db:
             return await self._get_working_representation_internal(
                 new_db,
-                session_name=session_name,
+                session_allowlist=session_allowlist,
                 include_semantic_query=include_semantic_query,
                 embedding=embedding,
                 semantic_search_top_k=semantic_search_top_k,
@@ -296,7 +318,7 @@ class RepresentationManager:
         self,
         db: AsyncSession,
         *,
-        session_name: str | None = None,
+        session_allowlist: list[str] | None = None,
         include_semantic_query: str | None = None,
         embedding: list[float] | None = None,
         semantic_search_top_k: int | None = None,
@@ -305,13 +327,20 @@ class RepresentationManager:
         max_observations: int = settings.DERIVER.WORKING_REPRESENTATION_MAX_OBSERVATIONS,
     ) -> Representation:
         """Internal implementation of get_working_representation."""
+        # Fail closed on an empty allowlist. This must short-circuit before
+        # any query: downstream stores drop an `IN ()` clause with an empty
+        # list (lancedb), which would silently widen the scope instead.
+        if session_allowlist is not None and not session_allowlist:
+            return Representation()
+
         total = max_observations
 
-        # Calculate how many observations to get from each source
+        # Calculate how many observations to get from each source.
+        # Floor of 1 when a semantic query was explicitly requested.
         semantic_observations = (
             min(
                 max(
-                    0,
+                    1,
                     semantic_search_top_k
                     if semantic_search_top_k is not None
                     else total // 3,
@@ -332,10 +361,8 @@ class RepresentationManager:
             # no derived observations requested
             top_observations = 0
 
-        # remaining observations are recent
-        recent_observations = total - semantic_observations - top_observations
-
         representation = Representation()
+        selected_document_ids: set[str] = set()
 
         # Get semantic observations if requested
         if include_semantic_query:
@@ -345,23 +372,38 @@ class RepresentationManager:
                 top_k=semantic_observations,
                 max_distance=semantic_search_max_distance,
                 embedding=embedding,
+                session_allowlist=session_allowlist,
             )
             representation.merge_representation(
                 Representation.from_documents(semantic_docs)
             )
+            selected_document_ids.update(document.id for document in semantic_docs)
 
-        # Get most derived observations if requested
+        # Get most derived observations if requested. The semantic query may
+        # return fewer documents than requested, so cap this query by the
+        # actual remaining representation capacity rather than the configured
+        # budget alone.
         if include_most_derived:
+            remaining_observations = max(0, total - representation.len())
             derived_docs = await self._query_documents_most_derived(
-                db, top_k=top_observations
+                db,
+                top_k=min(top_observations, remaining_observations),
+                session_allowlist=session_allowlist,
             )
             representation.merge_representation(
                 Representation.from_documents(derived_docs)
             )
+            selected_document_ids.update(document.id for document in derived_docs)
 
-        # Get recent observations
+        # Reclaim any capacity left by queries that returned fewer unique
+        # documents than requested. This keeps the final representation from
+        # shrinking when semantic or most-derived search underfills its slice.
+        recent_observations = max(0, total - representation.len())
         recent_docs = await self._query_documents_recent(
-            db, top_k=recent_observations, session_name=session_name
+            db,
+            top_k=recent_observations,
+            session_allowlist=session_allowlist,
+            excluded_document_ids=selected_document_ids,
         )
 
         representation.merge_representation(Representation.from_documents(recent_docs))
@@ -376,6 +418,7 @@ class RepresentationManager:
         max_distance: float | None = None,
         level: str | None = None,
         embedding: list[float] | None = None,
+        session_allowlist: list[str] | None = None,
     ) -> list[models.Document]:
         """Query documents by semantic similarity."""
         try:
@@ -387,6 +430,7 @@ class RepresentationManager:
                     top_k,
                     max_distance,
                     embedding=embedding,
+                    session_allowlist=session_allowlist,
                 )
             else:
                 documents = await crud.query_documents(
@@ -398,6 +442,10 @@ class RepresentationManager:
                     max_distance=max_distance,
                     top_k=top_k,
                     embedding=embedding,
+                    filters=self._build_filter_conditions(
+                        session_allowlist=session_allowlist
+                    )
+                    or None,
                 )
                 db.expunge_all()
                 return list(documents)
@@ -407,7 +455,11 @@ class RepresentationManager:
             return []
 
     async def _query_documents_recent(
-        self, db: AsyncSession, top_k: int, session_name: str | None = None
+        self,
+        db: AsyncSession,
+        top_k: int,
+        session_allowlist: list[str] | None = None,
+        excluded_document_ids: set[str] | None = None,
     ) -> list[models.Document]:
         """Query most recent documents."""
         stmt = (
@@ -419,8 +471,18 @@ class RepresentationManager:
                 models.Document.observed == self.observed,
                 models.Document.deleted_at.is_(None),
                 *(
-                    [models.Document.session_name == session_name]
-                    if session_name is not None
+                    [models.Document.id.notin_(excluded_document_ids)]
+                    if excluded_document_ids
+                    else []
+                ),
+                *(
+                    [
+                        models.Document.session_name.in_(session_allowlist),
+                        # Only levels with a trustworthy session stamp are
+                        # scopeable — see ALLOWLIST_SAFE_LEVELS.
+                        models.Document.level.in_(ALLOWLIST_SAFE_LEVELS),
+                    ]
+                    if session_allowlist is not None
                     else []
                 ),
             )
@@ -433,7 +495,7 @@ class RepresentationManager:
         return list(documents)
 
     async def _query_documents_most_derived(
-        self, db: AsyncSession, top_k: int
+        self, db: AsyncSession, top_k: int, session_allowlist: list[str] | None = None
     ) -> list[models.Document]:
         """Query most derived documents."""
         stmt = (
@@ -444,6 +506,16 @@ class RepresentationManager:
                 models.Document.observer == self.observer,
                 models.Document.observed == self.observed,
                 models.Document.deleted_at.is_(None),
+                *(
+                    [
+                        models.Document.session_name.in_(session_allowlist),
+                        # Only levels with a trustworthy session stamp are
+                        # scopeable — see ALLOWLIST_SAFE_LEVELS.
+                        models.Document.level.in_(ALLOWLIST_SAFE_LEVELS),
+                    ]
+                    if session_allowlist is not None
+                    else []
+                ),
             )
             .order_by(
                 models.Document.times_derived.desc(),
@@ -480,6 +552,7 @@ class RepresentationManager:
         count: int,
         max_distance: float | None = None,
         embedding: list[float] | None = None,
+        session_allowlist: list[str] | None = None,
     ) -> list[models.Document]:
         """Query documents for a specific level."""
         documents = await crud.query_documents(
@@ -490,7 +563,9 @@ class RepresentationManager:
             query=query,
             max_distance=max_distance,
             top_k=count,
-            filters=self._build_filter_conditions(level),
+            filters=self._build_filter_conditions(
+                level, session_allowlist=session_allowlist
+            ),
             embedding=embedding,
         )
 
@@ -503,16 +578,31 @@ class RepresentationManager:
     def _build_filter_conditions(
         self,
         level: str | None = None,
+        session_allowlist: list[str] | None = None,
     ) -> dict[str, Any]:
         """
         Build filter conditions for document queries.
 
         Returns a flat dict of key-value pairs for vector store filtering.
+        Callers must not pass an empty session_allowlist list — empty allowlists
+        fail closed before any query is issued (see
+        _get_working_representation_internal).
         """
         filters: dict[str, Any] = {}
 
         if level:
             filters["level"] = level
+
+        # `is not None` (not truthiness): an explicit empty allowlist must emit
+        # an empty `in` so downstream stores fail closed, matching
+        # _query_documents_recent / _query_documents_most_derived. Truthiness
+        # here would silently drop the filter and widen scope.
+        if session_allowlist is not None:
+            filters["session_name"] = {"in": session_allowlist}
+            # Only levels with a trustworthy session stamp are scopeable. This
+            # overrides any narrower `level` above; an empty intersection emits
+            # `{"in": []}`, which matches nothing rather than everything.
+            filters["level"] = {"in": allowlist_safe_levels([level] if level else None)}
 
         return filters
 
@@ -526,7 +616,7 @@ async def get_working_representation(
     db: AsyncSession | None = None,
     observer: str,
     observed: str,
-    session_name: str | None = None,
+    session_allowlist: list[str] | None = None,
     include_semantic_query: str | None = None,
     embedding: list[float] | None = None,
     semantic_search_top_k: int | None = None,
@@ -559,7 +649,7 @@ async def get_working_representation(
     )
     return await manager.get_working_representation(
         db=db,
-        session_name=session_name,
+        session_allowlist=session_allowlist,
         include_semantic_query=include_semantic_query,
         embedding=embedding,
         semantic_search_top_k=semantic_search_top_k,

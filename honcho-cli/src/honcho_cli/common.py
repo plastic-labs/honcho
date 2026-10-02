@@ -52,6 +52,15 @@ def get_resolved_config():
     return config
 
 
+def get_flag_overrides() -> dict[str, str | None]:
+    """Workspace/peer/session as supplied by ``-w``/``-p``/``-s`` at any level.
+
+    Unlike :func:`get_resolved_config`, this excludes values coming from the
+    environment or config file.
+    """
+    return dict(_global_overrides)
+
+
 def maybe_refresh_token(config: CLIConfig) -> None:
     """Refresh an expired OAuth access token in place and persist it.
 
@@ -157,3 +166,44 @@ def add_common_options(app: typer.Typer) -> None:
 
         if ctx.invoked_subcommand is None:
             typer.echo(ctx.get_help())
+
+
+def format_evidence(evidence) -> dict:
+    """Shape a dialectic `Evidence` for output.
+
+    Evidence is collated from what the agent accessed rather than reported by
+    the model, so it over-reports: a conclusion is listed because the agent
+    read it, which is not proof the answer leaned on it. Messages carry
+    identity only -- no content -- so they are summarised per session rather
+    than listed one by one.
+    """
+    if evidence is None:
+        return {"conclusions": [], "messages": {"total": 0, "sessions": []}, "tool_calls": []}
+
+    sessions: dict[str, int] = {}
+    for m in evidence.messages:
+        sessions[m.session_id] = sessions.get(m.session_id, 0) + 1
+
+    return {
+        "conclusions": [
+            {
+                "id": c.id,
+                "level": c.level,
+                "content": c.content,
+                "source_ids": list(c.source_ids or []),
+                "session_id": c.session_id,
+                "created_at": str(c.created_at),
+            }
+            for c in evidence.conclusions
+        ],
+        "messages": {
+            "total": len(evidence.messages),
+            "sessions": [
+                {"session_id": sid, "count": n}
+                for sid, n in sorted(sessions.items(), key=lambda kv: -kv[1])
+            ],
+        },
+        "tool_calls": [
+            {"tool_name": t.tool_name, "tool_input": t.tool_input} for t in evidence.tool_calls
+        ],
+    }

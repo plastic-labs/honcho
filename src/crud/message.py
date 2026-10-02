@@ -6,6 +6,7 @@ from typing import Any
 from nanoid import generate as generate_nanoid
 from sqlalchemy import ColumnElement, Select, and_, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import InstrumentedAttribute
 
 from src import models, schemas
 from src.config import settings
@@ -17,6 +18,7 @@ from src.utils.formatting import ILIKE_ESCAPE_CHAR, escape_ilike_pattern
 from src.utils.types import embedding_call_purpose
 from src.vector_store import get_external_vector_store
 
+from .peer import reject_scope_peers
 from .session import get_or_create_session
 
 logger = getLogger(__name__)
@@ -55,11 +57,28 @@ async def get_peer_session_names(
     db: AsyncSession,
     workspace_name: str,
     peer_name: str,
+    *,
+    active_only: bool = False,
 ) -> list[str]:
-    """Get all session names where a peer has any membership record.
+    """Get all session names where a peer has a membership record.
 
-    Any membership record (regardless of joined_at/left_at) grants visibility
-    to all messages in that session.
+    By default any membership record (regardless of joined_at/left_at) grants
+    visibility to all messages in that session — this is the loose definition
+    recall scoping uses.
+
+    Pass ``active_only=True`` for the strict definition (``left_at IS NULL``),
+    matching :func:`src.crud.session.is_peer_in_session`. The auth layer must
+    use the strict one so that a single peer-scoped key gets the same answer
+    whether it names a session directly or via a filter allowlist.
+
+    Args:
+        db: Database session
+        workspace_name: Name of the workspace
+        peer_name: Name of the peer
+        active_only: Restrict to sessions the peer has not left
+
+    Returns:
+        Distinct session names the peer has a matching membership record in.
     """
     stmt = (
         select(models.session_peers_table.c.session_name)
@@ -67,8 +86,163 @@ async def get_peer_session_names(
         .where(models.session_peers_table.c.peer_name == peer_name)
         .distinct()
     )
+    if active_only:
+        stmt = stmt.where(models.session_peers_table.c.left_at.is_(None))
     result = await db.execute(stmt)
     return [row[0] for row in result.all()]
+
+
+async def resolve_session_scope(
+    db: AsyncSession | None,
+    workspace_name: str,
+    session_name: str | None,
+    session_allowlist: list[str] | None,
+    observer: str | None,
+    *,
+    operation_name: str = "resolve_session_scope",
+) -> tuple[list[str] | None, bool]:
+    """Resolve the effective session scope for a message query.
+
+    Returns ``(allowed_session_names, deny)``:
+
+    - ``allowed_session_names is None`` — apply no allowlist filter. Either the
+      query is unrestricted, or ``session_name`` already pins it to one session.
+    - a populated list — restrict the query to exactly these sessions.
+    - ``deny=True`` — the caller must return an empty result *without* querying.
+
+    The distinction between ``None`` and an empty list is load-bearing: the
+    external vector stores drop an empty ``IN`` clause rather than matching
+    nothing, so collapsing the two would fail open. This function therefore
+    never returns an empty list — it returns ``deny=True`` instead.
+
+    Touches the database only when an observer lookup is actually required, so
+    callers on the external-vector-store path don't check out a connection
+    before their network call.
+
+    Args:
+        db: Database session to reuse. Pass None to let this function open its
+            own short-lived read-only session if (and only if) it needs one.
+        workspace_name: Name of the workspace
+        session_name: A single pinned session, if the caller named one
+        session_allowlist: Optional session allowlist. ``None`` is unrestricted;
+            an empty list fails closed.
+        observer: When set, scope is limited to this peer's sessions and then
+            intersected with ``session_allowlist``
+        operation_name: Label for the self-managed DB session, when one is opened
+
+    Returns:
+        Tuple of (allowlist to filter on or None, whether to deny outright).
+    """
+    if session_name:
+        # A specific session was requested. Fail closed when the allowlist
+        # forbids it — routes guard this too, but other CRUD callers (the
+        # dialectic tools) don't, so enforce it at the boundary.
+        if session_allowlist is not None and session_name not in session_allowlist:
+            return None, True
+        return None, False
+
+    if observer is None:
+        if session_allowlist is None:
+            return None, False
+        allowed = list(session_allowlist)
+        return (allowed, False) if allowed else (None, True)
+
+    if db is not None:
+        allowed = await get_peer_session_names(db, workspace_name, observer)
+    else:
+        async with tracked_db(f"{operation_name}.peer_scope", read_only=True) as own_db:
+            allowed = await get_peer_session_names(own_db, workspace_name, observer)
+
+    if session_allowlist is not None:
+        scope = set(session_allowlist)
+        allowed = [s for s in allowed if s in scope]
+
+    return (allowed, False) if allowed else (None, True)
+
+
+def observer_scope_clause(
+    workspace_name: str,
+    observer: str,
+    session_column: InstrumentedAttribute[str],
+) -> ColumnElement[bool]:
+    """Correlated EXISTS restricting ``session_column`` to the observer's sessions.
+
+    The in-database equivalent of filtering on :func:`get_peer_session_names`.
+    Prefer it whenever the scope feeds a single SQL statement: a peer's
+    membership count is unbounded, and materializing the names turns each one
+    into its own bind parameter. The PostgreSQL wire protocol caps parameters
+    at 65535 per statement, so a peer in enough sessions produces a query the
+    driver cannot serialize at all — and the resulting error carries every
+    parameter in its text.
+
+    Matches the loose membership definition ``get_peer_session_names`` uses by
+    default: any membership record grants visibility, whether or not the peer
+    has since left the session.
+    """
+    session_peers = models.session_peers_table
+    return (
+        select(1)
+        .where(session_peers.c.workspace_name == workspace_name)
+        .where(session_peers.c.peer_name == observer)
+        .where(session_peers.c.session_name == session_column)
+        .exists()
+    )
+
+
+def resolve_session_scope_clauses(
+    workspace_name: str,
+    session_name: str | None,
+    session_allowlist: list[str] | None,
+    observer: str | None,
+    session_column: InstrumentedAttribute[str],
+) -> tuple[list[ColumnElement[bool]], bool]:
+    """SQL-side counterpart to :func:`resolve_session_scope`.
+
+    Returns ``(clauses, deny)``, where ``clauses`` are ANDed onto the caller's
+    statement and ``deny=True`` means return an empty result without querying.
+    Unlike :func:`resolve_session_scope` this touches no database and grows no
+    bind parameters with the observer's session count — the observer half
+    becomes a correlated EXISTS instead of an ``IN`` over fetched names.
+
+    Scoping matches :func:`resolve_session_scope` case for case, with one
+    deliberate difference: where that function returns ``deny=True`` because an
+    observer's membership (or its intersection with the allowlist) is empty,
+    this returns clauses that simply match no rows. Callers reach the same empty
+    result, at the cost of running one indexed query that returns nothing.
+
+    ``session_allowlist`` stays an ``IN`` clause: it is caller-supplied and
+    therefore bounded, so it carries none of the unbounded-growth risk.
+
+    Args:
+        workspace_name: Name of the workspace
+        session_name: A single pinned session, if the caller named one. The
+            caller applies its own equality filter; this function only checks
+            the allowlist permits it.
+        session_allowlist: Optional session allowlist. ``None`` is
+            unrestricted; an empty list fails closed.
+        observer: When set, scope is limited to this peer's sessions
+        session_column: The session-name column to scope, e.g.
+            ``models.Message.session_name``
+    """
+    if session_name:
+        # Fail closed when the allowlist forbids the pinned session, matching
+        # `resolve_session_scope` — routes guard this too, but the dialectic
+        # tools reach CRUD directly, so enforce it at the boundary.
+        if session_allowlist is not None and session_name not in session_allowlist:
+            return [], True
+        return [], False
+
+    clauses: list[ColumnElement[bool]] = []
+
+    if observer is not None:
+        clauses.append(observer_scope_clause(workspace_name, observer, session_column))
+
+    if session_allowlist is not None:
+        if not session_allowlist:
+            return [], True
+        clauses.append(session_column.in_(session_allowlist))
+
+    return clauses, False
 
 
 def _apply_token_limit(
@@ -225,7 +399,22 @@ async def create_messages(
 
     Returns:
         List of created message objects
+
+    Raises:
+        ValidationException: If a message is authored by a scope peer
     """
+    # Scope peers are silent observers — they can never author messages. Keyed
+    # off name+flag so a legacy peer merely occupying the reserved namespace
+    # keeps ingesting. Must stay *before* get_or_create_session below: that call
+    # would create the scope peer and add it with a default SessionPeerConfig(),
+    # clobbering its observe_others=True/observe_me=False membership config.
+    await reject_scope_peers(
+        db,
+        workspace_name,
+        (message.peer_name for message in messages),
+        action="Scope peers cannot author messages.",
+    )
+
     # Get or create session with peers in messages list
     peers = {message.peer_name: schemas.SessionPeerConfig() for message in messages}
     await get_or_create_session(
@@ -558,6 +747,9 @@ async def _search_messages_external(
     Multiple vector records can map to the same message (chunked embeddings),
     so we oversample from the vector store and deduplicate by message_id.
     """
+    if limit <= 0:
+        return []
+
     external_vector_store = get_external_vector_store()
     if external_vector_store is None:
         return []
@@ -689,21 +881,29 @@ async def _semantic_search_messages(
     after_date: datetime | None = None,
     before_date: datetime | None = None,
     observer: str | None = None,
+    session_allowlist: list[str] | None = None,
 ) -> list[tuple[list[models.Message], list[models.Message]]]:
     """Run semantic message search with optional temporal filters.
 
     When observer is provided and session_name is None, results are
-    scoped to sessions the observer has any membership record in.
+    scoped to sessions the observer has any membership record in. When
+    session_allowlist is provided, that membership scope is further
+    intersected with the allowlist (fail-closed: empty result on empty
+    intersection).
     """
-    # Pre-fetch peer session scope if needed (short-lived DB session)
-    allowed_session_names: list[str] | None = None
-    if observer and not session_name:
-        async with tracked_db(f"{operation_name}.peer_scope", read_only=True) as db:
-            allowed_session_names = await get_peer_session_names(
-                db, workspace_name, observer
-            )
-        if not allowed_session_names:
-            return []
+    # db=None: the helper opens its own short-lived session only if it needs
+    # an observer lookup, so the external-store path below stays the first
+    # thing that happens when no observer scoping applies.
+    allowed_session_names, deny = await resolve_session_scope(
+        None,
+        workspace_name,
+        session_name,
+        session_allowlist,
+        observer,
+        operation_name=operation_name,
+    )
+    if deny:
+        return []
 
     if settings.VECTOR_STORE.TYPE != "pgvector" and settings.VECTOR_STORE.MIGRATED:
         message_ids = await _search_messages_external(
@@ -758,6 +958,7 @@ async def search_messages(
     context_window: int = 2,
     embedding: list[float] | None = None,
     observer: str | None = None,
+    session_allowlist: list[str] | None = None,
 ) -> list[tuple[list[models.Message], list[models.Message]]]:
     """
     Search for messages using semantic similarity and return conversation snippets.
@@ -768,12 +969,19 @@ async def search_messages(
     Args:
         workspace_name: Name of the workspace
         session_name: Name of the session (optional)
+            Deprecated for *scoping*: prefer session_allowlist, which
+            intersects with observer membership. This parameter also pins
+            the query to one session and bypasses observer scoping, so it
+            is not a drop-in equivalent and is not removed.
         query: Search query text
         limit: Maximum number of matching messages to return
         context_window: Number of messages before/after each match to include
         embedding: Optional pre-computed embedding
         observer: When provided and session_name is None, scope results
             to sessions this peer belongs to
+        session_allowlist: Optional session allowlist. None is unrestricted; an
+            empty list fails closed (empty result); a populated list is
+            intersected with the observer's session scope when observer is set
 
     Returns:
         List of tuples: (matched_messages, context_messages)
@@ -799,6 +1007,7 @@ async def search_messages(
         context_window=context_window,
         operation_name="message.search_messages",
         observer=observer,
+        session_allowlist=session_allowlist,
     )
 
 
@@ -846,6 +1055,7 @@ async def grep_messages(
     limit: int = 10,
     context_window: int = 2,
     observer: str | None = None,
+    session_allowlist: list[str] | None = None,
 ) -> list[tuple[list[models.Message], list[models.Message]]]:
     """
     Search for messages containing specific text (case-insensitive substring match).
@@ -856,25 +1066,29 @@ async def grep_messages(
     Args:
         workspace_name: Name of the workspace
         session_name: Name of the session (optional - searches all sessions if None)
+            Deprecated for *scoping*: prefer session_allowlist, which
+            intersects with observer membership. This parameter also pins
+            the query to one session and bypasses observer scoping, so it
+            is not a drop-in equivalent and is not removed.
         text: Text to search for (case-insensitive)
         limit: Maximum number of matching messages to return
         context_window: Number of messages before/after each match to include
         observer: When provided and session_name is None, scope results
             to sessions this peer belongs to
+        session_allowlist: Optional session allowlist. None is unrestricted; an
+            empty list fails closed (empty result); a populated list is
+            intersected with the observer's session scope when observer is set
 
     Returns:
         List of tuples: (matched_messages, context_messages)
         Each snippet may contain multiple matches if they were close together.
     """
     async with tracked_db("message.grep_messages", read_only=True) as db:
-        # Pre-fetch peer session scope if needed
-        allowed_session_names = None
-        if observer and not session_name:
-            allowed_session_names = await get_peer_session_names(
-                db, workspace_name, observer
-            )
-            if not allowed_session_names:
-                return []
+        allowed_session_names, deny = await resolve_session_scope(
+            db, workspace_name, session_name, session_allowlist, observer
+        )
+        if deny:
+            return []
 
         snippets = await _grep_messages_internal(
             db,
@@ -898,6 +1112,7 @@ async def get_messages_by_date_range(
     limit: int = 20,
     order: str = "desc",
     observer: str | None = None,
+    session_allowlist: list[str] | None = None,
 ) -> list[models.Message]:
     """
     Get messages within a date range.
@@ -906,24 +1121,28 @@ async def get_messages_by_date_range(
         db: Database session
         workspace_name: Name of the workspace
         session_name: Name of the session (optional - searches all sessions if None)
+            Deprecated for *scoping*: prefer session_allowlist, which
+            intersects with observer membership. This parameter also pins
+            the query to one session and bypasses observer scoping, so it
+            is not a drop-in equivalent and is not removed.
         after_date: Return messages after this datetime
         before_date: Return messages before this datetime
         limit: Maximum messages to return
         order: Sort order - 'asc' for oldest first, 'desc' for newest first
         observer: When provided and session_name is None, scope results
             to sessions this peer belongs to
+        session_allowlist: Optional session allowlist. None is unrestricted; an
+            empty list fails closed (empty result); a populated list is
+            intersected with the observer's session scope when observer is set
 
     Returns:
         List of messages within the date range
     """
-    # Pre-fetch peer session scope if needed
-    allowed_session_names = None
-    if observer and not session_name:
-        allowed_session_names = await get_peer_session_names(
-            db, workspace_name, observer
-        )
-        if not allowed_session_names:
-            return []
+    allowed_session_names, deny = await resolve_session_scope(
+        db, workspace_name, session_name, session_allowlist, observer
+    )
+    if deny:
+        return []
 
     stmt = select(models.Message).where(models.Message.workspace_name == workspace_name)
 
@@ -957,6 +1176,7 @@ async def search_messages_temporal(
     context_window: int = 2,
     embedding: list[float] | None = None,
     observer: str | None = None,
+    session_allowlist: list[str] | None = None,
 ) -> list[tuple[list[models.Message], list[models.Message]]]:
     """
     Search for messages using semantic similarity with optional date filtering.
@@ -967,6 +1187,10 @@ async def search_messages_temporal(
     Args:
         workspace_name: Name of the workspace
         session_name: Name of the session (optional)
+            Deprecated for *scoping*: prefer session_allowlist, which
+            intersects with observer membership. This parameter also pins
+            the query to one session and bypasses observer scoping, so it
+            is not a drop-in equivalent and is not removed.
         query: Search query text
         after_date: Only return messages after this datetime
         before_date: Only return messages before this datetime
@@ -975,6 +1199,9 @@ async def search_messages_temporal(
         embedding: Optional pre-computed embedding for the query
         observer: When provided and session_name is None, scope results
             to sessions this peer belongs to
+        session_allowlist: Optional session allowlist. None is unrestricted; an
+            empty list fails closed (empty result); a populated list is
+            intersected with the observer's session scope when observer is set
 
     Returns:
         List of tuples: (matched_messages, context_messages)
@@ -1001,4 +1228,5 @@ async def search_messages_temporal(
         context_window=context_window,
         operation_name="message.search_messages_temporal",
         observer=observer,
+        session_allowlist=session_allowlist,
     )

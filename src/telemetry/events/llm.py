@@ -34,6 +34,7 @@ class CallPurpose(str, Enum):
     DIALECTIC_ANSWER = "dialectic.answer"
     DREAM_DEDUCTION = "dream.deduction"
     DREAM_INDUCTION = "dream.induction"
+    DREAM_CARD_REFRESH = "dream.card_refresh"
     SUMMARY_SHORT = "summary.short"
     SUMMARY_LONG = "summary.long"
 

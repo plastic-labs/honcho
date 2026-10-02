@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from src.llm.backend import CompletionResult as BackendCompletionResult
+from src.llm.backend import StreamChunk
 from src.llm.executor import _emit_llm_call_completed
 from src.llm.runtime import AttemptPlan
 from src.llm.types import LLMTelemetryContext
@@ -277,7 +278,7 @@ class TestExecutorEndToEnd:
 
     @pytest.mark.asyncio
     async def test_success_path_emits_one_event(self):
-        from src.llm import executor
+        from src.llm import executor, registry
 
         emitted: list[BaseEvent] = []
         result = BackendCompletionResult(
@@ -285,7 +286,7 @@ class TestExecutorEndToEnd:
         )
 
         with (
-            patch.object(executor, "CLIENTS", {"anthropic": object()}),
+            patch.object(registry, "CLIENTS", {"anthropic": object()}),
             patch.object(
                 executor,
                 "backend_for_provider",
@@ -326,7 +327,7 @@ class TestExecutorEndToEnd:
         'error' — client disconnects / shutdowns must not pollute error rates."""
         import asyncio
 
-        from src.llm import executor
+        from src.llm import executor, registry
 
         emitted: list[BaseEvent] = []
 
@@ -334,7 +335,7 @@ class TestExecutorEndToEnd:
             raise asyncio.CancelledError()
 
         with (
-            patch.object(executor, "CLIENTS", {"anthropic": object()}),
+            patch.object(registry, "CLIENTS", {"anthropic": object()}),
             patch.object(executor, "backend_for_provider", return_value=object()),
             patch.object(executor, "execute_completion", new=_cancel),
             patch(
@@ -364,20 +365,20 @@ class TestExecutorEndToEnd:
         import asyncio
         from collections.abc import AsyncIterator
 
-        from src.llm import executor
+        from src.llm import executor, registry
 
         emitted: list[BaseEvent] = []
 
         async def _cancelling_stream() -> AsyncIterator[Any]:
             # one chunk then cancel — simulates a client disconnect mid-stream.
-            yield object()  # caller's `async for` consumes this
+            yield StreamChunk(content="partial")
             raise asyncio.CancelledError()
 
         async def _setup_stream(*_args: Any, **_kwargs: Any) -> AsyncIterator[Any]:
             return _cancelling_stream()
 
         with (
-            patch.object(executor, "CLIENTS", {"anthropic": object()}),
+            patch.object(registry, "CLIENTS", {"anthropic": object()}),
             patch.object(executor, "backend_for_provider", return_value=object()),
             patch.object(executor, "execute_stream", new=_setup_stream),
             patch.object(
@@ -418,7 +419,7 @@ class TestExecutorEndToEnd:
         generator without awaiting `execute_stream`, hiding setup failures
         from tenacity.
         """
-        from src.llm import executor
+        from src.llm import executor, registry
 
         emitted: list[BaseEvent] = []
 
@@ -426,7 +427,7 @@ class TestExecutorEndToEnd:
             raise RuntimeError("rate limited")
 
         with (
-            patch.object(executor, "CLIENTS", {"anthropic": object()}),
+            patch.object(registry, "CLIENTS", {"anthropic": object()}),
             patch.object(executor, "backend_for_provider", return_value=object()),
             patch.object(executor, "execute_stream", new=_setup_explodes),
             patch(
@@ -455,7 +456,7 @@ class TestExecutorEndToEnd:
 
     @pytest.mark.asyncio
     async def test_error_path_still_emits_via_finally(self):
-        from src.llm import executor
+        from src.llm import executor, registry
 
         emitted: list[BaseEvent] = []
 
@@ -463,7 +464,7 @@ class TestExecutorEndToEnd:
             raise RuntimeError("backend exploded")
 
         with (
-            patch.object(executor, "CLIENTS", {"anthropic": object()}),
+            patch.object(registry, "CLIENTS", {"anthropic": object()}),
             patch.object(
                 executor,
                 "backend_for_provider",
@@ -570,7 +571,7 @@ class TestStreamFinalResponseRetryAttempt:
     async def test_attempt_index_bumps_across_retries(self):
         from collections.abc import AsyncIterator
 
-        from src.llm import executor, tool_loop
+        from src.llm import executor, registry, tool_loop
 
         emitted: list[BaseEvent] = []
 
@@ -607,7 +608,7 @@ class TestStreamFinalResponseRetryAttempt:
         )
 
         with (
-            patch.object(executor, "CLIENTS", {"anthropic": object()}),
+            patch.object(registry, "CLIENTS", {"anthropic": object()}),
             patch.object(executor, "backend_for_provider", return_value=object()),
             patch.object(executor, "execute_stream", new=_flaky_setup),
             patch(
@@ -687,9 +688,9 @@ class TestStreamingResponseTokenWriteBack:
 
 
 class TestStreamingResponseRunHandleClose:
-    """When a `langfuse_run_handle` is transferred to the streaming wrapper,
-    the wrapper owns it: the accumulated streamed text is stamped as the run
-    span's output and the span is closed exactly once when the stream drains.
+    """When a `run_span` is transferred to the streaming wrapper, the wrapper
+    owns it: the accumulated streamed text is stamped as the run span's output
+    and the span is closed exactly once when the stream drains.
     The close lives in a `finally`, so an early-exit caller still closes the
     span rather than leaking it.
     """
@@ -721,7 +722,7 @@ class TestStreamingResponseRunHandleClose:
             output_tokens=0,
             cache_creation_input_tokens=0,
             cache_read_input_tokens=0,
-            langfuse_run_handle=handle,
+            run_span=handle,
         )
 
         async for _ in wrapper:
@@ -730,7 +731,7 @@ class TestStreamingResponseRunHandleClose:
         # Closed exactly once, with the concatenated streamed text as output.
         assert handle.end_calls == ["hello"]
         # Ownership released so a second drain can't double-close.
-        assert wrapper._langfuse_run_handle is None
+        assert wrapper._run_span is None
 
     @pytest.mark.asyncio
     async def test_abandoned_stream_still_closes_via_finally(self):
@@ -744,7 +745,7 @@ class TestStreamingResponseRunHandleClose:
             output_tokens=0,
             cache_creation_input_tokens=0,
             cache_read_input_tokens=0,
-            langfuse_run_handle=handle,
+            run_span=handle,
         )
 
         # Consume one chunk, then abandon the stream. `aclose()` is what the
@@ -754,9 +755,7 @@ class TestStreamingResponseRunHandleClose:
 
         from src.llm.types import HonchoLLMCallStreamChunk
 
-        agen = cast(
-            "AsyncGenerator[HonchoLLMCallStreamChunk, None]", wrapper.__aiter__()
-        )
+        agen = cast("AsyncGenerator[HonchoLLMCallStreamChunk]", wrapper.__aiter__())
         first = await agen.__anext__()
         assert first.content == "hel"
         await agen.aclose()
@@ -764,4 +763,4 @@ class TestStreamingResponseRunHandleClose:
         # Span closed once with only the text accumulated before abandonment —
         # the span is closed, not leaked.
         assert handle.end_calls == ["hel"]
-        assert wrapper._langfuse_run_handle is None
+        assert wrapper._run_span is None

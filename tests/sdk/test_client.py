@@ -1,3 +1,6 @@
+import sys
+
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -47,9 +50,9 @@ async def test_client_init(client_fixture: tuple[Honcho, str], client: TestClien
 
         page += 1
 
-    assert (
-        found_workspace
-    ), f"Workspace {honcho_client.workspace_id} not found in any page of results"
+    assert found_workspace, (
+        f"Workspace {honcho_client.workspace_id} not found in any page of results"
+    )
 
 
 @pytest.mark.asyncio
@@ -354,3 +357,40 @@ async def test_update_message_with_message_id(
         assert isinstance(updated, Message)
         assert updated.metadata == {"updated": True}
         assert updated.id == message.id
+
+
+def test_sdk_sends_default_host_header_unless_overridden():
+    """Every request carries X-Honcho-Host naming the SDK, and a caller's own
+    X-Honcho-Host (a harness plugin's identity) replaces it."""
+    from sdks.python.src.honcho import __version__
+
+    seen: list[httpx.Headers] = []
+
+    def capture(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers)
+        return httpx.Response(
+            200,
+            json={
+                "id": "ws",
+                "metadata": {},
+                "configuration": {},
+                "created_at": "2026-01-01T00:00:00Z",
+            },
+        )
+
+    transport = httpx.MockTransport(capture)
+
+    Honcho(
+        workspace_id="ws",
+        base_url="http://test",
+        http_client=httpx.Client(transport=transport, base_url="http://test"),
+    ).get_metadata()
+    assert seen[-1]["X-Honcho-Host"] == f"honcho-python/{__version__} ({sys.platform})"
+
+    Honcho(
+        workspace_id="ws",
+        base_url="http://test",
+        default_headers={"X-Honcho-Host": "claude-code/2.1.3 (darwin)"},
+        http_client=httpx.Client(transport=transport, base_url="http://test"),
+    ).get_metadata()
+    assert seen[-1]["X-Honcho-Host"] == "claude-code/2.1.3 (darwin)"

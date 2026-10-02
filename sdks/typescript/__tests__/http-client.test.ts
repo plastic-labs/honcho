@@ -13,7 +13,8 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test'
-import { HonchoHTTPClient } from '../src/http/client'
+import { HonchoHTTPClient, defaultHostHeader } from '../src/http/client'
+import { VERSION } from '../src/api-version'
 import {
   HonchoError,
   BadRequestError,
@@ -137,6 +138,20 @@ describe('HonchoHTTPClient constructor', () => {
     expect(client.defaultHeaders['X-Custom-Header']).toBe('custom-value')
   })
 
+  test('sends X-Honcho-Host naming the SDK unless the caller overrides it', () => {
+    const client = new HonchoHTTPClient({ baseURL: 'https://api.example.com' })
+
+    expect(defaultHostHeader()).toBe(`honcho-typescript/${VERSION} (${process.platform})`)
+    expect(client.defaultHeaders['X-Honcho-Host']).toBe(defaultHostHeader())
+
+    // A harness plugin's own host identity replaces the SDK default.
+    const overridden = new HonchoHTTPClient({
+      baseURL: 'https://api.example.com',
+      defaultHeaders: { 'X-Honcho-Host': 'claude-code/2.1.3 (darwin)' },
+    })
+    expect(overridden.defaultHeaders['X-Honcho-Host']).toBe('claude-code/2.1.3 (darwin)')
+  })
+
   test('custom headers can override default Content-Type', () => {
     const client = new HonchoHTTPClient({
       baseURL: 'https://api.example.com',
@@ -236,6 +251,39 @@ describe('URL building', () => {
     const url = new URL(capturedURL)
     expect(url.searchParams.get('present')).toBe('value')
     expect(url.searchParams.has('missing')).toBe(false)
+  })
+
+  test('sends array query parameters as repeated params, not comma-joined', async () => {
+    let capturedURL = ''
+    globalThis.fetch = async (url) => {
+      capturedURL = url.toString()
+      return mockResponse({ ok: true })
+    }
+
+    await client.get('/v1/test', {
+      query: { sessions: ['session-a', 'session-b'] },
+    })
+
+    const url = new URL(capturedURL)
+    // The API reads list-valued params as ?k=a&k=b. A comma-joined single value
+    // would arrive as one malformed entry.
+    expect(url.searchParams.getAll('sessions')).toEqual([
+      'session-a',
+      'session-b',
+    ])
+  })
+
+  test('an empty array query parameter contributes nothing', async () => {
+    let capturedURL = ''
+    globalThis.fetch = async (url) => {
+      capturedURL = url.toString()
+      return mockResponse({ ok: true })
+    }
+
+    await client.get('/v1/test', { query: { sessions: [] } })
+
+    const url = new URL(capturedURL)
+    expect(url.searchParams.has('sessions')).toBe(false)
   })
 })
 

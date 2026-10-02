@@ -5,7 +5,8 @@ import argparse
 import json
 import os
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import httpx
 from dotenv import load_dotenv
@@ -32,7 +33,7 @@ def parse_datetime(dt_string: str) -> datetime:
         day=date_obj.day,
         hour=time_obj.hour,
         minute=time_obj.minute,
-        tzinfo=timezone.utc,
+        tzinfo=UTC,
     )
 
 
@@ -106,7 +107,7 @@ def load_locomo(
         print(f"  Created session: {session_id}")
 
         # Build message batch
-        msg_batch = []
+        msg_batch: list[dict[str, Any]] = []
         for i, msg in enumerate(messages):
             msg_time = base_time + timedelta(seconds=i * 2)
             msg_batch.append(
@@ -134,7 +135,7 @@ def load_locomo(
 
 def chat(
     client: httpx.Client, workspace_id: str, peer_id: str, query: str, level: str
-) -> dict:
+) -> dict[str, Any]:
     """Call the chat endpoint with a specific reasoning level."""
     resp = client.post(
         f"{BASE_URL}/workspaces/{workspace_id}/peers/{peer_id}/chat",
