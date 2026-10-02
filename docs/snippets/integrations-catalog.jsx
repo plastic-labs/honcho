@@ -1,19 +1,21 @@
 // Integrations catalog for /v3/guides/overview.
 // Order inside each section is priority order — keep it that way when adding entries.
 // status: "official" | "community"
+// icon: a Font Awesome name, or a pinned CDN URL to a monochrome black SVG
+// (Simple Icons, then Lobe Icons) on jsDelivr; style.css inverts them in dark mode.
 
 export const IntegrationsCatalog = () => {
   const featured = [
     {
       name: "Hermes Agent",
-      icon: "message-bot",
+      icon: "https://cdn.jsdelivr.net/npm/@lobehub/icons-static-svg@1.95.1/icons/hermesagent.svg",
       href: "/v3/guides/integrations/hermes",
       cta: "Set up Hermes",
       desc: "Cross-session memory and user modeling for Nous Research's Hermes agent, across Telegram, Discord, Slack, and WhatsApp.",
     },
     {
       name: "OpenClaw",
-      icon: "lobster",
+      icon: "https://cdn.jsdelivr.net/npm/@lobehub/icons-static-svg@1.95.1/icons/openclaw.svg",
       href: "/v3/guides/integrations/openclaw",
       cta: "Set up OpenClaw",
       desc: "Memory across every OpenClaw channel, with honcho_* tools and automatic message capture.",
@@ -30,7 +32,7 @@ export const IntegrationsCatalog = () => {
   const universal = [
     {
       name: "MCP Server",
-      icon: "star-of-life",
+      icon: "https://cdn.jsdelivr.net/npm/simple-icons@16.33.0/icons/modelcontextprotocol.svg",
       href: "/v3/guides/integrations/mcp",
       desc: "Any MCP client — Claude Desktop, Cursor, Windsurf, VS Code, Zed, Goose, Cline.",
     },
@@ -42,10 +44,10 @@ export const IntegrationsCatalog = () => {
       title: "General agents",
       blurb: "Personal agents that work across your channels and tools.",
       items: [
-        { name: "Hermes Agent", icon: "message-bot", href: "/v3/guides/integrations/hermes", desc: "Cross-session memory and user modeling for Nous Research's Hermes agent.", status: "official" },
-        { name: "OpenClaw", icon: "lobster", href: "/v3/guides/integrations/openclaw", desc: "Memory across WhatsApp, Telegram, Discord, Slack, and every other OpenClaw channel.", status: "official" },
-        { name: "Claude Desktop", icon: "message", href: "/v3/guides/integrations/mcp#claude-desktop", desc: "Give Claude Desktop memory of you across every chat.", status: "official", via: "MCP" },
-        { name: "Goose", icon: "feather", href: "/v3/guides/integrations/mcp#goose", desc: "Add Honcho to Goose as a remote extension.", status: "official", via: "MCP" },
+        { name: "Hermes Agent", icon: "https://cdn.jsdelivr.net/npm/@lobehub/icons-static-svg@1.95.1/icons/hermesagent.svg", href: "/v3/guides/integrations/hermes", desc: "Cross-session memory and user modeling for Nous Research's Hermes agent.", status: "official" },
+        { name: "OpenClaw", icon: "https://cdn.jsdelivr.net/npm/@lobehub/icons-static-svg@1.95.1/icons/openclaw.svg", href: "/v3/guides/integrations/openclaw", desc: "Memory across WhatsApp, Telegram, Discord, Slack, and every other OpenClaw channel.", status: "official" },
+        { name: "Claude Desktop", icon: "https://cdn.jsdelivr.net/npm/simple-icons@16.33.0/icons/claude.svg", href: "/v3/guides/integrations/mcp#claude-desktop", desc: "Give Claude Desktop memory of you across every chat.", status: "official", via: "MCP" },
+        { name: "Goose", icon: "https://cdn.jsdelivr.net/npm/@lobehub/icons-static-svg@1.95.1/icons/goose.svg", href: "/v3/guides/integrations/mcp#goose", desc: "Add Honcho to Goose as a remote extension.", status: "official", via: "MCP" },
       ],
     },
     {
@@ -53,16 +55,16 @@ export const IntegrationsCatalog = () => {
       title: "Coding agents",
       blurb: "Memory that carries across sessions, restarts, and projects in the coding tools you already use.",
       items: [
-        { name: "Claude Code", icon: "terminal", href: "/v3/guides/integrations/claude-code", desc: "Memory that survives context wipes, restarts, and project switches.", status: "official" },
-        { name: "Pi", icon: "pi", href: "/v3/guides/community/pi-honcho-memory", desc: "Persistent memory extension for the pi coding agent CLI.", status: "community" },
-        { name: "Codex", icon: "square-terminal", href: "/v3/guides/integrations/codex", desc: "Lifecycle hooks capture Codex sessions and restore context on start.", status: "official" },
-        { name: "OpenCode", icon: "code", href: "/v3/guides/integrations/opencode", desc: "Per-directory, per-repo, or branch-scoped session memory.", status: "official" },
-        { name: "DeepSeek Harness", icon: "terminal", href: "/v3/guides/integrations/deepseek-harness", desc: "Context injection, turn capture, and honcho_search for dsh.", status: "official" },
-        { name: "Cline", icon: "star-of-life", href: "/v3/guides/integrations/mcp#cline", desc: "Connect Cline to the Honcho MCP server.", status: "official", via: "MCP" },
-        { name: "Cursor", icon: "arrow-pointer", href: "/v3/guides/integrations/mcp#cursor", desc: "Add Honcho as an HTTP MCP server in Cursor's global or per-project config.", status: "official", via: "MCP" },
-        { name: "Windsurf", icon: "wind", href: "/v3/guides/integrations/mcp#windsurf", desc: "Give Windsurf's Cascade agent memory through the Honcho MCP server.", status: "official", via: "MCP" },
-        { name: "VS Code", icon: "code", href: "/v3/guides/integrations/mcp#vs-code-copilot-chat", desc: "Memory for GitHub Copilot Chat in VS Code.", status: "official", via: "MCP" },
-        { name: "Zed", icon: "bolt", href: "/v3/guides/integrations/mcp#zed", desc: "Add Honcho to Zed as a context server.", status: "official", via: "MCP" },
+        { name: "Claude Code", icon: "https://cdn.jsdelivr.net/npm/simple-icons@16.33.0/icons/claudecode.svg", href: "/v3/guides/integrations/claude-code", desc: "Memory that survives context wipes, restarts, and project switches.", status: "official" },
+        { name: "Pi", icon: "https://cdn.jsdelivr.net/npm/simple-icons@16.33.0/icons/pi.svg", href: "/v3/guides/community/pi-honcho-memory", desc: "Persistent memory extension for the pi coding agent CLI.", status: "community" },
+        { name: "Codex", icon: "https://cdn.jsdelivr.net/npm/simple-icons@15.22.0/icons/openai.svg", href: "/v3/guides/integrations/codex", desc: "Lifecycle hooks capture Codex sessions and restore context on start.", status: "official" },
+        { name: "OpenCode", icon: "https://cdn.jsdelivr.net/npm/simple-icons@16.33.0/icons/opencode.svg", href: "/v3/guides/integrations/opencode", desc: "Per-directory, per-repo, or branch-scoped session memory.", status: "official" },
+        { name: "DeepSeek Harness", icon: "https://cdn.jsdelivr.net/npm/simple-icons@16.33.0/icons/deepseek.svg", href: "/v3/guides/integrations/deepseek-harness", desc: "Context injection, turn capture, and honcho_search for dsh.", status: "official" },
+        { name: "Cline", icon: "https://cdn.jsdelivr.net/npm/simple-icons@16.33.0/icons/cline.svg", href: "/v3/guides/integrations/mcp#cline", desc: "Connect Cline to the Honcho MCP server.", status: "official", via: "MCP" },
+        { name: "Cursor", icon: "https://cdn.jsdelivr.net/npm/simple-icons@16.33.0/icons/cursor.svg", href: "/v3/guides/integrations/mcp#cursor", desc: "Add Honcho as an HTTP MCP server in Cursor's global or per-project config.", status: "official", via: "MCP" },
+        { name: "Windsurf", icon: "https://cdn.jsdelivr.net/npm/simple-icons@16.33.0/icons/windsurf.svg", href: "/v3/guides/integrations/mcp#windsurf", desc: "Give Windsurf's Cascade agent memory through the Honcho MCP server.", status: "official", via: "MCP" },
+        { name: "VS Code", icon: "https://cdn.jsdelivr.net/npm/simple-icons@12.4.0/icons/visualstudiocode.svg", href: "/v3/guides/integrations/mcp#vs-code-copilot-chat", desc: "Memory for GitHub Copilot Chat in VS Code.", status: "official", via: "MCP" },
+        { name: "Zed", icon: "https://cdn.jsdelivr.net/npm/simple-icons@16.33.0/icons/zedindustries.svg", href: "/v3/guides/integrations/mcp#zed", desc: "Add Honcho to Zed as a context server.", status: "official", via: "MCP" },
       ],
     },
     {
@@ -70,11 +72,11 @@ export const IntegrationsCatalog = () => {
       title: "Frameworks & SDKs",
       blurb: "Add Honcho to agents built on these frameworks.",
       items: [
-        { name: "Vercel AI SDK", icon: "triangle", href: "/v3/guides/integrations/vercel-ai-sdk", desc: "Memory middleware and tools for generateText and streamText.", status: "official" },
-        { name: "LangGraph", icon: "diagram-project", href: "/v3/guides/integrations/langgraph", desc: "Persistent memory and theory of mind for LangGraph agents.", status: "official" },
-        { name: "CrewAI", icon: "users-gear", href: "/v3/guides/integrations/crewai", desc: "Honcho as a storage backend for CrewAI's Memory API.", status: "official" },
-        { name: "Agent Zero", icon: "triangle", href: "/v3/guides/community/agent0", desc: "Persistent memory plugin for the Agent Zero framework.", status: "community" },
-        { name: "Paperclip", icon: "paperclip", href: "/v3/guides/integrations/paperclip", desc: "Memory for Paperclip companies, agents, issues, and documents.", status: "official" },
+        { name: "Vercel AI SDK", icon: "https://cdn.jsdelivr.net/npm/simple-icons@16.33.0/icons/vercel.svg", href: "/v3/guides/integrations/vercel-ai-sdk", desc: "Memory middleware and tools for generateText and streamText.", status: "official" },
+        { name: "LangGraph", icon: "https://cdn.jsdelivr.net/npm/simple-icons@16.33.0/icons/langgraph.svg", href: "/v3/guides/integrations/langgraph", desc: "Persistent memory and theory of mind for LangGraph agents.", status: "official" },
+        { name: "CrewAI", icon: "https://cdn.jsdelivr.net/npm/simple-icons@16.33.0/icons/crewai.svg", href: "/v3/guides/integrations/crewai", desc: "Honcho as a storage backend for CrewAI's Memory API.", status: "official" },
+        { name: "Agent Zero", icon: "https://cdn.jsdelivr.net/gh/agent0ai/agent-zero@e3051fb584b1a36be2b0a0c90606f1c2c2d356ec/webui/public/darkSymbol.svg", href: "/v3/guides/community/agent0", desc: "Persistent memory plugin for the Agent Zero framework.", status: "community" },
+        { name: "Paperclip", icon: "https://cdn.jsdelivr.net/npm/lucide-static@1.50.0/icons/paperclip.svg", href: "/v3/guides/integrations/paperclip", desc: "Memory for Paperclip companies, agents, issues, and documents.", status: "official" },
       ],
     },
     {
@@ -83,7 +85,7 @@ export const IntegrationsCatalog = () => {
       blurb: "Memory for chat apps and workflow builders.",
       items: [
         { name: "SillyTavern", icon: "comments", href: "/v3/guides/integrations/sillytavern", desc: "Long-term memory for SillyTavern characters.", status: "official" },
-        { name: "n8n", icon: "share-nodes", href: "/v3/guides/integrations/n8n", desc: "Importable workflow for memory-aware n8n automations.", status: "official" },
+        { name: "n8n", icon: "https://cdn.jsdelivr.net/npm/simple-icons@16.33.0/icons/n8n.svg", href: "/v3/guides/integrations/n8n", desc: "Importable workflow for memory-aware n8n automations.", status: "official" },
         { name: "Zo Computer", icon: "bolt", href: "/v3/guides/integrations/zo-computer", desc: "Persistent memory skill for Zo workflows.", status: "official" },
       ],
     },
@@ -92,8 +94,8 @@ export const IntegrationsCatalog = () => {
       title: "Data sources",
       blurb: "Import data from the products you already use into Honcho.",
       items: [
-        { name: "Gmail", icon: "envelope", href: "/v3/guides/gmail", desc: "Import email threads as peers, sessions, and messages.", status: "official" },
-        { name: "Granola", icon: "microphone", href: "/v3/guides/granola", desc: "Ingest meeting transcripts with speaker turns and participants.", status: "official" },
+        { name: "Gmail", icon: "https://cdn.jsdelivr.net/npm/simple-icons@16.33.0/icons/gmail.svg", href: "/v3/guides/gmail", desc: "Import email threads as peers, sessions, and messages.", status: "official" },
+        { name: "Granola", icon: "https://cdn.jsdelivr.net/gh/pheralb/svgl@ed75393dbe6eba6e446e208abb6826ecd1abd36d/static/library/granola-light.svg", href: "/v3/guides/granola", desc: "Ingest meeting transcripts with speaker turns and participants.", status: "official" },
       ],
     },
   ];
