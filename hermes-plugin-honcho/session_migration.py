@@ -150,6 +150,46 @@ def _load_migration_state(state_path: Path) -> dict[str, Any] | None:
 
 
 class SessionMigrationMixin:
+    def _migration_marker_session(self, session, marker_id: str, target_key: str):
+        """Keep explicit observation opt-outs without enabling cross-peer observation."""
+        from honcho.session import SessionPeerConfig
+
+        marker = self._sdk_session(
+            marker_id,
+            metadata={"source": "hermes_memory_migration", "target_key": target_key},
+        )
+        member_ids = {peer.id for peer in marker.get_peers()}
+        conversation = self._sdk_session(session.honcho_session_id)
+        flags = self._observation_flags(session.honcho_session_id)
+        entries = []
+        for kind, peer_id in (
+            ("user", session.user_peer_id),
+            ("ai", session.assistant_peer_id),
+        ):
+            peer = self._get_or_create_peer(peer_id)
+            policies = [
+                getattr(self, f"_{kind}_observe_me"),
+                flags[f"{kind}_observe_me"],
+                conversation.get_peer_configuration(peer_id).observe_me,
+                peer.get_configuration().observe_me,
+            ]
+            if peer_id in member_ids:
+                policies.append(marker.get_peer_configuration(peer_id).observe_me)
+            # Inherit server defaults rather than overriding them with True.
+            entries.append(
+                (
+                    peer_id,
+                    SessionPeerConfig(
+                        observe_me=False
+                        if any(value is False for value in policies)
+                        else None,
+                        observe_others=False,
+                    ),
+                )
+            )
+        marker.add_peers(entries)
+        return marker
+
     def migrate_memory_files(self, session_key: str, memory_dir: str) -> bool:
         """Upload local memory files once per source and Honcho destination.
 
@@ -253,6 +293,7 @@ class SessionMigrationMixin:
                 )
                 return False
 
+            marker_ready = False
             uploaded = False
             for filename, upload_name, description, target_kind in _MEMORY_FILES:
                 if completed_files.get(filename) is True:
@@ -281,32 +322,16 @@ class SessionMigrationMixin:
                 migration_filter = {"metadata": {"migration_id": migration_id}}
 
                 try:
-                    from honcho.session import SessionPeerConfig
-
-                    self._authed_call(
-                        "memory migration marker session setup",
-                        lambda: self._sdk_session(
-                            remote_marker_session_id,
-                            metadata={
-                                "source": "hermes_memory_migration",
-                                "target_key": target_key,
-                            },
-                            peers=[
-                                (
-                                    session.user_peer_id,
-                                    SessionPeerConfig(
-                                        observe_me=True, observe_others=False
-                                    ),
-                                ),
-                                (
-                                    session.assistant_peer_id,
-                                    SessionPeerConfig(
-                                        observe_me=True, observe_others=False
-                                    ),
-                                ),
-                            ],
-                        ),
-                    )
+                    if not marker_ready:
+                        self._authed_call(
+                            "memory migration marker session setup",
+                            lambda: self._migration_marker_session(
+                                session,
+                                remote_marker_session_id,
+                                target_key,
+                            ),
+                        )
+                        marker_ready = True
                     remote_messages = self._authed_call(
                         "memory migration reconciliation",
                         lambda migration_filter=migration_filter: self._sdk_session(
