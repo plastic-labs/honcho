@@ -19,10 +19,6 @@
     {
       "url": "https://api.honcho.dev",
       "description": "Production SaaS Platform"
-    },
-    {
-      "url": "http://localhost:8000",
-      "description": "Local Development Server"
     }
   ],
   "paths": {
