@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from src import crud, models, schemas
 from src.crud.document import SemanticRejectionResult, is_rejected_duplicate
 from src.exceptions import ResourceNotFoundException
+from src.utils.types import DocumentLevel
 
 
 class TestDocumentCRUD:
@@ -1599,12 +1600,12 @@ class TestCreateDocumentsErrorHandling:
         assert docs[0].times_derived == 1
 
     @pytest.mark.asyncio
-    async def test_db_error_in_loop_aborts_batch(
+    async def test_db_error_resolving_dup_candidates_aborts_batch(
         self,
         db_session: AsyncSession,
         sample_data: tuple[models.Workspace, models.Peer],
     ):
-        """A DB error during per-document classification raises and commits nothing."""
+        """A DB error while resolving dup candidates raises and commits nothing."""
         test_workspace, test_peer = sample_data
         test_peer2, test_session = await self._setup(
             db_session, test_workspace, test_peer
@@ -1620,7 +1621,7 @@ class TestCreateDocumentsErrorHandling:
         deadlock = OperationalError("SELECT documents", {}, FakePGError())
         with (
             patch(
-                "src.crud.document._semantic_dup_decision",
+                "src.crud.document._pgvector_dup_candidates",
                 AsyncMock(side_effect=deadlock),
             ),
             pytest.raises(OperationalError),
@@ -2010,3 +2011,447 @@ class TestExternalCandidateHoist:
 
         assert len(result.created_documents) == 1
         mock_query.assert_not_awaited()
+
+
+class TestCreateDocumentsQueryCount:
+    """Semantic dedup costs a fixed number of queries, not one per document."""
+
+    async def _setup(
+        self,
+        db_session: AsyncSession,
+        test_workspace: models.Workspace,
+        test_peer: models.Peer,
+    ) -> tuple[models.Peer, models.Session]:
+        observed_peer = models.Peer(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        test_session = models.Session(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add_all([observed_peer, test_session])
+        await db_session.flush()
+        db_session.add(
+            models.Collection(
+                workspace_name=test_workspace.name,
+                observer=test_peer.name,
+                observed=observed_peer.name,
+            )
+        )
+        db_session.add(
+            models.Document(
+                workspace_name=test_workspace.name,
+                observer=test_peer.name,
+                observed=observed_peer.name,
+                session_name=test_session.name,
+                content="the user drinks coffee",
+                embedding=[0.1] * 1536,
+                level="explicit",
+                internal_metadata={},
+            )
+        )
+        await db_session.commit()
+        return observed_peer, test_session
+
+    def _doc(self, content: str, session_name: str) -> schemas.DocumentCreate:
+        return schemas.DocumentCreate(
+            content=content,
+            embedding=[0.1] * 1536,
+            session_name=session_name,
+            metadata=schemas.DocumentMetadata(
+                message_ids=[1],
+                message_created_at="2026-01-01T00:00:00Z",
+            ),
+        )
+
+    async def _count_queries(
+        self,
+        db_session: AsyncSession,
+        *,
+        workspace_name: str,
+        observer: str,
+        observed: str,
+        session_name: str,
+        batch_size: int,
+        tag: str,
+    ) -> int:
+        # Contents are tagged per call: the batches run against one database, and
+        # a repeat would land in exact dedup instead of the semantic stage.
+        documents = [
+            self._doc(
+                f"the user drinks coffee every morning, {tag} cup {i}", session_name
+            )
+            for i in range(batch_size)
+        ]
+        executed: list[Any] = []
+        real_execute = db_session.execute
+
+        async def spying_execute(statement: Any, *args: Any, **kwargs: Any) -> Any:
+            executed.append(statement)
+            return await real_execute(statement, *args, **kwargs)
+
+        with patch.object(db_session, "execute", side_effect=spying_execute):
+            result = await crud.create_documents(
+                db_session,
+                documents,
+                workspace_name=workspace_name,
+                observer=observer,
+                observed=observed,
+                deduplicate=True,
+            )
+
+        # Every document must have reached the semantic stage, or a flat query
+        # count would only prove the batch was skipped.
+        assert (
+            result.semantic_dup_replaced_count + result.semantic_dup_rejected_count
+            == batch_size
+        )
+        return len(executed)
+
+    @pytest.mark.asyncio
+    async def test_query_count_is_flat_in_batch_size(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        test_workspace, test_peer = sample_data
+        observed_peer, test_session = await self._setup(
+            db_session, test_workspace, test_peer
+        )
+
+        one = await self._count_queries(
+            db_session,
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=observed_peer.name,
+            session_name=test_session.name,
+            batch_size=1,
+            tag="first",
+        )
+        many = await self._count_queries(
+            db_session,
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=observed_peer.name,
+            session_name=test_session.name,
+            batch_size=8,
+            tag="second",
+        )
+
+        assert many == one, (
+            f"dedup queries scale with batch size ({one} for 1 document, "
+            f"{many} for 8): the per-document candidate lookup is back"
+        )
+
+
+class TestPrefetchedCandidateScope:
+    """Prefetched candidates are re-scoped in Python before they can merge.
+
+    Candidates for the whole batch are fetched in one query, so the per-document
+    merge scope can no longer be a SQL filter. A candidate the vector store
+    returns out of scope must not merge — for explicit documents that would
+    breach session purity.
+    """
+
+    async def _setup(
+        self,
+        db_session: AsyncSession,
+        test_workspace: models.Workspace,
+        test_peer: models.Peer,
+    ) -> tuple[models.Peer, models.Session, models.Session, models.Document]:
+        observed_peer = models.Peer(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        session_a = models.Session(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        session_b = models.Session(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add_all([observed_peer, session_a, session_b])
+        await db_session.flush()
+        db_session.add(
+            models.Collection(
+                workspace_name=test_workspace.name,
+                observer=test_peer.name,
+                observed=observed_peer.name,
+            )
+        )
+        existing = models.Document(
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=observed_peer.name,
+            session_name=session_a.name,
+            content="the user drinks coffee",
+            embedding=[0.1] * 1536,
+            level="explicit",
+            internal_metadata={},
+        )
+        db_session.add(existing)
+        await db_session.commit()
+        return observed_peer, session_a, session_b, existing
+
+    def _doc(self, content: str, session_name: str) -> schemas.DocumentCreate:
+        return schemas.DocumentCreate(
+            content=content,
+            embedding=[0.1] * 1536,
+            session_name=session_name,
+            metadata=schemas.DocumentMetadata(
+                message_ids=[1],
+                message_created_at="2026-01-01T00:00:00Z",
+            ),
+        )
+
+    @pytest.mark.parametrize(
+        ("incoming_session", "expect_merge"),
+        [("same", True), ("other", False)],
+    )
+    @pytest.mark.asyncio
+    async def test_out_of_scope_candidate_does_not_merge(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+        monkeypatch: pytest.MonkeyPatch,
+        incoming_session: str,
+        expect_merge: bool,
+    ):
+        from src.config import settings
+
+        test_workspace, test_peer = sample_data
+        observed_peer, session_a, session_b, existing = await self._setup(
+            db_session, test_workspace, test_peer
+        )
+        monkeypatch.setattr(settings.VECTOR_STORE, "TYPE", "turbopuffer")
+        monkeypatch.setattr(settings.VECTOR_STORE, "MIGRATED", True)
+
+        session_name = session_a.name if incoming_session == "same" else session_b.name
+
+        # The store hands back the session A document whatever scope was asked
+        # for, so the decision rests entirely on the in-Python re-scoping.
+        async def fake_resolve(*_args: Any, **_kwargs: Any) -> list[str]:
+            return [existing.id]
+
+        with (
+            patch(
+                "src.crud.document.query_external_vector_document_ids",
+                side_effect=fake_resolve,
+            ),
+            patch(
+                "src.crud.document.get_external_vector_store",
+                return_value=None,
+            ),
+        ):
+            result = await crud.create_documents(
+                db_session,
+                [self._doc("the user drinks coffee every morning", session_name)],
+                workspace_name=test_workspace.name,
+                observer=test_peer.name,
+                observed=observed_peer.name,
+                deduplicate=True,
+            )
+
+        assert result.semantic_dup_replaced_count == (1 if expect_merge else 0)
+
+        await db_session.refresh(existing)
+        assert (existing.deleted_at is not None) is expect_merge
+
+
+class TestPgvectorCandidateEquivalence:
+    """The batched candidate query matches the per-document query it replaced.
+
+    `_pgvector_dup_candidates` unions N nearest-neighbour searches into one
+    statement. `_query_documents_pgvector` — still the live path for ordinary
+    semantic queries — is the reference: for the same document the two must
+    agree on scope, distance cutoff and which row comes back.
+    """
+
+    DIM: int = 1536
+
+    def _vec(self, axis: int, tilt: float = 0.0) -> list[float]:
+        """Unit vector on `axis`, optionally tilted toward a far-off axis.
+
+        Cosine distance from the untilted vector is ``1 - 1/sqrt(1 + tilt**2)``:
+        0.0 at tilt 0, ~0.005 at 0.1, ~0.001 at 0.05, ~0.106 at 0.5. That last
+        one sits outside the 0.05 dedup cutoff.
+        """
+        vector = [0.0] * self.DIM
+        vector[axis] = 1.0
+        if tilt:
+            vector[axis + 500] = tilt
+        return vector
+
+    async def _setup(
+        self,
+        db_session: AsyncSession,
+        test_workspace: models.Workspace,
+        test_peer: models.Peer,
+    ) -> tuple[models.Peer, models.Session, models.Session]:
+        observed_peer = models.Peer(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        session_a = models.Session(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        session_b = models.Session(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add_all([observed_peer, session_a, session_b])
+        await db_session.flush()
+        db_session.add(
+            models.Collection(
+                workspace_name=test_workspace.name,
+                observer=test_peer.name,
+                observed=observed_peer.name,
+            )
+        )
+
+        def existing(
+            axis: int,
+            tilt: float,
+            level: DocumentLevel,
+            session: models.Session | None,
+            *,
+            deleted: bool = False,
+        ) -> models.Document:
+            return models.Document(
+                workspace_name=test_workspace.name,
+                observer=test_peer.name,
+                observed=observed_peer.name,
+                session_name=session.name if session else None,
+                content=f"existing axis={axis} tilt={tilt} level={level}",
+                embedding=self._vec(axis, tilt),
+                level=level,
+                internal_metadata={},
+                deleted_at=datetime.datetime.now(datetime.UTC) if deleted else None,
+            )
+
+        db_session.add_all(
+            [
+                # One in-scope near neighbour per axis, so a mis-mapped batch
+                # index sends a document to the wrong row.
+                existing(0, 0.1, "explicit", session_a),
+                existing(1, 0.1, "explicit", session_a),
+                existing(2, 0.1, "deductive", None),
+                # Nearer than the axis-0 match but in another session: only the
+                # scope filter keeps it from winning.
+                existing(0, 0.05, "explicit", session_b),
+                # Nearer than the axis-1 match but a different level.
+                existing(1, 0.05, "deductive", None),
+                # Axis 3's only neighbour sits outside the distance cutoff.
+                existing(3, 0.5, "explicit", session_a),
+                # Soft-deleted, and otherwise the closest thing to axis 4.
+                existing(4, 0.1, "explicit", session_a, deleted=True),
+            ]
+        )
+        await db_session.commit()
+        return observed_peer, session_a, session_b
+
+    @pytest.mark.parametrize("order", ["authored", "reversed"])
+    @pytest.mark.asyncio
+    async def test_batched_candidates_match_per_document_query(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+        order: str,
+    ):
+        """Every document's candidates must match, whatever order they arrive in.
+
+        Parametrising over batch *shape* is what earns its keep here. Splitting
+        the cases into one document per run would not: a single-document batch
+        makes the index mapping trivially correct, so a permuted or constant
+        `batch_index` could never be observed.
+        """
+        from src.crud import document as document_module
+
+        test_workspace, test_peer = sample_data
+        observed_peer, session_a, _session_b = await self._setup(
+            db_session, test_workspace, test_peer
+        )
+
+        def incoming(
+            axis: int, level: DocumentLevel, session: str | None
+        ) -> schemas.DocumentCreate:
+            return schemas.DocumentCreate(
+                content=f"incoming axis={axis} level={level} session={session}",
+                embedding=self._vec(axis),
+                session_name=session,
+                level=level,
+                metadata=schemas.DocumentMetadata(
+                    message_ids=[1],
+                    message_created_at="2026-01-01T00:00:00Z",
+                ),
+            )
+
+        # A document with no embedding, and a session-less explicit one, are both
+        # skipped when the legs are built. They are interleaved with matches on
+        # purpose: leg position and document index only diverge after a skip, and
+        # a `batch_index` taken from the wrong one would go unnoticed without them.
+        # Both sit on axis 0, which has near neighbours, so dropping either skip
+        # surfaces a spurious candidate instead of the empty result a barren axis
+        # would return either way.
+        no_embedding = incoming(0, "explicit", session_a.name)
+        no_embedding.embedding = []
+        sessionless = incoming(0, "explicit", None)
+
+        documents = [
+            incoming(0, "explicit", session_a.name),
+            no_embedding,
+            incoming(1, "explicit", session_a.name),
+            sessionless,
+            incoming(2, "deductive", None),
+            incoming(3, "explicit", session_a.name),  # nearest is out of range
+            incoming(4, "explicit", session_a.name),  # nearest is soft-deleted
+            incoming(5, "explicit", session_a.name),  # no neighbour at all
+        ]
+        if order == "reversed":
+            documents.reverse()
+
+        expected: list[list[str]] = []
+        skipped: list[int] = []
+        for index, doc in enumerate(documents):
+            filters = document_module._semantic_dup_filters(doc)  # pyright: ignore[reportPrivateUsage]
+            if filters is None or not doc.embedding:
+                # No merge scope or no vector: the document cannot have a
+                # candidate, and contributes no leg to the batched query.
+                expected.append([])
+                skipped.append(index)
+                continue
+            reference = await document_module._query_documents_pgvector(  # pyright: ignore[reportPrivateUsage]
+                db_session,
+                test_workspace.name,
+                test_peer.name,
+                observed_peer.name,
+                doc.embedding,
+                filters,
+                document_module._SEMANTIC_DUP_MAX_DISTANCE,  # pyright: ignore[reportPrivateUsage]
+                document_module._SEMANTIC_DUP_TOP_K,  # pyright: ignore[reportPrivateUsage]
+            )
+            expected.append([row.id for row in reference])
+
+        actual = await document_module._pgvector_dup_candidates(  # pyright: ignore[reportPrivateUsage]
+            db_session,
+            documents,
+            test_workspace.name,
+            observer=test_peer.name,
+            observed=observed_peer.name,
+        )
+
+        assert actual == expected
+
+        # The corpus has to keep discriminating, or two equally broken
+        # implementations would agree with each other.
+        matched = [index for index, ids in enumerate(expected) if ids]
+        assert len(matched) == 3, (
+            f"expected three documents to match, got {len(matched)}: {expected}"
+        )
+        assert len({expected[index][0] for index in matched}) == 3, (
+            "the three matches must be three distinct rows, or a permuted "
+            "batch index would go unnoticed"
+        )
+        assert len(expected) - len(matched) - len(skipped) == 3, (
+            "expected three documents that resolve no candidate without being "
+            "skipped: out of range, soft-deleted, and no neighbour at all"
+        )
+        assert min(skipped) < max(matched), (
+            "a skipped document must sit before a matching one, or leg position "
+            "and document index would never diverge"
+        )
