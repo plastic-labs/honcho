@@ -38,7 +38,7 @@ def test_migration_preserves_each_observation_opt_out(
             observe_me=False
         )
     else:
-        marker.get_peers.return_value = [SimpleNamespace(id=peer_id)]
+        marker.peers.return_value = [SimpleNamespace(id=peer_id)]
         marker.get_peer_configuration.side_effect = lambda peer: SimpleNamespace(
             observe_me=False if peer == peer_id else None
         )

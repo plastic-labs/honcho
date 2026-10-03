@@ -158,7 +158,7 @@ class SessionMigrationMixin:
             marker_id,
             metadata={"source": "hermes_memory_migration", "target_key": target_key},
         )
-        member_ids = {peer.id for peer in marker.get_peers()}
+        member_ids = {peer.id for peer in marker.peers()}
         conversation = self._sdk_session(session.honcho_session_id)
         flags = self._observation_flags(session.honcho_session_id)
         entries = []

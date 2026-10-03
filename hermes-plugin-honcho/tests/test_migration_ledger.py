@@ -15,6 +15,7 @@ from hermes_honcho.session import (
     HonchoSession,
     HonchoSessionManager,
 )
+from honcho.session import Session
 
 
 def _manager(
@@ -49,12 +50,12 @@ def _manager(
         assistant_peer_id=ai_peer_id,
         honcho_session_id=session_key.replace(":", "-"),
     )
-    remote_session = MagicMock()
+    remote_session = MagicMock(spec=Session)
     remote_session.get_peer_configuration.return_value = SimpleNamespace(
         observe_me=None
     )
-    remote_marker_session = MagicMock()
-    remote_marker_session.get_peers.return_value = []
+    remote_marker_session = MagicMock(spec=Session)
+    remote_marker_session.peers.return_value = []
     remote_marker_session.get_peer_configuration.return_value = SimpleNamespace(
         observe_me=None
     )
