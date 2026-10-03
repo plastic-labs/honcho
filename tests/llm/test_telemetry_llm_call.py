@@ -616,7 +616,7 @@ class TestStreamFinalResponseRetryAttempt:
                 side_effect=lambda event: emitted.append(event),
             ),
         ):
-            stream = tool_loop.stream_final_response(
+            stream = await tool_loop.stream_final_response(
                 winning_plan=winning_plan,
                 prompt="hi",
                 max_tokens=64,

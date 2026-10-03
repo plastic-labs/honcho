@@ -123,10 +123,16 @@ def select_model_config_for_attempt(
     Primary config on all attempts except the last, which swaps to the
     resolved fallback (if any).
     """
-    if attempt != retry_attempts or model_config.fallback is None:
+    if attempt != retry_attempts:
         return model_config
+    return fallback_model_config(model_config) or model_config
 
+
+def fallback_model_config(model_config: ModelConfig) -> ModelConfig | None:
+    """The configured fallback as a standalone ModelConfig, or None."""
     fb = model_config.fallback
+    if fb is None:
+        return None
     return ModelConfig(
         model=fb.model,
         transport=fb.transport,
@@ -199,6 +205,29 @@ def plan_attempt(
     )
 
 
+def plan_pinned_attempt(
+    *,
+    model_config: ModelConfig,
+    attempt: int,
+    retry_attempts: int,
+    thinking_budget_tokens: int | None,
+    reasoning_effort: ReasoningEffortType,
+    is_fallback: bool,
+) -> AttemptPlan:
+    provider = model_config.transport
+    return AttemptPlan(
+        provider=provider,
+        model=model_config.model,
+        client=client_for_model_config(provider, model_config),
+        thinking_budget_tokens=thinking_budget_tokens,
+        reasoning_effort=reasoning_effort,
+        selected_config=model_config,
+        attempt=attempt,
+        retry_attempts=retry_attempts,
+        is_fallback=is_fallback,
+    )
+
+
 def effective_config_for_call(
     *,
     selected_config: ModelConfig | None,
@@ -259,7 +288,9 @@ __all__ = [
     "current_attempt",
     "effective_config_for_call",
     "effective_temperature",
+    "fallback_model_config",
     "plan_attempt",
+    "plan_pinned_attempt",
     "resolve_backend_for_plan",
     "resolve_runtime_model_config",
     "select_model_config_for_attempt",

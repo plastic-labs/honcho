@@ -112,6 +112,8 @@ class LLMTelemetryContext:
     # (e.g. "Dialectic Agent", "Minimal Deriver"). Also labels the sentry
     # `ai_track` decorator.
     track_name: str | None = None
+    tags: list[str] = field(default_factory=list)
+    metadata: dict[str, str] = field(default_factory=dict)
     # Per-span memo for O(N) message capture in CapturedLLMCall
     hash_memo: dict[int, CapturedMessage] | None = field(
         default=None, compare=False, repr=False
@@ -128,6 +130,33 @@ class LLMTelemetryContext:
 
 
 IterationCallback = Callable[[IterationData], None]
+
+
+@dataclass
+class RunUsage:
+    """Token and tool-call totals a tool loop accrues, kept outside the loop so a
+    run that dies part-way still reports what it spent."""
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_creation_input_tokens: int = 0
+    cache_read_input_tokens: int = 0
+    tool_calls_made: list[dict[str, Any]] = field(default_factory=list)
+
+    def add(self, response: HonchoLLMCallResponse[Any]) -> None:
+        self.input_tokens += response.input_tokens
+        self.output_tokens += response.output_tokens
+        self.cache_creation_input_tokens += response.cache_creation_input_tokens
+        self.cache_read_input_tokens += response.cache_read_input_tokens
+
+    def fold_into(
+        self, result: HonchoLLMCallResponse[Any] | StreamingResponseWithMetadata
+    ) -> None:
+        result.input_tokens += self.input_tokens
+        result.output_tokens += self.output_tokens
+        result.cache_creation_input_tokens += self.cache_creation_input_tokens
+        result.cache_read_input_tokens += self.cache_read_input_tokens
+        result.tool_calls_made[:0] = self.tool_calls_made
 
 
 class HonchoLLMCallResponse(BaseModel, Generic[T]):
@@ -277,6 +306,7 @@ __all__ = [
     "LLMTelemetryContext",
     "ProviderClient",
     "ReasoningEffortType",
+    "RunUsage",
     "StreamingResponseWithMetadata",
     "T",
     "VerbosityType",

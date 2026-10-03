@@ -14,13 +14,7 @@ from __future__ import annotations
 import dataclasses
 import functools
 import logging
-from collections.abc import (
-    AsyncGenerator,
-    AsyncIterator,
-    Awaitable,
-    Callable,
-    Collection,
-)
+from collections.abc import AsyncIterator, Awaitable, Callable, Collection
 from typing import Any, ParamSpec, TypeVar
 
 from pydantic import BaseModel
@@ -53,6 +47,7 @@ from .types import (
     IterationCallback,
     IterationData,
     LLMTelemetryContext,
+    RunUsage,
     StreamingResponseWithMetadata,
     VerbosityType,
 )
@@ -216,15 +211,14 @@ async def stream_final_response(
     before_retry_callback: Callable[[Any], None],
     telemetry: LLMTelemetryContext | None = None,
 ) -> AsyncIterator[HonchoLLMCallStreamChunk]:
-    """Stream the final response after tool execution is complete.
+    """Set up the final response stream after tool execution is complete.
 
     Uses the AttemptPlan captured at the moment streaming began (typically
     the plan whose inner LLM call just succeeded) and pins it across any
-    retries of the stream setup. Re-running provider selection here would
-    bleed the outer current_attempt ContextVar into streaming retries,
-    potentially rolling the selection back to primary after the tool loop
-    had already settled on fallback. Tenacity retries re-issue the same
-    streaming call against the same pinned model for transient errors.
+    retries of the stream setup, so tenacity re-issues the same streaming
+    call against the same model for transient errors. Setup runs here,
+    before the caller gets the iterator back, so a setup failure surfaces
+    inside the tool loop where `honcho_llm_call` can still restart the run.
     """
 
     # Bump the per-retry attempt index inside `_setup_stream`. The pinned
@@ -277,16 +271,8 @@ async def stream_final_response(
             # and lands every outage on the generic 500 handler.
             reraise=True,
         )(_setup_stream)
-        stream = await wrapped()
-    else:
-        stream = await _setup_stream()
-
-    try:
-        async for chunk in stream:
-            yield chunk
-    finally:
-        if isinstance(stream, AsyncGenerator):
-            await stream.aclose()
+        return await wrapped()
+    return await _setup_stream()
 
 
 @_with_iteration_scope
@@ -315,6 +301,7 @@ async def execute_tool_loop(
     run_span: CapturedAgentSpan | None = None,
     force_tools_until: Collection[str] | None = None,
     max_forced_iterations: int = 3,
+    usage: RunUsage | None = None,
 ) -> HonchoLLMCallResponse[Any] | StreamingResponseWithMetadata:
     """Run the iterative tool calling loop for agentic LLM interactions.
 
@@ -348,7 +335,9 @@ async def execute_tool_loop(
         telemetry = dataclasses.replace(telemetry, hash_memo={})
 
     iteration = 0
-    all_tool_calls: list[dict[str, Any]] = []
+    all_tool_calls: list[dict[str, Any]] = (
+        usage.tool_calls_made if usage is not None else []
+    )
     total_input_tokens = 0
     total_output_tokens = 0
     total_cache_creation_tokens = 0
@@ -377,7 +366,7 @@ async def execute_tool_loop(
             _telemetry_for_iteration(telemetry, iteration + 1, step_seq=iteration + 1),
         )
         try:
-            # Reset attempt counter so each iteration starts with the primary provider.
+            # Reset attempt counter so each iteration gets the full retry budget.
             current_attempt.set(1)
             logger.debug(
                 f"Tool execution iteration {iteration + 1}/{max_tool_iterations}"
@@ -443,6 +432,8 @@ async def execute_tool_loop(
             total_output_tokens += response.output_tokens
             total_cache_creation_tokens += response.cache_creation_input_tokens
             total_cache_read_tokens += response.cache_read_input_tokens
+            if usage is not None:
+                usage.add(response)
 
             # emit one AgentIterationEvent per LLM response BEFORE the
             # no-tool early return. The terminating iteration counts too — it has
@@ -496,8 +487,7 @@ async def execute_tool_loop(
 
                 if stream_final:
                     # Snapshot the plan that just succeeded — streaming retries
-                    # pin to this exact client/model so we don't bounce back to
-                    # primary after the tool loop settled on fallback.
+                    # pin to this exact client/model.
                     winning_plan = get_attempt_plan()
                     # +2 (not +1): the in-loop call we just made used iteration+1,
                     # so the streamed tail needs the next ordinal — otherwise its
@@ -506,7 +496,7 @@ async def execute_tool_loop(
                     stream_telemetry = _telemetry_for_iteration(
                         telemetry, iteration + 2, step_seq=iteration + 2
                     )
-                    stream = stream_final_response(
+                    stream = await stream_final_response(
                         winning_plan=winning_plan,
                         prompt=prompt,
                         max_tokens=max_tokens,
@@ -679,7 +669,7 @@ async def execute_tool_loop(
         stream_telemetry = _telemetry_for_iteration(
             telemetry, synthesis_iteration, step_seq=synthesis_iteration
         )
-        stream = stream_final_response(
+        stream = await stream_final_response(
             winning_plan=winning_plan,
             prompt=prompt,
             max_tokens=max_tokens,
@@ -772,6 +762,8 @@ async def execute_tool_loop(
         final_response,
     )
 
+    if usage is not None:
+        usage.add(final_response)
     final_response.tool_calls_made = all_tool_calls
     final_response.iterations = iteration + 1
     final_response.input_tokens = total_input_tokens + final_response.input_tokens
