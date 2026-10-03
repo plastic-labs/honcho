@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, schemas
 from src.dependencies import db, read_db
-from src.exceptions import ResourceNotFoundException, ValidationException
+from src.exceptions import ResourceNotFoundException
 from src.security import require_auth
 from src.telemetry.events import EmbeddingCallPurpose
 from src.utils.types import embedding_call_purpose
@@ -108,13 +108,10 @@ async def query_conclusions(
         observer = body.filters.get("observer") or body.filters.get("observer_id")
         observed = body.filters.get("observed") or body.filters.get("observed_id")
 
-    if not observer or not observed:
-        raise ValidationException(
-            "observer and observed must be specified for semantic search. "
-            + "Pass them inside the 'filters' object, e.g. "
-            + '{"query": "...", "filters": {"observer": "alice", "observed": "bob"}}. '
-            + "Both 'observer'/'observer_id' and 'observed'/'observed_id' are accepted."
-        )
+    # observer/observed may be omitted on the pgvector backend, in which case
+    # the query searches across all peer relationships in the workspace
+    # (cross-peer search). crud.query_documents raises a 422 for external
+    # vector store deployments, where both are still required.
 
     with embedding_call_purpose(
         EmbeddingCallPurpose.GENERIC_DOCUMENT_SEARCH.value,
