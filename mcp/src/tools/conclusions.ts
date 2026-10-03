@@ -20,6 +20,8 @@ export function register(server: McpServer, ctx: ToolContext) {
       annotations: {
         title: "List Conclusions",
         readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
       },
       description: [
         "List conclusions (facts and observations) that Honcho has derived about a peer (paginated).",
@@ -103,6 +105,8 @@ export function register(server: McpServer, ctx: ToolContext) {
       annotations: {
         title: "Query Conclusions",
         readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
       },
       description: [
         "Semantic search across a peer's conclusions.",
@@ -153,6 +157,8 @@ export function register(server: McpServer, ctx: ToolContext) {
       annotations: {
         title: "Get Conclusions",
         readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
       },
       description: [
         "Fetch conclusions by ID, from anywhere in the workspace — no observer/observed pair needed.",
@@ -194,6 +200,8 @@ export function register(server: McpServer, ctx: ToolContext) {
       annotations: {
         title: "Get Derived Conclusions",
         readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
       },
       description: [
         "List the conclusions derived FROM a given conclusion — those naming it in their `source_ids`.",
@@ -243,6 +251,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         title: "Create Conclusions",
         readOnlyHint: false,
         destructiveHint: false,
+        openWorldHint: false,
       },
       description: [
         "Manually create conclusions (facts/observations) about a peer.",
@@ -300,6 +309,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         title: "Delete Conclusion",
         readOnlyHint: false,
         destructiveHint: true,
+        openWorldHint: false,
       },
       description: [
         "Delete a specific conclusion by ID.",

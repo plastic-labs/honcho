@@ -45,6 +45,15 @@ test("every tool declares a title and a read/write hint", async () => {
   );
   expect(implicitReadOnly.map((t) => t.name)).toEqual([]);
 
+  // OpenAI's plugin directory requires destructiveHint and openWorldHint
+  // explicitly on every tool, read-only ones included.
+  const implicitHints = tools.filter(
+    (t) =>
+      typeof t.annotations?.destructiveHint !== "boolean" ||
+      typeof t.annotations?.openWorldHint !== "boolean",
+  );
+  expect(implicitHints.map((t) => t.name)).toEqual([]);
+
   // A read-only tool must not also claim to destroy anything.
   const contradictory = tools.filter(
     (t) => t.annotations?.readOnlyHint === true && t.annotations?.destructiveHint,

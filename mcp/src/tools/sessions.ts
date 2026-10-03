@@ -19,6 +19,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         title: "Create Session",
         readOnlyHint: false,
         destructiveHint: false,
+        openWorldHint: false,
       },
       description: [
         "Get or create a session with the given ID.",
@@ -60,6 +61,8 @@ export function register(server: McpServer, ctx: ToolContext) {
       annotations: {
         title: "List Sessions",
         readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
       },
       description: [
         "List sessions in the given workspace (paginated).",
@@ -100,6 +103,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         title: "Delete Session",
         readOnlyHint: false,
         destructiveHint: true,
+        openWorldHint: false,
       },
       description: [
         "Delete a session and all its messages.",
@@ -131,6 +135,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         title: "Clone Session",
         readOnlyHint: false,
         destructiveHint: false,
+        openWorldHint: false,
       },
       description: [
         "Clone a session, optionally up to a specific message.",
@@ -169,6 +174,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         title: "Add Peers to Session",
         readOnlyHint: false,
         destructiveHint: false,
+        openWorldHint: false,
       },
       description: [
         "Add one or more peers to a session.",
@@ -230,6 +236,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         title: "Remove Peers from Session",
         readOnlyHint: false,
         destructiveHint: true,
+        openWorldHint: false,
       },
       description: [
         "Remove one or more peers from a session.",
@@ -264,6 +271,8 @@ export function register(server: McpServer, ctx: ToolContext) {
       annotations: {
         title: "Get Session Peers",
         readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
       },
       description: [
         "Get all peers participating in a session.",
@@ -295,6 +304,8 @@ export function register(server: McpServer, ctx: ToolContext) {
       annotations: {
         title: "Inspect Session",
         readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
       },
       description: [
         "Inspect a session at a glance.",
@@ -337,6 +348,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         title: "Add Messages to Session",
         readOnlyHint: false,
         destructiveHint: false,
+        openWorldHint: false,
       },
       description: [
         "Add messages to a session from specific peers.",
@@ -394,6 +406,8 @@ export function register(server: McpServer, ctx: ToolContext) {
       annotations: {
         title: "Get Session Messages",
         readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
       },
       description: [
         "Get messages from a session (paginated), with optional metadata filtering.",
@@ -437,6 +451,8 @@ export function register(server: McpServer, ctx: ToolContext) {
       annotations: {
         title: "Get Session Message",
         readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
       },
       description: [
         "Get a single message from a session by ID.",
@@ -469,6 +485,8 @@ export function register(server: McpServer, ctx: ToolContext) {
       annotations: {
         title: "Get Session Context",
         readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
       },
       description: [
         "Get optimized context for a session, suitable for LLM prompts.",

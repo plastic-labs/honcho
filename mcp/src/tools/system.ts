@@ -12,6 +12,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         title: "Schedule Dream",
         readOnlyHint: false,
         destructiveHint: true,
+        openWorldHint: false,
       },
       description: [
         "Schedule a dream — a background memory-consolidation task for a peer.",
@@ -56,6 +57,8 @@ export function register(server: McpServer, ctx: ToolContext) {
       annotations: {
         title: "Get Queue Status",
         readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
       },
       description: [
         "Get the current processing queue status for background tasks (message derivation, dreams).",
