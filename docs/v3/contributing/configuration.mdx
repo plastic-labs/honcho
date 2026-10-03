@@ -197,6 +197,51 @@ Because provider params live on each model config, background workers such as
 the Deriver and Dreamer can use longer request timeouts while synchronous
 chat paths keep tighter defaults.
 
+#### OpenAI Responses API mode
+
+The `openai` transport uses Chat Completions by default. Set
+`api_mode = "responses"` on a model config to opt that feature into an
+OpenAI Responses-compatible endpoint:
+
+```toml
+[dialectic.levels.max.model_config]
+transport = "openai"
+model = "gpt-5.4"
+
+[dialectic.levels.max.model_config.overrides]
+base_url = "https://api.openai.com/v1"
+api_key_env = "OPENAI_API_KEY"
+
+[dialectic.levels.max.model_config.overrides.provider_params]
+api_mode = "responses"
+timeout = 120.0
+```
+
+Responses mode translates Honcho's message history, tools, tool results,
+reasoning items, and structured-output requests to the Responses wire format.
+It is opt-in per model config: configure the Deriver, Summary, each Dialectic
+level, and both Dream specialist model configs separately when they should use
+Responses. A fallback also needs its own `fallback.overrides.provider_params`
+setting; otherwise that fallback keeps its configured/default API mode.
+
+The endpoint must implement the OpenAI Responses streaming contract. Honcho
+uses `responses.stream`, sends `store = false`, and reconstructs terminal text,
+tool calls, reasoning details, and usage from the event stream. By default it
+sends `max_output_tokens`; set `omit_max_output_tokens = true` only for a
+compatible endpoint that explicitly rejects that field.
+
+Responses mode rejects unsupported non-null controls instead of silently
+ignoring them: `stop`, `presence_penalty`, `frequency_penalty`, `seed`, and
+`thinking_budget_tokens`. Use `thinking_effort` for supported OpenAI reasoning
+models.
+
+<Note>
+`api_mode = "responses"` selects a wire protocol only. It does not acquire,
+store, or refresh OAuth credentials. Use the provider's documented
+server-to-server credentials, or an operator-managed compatible endpoint whose
+authentication and terms permit backend use.
+</Note>
+
 `timeout` gotchas:
 
 - The value is validated **at config load**: it must coerce to a positive,
