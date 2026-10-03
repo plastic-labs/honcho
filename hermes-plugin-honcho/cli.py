@@ -22,6 +22,7 @@ _RETRY_HINT = "  Re-run 'hermes honcho setup' to retry, or choose an API key ins
 _INHERITED_KEYS = (
     "recallMode", "writeFrequency", "sessionStrategy", "contextTokens",
     "dialecticReasoningLevel", "dialecticDynamic", "dialecticMaxChars",
+    "dialecticRetryOnCapped",
     "messageMaxChars", "dialecticMaxInputChars", "saveMessages", "observation",
     "recallSync",
 )

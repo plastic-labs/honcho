@@ -942,9 +942,12 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
         try:
             # Explicit reasoning bypasses the automatic-injection cap, and surfaces
             # timeouts/server errors as errors rather than an indistinguishable "no result".
+            # mark_truncated: the agent is the caller here, so a capped-out (budget-exhausted)
+            # answer is marked as truncated in the text it reads.
             result = self._manager.dialectic_query(
                 self._session_key, query, reasoning_level=args.get("reasoning_level"),
                 peer=args.get("peer", "user"), apply_injection_cap=False, raise_errors=True,
+                mark_truncated=True,
             )
         except HonchoAuthError:
             raise  # rendered by handle_tool_call's auth-specific handler
