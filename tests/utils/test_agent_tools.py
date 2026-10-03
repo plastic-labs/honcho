@@ -30,6 +30,7 @@ from src.utils.agent_tools import (
     ObservationsCreatedResult,
     ToolContext,
     _bounded_int,  # pyright: ignore[reportPrivateUsage]
+    _format_message_snippets,  # pyright: ignore[reportPrivateUsage]
     _handle_create_observations,  # pyright: ignore[reportPrivateUsage]
     _handle_create_observations_deductive,  # pyright: ignore[reportPrivateUsage]
     _handle_create_observations_inductive,  # pyright: ignore[reportPrivateUsage]
@@ -1338,6 +1339,106 @@ class TestSearchMessages:
         await _handle_search_messages(ctx, {"query": "anything", "limit": 0})
 
         assert seen_limits == [1]
+
+
+class TestFormatMessageSnippets:
+    """Regression tests for whole-snippet truncation (issue #1244)."""
+
+    @staticmethod
+    def _message(content: str) -> models.Message:
+        return models.Message(
+            public_id=generate_nanoid(),
+            session_name="sess",
+            content=content,
+            token_count=0,
+            seq_in_session=1,
+            created_at=datetime.now(UTC),
+            peer_name="alice",
+            workspace_name="ws",
+        )
+
+    def test_no_truncation_when_under_budget(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Short snippets under the budget return unchanged with the signal False."""
+        monkeypatch.setattr(settings.LLM, "MAX_TOOL_OUTPUT_CHARS", 100_000)
+        snippet = ([self._message("hello world")], [self._message("hello world")])
+        text, was_truncated, original_chars = _format_message_snippets(
+            [snippet], "for query 'x'"
+        )
+        assert was_truncated is False
+        assert original_chars == len(text)
+        assert "hello world" in text
+
+    def test_truncates_at_whole_snippet_boundaries(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Later snippets are dropped whole, and an omission notice is appended."""
+        monkeypatch.setattr(settings.LLM, "MAX_TOOL_OUTPUT_CHARS", 500)
+        snippets = [
+            ([self._message("A" * 120)], [self._message("A" * 120)]),
+            ([self._message("B" * 120)], [self._message("B" * 120)]),
+            ([self._message("C" * 120)], [self._message("C" * 120)]),
+        ]
+        text, was_truncated, original_chars = _format_message_snippets(
+            snippets, "for query 'x'"
+        )
+        assert was_truncated is True
+        assert original_chars > 500
+        # First snippet present, later ones omitted whole (not mid-snippet).
+        assert "Snippet 1" in text
+        assert "Snippet 2" not in text
+        assert "Snippet 3" not in text
+        # Loss is legible to the model.
+        assert "1 of 3 snippets shown" in text
+        assert "2 omitted" in text
+        # Final string stays within the budget (notice included).
+        assert len(text) <= 500
+
+    def test_single_oversized_snippet_falls_back_to_head_truncation(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A single snippet larger than the budget still returns a leading portion."""
+        monkeypatch.setattr(settings.LLM, "MAX_TOOL_OUTPUT_CHARS", 200)
+        snippet = ([self._message("Z" * 500)], [self._message("Z" * 500)])
+        text, was_truncated, original_chars = _format_message_snippets(
+            [snippet], "for query 'x'"
+        )
+        assert was_truncated is True
+        assert original_chars > 200
+        assert len(text) > 0
+        assert "OUTPUT TRUNCATED" in text
+
+    def test_uses_actual_notice_length_not_fixed_reserve(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A snippet whose omission notice fits is kept whole, not head-truncated.
+
+        Regression for the fixed 80-char ``notice_reserve``: when the first
+        snippet plus its ~58-char notice fits the budget but the 80-char
+        reserve does not, the old code fell through to head-truncation and
+        could split the next snippet mid-way.
+        """
+        snippets = [
+            ([self._message("A" * 120)], [self._message("A" * 120)]),
+            ([self._message("B" * 500)], [self._message("B" * 500)]),
+        ]
+        # Measure the single-snippet output (header + snippet 1) at a
+        # huge budget so it is not truncated.
+        monkeypatch.setattr(settings.LLM, "MAX_TOOL_OUTPUT_CHARS", 1_000_000)
+        single, _, _ = _format_message_snippets([snippets[0]], "for query 'x'")
+
+        # Budget = single-snippet length + 70. The real omission notice
+        # (~58 chars) fits; the old fixed 80-char reserve did not.
+        monkeypatch.setattr(settings.LLM, "MAX_TOOL_OUTPUT_CHARS", len(single) + 70)
+        text, was_truncated, original_chars = _format_message_snippets(
+            snippets, "for query 'x'"
+        )
+        assert was_truncated is True
+        assert original_chars > len(single) + 70
+        # Snippet 1 kept whole; snippet 2 dropped whole (not head-truncated in).
+        assert "Snippet 1" in text
+        assert "Snippet 2" not in text
+        assert "1 of 2 snippets shown" in text
+        assert len(text) <= len(single) + 70
 
 
 @pytest.mark.asyncio
