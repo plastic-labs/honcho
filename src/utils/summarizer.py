@@ -222,10 +222,16 @@ async def create_short_summary(
 
     # Mint a root span id.
     trace_id = generate_nanoid()
+    model_config = _get_summary_model_config()
     return await honcho_llm_call(
-        model_config=_get_summary_model_config(),
+        model_config=model_config,
         prompt=prompt,
-        max_tokens=settings.SUMMARY.MAX_TOKENS_SHORT,
+        # The runtime nulls model_config.max_output_tokens so that the per-call
+        # cap is authoritative (effective_config_for_call), so an operator-set
+        # [summary.model_config] max_output_tokens has to be applied here, as
+        # the deriver does. The word target above stays on MAX_TOKENS_SHORT, so
+        # a larger cap only gives the model room to finish.
+        max_tokens=model_config.max_output_tokens or settings.SUMMARY.MAX_TOKENS_SHORT,
         telemetry=replace(
             telemetry or LLMTelemetryContext(),
             call_purpose=CallPurpose.SUMMARY_SHORT.value,
@@ -259,10 +265,16 @@ async def create_long_summary(
 
     # Mint a root span id.
     trace_id = generate_nanoid()
+    model_config = _get_summary_model_config()
     return await honcho_llm_call(
-        model_config=_get_summary_model_config(),
+        model_config=model_config,
         prompt=prompt,
-        max_tokens=settings.SUMMARY.MAX_TOKENS_LONG,
+        # The runtime nulls model_config.max_output_tokens so that the per-call
+        # cap is authoritative (effective_config_for_call), so an operator-set
+        # [summary.model_config] max_output_tokens has to be applied here, as
+        # the deriver does. The word target above stays on MAX_TOKENS_LONG, so
+        # a larger cap only gives the model room to finish.
+        max_tokens=model_config.max_output_tokens or settings.SUMMARY.MAX_TOKENS_LONG,
         telemetry=replace(
             telemetry or LLMTelemetryContext(),
             call_purpose=CallPurpose.SUMMARY_LONG.value,

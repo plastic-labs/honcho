@@ -278,3 +278,120 @@ class TestSummaryCallerMigration:
         assert "model_config" in kwargs
         assert kwargs["model_config"].model == expected_config.model
         assert "llm_settings" not in kwargs
+
+
+@pytest.mark.asyncio
+class TestSummaryMaxOutputTokens:
+    """`[summary.model_config] max_output_tokens` must reach the per-call cap.
+
+    The runtime nulls `model_config.max_output_tokens` before the request is
+    built (`effective_config_for_call`), so the summarizer has to apply it to
+    the `max_tokens` kwarg itself, the way the deriver does. Without that, the
+    cap is always `MAX_TOKENS_SHORT/LONG`, the same number the word target is
+    built from, and dense summaries end `finish_reason=length` (#1204).
+    """
+
+    @staticmethod
+    def _response(text: str) -> HonchoLLMCallResponse[str]:
+        return HonchoLLMCallResponse(
+            content=text,
+            input_tokens=10,
+            output_tokens=5,
+            finish_reasons=["STOP"],
+        )
+
+    @staticmethod
+    def _config_with_cap(cap: int | None):
+        return settings.SUMMARY.MODEL_CONFIG.model_copy(
+            update={"max_output_tokens": cap}
+        )
+
+    async def test_short_summary_uses_configured_max_output_tokens(self):
+        with (
+            patch(
+                "src.utils.summarizer._get_summary_model_config",
+                return_value=self._config_with_cap(8000),
+            ),
+            patch(
+                "src.utils.summarizer.honcho_llm_call",
+                new_callable=AsyncMock,
+                return_value=self._response("short summary"),
+            ) as mock_llm_call,
+        ):
+            await create_short_summary(
+                formatted_messages=_FORMATTED_MESSAGES,
+                input_tokens=_INPUT_TOKENS,
+                previous_summary=None,
+            )
+
+        await_args = mock_llm_call.await_args
+        if await_args is None:
+            raise AssertionError("Expected summary LLM call")
+        assert await_args.kwargs["max_tokens"] == 8000
+
+    async def test_long_summary_uses_configured_max_output_tokens(self):
+        with (
+            patch(
+                "src.utils.summarizer._get_summary_model_config",
+                return_value=self._config_with_cap(8000),
+            ),
+            patch(
+                "src.utils.summarizer.honcho_llm_call",
+                new_callable=AsyncMock,
+                return_value=self._response("long summary"),
+            ) as mock_llm_call,
+        ):
+            await create_long_summary(
+                formatted_messages=_FORMATTED_MESSAGES,
+                previous_summary=None,
+            )
+
+        await_args = mock_llm_call.await_args
+        if await_args is None:
+            raise AssertionError("Expected summary LLM call")
+        assert await_args.kwargs["max_tokens"] == 8000
+
+    async def test_short_summary_falls_back_to_max_tokens_short(self):
+        with (
+            patch(
+                "src.utils.summarizer._get_summary_model_config",
+                return_value=self._config_with_cap(None),
+            ),
+            patch(
+                "src.utils.summarizer.honcho_llm_call",
+                new_callable=AsyncMock,
+                return_value=self._response("short summary"),
+            ) as mock_llm_call,
+        ):
+            await create_short_summary(
+                formatted_messages=_FORMATTED_MESSAGES,
+                input_tokens=_INPUT_TOKENS,
+                previous_summary=None,
+            )
+
+        await_args = mock_llm_call.await_args
+        if await_args is None:
+            raise AssertionError("Expected summary LLM call")
+        assert await_args.kwargs["max_tokens"] == settings.SUMMARY.MAX_TOKENS_SHORT
+
+    async def test_long_summary_falls_back_to_max_tokens_long(self):
+        with (
+            patch(
+                "src.utils.summarizer._get_summary_model_config",
+                return_value=self._config_with_cap(None),
+            ),
+            patch(
+                "src.utils.summarizer.honcho_llm_call",
+                new_callable=AsyncMock,
+                return_value=self._response("long summary"),
+            ) as mock_llm_call,
+        ):
+            await create_long_summary(
+                formatted_messages=_FORMATTED_MESSAGES,
+                previous_summary=None,
+            )
+
+        await_args = mock_llm_call.await_args
+        if await_args is None:
+            raise AssertionError("Expected summary LLM call")
+        assert await_args.kwargs["max_tokens"] == settings.SUMMARY.MAX_TOKENS_LONG
