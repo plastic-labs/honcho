@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 
 from .session_auth import HonchoAuthError
+from .session_projects import project_routed
 
 logger = logging.getLogger("plugins.memory.honcho.session")
 
@@ -18,6 +19,7 @@ _MEMORY_FILES = (
 
 
 class SessionMigrationMixin:
+    @project_routed
     def migrate_memory_files(self, session_key: str, memory_dir: str) -> bool:
         """Upload MEMORY.md / USER.md / SOUL.md to Honcho when it activates on an instance with
         locally consolidated memory; skips missing/empty files. True if at least one uploaded."""

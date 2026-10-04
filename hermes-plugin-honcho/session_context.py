@@ -7,6 +7,7 @@ import re
 from typing import Any, Callable
 
 from .session_auth import HonchoAuthError
+from .session_projects import project_routed
 
 logger = logging.getLogger("plugins.memory.honcho.session")
 
@@ -120,6 +121,7 @@ class SessionContextMixin:
         ctx = self._fetch_peer_context(peer_id, search_query, target=target)
         return ctx["representation"], "\n".join(ctx["card"])
 
+    @project_routed
     def get_prefetch_context(
         self, session_key: str, user_message: str | None = None, *, current_query_only: bool = False,
     ) -> dict[str, str]:
@@ -177,6 +179,7 @@ class SessionContextMixin:
                 logger.log(level, msg, e)
         return result
 
+    @project_routed
     def get_session_context(self, session_key: str, peer: str = "user") -> dict[str, Any]:
         """Fetch session-level context (summary, representation, card, recent messages).
         Raises HonchoAuthError so callers can tell rejected credentials from no context."""
@@ -212,6 +215,7 @@ class SessionContextMixin:
             return result
         return self._guarded(_fetch, {}, logging.DEBUG, "Session context fetch failed: %s")
 
+    @project_routed
     def get_peer_card(self, session_key: str, peer: str = "user") -> list[str]:
         """Fetch a peer card (curated facts, no LLM). [] if unavailable; raises HonchoAuthError."""
         def _fetch(session: Any) -> list[str]:
@@ -221,6 +225,7 @@ class SessionContextMixin:
             return card or (self._fetch_peer_card(target_peer_id) if target_peer_id else [])
         return self._guarded_session(session_key, _fetch, [], logging.DEBUG, "Failed to fetch peer card from Honcho: %s")
 
+    @project_routed
     def search_context(self, session_key: str, query: str, max_tokens: int = 800, peer: str = "user") -> str:
         """Hybrid search over raw messages visible from ``peer``'s perspective, all sessions. Snippets
         accumulate until ``max_tokens`` (~4 chars/token) is exhausted. Returns "" when nothing matches;
@@ -273,6 +278,7 @@ class SessionContextMixin:
         observer = self._get_or_create_peer(session.assistant_peer_id if ai_observes else target_peer_id)
         return observer.conclusions_of(target_peer_id)
 
+    @project_routed
     def create_conclusion(self, session_key: str, content: str, peer: str = "user") -> bool:
         """Write a conclusion (durable fact) about ``peer`` back to Honcho."""
         if not content or not content.strip():
@@ -293,6 +299,7 @@ class SessionContextMixin:
             return True
         return self._guarded(_create, False, logging.ERROR, "Failed to create conclusion: %s")
 
+    @project_routed
     def delete_conclusion(self, session_key: str, conclusion_id: str, peer: str = "user") -> bool:
         """Delete a conclusion by ID. Use only for PII removal."""
         def _delete(session: Any) -> bool:
@@ -306,6 +313,7 @@ class SessionContextMixin:
             session_key, _delete, False, logging.ERROR, "Failed to delete conclusion %s: %s", conclusion_id,
         )
 
+    @project_routed
     def list_conclusions(self, session_key: str, query: str | None = None, peer: str = "user", limit: int = 20):
         """List (or semantically search with ``query``) conclusions as {"id", "content"} dicts."""
         def _list(session: Any) -> list[dict]:
@@ -319,6 +327,7 @@ class SessionContextMixin:
             return [{"id": c.id, "content": c.content} for c in self._authed_call("conclusion list", _fetch)]
         return self._guarded_session(session_key, _list, [], logging.DEBUG, "Honcho list_conclusions failed: %s")
 
+    @project_routed
     def set_peer_card(self, session_key: str, card: list[str], peer: str = "user") -> list[str] | None:
         """Replace a peer's card. Returns the updated card, or None on failure."""
         def _update(session: Any) -> list[str] | None:
@@ -335,6 +344,7 @@ class SessionContextMixin:
             return result
         return self._guarded_session(session_key, _update, None, logging.ERROR, "Failed to set peer card: %s")
 
+    @project_routed
     def seed_ai_identity(self, session_key: str, content: str, source: str = "manual") -> bool:
         """Seed the AI peer's representation from text (SOUL.md, exported chats, ...), sent as an
         assistant-peer message so Honcho's reasoning model incorporates it. Unlike the other
@@ -361,6 +371,7 @@ class SessionContextMixin:
             logger.error("Failed to seed AI identity: %s", e)
             return False
 
+    @project_routed
     def get_ai_representation(self, session_key: str) -> dict[str, str]:
         """Fetch the AI peer's representation + card ("" values if unavailable)."""
         def _fetch(session: Any) -> dict[str, str]:
@@ -371,6 +382,7 @@ class SessionContextMixin:
             "Failed to fetch AI representation: %s",
         )
 
+    @project_routed
     def dialectic_query(
         self, session_key: str, query: str, reasoning_level: str | None = None, peer: str = "user",
         apply_injection_cap: bool = True, raise_errors: bool = False,

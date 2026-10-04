@@ -308,6 +308,56 @@ In bot mode another Hermes profile can DM this agent. The relay marks that turn 
 - **`per-session`** — Hermes session ID (timestamp + hex). Every `hermes` invocation starts a fresh Honcho session. Falls back to `per-directory` if no session ID is available.
 - **`global`** — workspace name. One session for everything. Memory accumulates across all directories and runs.
 
+#### Per-Channel Project Workspaces (`honcho-projects.json`)
+
+Session resolution picks the session *name* inside the profile's one `workspace`. An optional mapping file picks the *workspace* per channel, so a gateway profile serving channels from several projects can keep each project's memory in its own workspace. Everything unmapped stays in the configured `workspace`. Without the file, nothing changes.
+
+**Path:** `$HERMES_HOME/honcho-projects.json`, next to the profile's `honcho.json`. It is not part of `honcho.json` and the setup wizard does not write it.
+
+```json
+{
+  "projects": {
+    "myproject": {
+      "sessions": {
+        "telegram-group--100123456789-42": "telegram",
+        "slack-group-C0EXAMPLE123": "slack"
+      }
+    },
+    "otherproject": {
+      "sessions": { "discord-987654321": "discord" }
+    }
+  }
+}
+```
+
+| Level | Meaning |
+|-------|---------|
+| `projects.<key>` | Honcho workspace ID to route into |
+| `sessions.<pattern>` | Pattern matched against the sanitized session key |
+| `sessions.<pattern>` value | Short session name used inside that workspace |
+
+Patterns are written against the sanitized key: every character outside `[A-Za-z0-9_-]` becomes `-`, so `telegram:group:-100123456789:42` is matched as `telegram-group--100123456789-42`.
+
+**Matching.** A pattern matches when it is a terminal segment of the key: the key ends with it, or it is followed by a `-` (a thread suffix). When several match, the longest wins, so a specific mapping shadows a broader one. Plain substring matching is deliberately not used because it collides on numeric prefixes: a pattern for topic `1` must not capture topic `1578`.
+
+| Sanitized key | Pattern | Match |
+|---------------|---------|-------|
+| `telegram-group--100123456789-42` | `telegram-group--100123456789-42` | yes, key ends with it |
+| `slack-group-C0EXAMPLE123-thread-4567` | `slack-group-C0EXAMPLE123` | yes, followed by `-` |
+| `slack-group-C0EXAMPLE123999` | `slack-group-C0EXAMPLE123` | no |
+| `telegram-group--100123456789-1578` | `telegram-group--100123456789-1` | no |
+
+**Reloading.** The file is cached against its mtime and re-read when it changes, so projects can be added or edited without restarting the gateway. A malformed file logs one warning per change and routes nothing; every session then uses the configured `workspace`.
+
+**Behavior.**
+
+- Reads and writes both follow the route: session creation, message writes, prefetch, dialectic, search, peer cards and conclusions.
+- A routed session is served by a child manager holding a copy of the profile config with `workspace` replaced. It gets its client through the same per-identity cache and OAuth refresh as the default workspace; the profile config itself is never modified.
+- Each routed session is stamped with its workspace, so a write issued through another manager instance still lands in the right workspace.
+- `flush_all()` and `shutdown()` drain every routed workspace within the same timeout before the default one.
+- Short names are used as-is. `sessionPeerPrefix` and `sessionAiPeerPrefix` shape the full key before matching, not the short name, so if several profiles route into one project workspace, give their channels distinct short names.
+- This composes with the [Multi-Profile Pattern](#multi-profile-pattern): profiles choose their default workspace, and the mapping routes individual channels within one profile.
+
 ### Multi-Profile Pattern
 
 Multiple Hermes profiles can share one workspace while maintaining separate AI identities. Config resolution is **host block > root > env var > default** — host blocks inherit from root, so shared settings only need to be declared once:
