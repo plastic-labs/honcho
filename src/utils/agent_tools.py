@@ -964,6 +964,15 @@ INDUCTION_SPECIALIST_TOOLS: list[dict[str, Any]] = [
 # Card-only maintenance: discovery plus update_peer_card. Deliberately
 # excludes every observation-mutating tool (create_observations*,
 # delete_observations) — a card refresh must never touch observations.
+MUTATING_TOOLS: frozenset[str] = frozenset(
+    {
+        "create_observations_deductive",
+        "create_observations_inductive",
+        "delete_observations",
+        "update_peer_card",
+    }
+)
+
 CARD_REFRESH_SPECIALIST_TOOLS: list[dict[str, Any]] = [
     # Discovery tools
     TOOLS["get_recent_observations"],

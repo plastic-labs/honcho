@@ -126,11 +126,13 @@ class LangfuseExporter:
                 if langfuse_session.is_open(lf_trace_id, run_span_id):
                     # The agent reports its own steps; a call outside one (the
                     # streamed tail) nests directly under the run.
+                    step_span_id = langfuse_session.step_span_id(
+                        lf_trace_id, branch, call.iteration
+                    )
                     parent_span_id = (
-                        langfuse_session.step_span_id(
-                            lf_trace_id, branch, call.iteration
-                        )
-                        or run_span_id
+                        step_span_id
+                        if langfuse_session.is_open(lf_trace_id, step_span_id)
+                        else run_span_id
                     )
                 else:
                     parent_span_id = langfuse_session.ensure_step_span(
@@ -229,6 +231,10 @@ class LangfuseExporter:
             return
         if span.output is not None:
             obs.update(output=span.output)
+        if span.metadata:
+            obs.update(metadata=span.metadata)
+        if span.tags:
+            self._stamp_tags(obs, span.tags)
         if span.is_error:
             obs.update(level="ERROR")
         obs.end(end_time=span.time_ns)
@@ -327,7 +333,7 @@ class LangfuseExporter:
             metadata=metadata,
         )
         self._backdate_start(obs, start_ns)
-        self._attach(obs, parent_span_id, self._trace_name(call))
+        self._attach(obs, parent_span_id, self._trace_name(call), call.tags)
         obs.end()
         return getattr(obs, "id", None)
 
@@ -350,7 +356,7 @@ class LangfuseExporter:
             input=span.input,
             metadata=metadata,
         )
-        self._attach(obs, parent_span_id, self._trace_name(span))
+        self._attach(obs, parent_span_id, self._trace_name(span), span.tags)
         return obs
 
     def _create_generation(
@@ -376,7 +382,7 @@ class LangfuseExporter:
             level=level,
         )
         backdated = self._backdate_start(obs, start_ns)
-        self._attach(obs, parent_span_id, self._trace_name(call))
+        self._attach(obs, parent_span_id, self._trace_name(call), call.tags)
         # end_ns predates the SDK's own start stamp, so only pin it when backdated.
         obs.end(end_time=end_ns if backdated else None)
 
@@ -400,10 +406,16 @@ class LangfuseExporter:
         return True
 
     def _attach(
-        self, obs: Any, parent_span_id: str | None, trace_name: str | None
+        self,
+        obs: Any,
+        parent_span_id: str | None,
+        trace_name: str | None,
+        tags: list[str] | None = None,
     ) -> None:
         """Stamp trace attrs and export `obs` as the trace root or a plain child."""
         self._stamp_trace_attrs(obs, trace_name)
+        if tags:
+            self._stamp_tags(obs, tags)
         if parent_span_id is None:
             self._detach_placeholder_parent(obs)
         else:
@@ -441,6 +453,16 @@ class LangfuseExporter:
         if parent_span_id is not None:
             ctx["parent_span_id"] = parent_span_id
         return ctx
+
+    @staticmethod
+    def _stamp_tags(obs: Any, tags: list[str]) -> None:
+        """Tag the observation; Langfuse unions observation tags onto the trace."""
+        span = getattr(obs, "_otel_span", None)
+        if span is None:
+            return
+        from langfuse import LangfuseOtelSpanAttributes as Attr
+
+        span.set_attribute(Attr.TRACE_TAGS, list(tags))
 
     @staticmethod
     def _stamp_trace_attrs(obs: Any, trace_name: str | None) -> None:
@@ -486,6 +508,7 @@ class LangfuseExporter:
         ):
             if value is not None:
                 md[key] = str(value)
+        md.update(call.metadata)
         return md
 
     @staticmethod
