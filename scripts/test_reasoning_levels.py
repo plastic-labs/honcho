@@ -5,7 +5,7 @@ import argparse
 import json
 import os
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -33,7 +33,7 @@ def parse_datetime(dt_string: str) -> datetime:
         day=date_obj.day,
         hour=time_obj.hour,
         minute=time_obj.minute,
-        tzinfo=timezone.utc,
+        tzinfo=UTC,
     )
 
 

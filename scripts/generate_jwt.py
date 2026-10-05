@@ -110,7 +110,7 @@ def main():
 
     expiry: datetime.datetime | None = None
     if args.expires is not None:
-        expiry = datetime.datetime.now(datetime.timezone.utc) + args.expires
+        expiry = datetime.datetime.now(datetime.UTC) + args.expires
 
     params = JWTParams(
         ad=True if args.admin else None,

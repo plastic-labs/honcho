@@ -43,3 +43,20 @@ class SessionBase(BaseModel):
     workspace_id: str = Field(
         ..., min_length=1, description="Workspace ID for scoping operations"
     )
+
+
+class ScopeBase(BaseModel):
+    """Base class for Scope objects (sync and async variants).
+
+    Use this type in method signatures to accept either a scope ID string or any
+    Scope object.
+
+    Attributes:
+        id: Unprefixed scope name, unique within the workspace
+        workspace_id: Workspace ID for scoping operations
+    """
+
+    id: str = Field(..., min_length=1, description="Unprefixed name of this scope")
+    workspace_id: str = Field(
+        ..., min_length=1, description="Workspace ID for scoping operations"
+    )

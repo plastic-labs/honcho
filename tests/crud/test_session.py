@@ -1,13 +1,339 @@
+from datetime import UTC, datetime
+
 import pytest
 from nanoid import generate as generate_nanoid
+from sqlalchemy import Boolean, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
-from src.exceptions import ResourceNotFoundException
+from src.config import settings
+from src.exceptions import ObserverException, ResourceNotFoundException
 
 
 class TestSessionCRUD:
     """Test suite for session CRUD operations"""
+
+    @pytest.mark.asyncio
+    async def test_get_or_create_session_preserves_active_joined_at(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """Active re-adds keep joined_at and config; a genuine rejoin starts a
+        new window."""
+        test_workspace, test_peer = sample_data
+        session_name = str(generate_nanoid())
+        original_config = schemas.SessionPeerConfig(
+            observe_others=True, observe_me=False
+        )
+        updated_config = schemas.SessionPeerConfig(
+            observe_others=False, observe_me=True
+        )
+        session_peer_stmt = select(
+            models.SessionPeer.joined_at,
+            models.SessionPeer.left_at,
+            models.SessionPeer.configuration,
+        ).where(
+            models.SessionPeer.session_name == session_name,
+            models.SessionPeer.peer_name == test_peer.name,
+            models.SessionPeer.workspace_name == test_workspace.name,
+        )
+
+        await crud.get_or_create_session(
+            db_session,
+            schemas.SessionCreate(
+                name=session_name, peers={test_peer.name: original_config}
+            ),
+            test_workspace.name,
+        )
+        first_joined_at, first_left_at, first_config = (
+            await db_session.execute(session_peer_stmt)
+        ).one()
+        assert first_left_at is None
+        assert first_config == original_config.model_dump()
+
+        await crud.get_or_create_session(
+            db_session,
+            schemas.SessionCreate(
+                name=session_name, peers={test_peer.name: updated_config}
+            ),
+            test_workspace.name,
+        )
+        second_joined_at, second_left_at, second_config = (
+            await db_session.execute(session_peer_stmt)
+        ).one()
+        assert second_joined_at == first_joined_at
+        assert second_left_at is None
+        assert second_config == original_config.model_dump()
+
+        session_peer = (
+            await db_session.execute(
+                select(models.SessionPeer).where(
+                    models.SessionPeer.session_name == session_name,
+                    models.SessionPeer.peer_name == test_peer.name,
+                    models.SessionPeer.workspace_name == test_workspace.name,
+                )
+            )
+        ).scalar_one()
+        session_peer.left_at = datetime.now(UTC)
+        await db_session.commit()
+
+        await crud.get_or_create_session(
+            db_session,
+            schemas.SessionCreate(
+                name=session_name, peers={test_peer.name: updated_config}
+            ),
+            test_workspace.name,
+        )
+        rejoined_joined_at, rejoined_left_at, rejoined_config = (
+            await db_session.execute(session_peer_stmt)
+        ).one()
+        assert rejoined_joined_at > second_joined_at
+        assert rejoined_left_at is None
+        assert rejoined_config == updated_config.model_dump()
+
+    @pytest.mark.asyncio
+    async def test_set_peers_preserves_active_joined_at(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """PUT-peers keeps active membership windows and refreshes real rejoins."""
+        test_workspace, test_peer = sample_data
+        session_name = str(generate_nanoid())
+        original_config = schemas.SessionPeerConfig(
+            observe_others=True, observe_me=False
+        )
+        updated_config = schemas.SessionPeerConfig(
+            observe_others=False, observe_me=True
+        )
+        db_session.add(
+            models.Session(name=session_name, workspace_name=test_workspace.name)
+        )
+        await db_session.flush()
+
+        session_peer_stmt = select(
+            models.SessionPeer.joined_at,
+            models.SessionPeer.left_at,
+            models.SessionPeer.configuration,
+        ).where(
+            models.SessionPeer.session_name == session_name,
+            models.SessionPeer.peer_name == test_peer.name,
+            models.SessionPeer.workspace_name == test_workspace.name,
+        )
+
+        await crud.set_peers_for_session(
+            db_session,
+            workspace_name=test_workspace.name,
+            session_name=session_name,
+            peer_names={test_peer.name: original_config},
+        )
+        first_left_at, first_config = (
+            await db_session.execute(
+                select(
+                    models.SessionPeer.left_at,
+                    models.SessionPeer.configuration,
+                ).where(
+                    models.SessionPeer.session_name == session_name,
+                    models.SessionPeer.peer_name == test_peer.name,
+                    models.SessionPeer.workspace_name == test_workspace.name,
+                )
+            )
+        ).one()
+        assert first_left_at is None
+        assert first_config == original_config.model_dump()
+
+        session_peer = (
+            await db_session.execute(
+                select(models.SessionPeer).where(
+                    models.SessionPeer.session_name == session_name,
+                    models.SessionPeer.peer_name == test_peer.name,
+                    models.SessionPeer.workspace_name == test_workspace.name,
+                )
+            )
+        ).scalar_one()
+        session_peer.joined_at = datetime(2020, 1, 1, tzinfo=UTC)
+        await db_session.commit()
+
+        await crud.set_peers_for_session(
+            db_session,
+            workspace_name=test_workspace.name,
+            session_name=session_name,
+            peer_names={test_peer.name: updated_config},
+        )
+        active_joined_at, active_left_at, active_config = (
+            await db_session.execute(session_peer_stmt)
+        ).one()
+        assert active_joined_at == datetime(2020, 1, 1, tzinfo=UTC)
+        assert active_left_at is None
+        # A replace states the desired end state, so the incoming config lands even
+        # though the membership window is untouched.
+        assert active_config == updated_config.model_dump()
+
+        await crud.set_peers_for_session(
+            db_session,
+            workspace_name=test_workspace.name,
+            session_name=session_name,
+            peer_names={},
+        )
+        await crud.set_peers_for_session(
+            db_session,
+            workspace_name=test_workspace.name,
+            session_name=session_name,
+            peer_names={test_peer.name: updated_config},
+        )
+        rejoined_joined_at, rejoined_left_at, rejoined_config = (
+            await db_session.execute(session_peer_stmt)
+        ).one()
+        assert rejoined_joined_at > active_joined_at
+        assert rejoined_left_at is None
+        assert rejoined_config == updated_config.model_dump()
+
+    @pytest.mark.asyncio
+    async def test_observer_limit_counts_preserved_config(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """On the add path an already-active observer keeps its stored config, so
+        it still counts against the limit when re-sent as a non-observer."""
+        monkeypatch.setattr(settings, "SESSION_OBSERVERS_LIMIT", 2)
+        test_workspace, _ = sample_data
+        # Bound to a local: rollback below expires the ORM instance, and reloading
+        # it would lazy-load outside the greenlet context.
+        workspace_name = test_workspace.name
+        session_name = str(generate_nanoid())
+        observer = schemas.SessionPeerConfig(observe_others=True, observe_me=False)
+        bystander = schemas.SessionPeerConfig(observe_others=False, observe_me=True)
+        existing = [str(generate_nanoid()) for _ in range(2)]
+
+        await crud.get_or_create_session(
+            db_session,
+            schemas.SessionCreate(
+                name=session_name, peers=dict.fromkeys(existing, observer)
+            ),
+            workspace_name,
+        )
+
+        # Adding cannot demote an active member, so re-sending the two observers as
+        # non-observers leaves them observing and the third peer makes three.
+        with pytest.raises(ObserverException):
+            await crud.get_or_create_session(
+                db_session,
+                schemas.SessionCreate(
+                    name=session_name,
+                    peers={
+                        **dict.fromkeys(existing, bystander),
+                        str(generate_nanoid()): observer,
+                    },
+                ),
+                workspace_name,
+            )
+
+        # The rejected request left nothing behind.
+        await db_session.rollback()
+        observer_count = await db_session.scalar(
+            select(func.count()).where(
+                models.SessionPeer.session_name == session_name,
+                models.SessionPeer.workspace_name == workspace_name,
+                models.SessionPeer.left_at.is_(None),
+                models.SessionPeer.configuration["observe_others"].astext.cast(Boolean),
+            )
+        )
+        assert observer_count == 2
+
+    @pytest.mark.asyncio
+    async def test_set_peers_observer_limit_counts_replaced_config(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """The replace path applies the incoming config, so demoting active
+        observers frees room under the limit in the same request."""
+        monkeypatch.setattr(settings, "SESSION_OBSERVERS_LIMIT", 2)
+        test_workspace, _ = sample_data
+        workspace_name = test_workspace.name
+        session_name = str(generate_nanoid())
+        db_session.add(models.Session(name=session_name, workspace_name=workspace_name))
+        await db_session.flush()
+        observer = schemas.SessionPeerConfig(observe_others=True, observe_me=False)
+        bystander = schemas.SessionPeerConfig(observe_others=False, observe_me=True)
+        existing = [str(generate_nanoid()) for _ in range(2)]
+
+        await crud.set_peers_for_session(
+            db_session,
+            workspace_name=workspace_name,
+            session_name=session_name,
+            peer_names=dict.fromkeys(existing, observer),
+        )
+
+        # Demoting both active observers while adding a new one leaves exactly one.
+        await crud.set_peers_for_session(
+            db_session,
+            workspace_name=workspace_name,
+            session_name=session_name,
+            peer_names={
+                **dict.fromkeys(existing, bystander),
+                str(generate_nanoid()): observer,
+            },
+        )
+        observer_count = await db_session.scalar(
+            select(func.count()).where(
+                models.SessionPeer.session_name == session_name,
+                models.SessionPeer.workspace_name == workspace_name,
+                models.SessionPeer.left_at.is_(None),
+                models.SessionPeer.configuration["observe_others"].astext.cast(Boolean),
+            )
+        )
+        assert observer_count == 1
+
+    @pytest.mark.asyncio
+    async def test_observer_limit_lets_over_limit_session_take_non_observers(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """A session already past the limit still accepts non-observers, so
+        sessions that grew over it before enforcement do not become unusable."""
+        monkeypatch.setattr(settings, "SESSION_OBSERVERS_LIMIT", 2)
+        test_workspace, _ = sample_data
+        workspace_name = test_workspace.name
+        session_name = str(generate_nanoid())
+        observer = schemas.SessionPeerConfig(observe_others=True, observe_me=False)
+        bystander = schemas.SessionPeerConfig(observe_others=False, observe_me=True)
+
+        await crud.get_or_create_session(
+            db_session,
+            schemas.SessionCreate(
+                name=session_name,
+                peers=dict.fromkeys(
+                    [str(generate_nanoid()) for _ in range(2)], observer
+                ),
+            ),
+            workspace_name,
+        )
+
+        # Now the limit is below what the session already holds.
+        monkeypatch.setattr(settings, "SESSION_OBSERVERS_LIMIT", 1)
+        await crud.get_or_create_session(
+            db_session,
+            schemas.SessionCreate(
+                name=session_name, peers={str(generate_nanoid()): bystander}
+            ),
+            workspace_name,
+        )
+
+        active_count = await db_session.scalar(
+            select(func.count()).where(
+                models.SessionPeer.session_name == session_name,
+                models.SessionPeer.workspace_name == workspace_name,
+                models.SessionPeer.left_at.is_(None),
+            )
+        )
+        assert active_count == 3
 
     @pytest.mark.asyncio
     async def test_get_session_peer_configuration(
@@ -132,3 +458,218 @@ class TestSessionCRUD:
             await crud.clone_session(
                 db_session, test_workspace.name, test_session.name, "invalid_message_id"
             )
+
+    @pytest.mark.asyncio
+    async def test_clone_session_ignores_same_named_session_in_other_workspace(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """Session names are unique per workspace only, so a clone must not copy
+        messages or peers from another workspace's session of the same name."""
+        workspace_a, peer_a = sample_data
+        workspace_b, peer_b = await _create_workspace_with_peer(db_session)
+        session_name = str(generate_nanoid())
+        await _create_session(db_session, workspace_a.name, session_name, [peer_a.name])
+        await _create_message(db_session, workspace_a.name, session_name, peer_a.name)
+        await _create_session(db_session, workspace_b.name, session_name, [peer_b.name])
+        await _create_message(db_session, workspace_b.name, session_name, peer_b.name)
+
+        cloned = await crud.clone_session(db_session, workspace_a.name, session_name)
+
+        assert await _cloned_message_authors(db_session, cloned.name) == [peer_a.name]
+        assert await _cloned_session_peers(db_session, cloned.name) == [peer_a.name]
+
+    @pytest.mark.asyncio
+    async def test_clone_session_does_not_leak_messages_between_workspaces(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """Peer names are also per-workspace, so two workspaces can share one (e.g.
+        "user"). Cloning an empty session must not silently pick up the messages
+        and members of the other workspace's same-named session."""
+        workspace_a, shared_peer = sample_data
+        workspace_b, _ = await _create_workspace_with_peer(
+            db_session, peer_name=shared_peer.name
+        )
+        session_name = str(generate_nanoid())
+        await _create_session(db_session, workspace_a.name, session_name, [])
+        await _create_session(
+            db_session, workspace_b.name, session_name, [shared_peer.name]
+        )
+        await _create_message(
+            db_session, workspace_b.name, session_name, shared_peer.name
+        )
+
+        cloned = await crud.clone_session(db_session, workspace_a.name, session_name)
+
+        assert await _cloned_message_authors(db_session, cloned.name) == []
+        assert await _cloned_session_peers(db_session, cloned.name) == []
+
+    @pytest.mark.asyncio
+    async def test_clone_session_without_messages_commits_clone_and_peers(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """A session with no messages still clones: the copy and its peers are
+        committed rather than left for the request's closing rollback."""
+        test_workspace, test_peer = sample_data
+        session_name = str(generate_nanoid())
+        await _create_session(
+            db_session, test_workspace.name, session_name, [test_peer.name]
+        )
+        await db_session.commit()
+
+        cloned = await crud.clone_session(db_session, test_workspace.name, session_name)
+        cloned_name = cloned.name
+        await db_session.rollback()
+
+        assert await db_session.scalar(
+            select(models.Session.name).where(
+                models.Session.workspace_name == test_workspace.name,
+                models.Session.name == cloned_name,
+            )
+        )
+        assert await _cloned_session_peers(db_session, cloned_name) == [test_peer.name]
+
+    @pytest.mark.asyncio
+    async def test_clone_session_rejects_cutoff_from_other_workspace(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """A cutoff message from another workspace's same-named session is not a
+        message of the session being cloned."""
+        workspace_a, peer_a = sample_data
+        workspace_b, peer_b = await _create_workspace_with_peer(db_session)
+        session_name = str(generate_nanoid())
+        await _create_session(db_session, workspace_a.name, session_name, [peer_a.name])
+        await _create_message(db_session, workspace_a.name, session_name, peer_a.name)
+        await _create_session(db_session, workspace_b.name, session_name, [peer_b.name])
+        foreign_message = await _create_message(
+            db_session, workspace_b.name, session_name, peer_b.name
+        )
+
+        with pytest.raises(
+            ValueError,
+            match="Message not found or doesn't belong to the specified session",
+        ):
+            await crud.clone_session(
+                db_session, workspace_a.name, session_name, foreign_message.public_id
+            )
+
+    @pytest.mark.asyncio
+    async def test_clone_session_preserves_token_counts(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """Cloned messages keep their token counts, which token-limited message
+        reads (session context) budget against."""
+        test_workspace, test_peer = sample_data
+        session_name = str(generate_nanoid())
+        await _create_session(
+            db_session, test_workspace.name, session_name, [test_peer.name]
+        )
+        await _create_message(
+            db_session,
+            test_workspace.name,
+            session_name,
+            test_peer.name,
+            token_count=7,
+        )
+
+        cloned = await crud.clone_session(db_session, test_workspace.name, session_name)
+
+        token_counts = (
+            await db_session.scalars(
+                select(models.Message.token_count).where(
+                    models.Message.workspace_name == test_workspace.name,
+                    models.Message.session_name == cloned.name,
+                )
+            )
+        ).all()
+        assert token_counts == [7]
+
+
+async def _create_workspace_with_peer(
+    db_session: AsyncSession, peer_name: str | None = None
+) -> tuple[models.Workspace, models.Peer]:
+    workspace = models.Workspace(name=str(generate_nanoid()))
+    peer = models.Peer(
+        name=peer_name or str(generate_nanoid()), workspace_name=workspace.name
+    )
+    db_session.add_all([workspace, peer])
+    await db_session.flush()
+    return workspace, peer
+
+
+async def _create_session(
+    db_session: AsyncSession,
+    workspace_name: str,
+    session_name: str,
+    peer_names: list[str],
+) -> None:
+    db_session.add(models.Session(name=session_name, workspace_name=workspace_name))
+    await db_session.flush()
+    db_session.add_all(
+        models.SessionPeer(
+            session_name=session_name,
+            peer_name=peer_name,
+            workspace_name=workspace_name,
+            configuration={},
+        )
+        for peer_name in peer_names
+    )
+    await db_session.flush()
+
+
+async def _create_message(
+    db_session: AsyncSession,
+    workspace_name: str,
+    session_name: str,
+    peer_name: str,
+    token_count: int = 0,
+) -> models.Message:
+    message = models.Message(
+        public_id=generate_nanoid(),
+        session_name=session_name,
+        workspace_name=workspace_name,
+        peer_name=peer_name,
+        content="hello",
+        token_count=token_count,
+        seq_in_session=1,
+    )
+    db_session.add(message)
+    await db_session.flush()
+    return message
+
+
+async def _cloned_message_authors(
+    db_session: AsyncSession, session_name: str
+) -> list[str]:
+    return list(
+        (
+            await db_session.scalars(
+                select(models.Message.peer_name).where(
+                    models.Message.session_name == session_name
+                )
+            )
+        ).all()
+    )
+
+
+async def _cloned_session_peers(
+    db_session: AsyncSession, session_name: str
+) -> list[str]:
+    return list(
+        (
+            await db_session.scalars(
+                select(models.SessionPeer.peer_name).where(
+                    models.SessionPeer.session_name == session_name
+                )
+            )
+        ).all()
+    )

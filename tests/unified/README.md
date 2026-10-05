@@ -48,19 +48,21 @@ Tests are defined in JSON files. A test definition consists of a name, optional 
 
 4. **Querying & Assertions**:
     * `query`: Perform an action and assert on the result.
-        * `target`: "chat", "get_context", "get_peer_card", "get_representation"
-        * `scope`: confine the read to a scope (or, for chat/representation, to
-          the union of several). Valid for "chat", "get_representation" and
-          "get_context"; the latter takes a single scope and requires
-          `observed_peer_id`.
+        * `target`: "chat", "get_context", "get_peer_card", "get_representation",
+          "workspace_chat"
+        * `scope`: confine the read to a scope (or, for chat/representation/
+          workspace_chat, to the union of several). Valid for "chat",
+          "get_representation", "get_context", and "workspace_chat"; get_context
+          takes a single scope and requires `observed_peer_id`.
 
 ### Raw HTTP vs the SDK
 
-Most steps drive the Honcho Python SDK. `create_scope` and any query carrying
-`scope` go over raw HTTP instead, because the published SDK trails the API and
-exposes neither. Calling the API directly also tests the contract the SDK is
-generated from, so a wrong status code or response shape surfaces here rather
-than being masked by client-side validation.
+Most steps drive the Honcho Python SDK. `create_scope` and scoped `chat` /
+`get_representation` / `get_context` queries go over raw HTTP instead, because
+the published SDK trails the API and exposes neither. Scoped `workspace_chat`
+uses the SDK `scope` argument. Calling the API directly also tests the contract
+the SDK is generated from, so a wrong status code or response shape surfaces
+here rather than being masked by client-side validation.
 
 ### Assertions
 
@@ -68,6 +70,28 @@ than being masked by client-side validation.
 * `contains` / `not_contains`: Substring matching.
 * `exact_match`: Strict equality.
 * `json_match`: specific key-value checks.
+* `evidence_contains`: assert on what a `chat` / `workspace_chat` run *read*,
+  independent of how it phrased the answer. The runner always requests
+  `include_evidence`, so this is deterministic where `llm_judge` is not. Every
+  field given must hold:
+  * `conclusions_match`: case-insensitive substring some evidence conclusion
+      contains. A peer card the run read through a `get_peer_card` call counts
+      too, since a card is derived memory; a card that only arrived in the
+      workspace prefetch does not, so this still cannot pass without a tool call.
+  * `conclusions_from_peers` + `min_count` (default: all): at least `min_count`
+      of the listed peers have a conclusion *about them* (`observed_id`) in
+      evidence. Peer cards do not count here — this condition is what proves
+      per-peer corpus retrieval rather than an orientation read.
+  * `messages_match`: substring some evidence message contains. Evidence carries
+      message ids only, so the runner fetches each one's content.
+  * `not_from_sessions`: no evidence conclusion or message belongs to these
+      sessions. Conclusions without a session id cannot be attributed and are skipped.
+
+  Evidence over-reports (prefetched rows count as read), so it proves a row was
+  reached, not that the answer used it. Pair it with an `llm_judge` on synthesis:
+  a run that retrieved but phrased badly fails only the judge, a run that never
+  retrieved fails here first. The failure message lists the tool calls made and
+  every conclusion (peer, level, session, first 80 chars) and message in evidence.
 
 ## Example
 

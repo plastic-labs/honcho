@@ -2,13 +2,20 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import socket
+from collections.abc import Iterable
 from typing import Any, cast
 from urllib.parse import urlparse, urlunparse
 
 import sentry_sdk
 from cashews import cache
+from cashews.backends.redis.client import SafeRedisCluster
 from cashews.picklers import PicklerType
 from redis import exceptions as redis_exc
+from redis.asyncio import RedisCluster
+from redis.asyncio.connection import AbstractConnection
+from redis.asyncio.retry import Retry
+from redis.backoff import ExponentialBackoff
 from tenacity import (
     AsyncRetrying,
     retry_if_exception_type,
@@ -22,6 +29,110 @@ from src.config import settings
 logger = logging.getLogger(__name__)
 
 _cache_lock = asyncio.Lock()
+
+
+# region ai
+# Compatibility shim: cashews 7.5.0 against redis-py >= 8.0.0.
+#
+# REMOVE THIS once cashews ships a release that accepts the arguments redis-py
+# 8.x passes to `RedisCluster.initialize()`. Check `SafeRedisCluster.initialize`
+# upstream: if its signature takes *args/**kwargs (or the two parameters below),
+# this block is dead weight and should go with the cashews bump.
+#
+# cashews 7.5.0 (2026-03-02) predates redis-py 8.0.0 (2026-05-28). redis-py
+# PR #4060 added `additional_startup_nodes_info` and `last_failed_node_name` to
+# `RedisCluster.initialize()`, but cashews still declares its override as
+# `initialize(self)`. redis-py calls it with a keyword on the command-retry path
+# (`redis/asyncio/cluster.py`, guarded by `if self._initialize`), so the call
+# raises TypeError. `_initialize` is set by any ConnectionError/TimeoutError,
+# which makes a single unreachable node enough to trigger it.
+#
+# Two reasons this matters more than a normal signature drift:
+#   * TypeError is not in the tuple cashews catches (RedisError, socket.gaierror,
+#     OSError, asyncio.TimeoutError), so it bypasses SafeRedisCluster's entire
+#     purpose and propagates into request handling instead of degrading.
+#   * `initialize()` is itself the recovery path, so it never clears
+#     `_initialize` and every later command fails too. The client stays wedged
+#     until the process restarts.
+#
+# Only reachable with CACHE.CLUSTER enabled, and only after a node failure, so
+# it does not show up in standalone local stacks or in CI. Not reported upstream
+# at the time of writing; a standalone reproduction lives in DEV-2647.
+async def _safe_cluster_initialize(
+    self: SafeRedisCluster, *args: Any, **kwargs: Any
+) -> SafeRedisCluster:
+    """Forward whatever redis-py passes, keeping cashews' degrade-on-error intent."""
+    try:
+        return await RedisCluster.initialize(self, *args, **kwargs)  # pyright: ignore[reportReturnType]
+    except (
+        redis_exc.RedisError,
+        socket.gaierror,
+        OSError,
+        TimeoutError,
+    ):
+        logger.error("redis: can not initialize cache", exc_info=True)
+        return self
+
+
+# cashews evaluates `__aenter__ = initialize` at class-definition time, so the
+# alias still references the original function. Patching only `initialize` would
+# leave the async-context-manager path broken.
+SafeRedisCluster.initialize = _safe_cluster_initialize
+SafeRedisCluster.__aenter__ = _safe_cluster_initialize
+# endregion
+
+# region ai
+# Compatibility shim: redis-py 8.x `send_packed_command` under uvloop.
+#
+# REMOVE THIS once redis-py maps a write to a closed transport to
+# ConnectionError itself. Check `AbstractConnection.send_packed_command`
+# upstream: if it catches RuntimeError from a closing transport (or checks
+# `transport.is_closing()` before writing), this block is dead weight and should
+# go with the redis-py bump.
+#
+# Upstream: https://github.com/redis/redis-py/issues/4352
+#
+# uvloop raises RuntimeError when writing to a transport the peer already closed
+# (e.g. an idle pooled connection Redis dropped); the default asyncio loop does
+# not raise there, so redis-py only expects OSError and lets RuntimeError escape.
+# That matters because:
+#   * Retry only retries ConnectionError/TimeoutError, so it never reconnects.
+#   * RuntimeError is not in the tuple cashews catches, so it propagates into
+#     request handling instead of degrading.
+#
+# `connection_class=` would be the supported hook, but RedisCluster hard-codes
+# `Connection` (redis/asyncio/cluster.py in 8.1) and we run cluster in prod, so
+# this patches the base class globally.
+_send_packed_command = AbstractConnection.send_packed_command
+
+
+async def _send_packed_command_or_connection_error(
+    self: AbstractConnection,
+    command: bytes | str | Iterable[bytes],
+    check_health: bool = True,
+) -> None:
+    # The health check can reconnect onto a new transport, so run it first and
+    # snapshot the transport the write will actually use. Snapshot before
+    # sending: the wrapped method disconnects (closing the transport) before
+    # re-raising, so checking afterwards is always true. Skipped when not yet
+    # connected: the connect handshake counts as a health check upstream, so
+    # checking first would add a PING to every new connection.
+    if check_health and self.is_connected:
+        await self.check_health()
+    writer = self._writer  # pyright: ignore[reportPrivateUsage]
+    was_closing = writer is not None and writer.transport.is_closing()
+    try:
+        await _send_packed_command(self, command, False)
+    except RuntimeError as e:
+        if not was_closing:
+            raise
+        raise redis_exc.ConnectionError(
+            f"Connection closed by peer while writing to socket: {e}"
+        ) from e
+
+
+AbstractConnection.send_packed_command = _send_packed_command_or_connection_error
+# endregion
 
 
 # Query parameters that carry secrets when configured via URL:
@@ -123,6 +234,79 @@ def get_cache_namespace() -> str:
     return cast(str, settings.CACHE.NAMESPACE)
 
 
+# On Redis Cluster a key's slot is derived from the substring inside the first
+# {...}, when one is present. Tagging the namespace puts every key an instance
+# writes on a single slot, and therefore a single shard, so its client holds
+# connections to one node rather than to all of them. Namespaces still hash
+# independently of one another, so keys stay spread across the cluster.
+#
+# Two spellings, because the two ways a key gets built treat the string
+# differently: cashews runs `prefix=` through format substitution, so braces
+# have to be doubled to survive as literals, while direct construction does no
+# substitution and needs them single. Both render to the same bytes, which
+# tests/cache/test_cache_namespace_hash_tag.py asserts -- a mismatch would send
+# writes and deletes to different keys with nothing raised.
+def cache_key_namespace() -> str:
+    """Tagged namespace for keys built by string concatenation."""
+    return "{" + get_cache_namespace() + "}"
+
+
+def cache_prefix_namespace() -> str:
+    """Tagged namespace for cashews `prefix=`, which format-substitutes."""
+    return "{{" + get_cache_namespace() + "}}"
+
+
+async def _release_default_node_connection() -> None:
+    """Drop the idle connection the startup PING leaves on the cluster's default node.
+
+    PING carries no key, so redis-py routes it to ``nodes_manager.default_node``
+    rather than to a shard. That node is the same one for every client in a
+    deployment: ``NodesManager.initialize`` fills ``nodes_cache`` in the order
+    CLUSTER SLOTS returns slot ranges -- ascending since Redis 6.2 -- and then
+    takes ``get_nodes_by_server_type(PRIMARY)[0]``, so everyone picks whichever
+    primary owns slot 0.
+
+    Nothing closes that connection afterwards. It is returned to the pool on
+    release, redis-py's cluster node pool does no idle reaping, and every later
+    cache call is keyed and hash-tagged to this instance's namespace, so it goes
+    to a data shard instead. The result is one permanently idle socket per
+    process, all of them on one node, while the keyed traffic spreads evenly.
+
+    At fleet scale that dominates the connection count: the slot-0 primary held
+    roughly 13x the connections of its peers, ~92% of them idle since their
+    PING, even though the three primaries' keyed traffic was within 13% of each
+    other. Enough to reach ``maxclients`` on that one node while the rest of the
+    cluster sat near a quarter of it, which fails new clients everywhere --
+    ``RedisCluster.initialize`` cannot complete if the default node refuses the
+    connection, so the client never reaches the shard holding its own keys.
+
+    Safe because it only disconnects free connections and leaves them in the
+    pool: redis-py re-establishes lazily if a keyless command is ever issued
+    again. A topology refresh re-opens one, since the refreshed client asks the
+    default node for the command table, but that is per-refresh rather than for
+    the life of the process.
+    """
+    if not settings.CACHE.CLUSTER:
+        return
+    try:
+        # No public accessor reaches the node objects, so this reads through
+        # cashews' backend to the redis-py client it wraps. Guarded below
+        # because a rename in either library must not break startup: the
+        # connection this releases is an optimisation, not a correctness need.
+        for backend in cache._backends.values():  # pyright: ignore[reportPrivateUsage]
+            default_node = getattr(
+                getattr(getattr(backend, "_client", None), "nodes_manager", None),
+                "default_node",
+                None,
+            )
+            if default_node is not None:
+                await default_node.disconnect_free_connections()
+    except Exception:
+        logger.debug(
+            "Could not release the cache default-node connection", exc_info=True
+        )
+
+
 async def init_cache() -> None:
     """Initialize and verify cache connection if enabled."""
     async with _cache_lock:
@@ -144,11 +328,16 @@ async def init_cache() -> None:
                 settings.CACHE.URL,
                 pickle_type=PicklerType.SQLALCHEMY,
                 cluster=settings.CACHE.CLUSTER,
+                socket_connect_timeout=settings.CACHE.CONNECT_TIMEOUT_SECONDS,
+                retry=Retry(
+                    ExponentialBackoff(cap=0.5, base=0.1),
+                    settings.CACHE.CONNECT_RETRIES,
+                ),
             )
 
         except Exception as setup_err:
-            logger.warning(
-                "Cache setup failed for %s: %s. Falling back to in-memory cache",
+            logger.error(
+                "Cache setup failed for %s: %s. Falling back to a process-local in-memory cache; invalidations will not reach other processes",
                 _redact_cache_url(settings.CACHE.URL),
                 setup_err,
             )
@@ -181,14 +370,9 @@ async def init_cache() -> None:
                             "Connected to cache at %s",
                             _redact_cache_url(settings.CACHE.URL),
                         )
-        except (
-            redis_exc.TimeoutError,
-            redis_exc.ConnectionError,
-            asyncio.TimeoutError,
-            TimeoutError,
-        ) as e:
-            logger.warning(
-                "Failed to connect to cache at %s: %s. Falling back to in-memory cache",
+        except (redis_exc.TimeoutError, redis_exc.ConnectionError, TimeoutError) as e:
+            logger.error(
+                "Failed to connect to cache at %s: %s. Falling back to a process-local in-memory cache; invalidations will not reach other processes",
                 _redact_cache_url(settings.CACHE.URL),
                 e,
             )
@@ -198,8 +382,8 @@ async def init_cache() -> None:
             await cache.close()
             cache.setup("mem://", pickle_type=PicklerType.SQLALCHEMY)
         except Exception as e:
-            logger.warning(
-                "Unexpected cache error at %s: %s. Falling back to in-memory cache",
+            logger.error(
+                "Unexpected cache error at %s: %s. Falling back to a process-local in-memory cache; invalidations will not reach other processes",
                 _redact_cache_url(settings.CACHE.URL),
                 e,
             )
@@ -208,6 +392,12 @@ async def init_cache() -> None:
             # Fallback to in-memory cache
             await cache.close()
             cache.setup("mem://", pickle_type=PicklerType.SQLALCHEMY)
+
+        # Outside the try above deliberately: its handlers fall back to the
+        # in-memory cache, and losing Redis caching process-wide is far worse
+        # than leaving one idle connection behind. A no-op on the fallback
+        # path, where there is no cluster client to read.
+        await _release_default_node_connection()
 
 
 _TRANSIENT_CACHE_ERRORS = (
@@ -256,6 +446,8 @@ __all__ = [
     "init_cache",
     "close_cache",
     "cache",
+    "cache_key_namespace",
+    "cache_prefix_namespace",
     "safe_cache_delete",
     "safe_cache_set",
 ]

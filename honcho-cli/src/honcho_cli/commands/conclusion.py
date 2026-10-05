@@ -18,6 +18,43 @@ app = typer.Typer(cls=HonchoTyperGroup, help="List, search, create, and delete p
 add_common_options(app)
 
 
+_LEVELS = ("explicit", "deductive", "inductive", "contradiction")
+
+#: Columns carrying a conclusion's attribution, shown alongside the content.
+_ATTRIBUTION_COLUMNS = ["id", "level", "source_ids", "times_derived", "content"]
+
+
+def _format_conclusion(c, workspace_id: str | None) -> dict:
+    """Shape a Conclusion for output.
+
+    ``level``, ``source_ids`` and ``times_derived`` are the attribution the
+    server started returning in Honcho v3.2.0. In table mode ``source_ids``
+    collapses to a count, since the ids are nanoids and a list of them makes
+    the row unreadable; JSON mode keeps the full list so it can be piped back
+    into ``honcho conclusion get``.
+    """
+    source_ids = c.source_ids or []
+    return {
+        "id": c.id,
+        "level": c.level,
+        "source_ids": source_ids if use_json() else len(source_ids),
+        "times_derived": c.times_derived,
+        "content": c.content if use_json() else c.content[:160],
+        "workspace_id": workspace_id,
+        "observer_id": c.observer_id,
+        "observed_id": c.observed_id,
+        "session_id": c.session_id,
+        "created_at": str(c.created_at),
+    }
+
+
+def _validate_level(level: str | None) -> str | None:
+    if level and level not in _LEVELS:
+        print_error("INVALID_LEVEL", f"--level must be one of: {', '.join(_LEVELS)}")
+        raise typer.Exit(1)
+    return level
+
+
 def _require_observer(observer: str | None) -> str:
     """Resolve observer peer ID; emit combined error if peer+workspace both missing."""
     config = get_resolved_config()
@@ -39,6 +76,16 @@ def list_conclusions(
     observer: Optional[str] = typer.Option(None, "--observer", help="Observer peer ID"),
     observed: Optional[str] = typer.Option(None, "--observed", help="Observed peer ID"),
     limit: int = typer.Option(10, "--limit", help="Max results"),
+    level: Optional[str] = typer.Option(
+        None,
+        "--level",
+        help="Only this reasoning level: explicit, deductive, inductive, contradiction",
+    ),
+    derived_from: Optional[str] = typer.Option(
+        None,
+        "--derived-from",
+        help="Only conclusions derived from this conclusion ID",
+    ),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
     peer: Optional[str] = typer.Option(None, "--peer", "-p", help="Override peer ID"),
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
@@ -46,10 +93,17 @@ def list_conclusions(
     """List conclusions."""
 
     handle_cmd_flags(json_output=json_output, workspace=workspace, peer=peer)
+    _validate_level(level)
     observer = _require_observer(observer)
     client, config = get_client()
 
     p = client.peer(observer)
+
+    filters: dict = {}
+    if level:
+        filters["level"] = level
+    if derived_from:
+        filters["source_ids"] = {"contains": derived_from}
 
     try:
         if observed:
@@ -57,20 +111,9 @@ def list_conclusions(
         else:
             scope = p.conclusions
 
-        conclusions = scope.list(size=limit).items
-        items = [
-            {
-                "id": c.id,
-                "content": c.content if use_json() else c.content[:200],
-                "workspace_id": config.workspace_id,
-                "observer_id": c.observer_id,
-                "observed_id": c.observed_id,
-                "session_id": c.session_id,
-                "created_at": str(c.created_at),
-            }
-            for c in conclusions
-        ]
-        print_result(items, columns=["id", "content", "workspace_id", "observer_id", "observed_id", "session_id", "created_at"], title="Conclusions")
+        conclusions = scope.list(size=limit, filters=filters or None).items
+        items = [_format_conclusion(c, config.workspace_id) for c in conclusions]
+        print_result(items, columns=_ATTRIBUTION_COLUMNS + ["observed_id", "created_at"], title="Conclusions")
     except Exception as e:
         _handle_error(e, "conclusion", "list")
 
@@ -81,6 +124,11 @@ def search(
     observer: Optional[str] = typer.Option(None, "--observer", help="Observer peer ID"),
     observed: Optional[str] = typer.Option(None, "--observed", help="Observed peer ID"),
     top_k: int = typer.Option(10, help="Max results"),
+    level: Optional[str] = typer.Option(
+        None,
+        "--level",
+        help="Only this reasoning level: explicit, deductive, inductive, contradiction",
+    ),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
     peer: Optional[str] = typer.Option(None, "--peer", "-p", help="Override peer ID"),
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
@@ -88,6 +136,7 @@ def search(
     """Semantic search over conclusions."""
 
     handle_cmd_flags(json_output=json_output, workspace=workspace, peer=peer)
+    _validate_level(level)
     observer = _require_observer(observer)
     client, config = get_client()
 
@@ -99,22 +148,78 @@ def search(
         else:
             scope = p.conclusions
 
-        results = scope.query(query, top_k=top_k)
-        items = [
-            {
-                "id": c.id,
-                "content": c.content if use_json() else c.content[:200],
-                "workspace_id": config.workspace_id,
-                "observer_id": c.observer_id,
-                "observed_id": c.observed_id,
-                "session_id": c.session_id,
-                "created_at": str(c.created_at),
-            }
-            for c in results
-        ]
-        print_result(items, columns=["id", "content", "workspace_id", "session_id", "created_at"], title=f"Conclusion search: {query}")
+        results = scope.query(query, top_k=top_k, filters={"level": level} if level else None)
+        items = [_format_conclusion(c, config.workspace_id) for c in results]
+        print_result(items, columns=_ATTRIBUTION_COLUMNS + ["created_at"], title=f"Conclusion search: {query}")
     except Exception as e:
         _handle_error(e, "conclusion", "search")
+
+
+@app.command()
+def get(
+    conclusion_ids: list[str] = typer.Argument(help="Conclusion IDs to fetch"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
+    json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
+) -> None:
+    """Fetch conclusions by ID, from anywhere in the workspace.
+
+    Pass a conclusion's source_ids to see the premises it was derived from,
+    and repeat to walk a reasoning chain down to the explicit facts it rests
+    on. IDs that no longer exist are reported rather than failing the command.
+    """
+
+    handle_cmd_flags(json_output=json_output, workspace=workspace)
+    client, config = get_client()
+
+    for cid in conclusion_ids:
+        validate_resource_id(cid, "conclusion")
+
+    try:
+        conclusions = client.conclusions.get_many(list(conclusion_ids))
+        found = {c.id for c in conclusions}
+        missing = [cid for cid in conclusion_ids if cid not in found]
+
+        items = [_format_conclusion(c, config.workspace_id) for c in conclusions]
+        print_result(items, columns=_ATTRIBUTION_COLUMNS + ["observed_id", "created_at"], title="Conclusions")
+        if missing:
+            print_error(
+                "MISSING_CONCLUSIONS",
+                f"Not in this workspace (consolidated or deleted): {', '.join(missing)}",
+            )
+    except Exception as e:
+        _handle_error(e, "conclusion", "get")
+
+
+@app.command()
+def derived(
+    conclusion_id: str = typer.Argument(help="The premise conclusion ID"),
+    limit: int = typer.Option(10, "--limit", help="Max results"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
+    json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
+) -> None:
+    """List the conclusions derived FROM a conclusion.
+
+    Walks the reasoning tree upward (premise -> conclusion); `conclusion get`
+    on a conclusion's source_ids walks it downward. Worth checking before
+    deleting or correcting a fact.
+    """
+
+    handle_cmd_flags(json_output=json_output, workspace=workspace)
+    validate_resource_id(conclusion_id, "conclusion")
+    client, config = get_client()
+
+    try:
+        page = client.conclusions.list(
+            size=limit, filters={"source_ids": {"contains": conclusion_id}}
+        )
+        items = [_format_conclusion(c, config.workspace_id) for c in page.items]
+        print_result(
+            items,
+            columns=_ATTRIBUTION_COLUMNS + ["observed_id", "created_at"],
+            title=f"Derived from {conclusion_id}",
+        )
+    except Exception as e:
+        _handle_error(e, "conclusion", "derived")
 
 
 @app.command()

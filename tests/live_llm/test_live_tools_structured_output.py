@@ -90,9 +90,9 @@ async def run_tool_then_structured_flow(
     )
 
     assert first.tool_calls, "first turn should issue a tool call"
-    assert not isinstance(
-        first.content, FavoritePrimeReport
-    ), "tool-call turns carry no consumable content and must not be parsed"
+    assert not isinstance(first.content, FavoritePrimeReport), (
+        "tool-call turns carry no consumable content and must not be parsed"
+    )
 
     tool_call = first.tool_calls[0]
     tool_result = execute_local_tool(tool_call.name, tool_call.input)
@@ -173,9 +173,9 @@ async def test_live_anthropic_tools_with_structured_output(
             "role": "assistant",
             "content": "{",
         }, "the '{' prefill would suppress tool_use blocks"
-        assert "If not responding with a tool call" in str(
-            messages[-1]
-        ), "schema instruction should use the conditional wording with tools"
+        assert "If not responding with a tool call" in str(messages[-1]), (
+            "schema instruction should use the conditional wording with tools"
+        )
 
 
 @pytest.mark.asyncio
@@ -236,11 +236,11 @@ async def test_live_gemini_tools_with_structured_output(
     assert len(generate_calls) >= 2
     for call in generate_calls:
         gen_config = call["kwargs"]["config"]
-        assert (
-            "response_schema" not in gen_config
-        ), "native response_schema + function calling is rejected pre-Gemini 3"
+        assert "response_schema" not in gen_config, (
+            "native response_schema + function calling is rejected pre-Gemini 3"
+        )
         assert "response_mime_type" not in gen_config
         contents = call["kwargs"]["contents"]
-        assert "matching this schema" in str(
-            contents[-1]
-        ), "schema instruction should be injected into the final turn"
+        assert "matching this schema" in str(contents[-1]), (
+            "schema instruction should be injected into the final turn"
+        )

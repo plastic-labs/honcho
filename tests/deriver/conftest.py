@@ -1,6 +1,6 @@
 import asyncio
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, Literal, TypeAlias, cast
 from unittest.mock import AsyncMock, MagicMock
 
@@ -15,7 +15,7 @@ from src.utils.work_unit import construct_work_unit_key
 
 
 @pytest.fixture(autouse=True)
-async def clean_queue_tables(db_session: AsyncSession) -> AsyncGenerator[None, None]:
+async def clean_queue_tables(db_session: AsyncSession) -> AsyncGenerator[None]:
     """Clean up queue-related tables before each test to ensure isolation.
 
     This prevents webhook queue items and active queue sessions from previous tests
@@ -138,7 +138,7 @@ def create_queue_payload() -> Callable[..., Any]:
             "session_name": message.session_name,
             "message_id": message.id,
             "content": message.content,
-            "created_at": message.created_at or datetime.now(timezone.utc),
+            "created_at": message.created_at or datetime.now(UTC),
             "message_public_id": message.public_id,
         }
 

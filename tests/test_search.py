@@ -4,9 +4,10 @@ import datetime
 
 import pytest
 from nanoid import generate as generate_nanoid
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src import crud, models
+from src import crud, models, schemas
 from src.utils.search import search
 
 
@@ -32,7 +33,7 @@ async def test_peer_perspective_search_single_session(
     await db_session.flush()
 
     # Add peer1 to session
-    join_time = datetime.datetime.now(datetime.timezone.utc)
+    join_time = datetime.datetime.now(datetime.UTC)
     await db_session.execute(
         models.session_peers_table.insert().values(
             workspace_name=workspace.name,
@@ -100,7 +101,7 @@ async def test_peer_perspective_search_multiple_sessions(
     await db_session.flush()
 
     # Add peer1 to both sessions
-    join_time = datetime.datetime.now(datetime.timezone.utc)
+    join_time = datetime.datetime.now(datetime.UTC)
     for session in [session1, session2]:
         await db_session.execute(
             models.session_peers_table.insert().values(
@@ -168,7 +169,7 @@ async def test_peer_perspective_search_temporal_constraints(
     await db_session.flush()
 
     # Define time windows
-    base_time = datetime.datetime.now(datetime.timezone.utc)
+    base_time = datetime.datetime.now(datetime.UTC)
     join_time = base_time + datetime.timedelta(seconds=10)
     leave_time = base_time + datetime.timedelta(seconds=20)
 
@@ -246,7 +247,7 @@ async def test_peer_perspective_search_active_member(
     await db_session.flush()
 
     # Add peer1 to session (still active, left_at is NULL)
-    join_time = datetime.datetime.now(datetime.timezone.utc)
+    join_time = datetime.datetime.now(datetime.UTC)
     await db_session.execute(
         models.session_peers_table.insert().values(
             workspace_name=workspace.name,
@@ -313,7 +314,7 @@ async def test_peer_perspective_search_no_sessions(
     await db_session.flush()
 
     # Add peer2 to session
-    join_time = datetime.datetime.now(datetime.timezone.utc)
+    join_time = datetime.datetime.now(datetime.UTC)
     await db_session.execute(
         models.session_peers_table.insert().values(
             workspace_name=workspace.name,
@@ -370,7 +371,7 @@ async def test_peer_perspective_search_boundary_timestamps(
     await db_session.flush()
 
     # Define exact timestamps
-    join_time = datetime.datetime.now(datetime.timezone.utc)
+    join_time = datetime.datetime.now(datetime.UTC)
     leave_time = join_time + datetime.timedelta(seconds=10)
 
     # Add peer1 to session
@@ -439,9 +440,7 @@ async def _setup_multi_session_workspace(db_session: AsyncSession):
     db_session.add_all([session1, session2])
     await db_session.flush()
 
-    join_time = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(
-        minutes=10
-    )
+    join_time = datetime.datetime.now(datetime.UTC) - datetime.timedelta(minutes=10)
 
     # peer1 is only in session1
     await db_session.execute(
@@ -610,7 +609,7 @@ async def test_grep_messages_observer_scoping_empty_when_no_sessions(
             workspace_name=workspace.name,
             session_name=session.name,
             peer_name=other.name,
-            joined_at=datetime.datetime.now(datetime.timezone.utc),
+            joined_at=datetime.datetime.now(datetime.UTC),
             left_at=None,
         )
     )
@@ -622,7 +621,7 @@ async def test_grep_messages_observer_scoping_empty_when_no_sessions(
         peer_name=other.name,
         workspace_name=workspace.name,
         seq_in_session=1,
-        created_at=datetime.datetime.now(datetime.timezone.utc),
+        created_at=datetime.datetime.now(datetime.UTC),
     )
     db_session.add(msg)
     await db_session.commit()
@@ -657,9 +656,7 @@ async def test_grep_messages_observer_scoping_left_session_still_visible(
     db_session.add(session)
     await db_session.flush()
 
-    base_time = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(
-        minutes=10
-    )
+    base_time = datetime.datetime.now(datetime.UTC) - datetime.timedelta(minutes=10)
     join_time = base_time
     leave_time = base_time + datetime.timedelta(minutes=5)
 
@@ -704,3 +701,69 @@ async def test_grep_messages_observer_scoping_left_session_still_visible(
     matched_ids = [m.public_id for matches, _ in results for m in matches]
     assert msg_during.public_id in matched_ids
     assert msg_after.public_id in matched_ids
+
+
+@pytest.mark.asyncio
+async def test_peer_perspective_search_after_active_readd(
+    db_session: AsyncSession,
+):
+    """Active re-add keeps existing messages visible; a genuine rejoin starts a
+    new window."""
+    workspace = models.Workspace(name=generate_nanoid())
+    peer1 = models.Peer(name="peer1", workspace_name=workspace.name)
+    peer2 = models.Peer(name="peer2", workspace_name=workspace.name)
+    session = models.Session(name="session1", workspace_name=workspace.name)
+    db_session.add_all([workspace, peer1, peer2, session])
+    await db_session.flush()
+
+    past_time = datetime.datetime.now(datetime.UTC) - datetime.timedelta(hours=1)
+    await db_session.execute(
+        models.session_peers_table.insert().values(
+            workspace_name=workspace.name,
+            session_name=session.name,
+            peer_name=peer1.name,
+            joined_at=past_time,
+            left_at=None,
+        )
+    )
+    msg_old = models.Message(
+        content="old persistent message",
+        session_name=session.name,
+        peer_name=peer2.name,
+        workspace_name=workspace.name,
+        seq_in_session=1,
+        created_at=past_time + datetime.timedelta(minutes=1),
+    )
+    db_session.add(msg_old)
+    await db_session.commit()
+
+    session_create = schemas.SessionCreate(
+        name=session.name,
+        peers={peer1.name: schemas.SessionPeerConfig()},
+    )
+    await crud.get_or_create_session(db_session, session_create, workspace.name)
+    results = await search(
+        "persistent",
+        filters={"peer_perspective": peer1.name, "workspace_id": workspace.name},
+        limit=10,
+    )
+    assert msg_old.public_id in [m.public_id for m in results]
+
+    await db_session.execute(
+        update(models.SessionPeer)
+        .where(
+            models.SessionPeer.session_name == session.name,
+            models.SessionPeer.peer_name == peer1.name,
+            models.SessionPeer.workspace_name == workspace.name,
+        )
+        .values(left_at=datetime.datetime.now(datetime.UTC))
+    )
+    await db_session.commit()
+
+    await crud.get_or_create_session(db_session, session_create, workspace.name)
+    results = await search(
+        "persistent",
+        filters={"peer_perspective": peer1.name, "workspace_id": workspace.name},
+        limit=10,
+    )
+    assert msg_old.public_id not in [m.public_id for m in results]

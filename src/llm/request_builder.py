@@ -19,6 +19,7 @@ from .backend import (
     ProviderBackend,
     StreamChunk,
 )
+from .errors import raise_upstream_error
 
 # Operator escape-hatch keys recognized inside ModelConfig.provider_params.
 PASSTHROUGH_KEYS = ("extra_body", "extra_headers", "extra_query")
@@ -167,20 +168,26 @@ async def execute_completion(
     if cache_policy is not None:
         merged_extra_params["cache_policy"] = cache_policy
 
-    return await backend.complete(
-        model=config.model,
-        messages=messages,
-        max_tokens=effective_max_tokens,
-        temperature=config.temperature,
-        stop=stop if stop is not None else config.stop_sequences,
-        tools=tools,
-        tool_choice=tool_choice,
-        response_format=response_format,
-        thinking_budget_tokens=config.thinking_budget_tokens,
-        thinking_effort=config.thinking_effort,
-        max_output_tokens=effective_max_tokens,
-        extra_params=merged_extra_params,
-    )
+    try:
+        return await backend.complete(
+            model=config.model,
+            messages=messages,
+            max_tokens=effective_max_tokens,
+            temperature=config.temperature,
+            stop=stop if stop is not None else config.stop_sequences,
+            tools=tools,
+            tool_choice=tool_choice,
+            response_format=response_format,
+            thinking_budget_tokens=config.thinking_budget_tokens,
+            thinking_effort=config.thinking_effort,
+            max_output_tokens=effective_max_tokens,
+            extra_params=merged_extra_params,
+        )
+    except Exception as exc:
+        # A provider outage is not our caller's fault; give it a retryable
+        # identity before retry/fallback above us sees it.
+        raise_upstream_error(exc)
+        raise
 
 
 async def execute_stream(

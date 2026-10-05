@@ -75,7 +75,7 @@ def test_create_key_with_expires_at(
     test_workspace, _ = sample_data
 
     # Future expiry: mint succeeds and the token verifies (NumericDate exp, #1016)
-    future = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=1)
+    future = datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=1)
     response = auth_client.post(
         "/v3/keys",
         params={"workspace_id": test_workspace.name, "expires_at": future.isoformat()},
@@ -84,7 +84,7 @@ def test_create_key_with_expires_at(
     verify_jwt(response.json()["key"])  # must not raise "Invalid JWT"
 
     # Past expiry: mint succeeds but verification reports expired
-    past = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=1)
+    past = datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=1)
     response = auth_client.post(
         "/v3/keys",
         params={"workspace_id": test_workspace.name, "expires_at": past.isoformat()},

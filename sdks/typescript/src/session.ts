@@ -3,6 +3,9 @@ import type { HonchoHTTPClient } from './http/client'
 import { Message } from './message'
 import { Page } from './pagination'
 import { Peer } from './peer'
+// Type-only: scope.ts imports this module. Importing the type keeps that cycle
+// out of the emitted JS.
+import type { Scope } from './scope'
 import { SessionContext, SessionSummaries } from './session_context'
 import type {
   MessageResponse,
@@ -17,7 +20,7 @@ import type {
   SessionResponse,
   SessionSummariesResponse,
 } from './types/api'
-import { transformQueueStatus } from './utils'
+import { resolveId, transformQueueStatus } from './utils'
 import {
   ContextParamsSchema,
   FileUploadSchema,
@@ -220,6 +223,8 @@ export class Session {
     search_query?: string
     peer_target?: string
     peer_perspective?: string
+    scope?: string
+    sessions?: string[]
     limit_to_session?: boolean
     search_top_k?: number
     search_max_distance?: number
@@ -752,6 +757,17 @@ export class Session {
    * @param options.tokens - Target token count for the context window
    * @param options.peerTarget - The peer to get representation for
    * @param options.peerPerspective - The peer whose perspective to use for representation
+   * @param options.scope - A scope to use as the perspective source instead of a peer: the
+   *                        target's representation and card are read from what that scope
+   *                        observed. Requires `peerTarget`, is mutually exclusive with
+   *                        `peerPerspective`, and requires a workspace-level key.
+   * @param options.sessions - Allowlist of sessions confining the target's representation
+   *                           to that set. This session must be one of them. Recall is
+   *                           limited to conclusions stated directly in those sessions, and
+   *                           the peer card is omitted, since neither derived conclusions
+   *                           nor cards carry provable per-session provenance. Mutually
+   *                           exclusive with `scope` and `limitToSession`; requires
+   *                           `peerTarget`.
    * @param options.limitToSession - Whether to limit representation to this session only
    * @param options.representationOptions - Options for representation retrieval (searchQuery, searchTopK, etc.)
    * @returns Promise resolving to a SessionContext with messages, summary, and representation
@@ -764,6 +780,12 @@ export class Session {
    *   peerTarget: user
    * })
    *
+   * // Build the context from what a scope observed
+   * const ctx = await session.context({
+   *   peerTarget: user,
+   *   scope: 'therapy',
+   * })
+   *
    * // Convert to OpenAI format
    * const messages = ctx.toOpenAI(assistant)
    * ```
@@ -773,6 +795,8 @@ export class Session {
     tokens?: number
     peerTarget?: string | Peer
     peerPerspective?: string | Peer
+    scope?: string | Scope
+    sessions?: (string | Session)[]
     limitToSession?: boolean
     representationOptions?: RepresentationOptions
   }): Promise<SessionContext> {
@@ -795,6 +819,10 @@ export class Session {
       tokens: opts.tokens,
       peerTarget: peerTargetId,
       peerPerspective: peerPerspectiveId,
+      // Checked against undefined, not truthiness: `scope: ''` must reach the
+      // schema and be rejected, not be dropped into an unscoped context.
+      scope: opts.scope !== undefined ? resolveId(opts.scope) : undefined,
+      sessions: opts.sessions,
       limitToSession: opts.limitToSession,
       representationOptions: opts.representationOptions
         ? {
@@ -810,6 +838,8 @@ export class Session {
       search_query: searchQuery,
       peer_target: contextParams.peerTarget,
       peer_perspective: contextParams.peerPerspective,
+      scope: contextParams.scope,
+      sessions: contextParams.sessions,
       limit_to_session: contextParams.limitToSession,
       search_top_k: contextParams.representationOptions?.searchTopK,
       search_max_distance:

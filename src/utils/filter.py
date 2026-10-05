@@ -6,7 +6,16 @@ from logging import getLogger
 from typing import Any, TypeVar, get_args
 from typing import cast as typing_cast
 
-from sqlalchemy import ColumnElement, Select, and_, case, cast, literal, or_
+from sqlalchemy import (
+    ColumnElement,
+    Select,
+    and_,
+    case,
+    cast,
+    literal,
+    or_,
+    select,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.types import Numeric
 
@@ -58,10 +67,14 @@ ALLOWED_EXTERNAL_TO_INTERNAL_COLUMN_MAPPING_MESSAGES = {
 }
 
 ALLOWED_EXTERNAL_TO_INTERNAL_COLUMN_MAPPING_DOCUMENTS = {
+    "id": "id",
     "session_id": "session_name",
     "workspace_id": "workspace_name",
     "observer_id": "observer",
     "observed_id": "observed",
+    "level": "level",
+    "source_ids": "source_ids",
+    "times_derived": "times_derived",
     "metadata": "internal_metadata",
 }
 
@@ -279,16 +292,50 @@ def extract_session_allowlist(
             'filters.session_id must be a session id, a list of session ids, or {"in": [...]}'
         )
 
+    return normalize_session_allowlist(
+        entries, field="filters.session_id", must_include=must_include
+    )
+
+
+def normalize_session_allowlist(
+    entries: Sequence[Any],
+    *,
+    field: str,
+    must_include: str | None = None,
+) -> list[str]:
+    """Validate and de-duplicate a session allowlist.
+
+    Shared by every route-level entry point that accepts one — the ``filters``
+    body on the recall endpoints and the ``sessions`` query parameter on session
+    context — so the cap, the id charset, and the ``must_include`` rule cannot
+    drift apart between them. Only the parameter *name* in error messages
+    differs, which is what ``field`` supplies.
+
+    Args:
+        entries: Raw allowlist entries as the caller supplied them.
+        field: Caller-facing parameter name, used in error messages.
+        must_include: A session id that must appear in the allowlist — used by
+            routes that also carry a session of their own, so the two can't
+            contradict each other.
+
+    Returns:
+        The allowlist, de-duplicated, in first-seen order. An empty input yields
+        an empty list so downstream consumers fail closed.
+
+    Raises:
+        FilterError: On an over-cap list, a malformed session id, or a
+            ``must_include`` session missing from the allowlist.
+    """
     if len(entries) > MAX_SESSION_ALLOWLIST_ENTRIES:
         raise FilterError(
-            f"filters.session_id supports at most {MAX_SESSION_ALLOWLIST_ENTRIES} sessions per request"
+            f"{field} supports at most {MAX_SESSION_ALLOWLIST_ENTRIES} sessions per request"
         )
 
     allowlist: list[str] = []
     seen: set[str] = set()
     for entry in entries:
         if not isinstance(entry, str) or not entry:
-            raise FilterError("filters.session_id entries must be non-empty strings")
+            raise FilterError(f"{field} entries must be non-empty strings")
         # Only names a session could actually have. The allowlist reaches
         # queries three ways — direct `IN`, the filter DSL, and a Python
         # membership test — and they don't agree on a value like "*", which the
@@ -298,14 +345,14 @@ def extract_session_allowlist(
         # {"in": [...]}) which never included wildcards.
         if not re.fullmatch(RESOURCE_NAME_PATTERN, entry):
             raise FilterError(
-                f"Invalid session id in filters.session_id: {entry!r}. Session ids match {RESOURCE_NAME_PATTERN}"
+                f"Invalid session id in {field}: {entry!r}. Session ids match {RESOURCE_NAME_PATTERN}"
             )
         if entry not in seen:
             seen.add(entry)
             allowlist.append(entry)
 
     if must_include is not None and must_include not in seen:
-        raise FilterError("session_id must be included in filters.session_id")
+        raise FilterError(f"session_id must be included in {field}")
 
     return allowlist
 
@@ -477,6 +524,66 @@ def _build_filter_conditions(
         return and_(*conditions)
 
 
+def _build_source_ids_condition(
+    value: Any, model_class: type[Any]
+) -> ColumnElement[bool] | None:
+    """Filter documents by reasoning-tree linkage via document_sources.
+
+    Preserves the old JSONB containment semantics: a scalar matches
+    membership, a bare list requires ALL entries present, {"contains": x}
+    matches membership, {"in": [...]} matches any entry present.
+    """
+    from ..models import DocumentSource
+
+    def _member(sid: Any) -> ColumnElement[bool]:
+        if not isinstance(sid, str) or not sid:
+            raise FilterError("source_ids filter entries must be non-empty strings")
+        linked = (
+            select(literal(1))
+            .where(
+                DocumentSource.derived_id == model_class.id,
+                DocumentSource.source_id == sid,
+            )
+            .exists()
+        )
+        # Undrained rows still carry linkage in the legacy JSONB column.
+        return or_(linked, model_class.legacy_source_ids.contains([sid]))
+
+    if value == "*":
+        return None
+    if isinstance(value, str):
+        return _member(value)
+    if isinstance(value, list | tuple | set):
+        entries = list(typing_cast(Sequence[Any], value))
+        if "*" in entries:
+            return None
+        return _combine_conditions_with_and([_member(v) for v in entries])
+    if isinstance(value, dict):
+        conditions: list[ColumnElement[bool]] = []
+        for operator, op_value in typing_cast("dict[str, Any]", value).items():
+            if op_value == "*":
+                continue
+            if operator == "contains":
+                conditions.append(_member(op_value))
+            elif operator == "in":
+                if not isinstance(op_value, list | tuple | set):
+                    raise FilterError(
+                        f"Invalid value for 'in' operator: {op_value}. Expected an iterable"
+                    )
+                in_entries = list(typing_cast(Sequence[Any], op_value))
+                if "*" in in_entries:
+                    continue
+                members = [_member(v) for v in in_entries]
+                if members:
+                    conditions.append(or_(*members))
+            else:
+                raise FilterError(
+                    f"Operator '{operator}' is not supported on source_ids"
+                )
+        return _combine_conditions_with_and(conditions)
+    raise FilterError(f"Invalid source_ids filter value: {value}")
+
+
 def _build_field_condition(
     key: str, value: Any, model_class: type[Any]
 ) -> ColumnElement[bool] | None:
@@ -512,6 +619,11 @@ def _build_field_condition(
         raise FilterError(
             f"Column '{key}' is not allowed to be filtered on or does not exist on {model_class.__name__}"
         )
+
+    # Reasoning-tree linkage lives in the document_sources table, not a
+    # column; translate to EXISTS subqueries before column resolution.
+    if model_class.__name__ == "Document" and column_name == "source_ids":
+        return _build_source_ids_condition(value, model_class)
 
     # Check if the column exists on the model
     if not hasattr(model_class, column_name):
@@ -655,7 +767,9 @@ def _build_comparison_condition(
                 "lte": lambda a, v: a <= v,
                 "gt": lambda a, v: a > v,
                 "lt": lambda a, v: a < v,
-                "ne": lambda a, v: a != v,
+                # IS DISTINCT FROM, not <>: (metadata ->> key) is NULL for an
+                # absent key, and `NULL <> v` is NULL, so <> drops those rows.
+                "ne": lambda a, v: a.is_distinct_from(v),
             }
             return operator_map[operator](safe_accessor, safe_value)
         except Exception as e:
@@ -891,7 +1005,7 @@ def _validate_datetime_string(value: str) -> datetime.datetime | None:
         try:
             parsed = datetime.datetime.strptime(value, fmt)
             # Assume UTC timezone for naive datetimes
-            return parsed.replace(tzinfo=datetime.timezone.utc)
+            return parsed.replace(tzinfo=datetime.UTC)
         except ValueError:
             continue
 

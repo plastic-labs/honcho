@@ -35,6 +35,8 @@ TRACING = false
 # Per-connection establish timeout (seconds) so a single connection attempt
 # fails fast instead of hanging when the server/pooler is unreachable.
 CONNECT_TIMEOUT_SECONDS = 2
+# Seconds a migrator waits for another migrator's lock before failing.
+MIGRATION_LOCK_WAIT_SECONDS = 300
 
 # Authentication settings
 [auth]
@@ -77,6 +79,8 @@ model = "text-embedding-3-small"
 # Optional provider request input cap. Useful for OpenAI-compatible embedding
 # APIs with smaller limits, such as DashScope text-embedding-v4.
 # max_batch_size = 10
+# Optional client HTTP timeout in seconds (OpenAI + Gemini).
+# timeout = 90.0
 
 # Optional module-level endpoint overrides
 # [embedding.model_config.overrides]
@@ -274,10 +278,12 @@ URL = "redis://localhost:6379/0?suppress=true"
 # NAMESPACE = "honcho"  # Inherits from app.NAMESPACE if not set
 DEFAULT_TTL_SECONDS = 300
 DEFAULT_LOCK_TTL_SECONDS = 5
+CONNECT_TIMEOUT_SECONDS = 5.0
+CONNECT_RETRIES = 3
 
 # Vector store settings
 [vector_store]
-# Vector store type: "pgvector", "turbopuffer", or "lancedb"
+# Vector store type: "pgvector", "turbopuffer", "lancedb", "qdrant", or "chromadb"
 TYPE = "pgvector"
 # Migration flag: set to true when migration from pgvector is complete
 MIGRATED = false
@@ -286,4 +292,22 @@ NAMESPACE = "honcho"
 # TURBOPUFFER_API_KEY = "your-turbopuffer-api-key"
 # TURBOPUFFER_REGION = "us-east-1"
 LANCEDB_PATH = "./lancedb_data"
+# QDRANT_URL = "http://localhost:6333"
+# QDRANT_API_KEY = "your-qdrant-api-key"
+# QDRANT_PREFER_GRPC = false
+# QDRANT_GRPC_PORT = 6334
+# QDRANT_HTTPS = false
+# QDRANT_PREFIX = ""
+# QDRANT_TIMEOUT = 30
+
+# ChromaDB settings (requires the chromadb extra: uv sync --extra chromadb)
+# CHROMA_CLIENT_MODE: "http" (self-hosted server),
+# or "cloud" (Chroma Cloud; requires API key)
+CHROMA_CLIENT_MODE = "http"
+# CHROMA_HOST = "localhost"
+# CHROMA_PORT = 8000
+# CHROMA_SSL = false
+# CHROMA_API_KEY = "your-chroma-api-key"
+# CHROMA_TENANT = "your-tenant-id"
+# CHROMA_DATABASE = "your-database"
 RECONCILIATION_INTERVAL_SECONDS = 300

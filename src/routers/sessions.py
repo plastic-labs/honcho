@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import config, crud, schemas
 from src.cache.client import safe_cache_delete
+from src.crud.message import get_peer_session_names
 from src.crud.session import session_cache_key
 from src.dependencies import db, read_db
 from src.deriver.enqueue import enqueue_deletion
@@ -23,6 +24,7 @@ from src.exceptions import (
 from src.security import JWTParams, require_auth
 from src.telemetry.events import EmbeddingCallPurpose, GetContextEvent, emit
 from src.utils import summarizer
+from src.utils.filter import normalize_session_allowlist
 from src.utils.representation import Representation
 from src.utils.search import search
 from src.utils.tokens import estimate_tokens
@@ -246,6 +248,19 @@ def _select_summary_for_context(
             token_limit - short_len,
         )
 
+    if short_summary or long_summary:
+        # A summary exists but none fits. The caller sees `summary: null`, which
+        # is indistinguishable from "this session has no summary", so say so.
+        # `token_limit` here is already net of the representation and peer card,
+        # which is usually why the budget is smaller than the request suggests.
+        logger.info(
+            "Summary dropped: budget %s too small (short=%s, long=%s, limit=%s)",
+            summary_budget,
+            short_len or None,
+            long_len or None,
+            token_limit,
+        )
+
     return None, 0, token_limit
 
 
@@ -335,10 +350,21 @@ async def get_or_create_session(
             db, workspace_id, session.peer_names.keys(), action=_SCOPES_ROUTE_GUIDANCE
         )
 
+    # A peer-scoped key may only add its own peer. Membership grants read access
+    # to the session (`allow_member_read`), so naming another peer, or joining a
+    # session the caller is not already in, would hand out that access; the
+    # latter is enforced inside the CRUD call via `acting_peer`.
+    acting_peer = None if jwt_params.ad else jwt_params.p
+    if acting_peer is not None and set(session.peer_names or {}) - {acting_peer}:
+        raise AuthenticationException("Unauthorized access to resource")
+
     # Handle session creation with proper error handling
     try:
         result = await crud.get_or_create_session(
-            db, workspace_name=workspace_id, session=session
+            db,
+            workspace_name=workspace_id,
+            session=session,
+            acting_peer=acting_peer,
         )
         response.status_code = 201 if result.created else 200
         return result.resource
@@ -714,9 +740,27 @@ async def get_session_context(
         None,
         description="An (unprefixed) scope name to use as the perspective source: the representation and peer card of `peer_target` are read from the scope's observations instead of the global (or `peer_perspective`) view. Must be provided with `peer_target`; mutually exclusive with `peer_perspective`. Requires a workspace- or admin-level key.",
     ),
+    sessions: list[str] | None = Query(
+        None,
+        description=(
+            "Optional allowlist of session IDs confining the representation of "
+            "`peer_target` to those sessions. This session must be one of them. "
+            "Recall is restricted to conclusions stated directly in the allowed "
+            "sessions — conclusions synthesized across sessions are excluded, "
+            "since their provenance cannot be proven to sit inside the allowlist "
+            "— and the peer card is omitted for the same reason. Mutually "
+            "exclusive with `scope` and `limit_to_session`. A peer-scoped key "
+            "must be an active member of every session named. The 1,000-session "
+            "cap shared with the recall endpoints applies but is not reachable "
+            "here: these are repeated query parameters, so a long list exceeds "
+            "the request-line limit of the server or any proxy in front of it "
+            "(a 414/431, not a 422) at a few hundred entries. Use a named "
+            "`scope` for large or reusable session sets."
+        ),
+    ),
     limit_to_session: bool = Query(
         default=False,
-        description="Only used if `search_query` is provided. Whether to limit the representation to the session (as opposed to everything known about the target peer)",
+        description="Whether to limit the representation to the session (as opposed to everything known about the target peer). Narrows recall the same way `sessions` does, so the same restrictions apply: explicit-only conclusions, and the peer card is omitted because it carries no per-session provenance.",
     ),
     search_top_k: int | None = Query(
         None,
@@ -801,6 +845,47 @@ async def get_session_context(
                 "`scope` requires a workspace- or admin-level key"
             )
 
+    # The session allowlist confines the representation to a set of sessions this
+    # one belongs to. `scope` already determines what can be seen and
+    # `limit_to_session` already pins the set to this session alone, so both are
+    # contradictions rather than further narrowings — refused rather than given a
+    # silent precedence order.
+    session_allowlist: list[str] | None = None
+    if sessions is not None:
+        if scope is not None:
+            raise ValidationException("`sessions` and `scope` are mutually exclusive")
+        if limit_to_session:
+            raise ValidationException(
+                "`sessions` and `limit_to_session` are mutually exclusive"
+            )
+        if not peer_target:
+            # The allowlist only reaches the representation, and there is no
+            # representation without a target. Refused rather than accepted and
+            # silently ignored, which would read as a scoped context.
+            raise ValidationException(
+                "peer_target must be provided if sessions is provided"
+            )
+        # `must_include` keeps the allowlist from contradicting the route's own
+        # session: this session's messages and summary are always part of the
+        # response, so an allowlist excluding it would describe a context that
+        # cannot be assembled.
+        session_allowlist = normalize_session_allowlist(
+            sessions, field="sessions", must_include=session_id
+        )
+        # A peer-scoped key may only name sessions its peer belongs to. Mirrors
+        # the chat route's gate (see routers/peers.py), including `active_only`,
+        # so both answer the same question for a peer that has left a session.
+        # Reuses the handler's session rather than opening its own: this is a
+        # DB-only read and the handler already holds a connection.
+        if jwt_params.p is not None:
+            member_sessions = set(
+                await get_peer_session_names(
+                    db, workspace_id, jwt_params.p, active_only=True
+                )
+            )
+            if not set(session_allowlist) <= member_sessions:
+                raise AuthenticationException("JWT not permissioned for this resource")
+
     if not peer_target:
         # No representation or card needed
         summary, messages = await _get_session_context_task(
@@ -855,6 +940,10 @@ async def get_session_context(
     # Pre-compute embedding outside the DB session (best-effort)
     embedding: list[float] | None = None
     if search_query:
+        # Return any connection the checks above checked out (scope resolution,
+        # allowlist membership) before the external call. The session stays
+        # usable: its next query checks out a fresh connection.
+        await db.close()
         with (
             suppress(Exception),
             embedding_call_purpose(
@@ -863,24 +952,59 @@ async def get_session_context(
                 parent_category="api",
             ),
         ):
+            # Truncate oversized user queries instead of dropping semantic
+            # search; embed() stays strict so agent queries still fail.
+            search_query = embedding_client.truncate_to_token_limit(search_query)
             embedding = await embedding_client.embed(search_query)
+
+    # The allowlist recall must respect, whichever way the caller expressed it.
+    # `sessions` and `limit_to_session` are mutually exclusive (422 above), so at
+    # most one of these is set. `session_allowlist` is never an empty list here —
+    # `must_include=session_id` guarantees at least this session — so the
+    # None-check is the only distinction that matters.
+    effective_allowlist = (
+        session_allowlist
+        if session_allowlist is not None
+        else ([session_id] if limit_to_session else None)
+    )
 
     # Sequential calls on shared DB session
     representation = await _get_working_representation_task(
         db,
         workspace_id,
-        search_query,
+        # Semantic search only with an embedding; otherwise the downstream
+        # fallback would re-embed while holding this request's DB session.
+        search_query if embedding is not None else None,
         observer=observer,
         observed=observed,
-        session_allowlist=[session_id] if limit_to_session else None,
+        session_allowlist=effective_allowlist,
         search_top_k=search_top_k,
         search_max_distance=search_max_distance,
         include_most_derived=include_most_frequent,
         max_observations=max_conclusions,
         embedding=embedding,
     )
-    card = await _get_peer_card_task(
-        db, workspace_id, observer=observer, observed=observed
+    # A peer card is keyed by (workspace, observer, observed) with no session
+    # dimension (crud/peer_card.py), so it is synthesized from everything the
+    # observer has ever seen and cannot be narrowed to an allowlist. Returning it
+    # would leak exactly what the allowlist exists to exclude, so it is dropped —
+    # the same fail-closed reasoning that limits allowlisted conclusion recall to
+    # ALLOWLIST_SAFE_LEVELS.
+    #
+    # Gated on the *effective* allowlist, not on `sessions` alone:
+    # `limit_to_session=true` narrows recall identically, so carving out only the
+    # newer parameter would leave a control that one parameter swap defeats.
+    # `scope` needs no carve-out at all — it swaps the observer to the scope peer
+    # above, so the card read below is the scope's own.
+    #
+    # POST /peers/{id}/chat still injects an unscoped card under an allowlist
+    # (src/dialectic/chat.py) — tracked in DEV-2201, not fixed here.
+    card = (
+        None
+        if effective_allowlist is not None
+        else await _get_peer_card_task(
+            db, workspace_id, observer=observer, observed=observed
+        )
     )
     short_summary, long_summary = await _get_both_summaries_task(
         db, workspace_id, session_id

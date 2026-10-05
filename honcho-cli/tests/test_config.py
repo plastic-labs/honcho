@@ -6,7 +6,8 @@ import time
 from pathlib import Path
 
 import pytest
-from honcho_cli.config import CLIConfig, OAuthTokens, _config_dir
+from honcho_cli import __version__
+from honcho_cli.config import CLIConfig, OAuthTokens, _config_dir, get_client_kwargs
 from honcho_cli.oauth import TokenResponse
 
 
@@ -264,3 +265,11 @@ def test_save_sets_600_permissions(cfg_path):
     mode = stat.S_IMODE(os.stat(cfg_path).st_mode)
     # chmod(0o600) → rw- --- ---
     assert mode == 0o600, f"expected 0o600, got {oct(mode)}"
+
+
+def test_client_kwargs_identify_the_cli_as_the_host():
+    """CLI traffic overrides the SDK's own X-Honcho-Host so telemetry counts it as
+    harness traffic, not direct SDK use."""
+    kwargs = get_client_kwargs(CLIConfig(workspace_id="ws"))
+
+    assert kwargs["default_headers"]["X-Honcho-Host"].startswith(f"honcho-cli/{__version__} (")

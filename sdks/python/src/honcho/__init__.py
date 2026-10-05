@@ -37,15 +37,28 @@ Usage:
         print(p.id)
 """
 
-from importlib.metadata import PackageNotFoundError, version
-from pathlib import Path
-import re
-
-from .aio import ConclusionScopeAio, HonchoAio, PeerAio, SessionAio
-from .api_types import MessageCreateParams
-from .base import PeerBase, SessionBase
+from .aio import (
+    ConclusionsViewAio,
+    HonchoAio,
+    PeerAio,
+    ScopeAio,
+    SessionAio,
+    WorkspaceConclusionsAio,
+)
+from .api_types import (
+    Evidence,
+    EvidenceMessageRef,
+    EvidenceObservation,
+    EvidenceToolCall,
+    MessageCreateParams,
+    ScopeBackfillJob,
+    ScopeResponse,
+    ScopeStatusResponse,
+)
+from .base import PeerBase, ScopeBase, SessionBase
 from .client import Honcho
-from .conclusions import Conclusion, ConclusionScope
+from .conclusions import Conclusion, ConclusionsView, WorkspaceConclusions
+from .http.client import __version__ as __version__
 from .http.exceptions import (
     APIError,
     AuthenticationError,
@@ -63,30 +76,22 @@ from .http.exceptions import (
 from .message import Message
 from .pagination import AsyncPage, SyncPage
 from .peer import Peer
+from .scope import Scope
 from .session import Session
 from .session_context import SessionContext, SessionSummaries, Summary
 from .types import (
     AsyncDialecticStreamResponse,
+    ChatResponse,
     DialecticStreamResponse,
 )
 
-
-def _detect_version() -> str:
-    try:
-        return version("honcho-ai")
-    except PackageNotFoundError:
-        try:
-            pyproject_path = Path(__file__).resolve().parents[2] / "pyproject.toml"
-            pyproject_text = pyproject_path.read_text(encoding="utf-8")
-            match = re.search(r'^version\s*=\s*"([^"]+)"', pyproject_text, re.MULTILINE)
-            if match:
-                return match.group(1)
-        except OSError:
-            pass
-        return "0.0.0"
+# Deprecated aliases. "Scope" now means a named set of sessions (see `Scope`),
+# which these are not — they are views over one observer/observed pair. Kept for
+# one more minor version.
+ConclusionScope = ConclusionsView
+ConclusionScopeAio = ConclusionsViewAio
 
 
-__version__ = _detect_version()
 __author__ = "Plastic Labs"
 __email__ = "hello@plasticlabs.ai"
 
@@ -95,29 +100,45 @@ __all__ = [
     "Honcho",
     # Domain classes
     "Conclusion",
-    "ConclusionScope",
+    "ConclusionsView",
+    "WorkspaceConclusions",
     "Message",
     "MessageCreateParams",
     "Peer",
+    "Scope",
     "Session",
     # Aio views (for type hints)
-    "ConclusionScopeAio",
+    "ConclusionsViewAio",
+    "WorkspaceConclusionsAio",
     "HonchoAio",
     "PeerAio",
+    "ScopeAio",
     "SessionAio",
     # Base classes
     "PeerBase",
+    "ScopeBase",
     "SessionBase",
     # Response types
+    "ScopeBackfillJob",
+    "ScopeResponse",
+    "ScopeStatusResponse",
     "SessionContext",
     "SessionSummaries",
     "Summary",
+    # Deprecated aliases
+    "ConclusionScope",
+    "ConclusionScopeAio",
     # Pagination
     "AsyncPage",
     "SyncPage",
     # Streaming
     "AsyncDialecticStreamResponse",
+    "ChatResponse",
     "DialecticStreamResponse",
+    "Evidence",
+    "EvidenceMessageRef",
+    "EvidenceObservation",
+    "EvidenceToolCall",
     # Exceptions
     "APIError",
     "AuthenticationError",

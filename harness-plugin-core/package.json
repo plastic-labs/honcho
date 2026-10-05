@@ -1,0 +1,38 @@
+{
+  "name": "@honcho-ai/harness-plugin-core",
+  "version": "0.1.1",
+  "description": "Shared runtime for Honcho harness plugins",
+  "author": "Plastic Labs <hello@plasticlabs.ai>",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/plastic-labs/honcho.git",
+    "directory": "harness-plugin-core"
+  },
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc",
+    "prepublishOnly": "bun run build"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/node": "^24.0.1",
+    "typescript": "^5.0.0"
+  }
+}

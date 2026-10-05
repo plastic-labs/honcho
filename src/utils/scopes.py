@@ -19,7 +19,8 @@ carries a look-alike ``configuration``, is not a scope.
 from collections.abc import Iterable
 from typing import Any
 
-from src.exceptions import ValidationException
+from src.exceptions import AuthenticationException, ValidationException
+from src.security import JWTParams
 
 # Reserved peer-name prefix for scope peers. User-created peers may not use it.
 #
@@ -86,4 +87,21 @@ def validate_no_scope_peer_names(names: Iterable[str], *, action: str) -> None:
         raise ValidationException(
             f"Peer name(s) {offenders} use the reserved scope prefix "
             + f"'{SCOPE_PEER_PREFIX}'. {action}"
+        )
+
+
+def validate_scope_read_option(
+    *,
+    filters: dict[str, Any] | None,
+    session_id: str | None,
+    jwt_params: JWTParams,
+) -> None:
+    """Refuse `scope` combined with `filters`/`session_id`, or a peer-scoped key."""
+    if filters is not None:
+        raise ValidationException("`scope` and `filters` are mutually exclusive")
+    if session_id:
+        raise ValidationException("`scope` and `session_id` are mutually exclusive")
+    if jwt_params.p is not None:
+        raise AuthenticationException(
+            "`scope` requires a workspace- or admin-level key"
         )

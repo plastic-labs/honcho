@@ -12,7 +12,7 @@ import hashlib
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Protocol, cast, runtime_checkable
+from typing import Any, Literal, Protocol, cast, runtime_checkable
 
 from src.config import settings
 
@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 ROLE_OUTPUT = "assistant"
 ROLE_TOOL_SCHEMA = "__tool_schema__"
 ROLE_THINKING = "__thinking__"
+ROLE_REASONING = "__reasoning__"
 
 
 def canonical_json(obj: Any) -> str:
@@ -143,6 +144,16 @@ class CapturedLLMCall:
     was_stream: bool
     # True when any input message was clipped to TRACE_MAX_BYTES.
     input_truncated: bool = False
+    observers: list[str] = field(default_factory=list)
+    source_message_ids: list[str] = field(default_factory=list)
+    queue_item_ids: list[int] = field(default_factory=list)
+    parent_event_id: str | None = None
+    duration_ms: float | None = None
+    outcome: Literal["success", "error", "cancelled"] | None = None
+    error_class: str | None = None
+    retry_attempts: int | None = None
+    is_final_attempt: bool | None = None
+    effective_max_output_tokens: int | None = None
 
 
 def _normalize_message(
@@ -279,6 +290,11 @@ def build_captured_call(
     was_fallback: bool,
     was_stream: bool,
     finish_reason: str | None,
+    duration_ms: float | None = None,
+    outcome: Literal["success", "error", "cancelled"] | None = None,
+    error_class: str | None = None,
+    retry_attempts: int | None = None,
+    effective_max_output_tokens: int | None = None,
 ) -> CapturedLLMCall:
     """Assemble a `CapturedLLMCall` from telemetry + the provider result."""
     memo = telemetry.hash_memo if telemetry is not None else None
@@ -326,6 +342,18 @@ def build_captured_call(
         cache_creation_tokens=result.cache_creation_input_tokens if result else 0,
         was_stream=was_stream,
         input_truncated=input_truncated,
+        observers=list(telemetry.observers) if telemetry else [],
+        source_message_ids=list(telemetry.source_message_ids) if telemetry else [],
+        queue_item_ids=list(telemetry.queue_item_ids) if telemetry else [],
+        parent_event_id=telemetry.parent_event_id if telemetry else None,
+        duration_ms=duration_ms,
+        outcome=outcome,
+        error_class=error_class,
+        retry_attempts=retry_attempts,
+        is_final_attempt=(
+            attempt >= retry_attempts if retry_attempts is not None else None
+        ),
+        effective_max_output_tokens=effective_max_output_tokens,
     )
 
 
@@ -349,11 +377,96 @@ def _tool_call_to_dict(tool_call: ToolCallResult) -> dict[str, Any]:
     return out
 
 
+@dataclass(slots=True)
+class CapturedSpan:
+    """Start or end of a trace root, an agent run, or one tool-loop step."""
+
+    kind: Literal["trace", "run", "step"]
+    phase: Literal["start", "end"]
+    time_ns: int
+    trace_id: str | None
+    run_id: str | None
+    span_id: str | None
+    iteration: int | None
+    workspace_name: str | None
+    call_purpose: str | None
+    parent_category: str | None
+    agent_type: str | None
+    session_id: str | None
+    observer: str | None
+    observed: str | None
+    peer_name: str | None
+    track_name: str | None
+    input: Any = None
+    output: Any = None
+    is_error: bool = False
+
+
+@dataclass(slots=True)
+class CapturedToolCall:
+    """One executed tool call, captured when it finishes."""
+
+    run_id: str
+    agent_type: str
+    workspace_name: str | None
+    iteration: int | None
+    tool_call_seq: int
+    tool_call_id: str | None
+    name: str
+    input: Any
+    output: str
+    is_error: bool
+    duration_ms: float
+
+
+def build_captured_span(
+    telemetry: LLMTelemetryContext,
+    *,
+    kind: Literal["trace", "run", "step"],
+    phase: Literal["start", "end"],
+    time_ns: int,
+    input: Any = None,  # noqa: A002 - mirrors the observation field name
+    output: Any = None,
+    is_error: bool = False,
+) -> CapturedSpan:
+    """Build a `CapturedSpan` from the run's telemetry context."""
+    return CapturedSpan(
+        kind=kind,
+        phase=phase,
+        time_ns=time_ns,
+        trace_id=telemetry.trace_id,
+        run_id=telemetry.run_id,
+        span_id=telemetry.span_id,
+        iteration=telemetry.iteration,
+        workspace_name=telemetry.workspace_name,
+        call_purpose=telemetry.call_purpose,
+        parent_category=telemetry.parent_category,
+        agent_type=telemetry.agent_type,
+        session_id=telemetry.session_id,
+        observer=telemetry.observer,
+        observed=telemetry.observed,
+        peer_name=telemetry.peer_name,
+        track_name=telemetry.track_name,
+        input=input,
+        output=output,
+        is_error=is_error,
+    )
+
+
 @runtime_checkable
 class LLMCallExporter(Protocol):
     """A sink that consumes a `CapturedLLMCall`"""
 
     def export(self, call: CapturedLLMCall) -> None: ...
+
+
+@runtime_checkable
+class SpanTreeExporter(Protocol):
+    """An exporter that also consumes run/step lifecycle and executed tool calls."""
+
+    def export_span(self, span: CapturedSpan) -> None: ...
+
+    def export_tool_call(self, tool_call: CapturedToolCall) -> None: ...
 
 
 _EXPORTERS: list[LLMCallExporter] = []
@@ -375,6 +488,11 @@ def has_exporters() -> bool:
     return bool(_EXPORTERS)
 
 
+def has_span_tree_exporters() -> bool:
+    """True when at least one registered exporter is a `SpanTreeExporter`."""
+    return any(isinstance(exporter, SpanTreeExporter) for exporter in _EXPORTERS)
+
+
 def dispatch_captured_call(call: CapturedLLMCall) -> None:
     """Fan a captured call out to every exporter."""
     for exporter in _EXPORTERS:
@@ -384,20 +502,49 @@ def dispatch_captured_call(call: CapturedLLMCall) -> None:
             logger.debug("LLM call exporter failed", exc_info=True)
 
 
+def dispatch_captured_span(span: CapturedSpan) -> None:
+    """Fan a span lifecycle record out to every `SpanTreeExporter`."""
+    for exporter in _EXPORTERS:
+        if not isinstance(exporter, SpanTreeExporter):
+            continue
+        try:
+            exporter.export_span(span)
+        except Exception:  # pragma: no cover - best-effort telemetry
+            logger.debug("Span exporter failed", exc_info=True)
+
+
+def dispatch_captured_tool_call(tool_call: CapturedToolCall) -> None:
+    """Fan an executed tool call out to every `SpanTreeExporter`."""
+    for exporter in _EXPORTERS:
+        if not isinstance(exporter, SpanTreeExporter):
+            continue
+        try:
+            exporter.export_tool_call(tool_call)
+        except Exception:  # pragma: no cover - best-effort telemetry
+            logger.debug("Tool call exporter failed", exc_info=True)
+
+
 __all__ = [
     "ROLE_OUTPUT",
     "ROLE_THINKING",
     "ROLE_TOOL_SCHEMA",
     "CapturedLLMCall",
     "CapturedMessage",
+    "CapturedSpan",
+    "CapturedToolCall",
     "LLMCallExporter",
+    "SpanTreeExporter",
     "build_captured_call",
     "build_captured_messages",
+    "build_captured_span",
     "canonical_json",
     "clear_exporters",
     "clip_for_trace",
     "compute_content_hash",
     "dispatch_captured_call",
+    "dispatch_captured_span",
+    "dispatch_captured_tool_call",
     "has_exporters",
+    "has_span_tree_exporters",
     "register_exporter",
 ]

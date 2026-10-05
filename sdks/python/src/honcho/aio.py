@@ -3,7 +3,7 @@
 
 This module provides async accessor classes that wrap the main SDK classes
 and provide async versions of all operations. Access via the `.aio` property
-on Honcho, Peer, Session, and ConclusionScope instances.
+on Honcho, Peer, Session, and ConclusionsView instances.
 
 Example:
     ```python
@@ -24,7 +24,7 @@ from __future__ import annotations
 import json
 import logging
 import warnings
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Sequence
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, overload
 
@@ -40,38 +40,55 @@ from .api_types import (
     PeerResponse,
     QueueStatusResponse,
     RepresentationResponse,
+    ScopeBackfillJob,
+    ScopeResponse,
+    ScopeStatusResponse,
     SessionConfiguration,
     SessionPeerConfig,
     SessionResponse,
     WorkspaceConfiguration,
     WorkspaceResponse,
 )
-from .base import PeerBase, SessionBase
+from .base import PeerBase, ScopeBase, SessionBase
 from .conclusions import (
-    _SCOPE_RESERVED,
+    _LIST_PAGE_CAP,
+    _VIEW_RESERVED,
     Conclusion,
     _reject_reserved_filter_keys,
+    _require_view,
 )
 from .http import routes
 from .message import Message
 from .mixins import AsyncMetadataConfigMixin
 from .pagination import AsyncPage
 from .session_context import SessionContext, SessionSummaries, Summary
-from .types import AsyncDialecticStreamResponse
+from .types import AsyncDialecticStreamResponse, ChatResponse
 from .utils import (
+    SSEStreamParser,
     datetime_to_iso,
     normalize_peers_to_dict,
     parse_sse_astream,
     prepare_file_for_upload,
     resolve_id,
+    resolve_scope_membership,
+    resolve_scope_session,
+    scope_context_fields,
+    scope_recall_fields,
+    validate_scope_id,
 )
 
 if TYPE_CHECKING:
     from .client import Honcho
-    from .conclusions import ConclusionScope
+    from .conclusions import ConclusionsView, WorkspaceConclusions
 
 from .conclusions import ConclusionCreateParams
-from .peer import Peer, TResponseFormat, serialize_response_format
+from .peer import (
+    Peer,
+    TResponseFormat,
+    parse_chat_response,
+    serialize_response_format,
+)
+from .scope import Scope
 from .session import Session
 
 logger = logging.getLogger(__name__)
@@ -79,8 +96,10 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "HonchoAio",
     "PeerAio",
+    "ScopeAio",
     "SessionAio",
-    "ConclusionScopeAio",
+    "ConclusionsViewAio",
+    "WorkspaceConclusionsAio",
 ]
 
 
@@ -267,6 +286,7 @@ class HonchoAio(AsyncMetadataConfigMixin):
         | list[tuple[PeerBase | str, SessionPeerConfig]]
         | list[PeerBase | str | tuple[PeerBase | str, SessionPeerConfig]]
         | None = None,
+        scopes: Sequence[str | ScopeBase] | None = None,
     ) -> Session:
         """
         Get or create a session with the given ID asynchronously.
@@ -278,6 +298,11 @@ class HonchoAio(AsyncMetadataConfigMixin):
             peers: Optional peers to attach to the session at creation. Accepts the
                 same shape as Session.add_peers (peer ID string, Peer object, list
                 of either, or tuples with SessionPeerConfig).
+            scopes: Optional scopes this session should join, as IDs or Scope
+                objects. Each scope is created if it does not exist yet. Attaching
+                at creation avoids the asynchronous backfill a later
+                ``scope.add_sessions()`` triggers, since there is no history to
+                copy.
 
         Returns:
             A Session object with cached values from the API response.
@@ -290,6 +315,8 @@ class HonchoAio(AsyncMetadataConfigMixin):
             body["configuration"] = configuration.model_dump(exclude_none=True)
         if peers is not None:
             body["peers"] = normalize_peers_to_dict(peers)
+        if scopes is not None:
+            body["scopes"] = [validate_scope_id(resolve_id(scope)) for scope in scopes]
 
         data = await self._honcho._async_http_client.post(
             routes.sessions(self._honcho.workspace_id), body=body
@@ -358,6 +385,121 @@ class HonchoAio(AsyncMetadataConfigMixin):
 
         return AsyncPage(data, SessionResponse, transform, fetch_next)
 
+    async def scope(
+        self,
+        id: str,  # noqa: A002
+        *,
+        metadata: dict[str, object] | None = None,
+    ) -> Scope:
+        """
+        Get or create a scope with the given ID asynchronously.
+
+        A scope is a named set of sessions that acts as a visibility boundary:
+        recall performed through the scope sees only what happened in its sessions,
+        while the underlying peer keeps its single unified representation of
+        everything.
+
+        Args:
+            id: Unprefixed scope name, unique within the workspace.
+            metadata: Optional metadata dictionary to associate with this scope.
+
+        Returns:
+            A Scope object for managing membership.
+
+        Raises:
+            ValueError: If the scope ID is invalid.
+        """
+        validate_scope_id(id)
+        await self._honcho._ensure_workspace_async()
+        body: dict[str, Any] = {"id": id}
+        if metadata is not None:
+            body["metadata"] = metadata
+
+        data = await self._honcho._async_http_client.post(
+            routes.scopes(self._honcho.workspace_id), body=body
+        )
+        scope_data = ScopeResponse.model_validate(data)
+        return Scope(
+            id,
+            self._honcho,
+            metadata=scope_data.metadata,
+            created_at=scope_data.created_at,
+        )
+
+    async def get_scope(
+        self,
+        id: str,  # noqa: A002
+    ) -> Scope:
+        """
+        Get an existing scope by ID asynchronously, without creating it.
+
+        Unlike :meth:`scope`, this never creates the scope, so it is safe for
+        lookups where a typo must not provision a new recall boundary.
+
+        Args:
+            id: Unprefixed scope name, unique within the workspace.
+
+        Returns:
+            A Scope object for managing membership.
+
+        Raises:
+            ValueError: If the scope ID is invalid.
+            NotFoundError: If no scope with this ID exists in the workspace.
+        """
+        validate_scope_id(id)
+        await self._honcho._ensure_workspace_async()
+        data = await self._honcho._async_http_client.get(
+            routes.scope(self._honcho.workspace_id, id)
+        )
+        scope_data = ScopeResponse.model_validate(data)
+        return Scope(
+            id,
+            self._honcho,
+            metadata=scope_data.metadata,
+            created_at=scope_data.created_at,
+        )
+
+    async def scopes(
+        self,
+        *,
+        page: int = 1,
+        size: int = 50,
+        reverse: bool = False,
+    ) -> AsyncPage[ScopeResponse, Scope]:
+        """
+        Get all scopes in the current workspace asynchronously.
+
+        Args:
+            page: Page number (1-indexed). Default: 1.
+            size: Number of items per page. Default: 50.
+            reverse: If True, reverses the default ordering. Default: False.
+        """
+        await self._honcho._ensure_workspace_async()
+
+        async def fetch(next_page: int) -> dict[str, Any]:
+            query: dict[str, Any] = {"page": next_page, "size": size}
+            if reverse:
+                query["reverse"] = "true"
+            return await self._honcho._async_http_client.post(
+                routes.scopes_list(self._honcho.workspace_id), query=query
+            )
+
+        def transform(scope: ScopeResponse) -> Scope:
+            """Convert a scope API response into a Scope SDK object."""
+            return Scope(
+                scope.id,
+                self._honcho,
+                metadata=scope.metadata,
+                created_at=scope.created_at,
+            )
+
+        async def fetch_next(next_page: int) -> AsyncPage[ScopeResponse, Scope]:
+            return AsyncPage(
+                await fetch(next_page), ScopeResponse, transform, fetch_next
+            )
+
+        return AsyncPage(await fetch(page), ScopeResponse, transform, fetch_next)
+
     async def workspaces(
         self,
         filters: dict[str, object] | None = None,
@@ -399,6 +541,89 @@ class HonchoAio(AsyncMetadataConfigMixin):
         """Delete a workspace asynchronously."""
         await self._honcho._async_http_client.delete(routes.workspace(workspace_id))
 
+    @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
+    async def chat(
+        self,
+        query: str = Field(..., min_length=1, description="The natural language query"),
+        *,
+        session: str | SessionBase | None = None,
+        reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
+        | None = None,
+        response_format: type[BaseModel] | dict[str, Any] | None = None,
+        scope: str | list[str] | None = None,
+        include_evidence: bool = False,
+    ) -> ChatResponse[Any] | BaseModel | str | None:
+        """Query the entire workspace asynchronously (see Honcho.chat)."""
+        await self._honcho._ensure_workspace_async()
+        resolved_session_id = resolve_id(session)
+        body: dict[str, Any] = {"query": query, "stream": False}
+        if resolved_session_id:
+            body["session_id"] = resolved_session_id
+        if reasoning_level:
+            body["reasoning_level"] = reasoning_level
+        if scope is not None:
+            body["scope"] = scope
+        response_format_schema = serialize_response_format(response_format)
+        if response_format_schema is not None:
+            body["response_format"] = response_format_schema
+        if include_evidence:
+            body["include_evidence"] = True
+
+        data = await self._honcho._async_http_client.post(
+            routes.workspace_chat(self._honcho.workspace_id),
+            body=body,
+        )
+        return parse_chat_response(data, response_format, include_evidence)
+
+    @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
+    async def chat_stream(
+        self,
+        query: str = Field(..., min_length=1, description="The natural language query"),
+        *,
+        session: str | SessionBase | None = None,
+        reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
+        | None = None,
+        response_format: type[BaseModel] | dict[str, Any] | None = None,
+        scope: str | list[str] | None = None,
+        include_evidence: bool = False,
+    ) -> AsyncDialecticStreamResponse:
+        """Streaming variant of :meth:`chat` (async).
+
+        With include_evidence, the returned stream's `evidence` is populated
+        once it has been fully consumed.
+        """
+        await self._honcho._ensure_workspace_async()
+        resolved_session_id = resolve_id(session)
+        body: dict[str, Any] = {"query": query, "stream": True}
+        if resolved_session_id:
+            body["session_id"] = resolved_session_id
+        if reasoning_level:
+            body["reasoning_level"] = reasoning_level
+        if scope is not None:
+            body["scope"] = scope
+        response_format_schema = serialize_response_format(response_format)
+        if response_format_schema is not None:
+            body["response_format"] = response_format_schema
+        if include_evidence:
+            body["include_evidence"] = True
+
+        # The parser holds the evidence that arrives on the final event, so it
+        # has to outlive the generator that drains the stream.
+        parser = SSEStreamParser()
+
+        async def stream_response() -> AsyncGenerator[str, None]:
+            async for chunk in parse_sse_astream(
+                self._honcho._async_http_client.stream(
+                    "POST",
+                    routes.workspace_chat(self._honcho.workspace_id),
+                    body=body,
+                ),
+                parser=parser,
+            ):
+                yield chunk
+
+        return AsyncDialecticStreamResponse(stream_response(), lambda: parser.evidence)
+
     @validate_call
     async def search(
         self,
@@ -409,12 +634,27 @@ class HonchoAio(AsyncMetadataConfigMixin):
         limit: int = Field(
             default=10, ge=1, le=100, description="Number of results to return"
         ),
+        *,
+        scope: str | ScopeBase | None = None,
     ) -> list[Message]:
-        """Search for messages in the current workspace asynchronously."""
+        """Search for messages in the current workspace asynchronously.
+
+        Args:
+            query: The search query to use
+            filters: Filters to scope the search.
+            limit: Number of results to return (1-100, default: 10)
+            scope: Optional scope (ID or Scope object) restricting the search to
+                that scope's member sessions. Mutually exclusive with a
+                ``session_id`` filter. A scope with no member sessions matches
+                nothing rather than everything.
+        """
         await self._honcho._ensure_workspace_async()
+        body: dict[str, Any] = {"query": query, "filters": filters, "limit": limit}
+        if scope is not None:
+            body["scope"] = validate_scope_id(resolve_id(scope))
         data = await self._honcho._async_http_client.post(
             routes.workspace_search(self._honcho.workspace_id),
-            body={"query": query, "filters": filters, "limit": limit},
+            body=body,
         )
         return [
             Message.from_api_response(MessageResponse.model_validate(item))
@@ -446,6 +686,11 @@ class HonchoAio(AsyncMetadataConfigMixin):
             query=query if query else None,
         )
         return QueueStatusResponse.model_validate(data)
+
+    @property
+    def conclusions(self) -> "WorkspaceConclusionsAio":
+        """Workspace-wide conclusions (no observer/observed pair implied)."""
+        return self._honcho.conclusions.aio
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     async def schedule_dream(
@@ -584,9 +829,13 @@ class PeerAio(AsyncMetadataConfigMixin):
         *,
         target: str | PeerBase | None = None,
         session: str | SessionBase | None = None,
+        scope: str | ScopeBase | Sequence[str | ScopeBase] | None = None,
+        sessions: Sequence[str | SessionBase] | None = None,
         reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
         | None = None,
         response_format: type[TResponseFormat],
+        include_evidence: Literal[False] = False,
+        timeout: float | None = None,
     ) -> TResponseFormat | None: ...
 
     @overload
@@ -596,9 +845,45 @@ class PeerAio(AsyncMetadataConfigMixin):
         *,
         target: str | PeerBase | None = None,
         session: str | SessionBase | None = None,
+        scope: str | ScopeBase | Sequence[str | ScopeBase] | None = None,
+        sessions: Sequence[str | SessionBase] | None = None,
+        reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
+        | None = None,
+        response_format: type[TResponseFormat],
+        include_evidence: Literal[True],
+        timeout: float | None = None,
+    ) -> ChatResponse[TResponseFormat]: ...
+
+    @overload
+    async def chat(
+        self,
+        query: str,
+        *,
+        target: str | PeerBase | None = None,
+        session: str | SessionBase | None = None,
+        scope: str | ScopeBase | Sequence[str | ScopeBase] | None = None,
+        sessions: Sequence[str | SessionBase] | None = None,
         reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
         | None = None,
         response_format: dict[str, Any] | None = None,
+        include_evidence: Literal[True],
+        timeout: float | None = None,
+    ) -> ChatResponse[str]: ...
+
+    @overload
+    async def chat(
+        self,
+        query: str,
+        *,
+        target: str | PeerBase | None = None,
+        session: str | SessionBase | None = None,
+        scope: str | ScopeBase | Sequence[str | ScopeBase] | None = None,
+        sessions: Sequence[str | SessionBase] | None = None,
+        reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
+        | None = None,
+        response_format: dict[str, Any] | None = None,
+        include_evidence: Literal[False] = False,
+        timeout: float | None = None,
     ) -> str | None: ...
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
@@ -608,21 +893,35 @@ class PeerAio(AsyncMetadataConfigMixin):
         *,
         target: str | PeerBase | None = None,
         session: str | SessionBase | None = None,
+        scope: str | ScopeBase | Sequence[str | ScopeBase] | None = None,
+        sessions: Sequence[str | SessionBase] | None = None,
         reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
         | None = None,
         response_format: type[BaseModel] | dict[str, Any] | None = None,
-    ) -> BaseModel | str | None:
+        include_evidence: bool = False,
+        timeout: float | None = Field(
+            None, gt=0, description="Timeout in seconds for this chat request"
+        ),
+    ) -> ChatResponse[Any] | BaseModel | str | None:
         """Query the peer's representation asynchronously.
 
         See Peer.chat for parameter details. When response_format is a Pydantic
         model class, the answer is parsed into an instance of it; when it is a
-        JSON Schema dict, the answer is a JSON string.
+        JSON Schema dict, the answer is a JSON string. With include_evidence,
+        the answer comes back in a ChatResponse alongside what the dialectic
+        read to produce it. When timeout is omitted, the Honcho client's
+        configured timeout is used; retries can extend total elapsed time.
         """
         await self._peer._honcho._ensure_workspace_async()
         target_id = resolve_id(target)
         resolved_session_id = resolve_id(session)
 
         body: dict[str, Any] = {"query": query, "stream": False}
+        body.update(
+            scope_recall_fields(
+                scope=scope, sessions=sessions, session_id=resolved_session_id
+            )
+        )
         if target_id:
             body["target"] = target_id
         if resolved_session_id:
@@ -632,17 +931,15 @@ class PeerAio(AsyncMetadataConfigMixin):
         response_format_schema = serialize_response_format(response_format)
         if response_format_schema is not None:
             body["response_format"] = response_format_schema
+        if include_evidence:
+            body["include_evidence"] = True
 
         data = await self._peer._honcho._async_http_client.post(
             routes.peer_chat(self._peer.workspace_id, self._peer.id),
             body=body,
+            timeout=timeout,
         )
-        content = data.get("content")
-        if not content:
-            return None
-        if isinstance(response_format, type):
-            return response_format.model_validate_json(content)
-        return content
+        return parse_chat_response(data, response_format, include_evidence)
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     async def chat_stream(
@@ -651,21 +948,30 @@ class PeerAio(AsyncMetadataConfigMixin):
         *,
         target: str | PeerBase | None = None,
         session: str | SessionBase | None = None,
+        scope: str | ScopeBase | Sequence[str | ScopeBase] | None = None,
+        sessions: Sequence[str | SessionBase] | None = None,
         reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
         | None = None,
         response_format: type[BaseModel] | dict[str, Any] | None = None,
+        include_evidence: bool = False,
     ) -> AsyncDialecticStreamResponse:
         """Query the peer's representation with streaming asynchronously.
 
         See Peer.chat_stream for parameter details. With response_format set,
         chunks stay raw text that accumulates to a JSON string; parse it after
-        the stream completes.
+        the stream completes. With include_evidence, the returned stream's
+        `evidence` is populated once it has been fully consumed.
         """
         await self._peer._honcho._ensure_workspace_async()
         target_id = resolve_id(target)
         resolved_session_id = resolve_id(session)
 
         body: dict[str, Any] = {"query": query, "stream": True}
+        body.update(
+            scope_recall_fields(
+                scope=scope, sessions=sessions, session_id=resolved_session_id
+            )
+        )
         if target_id:
             body["target"] = target_id
         if resolved_session_id:
@@ -675,6 +981,12 @@ class PeerAio(AsyncMetadataConfigMixin):
         response_format_schema = serialize_response_format(response_format)
         if response_format_schema is not None:
             body["response_format"] = response_format_schema
+        if include_evidence:
+            body["include_evidence"] = True
+
+        # The parser holds the evidence that arrives on the final event, so it
+        # has to outlive the generator that drains the stream.
+        parser = SSEStreamParser()
 
         async def stream_response() -> AsyncGenerator[str, None]:
             async for content in parse_sse_astream(
@@ -682,11 +994,12 @@ class PeerAio(AsyncMetadataConfigMixin):
                     "POST",
                     routes.peer_chat(self._peer.workspace_id, self._peer.id),
                     body=body,
-                )
+                ),
+                parser=parser,
             ):
                 yield content
 
-        return AsyncDialecticStreamResponse(stream_response())
+        return AsyncDialecticStreamResponse(stream_response(), lambda: parser.evidence)
 
     async def sessions(
         self,
@@ -826,13 +1139,22 @@ class PeerAio(AsyncMetadataConfigMixin):
         search_max_distance: float | None = Field(None, ge=0.0, le=1.0),
         include_most_frequent: bool | None = None,
         max_conclusions: int | None = Field(None, ge=1, le=100),
+        *,
+        scope: str | ScopeBase | Sequence[str | ScopeBase] | None = None,
+        sessions: Sequence[str | SessionBase] | None = None,
     ) -> str:
-        """Get a subset of the representation of the peer asynchronously."""
+        """Get a subset of the representation of the peer asynchronously.
+
+        See Peer.representation for parameter details, including the depth caveat
+        on ``sessions``.
+        """
         await self._peer._honcho._ensure_workspace_async()
         session_id = resolve_id(session)
         target_id = resolve_id(target)
 
-        body: dict[str, Any] = {}
+        body: dict[str, Any] = scope_recall_fields(
+            scope=scope, sessions=sessions, session_id=session_id
+        )
         if session_id:
             body["session_id"] = session_id
         if target_id:
@@ -1192,6 +1514,14 @@ class SessionAio(AsyncMetadataConfigMixin):
             None,
             description="A peer ID to get context from the perspective of.",
         ),
+        scope: str | ScopeBase | None = Field(
+            None,
+            description="A scope to use as the perspective source instead of a peer.",
+        ),
+        sessions: Sequence[str | SessionBase] | None = Field(
+            None,
+            description="An allowlist of sessions confining `peer_target`'s representation to that set. This session must be one of them.",
+        ),
         limit_to_session: bool = Field(
             False,
             description="Whether to limit the representation to this session only.",
@@ -1219,7 +1549,11 @@ class SessionAio(AsyncMetadataConfigMixin):
             description="Maximum number of conclusions to include in the representation.",
         ),
     ) -> SessionContext:
-        """Get optimized context for this session asynchronously."""
+        """Get optimized context for this session asynchronously.
+
+        See Session.context for parameter details, including the depth caveat on
+        ``sessions``.
+        """
         await self._session._honcho._ensure_workspace_async()
         if peer_target is None and peer_perspective is not None:
             raise ValueError(
@@ -1238,6 +1572,13 @@ class SessionAio(AsyncMetadataConfigMixin):
         query: dict[str, Any] = {
             "summary": summary,
             "limit_to_session": limit_to_session,
+            **scope_context_fields(
+                scope=scope,
+                sessions=sessions,
+                peer_target=peer_target,
+                peer_perspective=peer_perspective,
+                limit_to_session=limit_to_session,
+            ),
         }
         if tokens is not None:
             query["tokens"] = tokens
@@ -1488,19 +1829,120 @@ class SessionAio(AsyncMetadataConfigMixin):
         return Message.from_api_response(MessageResponse.model_validate(data))
 
 
-class ConclusionScopeAio:
+async def _aget_conclusion(honcho: "Honcho", conclusion_id: str) -> Conclusion:
+    await honcho._ensure_workspace_async()
+    data = await honcho._async_http_client.get(
+        routes.conclusion(honcho.workspace_id, conclusion_id)
+    )
+    return Conclusion.from_api_response(ConclusionResponse.model_validate(data))
+
+
+async def _aget_many_conclusions(
+    honcho: "Honcho",
+    conclusion_ids: list[str],
+    extra_filters: dict[str, Any] | None = None,
+) -> list[Conclusion]:
+    if not conclusion_ids:
+        return []
+    await honcho._ensure_workspace_async()
+    conclusions: list[Conclusion] = []
+    for start in range(0, len(conclusion_ids), _LIST_PAGE_CAP):
+        chunk = conclusion_ids[start : start + _LIST_PAGE_CAP]
+        filters: dict[str, Any] = {"id": {"in": chunk}, **(extra_filters or {})}
+        data = await honcho._async_http_client.post(
+            routes.conclusions_list(honcho.workspace_id),
+            body={"filters": filters},
+            query={"page": 1, "size": len(chunk)},
+        )
+        conclusions.extend(
+            Conclusion.from_api_response(ConclusionResponse.model_validate(item))
+            for item in data.get("items", [])
+        )
+    return conclusions
+
+
+async def _alist_conclusions(
+    honcho: "Honcho",
+    filters: dict[str, Any] | None,
+    *,
+    page: int,
+    size: int,
+    reverse: bool,
+) -> AsyncPage[ConclusionResponse, Conclusion]:
+    await honcho._ensure_workspace_async()
+    body: dict[str, Any] | None = {"filters": filters} if filters else None
+    query: dict[str, Any] = {"page": page, "size": size}
+    if reverse:
+        query["reverse"] = "true"
+    data = await honcho._async_http_client.post(
+        routes.conclusions_list(honcho.workspace_id),
+        body=body,
+        query=query,
+    )
+
+    def transform(response: ConclusionResponse) -> Conclusion:
+        return Conclusion.from_api_response(response)
+
+    async def fetch_next(
+        next_page: int,
+    ) -> AsyncPage[ConclusionResponse, Conclusion]:
+        next_query: dict[str, Any] = {"page": next_page, "size": size}
+        if reverse:
+            next_query["reverse"] = "true"
+        next_data = await honcho._async_http_client.post(
+            routes.conclusions_list(honcho.workspace_id),
+            body=body,
+            query=next_query,
+        )
+        return AsyncPage(next_data, ConclusionResponse, transform, fetch_next)
+
+    return AsyncPage(data, ConclusionResponse, transform, fetch_next)
+
+
+class WorkspaceConclusionsAio:
+    """Async view of workspace-wide conclusions. Access via ``honcho.aio.conclusions``."""
+
+    __slots__: ClassVar[tuple[str, ...]] = ("_workspace",)
+    _workspace: "WorkspaceConclusions"
+
+    def __init__(self, workspace: "WorkspaceConclusions") -> None:
+        self._workspace = workspace
+
+    async def list(
+        self,
+        page: int = 1,
+        size: int = 50,
+        *,
+        filters: dict[str, Any] | None = None,
+        reverse: bool = False,
+    ) -> AsyncPage[ConclusionResponse, Conclusion]:
+        """List conclusions in this workspace asynchronously."""
+        return await _alist_conclusions(
+            self._workspace._honcho, filters, page=page, size=size, reverse=reverse
+        )
+
+    async def get(self, conclusion_id: str) -> Conclusion:
+        """Get a single conclusion by ID, anywhere in the workspace."""
+        return await _aget_conclusion(self._workspace._honcho, conclusion_id)
+
+    async def get_many(self, conclusion_ids: list[str]) -> list[Conclusion]:
+        """Get multiple conclusions by ID. Missing IDs are omitted."""
+        return await _aget_many_conclusions(self._workspace._honcho, conclusion_ids)
+
+
+class ConclusionsViewAio:
     """
-    Async view of a ConclusionScope.
+    Async view of a ConclusionsView.
 
-    Access via `scope.aio`. Provides async versions of all ConclusionScope methods.
-    Shares state with the parent ConclusionScope instance.
+    Access via `view.aio`. Provides async versions of all ConclusionsView methods.
+    Shares state with the parent ConclusionsView instance.
     """
 
-    __slots__: ClassVar[tuple[str, ...]] = ("_scope",)
-    _scope: "ConclusionScope"
+    __slots__: ClassVar[tuple[str, ...]] = ("_view",)
+    _view: "ConclusionsView"
 
-    def __init__(self, scope: "ConclusionScope") -> None:
-        self._scope = scope
+    def __init__(self, view: "ConclusionsView") -> None:
+        self._view = view
 
     async def list(
         self,
@@ -1520,43 +1962,18 @@ class ConclusionScopeAio:
         https://honcho.dev/docs/v3/documentation/features/advanced/using-filters
         """
         _reject_reserved_filter_keys(
-            filters, _SCOPE_RESERVED + ("session", "session_id")
+            filters, _VIEW_RESERVED + ("session", "session_id")
         )
-        await self._scope._honcho._ensure_workspace_async()
         resolved_session_id = resolve_id(session)
         filters = {
-            "observer_id": self._scope.observer,
-            "observed_id": self._scope.observed,
+            "observer_id": self._view.observer,
+            "observed_id": self._view.observed,
             **({"session_id": resolved_session_id} if resolved_session_id else {}),
             **(filters or {}),
         }
-
-        query: dict[str, Any] = {"page": page, "size": size}
-        if reverse:
-            query["reverse"] = "true"
-        data = await self._scope._honcho._async_http_client.post(
-            routes.conclusions_list(self._scope.workspace_id),
-            body={"filters": filters},
-            query=query,
+        return await _alist_conclusions(
+            self._view._honcho, filters, page=page, size=size, reverse=reverse
         )
-
-        def transform(response: ConclusionResponse) -> Conclusion:
-            return Conclusion.from_api_response(response)
-
-        async def fetch_next(
-            next_page: int,
-        ) -> AsyncPage[ConclusionResponse, Conclusion]:
-            next_query: dict[str, Any] = {"page": next_page, "size": size}
-            if reverse:
-                next_query["reverse"] = "true"
-            next_data = await self._scope._honcho._async_http_client.post(
-                routes.conclusions_list(self._scope.workspace_id),
-                body={"filters": filters},
-                query=next_query,
-            )
-            return AsyncPage(next_data, ConclusionResponse, transform, fetch_next)
-
-        return AsyncPage(data, ConclusionResponse, transform, fetch_next)
 
     async def query(
         self,
@@ -1575,11 +1992,11 @@ class ConclusionScopeAio:
             filters: Optional dictionary of additional filter criteria, merged
                 with this scope's observer/observed (e.g. ``{"level": "deductive"}``).
         """
-        _reject_reserved_filter_keys(filters, _SCOPE_RESERVED)
-        await self._scope._honcho._ensure_workspace_async()
+        _reject_reserved_filter_keys(filters, _VIEW_RESERVED)
+        await self._view._honcho._ensure_workspace_async()
         filters = {
-            "observer_id": self._scope.observer,
-            "observed_id": self._scope.observed,
+            "observer_id": self._view.observer,
+            "observed_id": self._view.observed,
             **(filters or {}),
         }
 
@@ -1591,8 +2008,8 @@ class ConclusionScopeAio:
         if distance is not None:
             body["distance"] = distance
 
-        data = await self._scope._honcho._async_http_client.post(
-            routes.conclusions_query(self._scope.workspace_id),
+        data = await self._view._honcho._async_http_client.post(
+            routes.conclusions_query(self._view.workspace_id),
             body=body,
         )
         return [
@@ -1600,11 +2017,90 @@ class ConclusionScopeAio:
             for item in data
         ]
 
+    async def get(self, conclusion_id: str) -> Conclusion:
+        """Get a single conclusion by ID asynchronously.
+
+        Returns:
+            The Conclusion object, including its attribution fields
+            (`source_ids`, `times_derived`)
+
+        Raises:
+            NotFoundError: If no conclusion with the given ID exists in this
+                observer/observed pair. Use ``honcho.aio.conclusions.get`` for a
+                workspace-wide lookup.
+        """
+        return _require_view(
+            await _aget_conclusion(self._view._honcho, conclusion_id),
+            self._view.observer,
+            self._view.observed,
+        )
+
+    async def get_many(self, conclusion_ids: list[str]) -> list[Conclusion]:
+        """Get multiple conclusions by ID in a single call asynchronously.
+
+        Useful for resolving a derived conclusion's premises: pass its
+        ``source_ids`` to fetch all of them at once instead of one
+        ``get()`` per ID.
+
+        Returns:
+            The matching Conclusion objects. IDs that don't exist are
+            omitted, so the result may be shorter than the input (order
+            is not guaranteed to match the input either).
+        """
+        return await _aget_many_conclusions(
+            self._view._honcho,
+            conclusion_ids,
+            extra_filters={
+                "observer_id": self._view.observer,
+                "observed_id": self._view.observed,
+            },
+        )
+
+    async def derived(
+        self,
+        conclusion_id: str,
+        page: int = 1,
+        size: int = 50,
+        *,
+        reverse: bool = False,
+    ) -> AsyncPage[ConclusionResponse, Conclusion]:
+        """Get the conclusions derived from the given conclusion asynchronously.
+
+        Returns the conclusions that list ``conclusion_id`` in their
+        ``source_ids``, traversing the reasoning tree upward
+        (source -> derived).
+
+        Args:
+            conclusion_id: The ID of the source conclusion
+            page: Page number to fetch. Default: 1.
+            size: Number of results per page. Default: 50.
+            reverse: If True, reverses the default newest-first ordering.
+
+        Equivalent to ``list`` with
+        ``{"source_ids": {"contains": conclusion_id}}``, restricted to this
+        observer/observed pair. An unknown ``conclusion_id`` yields an empty
+        page rather than an error.
+
+        Returns:
+            Paginated response containing Conclusion objects
+        """
+        return await _alist_conclusions(
+            self._view._honcho,
+            {
+                "source_ids": {"contains": conclusion_id},
+                "observer_id": self._view.observer,
+                "observed_id": self._view.observed,
+            },
+            page=page,
+            size=size,
+            reverse=reverse,
+        )
+
     async def delete(self, conclusion_id: str) -> None:
         """Delete a conclusion by ID asynchronously."""
-        await self._scope._honcho._ensure_workspace_async()
-        await self._scope._honcho._async_http_client.delete(
-            routes.conclusion(self._scope.workspace_id, conclusion_id)
+        await self._view._honcho._ensure_workspace_async()
+        await self._view._honcho._async_http_client.delete(
+            routes.conclusion(self._view.workspace_id, conclusion_id)
         )
 
     async def create(
@@ -1612,15 +2108,15 @@ class ConclusionScopeAio:
         conclusions: list[ConclusionCreateParams | dict[str, Any]],
     ) -> list[Conclusion]:
         """Create conclusions in this scope asynchronously."""
-        await self._scope._honcho._ensure_workspace_async()
+        await self._view._honcho._ensure_workspace_async()
 
         def build_conclusion_payload(
             item: ConclusionCreateParams | dict[str, Any],
         ) -> dict[str, Any]:
             """Build a single conclusion create payload."""
             payload: dict[str, Any] = {
-                "observer_id": self._scope.observer,
-                "observed_id": self._scope.observed,
+                "observer_id": self._view.observer,
+                "observed_id": self._view.observed,
             }
             if isinstance(item, ConclusionCreateParams):
                 payload["content"] = item.content
@@ -1636,8 +2132,8 @@ class ConclusionScopeAio:
 
         conclusion_params = [build_conclusion_payload(c) for c in conclusions]
 
-        data = await self._scope._honcho._async_http_client.post(
-            routes.conclusions(self._scope.workspace_id),
+        data = await self._view._honcho._async_http_client.post(
+            routes.conclusions(self._view.workspace_id),
             body={"conclusions": conclusion_params},
         )
         return [
@@ -1654,8 +2150,8 @@ class ConclusionScopeAio:
         max_conclusions: int | None = None,
     ) -> str:
         """Get the computed representation for this scope asynchronously."""
-        await self._scope._honcho._ensure_workspace_async()
-        body: dict[str, Any] = {"target": self._scope.observed}
+        await self._view._honcho._ensure_workspace_async()
+        body: dict[str, Any] = {"target": self._view.observed}
         if search_query is not None:
             body["search_query"] = search_query
         if search_top_k is not None:
@@ -1667,9 +2163,99 @@ class ConclusionScopeAio:
         if max_conclusions is not None:
             body["max_conclusions"] = max_conclusions
 
-        data = await self._scope._honcho._async_http_client.post(
-            routes.peer_representation(self._scope.workspace_id, self._scope.observer),
+        data = await self._view._honcho._async_http_client.post(
+            routes.peer_representation(self._view.workspace_id, self._view.observer),
             body=body,
         )
         response = RepresentationResponse.model_validate(data)
         return response.representation
+
+
+class ScopeAio:
+    """
+    Async view of a Scope.
+
+    Access via `scope.aio`. Provides async versions of all Scope methods.
+    Shares state with the parent Scope instance.
+    """
+
+    __slots__: ClassVar[tuple[str, ...]] = ("_scope",)
+    _scope: "Scope"
+
+    def __init__(self, scope: "Scope") -> None:
+        """Create an async view backed by a sync Scope."""
+        self._scope = scope
+
+    @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
+    async def add_sessions(self, sessions: Sequence[str | SessionBase]) -> None:
+        """Add sessions to this scope asynchronously.
+
+        See Scope.add_sessions for details, including the asynchronous backfill
+        that sessions with existing messages trigger.
+        """
+        session_ids = resolve_scope_membership(sessions)
+        await self._scope._honcho._ensure_workspace_async()
+        await self._scope._honcho._async_http_client.post(
+            routes.scope_sessions(self._scope.workspace_id, self._scope.id),
+            body={"session_ids": session_ids},
+        )
+
+    @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
+    async def remove_session(self, session: str | SessionBase) -> None:
+        """Remove a session from this scope asynchronously.
+
+        See Scope.remove_session for details on the asynchronous reconciliation.
+        """
+        await self._scope._honcho._ensure_workspace_async()
+        await self._scope._honcho._async_http_client.delete(
+            routes.scope_session(
+                self._scope.workspace_id, self._scope.id, resolve_scope_session(session)
+            )
+        )
+
+    async def sessions(
+        self,
+        page: int = 1,
+        size: int = 50,
+        *,
+        reverse: bool = False,
+    ) -> AsyncPage[SessionResponse, Session]:
+        """Get the sessions that are members of this scope asynchronously."""
+        await self._scope._honcho._ensure_workspace_async()
+
+        async def fetch(next_page: int) -> dict[str, Any]:
+            query: dict[str, Any] = {"page": next_page, "size": size}
+            if reverse:
+                query["reverse"] = "true"
+            return await self._scope._honcho._async_http_client.post(
+                routes.scope_sessions_list(self._scope.workspace_id, self._scope.id),
+                query=query,
+            )
+
+        def transform(response: SessionResponse) -> Session:
+            return Session(
+                response.id,
+                self._scope._honcho,
+                metadata=response.metadata,
+                configuration=response.configuration,
+                created_at=response.created_at,
+                is_active=response.is_active,
+            )
+
+        async def fetch_next(next_page: int) -> AsyncPage[SessionResponse, Session]:
+            return AsyncPage(
+                await fetch(next_page), SessionResponse, transform, fetch_next
+            )
+
+        return AsyncPage(await fetch(page), SessionResponse, transform, fetch_next)
+
+    async def status(self) -> dict[str, ScopeBackfillJob]:
+        """Get the backfill/reconciliation progress for this scope asynchronously.
+
+        See Scope.status for details.
+        """
+        await self._scope._honcho._ensure_workspace_async()
+        data = await self._scope._honcho._async_http_client.get(
+            routes.scope_status(self._scope.workspace_id, self._scope.id)
+        )
+        return ScopeStatusResponse.model_validate(data).backfill_status

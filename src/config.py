@@ -1,11 +1,11 @@
 import logging
 import math
 import os
+import tomllib
 from pathlib import Path
-from typing import Annotated, Any, ClassVar, Literal, cast
+from typing import Annotated, Any, ClassVar, Literal, cast, get_args
 from urllib.parse import urlparse
 
-import tomllib
 from dotenv import load_dotenv
 from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
 from pydantic.fields import FieldInfo
@@ -394,6 +394,15 @@ class ConfiguredEmbeddingModelSettings(BaseModel):
     dimensions_mode: EmbeddingDimensionsMode = "auto"
     encoding_format_mode: EmbeddingEncodingFormatMode = "auto"
     max_batch_size: Annotated[int, Field(gt=0)] | None = None
+    # Client HTTP timeout in seconds. OpenAI receives seconds; Gemini converts to ms.
+    timeout: float | None = None
+
+    @field_validator("timeout", mode="before")
+    @classmethod
+    def _validate_timeout(cls, v: Any) -> float | None:
+        if v is None:
+            return None
+        return coerce_provider_timeout(v)
 
     @model_validator(mode="before")
     @classmethod
@@ -431,6 +440,15 @@ class EmbeddingModelConfig(BaseModel):
     api_key: str | None = None
     base_url: str | None = None
     max_batch_size: Annotated[int, Field(gt=0)] | None = None
+    # Client HTTP timeout in seconds. OpenAI receives seconds; Gemini converts to ms.
+    timeout: float | None = None
+
+    @field_validator("timeout", mode="before")
+    @classmethod
+    def _validate_timeout(cls, v: Any) -> float | None:
+        if v is None:
+            return None
+        return coerce_provider_timeout(v)
 
     @model_validator(mode="before")
     @classmethod
@@ -556,6 +574,7 @@ def resolve_embedding_model_config(
         api_key=api_key,
         base_url=configured.overrides.base_url,
         max_batch_size=configured.max_batch_size,
+        timeout=configured.timeout,
     )
 
 
@@ -726,6 +745,9 @@ class DBSettings(HonchoSettings):
     # attempt with no retry; callers handle failure (the API surfaces it, the
     # deriver backs off and retries on a later poll).
     CONNECT_TIMEOUT_SECONDS: Annotated[int, Field(default=2, gt=0, le=60)] = 2
+
+    # Seconds a migrator waits for another migrator's advisory lock before failing
+    MIGRATION_LOCK_WAIT_SECONDS: Annotated[int, Field(default=300, gt=0, le=3600)] = 300
 
 
 class AuthSettings(HonchoSettings):
@@ -953,6 +975,10 @@ class DeriverSettings(HonchoSettings):
     # When enabled, bypasses the batch token threshold and processes work immediately
     FLUSH_ENABLED: bool = False
 
+    BACKLOG_METRICS_POLL_INTERVAL_SECONDS: Annotated[int, Field(default=30, ge=1)] = 30
+
+    SCHEDULER: Literal["api", "deriver"] = "deriver"
+
     @model_validator(mode="before")
     @classmethod
     def _merge_model_config_defaults(cls, data: Any) -> Any:
@@ -979,15 +1005,14 @@ class PeerCardSettings(HonchoSettings):
     ENABLED: bool = True
 
 
-# Reasoning levels for dialectic - defined here to avoid circular imports with schemas
+# Reasoning levels for dialectic - defined here to avoid circular imports with schemas.
+# region ai
+# REASONING_LEVELS is derived from the Literal, not hand-listed: the annotation
+# rejects an invalid member but not a MISSING one, so a hand-written copy could
+# silently drop a level and still typecheck.
+# endregion
 ReasoningLevel = Literal["minimal", "low", "medium", "high", "max"]
-REASONING_LEVELS: list[ReasoningLevel] = [
-    "minimal",
-    "low",
-    "medium",
-    "high",
-    "max",
-]
+REASONING_LEVELS: list[ReasoningLevel] = list(get_args(ReasoningLevel))
 
 
 class DialecticLevelSettings(BaseModel):
@@ -1079,6 +1104,12 @@ class DialecticSettings(HonchoSettings):
 
     # Token limit for get_recent_history tool within the agent
     HISTORY_TOKEN_LIMIT: Annotated[int, Field(default=8192, gt=0, le=100_000)] = 8192
+
+    # Extra tool rounds workspace chat gets on top of its level's limit. A
+    # workspace query fans out over peers where a pair query reads one
+    # representation, so it needs room to route and then recall. Not applied at
+    # "minimal", whose single round is the point of the level.
+    WORKSPACE_EXTRA_TOOL_ITERATIONS: Annotated[int, Field(default=3, ge=0, le=20)] = 3
 
     # Session history injection: max tokens of recent messages to include when session_id is specified.
     # Set to 0 to disable automatic session history injection.
@@ -1282,6 +1313,8 @@ class CacheSettings(HonchoSettings):
     # for Redis Cluster). A standalone client cannot follow the MOVED redirects
     # such deployments return for keys hashed to another shard.
     CLUSTER: bool = False
+    CONNECT_TIMEOUT_SECONDS: Annotated[float, Field(default=5.0, gt=0, le=60)] = 5.0
+    CONNECT_RETRIES: Annotated[int, Field(default=3, ge=0, le=10)] = 3
     NAMESPACE: str | None = None
     DEFAULT_TTL_SECONDS: Annotated[int, Field(default=300, ge=1, le=86_400)] = (
         300  # how long to keep items in cache
@@ -1333,6 +1366,8 @@ class DreamSettings(HonchoSettings):
     DOCUMENT_THRESHOLD: Annotated[int, Field(default=50, gt=0, le=1000)] = 50
     IDLE_TIMEOUT_MINUTES: Annotated[int, Field(default=60, gt=0, le=1440)] = 60
     MIN_HOURS_BETWEEN_DREAMS: Annotated[int, Field(default=8, gt=0, le=72)] = 8
+    DUE_POLL_INTERVAL_SECONDS: Annotated[int, Field(default=300, ge=1)] = 300
+    MAX_ENQUEUED_PER_POLL: Annotated[int, Field(default=100, gt=0, le=10_000)] = 100
     ENABLED_TYPES: list[str] = ["omni"]
 
     # Agent iteration limit - increased for extended reasoning workflow
@@ -1407,12 +1442,14 @@ class DreamSettings(HonchoSettings):
 
 
 class VectorStoreSettings(HonchoSettings):
-    """Settings for vector store (pgvector, Turbopuffer, or LanceDB)."""
+    """Settings for vector store (pgvector, Turbopuffer, LanceDB, Qdrant, or ChromaDB)."""
 
     model_config = SettingsConfigDict(env_prefix="VECTOR_STORE_", extra="ignore")  # pyright: ignore
 
     # Vector store type to use
-    TYPE: Literal["pgvector", "turbopuffer", "lancedb"] = "pgvector"
+    TYPE: Literal["pgvector", "turbopuffer", "lancedb", "qdrant", "chromadb"] = (
+        "pgvector"
+    )
 
     MIGRATED: bool = False
 
@@ -1438,15 +1475,63 @@ class VectorStoreSettings(HonchoSettings):
     # LanceDB-specific settings (local embedded mode)
     LANCEDB_PATH: str = "./lancedb_data"
 
+    # Qdrant-specific settings
+    QDRANT_URL: str = "http://localhost:6333"
+    QDRANT_API_KEY: str | None = None
+    QDRANT_PREFER_GRPC: bool = False
+    QDRANT_GRPC_PORT: int = 6334
+    QDRANT_HTTPS: bool | None = None
+    QDRANT_PREFIX: str | None = None
+    QDRANT_TIMEOUT: int | None = None
+
+    # ChromaDB-specific settings
+    # CHROMA_CLIENT_MODE selects the deployment shape:
+    # - "http": self-hosted Chroma server at CHROMA_HOST:CHROMA_PORT
+    # - "cloud": Chroma Cloud (requires CHROMA_API_KEY)
+    # Embedded persistence is unsafe across Honcho's API/worker processes.
+    CHROMA_CLIENT_MODE: Literal["http", "cloud"] = "http"
+    CHROMA_HOST: str = "localhost"
+    CHROMA_PORT: Annotated[int, Field(default=8000, gt=0)] = 8000
+    CHROMA_SSL: bool = False
+    CHROMA_API_KEY: str | None = None
+    # Tenant/database are optional for cloud mode (resolved from the API key
+    # when omitted); ignored in http mode.
+    CHROMA_TENANT: str | None = None
+    CHROMA_DATABASE: str | None = None
+
     RECONCILIATION_INTERVAL_SECONDS: Annotated[int, Field(default=300, gt=0)] = (
         300  # 5 minutes
     )
+
+    @field_validator("CHROMA_CLIENT_MODE", mode="before")
+    @classmethod
+    def _reject_embedded_chroma(cls, value: Any) -> Any:
+        if value == "persistent":
+            raise ValueError(
+                "ChromaDB persistent mode is unsafe across Honcho's multiple "
+                + "processes. Use VECTOR_STORE_CHROMA_CLIENT_MODE=http with a "
+                + "Chroma server, or cloud."
+            )
+        return value
 
     @model_validator(mode="after")
     def _require_api_key_for_turbopuffer(self) -> "VectorStoreSettings":
         if self.TYPE == "turbopuffer" and not self.TURBOPUFFER_API_KEY:
             raise ValueError(
                 "VECTOR_STORE_TURBOPUFFER_API_KEY must be set when TYPE is 'turbopuffer'"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _require_api_key_for_chroma_cloud(self) -> "VectorStoreSettings":
+        if (
+            self.TYPE == "chromadb"
+            and self.CHROMA_CLIENT_MODE == "cloud"
+            and not self.CHROMA_API_KEY
+        ):
+            raise ValueError(
+                "VECTOR_STORE_CHROMA_API_KEY must be set when TYPE is 'chromadb'"
+                + " and CHROMA_CLIENT_MODE is 'cloud'"
             )
         return self
 
@@ -1481,29 +1566,11 @@ class AppSettings(HonchoSettings):
     EMBED_MESSAGES: bool = True
     LANGFUSE_HOST: str | None = None
     LANGFUSE_PUBLIC_KEY: str | None = None
-    # How Langfuse traces are produced:
-    #   "exporter" (default) — Langfuse is a projection over the captured
-    #     CapturedLLMCall stream (LangfuseExporter), the same source of truth as
-    #     the CloudEvents trace stream.
-    #   "inline" — legacy live instrumentation (@observe + propagate_attributes
-    #     spans during execution). Kept one release for side-by-side validation.
-    LANGFUSE_EXPORTER_MODE: Literal["inline", "exporter"] = "exporter"
-
-    @property
-    def langfuse_inline_enabled(self) -> bool:
-        """True when the legacy inline Langfuse instrumentation is active
-        (keys configured + ``LANGFUSE_EXPORTER_MODE == "inline"``)."""
-        return (
-            bool(self.LANGFUSE_PUBLIC_KEY) and self.LANGFUSE_EXPORTER_MODE == "inline"
-        )
 
     @property
     def langfuse_exporter_enabled(self) -> bool:
-        """True when the Langfuse exporter (a projection over the captured call
-        stream) is active (keys configured + ``LANGFUSE_EXPORTER_MODE == "exporter"``)."""
-        return (
-            bool(self.LANGFUSE_PUBLIC_KEY) and self.LANGFUSE_EXPORTER_MODE == "exporter"
-        )
+        """True when Langfuse keys are configured."""
+        return bool(self.LANGFUSE_PUBLIC_KEY)
 
     # Origins allowed by the FastAPI CORSMiddleware
     CORS_ORIGINS: list[str] = [

@@ -464,6 +464,117 @@ class TestChatWithScope:
         assert set(kwargs["session_allowlist"]) == {session_a, session_b}
 
 
+class TestWorkspaceChatWithScope:
+    """Workspace chat has no observer to swap: `scope` is always an allowlist."""
+
+    def _chat(self, client: TestClient, workspace: Workspace, body: dict[str, Any]):
+        return client.post(
+            f"/v3/workspaces/{workspace.name}/chat",
+            json={"query": "what do you know?", **body},
+        )
+
+    def test_unknown_scope_404(
+        self, client: TestClient, sample_data: tuple[Workspace, Peer]
+    ):
+        workspace, _ = sample_data
+        assert (
+            self._chat(client, workspace, {"scope": str(generate_nanoid())}).status_code
+            == 404
+        )
+
+    def test_empty_scope_list_422(
+        self, client: TestClient, sample_data: tuple[Workspace, Peer]
+    ):
+        workspace, _ = sample_data
+        assert self._chat(client, workspace, {"scope": []}).status_code == 422
+
+    def test_scope_plus_session_id_422(
+        self, client: TestClient, sample_data: tuple[Workspace, Peer]
+    ):
+        workspace, _ = sample_data
+        scope_name = str(generate_nanoid())
+        _create_scope(client, workspace.name, scope_name)
+        assert (
+            self._chat(
+                client, workspace, {"scope": scope_name, "session_id": "s1"}
+            ).status_code
+            == 422
+        )
+
+    def test_peer_scoped_jwt_401(
+        self,
+        client: TestClient,
+        sample_data: tuple[Workspace, Peer],
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        workspace, peer = sample_data
+        scope_name = str(generate_nanoid())
+        _create_scope(client, workspace.name, scope_name)
+
+        monkeypatch.setattr(settings.AUTH, "USE_AUTH", True)
+        monkeypatch.setattr(settings.AUTH, "JWT_SECRET", "test-secret")
+        client.headers["Authorization"] = (
+            f"Bearer {create_jwt(JWTParams(w=workspace.name, p=peer.name))}"
+        )
+        assert self._chat(client, workspace, {"scope": scope_name}).status_code == 401
+
+    def test_single_scope_passes_member_allowlist(
+        self,
+        client: TestClient,
+        sample_data: tuple[Workspace, Peer],
+        mock_llm_call_functions: dict[str, Any],
+    ):
+        workspace, _ = sample_data
+        scope_name = str(generate_nanoid())
+        _create_scope(client, workspace.name, scope_name)
+        session_name = _create_session(client, workspace.name)
+        _add_sessions_to_scope(client, workspace.name, scope_name, [session_name])
+
+        resp = self._chat(client, workspace, {"scope": scope_name})
+        assert resp.status_code == 200
+
+        kwargs = mock_llm_call_functions["workspace_chat"].await_args.kwargs
+        assert kwargs["session_allowlist"] == [session_name]
+
+    def test_scope_list_passes_union_allowlist(
+        self,
+        client: TestClient,
+        sample_data: tuple[Workspace, Peer],
+        mock_llm_call_functions: dict[str, Any],
+    ):
+        workspace, _ = sample_data
+        scope_a = str(generate_nanoid())
+        scope_b = str(generate_nanoid())
+        _create_scope(client, workspace.name, scope_a)
+        _create_scope(client, workspace.name, scope_b)
+        session_a = _create_session(client, workspace.name)
+        session_b = _create_session(client, workspace.name)
+        _add_sessions_to_scope(client, workspace.name, scope_a, [session_a])
+        _add_sessions_to_scope(client, workspace.name, scope_b, [session_b])
+
+        resp = self._chat(client, workspace, {"scope": [scope_a, scope_b]})
+        assert resp.status_code == 200
+
+        kwargs = mock_llm_call_functions["workspace_chat"].await_args.kwargs
+        assert set(kwargs["session_allowlist"]) == {session_a, session_b}
+
+    def test_empty_scope_fails_closed(
+        self,
+        client: TestClient,
+        sample_data: tuple[Workspace, Peer],
+        mock_llm_call_functions: dict[str, Any],
+    ):
+        workspace, _ = sample_data
+        scope_name = str(generate_nanoid())
+        _create_scope(client, workspace.name, scope_name)
+
+        resp = self._chat(client, workspace, {"scope": scope_name})
+        assert resp.status_code == 200
+
+        kwargs = mock_llm_call_functions["workspace_chat"].await_args.kwargs
+        assert kwargs["session_allowlist"] == []
+
+
 class TestWorkspaceSearchWithScope:
     def _seed_message(
         self, client: TestClient, workspace_name: str, session_name: str, peer: Peer
@@ -693,6 +804,43 @@ class TestSessionContextWithScope:
             f"Bearer {create_jwt(JWTParams(w=workspace.name))}"
         )
         assert client.get(url, params=params).status_code == 200
+
+    def test_search_query_embeds_without_holding_connection(
+        self,
+        client: TestClient,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
+        mock_openai_embeddings: dict[str, Any],
+    ):
+        """Scope resolution queries the request session before the embedding
+        call; the connection must be released before that external call."""
+        workspace, peer = sample_data
+        scope_name = str(generate_nanoid())
+        _create_scope(client, workspace.name, scope_name)
+        session_name = _create_session(client, workspace.name, peers={peer.name: {}})
+        _add_sessions_to_scope(client, workspace.name, scope_name, [session_name])
+
+        mock_embed = mock_openai_embeddings["embed"]
+        default_embed = mock_embed.side_effect
+        held_during_embed: list[bool] = []
+
+        def recording_embed(query: str) -> list[float]:
+            held_during_embed.append(db_session.in_transaction())
+            return default_embed(query)
+
+        mock_embed.side_effect = recording_embed
+
+        resp = client.get(
+            f"/v3/workspaces/{workspace.name}/sessions/{session_name}/context",
+            params={
+                "peer_target": peer.name,
+                "scope": scope_name,
+                "search_query": "hiking",
+            },
+        )
+
+        assert resp.status_code == 200
+        assert held_during_embed == [False]
 
 
 class TestScopePeerGuardrailClosure:

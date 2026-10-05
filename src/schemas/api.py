@@ -31,6 +31,7 @@ from src.schemas.configuration import (
     SessionPeerConfig,
     WorkspaceConfiguration,
 )
+from src.utils.sanitization import NulStripped, strip_nul
 from src.utils.scopes import (
     SCOPE_PEER_PREFIX,
     is_scope_peer_name,
@@ -46,19 +47,6 @@ RESOURCE_NAME_PATTERN = r"^[a-zA-Z0-9_-]+$"
 
 _METADATA_MAX_KEYS = 100
 _METADATA_MAX_DEPTH = 5
-
-
-def _sanitize_value(v: Any) -> Any:
-    """Recursively strip NUL bytes from strings in nested data structures."""
-    if isinstance(v, str):
-        return v.replace("\x00", "")
-    if isinstance(v, dict):
-        d = cast(dict[str, Any], v)
-        return {_sanitize_value(k): _sanitize_value(val) for k, val in d.items()}
-    if isinstance(v, list):
-        lst = cast(list[Any], v)
-        return [_sanitize_value(item) for item in lst]
-    return v
 
 
 def _check_metadata_limits(
@@ -88,7 +76,7 @@ def _validate_metadata(v: Any) -> Any:
         return v
     data = cast(dict[str, Any], v)
     _check_metadata_limits(data)
-    return _sanitize_value(data)
+    return strip_nul(data)
 
 
 _SanitizedMetadata = Annotated[dict[str, Any], BeforeValidator(_validate_metadata)]
@@ -322,7 +310,7 @@ class PeerCardSet(BaseModel):
     def sanitize_peer_card(cls, v: Any) -> Any:
         if isinstance(v, list):
             return [
-                item.replace("\x00", "") if isinstance(item, str) else item
+                strip_nul(item) if isinstance(item, str) else item
                 for item in cast(list[Any], v)
             ]
         return v
@@ -349,7 +337,7 @@ class MessageCreate(MessageBase):
     @field_validator("content", mode="after")
     @classmethod
     def sanitize_content(cls, v: str) -> str:
-        return v.replace("\x00", "")
+        return strip_nul(v)
 
     @property
     def encoded_message(self) -> list[int]:
@@ -636,7 +624,31 @@ class Conclusion(BaseModel):
             "during dreaming)."
         ),
     )
+    source_ids: list[str] = Field(
+        default_factory=list,
+        description=(
+            "IDs of the conclusions this one was derived from: premises for "
+            "'deductive', supporting sources for 'inductive', conflicting "
+            "conclusions for 'contradiction'. Empty for 'explicit' conclusions, "
+            "which derive from messages rather than from other conclusions."
+        ),
+    )
+    times_derived: int = Field(
+        default=1,
+        description="Number of times this conclusion has been independently derived.",
+    )
     created_at: datetime.datetime
+
+    @field_validator("source_ids", mode="before")
+    @classmethod
+    def empty_when_unlinked(cls, v: list[str] | None) -> list[str]:
+        """A conclusion with no premises has an empty list, never null.
+
+        ``Document.source_ids`` is None when a row has no linkage, which is the
+        internal signal for "unlinked". Callers get one shape for "derived from
+        nothing" instead of having to treat null and [] as the same thing.
+        """
+        return v if v is not None else []
 
     model_config = ConfigDict(  # pyright: ignore
         from_attributes=True,
@@ -682,7 +694,7 @@ class ConclusionCreate(BaseModel):
     @field_validator("content", mode="after")
     @classmethod
     def sanitize_content(cls, v: str) -> str:
-        return v.replace("\x00", "")
+        return strip_nul(v)
 
     @model_validator(mode="after")
     def validate_token_count(self) -> Self:
@@ -717,7 +729,7 @@ class ConclusionBatchCreate(BaseModel):
 
 
 class MessageSearchOptions(BaseModel):
-    query: Annotated[str, Field(..., description="Search query")]
+    query: Annotated[str, Field(..., description="Search query"), NulStripped]
     filters: dict[str, Any] | None = Field(
         default=None, description="Filters to scope the search"
     )
@@ -727,11 +739,6 @@ class MessageSearchOptions(BaseModel):
         le=100,
         description="Number of results to return",
     )
-
-    @field_validator("query", mode="after")
-    @classmethod
-    def sanitize_query(cls, v: str) -> str:
-        return v.replace("\x00", "")
 
 
 class WorkspaceMessageSearchOptions(MessageSearchOptions):
@@ -751,6 +758,15 @@ class WorkspaceMessageSearchOptions(MessageSearchOptions):
 # ---------------------------------------------------------------------------
 # Dialectic schemas
 # ---------------------------------------------------------------------------
+
+
+_INCLUDE_EVIDENCE_DESCRIPTION = (
+    "When true, the response includes an `evidence` object listing the"
+    " conclusions and messages the agent read while answering, plus the tool"
+    " calls it made. Evidence is collated from what the agent accessed; the"
+    " model is never asked to cite anything, so evidence may over-report"
+    " (accessed is not the same as used)."
+)
 
 
 class DialecticOptions(BaseModel):
@@ -785,7 +801,9 @@ class DialecticOptions(BaseModel):
         description="Optional peer to get the representation for, from the perspective of this peer",
     )
     query: Annotated[
-        str, Field(min_length=1, max_length=10000, description="Dialectic API Prompt")
+        str,
+        Field(min_length=1, max_length=10000, description="Dialectic API Prompt"),
+        NulStripped,
     ]
     stream: bool = False
     reasoning_level: ReasoningLevel = Field(
@@ -802,15 +820,147 @@ class DialecticOptions(BaseModel):
             " maxLength, ...) are hints to the model, not enforced server-side."
         ),
     )
+    include_evidence: bool = Field(
+        default=False, description=_INCLUDE_EVIDENCE_DESCRIPTION
+    )
 
-    @field_validator("query", mode="after")
-    @classmethod
-    def sanitize_query(cls, v: str) -> str:
-        return v.replace("\x00", "")
+
+class WorkspaceChatOptions(BaseModel):
+    """Options for workspace-level chat (no anchor peer; see DialecticOptions)."""
+
+    session_id: str | None = Field(
+        None, description="Optional session to scope message tools to"
+    )
+    query: Annotated[
+        str,
+        Field(min_length=1, max_length=10000, description="Workspace chat prompt"),
+        NulStripped,
+    ]
+    stream: bool = False
+    reasoning_level: ReasoningLevel = Field(
+        default="low",
+        description="Level of reasoning to apply: minimal, low, medium, high, or max",
+    )
+    response_format: dict[str, Any] | None = Field(
+        None,
+        description=(
+            "Optional JSON Schema (root type 'object') the response must conform"
+            " to. When provided, `content` is a JSON string matching this schema."
+        ),
+    )
+    scope: _ScopeOption | None = Field(
+        None,
+        description=(
+            "Optional (unprefixed) scope name(s) restricting recall to the "
+            "union of the scopes' member sessions (explicit allowlist, "
+            "fail-closed: an empty union recalls nothing). Mutually exclusive "
+            "with `session_id`. Requires a workspace- or admin-level key."
+        ),
+    )
+    include_evidence: bool = Field(
+        default=False, description=_INCLUDE_EVIDENCE_DESCRIPTION
+    )
+
+
+class EvidenceObservation(BaseModel):
+    """A conclusion the dialectic agent read while answering."""
+
+    id: str = Field(description="Conclusion (document) ID")
+    level: DocumentLevel = Field(
+        description="Conclusion level: explicit, deductive, inductive, or contradiction"
+    )
+    content: str = Field(
+        description="The conclusion text (the derived conclusion, for non-explicit levels)"
+    )
+    created_at: datetime.datetime = Field(
+        description="When the conclusion was derived, from its source messages when known"
+    )
+    session_id: str | None = Field(
+        default=None, description="Session the conclusion is scoped to, if any"
+    )
+    observer_id: str = Field(description="The peer who made the conclusion")
+    observed_id: str = Field(description="The peer the conclusion is about")
+    source_ids: list[str] = Field(
+        default_factory=list,
+        description=(
+            "IDs of the conclusions this one was derived from. Empty for explicit"
+            " conclusions, which derive from messages rather than from other"
+            " conclusions."
+        ),
+    )
+
+
+class EvidenceMessageRef(BaseModel):
+    """A message the dialectic agent read while answering.
+
+    Identity and provenance only -- no content. Message content is
+    caller-supplied and unbounded, so carrying it would let one answer drag
+    megabytes behind it, and would invite callers to read messages out of
+    evidence in bulk rather than asking for the ones they want. Fetch the
+    message by `id` when the text is needed.
+    """
+
+    id: str = Field(description="Message ID")
+    session_id: str = Field(description="Session the message belongs to")
+    peer_id: str = Field(description="Peer who sent the message")
+    created_at: datetime.datetime = Field(description="When the message was sent")
+
+
+class EvidenceToolCall(BaseModel):
+    """A tool the dialectic agent invoked while answering."""
+
+    tool_name: str = Field(description="Name of the tool")
+    tool_input: dict[str, Any] = Field(
+        default_factory=dict, description="Arguments the agent passed to the tool"
+    )
+
+
+class Evidence(BaseModel):
+    """What the dialectic agent read and did while answering.
+
+    Collated from the agent's own reads rather than reported by the model, so
+    it is deterministic but over-reports: it lists what the agent accessed,
+    which is not necessarily what the answer relied on.
+
+    Meant for auditing and analytics -- inspecting why an answer looks the way
+    it does, or measuring what recall actually reaches the agent. It is not a
+    read API: conclusions carry their text because that text is the thing being
+    audited and the deriver keeps it short, while messages carry identity alone
+    (see `EvidenceMessageRef`).
+    """
+
+    conclusions: list[EvidenceObservation] = Field(
+        default_factory=list,
+        description="Conclusions the agent read, whether prefetched or found via its tools",
+    )
+    messages: list[EvidenceMessageRef] = Field(
+        default_factory=list,
+        description=(
+            "Messages the agent read via its search and grep tools, by ID and"
+            " provenance only. Fetch a message to read its content."
+        ),
+    )
+    tool_calls: list[EvidenceToolCall] = Field(
+        default_factory=list,
+        description=(
+            "Tools the agent invoked, in order, with their arguments. Results are"
+            " omitted (they are reflected in `conclusions` and `messages`), and so"
+            " are calls that failed, so this is a record of successful invocations"
+            " rather than a complete reasoning trace."
+        ),
+    )
+    reasoning_trace_id: str | None = Field(
+        default=None,
+        description="ID of the stored reasoning trace for this call, when trace storage is enabled",
+    )
 
 
 class DialecticResponse(BaseModel):
     content: str | None
+    evidence: Evidence | None = Field(
+        default=None,
+        description="What the answer was built from. Present only when `include_evidence` is true.",
+    )
 
 
 class DialecticStreamDelta(BaseModel):
@@ -828,6 +978,13 @@ class DialecticStreamChunk(BaseModel):
 
     delta: DialecticStreamDelta
     done: bool = False
+    evidence: Evidence | None = Field(
+        default=None,
+        description=(
+            "What the answer was built from. Set only on the final chunk"
+            " (`done` is true) and only when `include_evidence` is true."
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -848,6 +1005,18 @@ class SessionQueueStatus(BaseModel):
         description="Work units currently being processed"
     )
     pending_work_units: int = Field(description="Work units waiting to be processed")
+
+
+class ErrorResponse(BaseModel):
+    """The body returned for every raised HonchoException.
+
+    `HTTPValidationError` is FastAPI's own 422 shape, whose `detail` is an array
+    of per-field errors. Honcho's handler returns a single message string
+    instead (see `honcho_exception_handler` in `src/main.py`), so error codes
+    raised from application code document this schema rather than that one.
+    """
+
+    detail: str = Field(description="What went wrong")
 
 
 class QueueStatus(BaseModel):

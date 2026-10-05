@@ -1,6 +1,6 @@
 import { ZodType, z } from 'zod'
 import { API_VERSION } from './api-version'
-import { ConclusionScope } from './conclusions'
+import { ConclusionsView } from './conclusions'
 import type { HonchoHTTPClient } from './http/client'
 import {
   createDialecticStream,
@@ -8,8 +8,12 @@ import {
 } from './http/streaming'
 import { Message, type MessageInput } from './message'
 import { Page } from './pagination'
+// Type-only: scope.ts imports Session, which imports Peer. Importing the type
+// keeps that cycle out of the emitted JS.
+import type { Scope } from './scope'
 import { Session } from './session'
 import type {
+  ChatResponse,
   MessageResponse,
   PageResponse,
   PeerCardResponse,
@@ -40,6 +44,7 @@ import {
   peerConfigToApi,
   RepresentationOptionsSchema,
   SearchQuerySchema,
+  scopeRecallFields,
   sessionConfigFromApi,
 } from './validation'
 
@@ -251,8 +256,11 @@ export class Peer {
     stream?: boolean
     target?: string
     session_id?: string
+    scope?: string | string[]
+    filters?: Record<string, unknown>
     reasoning_level?: string
     response_format?: Record<string, unknown>
+    include_evidence?: boolean
   }): Promise<PeerChatResponse> {
     await this._ensureWorkspace()
     return this._http.post<PeerChatResponse>(
@@ -265,8 +273,11 @@ export class Peer {
     query: string
     target?: string
     session_id?: string
+    scope?: string | string[]
+    filters?: Record<string, unknown>
     reasoning_level?: string
     response_format?: Record<string, unknown>
+    include_evidence?: boolean
   }): Promise<Response> {
     await this._ensureWorkspace()
     return this._http.stream(
@@ -295,6 +306,8 @@ export class Peer {
 
   private async _getRepresentation(params: {
     session_id?: string
+    scope?: string | string[]
+    filters?: Record<string, unknown>
     target?: string
     search_query?: string
     search_top_k?: number
@@ -365,6 +378,18 @@ export class Peer {
    * @param options.session - Optional session to scope the query to. If provided, only
    *                          information from that session is considered. Can be a session
    *                          ID string or a Session object.
+   * @param options.scope - Optional scope(s) to confine the query to. A single scope answers
+   *                        from that scope's own view of the target, including the higher-order
+   *                        conclusions reasoned within it. A list of scopes restricts recall to
+   *                        the union of their member sessions, which — like `sessions` — yields
+   *                        only directly-stated conclusions. Mutually exclusive with `session`
+   *                        and `sessions`, and requires a workspace-level key.
+   * @param options.sessions - Optional allowlist of sessions to confine the query to, for
+   *                           one-off questions that span a handful of sessions. Recall is
+   *                           limited to conclusions stated directly in those sessions:
+   *                           conclusions produced by reasoning across sessions are excluded,
+   *                           because their provenance cannot be proven to sit inside the
+   *                           allowlist. Reach for a named `scope` when you need that depth.
    * @param options.reasoningLevel - Optional reasoning level for the query: "minimal", "low", "medium",
    *                                 "high", or "max". Defaults to "low" if not provided.
    * @returns Promise resolving to the response string, or null if no relevant information
@@ -379,6 +404,16 @@ export class Peer {
    *   target: otherPeer,
    *   reasoningLevel: 'high'
    * })
+   *
+   * // Answer only from a named scope
+   * const response = await peer.chat('What is stressing them out?', {
+   *   scope: 'therapy',
+   * })
+   *
+   * // Answer only from an ad-hoc set of sessions
+   * const response = await peer.chat('What did we decide?', {
+   *   sessions: [session1, session2],
+   * })
    * ```
    */
   async chat<T>(
@@ -386,17 +421,47 @@ export class Peer {
     options: {
       target?: string | Peer
       session?: string | Session
+      scope?: string | Scope | (string | Scope)[]
+      sessions?: (string | Session)[]
       reasoningLevel?: string
       responseFormat: ZodType<T>
+      includeEvidence: true
+    }
+  ): Promise<ChatResponse<T>>
+  async chat<T>(
+    query: string,
+    options: {
+      target?: string | Peer
+      session?: string | Session
+      scope?: string | Scope | (string | Scope)[]
+      sessions?: (string | Session)[]
+      reasoningLevel?: string
+      responseFormat: ZodType<T>
+      includeEvidence?: false
     }
   ): Promise<T | null>
+  async chat(
+    query: string,
+    options: {
+      target?: string | Peer
+      session?: string | Session
+      scope?: string | Scope | (string | Scope)[]
+      sessions?: (string | Session)[]
+      reasoningLevel?: string
+      responseFormat?: Record<string, unknown>
+      includeEvidence: true
+    }
+  ): Promise<ChatResponse<string>>
   async chat(
     query: string,
     options?: {
       target?: string | Peer
       session?: string | Session
+      scope?: string | Scope | (string | Scope)[]
+      sessions?: (string | Session)[]
       reasoningLevel?: string
       responseFormat?: Record<string, unknown>
+      includeEvidence?: false
     }
   ): Promise<string | null>
   async chat<T>(
@@ -404,10 +469,13 @@ export class Peer {
     options?: {
       target?: string | Peer
       session?: string | Session
+      scope?: string | Scope | (string | Scope)[]
+      sessions?: (string | Session)[]
       reasoningLevel?: string
       responseFormat?: ZodType<T> | Record<string, unknown>
+      includeEvidence?: boolean
     }
-  ): Promise<T | string | null> {
+  ): Promise<ChatResponse<T | string> | T | string | null> {
     const targetId = options?.target
       ? typeof options.target === 'string'
         ? options.target
@@ -423,8 +491,11 @@ export class Peer {
       query,
       target: targetId,
       session: resolvedSessionId,
+      scope: options?.scope,
+      sessions: options?.sessions,
       reasoningLevel: options?.reasoningLevel,
       responseFormat: options?.responseFormat,
+      includeEvidence: options?.includeEvidence,
     })
 
     const zodSchema =
@@ -437,16 +508,23 @@ export class Peer {
       stream: false,
       target: chatParams.target,
       session_id: chatParams.session,
+      ...scopeRecallFields(chatParams),
       reasoning_level: chatParams.reasoningLevel,
       response_format: Peer.toResponseFormatSchema(options?.responseFormat),
+      include_evidence: chatParams.includeEvidence ? true : undefined,
     })
-    if (!response.content) {
-      return null
+
+    // An empty answer stays null either way, so evidence is still available
+    // for a run that found nothing to say.
+    const content: T | string | null = response.content
+      ? zodSchema
+        ? (zodSchema.parse(JSON.parse(response.content)) as T)
+        : response.content
+      : null
+    if (!chatParams.includeEvidence) {
+      return content
     }
-    if (zodSchema) {
-      return zodSchema.parse(JSON.parse(response.content))
-    }
-    return response.content
+    return { content, evidence: response.evidence ?? null }
   }
 
   /**
@@ -465,8 +543,15 @@ export class Peer {
    * @param options.session - Optional session to scope the query to. If provided, only
    *                          information from that session is considered. Can be a session
    *                          ID string or a Session object.
+   * @param options.scope - Optional scope(s) to confine the query to. See {@link Peer.chat}.
+   * @param options.sessions - Optional allowlist of sessions to confine the query to.
+   *                           See {@link Peer.chat} for the depth caveat.
    * @param options.reasoningLevel - Optional reasoning level for the query: "minimal", "low", "medium",
    *                                 "high", or "max". Defaults to "low" if not provided.
+   * @param options.includeEvidence - When true, the returned stream's `evidence` is
+   *                                 populated once it has been fully consumed. Evidence
+   *                                 cannot be known before the answer is complete, so the
+   *                                 server sends it on the stream's terminal chunk.
    * @returns Promise resolving to a DialecticStreamResponse that can be iterated over
    *
    * @example
@@ -489,8 +574,11 @@ export class Peer {
     options?: {
       target?: string | Peer
       session?: string | Session
+      scope?: string | Scope | (string | Scope)[]
+      sessions?: (string | Session)[]
       reasoningLevel?: string
       responseFormat?: ZodType | Record<string, unknown>
+      includeEvidence?: boolean
     }
   ): Promise<DialecticStreamResponse> {
     const targetId = options?.target
@@ -508,16 +596,21 @@ export class Peer {
       query,
       target: targetId,
       session: resolvedSessionId,
+      scope: options?.scope,
+      sessions: options?.sessions,
       reasoningLevel: options?.reasoningLevel,
       responseFormat: options?.responseFormat,
+      includeEvidence: options?.includeEvidence,
     })
 
     const response = await this._chatStream({
       query: chatParams.query,
       target: chatParams.target,
       session_id: chatParams.session,
+      ...scopeRecallFields(chatParams),
       reasoning_level: chatParams.reasoningLevel,
       response_format: Peer.toResponseFormatSchema(options?.responseFormat),
+      include_evidence: chatParams.includeEvidence ? true : undefined,
     })
 
     return createDialecticStream(response)
@@ -846,6 +939,8 @@ export class Peer {
    */
   async representation(options?: {
     session?: string | Session
+    scope?: string | Scope | (string | Scope)[]
+    sessions?: (string | Session)[]
     target?: string | Peer
     searchQuery?: string | Message
     searchTopK?: number
@@ -856,6 +951,8 @@ export class Peer {
     const searchQuery = normalizeSearchQuery(options?.searchQuery)
     const getRepresentationParams = PeerGetRepresentationParamsSchema.parse({
       session: options?.session,
+      scope: options?.scope,
+      sessions: options?.sessions,
       target: options?.target,
       options: {
         searchQuery,
@@ -878,6 +975,7 @@ export class Peer {
 
     const response = await this._getRepresentation({
       session_id: sessionId,
+      ...scopeRecallFields(getRepresentationParams),
       target: targetId,
       search_query: searchQuery,
       search_top_k: getRepresentationParams.options?.searchTopK,
@@ -964,7 +1062,7 @@ export class Peer {
    * This property provides a convenient way to access conclusions that this peer
    * has made about themselves. Use this for self-conclusion scenarios.
    *
-   * @returns A ConclusionScope scoped to this peer's self-conclusions
+   * @returns A ConclusionsView scoped to this peer's self-conclusions
    *
    * @example
    * ```typescript
@@ -978,8 +1076,8 @@ export class Peer {
    * await peer.conclusions.delete('obs-123')
    * ```
    */
-  get conclusions(): ConclusionScope {
-    return new ConclusionScope(
+  get conclusions(): ConclusionsView {
+    return new ConclusionsView(
       this._http,
       this.workspaceId,
       this.id,
@@ -995,7 +1093,7 @@ export class Peer {
    * observer and the target is the observed peer.
    *
    * @param target - The target peer (either a Peer object or peer ID string)
-   * @returns A ConclusionScope scoped to this peer's conclusions of the target
+   * @returns A ConclusionsView scoped to this peer's conclusions of the target
    *
    * @example
    * ```typescript
@@ -1012,9 +1110,9 @@ export class Peer {
    * const rep = await bobConclusions.representation()
    * ```
    */
-  conclusionsOf(target: string | Peer): ConclusionScope {
+  conclusionsOf(target: string | Peer): ConclusionsView {
     const targetId = typeof target === 'string' ? target : target.id
-    return new ConclusionScope(
+    return new ConclusionsView(
       this._http,
       this.workspaceId,
       this.id,

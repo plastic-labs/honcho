@@ -19,7 +19,7 @@ the exact context a model saw, content-addressed to keep payload O(N):
 
 from __future__ import annotations
 
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Literal
 
 from pydantic import Field
 
@@ -37,7 +37,7 @@ class LLMCallTracedEvent(BaseEvent):
     """
 
     _event_type: ClassVar[str] = "llm.call.traced"
-    _schema_version: ClassVar[int] = 1
+    _schema_version: ClassVar[int] = 2
     _category: ClassVar[str] = "trace"
     _volume_class: ClassVar[str] = "ground_truth"
 
@@ -50,12 +50,25 @@ class LLMCallTracedEvent(BaseEvent):
     attempt: int = 1
     was_fallback: bool = False
     parent_event_id: str | None = None
+    run_id: str | None = None
 
     # --- Path identity ---
     call_purpose: str | None = None
     parent_category: str | None = None
     # Used for grouping traces
     session_id: str | None = None
+    workspace_name: str | None = None
+    # Every producer populates `observers`, including single-observer agents —
+    # there is no scalar `observer`, because a batched derivation has no single
+    # one and a joined string would name no peer.
+    observers: list[str] = Field(default_factory=list)
+    observed: str | None = None
+    peer_name: str | None = None
+    agent_type: str | None = None
+    track_name: str | None = None
+    # IDs of the work that triggered this call, not all retrieved context.
+    source_message_ids: list[str] = Field(default_factory=list)
+    queue_item_ids: list[int] = Field(default_factory=list)
     transport: ModelTransport
     provider_label: str | None = None
     model: str
@@ -63,6 +76,7 @@ class LLMCallTracedEvent(BaseEvent):
     # --- Context window (content-addressed) ---
     input_message_refs: list[str] = Field(default_factory=list)
     system_prompt_ref: str | None = None
+    system_prompt_refs: list[str] = Field(default_factory=list)
     tool_schema_refs: list[str] = Field(default_factory=list)
     tool_choice: Any = None
 
@@ -70,10 +84,19 @@ class LLMCallTracedEvent(BaseEvent):
     output_content_ref: str | None = None
     output_tool_calls: list[dict[str, Any]] = Field(default_factory=list)
     output_thinking_ref: str | None = None
+    output_reasoning_ref: str | None = None
     output_signatures: list[str] = Field(default_factory=list)
     # Reserved: Honcho captures the normalized request/response, not wire bytes.
     raw_response_ref: str | None = None
     finish_reason: str | None = None
+    # Optional for v1 archives and callers without execution diagnostics.
+    was_stream: bool | None = None
+    duration_ms: float | None = None
+    outcome: Literal["success", "error", "cancelled"] | None = None
+    error_class: str | None = None
+    retry_attempts: int | None = None
+    is_final_attempt: bool | None = None
+    effective_max_output_tokens: int | None = None
 
     # --- Accounting copy (stream stands alone; NOT joined to llm.call.completed) ---
     provider_input_tokens: int = 0
@@ -92,7 +115,7 @@ class EmbeddingCallTracedEvent(BaseEvent):
     """One trace-stream record per embedding-provider call."""
 
     _event_type: ClassVar[str] = "embedding.call.traced"
-    _schema_version: ClassVar[int] = 1
+    _schema_version: ClassVar[int] = 2
     _category: ClassVar[str] = "trace"
     _volume_class: ClassVar[str] = "ground_truth"
 
@@ -104,12 +127,19 @@ class EmbeddingCallTracedEvent(BaseEvent):
     step_seq: int = 0
     attempt: int = 1
     session_id: str | None = None
+    run_id: str | None = None
+    workspace_name: str | None = None
 
     # --- Path identity ---
     call_purpose: str | None = None
     parent_category: str | None = None
     provider: str
     model: str
+    duration_ms: float | None = None
+    outcome: Literal["success", "error", "cancelled"] | None = None
+    error_class: str | None = None
+    retry_attempts: int | None = None
+    is_final_attempt: bool | None = None
 
     # --- Accounting copy ---
     # v1: input tokens are a tiktoken ESTIMATE (no authoritative provider count is

@@ -194,7 +194,7 @@ def test_equality_and_comparison_paths_coerce_alike(filters: dict[str, Any]):
         (Message, {"created_at": {"contains": "x"}}),  # timestamptz ~~* text
         (Document, {"metadata": {"gte": 5}}),  # jsonb >= integer
         (Document, {"metadata": {"contains": "x"}}),  # jsonb ~~* text
-        (Document, {"source_ids": "abc"}),  # jsonb = character varying
+        (Document, {"source_ids": 5}),  # linkage ids must be strings
         (Document, {"session_id": 5}),  # text = integer
         (Document, {"session_id": True}),  # text = boolean
         (Message, {"created_at": 5}),  # timestamptz = integer
@@ -228,6 +228,20 @@ def test_ne_is_null_safe():
     assert "IS DISTINCT FROM" in where
 
 
+def test_nested_metadata_ne_string_is_null_safe():
+    """`ne` on a JSONB metadata key went through the operator map as plain <>,
+    unlike the scalar path, so a row missing that key was silently dropped."""
+    where = _where(Document, {"metadata": {"priority": {"ne": "high"}}})
+    assert "IS DISTINCT FROM" in where
+    assert "!=" not in where
+
+
+def test_nested_metadata_ne_numeric_is_null_safe():
+    where = _where(Document, {"metadata": {"score": {"ne": 5}}})
+    assert "IS DISTINCT FROM" in where
+    assert "!=" not in where
+
+
 def test_not_is_null_safe_over_a_compound_condition():
     """Negation has to survive nesting, not just single comparisons."""
     where = _where(
@@ -257,7 +271,6 @@ def test_ne_null_still_renders_is_not_null():
         (Session, {"is_active": None}),  # boolean
         (Message, {"created_at": None}),  # datetime
         (Document, {"metadata": None}),  # JSONB
-        (Document, {"source_ids": None}),  # JSONB via the raw-key fallback
     ],
 )
 def test_bare_null_is_a_null_check(model: Any, filters: dict[str, Any]):
@@ -277,12 +290,23 @@ def test_bare_null_agrees_with_negation():
     assert "IS NOT true" in negated
 
 
-def test_dict_on_raw_key_jsonb_column_is_equality():
-    """Document falls back to raw column names, so a JSONB column outside
-    JSONB_COLUMNS reaches _build_field_condition's dict branch. It compares as
-    equality rather than containment — unlike `metadata`."""
-    where = _where(Document, {"source_ids": {"kind": "note"}})
-    assert "source_ids =" in where
+def test_source_ids_unknown_operator_raises():
+    """source_ids is linkage via document_sources, not a JSONB column, so a
+    nested dict is an operator set — not equality against a document."""
+    with pytest.raises(FilterError):
+        apply_filter(select(Document), Document, {"source_ids": {"kind": "note"}})
+
+
+def test_source_ids_scalar_compiles_to_exists():
+    where = _where(Document, {"source_ids": "abc"})
+    assert "document_sources" in where
+    assert "source_id" in where
+
+
+def test_source_ids_null_is_rejected():
+    """No column to be null: absence of links is 'no matching EXISTS', not IS NULL."""
+    with pytest.raises(FilterError):
+        apply_filter(select(Document), Document, {"source_ids": None})
 
 
 @pytest.mark.parametrize(

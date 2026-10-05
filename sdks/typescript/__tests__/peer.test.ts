@@ -590,6 +590,37 @@ describe('Peer', () => {
       expect(response === null || typeof response === 'string').toBe(true)
     })
 
+    test('chat with includeEvidence returns answer and evidence', async () => {
+      const peer = await client.peer('chat-evidence-peer')
+      const session = await client.session('chat-evidence-session', {
+        metadata: {},
+      })
+
+      await session.addPeers([peer.id])
+      await session.addMessages([peer.message('I enjoy hiking')])
+
+      const result = await peer.chat('What does this user enjoy?', {
+        includeEvidence: true,
+      })
+
+      // The answer is wrapped rather than returned bare, and evidence is
+      // present even when the run read nothing -- empty is not absent.
+      expect(result).toHaveProperty('content')
+      expect(result).toHaveProperty('evidence')
+      expect(result.evidence).not.toBeNull()
+      expect(Array.isArray(result.evidence?.conclusions)).toBe(true)
+      expect(Array.isArray(result.evidence?.messages)).toBe(true)
+      expect(Array.isArray(result.evidence?.tool_calls)).toBe(true)
+    })
+
+    test('chat without includeEvidence still returns a bare answer', async () => {
+      const peer = await client.peer('chat-no-evidence-peer')
+
+      const response = await peer.chat('What does this user enjoy?')
+
+      expect(response === null || typeof response === 'string').toBe(true)
+    })
+
     test('chat with session scope', async () => {
       const peer = await client.peer('chat-session-peer')
       const session = await client.session('chat-scoped-session', { metadata: {} })
@@ -671,7 +702,7 @@ describe('Peer', () => {
   // ===========================================================================
 
   describe('Conclusion scope access', () => {
-    test('conclusions property returns ConclusionScope for self', async () => {
+    test('conclusions property returns ConclusionsView for self', async () => {
       const peer = await client.peer('self-conclusions-peer')
 
       const scope = peer.conclusions
@@ -681,7 +712,7 @@ describe('Peer', () => {
       expect(scope.workspaceId).toBe(client.workspaceId)
     })
 
-    test('conclusionsOf returns ConclusionScope for target', async () => {
+    test('conclusionsOf returns ConclusionsView for target', async () => {
       const observer = await client.peer('obs-conclusions-peer')
       const target = await client.peer('target-conclusions-peer')
 

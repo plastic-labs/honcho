@@ -29,12 +29,14 @@ from sqlalchemy.types import BigInteger, Boolean
 from src import models, schemas
 from src.cache.client import (
     cache,
-    get_cache_namespace,
+    cache_key_namespace,
+    cache_prefix_namespace,
     safe_cache_delete,
     safe_cache_set,
 )
 from src.config import settings
 from src.exceptions import (
+    AuthenticationException,
     ConflictException,
     ObserverException,
     ResourceNotFoundException,
@@ -67,13 +69,13 @@ class SessionDeletionResult:
 
 
 SESSION_CACHE_KEY_TEMPLATE = "v2:workspace:{workspace_name}:session:{session_name}"
-SESSION_LOCK_PREFIX = f"{get_cache_namespace()}:lock:v2"
+SESSION_LOCK_PREFIX = f"{cache_prefix_namespace()}:lock:v2"
 
 
 def session_cache_key(workspace_name: str, session_name: str) -> str:
     """Generate cache key for session."""
     return (
-        get_cache_namespace()
+        cache_key_namespace()
         + ":"
         + SESSION_CACHE_KEY_TEMPLATE.format(
             workspace_name=workspace_name,
@@ -85,7 +87,7 @@ def session_cache_key(workspace_name: str, session_name: str) -> str:
 @cache(
     key=SESSION_CACHE_KEY_TEMPLATE,
     ttl=f"{settings.CACHE.DEFAULT_TTL_SECONDS}s",
-    prefix=get_cache_namespace(),
+    prefix=cache_prefix_namespace(),
     condition=NOT_NONE,
 )
 @cache.locked(
@@ -192,6 +194,7 @@ async def get_or_create_session(
     session: schemas.SessionCreate,
     workspace_name: str,
     *,
+    acting_peer: str | None = None,
     _retry: bool = False,
 ) -> GetOrCreateResult[models.Session]:
     """
@@ -208,6 +211,9 @@ async def get_or_create_session(
         session: Session creation payload, including optional metadata,
             configuration, and session-peer configuration
         workspace_name: Name of the workspace
+        acting_peer: Peer a peer-scoped caller acts as. An existing session is
+            then only returned to an active member, and its metadata and
+            configuration are left untouched.
         _retry: Whether to retry after a concurrent create conflict
 
     Returns:
@@ -216,6 +222,8 @@ async def get_or_create_session(
     Raises:
         ValueError: If session.name is empty
         ResourceNotFoundException: If the named session exists but is inactive
+        AuthenticationException: If ``acting_peer`` is not a member of the
+            existing session, or tries to change its metadata or configuration
         ObserverException: If adding peers would exceed the observer limit
         ConflictException: If concurrent creation prevents fetching or creating
             the session
@@ -282,8 +290,26 @@ async def get_or_create_session(
                 raise ConflictException(
                     f"Unable to create or get session: {session.name}"
                 ) from None
-            return await get_or_create_session(db, session, workspace_name, _retry=True)
+            return await get_or_create_session(
+                db, session, workspace_name, acting_peer=acting_peer, _retry=True
+            )
     else:
+        # Checked here rather than in the handler so a session created between
+        # the handler's check and this read cannot be joined or modified.
+        if acting_peer is not None:
+            if not await is_peer_in_session(
+                db, workspace_name, session.name, acting_peer
+            ):
+                raise AuthenticationException("JWT not permissioned for this resource")
+            if session.metadata is not None or session.configuration is not None:
+                raise AuthenticationException(
+                    "Peer-scoped keys cannot modify an existing session"
+                )
+            # The caller is already a member, so the only effect of naming
+            # itself would be the upsert's rejoin (it clears ``left_at``), which
+            # would undo a removal committed since the check above. Skip it.
+            session.peer_names = None
+
         # Update existing session with metadata and feature flags if provided
         if (
             session.metadata is not None
@@ -604,29 +630,30 @@ async def delete_session(
         )
 
         # Delete message vectors from vector store before deleting DB records
-        # Fetch all MessageEmbedding records to build vector IDs with {message_id}_{chunk_index}
+        # Vector IDs are {message_id}_{chunk_index}, where chunk_index is the 0-based
+        # position of the chunk within its message. Only the message id and the chunk
+        # count are needed to rebuild the IDs we delete from the external store
         embedding_result = await db.execute(
-            select(models.MessageEmbedding).where(
+            select(
+                models.MessageEmbedding.message_id,
+                func.count().label("chunk_count"),
+            )
+            .where(
                 models.MessageEmbedding.session_name == session_name,
                 models.MessageEmbedding.workspace_name == workspace_name,
             )
+            .group_by(models.MessageEmbedding.message_id)
         )
-        embeddings = list(embedding_result.scalars().all())
+        message_chunk_counts = embedding_result.all()
         external_vector_store = get_external_vector_store()
 
         # Only delete from external vector store if one exists
-        if external_vector_store is not None and embeddings:
-            # Compute chunk_index for each embedding based on message_id ordering
-            message_chunks: dict[str, list[models.MessageEmbedding]] = {}
-            for emb in embeddings:
-                message_chunks.setdefault(emb.message_id, []).append(emb)
-
-            # Sort each message's chunks by id and build vector IDs
-            vector_ids: list[str] = []
-            for chunks in message_chunks.values():
-                chunks.sort(key=lambda e: e.id)
-                for chunk_idx, chunk in enumerate(chunks):
-                    vector_ids.append(f"{chunk.message_id}_{chunk_idx}")
+        if external_vector_store is not None and message_chunk_counts:
+            vector_ids: list[str] = [
+                f"{message_id}_{chunk_idx}"
+                for message_id, chunk_count in message_chunk_counts
+                for chunk_idx in range(chunk_count)
+            ]
 
             # Try to delete from external vector store (best effort)
             try:
@@ -786,6 +813,7 @@ async def clone_session(
     cutoff_message = None
     if cutoff_message_id is not None:
         stmt = select(models.Message).where(
+            models.Message.workspace_name == workspace_name,
             models.Message.public_id == cutoff_message_id,
             models.Message.session_name == original_session_name,
         )
@@ -805,9 +833,11 @@ async def clone_session(
     db.add(new_session)
     await db.flush()  # Flush to get the new session ID
 
-    # Build query for messages to clone
+    # Build query for messages to clone. Session names are only unique within a
+    # workspace, so every lookup by session name must also filter on workspace.
     stmt = select(models.Message).where(
-        models.Message.session_name == original_session_name
+        models.Message.workspace_name == workspace_name,
+        models.Message.session_name == original_session_name,
     )
     if cutoff_message_id is not None and cutoff_message is not None:
         stmt = stmt.where(models.Message.id <= cast(cutoff_message.id, BigInteger))
@@ -817,28 +847,28 @@ async def clone_session(
     messages_to_clone_scalars = await db.scalars(stmt)
     messages_to_clone = messages_to_clone_scalars.all()
 
-    if not messages_to_clone:
-        return new_session
+    if messages_to_clone:
+        # Prepare bulk insert data
+        new_messages = [
+            {
+                "session_name": new_session.name,
+                "content": message.content,
+                "h_metadata": message.h_metadata,
+                "workspace_name": workspace_name,
+                "peer_name": message.peer_name,
+                "token_count": message.token_count,
+                "seq_in_session": message.seq_in_session,
+            }
+            for message in messages_to_clone
+        ]
 
-    # Prepare bulk insert data
-    new_messages = [
-        {
-            "session_name": new_session.name,
-            "content": message.content,
-            "h_metadata": message.h_metadata,
-            "workspace_name": workspace_name,
-            "peer_name": message.peer_name,
-            "seq_in_session": message.seq_in_session,
-        }
-        for message in messages_to_clone
-    ]
-
-    insert_stmt = insert(models.Message).returning(models.Message)
-    result = await db.execute(insert_stmt, new_messages)
+        insert_stmt = insert(models.Message).returning(models.Message)
+        await db.execute(insert_stmt, new_messages)
 
     # Clone peers from original session to new session (including their configurations)
     stmt = select(models.SessionPeer).where(
-        models.SessionPeer.session_name == original_session_name
+        models.SessionPeer.workspace_name == workspace_name,
+        models.SessionPeer.session_name == original_session_name,
     )
     result = await db.execute(stmt)
     session_peers = result.scalars().all()
@@ -1050,25 +1080,31 @@ async def set_peers_for_session(
     peer_names: dict[str, schemas.SessionPeerConfig],
 ) -> list[models.SessionPeer]:
     """
-    Set peers for a session, overwriting any existing peers.
-    If peers don't exist, they will be created.
+    Replace a session's ordinary peer set with ``peer_names``.
+
+    Active members keep their joined_at but take the incoming configuration:
+    this is a replace, so the caller's map is the desired end state. Departed
+    members rejoin with the incoming configuration. Scope memberships are
+    preserved.
 
     Args:
         db: Database session
         workspace_name: Name of the workspace
         session_name: Name of the session
-        peer_names: Set of peer names to set for the session
+        peer_names: Mapping of peer names to session-level configuration
 
     Returns:
         List of SessionPeer objects for all peers in the session
 
     Raises:
         ResourceNotFoundException: If the session does not exist
+        ObserverException: If the resulting peer set would exceed the observer
+            limit
     """
-    # Validate observer limit before making any changes
-    observer_count = count_observers_in_config(peer_names)
-    if observer_count > settings.SESSION_OBSERVERS_LIMIT:
-        raise ObserverException(session_name, observer_count)
+    # No observer pre-check here: an already-active membership keeps its stored
+    # configuration, so the incoming map is not what lands. Counting it would
+    # reject a request that lowers the observer count as often as one that raises
+    # it. _get_or_add_peers_to_session enforces the limit on the resulting rows.
 
     # Verify session exists
     stmt = (
@@ -1084,20 +1120,21 @@ async def set_peers_for_session(
             f"Session {session_name} not found in workspace {workspace_name}"
         )
 
-    # Soft delete every *ordinary* active membership. Scope memberships are
-    # deliberately preserved: this route replaces the peers the caller names, and a
-    # caller detaches a scope by simply *omitting* it from an otherwise valid
-    # replacement map — never naming it, so no request-level guard can see it.
-    # Without the exclusion a plain replacement silently bypasses the facade that
-    # owns scope membership and its removal reconciliation. Being part of the
-    # UPDATE, this holds regardless of the request body or concurrent scope
-    # creation.
+    # Soft delete every *ordinary* active membership not in the incoming map.
+    # Scope memberships are deliberately preserved: this route replaces the peers
+    # the caller names, and a caller detaches a scope by simply *omitting* it from
+    # an otherwise valid replacement map — never naming it, so no request-level
+    # guard can see it. Without the exclusion a plain replacement silently
+    # bypasses the facade that owns scope membership and its removal
+    # reconciliation. Being part of the UPDATE, this holds regardless of the
+    # request body or concurrent scope creation.
     update_stmt = (
         update(models.SessionPeer)
         .where(
             models.SessionPeer.session_name == session_name,
             models.SessionPeer.workspace_name == workspace_name,
             models.SessionPeer.left_at.is_(None),  # Only update active peers
+            models.SessionPeer.peer_name.notin_(peer_names.keys()),
             ~exists(
                 select(models.Peer.id)
                 .where(models.Peer.workspace_name == workspace_name)
@@ -1118,12 +1155,14 @@ async def set_peers_for_session(
     )
     _reject_resolved_scope_peers(peers_result.resource)
 
-    # Add new peers to session
+    # Add new peers to session. This route replaces the session's peer set, so the
+    # incoming configuration is authoritative even for an already-active member.
     peers = await _get_or_add_peers_to_session(
         db,
         workspace_name=workspace_name,
         session_name=session_name,
         peer_names=peer_names,
+        replace_config=True,
     )
 
     await db.commit()
@@ -1162,13 +1201,22 @@ async def _get_or_add_peers_to_session(
     peer_names: dict[str, schemas.SessionPeerConfig],
     *,
     fetch_after_upsert: bool = True,
+    replace_config: bool = False,
 ) -> list[models.SessionPeer]:
     """
     Upsert session-peer memberships for a session and optionally fetch the
     active memberships afterward.
 
     New peers are inserted, peers that previously left the session are rejoined,
-    and already-active peers keep their existing session-level configuration.
+    and already-active peers keep their existing joined_at.
+
+    An already-active peer also keeps its stored configuration unless
+    ``replace_config`` is set: an add must not overwrite configuration it was
+    never asked about, while a replace states the desired end state.
+
+    The observer limit is checked against the rows the upsert actually produced,
+    not against the incoming map, since under the add semantics the incoming map
+    is not necessarily what lands.
 
     Args:
         db: Database session
@@ -1177,13 +1225,17 @@ async def _get_or_add_peers_to_session(
         peer_names: Mapping of peer names to session-level configuration
         fetch_after_upsert: If True, query and return the active session peers
             after the upsert. If False, skip that read and return an empty list.
+        replace_config: If True, an already-active membership takes the incoming
+            configuration instead of keeping its stored one. Set by replace-style
+            callers; leave False for add-style callers.
 
     Returns:
         Active SessionPeer objects after the upsert, or an empty list when the
         post-upsert fetch is skipped
 
     Raises:
-        ObserverException: If adding peers would exceed the observer limit
+        ObserverException: If the resulting active peer set would exceed the
+            observer limit
     """
     # If no peers to add, skip the insert and just return existing active session peers
     if not peer_names:
@@ -1202,42 +1254,9 @@ async def _get_or_add_peers_to_session(
     # costs document rows, not LLM calls, and counting them would
     # cap scopes-per-session at SESSION_OBSERVERS_LIMIT and surface as an
     # observer-shaped 400 through a facade that hides observers entirely.
+    # Resolved up front because the limit check below gates on whether this
+    # request asks for a *non-scope* observer.
     scopes_being_added = await scope_peer_names(db, workspace_name, peer_names.keys())
-
-    # Only validate observer limit if we're adding non-scope peers with observe_others=True
-    new_observer_count = count_observers_in_config(
-        {n: c for n, c in peer_names.items() if n not in scopes_being_added}
-    )
-
-    if new_observer_count > 0:
-        # Use a single efficient query to count existing observers not being updated
-        # This uses PostgreSQL's JSONB operators to check the observe_others field directly
-        existing_observers_stmt = select(func.count()).where(
-            models.SessionPeer.session_name == session_name,
-            models.SessionPeer.workspace_name == workspace_name,
-            models.SessionPeer.left_at.is_(None),  # Only active peers
-            models.SessionPeer.peer_name.notin_(
-                peer_names.keys()
-            ),  # Exclude peers being updated
-            models.SessionPeer.configuration["observe_others"].astext.cast(
-                Boolean
-            ),  # Only observers
-            # Existing scope memberships are excluded for the same reason as above.
-            ~exists(
-                select(models.Peer.id)
-                .where(models.Peer.workspace_name == workspace_name)
-                .where(models.Peer.name == models.SessionPeer.peer_name)
-                .where(scope_peer_clause())
-                .correlate(models.SessionPeer)
-            ),
-        )
-        result = await db.execute(existing_observers_stmt)
-        existing_observer_count = result.scalar() or 0
-
-        total_observers = existing_observer_count + new_observer_count
-
-        if total_observers > settings.SESSION_OBSERVERS_LIMIT:
-            raise ObserverException(session_name, total_observers)
 
     # Use upsert to handle both new peers and rejoining peers
     stmt = pg_insert(models.SessionPeer).values(
@@ -1254,21 +1273,76 @@ async def _get_or_add_peers_to_session(
         ]
     )
 
-    # On conflict, update joined_at and clear left_at (rejoin scenario)
-    # If left_at is not None (peer has left the session): Use the new configuration (stmt.excluded.configuration)
-    # If left_at is None (peer is still active): Keep the existing configuration (models.SessionPeer.configuration)
+    # On conflict, rejoin departed peers. joined_at always survives on an active
+    # membership -- advancing it would move the peer_perspective search window
+    # past messages the peer was present for (issue #940).
+    #
+    # Configuration depends on the caller's semantics. An add ("ensure this peer
+    # is here") must not silently overwrite a config it never asked about, so an
+    # active membership keeps its stored one. A replace ("these are the session's
+    # peers, configured thus") states a desired end state, so the incoming config
+    # wins -- otherwise PUT /peers could never change the configuration of a peer
+    # already in the session.
     stmt = stmt.on_conflict_do_update(
         index_elements=["session_name", "peer_name", "workspace_name"],
         set_={
-            "joined_at": func.now(),
+            "joined_at": case(
+                (models.SessionPeer.left_at.is_not(None), func.now()),
+                else_=models.SessionPeer.joined_at,
+            ),
             "left_at": None,
-            "configuration": case(
+            "configuration": stmt.excluded.configuration
+            if replace_config
+            else case(
                 (models.SessionPeer.left_at.is_not(None), stmt.excluded.configuration),
                 else_=models.SessionPeer.configuration,
             ),
         },
     )
     await db.execute(stmt)
+
+    # Enforce the observer limit on the resulting rows rather than predicting them.
+    # Under add semantics an already-active membership keeps its stored
+    # configuration (see the CASE above), so the incoming config is not what lands
+    # and cannot be counted: predicting from it silently undercounts preserved
+    # observers and lets a session grow past the limit indefinitely by re-sending
+    # its current observers at a lower config alongside new ones. Counting after
+    # the upsert is correct under both configuration semantics and cannot desync
+    # from those branches. Raising here rolls the upsert back: ObserverException
+    # is never caught, and both get_db and tracked_db roll back on exception.
+    #
+    # Gated on the request actually asking for a non-scope observer so that a
+    # session already over the limit keeps behaving as it does today: it can
+    # still take non-observers and scope attachments, and only a request that
+    # would make it worse is rejected.
+    if any(
+        config.observe_others
+        for peer_name, config in peer_names.items()
+        if peer_name not in scopes_being_added
+    ):
+        observer_count = (
+            await db.scalar(
+                select(func.count()).where(
+                    models.SessionPeer.session_name == session_name,
+                    models.SessionPeer.workspace_name == workspace_name,
+                    models.SessionPeer.left_at.is_(None),  # Only active peers
+                    models.SessionPeer.configuration["observe_others"].astext.cast(
+                        Boolean
+                    ),  # Only observers
+                    # Scope memberships are excluded for the reason given above.
+                    ~exists(
+                        select(models.Peer.id)
+                        .where(models.Peer.workspace_name == workspace_name)
+                        .where(models.Peer.name == models.SessionPeer.peer_name)
+                        .where(scope_peer_clause())
+                        .correlate(models.SessionPeer)
+                    ),
+                )
+            )
+            or 0
+        )
+        if observer_count > settings.SESSION_OBSERVERS_LIMIT:
+            raise ObserverException(session_name, observer_count)
 
     if not fetch_after_upsert:
         return []
