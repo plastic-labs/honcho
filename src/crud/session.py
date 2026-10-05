@@ -813,6 +813,7 @@ async def clone_session(
     cutoff_message = None
     if cutoff_message_id is not None:
         stmt = select(models.Message).where(
+            models.Message.workspace_name == workspace_name,
             models.Message.public_id == cutoff_message_id,
             models.Message.session_name == original_session_name,
         )
@@ -832,9 +833,11 @@ async def clone_session(
     db.add(new_session)
     await db.flush()  # Flush to get the new session ID
 
-    # Build query for messages to clone
+    # Build query for messages to clone. Session names are only unique within a
+    # workspace, so every lookup by session name must also filter on workspace.
     stmt = select(models.Message).where(
-        models.Message.session_name == original_session_name
+        models.Message.workspace_name == workspace_name,
+        models.Message.session_name == original_session_name,
     )
     if cutoff_message_id is not None and cutoff_message is not None:
         stmt = stmt.where(models.Message.id <= cast(cutoff_message.id, BigInteger))
@@ -844,28 +847,28 @@ async def clone_session(
     messages_to_clone_scalars = await db.scalars(stmt)
     messages_to_clone = messages_to_clone_scalars.all()
 
-    if not messages_to_clone:
-        return new_session
+    if messages_to_clone:
+        # Prepare bulk insert data
+        new_messages = [
+            {
+                "session_name": new_session.name,
+                "content": message.content,
+                "h_metadata": message.h_metadata,
+                "workspace_name": workspace_name,
+                "peer_name": message.peer_name,
+                "token_count": message.token_count,
+                "seq_in_session": message.seq_in_session,
+            }
+            for message in messages_to_clone
+        ]
 
-    # Prepare bulk insert data
-    new_messages = [
-        {
-            "session_name": new_session.name,
-            "content": message.content,
-            "h_metadata": message.h_metadata,
-            "workspace_name": workspace_name,
-            "peer_name": message.peer_name,
-            "seq_in_session": message.seq_in_session,
-        }
-        for message in messages_to_clone
-    ]
-
-    insert_stmt = insert(models.Message).returning(models.Message)
-    result = await db.execute(insert_stmt, new_messages)
+        insert_stmt = insert(models.Message).returning(models.Message)
+        await db.execute(insert_stmt, new_messages)
 
     # Clone peers from original session to new session (including their configurations)
     stmt = select(models.SessionPeer).where(
-        models.SessionPeer.session_name == original_session_name
+        models.SessionPeer.workspace_name == workspace_name,
+        models.SessionPeer.session_name == original_session_name,
     )
     result = await db.execute(stmt)
     session_peers = result.scalars().all()
