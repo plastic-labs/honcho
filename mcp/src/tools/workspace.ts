@@ -40,6 +40,8 @@ export function register(server: McpServer, ctx: ToolContext) {
       annotations: {
         title: "Inspect Workspace",
         readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
       },
       description: [
         "Inspect a workspace at a glance.",
@@ -85,6 +87,8 @@ export function register(server: McpServer, ctx: ToolContext) {
       annotations: {
         title: "List Workspaces",
         readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
       },
       description: [
         "List workspaces accessible to the current credentials (paginated).",
@@ -136,6 +140,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         title: "Create Workspace",
         readOnlyHint: false,
         destructiveHint: false,
+        openWorldHint: false,
       },
       description: [
         "Get or create a workspace with the given ID.",
@@ -180,6 +185,8 @@ export function register(server: McpServer, ctx: ToolContext) {
       annotations: {
         title: "Search Workspace",
         readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
       },
       description: [
         "Semantic search across messages and, when peer_id is given, that peer's saved conclusions.",
@@ -329,6 +336,8 @@ export function register(server: McpServer, ctx: ToolContext) {
       annotations: {
         title: "Ask About a Workspace",
         readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
       },
       description: [
         "Ask a natural-language question about the whole workspace and get an answer from Honcho's reasoning system.",
@@ -401,6 +410,8 @@ export function register(server: McpServer, ctx: ToolContext) {
       annotations: {
         title: "Get Metadata",
         readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
       },
       description: [
         "Get metadata for a resource. Scope is determined by which optional params are provided:",
@@ -450,6 +461,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         title: "Set Metadata",
         readOnlyHint: false,
         destructiveHint: true,
+        openWorldHint: false,
       },
       description: [
         "Set metadata for a resource. Overwrites existing metadata.",

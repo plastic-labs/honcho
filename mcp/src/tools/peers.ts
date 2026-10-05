@@ -12,6 +12,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         title: "Create Peer",
         readOnlyHint: false,
         destructiveHint: false,
+        openWorldHint: false,
       },
       description: [
         "Get or create a peer with the given ID.",
@@ -52,6 +53,8 @@ export function register(server: McpServer, ctx: ToolContext) {
       annotations: {
         title: "List Peers",
         readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
       },
       description: [
         "List peers in the given workspace (paginated).",
@@ -91,6 +94,8 @@ export function register(server: McpServer, ctx: ToolContext) {
       annotations: {
         title: "Ask About a Peer",
         readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
       },
       description: [
         "Ask a natural-language question about ONE peer and get an answer from Honcho's reasoning system.",
@@ -182,6 +187,8 @@ export function register(server: McpServer, ctx: ToolContext) {
       annotations: {
         title: "Get Peer Card",
         readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
       },
       description: [
         "Get the peer card — a compact set of biographical facts about a peer.",
@@ -220,6 +227,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         title: "Set Peer Card",
         readOnlyHint: false,
         destructiveHint: true,
+        openWorldHint: false,
       },
       description: [
         "Set or update the peer card — a list of biographical facts about a peer.",
@@ -260,6 +268,8 @@ export function register(server: McpServer, ctx: ToolContext) {
       annotations: {
         title: "Get Peer Context",
         readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
       },
       description: [
         "Get comprehensive context for a peer — combines their representation (conclusions) and peer card.",
@@ -318,6 +328,8 @@ export function register(server: McpServer, ctx: ToolContext) {
       annotations: {
         title: "Get Peer Representation",
         readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
       },
       description: [
         "Get the formatted representation for a peer — a text summary built from their conclusions.",
