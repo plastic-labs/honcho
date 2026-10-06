@@ -11,8 +11,8 @@ This package versions independently of the Honcho API, `@honcho-ai/sdk`, and hos
 
 ### Added
 
-- Optional Sentry error reporting for the Cloudflare Worker, enabled by setting
-  `SENTRY_DSN`. Unset, it is a no-op.
+- Optional Sentry error reporting for the Worker, HTTP, and stdio hosts, enabled by
+  setting `SENTRY_DSN`. Unset, it is a no-op.
 
 ### Fixed
 

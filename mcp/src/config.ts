@@ -179,7 +179,7 @@ export function honchoClients(
 }
 
 /**
- * Sentry options for the Worker. Without SENTRY_DSN the SDK stays disabled and
+ * Sentry options shared by every entry point. Without SENTRY_DSN the SDK stays disabled and
  * every capture is a no-op. Requests carry the caller's Honcho key
  * (Authorization) and memory content (body), so events keep only the method
  * and URL of the request.
