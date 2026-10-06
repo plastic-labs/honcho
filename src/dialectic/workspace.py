@@ -27,6 +27,7 @@ from src.dependencies import tracked_db
 from src.dialectic import prompts
 from src.dialectic.core import DialecticAgent
 from src.llm.types import LLMTelemetryContext
+from src.schemas import ResolvedDialecticConfiguration
 from src.utils.agent_tools import (
     WORKSPACE_DIALECTIC_TOOLS,
     WORKSPACE_RECALL_TOOLS,
@@ -56,7 +57,7 @@ class WorkspaceDialecticAgent(DialecticAgent):
         session_id: str | None = None,
         session_allowlist: list[str] | None = None,
         evidence: EvidenceAccumulator | None = None,
-        custom_instructions: str | None = None,
+        instructions: ResolvedDialecticConfiguration | None = None,
     ) -> None:
         super().__init__(
             workspace_name=workspace_name,
@@ -68,6 +69,7 @@ class WorkspaceDialecticAgent(DialecticAgent):
             session_id=session_id,
             session_allowlist=session_allowlist,
             evidence=evidence,
+            instructions=instructions,
         )
         # Replace the pair-oriented system prompt with the workspace one.
         self.messages[0] = {
@@ -78,7 +80,7 @@ class WorkspaceDialecticAgent(DialecticAgent):
                     for tool in self._select_tools()
                     if isinstance((name := tool.get("name")), str)
                 },
-                custom_instructions=custom_instructions,
+                custom_instructions=self.instructions.custom_instructions,
             ),
         }
 
@@ -241,4 +243,5 @@ class WorkspaceDialecticAgent(DialecticAgent):
             session_id=self.session_id,
             peer_name="(workspace)",
             track_name=track_name or "Workspace Dialectic Agent",
+            custom_instructions=self.instructions.custom_instructions,
         )

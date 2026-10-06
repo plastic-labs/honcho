@@ -187,12 +187,14 @@ class MessageConfiguration(BaseModel):
 class ResolvedReasoningConfiguration(BaseModel):
     enabled: bool
     custom_instructions: CustomInstructions = None
+    custom_instructions_source: str | None = None
 
 
 class ResolvedPeerCardConfiguration(BaseModel):
     use: bool
     create: bool
     custom_instructions: CustomInstructions = None
+    custom_instructions_source: str | None = None
 
 
 class ResolvedSummaryConfiguration(BaseModel):
@@ -200,15 +202,18 @@ class ResolvedSummaryConfiguration(BaseModel):
     messages_per_short_summary: int
     messages_per_long_summary: int
     custom_instructions: CustomInstructions = None
+    custom_instructions_source: str | None = None
 
 
 class ResolvedDreamConfiguration(BaseModel):
     enabled: bool
     custom_instructions: CustomInstructions = None
+    custom_instructions_source: str | None = None
 
 
 class ResolvedDialecticConfiguration(BaseModel):
     custom_instructions: CustomInstructions = None
+    custom_instructions_source: str | None = None
 
 
 class ResolvedConfiguration(BaseModel):
