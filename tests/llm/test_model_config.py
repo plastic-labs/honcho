@@ -177,6 +177,35 @@ def test_summary_settings_accept_nested_model_config() -> None:
     assert settings.MODEL_CONFIG.thinking_budget_tokens == 1024
 
 
+@pytest.mark.parametrize(("short_cap", "long_cap"), [(2001, 2000), (1000, 2001)])
+def test_summary_caps_cannot_exceed_model_config_ceiling(
+    short_cap: int, long_cap: int
+) -> None:
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="must not exceed"):
+        SummarySettings(
+            MODEL_CONFIG=ConfiguredModelSettings(
+                model="gpt-5.4-mini", transport="openai", max_output_tokens=2000
+            ),
+            MAX_TOKENS_SHORT=short_cap,
+            MAX_TOKENS_LONG=long_cap,
+        )
+
+
+def test_summary_caps_at_or_under_model_config_ceiling_are_accepted() -> None:
+    settings = SummarySettings(
+        MODEL_CONFIG=ConfiguredModelSettings(
+            model="gpt-5.4-mini", transport="openai", max_output_tokens=2000
+        ),
+        MAX_TOKENS_SHORT=1000,
+        MAX_TOKENS_LONG=2000,
+    )
+
+    assert settings.MAX_TOKENS_SHORT == 1000
+    assert settings.MAX_TOKENS_LONG == 2000
+
+
 def test_resolve_model_config_reads_override_env_and_provider_params(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

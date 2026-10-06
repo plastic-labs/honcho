@@ -1223,8 +1223,25 @@ class SummarySettings(HonchoSettings):
             )
         return data  # pyright: ignore[reportUnknownVariableType]
 
-    MAX_TOKENS_SHORT: Annotated[int, Field(default=1000, gt=0, le=10_000)] = 1000
-    MAX_TOKENS_LONG: Annotated[int, Field(default=4000, gt=0, le=20_000)] = 4000
+    # Per-call output caps. The prompt asks for a fraction of these as a soft
+    # target (SUMMARY_TARGET_RATIO in src/utils/summarizer.py), leaving the rest
+    # as headroom so a summary can finish instead of truncating.
+    MAX_TOKENS_SHORT: Annotated[int, Field(default=1500, gt=0, le=10_000)] = 1500
+    MAX_TOKENS_LONG: Annotated[int, Field(default=6000, gt=0, le=20_000)] = 6000
+
+    @model_validator(mode="after")
+    def _validate_caps_within_model_ceiling(self) -> "SummarySettings":
+        """Keep MODEL_CONFIG.max_output_tokens a ceiling over both summary caps."""
+        ceiling = self.MODEL_CONFIG.max_output_tokens
+        if ceiling is None:
+            return self
+        for name in ("MAX_TOKENS_SHORT", "MAX_TOKENS_LONG"):
+            if getattr(self, name) > ceiling:
+                raise ValueError(
+                    f"summary.{name} must not exceed "
+                    + "summary.MODEL_CONFIG.max_output_tokens"
+                )
+        return self
 
 
 class WebhookSettings(HonchoSettings):
