@@ -137,7 +137,7 @@ class WorkspaceConfiguration(BaseModel):
 
     custom_instructions: CustomInstructions = Field(
         default=None,
-        description="Custom instructions shared by the deriver, summarizer, dialectic, and dreamer. A module's own custom_instructions at the same level takes precedence; the most specific level (message > session > workspace) always wins.",
+        description="Custom instructions shared by the deriver, summarizer, dialectic, and dreamer. A module's own custom_instructions at the same level takes precedence, and session-level values beat workspace-level ones. Messages can only override reasoning.custom_instructions.",
     )
     reasoning: ReasoningConfiguration | None = Field(
         default=None,

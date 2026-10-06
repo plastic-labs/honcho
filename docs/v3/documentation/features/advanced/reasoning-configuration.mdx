@@ -161,7 +161,7 @@ Custom instructions are free-text guidance added to the prompts Honcho's agents 
 
 Resolution rules:
 
-1. **The most specific level wins.** Honcho checks message, then session, then workspace configuration and uses the first level that sets a value, so a session's shared instructions beat a workspace's `summary.custom_instructions`.
+1. **The most specific level wins.** Honcho checks session, then workspace configuration and uses the first level that sets a value, so a session's shared instructions beat a workspace's `summary.custom_instructions`. Messages can only set `reasoning.custom_instructions`, which overrides everything else for the deriver (see [Message Configuration](#message-configuration)).
 2. **Within a level, a module's own value beats the shared value.**
 3. **An empty string means "none".** Set `""` to turn off inherited instructions for a module at that level.
 4. **Other sections never fall back to `reasoning`.** `reasoning.custom_instructions` only affects the deriver, as it always has.
@@ -304,10 +304,10 @@ session.add_messages([
     })
 ])
 
-# Create a message with custom peer card settings
+# Give the deriver instructions for this message only
 session.add_messages([
-    user.message("Use existing card but don't update it", configuration={
-        "peer_card": {"use": True, "create": False}
+    user.message("Imported from our old CRM: renewal due in March", configuration={
+        "reasoning": {"custom_instructions": "This is imported CRM data. Only extract account facts."}
     })
 ])
 ```
@@ -323,6 +323,15 @@ import { Honcho } from "@honcho-ai/sdk";
     await session.addMessages([
         user.message("This message won't be analyzed", {
             configuration: { reasoning: { enabled: false } }
+        })
+    ]);
+
+    // Give the deriver instructions for this message only
+    await session.addMessages([
+        user.message("Imported from our old CRM: renewal due in March", {
+            configuration: {
+                reasoning: { customInstructions: "This is imported CRM data. Only extract account facts." }
+            }
         })
     ]);
 })();
@@ -366,15 +375,12 @@ import { Honcho } from "@honcho-ai/sdk";
 ```json
 {
   "reasoning": {
-    "enabled": true
-  },
-  "peer_card": {
-    "use": true,
-    "create": true
+    "enabled": true,
+    "custom_instructions": null
   }
 }
 ```
 
 <Note>
-Message configuration only supports reasoning and `peer_card` settings. Summary and dream configurations are session/workspace-level only.
+Message configuration only supports `reasoning` settings. Message-level `reasoning.custom_instructions` override session and workspace instructions for the deriver only. Peer card, summary, dream, dialectic, and shared `custom_instructions` are session/workspace-level only.
 </Note>
