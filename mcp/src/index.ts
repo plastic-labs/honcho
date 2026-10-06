@@ -4,6 +4,7 @@ import {
   honchoClients,
   identityHeaders,
   parseConfig,
+  sentryOptions,
   type Env,
 } from "./config.js";
 import { createServer } from "./server.js";
@@ -31,8 +32,7 @@ function authorizationServer(env: Env): string {
   return env.HONCHO_API_URL?.trim() || "https://api.honcho.dev";
 }
 
-// Without SENTRY_DSN the SDK stays disabled and every capture is a no-op.
-export default Sentry.withSentry((env: Env) => ({ dsn: env.SENTRY_DSN }), {
+export default Sentry.withSentry(sentryOptions, {
   // Probes the authorization server API to confirm it is reachable and healthy.
   async scheduled(
     _controller: ScheduledController,

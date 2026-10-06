@@ -1,4 +1,5 @@
 import { Honcho } from "@honcho-ai/sdk";
+import type { ErrorEvent } from "@sentry/cloudflare";
 import pkg from "../package.json";
 
 export const HEADER_HOST = "X-Honcho-Host";
@@ -174,5 +175,23 @@ export function honchoClients(
   return {
     clientFor: createClientFactory(config, headers),
     unscoped: createUnscopedClient(config, headers),
+  };
+}
+
+/**
+ * Sentry options for the Worker. Without SENTRY_DSN the SDK stays disabled and
+ * every capture is a no-op. Requests carry the caller's Honcho key
+ * (Authorization) and memory content (body), so events keep only the method
+ * and URL of the request.
+ */
+export function sentryOptions(env: Env) {
+  return {
+    dsn: env.SENTRY_DSN,
+    beforeSend(event: ErrorEvent) {
+      if (event.request) {
+        event.request = { method: event.request.method, url: event.request.url };
+      }
+      return event;
+    },
   };
 }
