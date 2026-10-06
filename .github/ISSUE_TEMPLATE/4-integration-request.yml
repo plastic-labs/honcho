@@ -1,12 +1,14 @@
 name: Integration request
-description: Add Honcho to an app store, agent framework, plugin marketplace, or other third-party surface — or improve an existing integration.
+description: Add Honcho to an app store, agent framework, plugin marketplace, or other third-party surface.
 title: "[Integration] "
 labels: ["integration"]
 body:
   - type: markdown
     attributes:
       value: |
-        Use this when you want Honcho available in (or better supported by) an external product surface — app stores, agent frameworks, plugin marketplaces, IDE extensions, MCP clients, etc.
+        Use this when you want Honcho available in an external product surface — app stores, agent frameworks, plugin marketplaces, IDE extensions, MCP clients, etc.
+
+        **Bug or change in an existing integration?** For Hermes, use the **Hermes plugin** template. Other integrations live in their own repos, linked from the [integrations catalog](https://honcho.dev/docs/v3/guides/overview).
 
         For core API/SDK product features that are not about a third-party surface, use the **Feature request** template instead.
 
@@ -16,7 +18,6 @@ body:
       label: What kind of request is this?
       options:
         - New integration / listing (Honcho is not there yet)
-        - Improve an existing integration
         - Official plugin / extension
         - Marketplace or app-store listing
         - Docs / guide for integrating with a specific tool

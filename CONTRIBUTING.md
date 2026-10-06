@@ -477,8 +477,8 @@ API keys, JWTs, and production user content out of any log or payload you attach
 
 Each new issue gets a first pass, from an agent or a maintainer, before review:
 
-- It gets labels for its type and layer. If it belongs to a different layer in this repo, it
-  is relabelled rather than closed.
+- It gets labels for its type, and for the integration if it came through one. If it belongs
+  to a different layer in this repo, it is relabelled rather than closed.
 - If it duplicates an existing issue, describes documented behavior, or belongs in another
   repo, it is closed with a comment linking the reason. If we got it wrong, say so on the
   issue.
