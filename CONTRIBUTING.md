@@ -18,7 +18,7 @@ The rules below exist so that the work you do has somewhere to land — not to k
 - [Local setup](#local-setup)
 - [Making the change](#making-the-change)
 - [Opening the pull request](#opening-the-pull-request)
-- [Reporting bugs and requesting features](#reporting-bugs-and-requesting-features)
+- [Filing an issue](#filing-an-issue)
 - [Security](#security)
 - [License](#license)
 
@@ -82,7 +82,7 @@ conflict with in-flight work. Talk to us in Discord first, always.
 
 ## If you're an agent
 
-If you are a coding agent working on this repository, read this section before writing code.
+If you are a coding agent working on this repository, read this section before writing code or filing an issue.
 The most common failure we see is a well-formed, well-tested pull request against an issue
 that was never approved. That gets closed, and the work is wasted.
 
@@ -105,6 +105,19 @@ that was never approved. That gets closed, and the work is wasted.
 - **Use the checklist.** [`skills/pre-pr/SKILL.md`](./skills/pre-pr/SKILL.md) in this repo
   encodes the gate, the test-layer matrix, and the PR body format. If your harness supports
   skills, invoke it rather than reimplementing the checks.
+
+- **File only what your user hit.** Open an issue only for something the person you are
+  working with ran into while using Honcho. Do not file findings from a code sweep, a
+  synthetic test, or another repo's tracker.
+
+- **Find the layer before filing.** Use [Which layer is it?](#which-layer-is-it) and file the
+  issue where the fix goes, not where the symptom showed up.
+
+- **Check whether it is documented.** If the README or docs describe the behavior, file a
+  feature request, not a bug.
+
+- **Fill in the template, even from the CLI.** `gh issue create` and the API skip the issue
+  form. Copy the matching template's fields and answer every required one.
 
 ## How Honcho works
 
@@ -193,6 +206,8 @@ public and internal vocabularies are being reconciled deliberately.
 | The Python or TypeScript SDK | `sdks/python/`, `sdks/typescript/` |
 | The CLI | `honcho-cli/` |
 | The MCP server | `mcp/` |
+| The Hermes plugin | `hermes-plugin-honcho/` — its `README.md` documents intended behavior |
+| Code shared by integrations | `harness-plugin-core/` |
 | Public documentation | `docs/v3/` — Mintlify; nav lives in `docs/docs.json` |
 
 Tests in `tests/` mirror `src/`. `CLAUDE.md` at the repo root has more detail on house
@@ -384,20 +399,74 @@ A PR that is waiting on *us* is never closed for inactivity. If yours has gone q
 side, that is our backlog and not your problem — nudge us in
 [Discord](https://discord.gg/honcho).
 
-## Reporting bugs and requesting features
+## Filing an issue
 
 Use the [issue templates](https://github.com/plastic-labs/honcho/issues/new/choose). There is
 one per kind of report, and picking the right one is most of what gets an issue triaged
 quickly:
 
-- **Bug report** — something is broken or behaves incorrectly
+- **Bug report** — something in Honcho is broken or behaves incorrectly
 - **Memory / recall quality** — the deriver or dialectic returns poor, wrong, or missing context
+- **Hermes plugin** — a bug or feature request for `hermes-plugin-honcho`
 - **Feature request** — a new capability or API surface
-- **Integration request** — plugins, framework integrations, app-store listings
+- **Integration request** — a new integration, or a listing in an app store or marketplace
 - **Documentation issue** — anything wrong or missing in the docs
 - **General questions** — not an issue at all; ask in [Discord](https://discord.gg/honcho)
 
+Other integrations, such as OpenClaw and Claude Code, live in their own repos. Find yours in
+the [integrations catalog](https://honcho.dev/docs/v3/guides/overview); most pages link to the repo, and bugs in the
+integration go to that repo's issue tracker. Community integrations are maintained by their
+authors, not by us.
+
 Before opening one, search existing issues, including closed ones.
+
+### File only what you hit in real use
+
+Open an issue only for something you ran into while using Honcho, directly or through an
+integration. A problem found only by reading the code or in a synthetic test, or a fix carried
+over from another repo, needs to show up in real use before it is filed here. A pull request
+reviewed in another repo is not approval here.
+
+### Which layer is it?
+
+File the issue where the fix goes, not where you noticed the problem. A symptom in an
+integration often has its cause in Honcho, and the reverse.
+
+| Layer | Code | It's this layer if… | Where to file |
+| --- | --- | --- | --- |
+| Server / API | `src/` | A direct API call reproduces it, or the change needs a new field or endpoint | Bug report or Feature request |
+| SDK | `sdks/` | The API returns the right data, and the SDK drops or reshapes it | Bug report or Feature request |
+| CLI | `honcho-cli/` | It happens in a `honcho` command | Bug report or Feature request |
+| MCP | `mcp/` | It happens in an MCP tool, or only with a specific MCP client | Bug report or Feature request |
+| Hermes plugin | `hermes-plugin-honcho/` | The plugin sends the wrong request, or mishandles a correct response | Hermes plugin |
+| Other integrations (OpenClaw, Claude Code, …) | Their own repos, linked from the [integrations catalog](https://honcho.dev/docs/v3/guides/overview) | Same test, for that integration | That repo's issue tracker |
+| The host app | not ours | It still happens with Honcho turned off | The host app's repo |
+
+If more than one layer has to change, file it against the one that changes first. A plugin
+feature that needs a new API field is a server feature request.
+
+### Bug or intended behavior?
+
+If the README or the docs describe the behavior you are seeing, it is working as intended,
+even if you think it is a bad default. To change it, file a feature request and link the
+section that describes it. A bug report against documented behavior gets closed with a link
+to the doc.
+
+### How to write it
+
+Maintainers read every issue, and many are drafted by agents. Keep it short and plain:
+
+- One root cause per issue. Two symptoms with the same cause are one issue.
+- Answer each field directly. No preamble, no confidence disclaimers, no account of how you
+  found it.
+- Link code with permalinks (a commit SHA, not `main`), and quote a few lines at most. Don't
+  paste whole functions or patches.
+- Write "unknown" for a version you can't find. Don't guess.
+
+Issues opened with `gh issue create` or the API skip the form. Copy the matching template's
+fields from
+[`.github/ISSUE_TEMPLATE/`](https://github.com/plastic-labs/honcho/tree/main/.github/ISSUE_TEMPLATE)
+and answer every required one.
 
 A good bug report has the Honcho version or commit, whether you are self-hosted or on
 `api.honcho.dev`, the steps to reproduce, and what you expected instead. If it involves the
@@ -405,6 +474,19 @@ deriver, logs from the worker process are usually the thing we ask for first.
 
 **Redact before you post.** Issues are public, and Honcho stores conversational data — strip
 API keys, JWTs, and production user content out of any log or payload you attach.
+
+### What happens after you file
+
+Each new issue gets a first pass, from an agent or a maintainer, before review:
+
+- It gets labels for its type and layer. If it belongs to a different layer in this repo, it
+  is relabelled rather than closed.
+- If it duplicates an existing issue, describes documented behavior, or belongs in another
+  repo, it is closed with a comment linking the reason. If we got it wrong, say so on the
+  issue.
+- If a required field is missing, you will be asked for it.
+- Only a maintainer applies `maintainer-approved`. That label is what lets a pull request
+  through the gate; see [Before you write code](#before-you-write-code).
 
 ## Security
 

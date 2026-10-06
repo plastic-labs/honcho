@@ -1,0 +1,190 @@
+name: Hermes plugin
+description: A bug or feature request for the Hermes memory provider (hermes-plugin-honcho), from using it.
+title: "[Hermes] "
+labels: ["integration:hermes"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this for bugs and feature requests in [`hermes-plugin-honcho`](https://github.com/plastic-labs/honcho/tree/main/hermes-plugin-honcho), the Honcho memory provider for Hermes.
+
+        **File only what you hit in real use** of Hermes with Honcho. Something found only by reading the code or in a synthetic test, or a fix carried over from another repo, needs to show up in real use before it's filed here.
+
+        **Make sure it's the plugin.** If you can reproduce it by calling the Honcho API or SDK directly, use **Bug report** instead. If it still happens with Honcho disabled, report it to [Hermes](https://github.com/NousResearch/hermes-agent).
+
+        **Keep it short.** One root cause per issue. Answer each field directly, with no preamble or disclaimers. Link code with permalinks and quote a few lines at most. Issues are public, so redact keys, JWTs, and user content.
+
+  - type: dropdown
+    id: type
+    attributes:
+      label: Type
+      description: |
+        - **Bug**: the plugin does something its README or docs say it shouldn't, or it crashes, errors, loses data, or sends Honcho a malformed request.
+        - **Feature request**: you want the plugin to do something new, or to change behavior that works as documented.
+
+        Behavior that matches the README is not a bug, even if it's a bad default. File it as a feature request.
+      options:
+        - Bug
+        - Feature request
+    validations:
+      required: true
+
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: >
+        Comma-separated: the plugin version, the Hermes version, the honcho-ai SDK version, and the
+        Honcho server version if you self-host. Write "unknown" for any you can't find; don't guess.
+      placeholder: hermes-plugin-honcho <version>, Hermes <version>, honcho-ai <version>, server <version>
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deploy_mode
+    attributes:
+      label: How are you running Honcho?
+      description: >
+        Hosted means the plugin points at api.honcho.dev. Self-hosted means you run the Honcho
+        server yourself, on your machine or your own infrastructure.
+      options:
+        - Hosted (api.honcho.dev)
+        - Self-hosted
+    validations:
+      required: true
+
+  - type: textarea
+    id: models
+    attributes:
+      label: Models
+      description: >
+        The model Hermes runs on, as provider and model name. If you self-host Honcho, also the
+        models it uses for the deriver, the dialectic, and embeddings, from your `config.toml` or
+        `.env`. On hosted Honcho, give only the Hermes model.
+      placeholder: |
+        Hermes: <provider>/<model>
+        Honcho deriver (self-hosted only): <provider>/<model>
+        Honcho dialectic (self-hosted only): <provider>/<model>
+        Honcho embeddings (self-hosted only): <provider>/<model>
+    validations:
+      required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where are you running Hermes?
+      description: >
+        Pick every surface where this applies. Several plugin behaviors differ by surface: messaging
+        gateways name sessions after the chat, and the API server builds a new agent for every
+        request.
+      multiple: true
+      options:
+        - CLI or TUI
+        - Desktop
+        - Messaging gateway (Telegram, Discord, Signal, Slack, …)
+        - API server (Open WebUI or another client)
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: layer
+    attributes:
+      label: Which layer needs to change?
+      description: |
+        Where the fix or the new behavior would go, not where you noticed it.
+
+        - **The plugin**: code in `hermes-plugin-honcho/`. It sends Honcho the wrong request, mishandles a correct response, or needs new logic.
+        - **Honcho server or API**: the change needs a new API field or endpoint, or Honcho returns a wrong result for a correct request.
+        - **Honcho SDK**: the API returns the right data, but `honcho-ai` drops or reshapes it before the plugin sees it.
+        - **Not sure**: say what you checked under **Current behavior**.
+
+        If more than one layer has to change, pick the one that changes first. A plugin feature that needs a new API field is **Honcho server or API**.
+      options:
+        - The plugin (hermes-plugin-honcho)
+        - Honcho server or API
+        - Honcho SDK (honcho-ai)
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: >
+        One or two sentences: what is wrong or missing, and who it affects. A maintainer should
+        understand the issue from this field alone.
+      placeholder: When I …, the plugin …, so …
+    validations:
+      required: true
+
+  - type: textarea
+    id: current
+    attributes:
+      label: Current behavior
+      description: >
+        What the plugin does today: the config, the input, and what happened. Say whether the
+        [README](https://github.com/plastic-labs/honcho/blob/main/hermes-plugin-honcho/README.md)
+        documents this behavior, and link the section if it does. If you traced it in the code, link
+        the lines with a permalink.
+      placeholder: |
+        Config: …
+        What I did: …
+        What happened: …
+        Documented: yes (README → …) / no
+    validations:
+      required: true
+
+  - type: textarea
+    id: desired
+    attributes:
+      label: Desired behavior
+      description: >
+        For a bug: what should happen instead, and which doc or config option says so. For a feature
+        request: what you want instead, and the problem it solves. Describe the behavior, not the
+        implementation.
+      placeholder: |
+        What should happen: …
+        Why: … (the doc or config option that says so, or the problem this solves)
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: >
+        Required for bugs; leave empty for feature requests. Numbered steps that someone else can
+        follow from a fresh config.
+      placeholder: |
+        1. Config: …
+        2. …
+        3. Observe: …
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Config and logs
+      description: >
+        First, the config lines from `hermes honcho status`, from `Host` down to `Write freq`. Stop
+        before `Connection...`: everything after it is your peer card and memory, which doesn't
+        belong in a public issue. Redact the API key, and any phone number or personal name in the
+        session key or peer names. Then add the request the plugin sent to Honcho and the response,
+        or the plugin log lines that show the problem, about 50 lines at most. Redact user content.
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: >
+        Links, one per line, each with a few words on why it's relevant: related issues or PRs, a
+        branch with a proposed fix, workarounds. Don't open a PR until a maintainer adds
+        `maintainer-approved` to this issue.
+    validations:
+      required: false
