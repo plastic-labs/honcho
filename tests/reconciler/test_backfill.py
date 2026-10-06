@@ -26,7 +26,7 @@ from src.reconciler.scheduler import (
 from src.telemetry import prometheus_metrics
 from src.telemetry.events import BackfillCompletedEvent, BaseEvent
 from src.utils.queue_payload import ReconcilerPayload
-from src.utils.work_unit import parse_work_unit_key
+from src.utils.work_unit import construct_work_unit_key, parse_work_unit_key
 
 
 @pytest.fixture(autouse=True)
@@ -64,7 +64,6 @@ def _fake_backfill(rows: _Rows, **overrides: Any) -> Backfill:
             count_pending=count_pending,
             run_batch=run_batch,
             interval_seconds=60,
-            retire_after="never",
             batch_size=2,
         ),
         **overrides,
@@ -219,7 +218,7 @@ async def test_generic_payload_runs_registered_backfill(
     assert rows.remaining == 0
     [event] = events
     assert isinstance(event, BackfillCompletedEvent)
-    assert (event.backfill_name, event.rows_touched, event.batches) == ("fake", 5, 4)
+    assert (event.backfill_name, event.rows_touched, event.batches) == ("fake", 5, 3)
     assert event.still_pending is False
 
 
@@ -248,6 +247,19 @@ def test_backfill_work_unit_key_is_a_two_part_reconciler_key() -> None:
     assert parse_work_unit_key(key).task_type == "reconciler"
 
 
+@pytest.mark.parametrize(
+    "backfill",
+    [
+        _fake_backfill(_Rows(0)),
+        backfill_module.BACKFILLS["document_sources"],
+    ],
+    ids=["generic", "legacy"],
+)
+def test_work_unit_key_rebuilds_from_payload(backfill: Backfill) -> None:
+    payload = {"task_type": "reconciler", **backfill.payload}
+    assert construct_work_unit_key("unused", payload) == backfill.work_unit_key
+
+
 # ---------------------------------------------------------------------------
 # Cycle
 # ---------------------------------------------------------------------------
@@ -258,7 +270,7 @@ async def test_cycle_commits_each_batch_in_its_own_session() -> None:
 
     result = await run_backfill_cycle(_fake_backfill(rows))
 
-    assert (result.rows_touched, result.batches, result.still_pending) == (5, 4, False)
+    assert (result.rows_touched, result.batches, result.still_pending) == (5, 3, False)
     assert len({id(session) for session in rows.sessions}) == len(rows.sessions)
 
 

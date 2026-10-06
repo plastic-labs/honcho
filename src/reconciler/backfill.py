@@ -39,8 +39,6 @@ class Backfill:
     # Processes one batch and returns the rows it touched; 0 means drained.
     run_batch: Callable[[AsyncSession, int], Awaitable[int]]
     interval_seconds: int
-    # Condition that must hold before the backfill and its legacy reads are removed.
-    retire_after: str
     batch_size: int = 500
     time_budget_seconds: float = 240.0
     pause_seconds: float = 0.0
@@ -76,16 +74,14 @@ class BackfillCycleResult:
 BACKFILLS: dict[str, Backfill] = {
     backfill.name: backfill
     for backfill in (
+        # Retire once no pre-3.2.0 writer of documents.source_ids is live on any
+        # deployment and backfill_pending{task="document_sources"} is 0.
         Backfill(
             name="document_sources",
             has_pending=has_pending_document_sources,
             count_pending=count_pending_document_sources,
             run_batch=drain_document_sources_batch,
             interval_seconds=settings.VECTOR_STORE.RECONCILIATION_INTERVAL_SECONDS,
-            retire_after=(
-                "No pre-3.2.0 writer of documents.source_ids is live on any "
-                + "deployment, and backfill_pending{task='document_sources'} is 0."
-            ),
             batch_size=BACKFILL_BATCH_SIZE,
             legacy_reconciler_type=ReconcilerType.BACKFILL_DOCUMENT_SOURCES,
         ),
@@ -120,9 +116,9 @@ async def run_backfill_cycle(backfill: Backfill) -> BackfillCycleResult:
         async with tracked_db(f"backfill_{backfill.name}") as db:
             count = await backfill.run_batch(db, backfill.batch_size)
             await db.commit()
-        batches += 1
         if count == 0:
             break
+        batches += 1
         rows_touched += count
         if backfill.pause_seconds > 0:
             await asyncio.sleep(backfill.pause_seconds)

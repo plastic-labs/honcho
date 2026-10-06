@@ -72,6 +72,9 @@ def construct_work_unit_key(
         reconciler_type = payload.get("reconciler_type")
         if not reconciler_type:
             raise ValueError("reconciler_type is required for reconciler tasks")
+        backfill_name = payload.get("backfill_name")
+        if backfill_name:
+            return f"reconciler:backfill.{backfill_name}"
         return f"reconciler:{reconciler_type}"
 
     if task_type in ("scope_backfill", "scope_removal"):

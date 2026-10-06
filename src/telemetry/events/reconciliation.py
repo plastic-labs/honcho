@@ -95,7 +95,9 @@ class BackfillCompletedEvent(BaseEvent):
 
     backfill_name: str = Field(..., description="Registered backfill name")
     rows_touched: int = Field(default=0, description="Rows moved to the new shape")
-    batches: int = Field(default=0, description="Batches run in this cycle")
+    batches: int = Field(
+        default=0, description="Batches that touched rows in this cycle"
+    )
     still_pending: bool = Field(
         ..., description="Whether rows still match the pending predicate"
     )
