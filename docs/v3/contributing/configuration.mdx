@@ -701,6 +701,7 @@ before interruption. `trace.content` remains at schema version 1.
 | `duration_ms`, `outcome`, `error_class`, `attempt`, `retry_attempts`, `is_final_attempt` | Execution diagnostics for both LLM and embedding calls. `is_final_attempt` means the configured retry budget is exhausted, so an earlier successful attempt can have `false`. |
 | `was_stream`, `was_fallback`, `effective_max_output_tokens` | LLM execution mode, selected fallback, and effective output limit. |
 | `system_prompt_ref`, `system_prompt_refs`, `output_reasoning_ref` | References into `trace.content` for the system prompt and normalized provider reasoning details. `system_prompt_refs` lists each system message as the provider saw it; `system_prompt_ref` is a single ref for the whole system prompt — the lone message when there is one, otherwise their concatenation shipped under its own hash. |
+| `custom_instructions_ref` | Reference into `trace.content` for the operator-written custom instructions added to this call's prompt (role `__custom_instructions__`, `honcho_authored=false`). Unset when no instructions applied. Unlike the system prompt that embeds them, this record is tenant-visible. |
 
 Fields remain null or empty when unavailable or inapplicable. Root spans have no
 parent; `parent_event_id` is populated only when a caller supplies an actual

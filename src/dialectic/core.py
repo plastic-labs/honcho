@@ -30,6 +30,7 @@ from src.llm import (
 )
 from src.llm.runtime import CapturedAgentSpan, start_captured_span
 from src.llm.types import LLMTelemetryContext
+from src.schemas import ResolvedDialecticConfiguration
 from src.telemetry import prometheus_metrics
 from src.telemetry.events import DialecticCompletedEvent, EmbeddingCallPurpose, emit
 from src.telemetry.logging import (
@@ -46,6 +47,7 @@ from src.utils.agent_tools import (
 )
 from src.utils.evidence import EvidenceAccumulator
 from src.utils.formatting import format_new_turn_with_timestamp
+from src.utils.tokens import estimate_tokens
 from src.utils.types import embedding_call_purpose
 
 logger = logging.getLogger(__name__)
@@ -79,7 +81,7 @@ class DialecticAgent:
         session_id: str | None = None,
         session_allowlist: list[str] | None = None,
         evidence: EvidenceAccumulator | None = None,
-        custom_instructions: str | None = None,
+        instructions: ResolvedDialecticConfiguration | None = None,
     ):
         """
         Initialize the dialectic agent.
@@ -100,7 +102,8 @@ class DialecticAgent:
             evidence: Optional accumulator collecting the conclusions and
                 messages this run reads, for callers that asked for evidence.
                 Passing None collects nothing.
-            custom_instructions: Resolved dialectic custom instructions, if any
+            instructions: Resolved dialectic configuration carrying the custom
+                instructions and where they were resolved from
         """
         self.workspace_name: str = workspace_name
         self.session_name: str | None = session_name
@@ -112,6 +115,9 @@ class DialecticAgent:
         self.observed_peer_card: list[str] | None = observed_peer_card
         self.metric_key: str | None = metric_key
         self.reasoning_level: ReasoningLevel = reasoning_level
+        self.instructions: ResolvedDialecticConfiguration = (
+            instructions or ResolvedDialecticConfiguration()
+        )
 
         # Initialize conversation history with system prompt
         self.messages: list[dict[str, str]] = [
@@ -127,7 +133,7 @@ class DialecticAgent:
                         for tool in self._select_tools()
                         if isinstance((name := tool.get("name")), str)
                     },
-                    custom_instructions=custom_instructions,
+                    custom_instructions=self.instructions.custom_instructions,
                 ),
             }
         ]
@@ -447,6 +453,7 @@ class DialecticAgent:
             observed=self.observed,
             peer_name=self.observed,
             track_name=track_name,
+            custom_instructions=self.instructions.custom_instructions,
         )
 
     def _log_response_metrics(
@@ -532,6 +539,10 @@ class DialecticAgent:
                 cache_read_tokens=cache_read_input_tokens or 0,
                 cache_creation_tokens=cache_creation_input_tokens or 0,
                 hit_input_token_cap=hit_input_token_cap,
+                custom_instructions_tokens=estimate_tokens(
+                    self.instructions.custom_instructions
+                ),
+                custom_instructions_source=self.instructions.custom_instructions_source,
             )
         )
 

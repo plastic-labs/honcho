@@ -149,6 +149,16 @@ class RepresentationCompletedEvent(BaseEvent):
         ),
     )
 
+    # Custom instructions
+    custom_instructions_tokens: int = Field(
+        default=0,
+        description="Estimated tokens of the resolved custom instructions applied (0 when none). Included in prompt_scaffold_tokens.",
+    )
+    custom_instructions_source: str | None = Field(
+        default=None,
+        description="Where the resolved custom instructions came from, as '<level>.<field>' (e.g. 'message.reasoning', 'workspace.shared'); None when no level set any.",
+    )
+
     # Observer fanout
     observer_count: int = Field(
         default=0,

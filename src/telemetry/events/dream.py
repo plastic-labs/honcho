@@ -191,6 +191,24 @@ class DreamSpecialistEvent(BaseEvent):
         description="Exception class name when success=False; None on success.",
     )
 
+    # Custom instructions
+    custom_instructions_tokens: int = Field(
+        default=0,
+        description="Estimated tokens of the resolved dream custom instructions applied (0 when none).",
+    )
+    custom_instructions_source: str | None = Field(
+        default=None,
+        description="Where the resolved dream custom instructions came from, as '<level>.<field>' (e.g. 'session.shared', 'workspace.dream'); None when no level set any.",
+    )
+    peer_card_custom_instructions_tokens: int = Field(
+        default=0,
+        description="Estimated tokens of the resolved peer_card custom instructions applied (0 when none).",
+    )
+    peer_card_custom_instructions_source: str | None = Field(
+        default=None,
+        description="Where the resolved peer_card custom instructions came from, as '<level>.<field>' (e.g. 'session.peer_card'; never 'shared', since peer_card does not fall back); None when no level set any.",
+    )
+
     def get_resource_id(self) -> str:
         """Resource ID includes run_id and specialist type for uniqueness."""
         return f"{self.run_id}:{self.specialist_type}"

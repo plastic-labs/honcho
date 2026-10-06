@@ -494,6 +494,7 @@ async def _create_and_save_summary(
             session_id=session_id,
             source_message_ids=source_message_ids,
             queue_item_ids=[queue_item_id] if queue_item_id is not None else [],
+            custom_instructions=configuration.summary.custom_instructions,
         ),
     )
 
@@ -580,6 +581,10 @@ async def _create_and_save_summary(
                 previous_summary_tokens=previous_summary_tokens,
                 message_tokens=messages_tokens,
                 prompt_scaffold_tokens=prompt_tokens,
+                custom_instructions_tokens=estimate_tokens(
+                    configuration.summary.custom_instructions
+                ),
+                custom_instructions_source=configuration.summary.custom_instructions_source,
             )
         )
 

@@ -124,7 +124,7 @@ async def agentic_chat(
         reasoning_level=reasoning_level,
         session_allowlist=session_allowlist,
         evidence=evidence,
-        custom_instructions=configuration.dialectic.custom_instructions,
+        instructions=configuration.dialectic,
     )
 
     return await agent.answer(query, response_model=response_model)
@@ -208,7 +208,7 @@ async def agentic_chat_stream(
         reasoning_level=reasoning_level,
         session_allowlist=session_allowlist,
         evidence=evidence,
-        custom_instructions=configuration.dialectic.custom_instructions,
+        instructions=configuration.dialectic,
     )
 
     async for chunk in agent.answer_stream(query, response_model=response_model):
@@ -243,7 +243,7 @@ async def workspace_chat(
         reasoning_level=reasoning_level,
         session_allowlist=session_allowlist,
         evidence=evidence,
-        custom_instructions=configuration.dialectic.custom_instructions,
+        instructions=configuration.dialectic,
     )
     return await agent.answer(query, response_model=response_model)
 
@@ -275,7 +275,7 @@ async def workspace_chat_stream(
         reasoning_level=reasoning_level,
         session_allowlist=session_allowlist,
         evidence=evidence,
-        custom_instructions=configuration.dialectic.custom_instructions,
+        instructions=configuration.dialectic,
     )
     async for chunk in agent.answer_stream(query, response_model=response_model):
         yield chunk

@@ -77,6 +77,16 @@ class DialecticCompletedEvent(BaseEvent):
         ),
     )
 
+    # Custom instructions
+    custom_instructions_tokens: int = Field(
+        default=0,
+        description="Estimated tokens of the resolved custom instructions applied (0 when none).",
+    )
+    custom_instructions_source: str | None = Field(
+        default=None,
+        description="Where the resolved custom instructions came from, as '<level>.<field>' (e.g. 'session.shared', 'workspace.dialectic'); None when no level set any.",
+    )
+
     def get_resource_id(self) -> str:
         """Resource ID is the run_id for uniqueness."""
         return self.run_id
