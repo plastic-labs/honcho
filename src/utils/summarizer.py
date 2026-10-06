@@ -29,7 +29,7 @@ from src.telemetry.prometheus.metrics import (
     DeriverTaskTypes,
     TokenTypes,
 )
-from src.utils.formatting import utc_now_iso
+from src.utils.formatting import custom_instructions_section, utc_now_iso
 from src.utils.tokens import estimate_tokens, track_deriver_input_tokens
 
 from .. import crud, models
@@ -103,8 +103,10 @@ def short_summary_prompt(
     formatted_messages: str,
     output_words: int,
     previous_summary_text: str,
+    custom_instructions: str | None = None,
 ) -> str:
     """Generate the short summary prompt."""
+    instructions_section = custom_instructions_section(custom_instructions)
     return c(f"""
 You are a system that summarizes parts of a conversation to create a concise and accurate summary. Focus on capturing:
 
@@ -118,6 +120,8 @@ If there is a previous summary, ALWAYS make your new summary inclusive of both i
 Provide a concise, factual summary that captures the essence of the conversation. Your summary should be detailed enough to serve as context for future messages, but brief enough to be helpful. Prefer a thorough chronological narrative over a list of bullet points.
 
 Return only the summary without any explanation or meta-commentary.
+
+{instructions_section}
 
 <previous_summary>
 {previous_summary_text}
@@ -135,8 +139,10 @@ def long_summary_prompt(
     formatted_messages: str,
     output_words: int,
     previous_summary_text: str,
+    custom_instructions: str | None = None,
 ) -> str:
     """Generate the long summary prompt."""
+    instructions_section = custom_instructions_section(custom_instructions)
     return c(f"""
 You are a system that creates thorough, comprehensive summaries of conversations. Focus on capturing:
 
@@ -152,6 +158,8 @@ If there is a previous summary, ALWAYS make your new summary inclusive of both i
 Provide a thorough and detailed summary that captures the essence of the conversation. Your summary should serve as a comprehensive record of the important information in this conversation. Prefer an exhaustive chronological narrative over a list of bullet points.
 
 Return only the summary without any explanation or meta-commentary.
+
+{instructions_section}
 
 <previous_summary>
 {previous_summary_text}
@@ -201,6 +209,7 @@ async def create_short_summary(
     formatted_messages: str,
     input_tokens: int,
     previous_summary: str | None = None,
+    custom_instructions: str | None = None,
     *,
     telemetry: LLMTelemetryContext | None = None,
 ) -> HonchoLLMCallResponse[str]:
@@ -217,7 +226,7 @@ async def create_short_summary(
         previous_summary_text = "There is no previous summary -- the messages are the beginning of the conversation."
 
     prompt = short_summary_prompt(
-        formatted_messages, output_words, previous_summary_text
+        formatted_messages, output_words, previous_summary_text, custom_instructions
     )
 
     # Mint a root span id.
@@ -241,6 +250,7 @@ async def create_short_summary(
 async def create_long_summary(
     formatted_messages: str,
     previous_summary: str | None = None,
+    custom_instructions: str | None = None,
     *,
     telemetry: LLMTelemetryContext | None = None,
 ) -> HonchoLLMCallResponse[str]:
@@ -254,7 +264,7 @@ async def create_long_summary(
         previous_summary_text = "There is no previous summary -- the messages are the beginning of the conversation."
 
     prompt = long_summary_prompt(
-        formatted_messages, output_words, previous_summary_text
+        formatted_messages, output_words, previous_summary_text, custom_instructions
     )
 
     # Mint a root span id.
@@ -478,6 +488,7 @@ async def _create_and_save_summary(
         last_message_id=last_message_id,
         last_message_content_preview=last_message_content_preview,
         message_count=message_count,
+        custom_instructions=configuration.summary.custom_instructions,
         telemetry=LLMTelemetryContext(
             workspace_name=workspace_name,
             session_id=session_id,
@@ -493,6 +504,10 @@ async def _create_and_save_summary(
         prompt_tokens = estimate_short_summary_prompt_tokens()
     else:
         prompt_tokens = estimate_long_summary_prompt_tokens()
+    if configuration.summary.custom_instructions:
+        prompt_tokens += estimate_tokens(
+            custom_instructions_section(configuration.summary.custom_instructions)
+        )
 
     # Step 3: Save to database with new transaction
     if not is_fallback:
@@ -578,6 +593,7 @@ async def _create_summary(
     last_message_id: int,
     last_message_content_preview: str,
     message_count: int,
+    custom_instructions: str | None = None,
     *,
     telemetry: LLMTelemetryContext | None = None,
 ) -> tuple[Summary, bool, int, int]:
@@ -593,6 +609,7 @@ async def _create_summary(
         last_message_id: ID of the last message
         last_message_content_preview: Preview of last message content for fallback
         message_count: Number of messages for fallback
+        custom_instructions: Resolved summary custom instructions, if any
         telemetry: Source identity carried through summary generation.
 
     Returns:
@@ -612,12 +629,14 @@ async def _create_summary(
                 formatted_messages,
                 input_tokens,
                 previous_summary_text,
+                custom_instructions,
                 telemetry=telemetry,
             )
         else:
             response = await create_long_summary(
                 formatted_messages,
                 previous_summary_text,
+                custom_instructions,
                 telemetry=telemetry,
             )
 

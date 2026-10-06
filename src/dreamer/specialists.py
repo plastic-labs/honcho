@@ -37,6 +37,7 @@ from src.utils.agent_tools import (
     INDUCTION_SPECIALIST_TOOLS,
     create_tool_executor,
 )
+from src.utils.formatting import custom_instructions_section
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +129,28 @@ For each legacy entry:
 When in doubt about a specific legacy entry, prefer migrating it (so valid info isn't lost) over dropping it. Splitting one dense legacy entry into multiple correctly-prefixed entries is fine and encouraged (e.g. a semicolon-separated `Tech Stack:` dump can become several `ATTRIBUTE:` lines, one per durable tool/platform).
 
 Call `update_peer_card` with the complete deduplicated list when there is a durable identity update to record, or when the existing card needs migration. Entries that do not start with one of the four allowed prefixes will be rejected. Keep concise (max 40 entries)."""
+
+
+def custom_instructions_prompt(
+    configuration: ResolvedConfiguration | None, *, peer_card_enabled: bool
+) -> str:
+    """Render the dream and peer card custom instructions for a specialist.
+
+    Peer card instructions are additive on top of the dream instructions and
+    only apply when the specialist can write the card.
+    """
+    if configuration is None:
+        return ""
+    sections = [custom_instructions_section(configuration.dream.custom_instructions)]
+    if peer_card_enabled:
+        sections.append(
+            custom_instructions_section(
+                configuration.peer_card.custom_instructions,
+                heading="PEER CARD CUSTOM INSTRUCTIONS:",
+                note="Apply these within the allowed entry kinds and rules of the PEER CARD section.",
+            )
+        )
+    return "".join(f"\n\n{section}" for section in sections if section)
 
 
 class BaseSpecialist(ABC):
@@ -304,6 +327,9 @@ If you update it, send the full deduplicated list and remove stale entries.
                     "role": "system",
                     "content": self.build_system_prompt(
                         observed, peer_card_enabled=peer_card_enabled
+                    )
+                    + custom_instructions_prompt(
+                        configuration, peer_card_enabled=peer_card_enabled
                     ),
                 },
                 {

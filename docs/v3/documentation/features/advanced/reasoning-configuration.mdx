@@ -146,6 +146,47 @@ await honcho.setConfiguration({
 ```
 </CodeGroup>
 
+### Custom Instructions
+
+Custom instructions are free-text guidance added to the prompts Honcho's agents use, for example "Always write in German" or "Only track durable work preferences." Set one shared value for every agent, override it per agent, or both.
+
+| Field | Applies to |
+|-------|------------|
+| `custom_instructions` (top level) | Shared fallback for the deriver, summarizer, dialectic, and dreamer |
+| `reasoning.custom_instructions` | Deriver (conclusion extraction) |
+| `summary.custom_instructions` | Session summaries |
+| `dialectic.custom_instructions` | The peer and workspace chat endpoints |
+| `dream.custom_instructions` | Dreaming (deductive and inductive conclusions) |
+| `peer_card.custom_instructions` | Peer card updates during dreaming. Added on top of the dream instructions, applied within the peer card's allowed entry kinds, and never falls back to the shared value. |
+
+Resolution rules:
+
+1. **The most specific level wins.** Honcho checks message, then session, then workspace configuration and uses the first level that sets a value, so a session's shared instructions beat a workspace's `summary.custom_instructions`.
+2. **Within a level, a module's own value beats the shared value.**
+3. **An empty string means "none".** Set `""` to turn off inherited instructions for a module at that level.
+4. **Other sections never fall back to `reasoning`.** `reasoning.custom_instructions` only affects the deriver, as it always has.
+
+Each value is limited to `DERIVER_MAX_CUSTOM_INSTRUCTIONS_TOKENS` (default 2000).
+
+<CodeGroup>
+```python Python
+# German everywhere, bullet-point summaries, and no instructions for the dialectic
+honcho.set_configuration({
+    "custom_instructions": "Always write in German.",
+    "summary": {"custom_instructions": "Write summaries as bullet points in German."},
+    "dialectic": {"custom_instructions": ""},
+})
+```
+```typescript TypeScript
+// German everywhere, bullet-point summaries, and no instructions for the dialectic
+await honcho.setConfiguration({
+    customInstructions: "Always write in German.",
+    summary: { customInstructions: "Write summaries as bullet points in German." },
+    dialectic: { customInstructions: "" },
+});
+```
+</CodeGroup>
+
 ---
 
 ## Peer Configuration
@@ -294,20 +335,28 @@ import { Honcho } from "@honcho-ai/sdk";
 
 ```json
 {
+  "custom_instructions": null,
   "reasoning": {
-    "enabled": true
+    "enabled": true,
+    "custom_instructions": null
   },
   "peer_card": {
     "use": true,
-    "create": true
+    "create": true,
+    "custom_instructions": null
   },
   "summary": {
     "enabled": true,
     "messages_per_short_summary": 20,
-    "messages_per_long_summary": 60
+    "messages_per_long_summary": 60,
+    "custom_instructions": null
   },
   "dream": {
-    "enabled": true
+    "enabled": true,
+    "custom_instructions": null
+  },
+  "dialectic": {
+    "custom_instructions": null
   }
 }
 ```
