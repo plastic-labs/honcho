@@ -17,7 +17,7 @@ from typing import ClassVar
 
 from pydantic import Field
 
-from src.telemetry.events.base import BaseEvent
+from src.telemetry.events.base import BaseEvent, CustomInstructionsFields
 
 
 class AgentIterationEvent(BaseEvent):
@@ -183,7 +183,7 @@ class AgentToolPeerCardUpdatedEvent(BaseEvent):
         return f"{self.run_id}:{self.iteration}:peer_card_updated"
 
 
-class AgentToolSummaryCreatedEvent(BaseEvent):
+class AgentToolSummaryCreatedEvent(BaseEvent, CustomInstructionsFields):
     """Emitted when a summary is created.
 
     Tracks summary creation with full context about what was summarized
@@ -261,16 +261,6 @@ class AgentToolSummaryCreatedEvent(BaseEvent):
             "Estimated tokens for the scaffold portion of the prompt, including "
             "any custom instructions (from estimate_short/long_summary_prompt_tokens)."
         ),
-    )
-
-    # Custom instructions
-    custom_instructions_tokens: int = Field(
-        default=0,
-        description="Estimated tokens of the resolved custom instructions applied (0 when none). Included in prompt_scaffold_tokens.",
-    )
-    custom_instructions_source: str | None = Field(
-        default=None,
-        description="Where the resolved custom instructions came from, as '<level>.<field>' (e.g. 'session.shared', 'workspace.summary'); None when no level set any.",
     )
 
     def get_resource_id(self) -> str:

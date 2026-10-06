@@ -10,7 +10,7 @@ from typing import ClassVar
 
 from pydantic import Field
 
-from src.telemetry.events.base import BaseEvent
+from src.telemetry.events.base import BaseEvent, CustomInstructionsFields
 
 
 class DreamRunEvent(BaseEvent):
@@ -111,7 +111,7 @@ class DreamRunEvent(BaseEvent):
         return self.run_id
 
 
-class DreamSpecialistEvent(BaseEvent):
+class DreamSpecialistEvent(BaseEvent, CustomInstructionsFields):
     """Emitted when an individual dream specialist completes.
 
     Each specialist (deduction, induction) emits its own event with
@@ -191,15 +191,7 @@ class DreamSpecialistEvent(BaseEvent):
         description="Exception class name when success=False; None on success.",
     )
 
-    # Custom instructions
-    custom_instructions_tokens: int = Field(
-        default=0,
-        description="Estimated tokens of the resolved dream custom instructions applied (0 when none).",
-    )
-    custom_instructions_source: str | None = Field(
-        default=None,
-        description="Where the resolved dream custom instructions came from, as '<level>.<field>' (e.g. 'session.shared', 'workspace.dream'); None when no level set any.",
-    )
+    # Peer card custom instructions (dream's own pair comes from the mixin)
     peer_card_custom_instructions_tokens: int = Field(
         default=0,
         description="Estimated tokens of the resolved peer_card custom instructions applied (0 when none).",

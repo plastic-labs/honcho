@@ -10,10 +10,10 @@ from typing import ClassVar
 
 from pydantic import Field
 
-from src.telemetry.events.base import BaseEvent
+from src.telemetry.events.base import BaseEvent, CustomInstructionsFields
 
 
-class RepresentationCompletedEvent(BaseEvent):
+class RepresentationCompletedEvent(BaseEvent, CustomInstructionsFields):
     """Emitted when a representation task completes processing a message batch.
 
     Representation tasks extract conclusions from messages to build peer
@@ -147,16 +147,6 @@ class RepresentationCompletedEvent(BaseEvent):
         description=(
             "True when the LLM call truncated input messages to fit max_input_tokens."
         ),
-    )
-
-    # Custom instructions
-    custom_instructions_tokens: int = Field(
-        default=0,
-        description="Estimated tokens of the resolved custom instructions applied (0 when none). Included in prompt_scaffold_tokens.",
-    )
-    custom_instructions_source: str | None = Field(
-        default=None,
-        description="Where the resolved custom instructions came from, as '<level>.<field>' (e.g. 'message.reasoning', 'workspace.shared'); None when no level set any.",
     )
 
     # Observer fanout

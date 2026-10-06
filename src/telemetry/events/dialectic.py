@@ -10,10 +10,10 @@ from typing import ClassVar
 
 from pydantic import Field
 
-from src.telemetry.events.base import BaseEvent
+from src.telemetry.events.base import BaseEvent, CustomInstructionsFields
 
 
-class DialecticCompletedEvent(BaseEvent):
+class DialecticCompletedEvent(BaseEvent, CustomInstructionsFields):
     """Emitted when a dialectic (chat) query completes.
 
     Dialectic queries answer questions about peers by gathering context
@@ -75,16 +75,6 @@ class DialecticCompletedEvent(BaseEvent):
             "settings.DIALECTIC.MAX_INPUT_TOKENS. Token-based — fires for the "
             "single-oversized-message case too, not just message-list shrinkage."
         ),
-    )
-
-    # Custom instructions
-    custom_instructions_tokens: int = Field(
-        default=0,
-        description="Estimated tokens of the resolved custom instructions applied (0 when none).",
-    )
-    custom_instructions_source: str | None = Field(
-        default=None,
-        description="Where the resolved custom instructions came from, as '<level>.<field>' (e.g. 'session.shared', 'workspace.dialectic'); None when no level set any.",
     )
 
     def get_resource_id(self) -> str:
