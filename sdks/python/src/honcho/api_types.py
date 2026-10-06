@@ -35,6 +35,7 @@ class PeerCardConfiguration(BaseModel):
 
     use: bool | None = None
     create: bool | None = None
+    custom_instructions: str | None = None
 
 
 class SummaryConfiguration(BaseModel):
@@ -45,6 +46,7 @@ class SummaryConfiguration(BaseModel):
     enabled: bool | None = None
     messages_per_short_summary: int | None = None
     messages_per_long_summary: int | None = None
+    custom_instructions: str | None = None
 
 
 class DreamConfiguration(BaseModel):
@@ -53,6 +55,15 @@ class DreamConfiguration(BaseModel):
     model_config = ConfigDict(extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
 
     enabled: bool | None = None
+    custom_instructions: str | None = None
+
+
+class DialecticConfiguration(BaseModel):
+    """Configuration for the dialectic chat endpoints."""
+
+    model_config = ConfigDict(extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
+
+    custom_instructions: str | None = None
 
 
 class WorkspaceConfiguration(BaseModel):
@@ -60,10 +71,12 @@ class WorkspaceConfiguration(BaseModel):
 
     model_config = ConfigDict(extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
 
+    custom_instructions: str | None = None
     reasoning: ReasoningConfiguration | None = None
     peer_card: PeerCardConfiguration | None = None
     summary: SummaryConfiguration | None = None
     dream: DreamConfiguration | None = None
+    dialectic: DialecticConfiguration | None = None
 
 
 class SessionConfiguration(WorkspaceConfiguration):

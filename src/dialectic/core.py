@@ -79,6 +79,7 @@ class DialecticAgent:
         session_id: str | None = None,
         session_allowlist: list[str] | None = None,
         evidence: EvidenceAccumulator | None = None,
+        custom_instructions: str | None = None,
     ):
         """
         Initialize the dialectic agent.
@@ -99,6 +100,7 @@ class DialecticAgent:
             evidence: Optional accumulator collecting the conclusions and
                 messages this run reads, for callers that asked for evidence.
                 Passing None collects nothing.
+            custom_instructions: Resolved dialectic custom instructions, if any
         """
         self.workspace_name: str = workspace_name
         self.session_name: str | None = session_name
@@ -125,6 +127,7 @@ class DialecticAgent:
                         for tool in self._select_tools()
                         if isinstance((name := tool.get("name")), str)
                     },
+                    custom_instructions=custom_instructions,
                 ),
             }
         ]

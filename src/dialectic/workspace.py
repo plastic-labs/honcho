@@ -56,6 +56,7 @@ class WorkspaceDialecticAgent(DialecticAgent):
         session_id: str | None = None,
         session_allowlist: list[str] | None = None,
         evidence: EvidenceAccumulator | None = None,
+        custom_instructions: str | None = None,
     ) -> None:
         super().__init__(
             workspace_name=workspace_name,
@@ -76,7 +77,8 @@ class WorkspaceDialecticAgent(DialecticAgent):
                     name
                     for tool in self._select_tools()
                     if isinstance((name := tool.get("name")), str)
-                }
+                },
+                custom_instructions=custom_instructions,
             ),
         }
 

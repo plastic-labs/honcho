@@ -165,3 +165,27 @@ def format_new_turn_with_timestamp(
     """
     current_time_str = current_time.strftime("%Y-%m-%d %H:%M:%S")
     return f"{current_time_str} {speaker}: {new_turn}"
+
+
+def custom_instructions_section(
+    custom_instructions: str | None,
+    *,
+    heading: str = "CUSTOM INSTRUCTIONS:",
+    note: str | None = None,
+) -> str:
+    """
+    Render operator-configured custom instructions as a prompt section.
+
+    Args:
+        custom_instructions: Resolved instructions; blank or None renders nothing
+        heading: Section heading line
+        note: Optional line between the heading and the instructions
+
+    Returns:
+        The rendered section, or an empty string when there are no instructions
+    """
+    normalized = (custom_instructions or "").strip()
+    if not normalized:
+        return ""
+    lines = [heading, note, normalized] if note else [heading, normalized]
+    return "\n".join(lines)

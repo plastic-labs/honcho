@@ -31,6 +31,39 @@ def deep_update(base: dict[str, Any], update: dict[str, Any]) -> None:
             base[key] = value
 
 
+# Modules whose custom_instructions fall back to the top-level shared value.
+# peer_card is resolved separately: its instructions are additive on top of the
+# dream instructions, so falling back would inject the shared value twice.
+_SHARED_INSTRUCTION_MODULES = ("reasoning", "summary", "dialectic", "dream")
+
+
+def resolve_custom_instructions(
+    levels: list[dict[str, Any]], module: str, *, shared_fallback: bool = True
+) -> str | None:
+    """
+    Resolve a module's custom instructions across configuration levels.
+
+    The most specific level that sets a value wins. Within one level, the
+    module's own `custom_instructions` beats the top-level shared value. An
+    empty string is an explicit "none" and stops the fallback.
+
+    Args:
+        levels: Normalized configuration dicts, most specific first
+        module: Configuration section name, e.g. "summary"
+        shared_fallback: Whether to fall back to the top-level value
+
+    Returns:
+        Stripped instructions, or None if none apply
+    """
+    for level in levels:
+        value = (as_dict(level.get(module)) or {}).get("custom_instructions")
+        if value is None and shared_fallback:
+            value = level.get("custom_instructions")
+        if isinstance(value, str):
+            return value.strip() or None
+    return None
+
+
 def normalize_configuration_dict(raw: dict[str, Any]) -> dict[str, Any]:
     """
     Normalize a workspace/session/message configuration dict to match the current
@@ -108,23 +141,34 @@ def get_configuration(
             "messages_per_long_summary": settings.SUMMARY.MESSAGES_PER_LONG_SUMMARY,
         },
         "dream": {"enabled": settings.DREAM.ENABLED},
+        "dialectic": {},
     }
 
-    # Apply overrides in order (Workspace -> Session -> Message)
-    # Note: deep_update modifies config_dict in place
-
-    if workspace is not None:
-        deep_update(config_dict, normalize_configuration_dict(workspace.configuration))
-
-    if session is not None:
-        deep_update(config_dict, normalize_configuration_dict(session.configuration))
-
-    if message_configuration is not None:
-        deep_update(
-            config_dict,
-            normalize_configuration_dict(
-                message_configuration.model_dump(exclude_none=True)
-            ),
+    # Most specific first: Message -> Session -> Workspace
+    levels = [
+        normalize_configuration_dict(raw)
+        for raw in (
+            message_configuration.model_dump(exclude_none=True)
+            if message_configuration is not None
+            else None,
+            session.configuration if session is not None else None,
+            workspace.configuration if workspace is not None else None,
         )
+        if raw is not None
+    ]
+
+    # Apply overrides least specific first; deep_update modifies config_dict in place
+    for level in reversed(levels):
+        deep_update(config_dict, level)
+
+    # custom_instructions don't merge field-by-field: a more specific level's
+    # shared value must beat a less specific level's module value.
+    for module in _SHARED_INSTRUCTION_MODULES:
+        config_dict[module]["custom_instructions"] = resolve_custom_instructions(
+            levels, module
+        )
+    config_dict["peer_card"]["custom_instructions"] = resolve_custom_instructions(
+        levels, "peer_card", shared_fallback=False
+    )
 
     return ResolvedConfiguration(**config_dict)

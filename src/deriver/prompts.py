@@ -10,6 +10,7 @@ from datetime import datetime
 from functools import cache
 from inspect import cleandoc as c
 
+from src.utils.formatting import custom_instructions_section
 from src.utils.tokens import estimate_tokens
 
 _MESSAGE_TAG = re.compile(r"<(?=/?message\b)", re.IGNORECASE)
@@ -42,23 +43,6 @@ def _normalized_custom_instructions(custom_instructions: str | None) -> str | No
     return normalized or None
 
 
-def _custom_instructions_section(custom_instructions: str | None) -> str:
-    """Render optional custom instructions for the deriver prompt."""
-    normalized_custom_instructions = _normalized_custom_instructions(
-        custom_instructions
-    )
-    if normalized_custom_instructions is None:
-        return ""
-
-    return c(
-        f"""
-        CUSTOM INSTRUCTIONS:
-        These instructions apply to the target peer identified below.
-        {normalized_custom_instructions}
-        """
-    )
-
-
 def minimal_deriver_prompt(
     peer_id: str,
     messages: str,
@@ -74,7 +58,10 @@ def minimal_deriver_prompt(
     Returns:
         Formatted prompt string for observation extraction.
     """
-    custom_instructions_section = _custom_instructions_section(custom_instructions)
+    instructions_section = custom_instructions_section(
+        custom_instructions,
+        note="These instructions apply to the target peer identified below.",
+    )
     return c(
         f"""
 Analyze messages to extract **explicit atomic facts** about the target peer.
@@ -98,7 +85,7 @@ RULES:
 - Write each observation for a reader who knows only the peer id: identify other people and things by their relation to this peer, and leave no pronoun, "it", "there", or relative time unresolved.
 - Include only what is needed to identify who or what the observation is about and to state the fact. Do not add explanation or background.
 
-{custom_instructions_section}
+{instructions_section}
 
 Target peer:
 {peer_id}

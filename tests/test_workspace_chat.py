@@ -387,7 +387,7 @@ async def test_workspace_chat_releases_preflight_session_before_agent_answer(
     async def fake_get_session(*args: Any, **kwargs: Any) -> object:
         _ = (args, kwargs)
         assert active_sessions == 1
-        return SimpleNamespace(id="session-id")
+        return SimpleNamespace(id="session-id", configuration={})
 
     async def fake_answer(_self: Any, query: str, **_kwargs: Any) -> str:
         assert query == "What changed?"
@@ -397,7 +397,7 @@ async def test_workspace_chat_releases_preflight_session_before_agent_answer(
     async def fake_get_workspace(*args: Any, **kwargs: Any) -> object:
         _ = (args, kwargs)
         assert active_sessions == 1
-        return SimpleNamespace(name="workspace")
+        return SimpleNamespace(name="workspace", configuration={})
 
     monkeypatch.setattr("src.dialectic.chat.tracked_db", fake_tracked_db)
     monkeypatch.setattr("src.dialectic.chat.crud.get_workspace", fake_get_workspace)
@@ -429,7 +429,7 @@ async def test_workspace_chat_stream_releases_preflight_session_before_stream(
     async def fake_get_session(*args: Any, **kwargs: Any) -> object:
         _ = (args, kwargs)
         assert active_sessions == 1
-        return SimpleNamespace(id="session-id")
+        return SimpleNamespace(id="session-id", configuration={})
 
     async def fake_answer_stream(_self: Any, query: str, **_kwargs: Any):
         assert query == "Stream it"
@@ -441,7 +441,7 @@ async def test_workspace_chat_stream_releases_preflight_session_before_stream(
     async def fake_get_workspace(*args: Any, **kwargs: Any) -> object:
         _ = (args, kwargs)
         assert active_sessions == 1
-        return SimpleNamespace(name="workspace")
+        return SimpleNamespace(name="workspace", configuration={})
 
     monkeypatch.setattr("src.dialectic.chat.tracked_db", fake_tracked_db)
     monkeypatch.setattr("src.dialectic.chat.crud.get_workspace", fake_get_workspace)
