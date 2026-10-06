@@ -108,7 +108,7 @@ body:
         - Honcho SDK (honcho-ai)
         - Not sure
     validations:
-      required: true
+      required: false
 
   - type: textarea
     id: summary
@@ -171,10 +171,10 @@ body:
     attributes:
       label: Config and logs
       description: >
-        First, the config lines from `hermes honcho status`, from `Host` down to `Write freq`. Stop
-        before `Connection...`: everything after it is your peer card and memory, which doesn't
-        belong in a public issue. Redact the API key, and any phone number or personal name in the
-        session key or peer names. Then add the request the plugin sent to Honcho and the response,
+        First, the config lines from `hermes honcho status`, from the `Honcho status` header down to
+        `Write freq`. Stop before `Connection...`: everything after it is your peer card and memory,
+        which doesn't belong in a public issue. Redact the API key, your username in file paths, and
+        any phone number or personal name in the session key or peer names. Then add the request the plugin sent to Honcho and the response,
         or the plugin log lines that show the problem, about 50 lines at most. Redact user content.
       render: shell
     validations:
