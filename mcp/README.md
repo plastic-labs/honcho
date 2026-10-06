@@ -84,6 +84,9 @@ HONCHO_API_URL=http://127.0.0.1:28000
 
 For a deployed Worker: `wrangler secret put HONCHO_API_URL`.
 
+To report errors to Sentry, set `SENTRY_DSN` the same way
+(`wrangler secret put SENTRY_DSN`). Without it, error reporting is a no-op.
+
 ## HTTP host
 
 For Docker or any platform that runs a long-lived process, use the Streamable

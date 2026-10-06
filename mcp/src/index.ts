@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/cloudflare";
 import { createMcpHandler } from "agents/mcp";
 import {
   honchoClients,
@@ -30,7 +31,8 @@ function authorizationServer(env: Env): string {
   return env.HONCHO_API_URL?.trim() || "https://api.honcho.dev";
 }
 
-export default {
+// Without SENTRY_DSN the SDK stays disabled and every capture is a no-op.
+export default Sentry.withSentry((env: Env) => ({ dsn: env.SENTRY_DSN }), {
   // Probes the authorization server API to confirm it is reachable and healthy.
   async scheduled(
     _controller: ScheduledController,
@@ -125,6 +127,7 @@ export default {
       });
       return await handler(request, env, executionCtx);
     } catch (e) {
+      Sentry.captureException(e);
       const message =
         e instanceof Error ? e.message : "Internal server error";
       return new Response(JSON.stringify({ error: message }), {
@@ -133,4 +136,4 @@ export default {
       });
     }
   },
-};
+} satisfies ExportedHandler<Env>);

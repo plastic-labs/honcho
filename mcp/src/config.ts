@@ -41,6 +41,7 @@ export interface Env {
   HONCHO_API_URL?: string;
   HONCHO_TIMEOUT_MS?: string;
   ALERT_WEBHOOK_URL?: string;
+  SENTRY_DSN?: string;
 }
 
 export interface EnvConfig {
