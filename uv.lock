@@ -7,7 +7,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-09-23T03:07:33.3784168Z"
+exclude-newer = "2026-10-01T20:21:57.558889Z"
 exclude-newer-span = "P5D"
 
 [manifest]
@@ -1177,6 +1177,7 @@ source = { editable = "sdks/python" }
 dependencies = [
     { name = "httpx" },
     { name = "pydantic" },
+    { name = "typing-extensions" },
 ]
 
 [package.optional-dependencies]
@@ -1191,10 +1192,11 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "eval-type-backport", marker = "python_full_version < '3.10'", specifier = ">=0.2.0" },
     { name = "honcho-cli", marker = "extra == 'cli'", editable = "honcho-cli" },
     { name = "httpx", specifier = ">=0.28.0,<1" },
-    { name = "pydantic", specifier = ">=2.0.0,<3" },
-    { name = "typing-extensions", marker = "python_full_version < '3.12'", specifier = ">=4.12.0" },
+    { name = "pydantic", specifier = ">=2.8.0,<3" },
+    { name = "typing-extensions", specifier = ">=4.12.0" },
 ]
 provides-extras = ["cli"]
 

@@ -5,6 +5,8 @@ This module provides shared functionality for handling file uploads across
 both sync and async client implementations.
 """
 
+from __future__ import annotations
+
 import mimetypes
 from io import BytesIO, IOBase
 

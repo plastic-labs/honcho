@@ -330,6 +330,38 @@ orchestrates. Run them with `uv run pytest tests/ -k typescript` from the repo r
 `bun test` on its own will fail. To type-check the SDK alone:
 `cd sdks/typescript && bun run tsc --noEmit`.
 
+### Clean package installs
+
+`Python clean installs` checks the published Python package boundary separately
+from the server's uv environment. It builds each package in a temporary directory
+outside the checkout, removes the copied sources, and installs the wheel and source
+archive into separate fresh environments. Smoke checks run from an unrelated
+directory with Python isolation enabled. Dependencies come from package metadata
+and the registry, without the root lockfile, workspace sources, or server extras.
+
+With Python 3.11+ and `uv` on PATH, run the same checks locally:
+
+```sh
+python3 scripts/check_clean_install.py --package sdk --python 3.8
+python3 scripts/check_clean_install.py --package cli --python 3.11
+python3 scripts/check_clean_install.py --package sdk-cli --python 3.11
+```
+
+The SDK matrix covers Python 3.8–3.14 and the CLI matrix covers 3.11–3.14 on Linux,
+with macOS checks for both and a Windows SDK check. `sdk-cli` checks the SDK's
+`[cli]` extra using the two locally built artifacts. Each base install verifies
+imports, declared versions, SDK sync/async requests through an in-memory HTTP
+transport, and absence of server dependencies. CLI checks also exercise command
+entry points, render the packaged Compose/SQL assets, and run the CLI suite against
+the installed package after the smoke checks pass. Docker and live credentials are
+not needed for these checks; actual server startup is covered separately.
+
+The workflow runs on matching PR changes regardless of the PR's base branch, so
+stacked PRs receive updated results too. It retains built archives as CI artifacts;
+use `--artifacts /tmp/honcho-install-artifacts` to retain them locally. Add explicit
+artifact checks for the provider mock and runtime packages when those packages land;
+this workflow currently covers the independently published SDK and CLI on `main`.
+
 ### Documentation
 
 Update docs in the same PR when you change a public surface: `/v3` endpoints, SDK exports,
