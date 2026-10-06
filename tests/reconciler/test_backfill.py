@@ -4,13 +4,14 @@ import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import replace
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from nanoid import generate as generate_nanoid
 from pydantic import ValidationError
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from src import models
 from src.deriver import consumer
@@ -261,13 +262,48 @@ async def test_cycle_commits_each_batch_in_its_own_session() -> None:
     assert len({id(session) for session in rows.sessions}) == len(rows.sessions)
 
 
-async def test_cycle_stops_at_time_budget() -> None:
-    rows = _Rows(5)
+async def test_cycle_persists_committed_batches_when_a_later_batch_fails(
+    db_engine: AsyncEngine,
+    db_session: AsyncSession,  # pyright: ignore[reportUnusedParameter]
+) -> None:
+    written: list[str] = []
 
-    result = await run_backfill_cycle(_fake_backfill(rows, time_budget_seconds=0))
+    async def run_batch(db: AsyncSession, _batch_size: int) -> int:
+        name = str(generate_nanoid())
+        db.add(models.Workspace(name=name))
+        await db.flush()
+        written.append(name)
+        if len(written) == 2:
+            raise RuntimeError("batch failed")
+        return 1
 
-    assert (result.rows_touched, result.batches, result.still_pending) == (0, 0, True)
-    assert rows.remaining == 5
+    with pytest.raises(RuntimeError, match="batch failed"):
+        await run_backfill_cycle(_fake_backfill(_Rows(0), run_batch=run_batch))
+
+    async with async_sessionmaker(bind=db_engine)() as fresh:
+        persisted = await fresh.scalars(
+            select(models.Workspace.name).where(models.Workspace.name.in_(written))
+        )
+        assert list(persisted) == written[:1]
+
+
+async def test_cycle_stops_at_time_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    rows = _Rows(10)
+    clock = SimpleNamespace(now=0.0)
+    monkeypatch.setattr(
+        backfill_module, "time", SimpleNamespace(monotonic=lambda: clock.now)
+    )
+    backfill = _fake_backfill(rows, time_budget_seconds=2.5)
+    inner = backfill.run_batch
+
+    async def run_batch(db: AsyncSession, batch_size: int) -> int:
+        clock.now += 1.0
+        return await inner(db, batch_size)
+
+    result = await run_backfill_cycle(replace(backfill, run_batch=run_batch))
+
+    assert (result.rows_touched, result.batches, result.still_pending) == (6, 3, True)
+    assert rows.remaining == 4
 
 
 # ---------------------------------------------------------------------------
@@ -301,10 +337,21 @@ async def test_scheduler_loop_refreshes_backfill_gauge(
         await scheduler.shutdown()
 
 
-def test_cycle_does_not_drive_the_gauge() -> None:
-    referenced = run_backfill_cycle.__code__.co_names
-    assert "record_backfill_pending" not in referenced
-    assert "prometheus_metrics" not in referenced
+async def test_cycle_does_not_drive_the_gauge(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, int]] = []
+
+    def _record(*, task: str, count: int) -> None:
+        calls.append((task, count))
+
+    monkeypatch.setattr("src.config.settings.METRICS.ENABLED", True)
+    monkeypatch.setattr(prometheus_metrics, "set_backfill_pending", _record)
+
+    result = await run_backfill_cycle(_fake_backfill(_Rows(5)))
+
+    assert result.rows_touched == 5
+    assert calls == []
 
 
 async def test_record_backfill_pending_sets_gauge(

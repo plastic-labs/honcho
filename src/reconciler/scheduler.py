@@ -29,6 +29,7 @@ from src.reconciler.sync_vectors import (
     has_pending_work,
     record_pending_embeddings_backlog,
 )
+from src.schemas import ReconcilerType
 
 logger = logging.getLogger(__name__)
 
@@ -39,12 +40,9 @@ class ReconcilerTask(BaseModel):
     name: str
     work_unit_key: str
     interval_seconds: int
-    payload: dict[str, Any] | None = None
+    payload: dict[str, Any]
     # Enqueue is skipped when this returns False.
     has_pending: Callable[[AsyncSession], Awaitable[bool]] | None = None
-
-    def queue_payload(self) -> dict[str, Any]:
-        return self.payload or {"reconciler_type": self.name}
 
 
 def backfill_task(backfill: Backfill) -> ReconcilerTask:
@@ -67,11 +65,14 @@ RECONCILER_TASKS: dict[str, ReconcilerTask] = {
         name="sync_vectors",
         work_unit_key="reconciler:sync_vectors",
         interval_seconds=settings.VECTOR_STORE.RECONCILIATION_INTERVAL_SECONDS,
+        payload={"reconciler_type": ReconcilerType.SYNC_VECTORS.value},
+        has_pending=has_pending_work,
     ),
     "cleanup_queue": ReconcilerTask(
         name="cleanup_queue",
         work_unit_key="reconciler:cleanup_queue",
         interval_seconds=QUEUE_CLEANUP_INTERVAL_SECONDS,
+        payload={"reconciler_type": ReconcilerType.CLEANUP_QUEUE.value},
     ),
     **{task.name: task for task in map(backfill_task, BACKFILLS.values())},
 }
@@ -280,10 +281,6 @@ class ReconcilerScheduler:
                 )
                 return False
 
-            if task.name == "sync_vectors" and not await has_pending_work(db):
-                logger.debug("Task %s has nothing to do, skipping enqueue", task.name)
-                return False
-
             if task.has_pending is not None and not await task.has_pending(db):
                 logger.debug("Task %s has nothing to do, skipping enqueue", task.name)
                 return False
@@ -291,7 +288,7 @@ class ReconcilerScheduler:
             # Enqueue the task using ORM
             queue_item = QueueItem(
                 work_unit_key=task.work_unit_key,
-                payload=task.queue_payload(),
+                payload=task.payload,
                 session_id=None,
                 task_type="reconciler",
                 workspace_name=None,
