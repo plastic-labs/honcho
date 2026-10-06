@@ -351,7 +351,6 @@ If you update it, send the full deduplicated list and remove stale entries.
                 observed=observed,
                 session_name=session_name,
                 include_observation_ids=True,
-                history_token_limit=settings.DREAM.HISTORY_TOKEN_LIMIT,
                 configuration=configuration,
                 run_id=run_id,
                 agent_type=self.name,

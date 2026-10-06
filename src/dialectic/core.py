@@ -406,7 +406,6 @@ class DialecticAgent:
             session_allowlist=self.session_allowlist,
             observer=self.observer,
             observed=self.observed,
-            history_token_limit=settings.DIALECTIC.HISTORY_TOKEN_LIMIT,
             run_id=self._run_id,
             agent_type="dialectic",
             parent_category="dialectic",
