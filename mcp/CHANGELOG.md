@@ -9,6 +9,11 @@ This package versions independently of the Honcho API, `@honcho-ai/sdk`, and hos
 
 ## [Unreleased]
 
+### Added
+
+- Optional Sentry error reporting for the Worker, HTTP, and stdio hosts, enabled by
+  setting `SENTRY_DSN`. Unset, it is a no-op.
+
 ### Fixed
 
 - Every tool that writes sets `readOnlyHint: false` explicitly. Leaving it unset let
