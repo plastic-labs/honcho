@@ -276,7 +276,7 @@ class AgentToolCallCompletedEvent(BaseEvent):
     peer_card_updated, summary_created), which carry semantic information
     about specific tools, with a lightweight per-call telemetry record that
     covers every tool — including read-only tools (`search_memory`,
-    `get_recent_history`, etc.) that have no dedicated event today.
+    `get_recent_observations`, etc.) that have no dedicated event today.
 
     Resource id includes `tool_call_seq` so the model can legitimately call
     the same tool twice in one iteration (it does) without colliding event

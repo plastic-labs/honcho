@@ -178,7 +178,6 @@ def make_workspace_ctx(
             workspace_name=workspace.name,
             session_name=session_name,
             include_observation_ids=include_observation_ids,
-            history_token_limit=8192,
             db_lock=shared_lock,
             session_allowlist=session_allowlist,
         )
@@ -605,7 +604,6 @@ class TestSearchMemoryWorkspace:
             workspace_name=workspace.name,
             session_name=session.name,
             include_observation_ids=False,
-            history_token_limit=8192,
             db_lock=asyncio.Lock(),
         )
 

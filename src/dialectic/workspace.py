@@ -218,7 +218,6 @@ class WorkspaceDialecticAgent(DialecticAgent):
             workspace_name=self.workspace_name,
             session_name=self.session_name,
             session_allowlist=self.session_allowlist,
-            history_token_limit=settings.DIALECTIC.HISTORY_TOKEN_LIMIT,
             run_id=self._run_id,
             agent_type="workspace_dialectic",
             parent_category="dialectic",

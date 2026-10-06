@@ -155,7 +155,6 @@ ENABLED = true
 [dialectic]
 MAX_OUTPUT_TOKENS = 8192
 MAX_INPUT_TOKENS = 100000
-HISTORY_TOKEN_LIMIT = 8192
 SESSION_HISTORY_MAX_TOKENS = 4096
 
 # Per-level settings for reasoning levels
@@ -228,7 +227,6 @@ IDLE_TIMEOUT_MINUTES = 60
 MIN_HOURS_BETWEEN_DREAMS = 8
 ENABLED_TYPES = ["omni"]
 MAX_TOOL_ITERATIONS = 20
-HISTORY_TOKEN_LIMIT = 16384
 
 [dream.deduction_model_config]
 transport = "openai"
