@@ -24,7 +24,6 @@ from src.telemetry.events import (
     EmbeddingCallPurpose,
     emit,
 )
-from src.utils import summarizer
 from src.utils.evidence import EvidenceAccumulator
 from src.utils.formatting import (
     format_datetime_utc,
@@ -93,141 +92,6 @@ def _normalized_observation_input(
             "sources": strip_nul(obs.sources),
         }
     )
-
-
-def _base_observation_properties() -> dict[str, Any]:
-    return {
-        "content": {
-            "type": "string",
-            "description": "The observation content",
-        },
-        "level": {
-            "type": "string",
-            "enum": [
-                "explicit",
-                "deductive",
-                "inductive",
-                "contradiction",
-            ],
-            "description": (
-                "Level: 'explicit' for direct facts, 'deductive' for logical "
-                + "necessities, 'inductive' for patterns, 'contradiction' for "
-                + "conflicting statements"
-            ),
-        },
-        "source_ids": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": (
-                "Document IDs of source or premise observations. Required and "
-                + "must be non-empty for deductive, inductive, and contradiction "
-                + "observations. Copy the exact ID shown in [id:xxx] format from "
-                + "observation results (e.g. for '[id:abc123XYZ]' pass "
-                + "'abc123XYZ'). Message search results carry no ID and cannot "
-                + "be cited here; IDs that do not match an existing observation "
-                + "are discarded."
-            ),
-        },
-        "premises": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": "(For deductive) Human-readable premise text for display",
-        },
-        "sources": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": "(For inductive/contradiction) Human-readable source text for display",
-        },
-        "pattern_type": {
-            "type": "string",
-            "enum": [
-                "preference",
-                "behavior",
-                "personality",
-                "tendency",
-                "correlation",
-            ],
-            "description": "(For inductive only) Type of pattern being identified",
-        },
-        "confidence": {
-            "type": "string",
-            "enum": ["high", "medium", "low"],
-            "description": (
-                "(For inductive only) Confidence level: 'high' for 5+ sources, "
-                + "'medium' for 3-4, 'low' for 2"
-            ),
-        },
-    }
-
-
-def _generic_observation_item_schema() -> dict[str, Any]:
-    return {
-        "type": "object",
-        "properties": _base_observation_properties(),
-        "required": ["content", "level"],
-        "additionalProperties": False,
-        "allOf": [
-            {
-                "if": {"properties": {"level": {"const": "deductive"}}},
-                "then": {
-                    "required": ["source_ids", "premises"],
-                    "properties": {
-                        "source_ids": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "minItems": 1,
-                        },
-                        "premises": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "minItems": 1,
-                        },
-                    },
-                },
-            },
-            {
-                "if": {"properties": {"level": {"const": "inductive"}}},
-                "then": {
-                    "required": [
-                        "source_ids",
-                        "sources",
-                        "pattern_type",
-                        "confidence",
-                    ],
-                    "properties": {
-                        "source_ids": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "minItems": 2,
-                        },
-                        "sources": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "minItems": 2,
-                        },
-                    },
-                },
-            },
-            {
-                "if": {"properties": {"level": {"const": "contradiction"}}},
-                "then": {
-                    "required": ["source_ids", "sources"],
-                    "properties": {
-                        "source_ids": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "minItems": 2,
-                        },
-                        "sources": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "minItems": 2,
-                        },
-                    },
-                },
-            },
-        ],
-    }
 
 
 def _deductive_observation_item_schema() -> dict[str, Any]:
@@ -475,21 +339,6 @@ def _extract_pattern_snippet(
 
 
 TOOLS: dict[str, dict[str, Any]] = {
-    "create_observations": {
-        "name": "create_observations",
-        "description": "Create observations at any level: explicit (facts), deductive (logical necessities), inductive (patterns), or contradiction (conflicting statements). For deductive, inductive, and contradiction observations, missing or empty source_ids are invalid and will be rejected.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "observations": {
-                    "type": "array",
-                    "description": "List of observations to create",
-                    "items": _generic_observation_item_schema(),
-                },
-            },
-            "required": ["observations"],
-        },
-    },
     "create_observations_deductive": {
         "name": "create_observations_deductive",
         "description": "Create new deductive observations discovered while answering the query. Every observation must include non-empty source_ids and premise text. Use this only for novel deductions grounded in existing observations.",
@@ -549,14 +398,6 @@ TOOLS: dict[str, dict[str, Any]] = {
                 },
             },
             "required": ["content"],
-        },
-    },
-    "get_recent_history": {
-        "name": "get_recent_history",
-        "description": "Retrieve recent conversation history to get more context about the conversation.",
-        "input_schema": {
-            "type": "object",
-            "properties": {},
         },
     },
     "search_memory": {
@@ -715,43 +556,6 @@ TOOLS: dict[str, dict[str, Any]] = {
             },
         },
     },
-    "get_most_derived_observations": {
-        "name": "get_most_derived_observations",
-        "description": "Get observations that have been reinforced most frequently across conversations. These represent the most established facts about the peer.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "limit": {
-                    "type": "integer",
-                    "description": "Maximum number of observations to return (default: 10)",
-                    "default": 10,
-                },
-            },
-        },
-    },
-    "get_session_summary": {
-        "name": "get_session_summary",
-        "description": "Get the session summary (short or long form). Useful for understanding the overall conversation context.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "summary_type": {
-                    "type": "string",
-                    "enum": ["short", "long"],
-                    "description": "Type of summary to retrieve (default: short)",
-                    "default": "short",
-                },
-            },
-        },
-    },
-    "get_peer_card": {
-        "name": "get_peer_card",
-        "description": "Get the peer card containing known biographical information about the peer (name, age, location, etc.).",
-        "input_schema": {
-            "type": "object",
-            "properties": {},
-        },
-    },
     "delete_observations": {
         "name": "delete_observations",
         "description": "Delete observations by their IDs. Use the exact ID shown in [id:xxx] format from search results. Example: if observation shows '[id:abc123XYZ]', pass 'abc123XYZ' to delete it.",
@@ -765,28 +569,6 @@ TOOLS: dict[str, dict[str, Any]] = {
                 },
             },
             "required": ["observation_ids"],
-        },
-    },
-    "finish_consolidation": {
-        "name": "finish_consolidation",
-        "description": "Signal that consolidation is complete. Call this when you have finished your consolidation work and are ready to stop. You MUST call this tool when done - do not keep exploring indefinitely.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "summary": {
-                    "type": "string",
-                    "description": "Brief summary of what was accomplished (peer card updates, observations consolidated, observations deleted)",
-                },
-            },
-            "required": ["summary"],
-        },
-    },
-    "extract_preferences": {
-        "name": "extract_preferences",
-        "description": "Extract user preferences and standing instructions from conversation history. This tool performs both semantic and text searches for preferences, instructions, and communication style preferences, then returns them for adding to the peer card. Call this FIRST during consolidation.",
-        "input_schema": {
-            "type": "object",
-            "properties": {},
         },
     },
     "get_reasoning_chain": {
@@ -912,30 +694,9 @@ WORKSPACE_RECALL_TOOLS: frozenset[str] = frozenset(
     }
 )
 
-# Tools for the dreamer agent (consolidation + peer card + deduplication)
-DREAMER_TOOLS: list[dict[str, Any]] = [
-    # Preference extraction (should be called first)
-    TOOLS["extract_preferences"],
-    TOOLS["get_recent_observations"],
-    TOOLS["get_most_derived_observations"],
-    TOOLS["search_memory"],
-    TOOLS["get_peer_card"],
-    TOOLS["create_observations"],
-    TOOLS["delete_observations"],
-    TOOLS["update_peer_card"],
-    # Message access tools for context verification
-    TOOLS["search_messages"],
-    TOOLS["get_observation_context"],
-    # Tree traversal
-    TOOLS["get_reasoning_chain"],
-    # Completion signal
-    TOOLS["finish_consolidation"],
-]
-
 # Tools for the deduction specialist (dreamer phase 1)
 # Creates deductive observations from explicit observations, can delete duplicates
 # Includes message access for context and self-directed exploration
-# Note: get_peer_card is not included - peer card is injected into the prompt directly
 DEDUCTION_SPECIALIST_TOOLS: list[dict[str, Any]] = [
     # Discovery tools
     TOOLS["get_recent_observations"],
@@ -1233,74 +994,6 @@ async def create_observations(
     )
 
 
-async def get_recent_history(
-    db: AsyncSession,
-    workspace_name: str,
-    session_name: str | None,
-    observed: str | None = None,
-    token_limit: int = 8192,
-    session_allowlist: list[str] | None = None,
-) -> list[models.Message]:
-    """
-    Retrieve recent conversation history.
-
-    If session_name is provided, retrieves messages from that session.
-    If session_name is None but observed is provided, retrieves recent messages
-    sent by the observed peer across all their sessions.
-
-    Args:
-        db: Database session
-        workspace_name: Workspace identifier
-        session_name: Session identifier (optional)
-            Deprecated for *scoping*: prefer session_allowlist, which
-            intersects with observer membership. This parameter also pins
-            the query to one session and bypasses observer scoping, so it
-            is not a drop-in equivalent and is not removed.
-        observed: Peer name to filter by when no session specified (optional)
-        token_limit: Maximum tokens to retrieve (default: 8192)
-
-    Returns:
-        List of messages in chronological order
-    """
-    if session_name:
-        # Fail closed: a specific session outside the allowlist is not readable.
-        if session_allowlist is not None and session_name not in session_allowlist:
-            return []
-        # Get messages from a specific session
-        messages_stmt = await crud.get_messages(
-            workspace_name=workspace_name,
-            session_name=session_name,
-            token_limit=token_limit,
-            reverse=True,  # Get most recent first
-        )
-        result = await db.execute(messages_stmt)
-        messages = result.scalars().all()
-        # Return in chronological order
-        return list(reversed(messages))
-    elif observed:
-        # Fail closed on an empty allowlist
-        if session_allowlist is not None and not session_allowlist:
-            return []
-        # Get recent messages from the observed peer across all sessions
-        # (restricted to the session allowlist when one is provided)
-        stmt = (
-            select(models.Message)
-            .where(models.Message.workspace_name == workspace_name)
-            .where(models.Message.peer_name == observed)
-            .order_by(models.Message.created_at.desc())
-            .limit(50)  # Limit to recent messages
-        )
-        if session_allowlist is not None:
-            stmt = stmt.where(models.Message.session_name.in_(session_allowlist))
-        result = await db.execute(stmt)
-        messages = list(result.scalars().all())
-        # Return in chronological order
-        return list(reversed(messages))
-    else:
-        # No session and no observed peer - can't retrieve history
-        return []
-
-
 async def search_memory(
     workspace_name: str,
     observer: str,
@@ -1463,93 +1156,6 @@ async def get_observation_context(
     return messages
 
 
-async def extract_preferences(
-    workspace_name: str,
-    session_name: str | None,
-    observed: str,
-    observer: str | None = None,
-) -> dict[str, list[str]]:
-    """
-    Extract user preferences and standing instructions from conversation history.
-
-    Uses semantic search to find messages that might contain preferences or instructions.
-    This is language-agnostic and doesn't rely on keyword matching.
-
-    Args:
-        workspace_name: Workspace identifier
-        session_name: Session identifier (optional)
-            Deprecated for *scoping*: prefer session_allowlist, which
-            intersects with observer membership. This parameter also pins
-            the query to one session and bypasses observer scoping, so it
-            is not a drop-in equivalent and is not removed.
-        observed: The peer whose preferences to extract
-        observer: When provided and session_name is None, scope results
-            to sessions this peer belongs to
-        session_allowlist: Optional session allowlist. None is unrestricted; an
-            empty list fails closed (empty result); a populated list is
-            intersected with the observer's session scope when observer is set
-
-    Returns:
-        Dict with 'messages' list containing potentially relevant messages
-    """
-    messages: list[str] = []
-    seen_content: set[str] = set()  # Dedupe by content hash
-
-    # Semantic queries to find preference-like content
-    semantic_queries = [
-        "user preferences and communication style",
-        "standing instructions and rules to follow",
-        "how user wants responses formatted",
-        "user requirements and constraints",
-        "things user wants or does not want",
-    ]
-
-    # Batch embed all queries in a single API call (no DB needed).
-    # If batching fails, each search call will generate its own embedding.
-    query_embeddings_by_query: dict[str, list[float]] | None = None
-    try:
-        query_embeddings = await embedding_client.simple_batch_embed(semantic_queries)
-        query_embeddings_by_query = dict(
-            zip(semantic_queries, query_embeddings, strict=True)
-        )
-    except Exception as e:
-        logger.warning(
-            "Batch embedding failed for extract_preferences; falling back to per-query embedding in search_messages: %s",
-            e,
-        )
-
-    for query in semantic_queries:
-        try:
-            snippets = await crud.search_messages(
-                workspace_name=workspace_name,
-                session_name=session_name,
-                query=query,
-                limit=10,
-                context_window=0,
-                embedding=(
-                    query_embeddings_by_query.get(query)
-                    if query_embeddings_by_query is not None
-                    else None
-                ),
-                observer=observer,
-            )
-            for matches, _ in snippets:
-                for msg in matches:
-                    if msg.peer_name == observed:
-                        content_key = msg.content[:100].lower()
-                        if content_key not in seen_content:
-                            seen_content.add(content_key)
-                            messages.append(f"'{msg.content.strip()}'")
-        except Exception as e:
-            logger.warning("Error in semantic search for '%s': %s", query, e)
-
-    return {
-        "instructions": [],  # Deprecated - LLM will categorize
-        "preferences": [],  # Deprecated - LLM will categorize
-        "messages": messages[:30],  # Raw messages for LLM to process
-    }
-
-
 @dataclass
 class ToolContext:
     """Context object passed to tool handlers."""
@@ -1560,7 +1166,6 @@ class ToolContext:
     session_name: str | None
     current_messages: list[models.Message] | None
     include_observation_ids: bool
-    history_token_limit: int
     # Shared lock for serializing writes to the same workspace/observer/observed.
     # This lock is obtained from the module-level registry to ensure all concurrent
     # tool executors for the same data share the same lock.
@@ -1814,12 +1419,6 @@ async def _handle_create_observations_impl(
     )
 
 
-async def _handle_create_observations(
-    ctx: ToolContext, tool_input: dict[str, Any]
-) -> "str | ToolResult":
-    return await _handle_create_observations_impl(ctx, tool_input)
-
-
 async def _handle_create_observations_deductive(
     ctx: ToolContext, tool_input: dict[str, Any]
 ) -> "str | ToolResult":
@@ -2001,34 +1600,6 @@ async def _handle_update_peer_card(
             "rejected_count": rejected_count,
         },
     )
-
-
-async def _handle_get_recent_history(
-    ctx: ToolContext, tool_input: dict[str, Any]
-) -> "str | ToolResult":
-    """Handle get_recent_history tool."""
-    _ = tool_input
-    async with tracked_db("tool.get_recent_history", read_only=True) as db:
-        history: list[models.Message] = await get_recent_history(
-            db,
-            workspace_name=ctx.workspace_name,
-            session_name=ctx.session_name,
-            observed=ctx.observed,
-            token_limit=ctx.history_token_limit,
-            session_allowlist=ctx.session_allowlist,
-        )
-        if not history:
-            return "No conversation history available"
-        history_text = "\n".join(
-            [f"{m.peer_name}: {_truncate_message_content(m.content)}" for m in history]
-        )
-    scope = (
-        f"from session {ctx.session_name}"
-        if ctx.session_name
-        else f"from {ctx.observed} across sessions"
-    )
-    output = f"Conversation history ({len(history)} messages {scope}):\n{history_text}"
-    return _maybe_truncated_result(output)
 
 
 def _record_conclusion_evidence(
@@ -2462,51 +2033,6 @@ async def _handle_get_recent_observations(
     return f"Found {total_count} recent observations from {scope}:\n\n{repr_str}"
 
 
-async def _handle_get_most_derived_observations(
-    ctx: ToolContext, tool_input: dict[str, Any]
-) -> str:
-    """Handle get_most_derived_observations tool."""
-    async with tracked_db("tool.get_most_derived_observations", read_only=True) as db:
-        documents = await crud.query_documents_most_derived(
-            db=db,
-            workspace_name=ctx.workspace_name,
-            observer=ctx.observer,
-            observed=ctx.observed,
-            limit=_bounded_int(tool_input.get("limit"), 10, hi=100),
-        )
-        representation = Representation.from_documents(documents)
-    total_count = representation.len()
-    if total_count == 0:
-        return "No established observations found"
-    repr_str = (
-        representation.str_with_ids()
-        if ctx.include_observation_ids
-        else str(representation)
-    )
-    return f"Found {total_count} established (frequently reinforced) observations:\n\n{repr_str}"
-
-
-async def _handle_get_session_summary(
-    ctx: ToolContext, tool_input: dict[str, Any]
-) -> str:
-    """Handle get_session_summary tool."""
-    if not ctx.session_name:
-        return "ERROR: No session available for summary"
-    summary_type = tool_input.get("summary_type", "short")
-    st = (
-        summarizer.SummaryType.LONG
-        if summary_type == "long"
-        else summarizer.SummaryType.SHORT
-    )
-    async with tracked_db("tool.get_session_summary", read_only=True) as db:
-        summary = await summarizer.get_summary(
-            db, ctx.workspace_name, ctx.session_name, st
-        )
-    if not summary:
-        return "No session summary available yet"
-    return f"Session summary ({summary['summary_type']}):\n{summary['content']}"
-
-
 async def _handle_get_peer_card(ctx: ToolContext, tool_input: dict[str, Any]) -> str:
     """Handle get_peer_card tool."""
     _ = tool_input
@@ -2590,50 +2116,6 @@ async def _handle_delete_observations(
             "levels": [level for _, level in deleted],
         },
     )
-
-
-async def _handle_finish_consolidation(
-    ctx: ToolContext, tool_input: dict[str, Any]
-) -> str:
-    """Handle finish_consolidation tool."""
-    _ = ctx
-    summary = tool_input.get("summary", "Consolidation complete")
-    return f"CONSOLIDATION_COMPLETE: {summary}"
-
-
-async def _handle_extract_preferences(
-    ctx: ToolContext, tool_input: dict[str, Any]
-) -> str:
-    """Handle extract_preferences tool."""
-    _ = tool_input
-    # Wrap so the batch-embed + downstream search_messages embedding calls
-    # all carry preference-extraction attribution.
-    with embedding_call_purpose(
-        EmbeddingCallPurpose.PREFERENCE_EXTRACTION.value,
-        workspace_name=ctx.workspace_name,
-        run_id=ctx.run_id,
-        parent_category=ctx.parent_category,
-    ):
-        results = await extract_preferences(
-            workspace_name=ctx.workspace_name,
-            session_name=ctx.session_name,
-            observed=ctx.observed,
-            observer=ctx.observer,
-        )
-
-    messages = results.get("messages", [])
-
-    if not messages:
-        return "No potentially relevant preference or instruction messages found in conversation history."
-
-    output_parts: list[str] = [
-        f"**Potentially Relevant Messages ({len(messages)}):**",
-        "\n".join(f"- {msg}" for msg in messages),
-        "\n**Action Required:** Review these messages and extract any preferences or standing instructions to add to the peer card using `update_peer_card`. "
-        + "Summarize as clear rules (e.g., 'INSTRUCTION: Always include cultural context') or preferences (e.g., 'PREFERENCE: Brief responses').",
-    ]
-
-    return "\n\n".join(output_parts)
 
 
 def _format_message_snippets(
@@ -2781,11 +2263,9 @@ async def _handle_get_reasoning_chain(
 
 # Tool handler dispatch table
 _TOOL_HANDLERS: dict[str, Callable[[ToolContext, dict[str, Any]], Any]] = {
-    "create_observations": _handle_create_observations,
     "create_observations_deductive": _handle_create_observations_deductive,
     "create_observations_inductive": _handle_create_observations_inductive,
     "update_peer_card": _handle_update_peer_card,
-    "get_recent_history": _handle_get_recent_history,
     "search_memory": _handle_search_memory,
     "get_observation_context": _handle_get_observation_context,
     "search_messages": _handle_search_messages,
@@ -2793,12 +2273,7 @@ _TOOL_HANDLERS: dict[str, Callable[[ToolContext, dict[str, Any]], Any]] = {
     "get_messages_by_date_range": _handle_get_messages_by_date_range,
     "search_messages_temporal": _handle_search_messages_temporal,
     "get_recent_observations": _handle_get_recent_observations,
-    "get_most_derived_observations": _handle_get_most_derived_observations,
-    "get_session_summary": _handle_get_session_summary,
-    "get_peer_card": _handle_get_peer_card,
     "delete_observations": _handle_delete_observations,
-    "finish_consolidation": _handle_finish_consolidation,
-    "extract_preferences": _handle_extract_preferences,
     "get_reasoning_chain": _handle_get_reasoning_chain,
 }
 
@@ -2810,7 +2285,6 @@ async def create_tool_executor(
     session_name: str | None = None,
     current_messages: list[models.Message] | None = None,
     include_observation_ids: bool = False,
-    history_token_limit: int = 8192,
     configuration: ResolvedConfiguration | None = None,
     run_id: str | None = None,
     agent_type: str | None = None,
@@ -2835,7 +2309,6 @@ async def create_tool_executor(
         session_name: Session identifier (optional for global queries)
         current_messages: List of current messages being processed (optional, for deriver)
         include_observation_ids: If True, include observation IDs in output (for dreamer agent)
-        history_token_limit: Maximum tokens for get_recent_history (default: 8192)
         configuration: Resolved configuration for checking feature flags (optional)
         run_id: Optional run ID for telemetry correlation
         agent_type: Optional agent type for telemetry (dialectic, deriver, dreamer)
@@ -2863,7 +2336,6 @@ async def create_tool_executor(
         session_name=session_name,
         current_messages=current_messages,
         include_observation_ids=include_observation_ids,
-        history_token_limit=history_token_limit,
         db_lock=shared_lock,
         configuration=configuration,
         session_allowlist=session_allowlist,
@@ -2907,10 +2379,6 @@ async def create_tool_executor(
         result_str: str = ""
         metadata: dict[str, Any] = {}
         is_error: bool = False
-
-        # Langfuse tool observation; auto-parents under the active step span.
-        # Closed in the finally below with output + level.
-        tool_obs = _begin_tool_observation(tool_name, tool_input)
 
         try:
             handler = (handler_resolver or _TOOL_HANDLERS.get)(tool_name)
@@ -2993,48 +2461,64 @@ async def create_tool_executor(
                 tool_call_seq=get_current_tool_call_seq(),
                 provider_tool_call_id=get_current_provider_tool_call_id(),
             )
-
-            _finish_tool_observation(tool_obs, result_str, is_error)
+            _dispatch_captured_tool_call(
+                ctx=ctx,
+                tool_name=tool_name,
+                tool_input=tool_input,
+                duration_ms=duration_ms,
+                result_str=result_str,
+                is_error=is_error,
+                iteration=get_current_iteration(),
+                tool_call_seq=get_current_tool_call_seq(),
+                provider_tool_call_id=get_current_provider_tool_call_id(),
+            )
 
         return result_str
 
     return execute_tool
 
 
-def _begin_tool_observation(tool_name: str, tool_input: dict[str, Any]) -> Any:
-    """Open a non-current Langfuse "tool" observation for one tool execution.
-
-    Auto-parents under the active step span (else standalone). Returns a handle
-    (closed by `_finish_tool_observation`) or None when disabled/setup fails.
-    All tools are ``as_type="tool"`` — they share one generic dispatcher.
-
-    Only fires in legacy *inline* mode. In exporter mode there's no live span
-    context to parent under, so this would emit a rootless tool trace per call;
-    the LangfuseExporter already projects tool spans (from ``output_tool_calls``)
-    nested under the step span, so a live observation here just double-emits.
-    """
-    if not settings.langfuse_inline_enabled:
-        return None
-    try:
-        from langfuse import get_client
-
-        return get_client().start_observation(
-            as_type="tool", name=tool_name, input=tool_input
-        )
-    except Exception:  # pragma: no cover - best-effort telemetry
-        logger.debug("Failed to open Langfuse tool observation", exc_info=True)
-        return None
-
-
-def _finish_tool_observation(tool_obs: Any, result_str: str, is_error: bool) -> None:
-    """Close a Langfuse tool observation opened by `_begin_tool_observation`."""
-    if tool_obs is None:
+def _dispatch_captured_tool_call(
+    *,
+    ctx: "ToolContext",
+    tool_name: str,
+    tool_input: dict[str, Any],
+    duration_ms: float,
+    result_str: str,
+    is_error: bool,
+    iteration: int,
+    tool_call_seq: int,
+    provider_tool_call_id: str | None,
+) -> None:
+    """Report an executed tool call to span-tree exporters. Best-effort."""
+    if not (ctx.run_id and ctx.agent_type):
         return
     try:
-        tool_obs.update(output=result_str, level="ERROR" if is_error else None)
-        tool_obs.end()
-    except Exception:  # pragma: no cover - best-effort telemetry
-        logger.debug("Failed to close Langfuse tool observation", exc_info=True)
+        from src.llm.capture import (
+            CapturedToolCall,
+            dispatch_captured_tool_call,
+            has_span_tree_exporters,
+        )
+
+        if not has_span_tree_exporters():
+            return
+        dispatch_captured_tool_call(
+            CapturedToolCall(
+                run_id=ctx.run_id,
+                agent_type=ctx.agent_type,
+                workspace_name=ctx.workspace_name,
+                iteration=iteration,
+                tool_call_seq=tool_call_seq,
+                tool_call_id=provider_tool_call_id,
+                name=tool_name,
+                input=tool_input,
+                output=result_str,
+                is_error=is_error,
+                duration_ms=duration_ms,
+            )
+        )
+    except Exception:  # pragma: no cover - telemetry must not raise
+        logger.debug("Failed to dispatch captured tool call", exc_info=True)
 
 
 def _emit_agent_tool_call_completed(
@@ -3333,7 +2817,6 @@ async def create_workspace_tool_executor(
     workspace_name: str,
     session_name: str | None = None,
     session_allowlist: list[str] | None = None,
-    history_token_limit: int = 8192,
     run_id: str | None = None,
     agent_type: str | None = None,
     parent_category: str | None = None,
@@ -3355,7 +2838,6 @@ async def create_workspace_tool_executor(
         session_name=session_name,
         session_allowlist=session_allowlist,
         include_observation_ids=True,
-        history_token_limit=history_token_limit,
         run_id=run_id,
         agent_type=agent_type,
         parent_category=parent_category,

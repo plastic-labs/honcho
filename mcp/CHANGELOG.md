@@ -9,6 +9,28 @@ This package versions independently of the Honcho API, `@honcho-ai/sdk`, and hos
 
 ## [Unreleased]
 
+### Added
+
+- Optional Sentry error reporting for the Worker, HTTP, and stdio hosts, enabled by
+  setting `SENTRY_DSN`. Unset, it is a no-op.
+
+### Fixed
+
+- Every tool that writes sets `readOnlyHint: false` explicitly. Leaving it unset let
+  clients that default a missing hint to read-only treat write tools as reads (#1262)
+
+## [3.0.2] - 2026-09-29
+
+### Added
+
+- The remaining read tools take the scope options the API and SDKs accept
+  (Honcho v3.1.0+), so a client can use scopes end to end over MCP.
+  `create_session` takes `scopes`, `get_representation` takes `scope` or
+  `sessions`, and `search` takes `scope` (rejected alongside `session_id`).
+  `get_session_context` takes `peer_target`, `peer_perspective`, `scope`, and
+  `limit_to_session`, and returns `peer_representation` and `peer_card` when a
+  target is given.
+
 ## [3.0.1] - 2026-09-22
 
 ### Added

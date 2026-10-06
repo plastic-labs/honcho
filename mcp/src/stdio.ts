@@ -1,11 +1,14 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { honchoClients, parseEnvConfig } from "./config.js";
+import * as Sentry from "@sentry/bun";
+import { honchoClients, parseEnvConfig, sentryOptions } from "./config.js";
 import { createServer } from "./server.js";
 
 declare const process: {
   env: Record<string, string | undefined>;
   exit(code?: number): never;
 };
+
+Sentry.init(sentryOptions({ SENTRY_DSN: process.env.SENTRY_DSN }));
 
 try {
   const config = parseEnvConfig({

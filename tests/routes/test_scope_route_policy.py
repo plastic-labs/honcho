@@ -58,6 +58,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
+from src.config import settings
 from src.main import app
 from src.models import Peer, Workspace
 from src.utils.scopes import scope_peer_name
@@ -767,6 +768,18 @@ _REFUSING = tuple(case for case in POLICY if case.refuse)
 _ALLOWING_EXERCISED = tuple(
     case for case in POLICY if not case.refuse and case.build is not None
 )
+
+
+@pytest.fixture(autouse=True)
+def _pin_dream_enabled(  # pyright: ignore[reportUnusedFunction]
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pin DREAM.ENABLED so the schedule_dream cases reach the scope guard.
+
+    The route returns 400 on its config check before any scope check runs, so a
+    local `.env` with DREAM_ENABLED=false would otherwise fail those cases.
+    """
+    monkeypatch.setattr(settings.DREAM, "ENABLED", True)
 
 
 def _setup(client: TestClient, workspace: str) -> tuple[str, str]:

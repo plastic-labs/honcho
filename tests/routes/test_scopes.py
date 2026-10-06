@@ -1054,6 +1054,7 @@ async def test_dream_cannot_be_queued_for_a_future_scope(
     client: TestClient,
     db_session: AsyncSession,
     sample_data: tuple[Workspace, Peer],
+    monkeypatch: pytest.MonkeyPatch,
 ):
     """A refused dream leaves no queue row behind.
 
@@ -1063,6 +1064,8 @@ async def test_dream_cannot_be_queued_for_a_future_scope(
     the queue item, and a check placed after the insert would still 422.
     """
     test_workspace, test_peer = sample_data
+    # The route 400s before the scope check when dreams are disabled locally.
+    monkeypatch.setattr(settings.DREAM, "ENABLED", True)
     future = scope_peer_name(str(generate_nanoid()))
 
     response = client.post(

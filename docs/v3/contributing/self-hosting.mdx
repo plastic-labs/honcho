@@ -416,6 +416,7 @@ When `DB_POOL_CLASS=null`, SQLAlchemy uses `NullPool`; `DB_POOL_SIZE` and `DB_MA
 ### Database Migrations
 - Always run `uv run alembic upgrade head` after updating Honcho before starting the server
 - Check current migration status with `uv run alembic current`
+- Migrations hold a session-level advisory lock, so they need a session-mode connection (direct Postgres or a session pooler), not a transaction-mode pooler. A Supabase-style `:6543` port is rewritten to `:5432` automatically.
 
 ### LLM Providers
 - Ensure your API keys are configured (see [LLM Setup](#llm-setup))

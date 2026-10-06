@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, datetime
 from unittest.mock import patch
 
@@ -9,6 +10,12 @@ from src.deriver.prompts import (
     format_deriver_message,
     minimal_deriver_prompt,
 )
+from src.utils.representation import PromptRepresentation
+
+
+@pytest.fixture(autouse=True)
+def clean_queue_tables() -> None:
+    """Override the package-level DB fixture: these tests only render strings."""
 
 
 def test_format_deriver_message_marks_target_peer() -> None:
@@ -96,3 +103,36 @@ def test_estimate_deriver_prompt_tokens_propagates_token_estimation_errors() -> 
 
         with pytest.raises(RuntimeError, match="tokenizer unavailable"):
             estimate_deriver_prompt_tokens("Prefer concrete facts.")
+
+
+def test_model_visible_scaffold_carries_no_example_facts() -> None:
+    """The deriver copies whatever facts it can see, so the scaffold must hold none.
+
+    Everything the model sees besides the batch itself is the rendered prompt
+    and the structured-output schema. Neither may contain a worked example: no
+    sample message tags, no sample conclusions, no "Example:" lists in field
+    descriptions. Rendered with an empty batch, the prompt must therefore hold
+    no complete message element.
+    """
+    prompt = minimal_deriver_prompt(peer_id="", messages="", custom_instructions=None)
+    schema = json.dumps(PromptRepresentation.model_json_schema())
+
+    # The rules describe the tag *shape* with an opening tag; only a worked
+    # example would carry a closing one.
+    assert "</message>" not in prompt
+    assert "→" not in prompt
+    assert "EXAMPLE" not in prompt.upper()
+    assert "example" not in schema.lower()
+
+    # Facts that leaked from earlier versions of the scaffold.
+    for legacy in ("dog", "NYC", "25 years", "six years", "alice", "Rover", "Ann "):
+        assert legacy not in prompt
+        assert legacy not in schema
+
+
+def test_minimal_deriver_prompt_names_the_peer_id_as_subject() -> None:
+    """The subject instruction must carry the real id, so the model sees the
+    exact token it should write instead of the phrase "the target peer"."""
+    prompt = minimal_deriver_prompt(peer_id="x7", messages="", custom_instructions=None)
+
+    assert "Write `x7` as the subject of every observation" in prompt

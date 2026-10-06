@@ -1,17 +1,13 @@
 """
-Custom utility logging functions for Langfuse integration.
-This module provides specialized formatters for all @observe decorated functions
-and a conditional observe decorator that only applies when Langfuse is configured.
+Custom utility logging functions: Rich console formatters, metric accumulation,
+and the Langfuse shutdown flush.
 """
 
 import datetime
 import logging
 from collections import OrderedDict
-from collections.abc import Callable
-from typing import Literal, ParamSpec, TypeVar, overload
 
 from fastapi import Request
-from langfuse import observe
 from rich import box
 from rich.console import Console, Group, RenderableType
 from rich.panel import Panel
@@ -30,105 +26,6 @@ logger = logging.getLogger(__name__)
 console = Console(markup=True)
 
 COLLECT_METRICS_LOCAL = settings.COLLECT_METRICS_LOCAL
-
-P = ParamSpec("P")
-R = TypeVar("R")
-
-# Langfuse observation types accepted by `@observe(as_type=...)`. Mirrors the
-# literal union the SDK exposes; kept local so callers don't import langfuse
-# internals just to name an observation type.
-ObserveAsType = Literal[
-    "generation",
-    "embedding",
-    "span",
-    "agent",
-    "tool",
-    "chain",
-    "retriever",
-    "evaluator",
-    "guardrail",
-]
-
-
-@overload
-def conditional_observe(
-    func: Callable[P, R],
-) -> Callable[P, R]: ...
-
-
-@overload
-def conditional_observe(
-    *,
-    name: str | None = None,
-    as_type: ObserveAsType | None = None,
-    capture_input: bool | None = None,
-    capture_output: bool | None = None,
-) -> Callable[[Callable[P, R]], Callable[P, R]]: ...
-
-
-def conditional_observe(
-    func: Callable[P, R] | None = None,
-    *,
-    name: str | None = None,
-    as_type: ObserveAsType | None = None,
-    capture_input: bool | None = None,
-    capture_output: bool | None = None,
-) -> Callable[P, R] | Callable[[Callable[P, R]], Callable[P, R]]:
-    """
-    Conditionally apply the @observe decorator only in legacy inline mode
-    (``langfuse_inline_enabled`` — i.e. a key is set AND
-    ``LANGFUSE_EXPORTER_MODE == "inline"``). In exporter mode the LangfuseExporter
-    rebuilds every observation from the captured trace stream, so a live
-    @observe span here would double-emit.
-
-    Can be used in two ways:
-    1. As a decorator: @conditional_observe
-    2. As a decorator factory: @conditional_observe(name="...", as_type="generation")
-
-    Args:
-        func: The function to potentially decorate (when used as @conditional_observe)
-        name: Optional name for the observation (when used as @conditional_observe(name="..."))
-        as_type: Optional Langfuse observation type (e.g. "generation", "tool"). When
-            omitted, Langfuse infers a default span.
-        capture_input: When ``False``, Langfuse does NOT auto-serialize the
-            function's arguments into the span input. Set this on functions that
-            receive live SDK clients or secret-bearing config as parameters
-            (e.g. the LLM executor): auto-capture would deep-copy those clients
-            into throwaway, half-constructed objects whose GC raises
-            ``AsyncHttpxClientWrapper ... no attribute '_state'`` /
-            ``BaseApiClient ... no attribute '_http_options'`` (see HONCHO-4HA),
-            and would also leak ``ModelConfig.api_key`` into traces. Pair with an
-            explicit ``update_current_generation(input=...)`` call to keep
-            full-fidelity input. ``None`` leaves the SDK default (capture on).
-        capture_output: When ``False``, Langfuse does NOT auto-serialize the
-            return value. Pair with an explicit
-            ``update_current_generation(output=...)``. ``None`` = SDK default.
-
-    Returns:
-        The decorated function if Langfuse is configured, otherwise the original function
-    """
-
-    def decorator(f: Callable[P, R]) -> Callable[P, R]:
-        # Only auto-instrument with @observe in legacy inline mode. In exporter
-        # mode the LangfuseExporter produces every observation from the captured
-        # trace stream, so a live @observe span here would double-emit.
-        if not settings.langfuse_inline_enabled:
-            return f
-        # `observe` treats None as "use SDK default", so passing the optionals
-        # straight through is equivalent to omitting them.
-        return observe(
-            name=name if name is not None else f.__name__,
-            as_type=as_type,
-            capture_input=capture_input,
-            capture_output=capture_output,
-        )(f)
-
-    if func is not None:
-        # Used as @conditional_observe (without parentheses)
-        return decorator(func)
-    else:
-        # Used as @conditional_observe(name="...") (with parentheses and keyword args)
-        return decorator
 
 
 def flush_langfuse() -> None:

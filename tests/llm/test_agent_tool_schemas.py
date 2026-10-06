@@ -14,26 +14,6 @@ def _observation_items_schema(tool_key: str) -> dict[str, Any]:
     )
 
 
-def test_generic_create_observations_schema_has_level_specific_requirements() -> None:
-    items = _observation_items_schema("create_observations")
-
-    assert items["additionalProperties"] is False
-
-    level_requirements = {
-        condition["if"]["properties"]["level"]["const"]: condition["then"]["required"]
-        for condition in cast(list[dict[str, Any]], items["allOf"])
-    }
-
-    assert level_requirements["deductive"] == ["source_ids", "premises"]
-    assert level_requirements["inductive"] == [
-        "source_ids",
-        "sources",
-        "pattern_type",
-        "confidence",
-    ]
-    assert level_requirements["contradiction"] == ["source_ids", "sources"]
-
-
 def test_deductive_specialist_tool_requires_evidence_fields() -> None:
     items = _observation_items_schema("create_observations_deductive")
 

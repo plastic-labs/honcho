@@ -1449,3 +1449,80 @@ def test_chat_with_invalid_response_format(
     assert response.status_code == 422
     assert "Invalid response_format" in response.json()["detail"]
     mock_llm_call_functions["agentic_chat"].assert_not_awaited()
+
+
+def _get_search_context(
+    client: TestClient, workspace: Workspace, peer: Peer, route: str, query: str
+):
+    base = f"/v3/workspaces/{workspace.name}"
+    if route == "peer_context":
+        return client.get(
+            f"{base}/peers/{peer.name}/context", params={"search_query": query}
+        )
+    if route == "peer_representation":
+        return client.post(
+            f"{base}/peers/{peer.name}/representation", json={"search_query": query}
+        )
+    session_id = str(generate_nanoid())
+    client.post(f"{base}/sessions", json={"id": session_id, "peers": {peer.name: {}}})
+    return client.get(
+        f"{base}/sessions/{session_id}/context",
+        params={"peer_target": peer.name, "search_query": query},
+    )
+
+
+@pytest.mark.parametrize("route", ["peer_context", "peer_representation", "session"])
+def test_oversized_search_query_is_truncated_before_embedding(
+    client: TestClient,
+    sample_data: tuple[Workspace, Peer],
+    mock_openai_embeddings: dict[str, Any],
+    route: str,
+):
+    """An over-limit search_query is truncated once, not rejected and re-embedded."""
+    from src.embedding_client import EmbeddingTokenLimitError
+
+    test_workspace, test_peer = sample_data
+    limit = 10
+    long_query = "x" * (limit * 5)
+
+    mock_embed = mock_openai_embeddings["embed"]
+    default_embed = mock_embed.side_effect
+
+    def strict_embed(query: str) -> list[float]:
+        if len(query) > limit:
+            raise EmbeddingTokenLimitError("too long")
+        return default_embed(query)
+
+    mock_embed.side_effect = strict_embed
+
+    def truncate(text: str) -> str:
+        return text[:limit]
+
+    mock_openai_embeddings["truncate_to_token_limit"].side_effect = truncate
+
+    response = _get_search_context(client, test_workspace, test_peer, route, long_query)
+
+    assert response.status_code == 200
+    mock_embed.assert_called_once_with(long_query[:limit])
+
+
+@pytest.mark.parametrize("route", ["peer_context", "peer_representation", "session"])
+def test_search_query_truncation_failure_degrades(
+    client: TestClient,
+    sample_data: tuple[Workspace, Peer],
+    mock_openai_embeddings: dict[str, Any],
+    route: str,
+):
+    """A truncation failure (e.g. tiktoken rejecting a special token) degrades to
+    non-semantic retrieval instead of failing the request or re-embedding."""
+    test_workspace, test_peer = sample_data
+    mock_openai_embeddings["truncate_to_token_limit"].side_effect = ValueError(
+        "disallowed special token"
+    )
+
+    response = _get_search_context(
+        client, test_workspace, test_peer, route, "<|endoftext|>"
+    )
+
+    assert response.status_code == 200
+    mock_openai_embeddings["embed"].assert_not_called()

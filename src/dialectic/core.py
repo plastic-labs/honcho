@@ -28,7 +28,9 @@ from src.llm import (
     StreamingResponseWithMetadata,
     honcho_llm_call,
 )
+from src.llm.runtime import CapturedAgentSpan, start_captured_span
 from src.llm.types import LLMTelemetryContext
+from src.schemas import ResolvedDialecticConfiguration
 from src.telemetry import prometheus_metrics
 from src.telemetry.events import DialecticCompletedEvent, EmbeddingCallPurpose, emit
 from src.telemetry.logging import (
@@ -45,6 +47,7 @@ from src.utils.agent_tools import (
 )
 from src.utils.evidence import EvidenceAccumulator
 from src.utils.formatting import format_new_turn_with_timestamp
+from src.utils.tokens import estimate_tokens
 from src.utils.types import embedding_call_purpose
 
 logger = logging.getLogger(__name__)
@@ -78,6 +81,7 @@ class DialecticAgent:
         session_id: str | None = None,
         session_allowlist: list[str] | None = None,
         evidence: EvidenceAccumulator | None = None,
+        instructions: ResolvedDialecticConfiguration | None = None,
     ):
         """
         Initialize the dialectic agent.
@@ -98,6 +102,8 @@ class DialecticAgent:
             evidence: Optional accumulator collecting the conclusions and
                 messages this run reads, for callers that asked for evidence.
                 Passing None collects nothing.
+            instructions: Resolved dialectic configuration carrying the custom
+                instructions and where they were resolved from
         """
         self.workspace_name: str = workspace_name
         self.session_name: str | None = session_name
@@ -109,6 +115,9 @@ class DialecticAgent:
         self.observed_peer_card: list[str] | None = observed_peer_card
         self.metric_key: str | None = metric_key
         self.reasoning_level: ReasoningLevel = reasoning_level
+        self.instructions: ResolvedDialecticConfiguration = (
+            instructions or ResolvedDialecticConfiguration()
+        )
 
         # Initialize conversation history with system prompt
         self.messages: list[dict[str, str]] = [
@@ -124,6 +133,7 @@ class DialecticAgent:
                         for tool in self._select_tools()
                         if isinstance((name := tool.get("name")), str)
                     },
+                    custom_instructions=self.instructions.custom_instructions,
                 ),
             }
         ]
@@ -316,19 +326,27 @@ class DialecticAgent:
             return None
 
     async def _prepare_query(
-        self, query: str
-    ) -> tuple[Callable[[str, dict[str, Any]], Any], str, str | None, float]:
+        self, query: str, telemetry: LLMTelemetryContext
+    ) -> tuple[
+        Callable[[str, dict[str, Any]], Any],
+        str,
+        str | None,
+        float,
+        CapturedAgentSpan | None,
+    ]:
         """
         Prepare common state for answering a query.
 
         Handles session history initialization, metrics setup, observation prefetching,
-        user message construction, and tool executor creation.
+        user message construction, and tool executor creation. Opens the run span
+        before prefetch; the caller ends it.
 
         Args:
             query: The question to answer about the peer
+            telemetry: Telemetry context for the run
 
         Returns:
-            A tuple of (tool_executor, task_name, run_id, start_time)
+            A tuple of (tool_executor, task_name, run_id, start_time, run)
         """
         await self._initialize_session_history()
 
@@ -339,7 +357,19 @@ class DialecticAgent:
             run_id = generate_nanoid()
             task_name = f"dialectic_chat_{run_id}"
         start_time = time.perf_counter()
+        run = start_captured_span("run", telemetry, input=query)
+        try:
+            tool_executor = await self._prepare_messages(query, task_name)
+        except BaseException:
+            if run is not None:
+                run.end(is_error=True)
+            raise
+        return tool_executor, task_name, run_id, start_time, run
 
+    async def _prepare_messages(
+        self, query: str, task_name: str
+    ) -> Callable[[str, dict[str, Any]], Any]:
+        """Prefetch observations, append the user message, and build the tool executor."""
         accumulate_metric(
             task_name,
             "context",
@@ -371,11 +401,7 @@ class DialecticAgent:
 
         self.messages.append({"role": "user", "content": user_content})
 
-        tool_executor: Callable[
-            [str, dict[str, Any]], Any
-        ] = await self._create_tool_executor()
-
-        return tool_executor, task_name, run_id, start_time
+        return await self._create_tool_executor()
 
     async def _create_tool_executor(self) -> Callable[[str, dict[str, Any]], Any]:
         """Build the tool executor. Subclasses override to change tool scoping
@@ -386,7 +412,6 @@ class DialecticAgent:
             session_allowlist=self.session_allowlist,
             observer=self.observer,
             observed=self.observed,
-            history_token_limit=settings.DIALECTIC.HISTORY_TOKEN_LIMIT,
             run_id=self._run_id,
             agent_type="dialectic",
             parent_category="dialectic",
@@ -410,7 +435,7 @@ class DialecticAgent:
         Carries the instance's `_run_id` (always set in __init__) + workspace +
         peer identifiers so LLMCallCompletedEvent and 's
         AgentIterationEvent can attribute every per-iteration LLM call back to
-        this dialectic invocation. `track_name` names the Langfuse trace/step
+        this dialectic invocation. `track_name` names the trace/step
         (e.g. "Dialectic Agent" vs "Dialectic Agent Stream").
         """
         return LLMTelemetryContext(
@@ -427,6 +452,7 @@ class DialecticAgent:
             observed=self.observed,
             peer_name=self.observed,
             track_name=track_name,
+            custom_instructions=self.instructions.custom_instructions,
         )
 
     def _log_response_metrics(
@@ -512,6 +538,10 @@ class DialecticAgent:
                 cache_read_tokens=cache_read_input_tokens or 0,
                 cache_creation_tokens=cache_creation_input_tokens or 0,
                 hit_input_token_cap=hit_input_token_cap,
+                custom_instructions_tokens=estimate_tokens(
+                    self.instructions.custom_instructions
+                ),
+                custom_instructions_source=self.instructions.custom_instructions_source,
             )
         )
 
@@ -534,7 +564,10 @@ class DialecticAgent:
         Returns:
             The synthesized answer string
         """
-        tool_executor, task_name, run_id, start_time = await self._prepare_query(query)
+        telemetry = self._telemetry_context(track_name="Dialectic Agent")
+        tool_executor, task_name, run_id, start_time, run = await self._prepare_query(
+            query, telemetry
+        )
 
         # Get level-specific settings
         level_settings = settings.DIALECTIC.LEVELS[self.reasoning_level]
@@ -547,33 +580,43 @@ class DialecticAgent:
             else settings.DIALECTIC.MAX_OUTPUT_TOKENS
         )
 
-        # cast: `type[BaseModel] | None` matches neither the parsed nor the
-        # plain-text overload statically, so pyright resolves the stream
-        # overload — but without stream=True the call is non-streaming.
-        response = cast(  # pyright: ignore[reportInvalidCast]
-            HonchoLLMCallResponse[Any],
-            await honcho_llm_call(
-                model_config=_get_dialectic_level_model_config(self.reasoning_level),
-                prompt="",  # Ignored since we pass messages
-                max_tokens=max_tokens,
-                tools=tools,
-                tool_choice=self._tool_choice(level_settings),
-                force_tools_until=self._force_tools_until(),
-                tool_executor=tool_executor,
-                max_tool_iterations=self._max_tool_iterations(level_settings),
-                messages=self.messages,
-                max_input_tokens=settings.DIALECTIC.MAX_INPUT_TOKENS,
-                trace_name="dialectic_chat",
-                telemetry=self._telemetry_context(track_name="Dialectic Agent"),
-                response_model=response_model,
-            ),
-        )
+        try:
+            # cast: `type[BaseModel] | None` matches neither the parsed nor the
+            # plain-text overload statically, so pyright resolves the stream
+            # overload — but without stream=True the call is non-streaming.
+            response = cast(  # pyright: ignore[reportInvalidCast]
+                HonchoLLMCallResponse[Any],
+                await honcho_llm_call(
+                    model_config=_get_dialectic_level_model_config(
+                        self.reasoning_level
+                    ),
+                    prompt="",  # Ignored since we pass messages
+                    max_tokens=max_tokens,
+                    tools=tools,
+                    tool_choice=self._tool_choice(level_settings),
+                    force_tools_until=self._force_tools_until(),
+                    tool_executor=tool_executor,
+                    max_tool_iterations=self._max_tool_iterations(level_settings),
+                    messages=self.messages,
+                    max_input_tokens=settings.DIALECTIC.MAX_INPUT_TOKENS,
+                    trace_name="dialectic_chat",
+                    telemetry=telemetry,
+                    response_model=response_model,
+                    run=run,
+                ),
+            )
+        except BaseException:
+            if run is not None:
+                run.end(is_error=True)
+            raise
 
         # With response_model, the backend parses content into a model
         # instance; the API contract is a JSON string.
         content = response.content
         if isinstance(content, BaseModel):
             content = content.model_dump_json(by_alias=True)
+        if run is not None:
+            run.end(output=content)
 
         if self.evidence is not None:
             self.evidence.record_tool_calls(response.tool_calls_made)
@@ -615,7 +658,10 @@ class DialecticAgent:
         Yields:
             Chunks of the response text as they are generated
         """
-        tool_executor, task_name, run_id, start_time = await self._prepare_query(query)
+        telemetry = self._telemetry_context(track_name="Dialectic Agent Stream")
+        tool_executor, task_name, run_id, start_time, run = await self._prepare_query(
+            query, telemetry
+        )
 
         # Get level-specific settings
         level_settings = settings.DIALECTIC.LEVELS[self.reasoning_level]
@@ -628,32 +674,43 @@ class DialecticAgent:
             else settings.DIALECTIC.MAX_OUTPUT_TOKENS
         )
 
-        response = cast(
-            StreamingResponseWithMetadata,
-            await honcho_llm_call(
-                model_config=_get_dialectic_level_model_config(self.reasoning_level),
-                prompt="",  # Ignored since we pass messages
-                max_tokens=max_tokens,
-                stream=True,
-                stream_final_only=True,
-                tools=tools,
-                tool_choice=self._tool_choice(level_settings),
-                force_tools_until=self._force_tools_until(),
-                tool_executor=tool_executor,
-                max_tool_iterations=self._max_tool_iterations(level_settings),
-                messages=self.messages,
-                max_input_tokens=settings.DIALECTIC.MAX_INPUT_TOKENS,
-                trace_name="dialectic_chat",
-                telemetry=self._telemetry_context(track_name="Dialectic Agent Stream"),
-                response_model=response_model,
-            ),
-        )
-
         accumulated_content: list[str] = []
-        async for chunk in response:
-            if chunk.content:
-                accumulated_content.append(chunk.content)
-                yield chunk.content
+        is_error = False
+        try:
+            response = cast(
+                StreamingResponseWithMetadata,
+                await honcho_llm_call(
+                    model_config=_get_dialectic_level_model_config(
+                        self.reasoning_level
+                    ),
+                    prompt="",  # Ignored since we pass messages
+                    max_tokens=max_tokens,
+                    stream=True,
+                    stream_final_only=True,
+                    tools=tools,
+                    tool_choice=self._tool_choice(level_settings),
+                    force_tools_until=self._force_tools_until(),
+                    tool_executor=tool_executor,
+                    max_tool_iterations=self._max_tool_iterations(level_settings),
+                    messages=self.messages,
+                    max_input_tokens=settings.DIALECTIC.MAX_INPUT_TOKENS,
+                    trace_name="dialectic_chat",
+                    telemetry=telemetry,
+                    response_model=response_model,
+                    run=run,
+                ),
+            )
+
+            async for chunk in response:
+                if chunk.content:
+                    accumulated_content.append(chunk.content)
+                    yield chunk.content
+        except BaseException as exc:
+            is_error = not isinstance(exc, GeneratorExit)
+            raise
+        finally:
+            if run is not None:
+                run.end(output="".join(accumulated_content) or None, is_error=is_error)
 
         if self.evidence is not None:
             self.evidence.record_tool_calls(response.tool_calls_made)
