@@ -1,7 +1,5 @@
 # Contributing to Honcho
 
-<!-- This file is mirrored at docs/v3/contributing/guidelines.mdx. Update both. -->
-
 Thanks for your interest in contributing. This guide covers how work gets accepted, how
 Honcho is put together, and what a mergeable pull request looks like.
 
