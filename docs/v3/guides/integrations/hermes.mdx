@@ -7,7 +7,18 @@ icon: "https://cdn.jsdelivr.net/npm/@lobehub/icons-static-svg@1.95.1/icons/herme
 
 [Hermes Agent](https://github.com/NousResearch/hermes-agent) is an open-source AI agent from [Nous Research](https://nousresearch.com) with tool-calling, terminal access, a skills system, and multi-platform deployment (Telegram, Discord, Slack, WhatsApp). Honcho gives Hermes persistent cross-session memory and user modeling.
 
-For setup, configuration, and CLI commands, see the [Hermes Agent Honcho docs](https://hermes-agent.nousresearch.com/docs/user-guide/features/honcho).
+Honcho plugs into Hermes as a memory provider plugin, [`hermes-plugin-honcho`](https://github.com/plastic-labs/honcho/tree/main/hermes-plugin-honcho), maintained by Plastic Labs in the Honcho repository. It is listed in the Hermes plugin catalog. Its [README](https://github.com/plastic-labs/honcho/tree/main/hermes-plugin-honcho#readme) is the full reference for configuration and CLI commands.
+
+## Installation
+
+```bash
+hermes plugins install honcho
+hermes memory setup honcho
+```
+
+`hermes memory setup honcho` walks you through connecting to Honcho with OAuth sign-in, a device code, or an API key from [app.honcho.dev](https://app.honcho.dev).
+
+Honcho used to ship inside Hermes. If you set it up before it moved to the catalog, `hermes update` installs the plugin for you and keeps your existing config.
 
 ## What Honcho provides
 
@@ -28,25 +39,28 @@ Both the user and the AI agent have peer representations in Honcho:
 - **User peer**: observed from user messages. Learns preferences, goals, communication style.
 - **AI peer**: observed from assistant messages. Builds the agent's knowledge representation.
 
-Both representations are injected into the system prompt, giving Hermes awareness of both who it's talking to and what it knows.
+Both representations are injected into the user message at API-call time (not the system prompt, which keeps prompt caching intact), giving Hermes awareness of both who it's talking to and what it knows.
 
 ## Available tools
 
-Hermes exposes four Honcho tools to the agent:
+The plugin exposes five Honcho tools to the agent. Each takes an optional `peer` argument (`user` or `ai`, default `user`):
 
 | Tool | What it does |
 |---|---|
-| `honcho_profile` | Fast peer card retrieval (no LLM). Returns curated key facts about the user. |
-| `honcho_search` | Semantic search over memory. Returns raw excerpts ranked by relevance. |
-| `honcho_context` | Dialectic Q&A powered by Honcho's LLM. Synthesizes answers from conversation history. |
-| `honcho_conclude` | Writes durable facts to Honcho when the user states preferences, corrections, or important context. |
+| `honcho_profile` | Fast peer card retrieval (no LLM). Returns curated key facts about the peer. |
+| `honcho_search` | Hybrid semantic and keyword search over past messages. Returns ranked excerpts. |
+| `honcho_context` | Full session context: summary, representation, peer card, and recent messages (no LLM). |
+| `honcho_reasoning` | Dialectic Q&A powered by Honcho's LLM. Synthesizes an answer from memory. |
+| `honcho_conclude` | Writes, lists, searches, or deletes durable conclusions about the peer. |
+
+Tools are hidden when `recallMode` is `context`.
 
 ## Running Honcho locally with Hermes
 
 Follow the [Self-Hosting Guide](/v3/contributing/self-hosting) to get Honcho running locally. Once it's up, point Hermes at your instance:
 
 ```bash
-hermes memory setup  # select "honcho", enter http://localhost:8000 as the base URL
+hermes memory setup honcho  # choose self-hosted, enter http://localhost:8000 as the base URL
 ```
 
 Or manually create/edit the config file (checked in order: `$HERMES_HOME/honcho.json` > `~/.hermes/honcho.json` > `~/.honcho/config.json`):
@@ -65,17 +79,17 @@ Or manually create/edit the config file (checked in order: `$HERMES_HOME/honcho.
 }
 ```
 
-For the full list of config fields (`recallMode`, `writeFrequency`, `sessionStrategy`, `dialecticReasoningLevel`, etc.), see the [Hermes memory provider docs](https://hermes-agent.nousresearch.com/docs/user-guide/features/memory-providers#honcho).
+For the full list of config fields (`recallMode`, `writeFrequency`, `sessionStrategy`, `dialecticReasoningLevel`, etc.), see the [plugin README](https://github.com/plastic-labs/honcho/tree/main/hermes-plugin-honcho#full-configuration-reference).
 
 ## Verifying the integration
 
 ### 1. Check status
 
 ```bash
-hermes memory status
+hermes honcho status
 ```
 
-This should show Honcho as the active memory provider with your base URL.
+This should show Honcho as enabled with your base URL, workspace, and peer names, followed by `Connection... OK`.
 
 ### 2. Store a fact and recall it across sessions
 
@@ -111,18 +125,23 @@ If Hermes calls the tool and returns results, the full tool pipeline (API connec
 | `writeFrequency` | `async` | `async`, `turn`, `session`, or integer N |
 | `sessionStrategy` | `per-directory` | `per-directory`, `per-repo`, `per-session`, `global` |
 | `dialecticReasoningLevel` | `low` | `minimal`, `low`, `medium`, `high`, `max` |
-| `dialecticDynamic` | `true` | Auto-bump reasoning level by query complexity |
+| `reasoningHeuristic` | `true` | Raise the auto-injected dialectic's reasoning level for longer queries, up to `reasoningLevelCap` |
+| `dialecticDynamic` | `true` | Let the agent pick the reasoning level per call to `honcho_reasoning` |
 | `messageMaxChars` | `25000` | Max chars per message (chunked if exceeded) |
+
+## Reporting issues
+
+File plugin bugs and feature requests with the [Hermes plugin issue template](https://github.com/plastic-labs/honcho/issues/new?template=6-hermes.yml). If the problem still happens with Honcho disabled, report it to [Hermes Agent](https://github.com/NousResearch/hermes-agent/issues) instead.
 
 ## Next steps
 
 <CardGroup cols={2}>
-  <Card title="Hermes Agent Honcho Docs" icon="book" href="https://hermes-agent.nousresearch.com/docs/user-guide/features/honcho">
-    Setup, configuration, CLI commands, and all config options.
+  <Card title="Plugin README" icon="book" href="https://github.com/plastic-labs/honcho/tree/main/hermes-plugin-honcho#readme">
+    Full configuration reference, CLI commands, and how the plugin works.
   </Card>
 
-  <Card title="Hermes Agent Source" icon="github" href="https://github.com/NousResearch/hermes-agent">
-    Source code, installation, and full documentation.
+  <Card title="Plugin Source" icon="github" href="https://github.com/plastic-labs/honcho/tree/main/hermes-plugin-honcho">
+    `hermes-plugin-honcho` in the Honcho repository.
   </Card>
 
   <Card title="Honcho Architecture" icon="sitemap" href="/v3/documentation/core-concepts/architecture">

@@ -1,5 +1,3 @@
-> **Handoff repository.** This is the standalone copy of the `honcho` memory provider formerly bundled with Hermes Agent, published so its upstream maintainers can take it over. Not an official Nous Research plugin. See [HANDOFF.md](HANDOFF.md).
-
 # Honcho Memory Provider
 
 AI-native cross-session user modeling with multi-pass dialectic reasoning, session summaries, bidirectional peer tools, and persistent conclusions.
