@@ -10,6 +10,8 @@ body:
 
         Questions about how to use Honcho belong on [Discord](https://discord.gg/honcho), not here.
 
+        **Feature for the Hermes plugin** (`hermes-plugin-honcho`)? Use the **Hermes plugin** template, unless it needs a new API field or endpoint, which belongs here. Other integrations take feature requests in their own repos, linked from the [integrations catalog](https://honcho.dev/docs/v3/guides/overview).
+
   - type: dropdown
     id: request_type
     attributes:
@@ -28,7 +30,7 @@ body:
     id: problem
     attributes:
       label: Problem
-      description: What is hard or impossible today? Who hits this?
+      description: What is hard or impossible today? Who hits this? If the README or docs describe today's behavior, link that section.
       placeholder: I'm always frustrated when… / My integration needs…
     validations:
       required: true
