@@ -42,8 +42,6 @@ body:
     attributes:
       label: How were you using Honcho when you hit it?
       description: |
-        We only take bugs found while using Honcho, so pick how you were using it.
-
         - **Directly**: you were calling the Honcho API, an SDK, or the CLI yourself.
         - **Through an integration**: you were using Honcho through Hermes, OpenClaw, Claude Code, or another integration, and the problem is in Honcho, not in the integration. Pick the integration. If the integration itself is at fault, file it there instead: the **Hermes plugin** template here, or the integration's own repo, linked from its page in the [integrations catalog](https://honcho.dev/docs/v3/guides/overview).
       options:

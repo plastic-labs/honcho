@@ -8,6 +8,8 @@ body:
       value: |
         Use this for bugs and feature requests in [`hermes-plugin-honcho`](https://github.com/plastic-labs/honcho/tree/main/hermes-plugin-honcho), the Honcho memory provider for Hermes.
 
+        **Security vulnerability?** Do not use this form — report privately via [SECURITY.md](https://github.com/plastic-labs/honcho/blob/main/SECURITY.md).
+
         **File only what you hit in real use** of Hermes with Honcho. Something found only by reading the code or in a synthetic test, or a fix carried over from another repo, needs to show up in real use before it's filed here.
 
         **Make sure it's the plugin.** If you can reproduce it by calling the Honcho API or SDK directly, use **Bug report** instead. If it still happens with Honcho disabled, report it to [Hermes](https://github.com/NousResearch/hermes-agent).
