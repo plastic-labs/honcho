@@ -20,15 +20,16 @@ ENV PYTHONUNBUFFERED=1
 
 # Copy only requirements to cache them in docker layer
 COPY uv.lock pyproject.toml /app/
+COPY packages/mock-provider /app/packages/mock-provider
 
 # Optionall include lancedb with:
 #   docker build --build-arg INSTALL_LANCEDB=true .
 ARG INSTALL_LANCEDB=false
 RUN --mount=type=cache,target=/root/.cache/uv \
     if [ "$INSTALL_LANCEDB" = "true" ]; then \
-        uv sync --frozen --no-install-project --no-group dev --extra lancedb; \
+        uv sync --frozen --no-install-project --no-group dev --no-editable --extra lancedb; \
     elif [ "$INSTALL_LANCEDB" = "false" ]; then \
-        uv sync --frozen --no-install-project --no-group dev; \
+        uv sync --frozen --no-install-project --no-group dev --no-editable; \
     else \
         echo "INSTALL_LANCEDB must be 'true' or 'false'" >&2; \
         exit 2; \

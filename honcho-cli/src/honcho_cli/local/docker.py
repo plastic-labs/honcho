@@ -117,7 +117,7 @@ _CONFIG_HEADER = (
 
 def image_is_digest(ref: str) -> bool:
     """True when ``ref`` is already pinned to a content digest."""
-    return "@sha256:" in ref.lower()
+    return "@sha256:" in ref.lower() or ref.startswith("sha256:")
 
 
 def image_repository(ref: str) -> str:
@@ -220,7 +220,7 @@ def services_running(ps: list[dict]) -> dict[str, str]:
     for row in ps:
         service = str(row.get("Service") or row.get("Name") or "")
         # "honcho-local-api-1" → try Service first; fall back to suffix match
-        if service not in STACK_SERVICES:
+        if service not in (*STACK_SERVICES, "mock-provider", "mock-config"):
             for name in STACK_SERVICES:
                 if (
                     service == name
@@ -243,12 +243,17 @@ def services_running(ps: list[dict]) -> dict[str, str]:
     return out
 
 
-def stack_containers_up(ps: list[dict]) -> bool:
+def stack_containers_up(ps: list[dict], *, mock: bool = False) -> bool:
     """True when all four services are running (deriver has no healthcheck)."""
     states = services_running(ps)
-    if any(name not in states for name in STACK_SERVICES):
+    required = (*STACK_SERVICES, "mock-provider") if mock else STACK_SERVICES
+    if any(name not in states for name in required):
         return False
-    for state in states.values():
+    for service, state in states.items():
+        # The mock-config validation container intentionally exits successfully.
+        # Compose gates api/deriver startup on its successful completion.
+        if service == "mock-config":
+            continue
         if "exit" in state or state in {"dead", "paused"}:
             return False
         if "running" not in state and "healthy" not in state:

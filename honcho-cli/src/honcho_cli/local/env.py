@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import os
+import tomllib
 from contextlib import suppress
 from importlib.resources import files
 from pathlib import Path
@@ -137,9 +139,7 @@ def upsert_env(
             extras.append(line)
 
     managed = [f"{k}={updates[k]}" for k in MANAGED_KEYS if k in updates]
-    extra_updates = [
-        f"{k}={v}" for k, v in updates.items() if k not in MANAGED_KEYS
-    ]
+    extra_updates = [f"{k}={v}" for k, v in updates.items() if k not in MANAGED_KEYS]
     body = [_HEADER, *managed]
     if extra_updates:
         if not body[-1].startswith("#"):
@@ -175,6 +175,57 @@ def render_stack(
     if extra:
         updates.update(extra)
     upsert_env(profile.env_file(), updates, drop=drop)
+    if profile.providers == "mock":
+        from honcho_cli.local.mock import VALIDATE
+        from honcho_cli.local.mock import environment as mock_environment
+
+        config = {}
+        if profile.config_file().exists():
+            with profile.config_file().open("rb") as file:
+                for section, values in tomllib.load(file).items():
+                    prefix = "" if section.lower() == "app" else section.upper() + "_"
+                    for key, value in values.items():
+                        config[prefix + key.upper()] = (
+                            value if isinstance(value, str) else json.dumps(value)
+                        )
+        mock_env = mock_environment(
+            {**config, **read_env_file(profile.env_file())},
+            "http://mock-provider:8000/v1",
+        )
+        mock_file = directory / ".mock.env"
+        mock_file.write_text(
+            "\n".join(f"{key}={value}" for key, value in mock_env.items()) + "\n"
+        )
+        mock_file.chmod(0o600)
+        # The live .env is preserved. The generated file contains the complete
+        # preset, so old nested credentials cannot override the mock settings.
+        compose = compose.replace(
+            "path: .env\n        required: false",
+            "path: .mock.env\n        format: raw",
+        )
+        compose = compose.replace(
+            "    depends_on:\n",
+            "    depends_on:\n      mock-provider:\n        condition: service_healthy\n      mock-config:\n        condition: service_completed_successfully\n",
+        )
+        extra_services = f"""
+  mock-provider:
+    image: ${{HONCHO_IMAGE}}
+    entrypoint: ["/app/.venv/bin/fastapi", "run", "--host", "0.0.0.0", "src/mock_provider/main.py"]
+    healthcheck:
+      test: ["CMD", "/app/.venv/bin/python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+  mock-config:
+    image: ${{HONCHO_IMAGE}}
+    entrypoint: ["/app/.venv/bin/python", "-c", {json.dumps(VALIDATE)}]
+    network_mode: none
+    env_file:
+      - path: .mock.env
+        format: raw
+"""
+        compose = compose.replace("\nvolumes:\n", extra_services + "\nvolumes:\n")
+        profile.compose_file().write_text(compose)
 
 
 def _unquote(value: str) -> str:

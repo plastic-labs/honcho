@@ -8,6 +8,7 @@ authors = [
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "honcho-mock-provider",
     "fastapi[standard-no-fastapi-cloud-cli]>=0.131.0",
     "python-dotenv>=1.0.0",
     "sqlalchemy>=2.0.30",
@@ -81,11 +82,13 @@ exclude-newer = "5 days"
 members = [
     "sdks/python",
     "honcho-cli",
+    "packages/mock-provider",
 ]
 
 [tool.uv.sources]
 honcho-ai = { workspace = true }
 honcho-cli = { workspace = true }
+honcho-mock-provider = { workspace = true }
 
 [tool.ruff.lint]
 # from https://docs.astral.sh/ruff/linter/#rule-selection example
