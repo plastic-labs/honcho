@@ -1,0 +1,65 @@
+{
+  "name": "@honcho-ai/kilo-honcho",
+  "version": "0.1.0",
+  "description": "Honcho memory plugin for Kilo Code: persistent memory across sessions in the Kilo CLI, VS Code and JetBrains.",
+  "type": "module",
+  "keywords": [
+    "kilo",
+    "kilocode",
+    "kilo-plugin",
+    "honcho",
+    "memory",
+    "ai",
+    "agents"
+  ],
+  "homepage": "https://github.com/plastic-labs/honcho/tree/main/kilo-honcho#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/plastic-labs/honcho.git",
+    "directory": "kilo-honcho"
+  },
+  "bugs": {
+    "url": "https://github.com/plastic-labs/honcho/issues"
+  },
+  "author": "Plastic Labs <hello@plasticlabs.ai>",
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./server": {
+      "import": "./dist/server.js"
+    },
+    "./tui": {
+      "import": "./dist/tui.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "skills",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "bun --eval \"const { rm } = await import('node:fs/promises'); await rm('dist', { recursive: true, force: true })\" && bun build ./src/index.ts ./src/server.ts ./src/tui.ts ./src/import.ts --outdir ./dist --target node --external @kilocode/plugin && tsc --emitDeclarationOnly",
+    "check": "tsc --noEmit",
+    "test": "bun run build && bun test ./tests",
+    "prepublishOnly": "bun run build"
+  },
+  "dependencies": {
+    "@honcho-ai/harness-plugin-core": "^0.1.1",
+    "@honcho-ai/sdk": "^2.4.0",
+    "zod": "4.1.8"
+  },
+  "devDependencies": {
+    "@kilocode/plugin": "7.8.3",
+    "@types/bun": "^1.2.8",
+    "@types/node": "^22.13.9",
+    "typescript": "^5.9.3"
+  }
+}
