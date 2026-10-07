@@ -18,7 +18,7 @@ This plugin gives Kilo Code long-term memory that survives context wipes, sessio
 kilo plugin @honcho-ai/kilo-honcho --global
 ```
 
-`kilo plugin` installs the package and adds it to the `plugin` list in your global Kilo config. To update an existing install, add `--force`. You can also install it from the Kilo Marketplace in VS Code.
+`kilo plugin` installs the package and adds it to the `plugin` list in your global Kilo config. To update an existing install, add `--force`.
 
 If you edit the config by hand, add `"@honcho-ai/kilo-honcho"` to the `plugin` array in `~/.config/kilo/kilo.json`.
 
