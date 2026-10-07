@@ -22,6 +22,8 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - `/openapi.json` no longer hardcodes `https://api.honcho.dev` as its first server. Self-hosted `/docs` "Try it out" and generated clients target the origin they were served from; behind a prefix-stripping proxy, set `--root-path` (#1103)
 - Gemini `gemini-embedding-2` models embed up to 8192 input tokens instead of being capped at 2048. Other Gemini models keep the 2048 cap (#925)
 - `uv.lock` bumps `starlette` (1.0.0 → 1.6.0, CVE-2026-48710), `python-multipart`, `anyio`, and `idna` to patched versions, which the Docker image picks up through `uv sync --frozen` (#1266)
+- Session summaries ask for about 60% of their token cap instead of a hard word limit, leaving headroom so dense content finishes instead of being cut off mid-summary. The default caps rise from 1000/4000 to 1500/6000 (`SUMMARY_MAX_TOKENS_SHORT` / `SUMMARY_MAX_TOKENS_LONG`), so default summaries stay about the same length. When `SUMMARY_MODEL_CONFIG__MAX_OUTPUT_TOKENS` is set it is a ceiling: settings fail to load if either cap exceeds it, so a deployment that sets it below 6000 must lower the caps to match or raise it (#1318)
+- The deriver's semantic deduplication looks up candidates for the whole batch in one query instead of one query per conclusion (#1202)
 
 ### Removed
 
@@ -32,6 +34,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Cloning a session matched the source's messages, peers, and cutoff message by session name alone, so it could copy a same-named session's data from another workspace or fail with a 500. Lookups are scoped to the workspace. Cloned messages also keep `token_count`, and cloning a session with no messages copies its peers and commits instead of returning a 201 for a session that was rolled back (#1284)
 - JWTs with an expiry (`--expires` on `scripts/generate_jwt.py`, `expires_at` on `POST /v3/keys`) failed every request with a 401, because `exp` was written as an ISO string instead of a NumericDate. Expiring keys now authenticate until they expire, and an expired key returns `JWT expired` (#1025)
 - OpenAI `gpt-6` models failed with a 400 `unsupported_parameter` because Honcho sent `max_tokens`; they now get `max_completion_tokens` like `gpt-5` and the o-series (#1233)
+- A summary that hits its cap while repeating itself (fewer than 35% distinct 4-word sequences) is discarded and the previous summary kept, instead of overwriting it. Rejections are counted in `summary_rejections{summary_type,reason}` (#1318)
 
 ## [3.2.2] - 2026-09-29
 
