@@ -280,18 +280,15 @@ async def _reclaim_still_owned_message_embeddings(
         return set()
 
     rows = (
-        (
-            await db.execute(
-                select(models.MessageEmbedding.id, models.MessageEmbedding.last_sync_at)
-                .where(
-                    models.MessageEmbedding.id.in_(list(leases)),
-                    models.MessageEmbedding.sync_state == "pending",
-                )
-                .with_for_update(skip_locked=True)
+        await db.execute(
+            select(models.MessageEmbedding.id, models.MessageEmbedding.last_sync_at)
+            .where(
+                models.MessageEmbedding.id.in_(list(leases)),
+                models.MessageEmbedding.sync_state == "pending",
             )
+            .with_for_update(skip_locked=True)
         )
-        .all()
-    )
+    ).all()
     owned = {emb_id for emb_id, last_sync_at in rows if last_sync_at == leases[emb_id]}
     if owned:
         await db.execute(
