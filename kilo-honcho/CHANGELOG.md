@@ -19,11 +19,17 @@ This package versions independently of the Honcho API, `@honcho-ai/sdk`, and oth
 - The server writes this per-session record to `~/.honcho/kilo/sessions/<session id>.json` (mode 600) for the TUI to read. Files older than 14 days are removed at startup, and a file is removed when Kilo deletes its session.
 - `hosts.kilo.autoConclusions` turns keyword auto-conclusions back on.
 - `/honcho:setup` fills in the peer name other Honcho tools already use, and offers to share a workspace another Honcho tool uses. `honcho_setup` takes a `workspace` argument for the same choice.
+- `npx @honcho-ai/kilo-honcho setup` sets up Honcho from any terminal and adds the plugin to Kilo's global config, for the desktop app and IDE extensions, which have no `/honcho:setup`.
+- The TUI offers setup the first time the plugin loads without an API key. Without a key, the system prompt asks the agent to point the user at the setup command once per session.
+- The sidebar ends with `/honcho:recall`, which opens the recall view when clicked.
+- `environmentUrl`, which `honcho init` writes, is used when `baseUrl` is missing.
 
 ### Changed
 
 - The user peer is `peerName` unchanged, as in Claude Code and Hermes. opencode-honcho's `user-` prefix and the `removeUserPrefix` setting are gone. When `peerName` is unset, Kilo uses `HONCHO_PEER_NAME`, then the OS user name, instead of `user`. A `peerName` equal to `aiPeer` is an error instead of a renamed user.
 - The plugin no longer writes `~/.honcho/config.json` on first run. It used to write `peerName: "user"`, which every other Honcho tool then read.
+- `honcho_setup` no longer takes an `apiKey`, so a key never passes through the chat, Kilo's history or the model provider.
+- `~/.honcho/config.json` is written with mode 600, since it can hold the API key.
 - `observationMode` defaults to `unified` for every config. The "observation mode is unset" prompt, an opencode-honcho upgrade step, is gone.
 
 - Keyword auto-conclusions are off by default. They saved prompts containing words like "always" or "never" verbatim, including prompts such as "never mind, revert that", and duplicated what Honcho's deriver already extracts.

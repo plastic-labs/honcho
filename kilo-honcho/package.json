@@ -25,6 +25,9 @@
   "license": "MIT",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "bin": {
+    "kilo-honcho": "./dist/cli.js"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -54,6 +57,7 @@
   "dependencies": {
     "@honcho-ai/harness-plugin-core": "^0.1.1",
     "@honcho-ai/sdk": "^2.4.0",
+    "jsonc-parser": "3.3.1",
     "zod": "4.1.8"
   },
   "devDependencies": {

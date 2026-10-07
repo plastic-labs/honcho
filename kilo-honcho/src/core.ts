@@ -12,6 +12,9 @@ export const PLUGIN_ID = "kilo-honcho"
 /** npm package name. Kilo uses it as the plugin id and the Marketplace matches installs on it. */
 export const PACKAGE_ID = "@honcho-ai/kilo-honcho"
 
+/** Terminal setup for clients without the Kilo CLI's `/honcho:setup`: the desktop app and the IDE extensions. */
+export const SETUP_COMMAND = `npx ${PACKAGE_ID} setup`
+
 export const SESSION_STRATEGIES = [
   "per-repo",
   "per-directory",
@@ -112,11 +115,12 @@ const endpointBaseUrl = (scope: unknown) => {
   return isRecord(endpoint) && typeof endpoint.baseUrl === "string" ? endpoint.baseUrl.trim() : ""
 }
 
-/** `baseUrl`, else the `endpoint.baseUrl` other Honcho integrations write (host block, then top level). */
+/** `baseUrl`, else the `endpoint.baseUrl` other integrations write (host block, then top level), else `honcho init`'s `environmentUrl`. */
 export const resolveBaseUrl = (raw: Record<string, unknown>, hostId = HOST_ID) => {
   const baseUrl = typeof raw.baseUrl === "string" ? raw.baseUrl.trim() : ""
   if (baseUrl) return baseUrl
-  return endpointBaseUrl(isRecord(raw.hosts) ? raw.hosts[hostId] : undefined) || endpointBaseUrl(raw)
+  const environmentUrl = typeof raw.environmentUrl === "string" ? raw.environmentUrl.trim() : ""
+  return endpointBaseUrl(isRecord(raw.hosts) ? raw.hosts[hostId] : undefined) || endpointBaseUrl(raw) || environmentUrl
 }
 
 // Only Honcho Cloud has a known dashboard; a self-hosted or local server gets no link.

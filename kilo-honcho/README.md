@@ -20,12 +20,20 @@ kilo plugin @honcho-ai/kilo-honcho --global
 
 `kilo plugin` installs the package and adds it to the `plugin` list in `~/.config/kilo/opencode.json` (the server half) and `~/.config/kilo/tui.json` (the `/honcho:*` commands). To update an existing install, add `--force`.
 
+For the Kilo desktop app or the VS Code and JetBrains extensions, run this in any terminal instead:
+
+```bash
+npx @honcho-ai/kilo-honcho setup
+```
+
+It asks for your API key without echoing it, the name Honcho should call you, and a workspace. It saves them to `~/.honcho/config.json` with mode 600 and adds the plugin to both Kilo config files, keeping any comments. Restart Kilo to load it.
+
 If you edit the config by hand, add `"@honcho-ai/kilo-honcho"` to the `plugin` array in both files.
 
 ### Step 3: Run Setup in Kilo
 
-1. Start Kilo
-2. Run `/honcho:setup`
+1. Start Kilo. The first time the plugin loads without an API key, it offers to set up Honcho.
+2. Choose **Set up now**, or run `/honcho:setup`
 3. Keep the default `Honcho Cloud` option unless you want a self-hosted or local endpoint
 4. Enter your Honcho API key
 5. Confirm the name Honcho should call you. Setup fills in the `peerName` your other Honcho tools use, or your OS user name.
@@ -121,13 +129,14 @@ Honcho
 • Active
 Peer: alice
 Session: View in Honcho ↗
+/honcho:recall
 ```
 
-On Honcho Cloud, clicking `View in Honcho` opens the session in the Honcho dashboard, where you can read the saved messages and the conclusions. A self-hosted or local Honcho has no known dashboard, so the sidebar shows the session name, shortened in the middle to fit. The section shows `Not set up` before `/honcho:setup`, and `Error` with the reason when a Honcho request fails.
+On Honcho Cloud, clicking `View in Honcho` opens the session in the Honcho dashboard, where you can read the saved messages and the conclusions. Any other Honcho server has no known dashboard address, so the sidebar shows the session name, shortened in the middle to fit. Clicking `/honcho:recall` opens the recall view. The section shows `Not set up` before `/honcho:setup`, and `Error` with the reason when a Honcho request fails.
 
 `/honcho:recall` opens the exact text the model received. Kilo does not save this text in its session history.
 
-The server half writes this record to `~/.honcho/kilo/sessions/<session id>.json` with mode 600, and the TUI reads it. The sidebar and the `/honcho:*` commands belong to the Kilo CLI's terminal UI. The VS Code and JetBrains extensions do not load TUI plugins, so they show neither.
+The server half writes this record to `~/.honcho/kilo/sessions/<session id>.json` with mode 600, and the TUI reads it. The sidebar and the `/honcho:*` commands belong to the Kilo CLI's terminal UI. The desktop app and the VS Code and JetBrains extensions do not load TUI plugins, so they show neither. When Honcho has no API key, the agent tells the user once per session to run `npx @honcho-ai/kilo-honcho setup`.
 
 ## Operator Commands
 
@@ -146,7 +155,7 @@ The server half writes this record to `~/.honcho/kilo/sessions/<session id>.json
 
 | Tool | Description |
 | --- | --- |
-| `honcho_setup` | Validate setup and persist shared credentials or endpoint settings |
+| `honcho_setup` | Check the connection and save the peer name, workspace or endpoint. It never takes an API key. |
 | `honcho_status` | Show effective runtime status |
 | `honcho_get_config` | Read effective and persisted settings |
 | `honcho_set_config` | Update a persisted shared setting |

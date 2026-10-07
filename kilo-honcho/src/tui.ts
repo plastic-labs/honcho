@@ -3,6 +3,7 @@ import { recallMessage, sidebarRows } from "./tui/activity-view.js"
 import {
   modeEditableFieldPaths,
   normalizeSettings,
+  offerSetup,
   readSharedConfig,
   resolveConfigPath,
   resolveSharedConfigField,
@@ -28,6 +29,7 @@ export const __testing = {
   deriveLiveStatus,
   normalizeSettings,
   modeEditableFieldPaths,
+  offerSetup,
   readSharedConfig,
   recallMessage,
   resolveSharedConfigField,

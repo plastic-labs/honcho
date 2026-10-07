@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises"
+import { chmod, mkdir, readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { readActivity } from "../activity.js"
 import { createHonchoClient } from "../honcho-client.js"
@@ -71,12 +71,15 @@ export const readSharedConfig = async (): Promise<Record<string, unknown> | null
   }
 }
 
-export const writeSharedConfig = async (settings: Record<string, unknown>) => {
-  const configPath = resolveConfigPath()
+// The file can hold an API key, so only its owner may read it.
+const writeConfigFile = async (configPath: string, settings: Record<string, unknown>) => {
   await mkdir(path.dirname(configPath), { recursive: true })
-  await writeFile(configPath, `${JSON.stringify(settings, null, 2)}\n`, "utf-8")
+  await writeFile(configPath, `${JSON.stringify(settings, null, 2)}\n`, { encoding: "utf-8", mode: 0o600 })
+  await chmod(configPath, 0o600)
   return configPath
 }
+
+export const writeSharedConfig = (settings: Record<string, unknown>) => writeConfigFile(resolveConfigPath(), settings)
 
 const listSharedConfigFields = (value: Record<string, unknown>, prefix = ""): string[] =>
   Object.entries(value).flatMap(([key, entryValue]) => {
@@ -138,12 +141,7 @@ const parseSharedConfigValue = (currentValue: unknown, rawValue: string) => {
   return trimmed
 }
 
-const writeGlobalSettings = async (settings: GlobalSettings) => {
-  const configPath = resolveConfigPath()
-  await mkdir(path.dirname(configPath), { recursive: true })
-  await writeFile(configPath, `${JSON.stringify(settings, null, 2)}\n`, "utf-8")
-  return configPath
-}
+const writeGlobalSettings = (settings: GlobalSettings) => writeConfigFile(resolveConfigPath(), settings)
 
 export const normalizeSettings = (settings: GlobalSettings) => ({
   baseUrl: resolveBaseUrl(settings as Record<string, unknown>) || DEFAULT_SETTINGS.baseUrl,
@@ -162,12 +160,18 @@ const withEnvOverrides = (normalized: ReturnType<typeof normalizeSettings>) => (
   peerName: process.env.HONCHO_PEER_NAME?.trim() || normalized.peerName,
 })
 
+// What the server checks before it talks to Honcho, including HONCHO_* env values.
+const configuredForServer = (settings: GlobalSettings) => {
+  const normalized = withEnvOverrides(normalizeSettings(settings))
+  return Boolean(normalized.apiKey) || isLocalBaseUrl(normalized.baseUrl)
+}
+
 export const statusMessage = (
   settings: GlobalSettings,
   liveStatus?: { workspaceName?: string; kiloSessionId?: string },
 ) => {
   const normalized = withEnvOverrides(normalizeSettings(settings))
-  const configured = Boolean(normalized.apiKey) || isLocalBaseUrl(normalized.baseUrl)
+  const configured = configuredForServer(settings)
   const deployment = isLocalBaseUrl(normalized.baseUrl)
     ? "Local / self-hosted"
     : normalized.baseUrl === DEFAULT_SETTINGS.baseUrl
@@ -288,6 +292,23 @@ const formatImportPreview = (plan: Awaited<ReturnType<typeof planKiloImport>>) =
 
 const isConfigured = (settings: GlobalSettings) =>
   Boolean(settings.apiKey?.trim()) || isLocalBaseUrl(resolveBaseUrl(settings as Record<string, unknown>))
+
+/** Offered once when the plugin is installed or updated and Honcho has no API key yet. */
+export const offerSetup = async (session: TuiSession) => {
+  try {
+    if (configuredForServer(await readGlobalSettings())) return
+    const choice = await session.dialogs.select<"setup" | "later">({
+      title: "Honcho is installed. Set up memory now?",
+      options: [
+        { title: "Set up now", value: "setup", description: "Paste a key from app.honcho.dev" },
+        { title: "Later", value: "later", description: "Run /honcho:setup any time" },
+      ],
+    })
+    if (choice === "setup") await runSetup(session)
+  } catch {
+    return
+  }
+}
 
 export const runStatus = async (session: TuiSession) => {
   const settings = await readGlobalSettings()

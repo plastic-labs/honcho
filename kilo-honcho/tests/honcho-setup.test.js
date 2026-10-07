@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, expect, test } from "bun:test"
 import os from "node:os"
 import path from "node:path"
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises"
 
-import { createHonchoRuntimePlugin } from "../dist/index.js"
+import { __testing, createHonchoRuntimePlugin } from "../dist/index.js"
 
 // Tests set HONCHO_* themselves; values inherited from the shell would override the config under test.
 const HONCHO_ENV = ["HONCHO_API_KEY", "HONCHO_URL", "HONCHO_BASE_URL", "HONCHO_PEER_NAME", "HONCHO_WORKSPACE", "HONCHO_WORKSPACE_ID", "HONCHO_AI_PEER"]
@@ -118,11 +118,14 @@ test("honcho_setup saves the peer name and can join another tool's workspace", a
   const homeDir = await mkdtemp(path.join(os.tmpdir(), "honcho-home-"))
   const sharedConfigPath = path.join(homeDir, ".honcho", "config.json")
 
+  await mkdir(path.dirname(sharedConfigPath), { recursive: true })
+  await writeFile(sharedConfigPath, JSON.stringify({ apiKey: "new-key" }))
+
   await withMockFetch(successfulValidationFetch, async () => {
     await withEnv({ HOME: homeDir, USER: "ignored-user", XDG_CONFIG_HOME: undefined }, async () => {
       const hooks = await createPluginHarness(rootDir)
       const result = JSON.parse(
-        await hooks.tool.honcho_setup.execute({ apiKey: "new-key", peerName: "custom-peer", workspace: "claude-code" }, toolContext(rootDir)),
+        await hooks.tool.honcho_setup.execute({ peerName: "custom-peer", workspace: "claude-code" }, toolContext(rootDir)),
       )
       const persisted = JSON.parse(await readFile(sharedConfigPath, "utf-8"))
 
@@ -131,7 +134,21 @@ test("honcho_setup saves the peer name and can join another tool's workspace", a
       expect(persisted.apiKey).toBe("new-key")
       expect(persisted.hosts.kilo.workspace).toBe("claude-code")
       expect(persisted.hosts.kilo.removeUserPrefix).toBeUndefined()
+      // The shared file holds the key, so only its owner may read it.
+      expect((await stat(sharedConfigPath)).mode & 0o777).toBe(0o600)
     })
+  })
+})
+
+test("honcho_setup takes no API key and points the user at the setup command", async () => {
+  const rootDir = await mkdtemp(path.join(os.tmpdir(), "honcho-setup-nokey-"))
+  const homeDir = await mkdtemp(path.join(os.tmpdir(), "honcho-home-nokey-"))
+  await withEnv({ HOME: homeDir, USER: "ignored-user", XDG_CONFIG_HOME: undefined }, async () => {
+    const hooks = await createPluginHarness(rootDir)
+    expect(Object.keys(hooks.tool.honcho_setup.args)).not.toContain("apiKey")
+    const result = JSON.parse(await hooks.tool.honcho_setup.execute({ peerName: "alice" }, toolContext(rootDir)))
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain("npx @honcho-ai/kilo-honcho setup")
   })
 })
 
@@ -147,12 +164,14 @@ test("honcho_setup does not persist when cloud auth validation fails", async () 
       }),
     async () => {
       await withEnv({ HOME: homeDir, USER: "ignored-user", XDG_CONFIG_HOME: undefined }, async () => {
+        await mkdir(path.dirname(sharedConfigPath), { recursive: true })
+        await writeFile(sharedConfigPath, JSON.stringify({ apiKey: "bad-key" }))
         const hooks = await createPluginHarness(rootDir)
-        const result = JSON.parse(await hooks.tool.honcho_setup.execute({ apiKey: "bad-key" }, toolContext(rootDir)))
+        const result = JSON.parse(await hooks.tool.honcho_setup.execute({ peerName: "alice" }, toolContext(rootDir)))
 
         expect(result.ok).toBe(false)
         expect(result.error).toMatch(/Invalid API key/i)
-        await expect(readFile(sharedConfigPath, "utf-8")).rejects.toThrow()
+        expect(JSON.parse(await readFile(sharedConfigPath, "utf-8")).peerName).toBeUndefined()
       })
     },
   )
@@ -314,5 +333,51 @@ test("config writes keep an ${VAR} apiKey reference instead of saving the secret
       expect(raw).not.toContain("hch-real-secret")
       expect(JSON.parse(raw).apiKey).toBe("${HONCHO_TEST_SECRET}")
     })
+  })
+})
+
+test("honcho init's environmentUrl is used when there is no baseUrl", async () => {
+  const rootDir = await mkdtemp(path.join(os.tmpdir(), "honcho-envurl-root-"))
+  const homeDir = await mkdtemp(path.join(os.tmpdir(), "honcho-envurl-home-"))
+  const cfg = path.join(homeDir, ".honcho", "config.json")
+  await mkdir(path.dirname(cfg), { recursive: true })
+  await writeFile(cfg, JSON.stringify({ apiKey: "key", environmentUrl: "https://honcho.example.com" }))
+
+  await withEnv({ HOME: homeDir, USER: "ignored-user", XDG_CONFIG_HOME: undefined }, async () => {
+    const result = JSON.parse(await (await createPluginHarness(rootDir)).tool.honcho_status.execute({}, toolContext(rootDir)))
+    expect(result.baseUrl).toBe("https://honcho.example.com")
+  })
+})
+
+test("addKiloPlugin adds the package to Kilo's server and TUI config and keeps comments", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "honcho-kilo-config-"))
+  await writeFile(path.join(dir, "opencode.jsonc"), '{\n  // my models\n  "plugin": ["other-plugin"]\n}\n')
+
+  const first = await __testing.addKiloPlugin(dir)
+  expect(first.map((item) => [path.basename(item.file), item.status])).toEqual([
+    ["opencode.jsonc", "added"],
+    ["tui.json", "added"],
+  ])
+  const server = await readFile(path.join(dir, "opencode.jsonc"), "utf-8")
+  expect(server).toContain("// my models")
+  expect(server).toContain('"other-plugin"')
+  expect(server).toContain('"@honcho-ai/kilo-honcho"')
+  expect(JSON.parse(await readFile(path.join(dir, "tui.json"), "utf-8")).plugin).toEqual(["@honcho-ai/kilo-honcho"])
+
+  const second = await __testing.addKiloPlugin(dir)
+  expect(second.map((item) => item.status)).toEqual(["present", "present"])
+
+  const broken = await mkdtemp(path.join(os.tmpdir(), "honcho-kilo-broken-"))
+  await writeFile(path.join(broken, "opencode.json"), "{ not json")
+  expect((await __testing.addKiloPlugin(broken))[0].status).toBe("unreadable")
+  expect(await readFile(path.join(broken, "opencode.json"), "utf-8")).toBe("{ not json")
+})
+
+test("kiloConfigDir follows XDG_CONFIG_HOME like Kilo does", async () => {
+  await withEnv({ XDG_CONFIG_HOME: "/tmp/xdg", HOME: "/home/a" }, async () => {
+    expect(__testing.kiloConfigDir()).toBe("/tmp/xdg/kilo")
+  })
+  await withEnv({ XDG_CONFIG_HOME: undefined, HOME: "/home/a" }, async () => {
+    expect(__testing.kiloConfigDir()).toBe("/home/a/.config/kilo")
   })
 })

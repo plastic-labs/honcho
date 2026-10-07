@@ -1,7 +1,7 @@
 import type { TuiPlugin, TuiPluginApi } from "@kilocode/plugin/tui"
 import { DEFAULT_SETTINGS } from "../core.js"
 import { transcriptSourceFromClient } from "../import.js"
-import { COMMANDS, runGuarded } from "./commands.js"
+import { COMMANDS, offerSetup, runGuarded, runRecall } from "./commands.js"
 import type { Dialogs, GlobalSettings, TuiSession } from "./dialogs.js"
 import { registerSidebar } from "./sidebar.js"
 import { showTextView } from "./text-view.js"
@@ -138,7 +138,11 @@ export const buildCommands = (api: TuiPluginApi) =>
     },
   }))
 
-export const tui: TuiPlugin = async (api) => {
+export const tui: TuiPlugin = async (api, _options, meta) => {
   api.command?.register(() => buildCommands(api))
-  registerSidebar(api)
+  registerSidebar(api, () => {
+    void runRecall(sessionFromApi(api)).catch(() => undefined)
+  })
+  // "same" means this exact plugin build loaded before, so the user has already seen the offer.
+  if (meta?.state !== "same") void offerSetup(sessionFromApi(api))
 }

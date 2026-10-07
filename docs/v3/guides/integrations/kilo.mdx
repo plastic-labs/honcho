@@ -17,11 +17,26 @@ Give Kilo Code long-term memory that survives context wipes, session restarts, a
 
 ### Step 2: Install the Plugin
 
-<Note>
-This plugin requires the [Kilo CLI](https://kilo.ai/docs/code-with-ai/platforms/cli). If `kilo` isn't on your `PATH`, install it first, then restart your shell.
-</Note>
+<Tabs>
+  <Tab title="Desktop app, VS Code, JetBrains">
+    Run this in any terminal, including the desktop app's built-in terminal or VS Code's:
 
-Install the plugin:
+    ```bash
+    npx @honcho-ai/kilo-honcho setup
+    ```
+
+    It asks for your API key without showing it, the name Honcho should call you, and a workspace. It then saves them to `~/.honcho/config.json` and adds the plugin to Kilo's global config. Restart Kilo to load it. You can skip Step 3.
+  </Tab>
+  <Tab title="Kilo CLI">
+    Install the plugin, then run Step 3:
+
+    ```bash
+    kilo plugin @honcho-ai/kilo-honcho --global
+    ```
+  </Tab>
+</Tabs>
+
+Install with the Kilo CLI:
 
 ```bash
 kilo plugin @honcho-ai/kilo-honcho --global
@@ -37,8 +52,8 @@ kilo plugin @honcho-ai/kilo-honcho --global --force
 
 ### Step 3: Run Setup in Kilo
 
-1. Start Kilo
-2. Run `/honcho:setup`
+1. Start Kilo. The first time the plugin loads without an API key, it offers to set up Honcho.
+2. Choose **Set up now**, or run `/honcho:setup`
 3. Keep the default **Honcho Cloud** option unless you want a self-hosted or local endpoint
 4. Paste your Honcho API key
 5. Confirm the name Honcho should call you. Setup fills in the `peerName` your other Honcho tools use, or your OS user name.
@@ -70,12 +85,13 @@ Honcho
 • Active
 Peer: alice
 Session: View in Honcho ↗
+/honcho:recall
 ```
 
-On Honcho Cloud, clicking `View in Honcho` opens the session in the Honcho dashboard, where you can read the saved messages and the conclusions. A self-hosted or local Honcho shows the session name instead. Run `/honcho:recall` to read the exact memory text the model received.
+On Honcho Cloud, clicking `View in Honcho` opens the session in the Honcho dashboard, where you can read the saved messages and the conclusions. Any other Honcho server has no known dashboard address, so the sidebar shows the session name instead. Click `/honcho:recall`, or run it, to read the exact memory text the model received.
 
 <Note>
-The sidebar and the `/honcho:*` commands belong to the Kilo CLI's terminal UI. The VS Code and JetBrains extensions do not load TUI plugins, so they show neither. Memory still works there.
+The sidebar and the `/honcho:*` commands belong to the Kilo CLI's terminal UI. The desktop app and the VS Code and JetBrains extensions do not load TUI plugins, so they show neither. Memory still works there. When Honcho has no API key, the agent tells you once per session to run `npx @honcho-ai/kilo-honcho setup`.
 </Note>
 
 ## Configuration
@@ -118,7 +134,7 @@ For **Honcho Cloud**:
 
 For **self-hosted or local Honcho**:
 
-- `baseUrl` should point to your deployment (e.g. `http://127.0.0.1:8000`)
+- `baseUrl` should point to your deployment (e.g. `http://127.0.0.1:8000`). Without `baseUrl`, Kilo uses the `environmentUrl` that `honcho init` writes.
 - `apiKey` is only required if the deployment is authenticated
 
 <Warning>
@@ -161,7 +177,7 @@ The plugin exposes these tools inside Kilo:
 
 | Tool | Description |
 | --- | --- |
-| `honcho_setup` | Validate setup and persist shared credentials or endpoint settings |
+| `honcho_setup` | Check the connection and save the peer name, workspace or endpoint. It never takes an API key. |
 | `honcho_status` | Show effective runtime status |
 | `honcho_get_config` | Read effective and persisted settings |
 | `honcho_set_config` | Update a persisted shared setting |
@@ -187,8 +203,8 @@ The plugin hooks into these Kilo plugin capabilities:
 
 ## What Install Writes
 
-- **Kilo config:** `@honcho-ai/kilo-honcho` in the `plugin` array of `~/.config/kilo/opencode.json` and `~/.config/kilo/tui.json`.
-- **Honcho config:** `~/.honcho/config.json`, written only by `/honcho:setup`, `/honcho:config`, `honcho_setup`, and `honcho_set_config`. Installing or starting the plugin does not write it. An `apiKey` written as `${HONCHO_API_KEY}` stays a reference.
+- **Kilo config:** `@honcho-ai/kilo-honcho` in the `plugin` array of `~/.config/kilo/opencode.json` and `~/.config/kilo/tui.json`, written by `kilo plugin` or `npx @honcho-ai/kilo-honcho setup`. Setup keeps any comments in those files.
+- **Honcho config:** `~/.honcho/config.json`, written only by `npx @honcho-ai/kilo-honcho setup`, `/honcho:setup`, `/honcho:config`, `honcho_setup`, and `honcho_set_config`, with mode 600. Installing or starting the plugin does not write it. An `apiKey` written as `${HONCHO_API_KEY}` stays a reference.
 - **Skill:** `~/.config/kilo/skills/honcho-memory/SKILL.md`, or `$KILO_CONFIG_DIR/skills/honcho-memory/SKILL.md` when that variable is set.
 - **Import state:** `~/.honcho/kilo-import-state.json`, after you run `/honcho:import`.
 - **Session activity:** `~/.honcho/kilo/sessions/<session id>.json`, one file per Kilo session, with mode 600. It holds the memory text shown by `/honcho:recall`. Files older than 14 days are removed when the plugin starts, and a file is removed when Kilo deletes its session.

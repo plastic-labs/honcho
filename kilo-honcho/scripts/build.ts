@@ -1,4 +1,4 @@
-import { rm } from "node:fs/promises"
+import { chmod, rm } from "node:fs/promises"
 import solidTransform from "@opentui/solid/bun-plugin"
 
 await rm("dist", { recursive: true, force: true })
@@ -12,7 +12,16 @@ const result = await Bun.build({
   plugins: [solidTransform],
 })
 
-if (!result.success) {
-  for (const log of result.logs) console.error(log)
+const cli = await Bun.build({
+  entrypoints: ["./src/cli.ts"],
+  outdir: "./dist",
+  target: "node",
+  banner: "#!/usr/bin/env node",
+})
+
+for (const build of [result, cli]) {
+  if (build.success) continue
+  for (const log of build.logs) console.error(log)
   process.exit(1)
 }
+await chmod("./dist/cli.js", 0o755)

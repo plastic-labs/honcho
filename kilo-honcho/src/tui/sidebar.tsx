@@ -8,7 +8,7 @@ import { openUrl } from "./open-url.js"
 
 const REFRESH_MS = 2_000
 
-function HonchoSidebar(props: { api: TuiPluginApi; sessionID: string }) {
+function HonchoSidebar(props: { api: TuiPluginApi; sessionID: string; onRecall: () => void }) {
   const [activity, setActivity] = createSignal<HonchoActivity | null>(null)
   const refresh = () => {
     const sessionID = props.sessionID
@@ -46,10 +46,11 @@ function HonchoSidebar(props: { api: TuiPluginApi; sessionID: string }) {
             <For each={row().details}>
               {(line) => (
                 <text
-                  fg={line.url ? theme().primary : theme().textMuted}
+                  fg={line.url || line.opensRecall ? theme().primary : theme().textMuted}
                   wrapMode="word"
                   onMouseUp={() => {
                     if (line.url) openUrl(line.url)
+                    if (line.opensRecall) props.onRecall()
                   }}
                 >
                   {line.text}
@@ -63,13 +64,13 @@ function HonchoSidebar(props: { api: TuiPluginApi; sessionID: string }) {
   )
 }
 
-export const registerSidebar = (api: TuiPluginApi) =>
+export const registerSidebar = (api: TuiPluginApi, onRecall: () => void) =>
   api.slots.register({
     // Kilo's own Memory section is order 1000, so Honcho sits directly below it.
     order: 1001,
     slots: {
       sidebar_content(_ctx, props) {
-        return <HonchoSidebar api={api} sessionID={props.session_id} />
+        return <HonchoSidebar api={api} sessionID={props.session_id} onRecall={onRecall} />
       },
     },
   })

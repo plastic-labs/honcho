@@ -176,6 +176,7 @@ test("sidebar rows show the peer and a session link, or the session name off Hon
   assert.deepEqual(cloud.details, [
     { text: "Peer: eri" },
     { text: "Session: View in Honcho ↗", url: "https://app.honcho.dev/explore?x" },
+    { text: "/honcho:recall", opensRecall: true },
   ])
 
   const selfHosted = __testing.sidebarRows(activity({ session: "eri-per-directory-kilo-some-long-folder-name-kilo" }))
@@ -253,4 +254,23 @@ test("/honcho:setup prefills the shared peer name and can join another tool's wo
   assert.equal(saved.peerName, "eri")
   assert.equal(saved.hosts.kilo.workspace, "claude-code")
   assert.deepEqual(saved.hosts.claude_code, { workspace: "claude-code" })
+})
+
+test("the setup offer appears only while Honcho has no key", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "honcho-tui-offer-"))
+  const configPath = path.join(dir, "config.json")
+  const previous = process.env.KILO_HONCHO_CONFIG_PATH
+  process.env.KILO_HONCHO_CONFIG_PATH = configPath
+  const offers = []
+  const session = { dialogs: { select: async (input) => (offers.push(input), "later") }, liveStatus: () => ({}) }
+  try {
+    await withHonchoEnv({}, () => __testing.offerSetup(session))
+    await writeFile(configPath, JSON.stringify({ apiKey: "hch-key" }))
+    await withHonchoEnv({}, () => __testing.offerSetup(session))
+  } finally {
+    if (previous === undefined) delete process.env.KILO_HONCHO_CONFIG_PATH
+    else process.env.KILO_HONCHO_CONFIG_PATH = previous
+  }
+  assert.equal(offers.length, 1)
+  assert.equal(offers[0].title, "Honcho is installed. Set up memory now?")
 })

@@ -1,7 +1,7 @@
 import { clampText } from "../core.js"
 import type { HonchoActivity } from "../activity.js"
 
-export type SidebarLine = { text: string; url?: string }
+export type SidebarLine = { text: string; url?: string; opensRecall?: boolean }
 
 export type SidebarRows = {
   label: string
@@ -42,6 +42,7 @@ export const sidebarRows = (activity: HonchoActivity): SidebarRows => {
   if (activity.userPeer) details.push({ text: `Peer: ${activity.userPeer}` })
   if (activity.sessionUrl) details.push({ text: "Session: View in Honcho ↗", url: activity.sessionUrl })
   else if (activity.session) details.push({ text: `Session: ${truncateMiddle(activity.session, SESSION_NAME_MAX)}` })
+  details.push({ text: "/honcho:recall", opensRecall: true })
   return { label: "Active", tone: "success", details }
 }
 
