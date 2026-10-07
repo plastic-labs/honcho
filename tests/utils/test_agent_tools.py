@@ -1348,7 +1348,9 @@ class TestFormatMessageSnippets:
             workspace_name="ws",
         )
 
-    def test_no_truncation_when_under_budget(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_no_truncation_when_under_budget(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Short snippets under the budget return unchanged with the signal False."""
         monkeypatch.setattr(settings.LLM, "MAX_TOOL_OUTPUT_CHARS", 100_000)
         snippet = ([self._message("hello world")], [self._message("hello world")])

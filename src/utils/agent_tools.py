@@ -264,6 +264,17 @@ def _truncate_tool_output(
     return truncated, original_chars, True
 
 
+def _truncation_metadata(was_truncated: bool, original_chars: int) -> dict[str, Any]:
+    """`ToolResult.metadata` fields that `AgentToolCallCompletedEvent` reads
+    to report truncation; empty when the output was not clamped."""
+    if not was_truncated:
+        return {}
+    return {
+        "was_truncated": True,
+        "result_chars_before_truncation": original_chars,
+    }
+
+
 def _maybe_truncated_result(output: str) -> "str | ToolResult":
     """Run `_truncate_tool_output` and wrap in `ToolResult` only when the
     output was actually clamped, so the truncation signal reaches the
@@ -277,10 +288,7 @@ def _maybe_truncated_result(output: str) -> "str | ToolResult":
         return content
     return ToolResult(
         content=content,
-        metadata={
-            "was_truncated": True,
-            "result_chars_before_truncation": original_chars,
-        },
+        metadata=_truncation_metadata(was_truncated, original_chars),
     )
 
 
@@ -1720,13 +1728,11 @@ async def _handle_search_memory(
                     snippets, f"for query '{query}'"
                 )
             if message_output:
-                fallback_meta = {**zero_hit_meta, "results_count": len(snippets)}
-                if msg_truncated:
-                    fallback_meta = {
-                        **fallback_meta,
-                        "was_truncated": True,
-                        "result_chars_before_truncation": msg_original,
-                    }
+                fallback_meta = {
+                    **zero_hit_meta,
+                    "results_count": len(snippets),
+                    **_truncation_metadata(msg_truncated, msg_original),
+                }
                 return ToolResult(
                     content=f"No observations yet. Message search results:\n\n{message_output}",
                     metadata=fallback_meta,
@@ -1823,13 +1829,10 @@ async def _handle_search_messages(
     formatted, was_truncated, original_chars = _format_message_snippets(
         snippets, f"for query '{query}'"
     )
-    if was_truncated:
-        search_meta = {
-            **search_meta,
-            "was_truncated": True,
-            "result_chars_before_truncation": original_chars,
-        }
-    return ToolResult(content=formatted, metadata=search_meta)
+    return ToolResult(
+        content=formatted,
+        metadata={**search_meta, **_truncation_metadata(was_truncated, original_chars)},
+    )
 
 
 async def _handle_grep_messages(
@@ -2021,13 +2024,10 @@ async def _handle_search_messages_temporal(
     formatted, was_truncated, original_chars = _format_message_snippets(
         snippets, f"for query '{query}'{filter_desc}"
     )
-    if was_truncated:
-        search_meta = {
-            **search_meta,
-            "was_truncated": True,
-            "result_chars_before_truncation": original_chars,
-        }
-    return ToolResult(content=formatted, metadata=search_meta)
+    return ToolResult(
+        content=formatted,
+        metadata={**search_meta, **_truncation_metadata(was_truncated, original_chars)},
+    )
 
 
 async def _handle_get_recent_observations(
