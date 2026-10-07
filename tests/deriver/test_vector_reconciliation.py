@@ -908,6 +908,50 @@ class TestMessageEmbeddings:
         assert pending_emb.sync_attempts == 0
         assert pending_emb.embedding is not None
 
+    async def test_pgvector_write_skipped_when_lease_reclaimed(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ) -> None:
+        """In pgvector-only mode, a worker whose lease was re-claimed (row still
+        pending, but stamped with a different last_sync_at) must not persist its
+        stale vector or reset the row's attempts."""
+        workspace, peer = sample_data
+        pending_emb = await self._create_pending_message_embedding(
+            db_session, workspace, peer
+        )
+
+        # During the embed, another worker re-claims the row: it stays pending
+        # but carries a different (newer) lease token.
+        async def embed_then_second_worker_reclaims(
+            claimed: list[_ClaimedEmbedding],
+        ) -> tuple[dict[int, list[float]], set[int]]:
+            del claimed  # not inspected here
+            await db_session.execute(
+                update(models.MessageEmbedding)
+                .where(models.MessageEmbedding.id == pending_emb.id)
+                .values(last_sync_at=func.now())
+            )
+            await db_session.commit()
+            return ({pending_emb.id: [0.5] * 1536}, set())
+
+        with patch(
+            "src.reconciler.sync_vectors._embed_claimed",
+            side_effect=embed_then_second_worker_reclaims,
+        ):
+            metrics = ReconciliationMetrics()
+            worked = await _reconcile_message_embeddings_batch(None, metrics)
+
+        assert worked is True
+        # Our write matched no row (lease token changed), so nothing synced.
+        assert metrics.message_embeddings_synced == 0
+
+        await db_session.refresh(pending_emb)
+        # The other worker's claim is untouched: still pending, not synced, no
+        # stale vector persisted by us.
+        assert pending_emb.sync_state == "pending"
+        assert pending_emb.embedding is None
+
     async def test_oversized_input_marks_permanently_failed(
         self,
         db_session: AsyncSession,

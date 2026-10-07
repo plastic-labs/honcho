@@ -698,6 +698,7 @@ async def _persist_message_embeddings(
                         .where(
                             models.MessageEmbedding.id == c.id,
                             models.MessageEmbedding.sync_state == "pending",
+                            models.MessageEmbedding.last_sync_at == c.lease_token,
                         )
                         .values(**sync_values)
                     ),
