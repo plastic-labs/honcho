@@ -1,24 +1,23 @@
 """
 Offset-or-cursor pagination for list endpoints.
 
-Offset pagination (`page`/`size`) runs a COUNT and an OFFSET scan on every
-request, so a client walking a large collection page by page pays O(n) per
-page. Cursor (keyset) pagination seeks straight to the next row and skips the
-count.
+Plain offset pagination (`page`/`size`) runs a COUNT and an OFFSET scan on
+every request, so a client walking a large collection page by page pays O(n)
+per page. Two things here remove that cost:
 
-Cursor mode is opt-in: a request that sends a `cursor` query parameter (an
-empty value means "first page") gets a `CursorPage` back; any other request
-gets the existing `Page` shape. Swapping the response in place would break
-installed SDKs, which stop iterating when `pages` is missing from the response.
-
-Servers that predate cursor mode ignore the unknown `cursor` parameter and
-answer with a `Page`, so clients can detect support from the response shape.
-
-Offset requests are made cheap too, without changing their response, by the
-offset shim (see `_paginate_offset_via_keyset`): installed SDKs keep sending
-`?page=N` and will never switch to cursors on their own.
+- Cursor mode is opt-in: a request that sends a `cursor` query parameter (an
+  empty value means "first page") gets a keyset-paginated `CursorPage` back,
+  one seek per page and no count. Any other request gets the existing `Page`
+  shape. Swapping the response in place would break installed SDKs, which stop
+  iterating when `pages` is missing from the response. Servers that predate
+  cursor mode ignore the unknown `cursor` parameter and answer with a `Page`,
+  so clients can detect support from the response shape.
+- The offset shim (`_paginate_offset_via_keyset`) makes offset requests cheap
+  without changing their response, for clients that keep sending `?page=N`.
+  It needs the cache, and turns off with `CACHE_PAGINATION_OFFSET_SHIM`.
 """
 
+import asyncio
 import hashlib
 import logging
 from typing import Any, ClassVar, Generic, TypeVar, cast
@@ -34,19 +33,19 @@ from fastapi_pagination.ext.sqlalchemy import apaginate, create_count_query
 from sqlakeyset import InvalidPage, unserialize_bookmark
 from sqlalchemy import Select
 from sqlalchemy.dialects import postgresql
+from sqlalchemy.exc import DataError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.cache.client import cache, cache_key_namespace, safe_cache_set
+from src.cache.client import cache, cache_key_namespace, safe_cache_get
 from src.config import settings
-from src.telemetry.prometheus.metrics import pagination_offset_shim_counter
+from src.telemetry.prometheus.metrics import PaginationShimOutcomes, prometheus_metrics
 
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
-# Stored in place of a position when the page before came back short, so a
-# walker paging past the end gets an empty page without a query.
-_END = "end"
+# ai: the shim's cache traffic is an optimization on the request path, so a slow cache costs at most this per call, then counts as a miss
+_CACHE_TIMEOUT_SECONDS = 0.25
 
 
 class CursorParams(_CursorParams):
@@ -65,14 +64,14 @@ class CursorParams(_CursorParams):
 class CursorPage(_CursorPage[T], Generic[T]):
     """Cursor page whose `total` is always null (see `CursorParams`)."""
 
-    # Widened from the base's required int, as fastapi-pagination's own
-    # UseIncludeTotal(False) customizer does at runtime.
+    # ai: widened from the base's required int, as fastapi-pagination's own UseIncludeTotal(False) customizer does at runtime
     total: int | None = None  # pyright: ignore[reportIncompatibleVariableOverride]
 
     __params_type__: ClassVar[type[AbstractParams]] = CursorParams
 
 
 def _invalid_cursor() -> HTTPException:
+    # ai: HTTPException, not a HonchoException: the HonchoException handler logs a traceback at ERROR, and this is a client mistake
     return HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid cursor"
     )
@@ -94,14 +93,22 @@ def pagination_params(
     if cursor is None:
         return Params(page=page, size=size)
 
-    # Validate the cursor before any route code runs: a malformed one is a
-    # 400, and some routes map a ValueError raised while paginating to a 404.
+    # ai: validated here, before route code runs: some routes map a ValueError raised while paginating to a 404
     if cursor:
         try:
             unserialize_bookmark(decode_cursor(cursor) or "")
-        except InvalidPage:
+        except Exception:
             raise _invalid_cursor() from None
     return CursorParams(cursor=cursor, size=size)
+
+
+async def _apaginate_cursor(
+    db: AsyncSession, stmt: Select[Any], params: CursorParams, **apaginate_kwargs: Any
+) -> CursorPage[Any]:
+    # ai: the routes' response model is a union, so fastapi-pagination can't infer the page class from it
+    return await apaginate(
+        db, stmt, params=params, config=Config(page_cls=CursorPage), **apaginate_kwargs
+    )
 
 
 def _statement_digest(stmt: Select[Any]) -> str:
@@ -116,13 +123,13 @@ def _statement_digest(stmt: Select[Any]) -> str:
     return hashlib.sha256(material.encode()).hexdigest()
 
 
-async def _cache_get(key: str) -> Any:
-    """Read the cache, treating any failure as a miss."""
+async def _cache_set_once(key: str, value: Any, expire: int) -> None:
+    # ai: one attempt under the shim's budget rather than safe_cache_set's retries: the request is waiting, and a lost write only costs a later miss
     try:
-        return await cache.get(key)
+        async with asyncio.timeout(_CACHE_TIMEOUT_SECONDS):
+            await cache.set(key, value, expire=expire)
     except Exception:
-        logger.warning("Pagination cache read failed for key %s", key, exc_info=True)
-        return None
+        logger.warning("Pagination cache set failed for key %s", key, exc_info=True)
 
 
 async def _paginate_offset_via_keyset(
@@ -134,57 +141,82 @@ async def _paginate_offset_via_keyset(
     """
     Serve an offset request with a keyset seek wherever possible.
 
-    Installed SDKs walk pages in order. After serving page N, the position of
-    its last row is stored under page N+1, so a sequential walk seeks from
-    there instead of scanning past every earlier row. Requests with no stored
-    position (page 1, random access, expired entries) run the OFFSET query,
-    but through the same keyset machinery, so they still record a position
-    for the page after them. The response is the unchanged offset `Page`.
+    After serving page N, the position of its last row is stored under page
+    N+1, so a sequential walk seeks instead of scanning past every earlier row.
+    Requests with no stored position (page 1, random access, expired entries,
+    the page after a last page) run the OFFSET query, but through the same
+    keyset machinery, so they still record a position for the page after them.
+    The response is the unchanged offset `Page`.
 
     On pages after the first, `total` comes from the cache and is recounted
     when it expires, so a long walk counts about once per TTL instead of once
-    per page. Page 1 always counts, so a list read right after a write is exact.
+    per page. Page 1 always counts, so a list read right after a write is
+    exact. While a next page exists, `total` is kept large enough that `pages`
+    reaches past this page, so a cached count from before rows were appended
+    can't end a walk early.
+
+    Positions are shared by every caller that runs the same query. A client
+    that jumps ahead instead of walking can get a page positioned by another
+    client's earlier walk, so rows written in between may be skipped or
+    repeated, for up to the position TTL. A sequential walker re-seeds every
+    position it uses.
     """
-    prefix = f"{cache_key_namespace()}:pagination:{_statement_digest(stmt)}"
+    try:
+        prefix = f"{cache_key_namespace()}:v1:pagination:{_statement_digest(stmt)}"
+    except Exception:
+        logger.warning("Pagination shim could not key a statement", exc_info=True)
+        return await apaginate(
+            db, stmt, params=params, config=Config(page_cls=Page), **apaginate_kwargs
+        )
     count_key = f"{prefix}:count"
     position_key = f"{prefix}:size={params.size}:page="
 
-    position = (
-        None if params.page == 1 else await _cache_get(f"{position_key}{params.page}")
-    )
-
-    items: list[Any] = []
-    if position == _END:
-        outcome = "end"
+    if params.page == 1:
+        outcome = PaginationShimOutcomes.FIRST
+        position, cached_total = None, None
     else:
-        outcome = "hit" if position else "miss"
-        if not position:
-            stmt_for_page = stmt.offset((params.page - 1) * params.size)
-        else:
-            stmt_for_page = stmt
-        cursor_page = await apaginate(
-            db,
-            stmt_for_page,
-            params=CursorParams(cursor=position, size=params.size),
-            config=Config(page_cls=CursorPage),
-            **apaginate_kwargs,
+        position, cached_total = await asyncio.gather(
+            safe_cache_get(
+                f"{position_key}{params.page}", timeout=_CACHE_TIMEOUT_SECONDS
+            ),
+            safe_cache_get(count_key, timeout=_CACHE_TIMEOUT_SECONDS),
         )
-        items = list(cursor_page.items)
-        await safe_cache_set(
-            f"{position_key}{params.page + 1}",
-            cursor_page.next_page or _END,
-            expire=settings.PAGINATION_SHIM_POSITION_TTL_SECONDS,
+        outcome = (
+            PaginationShimOutcomes.HIT if position else PaginationShimOutcomes.MISS
         )
-    pagination_offset_shim_counter.labels(outcome=outcome).inc()
 
-    total = None if params.page == 1 else await _cache_get(count_key)
+    stmt_for_page = stmt if position else stmt.offset((params.page - 1) * params.size)
+    cursor_page = await _apaginate_cursor(
+        db,
+        stmt_for_page,
+        CursorParams(cursor=position, size=params.size),
+        **apaginate_kwargs,
+    )
+    prometheus_metrics.record_pagination_offset_shim(outcome)
+
+    writes = []
+    if cursor_page.next_page:
+        # ai: nothing is stored after a last page: a position taken there would skip rows appended later that OFFSET puts on the next page
+        writes.append(
+            _cache_set_once(
+                f"{position_key}{params.page + 1}",
+                cursor_page.next_page,
+                settings.CACHE.PAGINATION_POSITION_TTL_SECONDS,
+            )
+        )
+    total = cached_total
     if total is None:
         total = await db.scalar(cast(Select[Any], create_count_query(stmt)))
-        await safe_cache_set(
-            count_key, total, expire=settings.PAGINATION_SHIM_COUNT_TTL_SECONDS
+        writes.append(
+            _cache_set_once(
+                count_key, total, settings.CACHE.PAGINATION_COUNT_TTL_SECONDS
+            )
         )
+    await asyncio.gather(*writes)
 
-    return Page.create(items, params=params, total=total)
+    if cursor_page.next_page:
+        total = max(total or 0, params.page * params.size + 1)
+    return Page.create(list(cursor_page.items), params=params, total=total)
 
 
 async def paginate_offset_or_cursor(
@@ -200,32 +232,25 @@ async def paginate_offset_or_cursor(
     `created_at, id`); otherwise rows sharing a sort key can be skipped or
     repeated across pages, in either mode.
     """
-    try:
-        if isinstance(params, CursorParams):
-            # The route's response model is a union, so fastapi-pagination
-            # can't infer the page class from it; name it explicitly.
-            return await apaginate(
-                db,
-                stmt,
-                params=params,
-                config=Config(page_cls=CursorPage),
-                **apaginate_kwargs,
-            )
-        if (
-            isinstance(params, Params)
-            and settings.PAGINATION_OFFSET_SHIM
-            and settings.CACHE.ENABLED
-        ):
-            return await _paginate_offset_via_keyset(
-                db, stmt, params, **apaginate_kwargs
-            )
-        return await apaginate(
-            db, stmt, params=params, config=Config(page_cls=Page), **apaginate_kwargs
-        )
-    except InvalidPage:
-        # A well-formed cursor that doesn't fit this query, e.g. one taken
-        # from a different list endpoint.
-        raise _invalid_cursor() from None
+    if isinstance(params, CursorParams):
+        try:
+            return await _apaginate_cursor(db, stmt, params, **apaginate_kwargs)
+        except (InvalidPage, DataError, ProgrammingError):
+            if not params.cursor:
+                raise
+            # ai: a well-formed cursor whose values don't fit this query (another endpoint's cursor, or a hand-edited one) fails in sqlakeyset or in Postgres
+            logger.info("Rejected a cursor that doesn't fit its query", exc_info=True)
+            raise _invalid_cursor() from None
+
+    if (
+        isinstance(params, Params)
+        and settings.CACHE.ENABLED
+        and settings.CACHE.PAGINATION_OFFSET_SHIM
+    ):
+        return await _paginate_offset_via_keyset(db, stmt, params, **apaginate_kwargs)
+    return await apaginate(
+        db, stmt, params=params, config=Config(page_cls=Page), **apaginate_kwargs
+    )
 
 
 __all__ = [

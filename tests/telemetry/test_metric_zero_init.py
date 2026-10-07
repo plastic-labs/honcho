@@ -29,6 +29,7 @@ from src.telemetry.prometheus.metrics import (
     DeriverComponents,
     DeriverTaskTypes,
     DialecticComponents,
+    PaginationShimOutcomes,
     TokenTypes,
     prometheus_metrics,
 )
@@ -400,3 +401,33 @@ def test_init_noop_when_metrics_disabled(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr("src.config.settings.METRICS.NAMESPACE", unique_ns("disabled"))
     prometheus_metrics.initialize_bounded_metrics(instance_type="api")
     assert sample("telemetry_events_emitted_total", type="message.created") is None
+
+
+# ---------------------------------------------------------------------------
+# Pagination offset shim
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.usefixtures("metrics_enabled")
+@pytest.mark.parametrize(
+    ("instance_type", "cache_enabled", "shim", "materialized"),
+    [
+        ("api", True, True, True),
+        ("api", False, True, False),  # the shim only runs with the cache on
+        ("api", True, False, False),  # ... and the flag on
+        ("deriver", True, True, False),  # the deriver serves no list routes
+    ],
+)
+def test_pagination_offset_shim_init_follows_where_it_can_run(
+    monkeypatch: pytest.MonkeyPatch,
+    instance_type: str,
+    cache_enabled: bool,
+    shim: bool,
+    materialized: bool,
+):
+    monkeypatch.setattr(settings.CACHE, "ENABLED", cache_enabled)
+    monkeypatch.setattr(settings.CACHE, "PAGINATION_OFFSET_SHIM", shim)
+    prometheus_metrics.initialize_bounded_metrics(instance_type=instance_type)
+    for outcome in PaginationShimOutcomes:
+        value = sample("pagination_offset_shim_total", outcome=outcome.value)
+        assert value == (0.0 if materialized else None)

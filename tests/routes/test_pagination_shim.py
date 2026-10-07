@@ -18,7 +18,10 @@ from nanoid import generate as generate_nanoid
 from src.cache.client import cache
 from src.config import settings
 from src.models import Peer, Workspace
-from src.telemetry.prometheus.metrics import pagination_offset_shim_counter
+from src.telemetry.prometheus.metrics import (
+    PaginationShimOutcomes,
+    pagination_offset_shim_counter,
+)
 
 SEEDED = 5
 SIZE = 2
@@ -213,7 +216,7 @@ def test_every_walk_returns_the_same_rows_in_the_same_order(
 
     shim_ids = _walk_offset(client, endpoint, url, extra)
     with monkeypatch.context() as m:
-        m.setattr(settings, "PAGINATION_OFFSET_SHIM", False)
+        m.setattr(settings.CACHE, "PAGINATION_OFFSET_SHIM", False)
         plain_ids = _walk_offset(client, endpoint, url, extra)
     cursor_ids = _walk_cursor(client, endpoint, url, extra)
 
@@ -223,8 +226,13 @@ def test_every_walk_returns_the_same_rows_in_the_same_order(
     assert cursor_ids == plain_ids
 
 
-def _shim_count(outcome: str) -> float:
-    return pagination_offset_shim_counter.labels(outcome=outcome)._value.get()  # pyright: ignore
+def _shim_counts() -> dict[PaginationShimOutcomes, float]:
+    return {
+        outcome: pagination_offset_shim_counter.labels(
+            outcome=outcome.value
+        )._value.get()  # pyright: ignore
+        for outcome in PaginationShimOutcomes
+    }
 
 
 def test_sequential_offset_walk_seeks_after_page_one(
@@ -233,12 +241,17 @@ def test_sequential_offset_walk_seeks_after_page_one(
     workspace, peer = sample_data
     url, _ = _seed_sessions(client, workspace.name, peer.name)
     endpoint = ENDPOINTS[1]
-    before = {o: _shim_count(o) for o in ("hit", "miss", "end")}
+    before = _shim_counts()
 
     _walk_offset(client, endpoint, url, {})  # 5 rows at size 2: pages 1, 2, 3
 
-    assert _shim_count("miss") - before["miss"] == 1  # page 1 only
-    assert _shim_count("hit") - before["hit"] == 2
+    after = _shim_counts()
+    delta = {outcome: after[outcome] - before[outcome] for outcome in after}
+    assert delta == {
+        PaginationShimOutcomes.FIRST: 1,
+        PaginationShimOutcomes.HIT: 2,
+        PaginationShimOutcomes.MISS: 0,
+    }
 
 
 def test_total_is_cached_past_page_one(
@@ -256,20 +269,52 @@ def test_total_is_cached_past_page_one(
     assert _get(client, endpoint, url, {"page": 1, "size": SIZE})["total"] == 2 * SEEDED
 
 
-def test_paging_past_the_end_runs_no_query(
+def test_a_cached_total_does_not_end_a_walk_early(
     client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
+    """Rows appended mid-walk land at the end of an oldest-first list; the walk must reach them."""
     workspace, peer = sample_data
     url, _ = _seed_sessions(client, workspace.name, peer.name)
     endpoint = ENDPOINTS[1]
-    _walk_offset(client, endpoint, url, {})
-    before = _shim_count("end")
+    data = _get(client, endpoint, url, {"page": 1, "size": SIZE})
+    ids = [item["id"] for item in data["items"]]
 
-    data = _get(client, endpoint, url, {"page": 4, "size": SIZE})
+    _seed_sessions(client, workspace.name, peer.name)
 
-    assert data["items"] == []
-    assert (data["total"], data["page"], data["pages"]) == (SEEDED, 4, 3)
-    assert _shim_count("end") - before == 1
+    page = 2
+    while True:
+        data = _get(client, endpoint, url, {"page": page, "size": SIZE})
+        ids += [item["id"] for item in data["items"]]
+        if page >= data["pages"]:
+            break
+        page += 1
+    assert len(ids) == len(set(ids)) == 2 * SEEDED
+
+
+def test_the_last_page_fills_when_rows_are_appended(
+    client: TestClient,
+    sample_data: tuple[Workspace, Peer],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Reaching the end stores nothing, so a later jump to the last page sees new rows."""
+    workspace, peer = sample_data
+    session_ids = [_new_id() for _ in range(4)]
+    for session_id in session_ids:
+        assert client.post(
+            f"/v3/workspaces/{workspace.name}/sessions", json={"id": session_id}
+        ).is_success
+    url = f"/v3/workspaces/{workspace.name}/sessions/list"
+    endpoint = ENDPOINTS[1]
+    _walk_offset(client, endpoint, url, {})  # pages 1 and 2, both full
+
+    _seed_sessions(client, workspace.name, peer.name)
+    last = _get(client, endpoint, url, {"page": 1, "size": SIZE})["pages"]
+    shim = _get(client, endpoint, url, {"page": last, "size": SIZE})
+    monkeypatch.setattr(settings.CACHE, "PAGINATION_OFFSET_SHIM", False)
+    plain = _get(client, endpoint, url, {"page": last, "size": SIZE})
+
+    assert shim["items"]
+    assert shim == plain
 
 
 def test_inserts_during_a_newest_first_walk_cause_no_duplicates(
@@ -319,13 +364,16 @@ def test_cache_failure_falls_back_to_offset(
     "cursor",
     [
         encode_cursor("not a bookmark"),  # decodes, but isn't a bookmark
-        encode_cursor(">i:1~i:2~i:3"),  # a bookmark with the wrong column count
+        encode_cursor(">s:a\rb"),  # breaks the bookmark's CSV parser
+        encode_cursor(">i:1~i:2~i:3"),  # the wrong column count for this query
+        encode_cursor(">s:abc"),  # a string where the bigint id is compared
+        encode_cursor(">i:99999999999999999999999"),  # out of bigint range
     ],
 )
-def test_well_formed_but_wrong_cursor_is_a_400(
+def test_a_cursor_that_does_not_fit_is_a_400(
     client: TestClient, sample_data: tuple[Workspace, Peer], cursor: str
 ):
-    """Not a 500, and not the 404 some routes map other ValueErrors to."""
+    """Not a 500, and not the 404 the messages route maps other ValueErrors to."""
     workspace, peer = sample_data
     url, _ = _seed_messages(client, workspace.name, peer.name)
 

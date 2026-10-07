@@ -1000,8 +1000,8 @@ async def get_peers_from_session(
         # composes directly — no correlated exists() as in the SessionPeer-only
         # UPDATE statements elsewhere in this module.
         .where(~scope_peer_clause())
-        # Pagination needs a total order; the unique id breaks joined_at ties.
-        .order_by(models.SessionPeer.joined_at, models.Peer.id)
+        # ai: pagination needs a total order; the unique id breaks joined_at ties
+        .order_by(models.SessionPeer.joined_at.asc(), models.Peer.id.asc())
     )
 
 

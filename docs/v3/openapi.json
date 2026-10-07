@@ -103,11 +103,11 @@
             "schema": {
               "type": "integer",
               "minimum": 1,
-              "description": "Page number",
+              "description": "Page number (offset mode)",
               "default": 1,
               "title": "Page"
             },
-            "description": "Page number"
+            "description": "Page number (offset mode)"
           },
           {
             "name": "size",
@@ -122,6 +122,24 @@
               "title": "Size"
             },
             "description": "Page size"
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opt in to cursor pagination. Send an empty value for the first page, then the `next_page` value from each response. When set, `page` is ignored and the response is a cursor page with no `total`.",
+              "title": "Cursor"
+            },
+            "description": "Opt in to cursor pagination. Send an empty value for the first page, then the `next_page` value from each response. When set, `page` is ignored and the response is a cursor page with no `total`."
           }
         ],
         "requestBody": {
@@ -148,7 +166,15 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Page_Workspace_"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Page_Workspace_"
+                    },
+                    {
+                      "$ref": "#/components/schemas/CursorPage_Workspace_"
+                    }
+                  ],
+                  "title": "Response Get All Workspaces V3 Workspaces List Post"
                 }
               }
             }
@@ -615,11 +641,11 @@
             "schema": {
               "type": "integer",
               "minimum": 1,
-              "description": "Page number",
+              "description": "Page number (offset mode)",
               "default": 1,
               "title": "Page"
             },
-            "description": "Page number"
+            "description": "Page number (offset mode)"
           },
           {
             "name": "size",
@@ -634,6 +660,24 @@
               "title": "Size"
             },
             "description": "Page size"
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opt in to cursor pagination. Send an empty value for the first page, then the `next_page` value from each response. When set, `page` is ignored and the response is a cursor page with no `total`.",
+              "title": "Cursor"
+            },
+            "description": "Opt in to cursor pagination. Send an empty value for the first page, then the `next_page` value from each response. When set, `page` is ignored and the response is a cursor page with no `total`."
           }
         ],
         "requestBody": {
@@ -660,7 +704,15 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Page_Peer_"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Page_Peer_"
+                    },
+                    {
+                      "$ref": "#/components/schemas/CursorPage_Peer_"
+                    }
+                  ],
+                  "title": "Response Get Peers V3 Workspaces  Workspace Id  Peers List Post"
                 }
               }
             }
@@ -856,11 +908,11 @@
             "schema": {
               "type": "integer",
               "minimum": 1,
-              "description": "Page number",
+              "description": "Page number (offset mode)",
               "default": 1,
               "title": "Page"
             },
-            "description": "Page number"
+            "description": "Page number (offset mode)"
           },
           {
             "name": "size",
@@ -875,6 +927,24 @@
               "title": "Size"
             },
             "description": "Page size"
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opt in to cursor pagination. Send an empty value for the first page, then the `next_page` value from each response. When set, `page` is ignored and the response is a cursor page with no `total`.",
+              "title": "Cursor"
+            },
+            "description": "Opt in to cursor pagination. Send an empty value for the first page, then the `next_page` value from each response. When set, `page` is ignored and the response is a cursor page with no `total`."
           }
         ],
         "requestBody": {
@@ -901,7 +971,15 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Page_Session_"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Page_Session_"
+                    },
+                    {
+                      "$ref": "#/components/schemas/CursorPage_Session_"
+                    }
+                  ],
+                  "title": "Response Get Sessions For Peer V3 Workspaces  Workspace Id  Peers  Peer Id  Sessions Post"
                 }
               }
             }
@@ -1527,11 +1605,11 @@
             "schema": {
               "type": "integer",
               "minimum": 1,
-              "description": "Page number",
+              "description": "Page number (offset mode)",
               "default": 1,
               "title": "Page"
             },
-            "description": "Page number"
+            "description": "Page number (offset mode)"
           },
           {
             "name": "size",
@@ -1546,6 +1624,24 @@
               "title": "Size"
             },
             "description": "Page size"
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opt in to cursor pagination. Send an empty value for the first page, then the `next_page` value from each response. When set, `page` is ignored and the response is a cursor page with no `total`.",
+              "title": "Cursor"
+            },
+            "description": "Opt in to cursor pagination. Send an empty value for the first page, then the `next_page` value from each response. When set, `page` is ignored and the response is a cursor page with no `total`."
           }
         ],
         "requestBody": {
@@ -1572,7 +1668,15 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Page_Session_"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Page_Session_"
+                    },
+                    {
+                      "$ref": "#/components/schemas/CursorPage_Session_"
+                    }
+                  ],
+                  "title": "Response Get Sessions V3 Workspaces  Workspace Id  Sessions List Post"
                 }
               }
             }
@@ -2094,11 +2198,11 @@
             "schema": {
               "type": "integer",
               "minimum": 1,
-              "description": "Page number",
+              "description": "Page number (offset mode)",
               "default": 1,
               "title": "Page"
             },
-            "description": "Page number"
+            "description": "Page number (offset mode)"
           },
           {
             "name": "size",
@@ -2113,6 +2217,24 @@
               "title": "Size"
             },
             "description": "Page size"
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opt in to cursor pagination. Send an empty value for the first page, then the `next_page` value from each response. When set, `page` is ignored and the response is a cursor page with no `total`.",
+              "title": "Cursor"
+            },
+            "description": "Opt in to cursor pagination. Send an empty value for the first page, then the `next_page` value from each response. When set, `page` is ignored and the response is a cursor page with no `total`."
           }
         ],
         "responses": {
@@ -2121,7 +2243,15 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Page_Peer_"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Page_Peer_"
+                    },
+                    {
+                      "$ref": "#/components/schemas/CursorPage_Peer_"
+                    }
+                  ],
+                  "title": "Response Get Session Peers V3 Workspaces  Workspace Id  Sessions  Session Id  Peers Get"
                 }
               }
             }
@@ -2788,11 +2918,11 @@
             "schema": {
               "type": "integer",
               "minimum": 1,
-              "description": "Page number",
+              "description": "Page number (offset mode)",
               "default": 1,
               "title": "Page"
             },
-            "description": "Page number"
+            "description": "Page number (offset mode)"
           },
           {
             "name": "size",
@@ -2807,6 +2937,24 @@
               "title": "Size"
             },
             "description": "Page size"
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opt in to cursor pagination. Send an empty value for the first page, then the `next_page` value from each response. When set, `page` is ignored and the response is a cursor page with no `total`.",
+              "title": "Cursor"
+            },
+            "description": "Opt in to cursor pagination. Send an empty value for the first page, then the `next_page` value from each response. When set, `page` is ignored and the response is a cursor page with no `total`."
           }
         ],
         "responses": {
@@ -2815,7 +2963,15 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Page_Scope_"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Page_Scope_"
+                    },
+                    {
+                      "$ref": "#/components/schemas/CursorPage_Scope_"
+                    }
+                  ],
+                  "title": "Response Get Scopes V3 Workspaces  Workspace Id  Scopes List Post"
                 }
               }
             }
@@ -3061,11 +3217,11 @@
             "schema": {
               "type": "integer",
               "minimum": 1,
-              "description": "Page number",
+              "description": "Page number (offset mode)",
               "default": 1,
               "title": "Page"
             },
-            "description": "Page number"
+            "description": "Page number (offset mode)"
           },
           {
             "name": "size",
@@ -3080,6 +3236,24 @@
               "title": "Size"
             },
             "description": "Page size"
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opt in to cursor pagination. Send an empty value for the first page, then the `next_page` value from each response. When set, `page` is ignored and the response is a cursor page with no `total`.",
+              "title": "Cursor"
+            },
+            "description": "Opt in to cursor pagination. Send an empty value for the first page, then the `next_page` value from each response. When set, `page` is ignored and the response is a cursor page with no `total`."
           }
         ],
         "responses": {
@@ -3088,7 +3262,15 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Page_Session_"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Page_Session_"
+                    },
+                    {
+                      "$ref": "#/components/schemas/CursorPage_Session_"
+                    }
+                  ],
+                  "title": "Response Get Scope Sessions V3 Workspaces  Workspace Id  Scopes  Scope Id  Sessions List Post"
                 }
               }
             }
@@ -3373,11 +3555,11 @@
             "schema": {
               "type": "integer",
               "minimum": 1,
-              "description": "Page number",
+              "description": "Page number (offset mode)",
               "default": 1,
               "title": "Page"
             },
-            "description": "Page number"
+            "description": "Page number (offset mode)"
           },
           {
             "name": "size",
@@ -3392,6 +3574,24 @@
               "title": "Size"
             },
             "description": "Page size"
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opt in to cursor pagination. Send an empty value for the first page, then the `next_page` value from each response. When set, `page` is ignored and the response is a cursor page with no `total`.",
+              "title": "Cursor"
+            },
+            "description": "Opt in to cursor pagination. Send an empty value for the first page, then the `next_page` value from each response. When set, `page` is ignored and the response is a cursor page with no `total`."
           }
         ],
         "requestBody": {
@@ -3418,7 +3618,15 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Page_Message_"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Page_Message_"
+                    },
+                    {
+                      "$ref": "#/components/schemas/CursorPage_Message_"
+                    }
+                  ],
+                  "title": "Response Get Messages V3 Workspaces  Workspace Id  Sessions  Session Id  Messages List Post"
                 }
               }
             }
@@ -3646,7 +3854,7 @@
           "conclusions"
         ],
         "summary": "List Conclusions",
-        "description": "List Conclusions using optional filters, ordered by recency unless `reverse` is true. Results are paginated.",
+        "description": "List Conclusions using optional filters, ordered by recency unless `reverse` is true. Results are paginated.\n\nPass `cursor` (empty for the first page) to use cursor pagination, which\nskips the total count and stays fast at any depth.",
         "operationId": "list_conclusions_v3_workspaces__workspace_id__conclusions_list_post",
         "security": [
           {
@@ -3689,11 +3897,11 @@
             "schema": {
               "type": "integer",
               "minimum": 1,
-              "description": "Page number",
+              "description": "Page number (offset mode)",
               "default": 1,
               "title": "Page"
             },
-            "description": "Page number"
+            "description": "Page number (offset mode)"
           },
           {
             "name": "size",
@@ -3708,6 +3916,24 @@
               "title": "Size"
             },
             "description": "Page size"
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opt in to cursor pagination. Send an empty value for the first page, then the `next_page` value from each response. When set, `page` is ignored and the response is a cursor page with no `total`.",
+              "title": "Cursor"
+            },
+            "description": "Opt in to cursor pagination. Send an empty value for the first page, then the `next_page` value from each response. When set, `page` is ignored and the response is a cursor page with no `total`."
           }
         ],
         "requestBody": {
@@ -3734,7 +3960,15 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Page_Conclusion_"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Page_Conclusion_"
+                    },
+                    {
+                      "$ref": "#/components/schemas/CursorPage_Conclusion_"
+                    }
+                  ],
+                  "title": "Response List Conclusions V3 Workspaces  Workspace Id  Conclusions List Post"
                 }
               }
             }
@@ -4119,11 +4353,11 @@
             "schema": {
               "type": "integer",
               "minimum": 1,
-              "description": "Page number",
+              "description": "Page number (offset mode)",
               "default": 1,
               "title": "Page"
             },
-            "description": "Page number"
+            "description": "Page number (offset mode)"
           },
           {
             "name": "size",
@@ -4138,6 +4372,24 @@
               "title": "Size"
             },
             "description": "Page size"
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opt in to cursor pagination. Send an empty value for the first page, then the `next_page` value from each response. When set, `page` is ignored and the response is a cursor page with no `total`.",
+              "title": "Cursor"
+            },
+            "description": "Opt in to cursor pagination. Send an empty value for the first page, then the `next_page` value from each response. When set, `page` is ignored and the response is a cursor page with no `total`."
           }
         ],
         "responses": {
@@ -4146,7 +4398,15 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Page_WebhookEndpoint_"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Page_WebhookEndpoint_"
+                    },
+                    {
+                      "$ref": "#/components/schemas/CursorPage_WebhookEndpoint_"
+                    }
+                  ],
+                  "title": "Response List Webhook Endpoints V3 Workspaces  Workspace Id  Webhooks Get"
                 }
               }
             }
@@ -4539,6 +4799,531 @@
         ],
         "title": "ConclusionQuery",
         "description": "Query parameters for semantic search of conclusions."
+      },
+      "CursorPage_Conclusion_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Conclusion"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total"
+          },
+          "current_page": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Page",
+            "description": "Cursor to refetch the current page"
+          },
+          "current_page_backwards": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Page Backwards",
+            "description": "Cursor to refetch the current page starting from the last item"
+          },
+          "previous_page": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Page",
+            "description": "Cursor for the previous page"
+          },
+          "next_page": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Page",
+            "description": "Cursor for the next page"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "CursorPage[Conclusion]"
+      },
+      "CursorPage_Message_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Message"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total"
+          },
+          "current_page": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Page",
+            "description": "Cursor to refetch the current page"
+          },
+          "current_page_backwards": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Page Backwards",
+            "description": "Cursor to refetch the current page starting from the last item"
+          },
+          "previous_page": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Page",
+            "description": "Cursor for the previous page"
+          },
+          "next_page": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Page",
+            "description": "Cursor for the next page"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "CursorPage[Message]"
+      },
+      "CursorPage_Peer_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Peer"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total"
+          },
+          "current_page": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Page",
+            "description": "Cursor to refetch the current page"
+          },
+          "current_page_backwards": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Page Backwards",
+            "description": "Cursor to refetch the current page starting from the last item"
+          },
+          "previous_page": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Page",
+            "description": "Cursor for the previous page"
+          },
+          "next_page": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Page",
+            "description": "Cursor for the next page"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "CursorPage[Peer]"
+      },
+      "CursorPage_Scope_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Scope"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total"
+          },
+          "current_page": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Page",
+            "description": "Cursor to refetch the current page"
+          },
+          "current_page_backwards": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Page Backwards",
+            "description": "Cursor to refetch the current page starting from the last item"
+          },
+          "previous_page": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Page",
+            "description": "Cursor for the previous page"
+          },
+          "next_page": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Page",
+            "description": "Cursor for the next page"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "CursorPage[Scope]"
+      },
+      "CursorPage_Session_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Session"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total"
+          },
+          "current_page": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Page",
+            "description": "Cursor to refetch the current page"
+          },
+          "current_page_backwards": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Page Backwards",
+            "description": "Cursor to refetch the current page starting from the last item"
+          },
+          "previous_page": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Page",
+            "description": "Cursor for the previous page"
+          },
+          "next_page": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Page",
+            "description": "Cursor for the next page"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "CursorPage[Session]"
+      },
+      "CursorPage_WebhookEndpoint_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/WebhookEndpoint"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total"
+          },
+          "current_page": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Page",
+            "description": "Cursor to refetch the current page"
+          },
+          "current_page_backwards": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Page Backwards",
+            "description": "Cursor to refetch the current page starting from the last item"
+          },
+          "previous_page": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Page",
+            "description": "Cursor for the previous page"
+          },
+          "next_page": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Page",
+            "description": "Cursor for the next page"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "CursorPage[WebhookEndpoint]"
+      },
+      "CursorPage_Workspace_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Workspace"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total"
+          },
+          "current_page": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Page",
+            "description": "Cursor to refetch the current page"
+          },
+          "current_page_backwards": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Page Backwards",
+            "description": "Cursor to refetch the current page starting from the last item"
+          },
+          "previous_page": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Page",
+            "description": "Cursor for the previous page"
+          },
+          "next_page": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Page",
+            "description": "Cursor for the next page"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "CursorPage[Workspace]"
       },
       "DialecticConfiguration": {
         "properties": {

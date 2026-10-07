@@ -7,7 +7,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
+exclude-newer = "2026-09-23T03:07:33.3784168Z"
 exclude-newer-span = "P5D"
 
 [manifest]
@@ -1143,7 +1143,7 @@ requires-dist = [
     { name = "rich", specifier = ">=13.7.1" },
     { name = "scikit-learn", marker = "extra == 'surprisal'", specifier = ">=1.6.0" },
     { name = "sentry-sdk", extras = ["anthropic", "fastapi", "sqlalchemy"], specifier = ">=2.3.1" },
-    { name = "sqlakeyset", specifier = ">=2.0.1787969905" },
+    { name = "sqlakeyset", specifier = ">=2.0.1787969905,<3" },
     { name = "sqlalchemy", specifier = ">=2.0.30" },
     { name = "tenacity", specifier = ">=9.1.2" },
     { name = "tiktoken", specifier = ">=0.9.0" },

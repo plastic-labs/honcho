@@ -85,8 +85,10 @@ async def list_webhook_endpoints(
     return (
         select(models.WebhookEndpoint)
         .where(models.WebhookEndpoint.workspace_name == workspace_name)
-        # Pagination needs a total order; the unique id breaks created_at ties.
-        .order_by(models.WebhookEndpoint.created_at, models.WebhookEndpoint.id)
+        # ai: pagination needs a total order; the unique id breaks created_at ties
+        .order_by(
+            models.WebhookEndpoint.created_at.asc(), models.WebhookEndpoint.id.asc()
+        )
     )
 
 

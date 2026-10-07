@@ -597,6 +597,16 @@ CACHE_DEFAULT_TTL_SECONDS=300
 CACHE_DEFAULT_LOCK_TTL_SECONDS=5  # Cache stampede prevention
 ```
 
+With the cache enabled, offset-paginated list requests (`?page=N`) are also served faster: after each page, Honcho remembers where it ended, so the next page seeks straight to it instead of scanning past every earlier row. Responses are unchanged, except that `total` on pages after the first may be up to `CACHE_PAGINATION_COUNT_TTL_SECONDS` old.
+
+```bash
+CACHE_PAGINATION_OFFSET_SHIM=true
+CACHE_PAGINATION_POSITION_TTL_SECONDS=600
+CACHE_PAGINATION_COUNT_TTL_SECONDS=60
+```
+
+List endpoints also accept a `cursor` query parameter (empty for the first page, then each response's `next_page`), which pages by cursor with no count at all, with or without the cache.
+
 ### Webhooks
 
 ```bash
