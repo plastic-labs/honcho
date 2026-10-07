@@ -283,3 +283,23 @@ test("hosts.kilo.apiKey is used when the root apiKey is absent", async () => {
     expect(env.env.HONCHO_API_KEY).toBe("host-kilo-jwt")
   })
 })
+
+test("config writes keep an ${VAR} apiKey reference instead of saving the secret", async () => {
+  const rootDir = await mkdtemp(path.join(os.tmpdir(), "honcho-setup-envref-"))
+  const homeDir = await mkdtemp(path.join(os.tmpdir(), "honcho-home-"))
+  const sharedConfigPath = path.join(homeDir, ".honcho", "config.json")
+  await mkdir(path.dirname(sharedConfigPath), { recursive: true })
+  await writeFile(sharedConfigPath, JSON.stringify({ apiKey: "${HONCHO_TEST_SECRET}", peerName: "eri" }))
+
+  await withMockFetch(successfulValidationFetch, async () => {
+    await withEnv({ HOME: homeDir, HONCHO_TEST_SECRET: "hch-real-secret", XDG_CONFIG_HOME: undefined }, async () => {
+      const hooks = await createPluginHarness(rootDir)
+      await hooks.tool.honcho_set_config.execute({ field: "sessionStrategy", value: "per-repo" }, toolContext(rootDir))
+      await hooks.tool.honcho_setup.execute({ peerName: "eri" }, toolContext(rootDir))
+      const raw = await readFile(sharedConfigPath, "utf-8")
+
+      expect(raw).not.toContain("hch-real-secret")
+      expect(JSON.parse(raw).apiKey).toBe("${HONCHO_TEST_SECRET}")
+    })
+  })
+})

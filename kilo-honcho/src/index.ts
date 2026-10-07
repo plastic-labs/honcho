@@ -823,7 +823,8 @@ const readJsonFile = async (configPath: string) => {
   }
 }
 
-const readConfigFile = async (configPath: string) => normalizedRawSettings((await readJsonFile(configPath)) ?? {})
+// Raw file contents: `${VAR}` references stay unexpanded, so writing the result back never stores a secret.
+const readConfigFile = async (configPath: string) => (await readJsonFile(configPath)) ?? {}
 
 const envSettings = (): Record<string, unknown> => ({
   apiKey: process.env.HONCHO_API_KEY || "",
@@ -864,11 +865,6 @@ const assertDistinctUserAndAgentPeers = (userPeerId: string, rootAgentPeerId: st
   }
 }
 
-const rootApiKey = (raw: Record<string, unknown>) => {
-  const legacyApiKey = typeof raw[LEGACY_API_KEY_FIELD] === "string" ? expandEnv(raw[LEGACY_API_KEY_FIELD] as string) : ""
-  return legacyApiKey
-}
-
 const hostDefaults = (settings: HonchoSettings): Record<string, unknown> => {
   const workspace = typeof settings.workspace === "string" && settings.workspace.trim() ? settings.workspace : DEFAULT_SETTINGS.workspace
   const aiPeer = typeof settings.aiPeer === "string" && settings.aiPeer.trim() ? settings.aiPeer : DEFAULT_SETTINGS.aiPeer
@@ -883,10 +879,9 @@ const hostDefaults = (settings: HonchoSettings): Record<string, unknown> => {
 
 const writeSharedGlobalSettings = async (configPath: string, settings: Record<string, unknown>) => {
   const next = { ...settings }
-  const apiKey = rootApiKey(next)
-  if (apiKey) {
-    next[LEGACY_API_KEY_FIELD] = apiKey
-  } else {
+  // Keep the key exactly as written; expanding a `${VAR}` reference here would save the secret itself.
+  const apiKey = next[LEGACY_API_KEY_FIELD]
+  if (typeof apiKey !== "string" || !apiKey.trim()) {
     delete next[LEGACY_API_KEY_FIELD]
   }
   await mkdir(path.dirname(configPath), { recursive: true })
