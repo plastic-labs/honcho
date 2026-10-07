@@ -2,7 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { randomBytes } from "node:crypto"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
-import type { Plugin, PluginInput, tool } from "@kilocode/plugin"
+import type { Hooks, Plugin, PluginInput, tool } from "@kilocode/plugin"
 import { z } from "zod"
 import type { Honcho } from "@honcho-ai/sdk"
 import { createHonchoClient, telemetryIdentity, type TelemetryOverrides } from "./honcho-client.js"
@@ -219,6 +219,39 @@ function createPartId(): string {
   const time = Buffer.alloc(6)
   for (let i = 0; i < 6; i++) time[i] = Number((now >> BigInt(40 - 8 * i)) & BigInt(0xff))
   return `prt_${time.toString("hex")}${randomBytes(14).toString("base64url").slice(0, 14)}`
+}
+
+type RecallBlock = { partId: string; sessionID: string; text: string }
+type TransformMessage = Parameters<NonNullable<Hooks["experimental.chat.messages.transform"]>>[1]["messages"][number]
+
+const MAX_RECALL_BLOCKS = 512
+const DISPOSE_FLUSH_MS = 2_000
+
+const rememberRecallBlock = (blocks: Map<string, RecallBlock>, messageId: string, block: RecallBlock) => {
+  blocks.set(messageId, block)
+  if (blocks.size > MAX_RECALL_BLOCKS) {
+    const oldest = blocks.keys().next().value
+    if (oldest !== undefined) blocks.delete(oldest)
+  }
+}
+
+// Re-attach each prompt's recall to its own user message on every step, with the same part id and
+// text, so the request history stays byte-identical and the provider prompt cache keeps hitting.
+const attachRecallBlocks = (blocks: Map<string, RecallBlock>, messages: TransformMessage[] | undefined) => {
+  if (!Array.isArray(messages) || blocks.size === 0) return
+  for (const message of messages) {
+    if (message.info?.role !== "user") continue
+    const block = blocks.get(message.info.id)
+    if (!block || message.parts.some((part) => part.id === block.partId)) continue
+    message.parts.push({
+      id: block.partId,
+      sessionID: block.sessionID,
+      messageID: message.info.id,
+      type: "text",
+      text: block.text,
+      synthetic: true,
+    })
+  }
 }
 
 const TRIVIAL_PROMPT_PATTERNS = [
@@ -1963,9 +1996,11 @@ export const createHonchoRuntimePlugin =
   ({ configPath }: RuntimePluginOptions = {}): Plugin =>
   async (pluginInput) => {
     const core = createHonchoCore(hostFromPluginInput(pluginInput), configPath)
+    const recallBlocks = new Map<string, RecallBlock>()
+    // Kilo does not await the event hook, so a one-shot `kilo run` can exit mid-upload.
+    const inflight = new Set<Promise<void>>()
 
-    return {
-      event: async ({ event }) => {
+    const handleEvent = async (event: Parameters<NonNullable<Hooks["event"]>>[0]["event"]) => {
         const payload = isRecord(event) ? { event, ...(isRecord(event.properties) ? event.properties : {}) } : { event }
         core.rememberHostVersion(event)
         if (event.type === "command.executed") {
@@ -2005,6 +2040,21 @@ export const createHonchoRuntimePlugin =
           }
           return
         }
+    }
+
+    return {
+      event: async ({ event }) => {
+        const pending = handleEvent(event).catch(() => undefined)
+        inflight.add(pending)
+        void pending.finally(() => inflight.delete(pending))
+        await pending
+      },
+      dispose: async () => {
+        if (inflight.size === 0) return
+        await Promise.race([
+          Promise.allSettled([...inflight]),
+          new Promise((resolve) => setTimeout(resolve, DISPOSE_FLUSH_MS)),
+        ])
       },
       "command.execute.before": async (input, output) => {
         const command = typeof input.command === "string" ? input.command : ""
@@ -2027,28 +2077,27 @@ export const createHonchoRuntimePlugin =
         if (!message) {
           return
         }
-        // Prompt-specific recall rides along with the user turn as a
-        // synthetic part (codex-honcho parity): it persists at the end of
-        // the conversation, so the system prompt - and with it the
-        // provider's prefix cache - is never invalidated mid-session.
         const block = await core.captureUserPrompt(
           input,
           message,
           timestampToIso(output.message?.time?.created),
           "chat.message",
         )
-        if (block) {
-          output.parts.push({
-            id: createPartId(),
+        // Kilo saves parts added here to its session history, so the block is attached later in
+        // messages.transform, which only changes the request.
+        if (block && output.message?.id) {
+          rememberRecallBlock(recallBlocks, output.message.id, {
+            partId: createPartId(),
             sessionID: input.sessionID,
-            messageID: output.message.id,
-            type: "text",
             text: block,
-            synthetic: true,
           })
         }
       },
       "experimental.chat.system.transform": async (input, output) => {
+        // Kilo also runs this hook for title generation (`title-<id>`) and calls with no session.
+        if (typeof input.sessionID !== "string" || input.sessionID.startsWith("title-")) {
+          return
+        }
         const blocks = await core.systemBlocks(input)
         if (blocks.length === 0) {
           return
@@ -2057,7 +2106,7 @@ export const createHonchoRuntimePlugin =
         output.system.push(...blocks)
       },
       "experimental.chat.messages.transform": async (_input, output) => {
-        void output
+        attachRecallBlocks(recallBlocks, output.messages)
       },
       "experimental.session.compacting": async (input, output) => {
         output.context = output.context || []

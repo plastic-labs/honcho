@@ -260,7 +260,7 @@ test("chat.message skips recall for trivial prompt text", async () => {
   })
 })
 
-test("chat.message appends prompt-specific memory as a synthetic part", async () => {
+test("prompt-specific memory is attached in messages.transform, not saved through chat.message", async () => {
   await runWithHarness(async ({ hooks, fetch }) => {
     const chatOutput = {
       message: { id: "msg-prompt", role: "user", time: { created: Date.now() } },
@@ -269,11 +269,26 @@ test("chat.message appends prompt-specific memory as a synthetic part", async ()
 
     await hooks["chat.message"]({ sessionID: "ses-test" }, chatOutput)
 
-    const synthetic = chatOutput.parts.find((part) => part.type === "text" && part.synthetic)
+    // Kilo persists chat.message parts, so recall must not be added here.
+    expect(chatOutput.parts).toHaveLength(1)
+
+    const step = () => ({
+      messages: [
+        { info: { id: "msg-prompt", role: "user" }, parts: [{ id: "prt_user", type: "text", text: "fix memory injection" }] },
+      ],
+    })
+    const first = step()
+    await hooks["experimental.chat.messages.transform"]({}, first)
+    const second = step()
+    await hooks["experimental.chat.messages.transform"]({}, second)
+
+    const synthetic = first.messages[0].parts.find((part) => part.type === "text" && part.synthetic)
     expect(synthetic).toBeDefined()
     expect(synthetic?.messageID).toBe("msg-prompt")
     expect(synthetic?.id).toMatch(/^prt_[0-9a-f]{12}[A-Za-z0-9_-]{14}$/)
     expect(synthetic?.text).toContain("Prompt memory for memory-injection")
+    // Every step gets the same bytes, so the provider prompt cache keeps hitting.
+    expect(second.messages[0].parts).toEqual(first.messages[0].parts)
 
     const targeted = fetch.calls.find(
       (call) =>
@@ -305,5 +320,31 @@ test("tool.execute.after records significant tool use to Honcho", async () => {
         call.body?.messages?.some((msg) => msg.content?.includes("[Tool] Ran: npm test")),
     )
     expect(saved).toBeDefined()
+  })
+})
+
+test("system transform skips Kilo title generation and calls without a session", async () => {
+  await runWithHarness(async ({ hooks, fetch }) => {
+    const before = fetch.calls.length
+    for (const sessionID of ["title-ses-test", undefined]) {
+      const output = { system: ["base"] }
+      await hooks["experimental.chat.system.transform"](systemInput({ sessionID }), output)
+      expect(output.system).toEqual(["base"])
+    }
+    expect(fetch.calls.length).toBe(before)
+  })
+})
+
+test("dispose waits for event work still in flight", async () => {
+  await runWithHarness(async ({ hooks }) => {
+    let finished = false
+    const slow = hooks.event({
+      event: { type: "session.created", properties: { info: { id: "ses-dispose", version: "7.8.3" } } },
+    }).then(() => {
+      finished = true
+    })
+    await hooks.dispose()
+    await slow
+    expect(finished).toBe(true)
   })
 })
