@@ -18,7 +18,7 @@ This plugin gives Kilo Code long-term memory that survives context wipes, sessio
 kilo plugin @honcho-ai/kilo-honcho --global
 ```
 
-`kilo plugin` installs the package and adds it to the `plugin` list in `~/.config/kilo/opencode.json` (the server half) and `~/.config/kilo/tui.json` (the `/honcho:*` commands). To update an existing install, add `--force`.
+`kilo plugin` installs the package and adds it to the `plugin` list of Kilo's global config (the server half) and `~/.config/kilo/tui.json` (the `/honcho:*` commands). It still uses Kilo's older `opencode.json` name for the server entry; Kilo reads `kilo.jsonc`, `kilo.json` and `opencode.json` alike. To update an existing install, add `--force`. To add it by hand, put `"@honcho-ai/kilo-honcho"` in the `plugin` array of `~/.config/kilo/kilo.jsonc` and `~/.config/kilo/tui.json`.
 
 For the Kilo desktop app or the VS Code and JetBrains extensions, run this in any terminal instead:
 
@@ -26,7 +26,7 @@ For the Kilo desktop app or the VS Code and JetBrains extensions, run this in an
 npx @honcho-ai/kilo-honcho setup
 ```
 
-It asks for your API key without echoing it, the name Honcho should call you, and a workspace. It saves them to `~/.honcho/config.json` with mode 600 and adds the plugin to both Kilo config files, keeping any comments. Restart Kilo to load it.
+It asks for your API key without echoing it, the name Honcho should call you, and a workspace. It saves them to `~/.honcho/config.json` with mode 600 and adds the plugin to `~/.config/kilo/kilo.jsonc` (or `kilo.json`) and `~/.config/kilo/tui.json`, keeping any comments. Restart Kilo to load it.
 
 If you edit the config by hand, add `"@honcho-ai/kilo-honcho"` to the `plugin` array in both files.
 

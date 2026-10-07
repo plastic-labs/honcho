@@ -48,7 +48,7 @@ To update an existing install:
 kilo plugin @honcho-ai/kilo-honcho --global --force
 ```
 
-`kilo plugin` adds the package to `~/.config/kilo/opencode.json`, which loads the server half, and to `~/.config/kilo/tui.json`, which loads the `/honcho:*` commands. You can add `"@honcho-ai/kilo-honcho"` to the `plugin` array in both files yourself instead. The VS Code and JetBrains extensions start the same Kilo server and read the same global config, so one install covers all three.
+To add the plugin by hand, put `"@honcho-ai/kilo-honcho"` in the `plugin` array of `~/.config/kilo/kilo.jsonc` (or `kilo.json`), which loads the server half, and of `~/.config/kilo/tui.json`, which loads the `/honcho:*` commands. `kilo plugin` writes the same entries, but under Kilo's older `opencode.json` name; Kilo reads both. The desktop app and the VS Code and JetBrains extensions read the same global config, so one install covers every client.
 
 ### Step 3: Run Setup in Kilo
 
@@ -203,7 +203,7 @@ The plugin hooks into these Kilo plugin capabilities:
 
 ## What Install Writes
 
-- **Kilo config:** `@honcho-ai/kilo-honcho` in the `plugin` array of `~/.config/kilo/opencode.json` and `~/.config/kilo/tui.json`, written by `kilo plugin` or `npx @honcho-ai/kilo-honcho setup`. Setup keeps any comments in those files.
+- **Kilo config:** `@honcho-ai/kilo-honcho` in the `plugin` array of `~/.config/kilo/kilo.jsonc` (or `kilo.json` if you have one) and `~/.config/kilo/tui.json`, written by `npx @honcho-ai/kilo-honcho setup`. Setup keeps any comments in those files, and skips a file that already loads the plugin. `kilo plugin` writes the server entry to `~/.config/kilo/opencode.json` instead.
 - **Honcho config:** `~/.honcho/config.json`, written only by `npx @honcho-ai/kilo-honcho setup`, `/honcho:setup`, `/honcho:config`, `honcho_setup`, and `honcho_set_config`, with mode 600. Installing or starting the plugin does not write it. An `apiKey` written as `${HONCHO_API_KEY}` stays a reference.
 - **Skill:** `~/.config/kilo/skills/honcho-memory/SKILL.md`, or `$KILO_CONFIG_DIR/skills/honcho-memory/SKILL.md` when that variable is set.
 - **Import state:** `~/.honcho/kilo-import-state.json`, after you run `/honcho:import`.

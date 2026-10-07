@@ -19,7 +19,7 @@ This package versions independently of the Honcho API, `@honcho-ai/sdk`, and oth
 - The server writes this per-session record to `~/.honcho/kilo/sessions/<session id>.json` (mode 600) for the TUI to read. Files older than 14 days are removed at startup, and a file is removed when Kilo deletes its session.
 - `hosts.kilo.autoConclusions` turns keyword auto-conclusions back on.
 - `/honcho:setup` fills in the peer name other Honcho tools already use, and offers to share a workspace another Honcho tool uses. `honcho_setup` takes a `workspace` argument for the same choice.
-- `npx @honcho-ai/kilo-honcho setup` sets up Honcho from any terminal and adds the plugin to Kilo's global config, for the desktop app and IDE extensions, which have no `/honcho:setup`.
+- `npx @honcho-ai/kilo-honcho setup` sets up Honcho from any terminal for the desktop app and IDE extensions, which have no `/honcho:setup`. It adds the plugin to `~/.config/kilo/kilo.jsonc` (or `kilo.json`) and `tui.json`, and skips a config that already loads it.
 - The TUI offers setup the first time the plugin loads without an API key. Without a key, the system prompt asks the agent to point the user at the setup command once per session.
 - The sidebar ends with `/honcho:recall`, which opens the recall view when clicked.
 - `environmentUrl`, which `honcho init` writes, is used when `baseUrl` is missing.

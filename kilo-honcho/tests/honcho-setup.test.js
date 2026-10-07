@@ -349,16 +349,16 @@ test("honcho init's environmentUrl is used when there is no baseUrl", async () =
   })
 })
 
-test("addKiloPlugin adds the package to Kilo's server and TUI config and keeps comments", async () => {
+test("addKiloPlugin writes kilo.jsonc and tui.json and keeps comments", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "honcho-kilo-config-"))
-  await writeFile(path.join(dir, "opencode.jsonc"), '{\n  // my models\n  "plugin": ["other-plugin"]\n}\n')
+  await writeFile(path.join(dir, "kilo.jsonc"), '{\n  // my models\n  "plugin": ["other-plugin"]\n}\n')
 
   const first = await __testing.addKiloPlugin(dir)
   expect(first.map((item) => [path.basename(item.file), item.status])).toEqual([
-    ["opencode.jsonc", "added"],
+    ["kilo.jsonc", "added"],
     ["tui.json", "added"],
   ])
-  const server = await readFile(path.join(dir, "opencode.jsonc"), "utf-8")
+  const server = await readFile(path.join(dir, "kilo.jsonc"), "utf-8")
   expect(server).toContain("// my models")
   expect(server).toContain('"other-plugin"')
   expect(server).toContain('"@honcho-ai/kilo-honcho"')
@@ -366,11 +366,22 @@ test("addKiloPlugin adds the package to Kilo's server and TUI config and keeps c
 
   const second = await __testing.addKiloPlugin(dir)
   expect(second.map((item) => item.status)).toEqual(["present", "present"])
+})
+
+test("addKiloPlugin creates kilo.jsonc when Kilo has no config yet, and counts a `kilo plugin` install as present", async () => {
+  const fresh = await mkdtemp(path.join(os.tmpdir(), "honcho-kilo-fresh-"))
+  expect((await __testing.addKiloPlugin(fresh))[0].file).toBe(path.join(fresh, "kilo.jsonc"))
+
+  const viaKiloPlugin = await mkdtemp(path.join(os.tmpdir(), "honcho-kilo-cli-install-"))
+  await writeFile(path.join(viaKiloPlugin, "opencode.json"), JSON.stringify({ plugin: ["@honcho-ai/kilo-honcho@0.1.0"] }))
+  const [server] = await __testing.addKiloPlugin(viaKiloPlugin)
+  expect(server.status).toBe("present")
+  await expect(readFile(path.join(viaKiloPlugin, "kilo.jsonc"), "utf-8")).rejects.toThrow()
 
   const broken = await mkdtemp(path.join(os.tmpdir(), "honcho-kilo-broken-"))
-  await writeFile(path.join(broken, "opencode.json"), "{ not json")
+  await writeFile(path.join(broken, "kilo.json"), "{ not json")
   expect((await __testing.addKiloPlugin(broken))[0].status).toBe("unreadable")
-  expect(await readFile(path.join(broken, "opencode.json"), "utf-8")).toBe("{ not json")
+  expect(await readFile(path.join(broken, "kilo.json"), "utf-8")).toBe("{ not json")
 })
 
 test("kiloConfigDir follows XDG_CONFIG_HOME like Kilo does", async () => {
