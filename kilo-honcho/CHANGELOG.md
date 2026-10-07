@@ -15,6 +15,14 @@ This package versions independently of the Honcho API, `@honcho-ai/sdk`, and oth
 - The `honcho-memory` skill installs to `~/.config/kilo/skills`, or `$KILO_CONFIG_DIR/skills`, where Kilo looks for skills.
 - `.kilo` and `.kilocode` count as project-root markers alongside `.git`.
 
+### Fixed
+
+- Prompt-specific recall is attached in `experimental.chat.messages.transform`, so it reaches the model without being saved to Kilo's session history. Kilo persists parts added in `chat.message`.
+- `dispose` waits up to 2s for event work in flight, so a one-shot `kilo run` no longer exits before the assistant reply reaches Honcho.
+- The system transform skips Kilo's title-generation calls and calls with no session id.
+- Session keys start with the user peer, so teammates sharing a workspace get separate sessions.
+- Config writes keep an `apiKey` written as `${VAR}` instead of saving the expanded secret.
+
 ### Removed
 
 - The OpenCode 2.x adapter. Kilo uses the 1.x plugin API.

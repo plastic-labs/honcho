@@ -112,12 +112,14 @@ const importedSessionKey = async ({
   sessionStrategy,
   directory,
   sessionId,
+  userPeerId,
   agentPeerId,
 }: {
   workspaceId: string
   sessionStrategy: SessionStrategy
   directory: string
   sessionId: string
+  userPeerId: string
   agentPeerId: string
 }) => {
   const rootDir = findProjectRoot(directory)
@@ -129,7 +131,7 @@ const importedSessionKey = async ({
     currentDirectory: directory,
     sessionId,
   })
-  return honchoSessionKey(sessionStrategy, scope, [agentPeerId])
+  return honchoSessionKey(userPeerId, sessionStrategy, scope, [agentPeerId])
 }
 
 const unwrap = <T>(result: { data?: T; error?: unknown }, what: string): T => {
@@ -220,6 +222,7 @@ export type PlanImportOptions = {
   source?: TranscriptSource
   workspaceId: string
   sessionStrategy: SessionStrategy
+  userPeerId: string
   agentPeerId: string
   statePath?: string
   days?: number
@@ -253,6 +256,7 @@ export const planKiloImport = async (options: PlanImportOptions): Promise<Import
         sessionStrategy: options.sessionStrategy,
         directory: row.directory,
         sessionId: row.id,
+        userPeerId: options.userPeerId,
         agentPeerId: options.agentPeerId,
       }),
       timeUpdated: row.timeUpdated,

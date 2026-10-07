@@ -237,11 +237,13 @@ export const deriveSessionScope = async ({
   return `${workspaceId}:${normalizeId(repoName)}`
 }
 
+// The user peer leads the key so teammates sharing a workspace never land in one session.
 export const honchoSessionKey = (
+  userPeerId: string,
   sessionStrategy: SessionStrategy,
   sessionScope: string,
   lineage: readonly string[],
-) => normalizeId(`${sessionStrategy}:${sessionScope}:${lineage.join(":")}`)
+) => normalizeId(`${userPeerId}:${sessionStrategy}:${sessionScope}:${lineage.join(":")}`)
 
 export const deriveUserPeerId = (peerName: string, removeUserPrefix: boolean) => {
   const name = peerName.trim() || "user"

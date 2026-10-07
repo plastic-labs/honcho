@@ -963,7 +963,7 @@ const deriveRuntimeHandle = async (
     config: settings,
     workspaceId,
     sessionId,
-    sessionKey: honchoSessionKey(settings.sessionStrategy, sessionScope, lineage),
+    sessionKey: honchoSessionKey(userPeerId, settings.sessionStrategy, sessionScope, lineage),
     userPeerId,
     rootAgentPeerId,
     activeAgentPeerId,
@@ -2128,6 +2128,7 @@ export const createHonchoRuntimePlugin =
 export const HonchoRuntimePlugin = createHonchoRuntimePlugin()
 export const __testing = {
   createSessionState,
+  honchoSessionKey,
   deriveUserPeerId,
   assertDistinctUserAndAgentPeers,
   deriveSessionStateKey,

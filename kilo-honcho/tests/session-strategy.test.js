@@ -24,3 +24,10 @@ test("per-directory sessions use a relative path so same-basename dirs do not co
   expect(sessionB).toBe("kilo:packages-api")
   expect(__testing.defaultSettings.sessionStrategy).toBe("per-directory")
 })
+
+test("teammates in one workspace and directory get separate sessions", () => {
+  const alice = __testing.honchoSessionKey("alice", "per-directory", "repo", ["kilo"])
+  const bob = __testing.honchoSessionKey("bob", "per-directory", "repo", ["kilo"])
+  expect(alice).not.toBe(bob)
+  expect(alice).toBe("alice-per-directory-repo-kilo")
+})

@@ -483,6 +483,7 @@ export const runImport = async (session: TuiSession) => {
       source: session.transcripts,
       workspaceId: config.workspaceId,
       sessionStrategy: config.sessionStrategy,
+      userPeerId: config.userPeerId,
       agentPeerId: config.agentPeerId,
     })
   } catch (error) {

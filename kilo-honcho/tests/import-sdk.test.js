@@ -35,6 +35,7 @@ test("import walks every project with scope=project and reads whole transcripts 
     client,
     workspaceId: "ws",
     sessionStrategy: "per-session",
+    userPeerId: "eri",
     agentPeerId: "kilo",
     statePath: path.join(dir, "state.json"),
     days: 7,
@@ -45,6 +46,8 @@ test("import walks every project with scope=project and reads whole transcripts 
   expect(calls[0]).toMatchObject({ scope: "project", roots: true, limit: expect.any(Number) })
   expect(calls[0].start).toBeGreaterThan(now - 8 * 86_400_000)
   expect(calls[2]).toEqual({ sessionID: "a" })
+  // Same key shape as live capture: the user peer leads, so teammates never share a session.
+  expect(plan.sessions[0].honchoSessionKey.startsWith("eri-per-session-")).toBe(true)
   expect(plan.sessions[0].messages).toEqual([
     { role: "user", content: "hello", createdAt: new Date(now).toISOString() },
     { role: "assistant", content: "hi back", createdAt: new Date(now + 1).toISOString() },
