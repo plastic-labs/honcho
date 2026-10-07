@@ -10,7 +10,24 @@ should call you, and a workspace, then saves them to ~/.honcho/config.json and
 adds the plugin to Kilo's global config. The Kilo CLI, the VS Code and JetBrains
 extensions, and the Kilo desktop app all read those files.`
 
+// Piped input is read once and answered line by line; a readline per question would drop the lines it buffered.
+let pipedLines: string[] | undefined
+const nextPipedLine = async () => {
+  if (!pipedLines) {
+    const chunks: Buffer[] = []
+    for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk))
+    pipedLines = Buffer.concat(chunks).toString("utf8").split(/\r?\n/)
+  }
+  return pipedLines.shift() ?? ""
+}
+
 const ask = async (question: string) => {
+  if (!process.stdin.isTTY) {
+    process.stdout.write(question)
+    const line = await nextPipedLine()
+    process.stdout.write("\n")
+    return line.trim()
+  }
   const rl = createInterface({ input: process.stdin, output: process.stdout })
   try {
     return (await rl.question(question)).trim()

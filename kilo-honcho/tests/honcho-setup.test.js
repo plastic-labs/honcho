@@ -392,3 +392,20 @@ test("kiloConfigDir follows XDG_CONFIG_HOME like Kilo does", async () => {
     expect(__testing.kiloConfigDir()).toBe("/home/a/.config/kilo")
   })
 })
+
+test("the setup command runs end to end from piped answers", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "honcho-cli-"))
+  const proc = Bun.spawn(["node", path.join(import.meta.dir, "..", "dist", "cli.js"), "setup"], {
+    stdin: new TextEncoder().encode("2\nhttp://127.0.0.1:1\n\nalice\n"),
+    stdout: "pipe",
+    stderr: "pipe",
+    env: { ...process.env, HOME: dir, XDG_CONFIG_HOME: path.join(dir, "xdg"), KILO_HONCHO_CONFIG_PATH: path.join(dir, "honcho.json"), HONCHO_API_KEY: "" },
+  })
+  const output = await new Response(proc.stdout).text()
+  expect(await proc.exited).toBe(0)
+  expect(output).toContain("Peer: alice")
+  const saved = JSON.parse(await readFile(path.join(dir, "honcho.json"), "utf-8"))
+  expect(saved).toMatchObject({ peerName: "alice", baseUrl: "http://127.0.0.1:1", hosts: { kilo: { workspace: "kilo" } } })
+  expect(saved.apiKey).toBeUndefined()
+  expect(await readFile(path.join(dir, "xdg", "kilo", "kilo.jsonc"), "utf-8")).toContain("@honcho-ai/kilo-honcho")
+})
