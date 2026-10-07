@@ -2455,3 +2455,189 @@ class TestPgvectorCandidateEquivalence:
             "a skipped document must sit before a matching one, or leg position "
             "and document index would never diverge"
         )
+
+
+class TestExternalCandidateEquivalence:
+    """Prefetched-and-rescoped candidates match the per-document lookup.
+
+    On the external-store path the vector query is unchanged; what moved is
+    hydration. `_semantic_dup_decision` with `candidate_document_ids` — still
+    the live path for `is_rejected_duplicate` — loads each document's ids with
+    its merge scope as a SQL filter. The batch path loads every id once,
+    unscoped, and `_resolve_semantic_dup` re-applies the scope in Python. For
+    the same candidate ids the two must pick the same row.
+
+    Candidate ids are injected rather than produced by a store: a real store
+    filters by scope too, so it would rarely hand back the out-of-scope ids
+    the Python re-scoping exists to reject.
+    """
+
+    async def _setup(
+        self,
+        db_session: AsyncSession,
+        test_workspace: models.Workspace,
+        test_peer: models.Peer,
+    ) -> tuple[models.Peer, models.Session, models.Session, dict[str, str]]:
+        observed_peer = models.Peer(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        other_observed = models.Peer(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        session_a = models.Session(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        session_b = models.Session(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add_all([observed_peer, other_observed, session_a, session_b])
+        await db_session.flush()
+        for observed in (observed_peer, other_observed):
+            db_session.add(
+                models.Collection(
+                    workspace_name=test_workspace.name,
+                    observer=test_peer.name,
+                    observed=observed.name,
+                )
+            )
+
+        def existing(
+            key: str,
+            level: DocumentLevel,
+            session: models.Session | None,
+            *,
+            observed: models.Peer = observed_peer,
+            deleted: bool = False,
+        ) -> models.Document:
+            return models.Document(
+                workspace_name=test_workspace.name,
+                observer=test_peer.name,
+                observed=observed.name,
+                session_name=session.name if session else None,
+                content=f"existing {key}",
+                embedding=[0.1] * 1536,
+                level=level,
+                internal_metadata={},
+                deleted_at=datetime.datetime.now(datetime.UTC) if deleted else None,
+            )
+
+        rows = {
+            "a": existing("a", "explicit", session_a),
+            "a2": existing("a2", "explicit", session_a),
+            "b": existing("b", "explicit", session_b),
+            "deductive": existing("deductive", "deductive", None),
+            # A deductive row that still carries a session: level is its only
+            # merge filter, so the session must not keep it out.
+            "deductive_in_a": existing("deductive_in_a", "deductive", session_a),
+            "deleted": existing("deleted", "explicit", session_a, deleted=True),
+            # In scope on every filter except the collection it belongs to.
+            "foreign": existing(
+                "foreign", "explicit", session_a, observed=other_observed
+            ),
+        }
+        db_session.add_all(rows.values())
+        await db_session.commit()
+        return (
+            observed_peer,
+            session_a,
+            session_b,
+            {key: row.id for key, row in rows.items()},
+        )
+
+    @pytest.mark.asyncio
+    async def test_rescoped_candidates_match_per_document_fetch(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        from src.crud import document as document_module
+
+        test_workspace, test_peer = sample_data
+        observed_peer, session_a, session_b, ids = await self._setup(
+            db_session, test_workspace, test_peer
+        )
+
+        def incoming(
+            level: DocumentLevel, session: str | None
+        ) -> schemas.DocumentCreate:
+            return schemas.DocumentCreate(
+                content=f"incoming level={level} session={session}",
+                embedding=[0.1] * 1536,
+                session_name=session,
+                level=level,
+                metadata=schemas.DocumentMetadata(
+                    message_ids=[1],
+                    message_created_at="2026-01-01T00:00:00Z",
+                ),
+            )
+
+        # (document, candidate ids in similarity order, row that must win)
+        cases: list[tuple[schemas.DocumentCreate, list[str], str | None]] = [
+            # Out-of-scope id ranked first: the next in-scope one wins.
+            (incoming("explicit", session_a.name), [ids["b"], ids["a"]], "a"),
+            # Soft-deleted id ranked first, then two in scope: first of those wins.
+            (
+                incoming("explicit", session_a.name),
+                [ids["deleted"], ids["a2"], ids["a"]],
+                "a2",
+            ),
+            # Another collection's row, and an id with no row at all.
+            (
+                incoming("explicit", session_a.name),
+                [ids["foreign"], "no-such-document"],
+                None,
+            ),
+            # Wrong session, then wrong level.
+            (incoming("explicit", session_b.name), [ids["a"], ids["deductive"]], None),
+            # Deductive: an explicit row is out of scope, a session is not.
+            (
+                incoming("deductive", None),
+                [ids["a"], ids["deductive_in_a"], ids["deductive"]],
+                "deductive_in_a",
+            ),
+            # Session-less explicit has no merge scope, whatever the store said.
+            (incoming("explicit", None), [ids["a"]], None),
+            # The same id resolved for a second document in the batch.
+            (incoming("explicit", session_a.name), [ids["a"]], "a"),
+            (incoming("deductive", None), [], None),
+        ]
+        candidate_ids = [candidates for _, candidates, _ in cases]
+
+        for doc, _, _ in cases:
+            filters = document_module._semantic_dup_filters(doc)  # pyright: ignore[reportPrivateUsage]
+            # SQL `col = NULL` matches nothing while Python `None == None` is
+            # true; the two scopes only agree while no filter value is None.
+            assert filters is None or None not in filters.values()
+
+        candidates_by_id = await document_module._fetch_dup_candidates_by_id(  # pyright: ignore[reportPrivateUsage]
+            db_session,
+            candidate_ids,
+            test_workspace.name,
+            observer=test_peer.name,
+            observed=observed_peer.name,
+        )
+
+        key_by_id = {row_id: key for key, row_id in ids.items()}
+        for index, (doc, candidates, expected_key) in enumerate(cases):
+            (
+                reference_result,
+                reference_row,
+            ) = await document_module._semantic_dup_decision(  # pyright: ignore[reportPrivateUsage]
+                db_session,
+                doc,
+                test_workspace.name,
+                observer=test_peer.name,
+                observed=observed_peer.name,
+                candidate_document_ids=candidates,
+            )
+            batched_result, batched_row = document_module._resolve_semantic_dup(  # pyright: ignore[reportPrivateUsage]
+                doc, candidates, candidates_by_id
+            )
+
+            reference_key = key_by_id[reference_row.id] if reference_row else None
+            batched_key = key_by_id[batched_row.id] if batched_row else None
+            assert (batched_result, batched_key) == (reference_result, reference_key), (
+                f"case {index}"
+            )
+            # Pinned independently too, or two equally broken scopes would agree.
+            assert batched_key == expected_key, f"case {index}"
