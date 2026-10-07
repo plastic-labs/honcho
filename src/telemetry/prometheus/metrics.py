@@ -120,6 +120,12 @@ embed_now_tasks_shed_counter = NamespacedCounter(
     ["namespace"],
 )
 
+pagination_offset_shim_counter = NamespacedCounter(
+    "pagination_offset_shim",
+    "Offset-paginated list requests by how the offset shim served them: hit (seek from a stored position), miss (OFFSET query) or end (past the last page, no query)",
+    ["namespace", "outcome"],
+)
+
 embed_now_tasks_in_flight_gauge = NamespacedGauge(
     "embed_now_tasks_in_flight",
     "Immediate-embed background tasks currently in flight for this process",

@@ -17,13 +17,18 @@ enqueues a removal-reconciliation job. Track backfill progress via
 import logging
 
 from fastapi import APIRouter, Body, Depends, Path, Query, Response
-from fastapi_pagination import Page
-from fastapi_pagination.ext.sqlalchemy import apaginate
+from fastapi_pagination.bases import AbstractParams
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, schemas
 from src.dependencies import db, read_db
 from src.security import require_auth
+from src.utils.pagination import (
+    CursorPage,
+    Page,
+    paginate_offset_or_cursor,
+    pagination_params,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -67,18 +72,20 @@ async def get_or_create_scope(
 
 @router.post(
     "/list",
-    response_model=Page[schemas.Scope],
+    response_model=Page[schemas.Scope] | CursorPage[schemas.Scope],
     dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
 )
 async def get_scopes(
     workspace_id: str = Path(...),
     reverse: bool = Query(False, description="Whether to reverse the order of results"),
+    params: AbstractParams = Depends(pagination_params),
     db: AsyncSession = read_db,
 ):
     """Get all Scopes for a Workspace. Results are paginated."""
-    return await apaginate(
+    return await paginate_offset_or_cursor(
         db,
         await crud.get_scopes(workspace_name=workspace_id, reverse=reverse),
+        params,
     )
 
 
@@ -159,13 +166,14 @@ async def remove_session_from_scope(
 
 @router.post(
     "/{scope_id}/sessions/list",
-    response_model=Page[schemas.Session],
+    response_model=Page[schemas.Session] | CursorPage[schemas.Session],
     dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
 )
 async def get_scope_sessions(
     workspace_id: str = Path(...),
     scope_id: str = Path(...),
     reverse: bool = Query(False, description="Whether to reverse the order of results"),
+    params: AbstractParams = Depends(pagination_params),
     db: AsyncSession = read_db,
 ):
     """Get the Sessions that are members of a Scope, paginated.
@@ -176,11 +184,12 @@ async def get_scope_sessions(
     # Distinguishes an empty scope from one that does not exist; the query itself
     # returns an empty page either way.
     await crud.get_scope_or_raise(db, workspace_id, scope_id)
-    return await apaginate(
+    return await paginate_offset_or_cursor(
         db,
         await crud.get_scope_sessions(
             workspace_name=workspace_id, scope_name=scope_id, reverse=reverse
         ),
+        params,
     )
 
 

@@ -6,8 +6,7 @@ from time import perf_counter
 
 from fastapi import APIRouter, Body, Depends, Path, Query, Response
 from fastapi.responses import StreamingResponse
-from fastapi_pagination import Page
-from fastapi_pagination.ext.sqlalchemy import apaginate
+from fastapi_pagination.bases import AbstractParams
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,6 +27,12 @@ from src.telemetry import prometheus_metrics
 from src.telemetry.events import EmbeddingCallPurpose, GetContextEvent, emit
 from src.utils.evidence import EvidenceAccumulator
 from src.utils.filter import MAX_SESSION_ALLOWLIST_ENTRIES, extract_session_allowlist
+from src.utils.pagination import (
+    CursorPage,
+    Page,
+    paginate_offset_or_cursor,
+    pagination_params,
+)
 from src.utils.schema_conversion import json_response_schema_to_pydantic
 from src.utils.scopes import (
     is_scope_peer,
@@ -80,7 +85,7 @@ async def _resolve_scope_option(
 
 @router.post(
     "/list",
-    response_model=Page[schemas.Peer],
+    response_model=Page[schemas.Peer] | CursorPage[schemas.Peer],
     dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
 )
 async def get_peers(
@@ -89,6 +94,7 @@ async def get_peers(
         None, description="Filtering options for the peers list"
     ),
     reverse: bool = Query(False, description="Whether to reverse the order of results"),
+    params: AbstractParams = Depends(pagination_params),
     db: AsyncSession = read_db,
 ):
     """Get all Peers for a Workspace, paginated with optional filters.
@@ -102,7 +108,7 @@ async def get_peers(
         if filter_param == {}:
             filter_param = None
 
-    return await apaginate(
+    return await paginate_offset_or_cursor(
         db,
         await crud.get_peers(
             workspace_name=workspace_id,
@@ -110,6 +116,7 @@ async def get_peers(
             reverse=reverse,
             kind=options.kind if options else None,
         ),
+        params,
     )
 
 
@@ -198,7 +205,7 @@ async def update_peer(
 
 @router.post(
     "/{peer_id}/sessions",
-    response_model=Page[schemas.Session],
+    response_model=Page[schemas.Session] | CursorPage[schemas.Session],
     dependencies=[
         Depends(require_auth(workspace_name="workspace_id", peer_name="peer_id"))
     ],
@@ -210,6 +217,7 @@ async def get_sessions_for_peer(
         None, description="Filtering options for the sessions list"
     ),
     reverse: bool = Query(False, description="Whether to reverse the order of results"),
+    params: AbstractParams = Depends(pagination_params),
     db: AsyncSession = read_db,
 ):
     """Get all Sessions for a Peer, paginated with optional filters."""
@@ -220,7 +228,7 @@ async def get_sessions_for_peer(
         if filter_param == {}:
             filter_param = None
 
-    return await apaginate(
+    return await paginate_offset_or_cursor(
         db,
         await crud.get_sessions_for_peer(
             workspace_name=workspace_id,
@@ -228,6 +236,7 @@ async def get_sessions_for_peer(
             filters=filter_param,
             reverse=reverse,
         ),
+        params,
     )
 
 
