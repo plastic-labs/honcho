@@ -1,0 +1,37 @@
+name: kilo-honcho
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'kilo-honcho/**'
+      - '.github/workflows/kilo-honcho.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'kilo-honcho/**'
+      - '.github/workflows/kilo-honcho.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: kilo-honcho
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run check
+
+      - name: Build and test
+        run: bun run test
