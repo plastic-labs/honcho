@@ -241,7 +241,6 @@ async def _bump_message_embedding_sync_attempts(
     for emb in rows:
         new_attempts = emb.sync_attempts + 1
         new_state = "failed" if new_attempts >= MAX_SYNC_ATTEMPTS else "pending"
-
         await db.execute(
             update(models.MessageEmbedding)
             .where(models.MessageEmbedding.id == emb.id)
@@ -251,6 +250,55 @@ async def _bump_message_embedding_sync_attempts(
                 last_sync_at=func.now(),
             )
         )
+
+
+async def _reclaim_still_owned_message_embeddings(
+    db: AsyncSession,
+    embedding_ids: list[int],
+) -> set[int]:
+    """Re-verify ownership and re-lease rows immediately before an external
+    upsert, returning the subset still owned.
+
+    The claim lease is soft: a row becomes re-claimable once ``last_sync_at``
+    passes ``SYNC_BACKOFF``. The embed phase can outrun that window, so by the
+    time this worker reaches the external upsert another worker may have
+    claimed and completed the same row. An unfenced upsert would then overwrite
+    the newer worker's external vector with this worker's (possibly stale)
+    result, leaving the external index inconsistent with the completed DB row.
+
+    Re-claiming under ``FOR UPDATE SKIP LOCKED`` fences that window: only the
+    worker that actually holds the row lock — i.e. still owns a ``pending``
+    row — may proceed, and re-stamping ``last_sync_at`` extends the lease so no
+    other worker can claim the row for another ``SYNC_BACKOFF`` window (far
+    longer than the single upsert call that follows). Rows another worker
+    already completed are no longer ``pending`` and are excluded, so this
+    worker neither overwrites them nor counts them as synced.
+    """
+    if not embedding_ids:
+        return set()
+
+    rows = (
+        (
+            await db.execute(
+                select(models.MessageEmbedding.id)
+                .where(
+                    models.MessageEmbedding.id.in_(embedding_ids),
+                    models.MessageEmbedding.sync_state == "pending",
+                )
+                .with_for_update(skip_locked=True)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    owned = set(rows)
+    if owned:
+        await db.execute(
+            update(models.MessageEmbedding)
+            .where(models.MessageEmbedding.id.in_(owned))
+            .values(last_sync_at=func.now())
+        )
+    return owned
 
 
 async def compute_chunk_positions(
@@ -655,9 +703,22 @@ async def _persist_message_embeddings(
     async with tracked_db("reconciliation_embs_positions") as db:
         chunk_position = await compute_chunk_positions(db, message_ids)
 
+    # Re-verify ownership and re-lease right before writing to the external
+    # store. The embed phase runs with no session and can outrun the soft lease
+    # (SYNC_BACKOFF), so another worker may have claimed and completed some of
+    # these rows in the meantime. Only rows we still hold may be upserted, so a
+    # late worker can't overwrite a newer worker's external vector.
+    async with tracked_db("reconciliation_embs_reclaim") as db:
+        owned_ids = await _reclaim_still_owned_message_embeddings(
+            db, list(vector_by_id)
+        )
+        await db.commit()
+    if not owned_ids:
+        return synced_count, failed_count
+
     by_namespace: dict[str, list[_ClaimedEmbedding]] = {}
     for c in claimed:
-        if c.id not in vector_by_id:
+        if c.id not in owned_ids:
             continue
         ns = external_vector_store.get_vector_namespace("message", c.workspace_name)
         by_namespace.setdefault(ns, []).append(c)

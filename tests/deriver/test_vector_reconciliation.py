@@ -23,6 +23,7 @@ from src.reconciler.sync_vectors import (
     _ClaimedEmbedding,  # pyright: ignore[reportPrivateUsage]
     _get_documents_needing_sync,  # pyright: ignore[reportPrivateUsage]
     _get_message_embeddings_needing_sync,  # pyright: ignore[reportPrivateUsage]
+    _reclaim_still_owned_message_embeddings,  # pyright: ignore[reportPrivateUsage]
     _reconcile_documents_batch,  # pyright: ignore[reportPrivateUsage]
     _reconcile_message_embeddings_batch,  # pyright: ignore[reportPrivateUsage]
     _sync_documents,  # pyright: ignore[reportPrivateUsage]
@@ -1007,6 +1008,90 @@ class TestMessageEmbeddings:
         # The second worker's "synced" state must survive our late failure write.
         assert pending_emb.sync_state == "synced"
         assert pending_emb.sync_attempts == 0
+
+    async def test_reclaim_returns_only_rows_still_owned(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ) -> None:
+        """The pre-upsert reclaim must re-lease still-pending rows and exclude
+        rows another worker has already completed."""
+        workspace, peer = sample_data
+        still_pending = await self._create_pending_message_embedding(
+            db_session, workspace, peer
+        )
+        already_done = await self._create_pending_message_embedding(
+            db_session, workspace, peer
+        )
+
+        # Simulate another worker completing one of them while our lease lapsed.
+        await db_session.execute(
+            update(models.MessageEmbedding)
+            .where(models.MessageEmbedding.id == already_done.id)
+            .values(sync_state="synced", last_sync_at=func.now())
+        )
+        await db_session.commit()
+
+        owned = await _reclaim_still_owned_message_embeddings(
+            db_session, [still_pending.id, already_done.id]
+        )
+        await db_session.commit()
+
+        assert still_pending.id in owned
+        assert already_done.id not in owned
+
+        # The still-owned row's lease is extended so no other worker can claim
+        # it for another SYNC_BACKOFF window.
+        await db_session.refresh(still_pending)
+        assert still_pending.sync_state == "pending"
+        assert still_pending.last_sync_at is not None
+
+    async def test_external_upsert_skipped_when_lease_lost(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+        mock_vector_store: VectorStore,
+    ) -> None:
+        """A late worker must not upsert a row another worker already synced."""
+        workspace, peer = sample_data
+        pending_emb = await self._create_pending_message_embedding(
+            db_session, workspace, peer
+        )
+
+        # Embedding succeeds, but during the embed another worker completes the
+        # row (lease lapsed). Our reclaim must then refuse to upsert it.
+        async def embed_then_second_worker_syncs(
+            claimed: list[_ClaimedEmbedding],
+        ) -> tuple[dict[int, list[float]], set[int]]:
+            del claimed  # not inspected here
+            await db_session.execute(
+                update(models.MessageEmbedding)
+                .where(models.MessageEmbedding.id == pending_emb.id)
+                .values(
+                    sync_state="synced",
+                    last_sync_at=func.now(),
+                    embedding=[1.0] * 1536,
+                )
+            )
+            await db_session.commit()
+            return ({pending_emb.id: [0.5] * 1536}, set())
+
+        upsert_mock: AsyncMock = cast(AsyncMock, mock_vector_store.upsert_many)
+
+        with patch(
+            "src.reconciler.sync_vectors._embed_claimed",
+            side_effect=embed_then_second_worker_syncs,
+        ):
+            metrics = ReconciliationMetrics()
+            worked = await _reconcile_message_embeddings_batch(
+                mock_vector_store, metrics
+            )
+
+        assert worked is True
+        # The row was already synced by the other worker; we must not count it.
+        assert metrics.message_embeddings_synced == 0
+        # And critically, we must not have overwritten its external vector.
+        upsert_mock.assert_not_awaited()
 
     async def test_all_chunks_of_a_message_claimed_together(
         self,
