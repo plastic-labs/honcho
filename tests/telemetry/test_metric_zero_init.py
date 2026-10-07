@@ -25,6 +25,7 @@ from src.telemetry.events import ALL_EVENT_TYPES, HIGH_VOLUME_EVENT_TYPES
 from src.telemetry.events.base import BaseEvent
 from src.telemetry.prometheus.metrics import (
     _DERIVER_TOKEN_COMBOS_BY_TASK,  # pyright: ignore[reportPrivateUsage]
+    SUMMARY_REJECTION_DEGENERATE,
     DeriverComponents,
     DeriverTaskTypes,
     DialecticComponents,
@@ -227,6 +228,15 @@ def test_deriver_init_materializes_token_and_backlog():
             )
             is not None
         ), f"specialist {specialist_name!r} was not zero-initialized"
+    for summary_type in ("short", "long"):
+        assert (
+            sample(
+                "summary_rejections_total",
+                summary_type=summary_type,
+                reason=SUMMARY_REJECTION_DEGENERATE,
+            )
+            is not None
+        )
     assert sample("message_embeddings_pending") == 0.0  # gauge zero-init
 
 
