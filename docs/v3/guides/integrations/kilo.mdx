@@ -33,7 +33,7 @@ To update an existing install:
 kilo plugin @honcho-ai/kilo-honcho --global --force
 ```
 
-You can also add `"@honcho-ai/kilo-honcho"` to the `plugin` array in your global Kilo config yourself. The VS Code and JetBrains extensions start the same Kilo server and read the same global config, so one install covers all three.
+`kilo plugin` adds the package to `~/.config/kilo/opencode.json`, which loads the server half, and to `~/.config/kilo/tui.json`, which loads the `/honcho:*` commands. You can add `"@honcho-ai/kilo-honcho"` to the `plugin` array in both files yourself instead. The VS Code and JetBrains extensions start the same Kilo server and read the same global config, so one install covers all three.
 
 ### Step 3: Run Setup in Kilo
 
@@ -161,8 +161,8 @@ The plugin hooks into these Kilo plugin capabilities:
 
 ## What Install Writes
 
-- **Kilo config:** `@honcho-ai/kilo-honcho` in the `plugin` array of your global Kilo config.
-- **Honcho config:** `~/.honcho/config.json`, created on first run if it does not exist, and updated by `/honcho:setup`, `/honcho:config`, and `honcho_set_config`. An `apiKey` written as `${HONCHO_API_KEY}` stays a reference.
+- **Kilo config:** `@honcho-ai/kilo-honcho` in the `plugin` array of `~/.config/kilo/opencode.json` and `~/.config/kilo/tui.json`.
+- **Honcho config:** `~/.honcho/config.json`, created on first run if it does not exist, and updated by `/honcho:setup`, `/honcho:config`, and `honcho_set_config`. A file created on first run sets `peerName` to `user`; run `/honcho:setup` to use your own name. An `apiKey` written as `${HONCHO_API_KEY}` stays a reference.
 - **Skill:** `~/.config/kilo/skills/honcho-memory/SKILL.md`, or `$KILO_CONFIG_DIR/skills/honcho-memory/SKILL.md` when that variable is set.
 - **Import state:** `~/.honcho/kilo-import-state.json`, after you run `/honcho:import`.
 
@@ -170,7 +170,7 @@ The plugin hooks into these Kilo plugin capabilities:
 
 **The plugin does not load.** Run `kilo run --print-logs "hello"` and look for `kilo-honcho` and `Honcho session initialized for Kilo.` in the output. Setting `KILO_PURE=1` turns off every external plugin, including this one.
 
-**Kilo does not use memory.** Run `/honcho:status`. If it reports no API key, run `/honcho:setup`. Recall starts once Honcho has something to recall; a new workspace has no conclusions until a few messages have been processed.
+**Kilo does not use memory.** Run `/honcho:status`. It shows the values the plugin uses, including any `HONCHO_API_KEY`, `HONCHO_URL`, or `HONCHO_WORKSPACE` set in your environment. If it reports no API key, run `/honcho:setup`. Recall starts once Honcho has something to recall; a new workspace has no conclusions until a few messages have been processed.
 
 **Memory is missing from another tool.** Each tool writes to its own workspace unless you set the same `workspace` for both. See [Configuration](#configuration).
 

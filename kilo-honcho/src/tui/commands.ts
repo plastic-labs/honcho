@@ -152,11 +152,19 @@ export const normalizeSettings = (settings: GlobalSettings) => ({
 export const validateCloudApiKey = (value: string) =>
   value.trim() ? null : "Honcho Cloud requires a Honcho API key. Enter a non-empty key or choose Self-hosted / local."
 
+// The server lets HONCHO_* env values win over the file, so status reports what the server uses.
+// Display only: nothing here is ever written back to the config file.
+const withEnvOverrides = (normalized: ReturnType<typeof normalizeSettings>) => ({
+  baseUrl: process.env.HONCHO_URL?.trim() || process.env.HONCHO_BASE_URL?.trim() || normalized.baseUrl,
+  apiKey: process.env.HONCHO_API_KEY?.trim() || normalized.apiKey,
+  peerName: process.env.HONCHO_PEER_NAME?.trim() || normalized.peerName,
+})
+
 export const statusMessage = (
   settings: GlobalSettings,
   liveStatus?: { workspaceName?: string; kiloSessionId?: string },
 ) => {
-  const normalized = normalizeSettings(settings)
+  const normalized = withEnvOverrides(normalizeSettings(settings))
   const configured = Boolean(normalized.apiKey) || isLocalBaseUrl(normalized.baseUrl)
   const deployment = isLocalBaseUrl(normalized.baseUrl)
     ? "Local / self-hosted"

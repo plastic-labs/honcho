@@ -22,6 +22,7 @@ This package versions independently of the Honcho API, `@honcho-ai/sdk`, and oth
 - The system transform skips Kilo's title-generation calls and calls with no session id.
 - Session keys start with the user peer, so teammates sharing a workspace get separate sessions.
 - Config writes keep an `apiKey` written as `${VAR}` instead of saving the expanded secret.
+- `/honcho:status` shows `HONCHO_*` environment values the server uses, and falls back to the `kilo` workspace instead of the folder name.
 
 ### Removed
 

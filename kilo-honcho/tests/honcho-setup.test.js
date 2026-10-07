@@ -1,9 +1,25 @@
-import { expect, test } from "bun:test"
+import { afterEach, beforeEach, expect, test } from "bun:test"
 import os from "node:os"
 import path from "node:path"
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises"
 
 import { createHonchoRuntimePlugin } from "../dist/index.js"
+
+// Tests set HONCHO_* themselves; values inherited from the shell would override the config under test.
+const HONCHO_ENV = ["HONCHO_API_KEY", "HONCHO_URL", "HONCHO_BASE_URL", "HONCHO_PEER_NAME", "HONCHO_WORKSPACE", "HONCHO_WORKSPACE_ID", "HONCHO_AI_PEER"]
+const inheritedEnv = {}
+beforeEach(() => {
+  for (const key of HONCHO_ENV) {
+    inheritedEnv[key] = process.env[key]
+    delete process.env[key]
+  }
+})
+afterEach(() => {
+  for (const key of HONCHO_ENV) {
+    if (inheritedEnv[key] === undefined) delete process.env[key]
+    else process.env[key] = inheritedEnv[key]
+  }
+})
 
 const withEnv = async (entries, action) => {
   const previous = new Map()

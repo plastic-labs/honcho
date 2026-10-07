@@ -1,6 +1,5 @@
-import path from "node:path"
 import type { TuiPlugin, TuiPluginApi } from "@kilocode/plugin/tui"
-import { HOST_ID } from "../core.js"
+import { DEFAULT_SETTINGS } from "../core.js"
 import { transcriptSourceFromClient } from "../import.js"
 import { COMMANDS, maybePromptObservationUpgrade, runGuarded } from "./commands.js"
 import type { Dialogs, GlobalSettings, TuiSession } from "./dialogs.js"
@@ -102,11 +101,13 @@ export const deriveLiveStatus = (api: TuiPluginApi, settings: GlobalSettings) =>
     api.route?.current?.name === "session" && typeof api.route.current.params?.sessionID === "string"
       ? api.route.current.params.sessionID
       : undefined
+  // Same precedence as the server: env, then hosts.kilo.workspace, then the "kilo" default.
   const configuredWorkspace = settings.hosts?.kilo?.workspace
   const liveWorkspace =
-    typeof configuredWorkspace === "string" && configuredWorkspace.trim()
-      ? configuredWorkspace.trim()
-      : path.basename(api.state?.path?.worktree || api.state?.path?.directory || HOST_ID)
+    process.env.HONCHO_WORKSPACE?.trim() ||
+    process.env.HONCHO_WORKSPACE_ID?.trim() ||
+    (typeof configuredWorkspace === "string" && configuredWorkspace.trim()) ||
+    DEFAULT_SETTINGS.workspace
   return {
     workspaceName: liveWorkspace,
     kiloSessionId,

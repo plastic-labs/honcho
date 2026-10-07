@@ -115,3 +115,40 @@ test("tui shows endpoint.baseUrl when there is no top-level baseUrl", () => {
   assert.equal(url({ baseUrl: "http://explicit:9", endpoint }), "http://explicit:9")
   assert.equal(url({}), "https://api.honcho.dev")
 })
+
+const withHonchoEnv = async (entries, action) => {
+  const keys = ["HONCHO_API_KEY", "HONCHO_URL", "HONCHO_BASE_URL", "HONCHO_PEER_NAME", "HONCHO_WORKSPACE", "HONCHO_WORKSPACE_ID"]
+  const previous = Object.fromEntries(keys.map((key) => [key, process.env[key]]))
+  for (const key of keys) delete process.env[key]
+  Object.assign(process.env, entries)
+  try {
+    return await action()
+  } finally {
+    for (const key of keys) {
+      if (previous[key] === undefined) delete process.env[key]
+      else process.env[key] = previous[key]
+    }
+  }
+}
+
+test("tui status reports HONCHO_* env values the server will use", async () => {
+  await withHonchoEnv({ HONCHO_API_KEY: "env-key", HONCHO_URL: "https://api.staging.example" }, () => {
+    const message = __testing.statusMessage({ peerName: "eri" })
+    assert.match(message, /Configured: yes/)
+    assert.match(message, /API key: set/)
+    assert.match(message, /Base URL: https:\/\/api\.staging\.example/)
+    assert.doesNotMatch(message, /env-key/)
+  })
+})
+
+test("tui live status falls back to the kilo workspace, not the folder name", async () => {
+  await withHonchoEnv({}, () => {
+    const api = { route: { current: { name: "home" } }, state: { path: { worktree: "/tmp/demo", directory: "/tmp/demo" } } }
+    assert.equal(__testing.deriveLiveStatus(api, {}).workspaceName, "kilo")
+    assert.equal(__testing.deriveLiveStatus(api, { hosts: { kilo: { workspace: "team" } } }).workspaceName, "team")
+  })
+  await withHonchoEnv({ HONCHO_WORKSPACE: "from-env" }, () => {
+    const api = { route: { current: { name: "home" } }, state: { path: { worktree: "/tmp/demo" } } }
+    assert.equal(__testing.deriveLiveStatus(api, { hosts: { kilo: { workspace: "team" } } }).workspaceName, "from-env")
+  })
+})
