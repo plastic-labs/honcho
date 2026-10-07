@@ -11,6 +11,7 @@ import sys
 from datetime import datetime, timezone
 from typing import Any
 
+from pydantic import BaseModel
 from rich.console import Console
 from rich.table import Table
 from rich.text import Text
@@ -41,9 +42,20 @@ def use_json() -> bool:
     return _force_json or os.environ.get("HONCHO_JSON", "").lower() in ("1", "true") or not is_tty()
 
 
+def _json_default(obj: Any) -> Any:
+    """Fallback for ``json.dumps``: dump pydantic models as objects, stringify the rest.
+
+    A bare ``default=str`` turns an SDK model into its repr
+    (``content='...' message_id='...'``) instead of a nested object.
+    """
+    if isinstance(obj, BaseModel):
+        return obj.model_dump(mode="json")
+    return str(obj)
+
+
 def print_json(data: Any) -> None:
     """Print a single JSON value to stdout."""
-    print(json.dumps(data, indent=2, default=str))
+    print(json.dumps(data, indent=2, default=_json_default))
 
 
 def print_table(columns: list[str], rows: list[list[str]], title: str | None = None) -> None:
@@ -76,7 +88,7 @@ def print_result(data: Any, columns: list[str] | None = None, title: str | None 
             table.add_column("Field", style="bold")
             table.add_column("Value")
             for k, v in data.items():
-                val = json.dumps(v, default=str) if isinstance(v, (dict, list)) else str(v)
+                val = json.dumps(v, default=_json_default) if isinstance(v, (dict, list)) else str(v)
                 table.add_row(k, val)
             stdout_console.print(table)
         else:

@@ -323,7 +323,7 @@ def queue_status(
 
     try:
         result = client.queue_status(observer=observer, sender=sender, session=config.session_id or None)
-        print_result(result.__dict__ if hasattr(result, "__dict__") else result)
+        print_result(result.model_dump(mode="json"))
     except Exception as e:
         _handle_error(e, "queue", "status")
 

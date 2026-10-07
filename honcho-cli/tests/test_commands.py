@@ -10,9 +10,12 @@ from __future__ import annotations
 import json
 import os
 from contextlib import ExitStack, contextmanager
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
+from honcho import Message, SessionContext, SessionSummaries, Summary
+from honcho.api_types import QueueStatusResponse, SessionQueueStatus
 from typer.testing import CliRunner
 
 from honcho_cli.commands.session import _next_page_command
@@ -83,6 +86,16 @@ def _patch_view(session: MagicMock, *, peer_id: str = ""):
     return _nested(
         patch("honcho_cli.commands.session.get_client", return_value=(client, config)),
         patch("honcho_cli.commands.session.Session", return_value=session),
+    )
+
+
+def _summary(kind: str) -> Summary:
+    return Summary(
+        content=f"{kind} summary",
+        message_id="m1",
+        summary_type=f"honcho_chat_summary_{kind}",
+        created_at="2026-01-01T00:00:00Z",
+        token_count=3,
     )
 
 
@@ -552,6 +565,107 @@ class TestJsonContract:
         assert payload[0]["id"] == "m30"
         assert payload[-1]["id"] == "m149"
         assert session.messages.call_args.kwargs["size"] == 100
+
+    def test_session_summaries_json_nests_summary_objects(self, cfg, runner):
+        """Summaries are SDK models; they were emitted as their Python repr string."""
+        cfg.write_text(json.dumps({"apiKey": "k", "environmentUrl": "http://localhost:8000"}))
+        sess = MagicMock()
+        sess.summaries.return_value = SessionSummaries(
+            id="sess1", short_summary=_summary("short"), long_summary=None
+        )
+        client = MagicMock()
+        client.session.return_value = sess
+        config = MagicMock(session_id="sess1", workspace_id="ws1")
+        with patch("honcho_cli.commands.session.get_client", return_value=(client, config)):
+            result = runner.invoke(app, ["session", "summaries", "sess1", "-w", "ws1", "--json"])
+        assert result.exit_code == 0, result.stderr
+        assert json.loads(result.stdout) == {
+            "session_id": "sess1",
+            "short_summary": _summary("short").model_dump(),
+            "long_summary": None,
+        }
+
+    def test_session_inspect_json_nests_summary_objects(self, cfg, runner):
+        cfg.write_text(json.dumps({"apiKey": "k", "environmentUrl": "http://localhost:8000"}))
+        sess = MagicMock()
+        sess.peers.return_value = []
+        sess.messages.return_value = _fake_page([], total=0)
+        sess.summaries.return_value = SessionSummaries(
+            id="sess1", short_summary=_summary("short"), long_summary=_summary("long")
+        )
+        sess.get_configuration.return_value = None
+        client = MagicMock()
+        client.session.return_value = sess
+        config = MagicMock(session_id="sess1", workspace_id="ws1")
+        with patch("honcho_cli.commands.session.get_client", return_value=(client, config)):
+            result = runner.invoke(app, ["session", "inspect", "sess1", "-w", "ws1", "--json"])
+        assert result.exit_code == 0, result.stderr
+        assert json.loads(result.stdout)["summaries"] == {
+            "short": _summary("short").model_dump(),
+            "long": _summary("long").model_dump(),
+        }
+
+    def test_session_context_json_nests_summary_and_messages(self, cfg, runner):
+        cfg.write_text(json.dumps({"apiKey": "k", "environmentUrl": "http://localhost:8000"}))
+        message = Message(
+            id="m1",
+            content="hello",
+            peer_id="alice",
+            session_id="sess1",
+            workspace_id="ws1",
+            metadata={},
+            created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            token_count=1,
+        )
+        sess = MagicMock()
+        sess.context.return_value = SessionContext(
+            session_id="sess1", messages=[message], summary=_summary("short")
+        )
+        client = MagicMock()
+        client.session.return_value = sess
+        config = MagicMock(session_id="sess1", workspace_id="ws1")
+        with patch("honcho_cli.commands.session.get_client", return_value=(client, config)):
+            result = runner.invoke(app, ["session", "context", "sess1", "-w", "ws1", "--json"])
+        assert result.exit_code == 0, result.stderr
+        assert json.loads(result.stdout) == {
+            "session_id": "sess1",
+            "summary": _summary("short").model_dump(),
+            "peer_representation": None,
+            "peer_card": None,
+            "messages": [{
+                "id": "m1",
+                "peer_id": "alice",
+                "content": "hello",
+                "token_count": 1,
+                "metadata": {},
+                "created_at": "2026-01-01 00:00:00+00:00",
+            }],
+        }
+
+    def test_workspace_queue_status_json_nests_session_status(self, cfg, runner):
+        cfg.write_text(json.dumps({
+            "apiKey": "k",
+            "environmentUrl": "http://localhost:8000",
+            "workspace_id": "ws1",
+        }))
+        counts = {
+            "total_work_units": 2,
+            "completed_work_units": 1,
+            "in_progress_work_units": 0,
+            "pending_work_units": 1,
+        }
+        client = MagicMock()
+        client.queue_status.return_value = QueueStatusResponse(
+            **counts, sessions={"sess1": SessionQueueStatus(session_id="sess1", **counts)}
+        )
+        config = MagicMock(workspace_id="ws1", session_id="")
+        with patch("honcho_cli.commands.workspace.get_client", return_value=(client, config)):
+            result = runner.invoke(app, ["workspace", "queue-status", "-w", "ws1", "--json"])
+        assert result.exit_code == 0, result.stderr
+        assert json.loads(result.stdout) == {
+            **counts,
+            "sessions": {"sess1": {"session_id": "sess1", **counts}},
+        }
 
 
 # --------------------------------------------------------------------------- #

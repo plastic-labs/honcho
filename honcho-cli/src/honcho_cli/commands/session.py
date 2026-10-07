@@ -27,6 +27,23 @@ app = typer.Typer(cls=HonchoTyperGroup, help="List, inspect, view, create, delet
 add_common_options(app)
 
 
+def _summary_to_dict(summary) -> dict | None:
+    """Serialize an SDK ``Summary`` model, which ``json.dumps`` would otherwise stringify."""
+    return summary.model_dump(mode="json") if summary is not None else None
+
+
+def _message_to_dict(m) -> dict:
+    """Serialize an SDK ``Message`` to the CLI's message shape."""
+    return {
+        "id": m.id,
+        "peer_id": m.peer_id,
+        "content": m.content,
+        "token_count": m.token_count,
+        "metadata": m.metadata,
+        "created_at": str(m.created_at),
+    }
+
+
 def _get_session_id(session_id: str | None) -> str:
 
     config = get_resolved_config()
@@ -132,8 +149,8 @@ def inspect(
             "peers": [{"id": p.id} for p in peers],
             "message_count": msg_page.total,
             "summaries": {
-                "short": summaries.short_summary if hasattr(summaries, "short_summary") else None,
-                "long": summaries.long_summary if hasattr(summaries, "long_summary") else None,
+                "short": _summary_to_dict(summaries.short_summary),
+                "long": _summary_to_dict(summaries.long_summary),
             },
             "configuration": _config_to_dict(sess_config) if sess_config else None,
         }
@@ -334,17 +351,7 @@ def view(
             if not reverse:
                 msgs = list(reversed(msgs))
 
-        items = [
-            {
-                "id": m.id,
-                "peer_id": m.peer_id,
-                "content": m.content,
-                "token_count": m.token_count,
-                "metadata": m.metadata,
-                "created_at": str(m.created_at),
-            }
-            for m in msgs
-        ]
+        items = [_message_to_dict(m) for m in msgs]
     except Exception as e:
         _handle_error(e, "session", sid)
         raise  # unreachable: _handle_error always exits
@@ -394,8 +401,13 @@ def context(
 
     try:
         ctx = sess.context(tokens=tokens, summary=summary)
-        result = ctx.__dict__ if hasattr(ctx, "__dict__") else ctx
-        print_result(result)
+        print_result({
+            "session_id": ctx.session_id,
+            "summary": _summary_to_dict(ctx.summary),
+            "peer_representation": ctx.peer_representation,
+            "peer_card": ctx.peer_card,
+            "messages": [_message_to_dict(m) for m in ctx.messages],
+        })
     except Exception as e:
         _handle_error(e, "session", sid)
 
@@ -418,8 +430,8 @@ def summaries(
         s = sess.summaries()
         result = {
             "session_id": sid,
-            "short_summary": s.short_summary if hasattr(s, "short_summary") else None,
-            "long_summary": s.long_summary if hasattr(s, "long_summary") else None,
+            "short_summary": _summary_to_dict(s.short_summary),
+            "long_summary": _summary_to_dict(s.long_summary),
         }
         print_result(result)
     except Exception as e:
