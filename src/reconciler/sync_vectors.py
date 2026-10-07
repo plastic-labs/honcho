@@ -461,7 +461,9 @@ async def _sync_message_embeddings(
                 workspace_name=workspaces.pop() if len(workspaces) == 1 else None,
                 parent_category="reconciliation",
             ):
-                new_embeddings = await embedding_client.simple_batch_embed(contents)
+                new_embeddings = await embedding_client.simple_batch_embed(
+                    contents, on_oversize="truncate"
+                )
 
             if len(new_embeddings) != len(embs_needing_embed):
                 logger.warning(
