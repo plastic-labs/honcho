@@ -4,6 +4,8 @@ System prompts for the Dialectic Agent.
 
 from collections.abc import Iterable
 
+from src.utils.formatting import custom_instructions_section
+
 # Curated tool docs, keyed by the `name` each loadout actually exposes.
 # `_select_tools` filters this set per request (minimal / session allowlist).
 _PAIR_TOOL_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
@@ -109,12 +111,18 @@ def _render_tool_groups(
     return "\n\n".join(parts)
 
 
+def _custom_instructions_suffix(custom_instructions: str | None) -> str:
+    section = custom_instructions_section(custom_instructions)
+    return f"\n{section}\n" if section else ""
+
+
 def agent_system_prompt(
     observer: str,
     observed: str,
     observer_peer_card: list[str] | None,
     observed_peer_card: list[str] | None,
     available_tools: Iterable[str] | None = None,
+    custom_instructions: str | None = None,
 ) -> str:
     """System prompt for pair-scoped dialectic recall.
 
@@ -125,6 +133,7 @@ def agent_system_prompt(
         observed_peer_card: Biographical information about the observed peer
         available_tools: Tool names offered on this request. Defaults to the
             full pair loadout.
+        custom_instructions: Resolved dialectic custom instructions, if any
     """
     # Determine if we have any peer card data
     peer_cards_enabled = (
@@ -335,11 +344,12 @@ If after thorough searching you find NOTHING relevant:
 After gathering context, reason through the information you found *before* stating your final answer. For comparison questions, explicitly compare the values. Only after you've verified your reasoning should you state your conclusion. Do NOT be pedantic, rather, be helpful and try to give the answer that the asker would expect -- they're the one who knows the most about themselves. Try to 'read their mind' -- understand the information they're really after and share it with them! Be **as specific as possible** given the information you have.
 
 Do not explain your tool usage - just provide the synthesized answer.
-"""
+{_custom_instructions_suffix(custom_instructions)}"""
 
 
 def workspace_agent_system_prompt(
     available_tools: Iterable[str] | None = None,
+    custom_instructions: str | None = None,
 ) -> str:
     """System prompt for workspace-wide dialectic recall."""
     tools = _available_tool_names(available_tools, WORKSPACE_PROMPT_TOOLS)
@@ -400,4 +410,4 @@ State only what you found. If you have related context but not the asked-for det
 ## CONCLUSION LEVELS
 
 `explicit` conclusions are derived from a single session. Deductive and inductive conclusions consolidate across sessions. Prefer those for cross-session or cross-peer answers, and use `get_reasoning_chain` to check their premises.
-"""
+{_custom_instructions_suffix(custom_instructions)}"""

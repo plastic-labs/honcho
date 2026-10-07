@@ -121,3 +121,16 @@ class BaseEvent(BaseModel):
             resource_id=self.get_resource_id(),
             honcho_version=HONCHO_VERSION,
         )
+
+
+class CustomInstructionsFields(BaseModel):
+    """Custom-instruction telemetry shared by the agent completion events."""
+
+    custom_instructions_tokens: int = Field(
+        default=0,
+        description="Estimated tokens of the resolved custom instructions applied (0 when none). Where the event has prompt_scaffold_tokens, these are included in it.",
+    )
+    custom_instructions_source: str | None = Field(
+        default=None,
+        description="Where the resolved custom instructions came from, as '<level>.<field>' (e.g. 'session.shared', 'workspace.summary'); None when no level set any.",
+    )

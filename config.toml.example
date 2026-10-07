@@ -35,6 +35,8 @@ TRACING = false
 # Per-connection establish timeout (seconds) so a single connection attempt
 # fails fast instead of hanging when the server/pooler is unreachable.
 CONNECT_TIMEOUT_SECONDS = 2
+# Seconds a migrator waits for another migrator's lock before failing.
+MIGRATION_LOCK_WAIT_SECONDS = 300
 
 # Authentication settings
 [auth]
@@ -153,7 +155,6 @@ ENABLED = true
 [dialectic]
 MAX_OUTPUT_TOKENS = 8192
 MAX_INPUT_TOKENS = 100000
-HISTORY_TOKEN_LIMIT = 8192
 SESSION_HISTORY_MAX_TOKENS = 4096
 
 # Per-level settings for reasoning levels
@@ -226,7 +227,6 @@ IDLE_TIMEOUT_MINUTES = 60
 MIN_HOURS_BETWEEN_DREAMS = 8
 ENABLED_TYPES = ["omni"]
 MAX_TOOL_ITERATIONS = 20
-HISTORY_TOKEN_LIMIT = 16384
 
 [dream.deduction_model_config]
 transport = "openai"

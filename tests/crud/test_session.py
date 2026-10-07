@@ -458,3 +458,225 @@ class TestSessionCRUD:
             await crud.clone_session(
                 db_session, test_workspace.name, test_session.name, "invalid_message_id"
             )
+
+    @pytest.mark.asyncio
+    async def test_clone_session_ignores_same_named_session_in_other_workspace(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """Session names are unique per workspace only, so a clone must not copy
+        messages or peers from another workspace's session of the same name."""
+        workspace_a, peer_a = sample_data
+        workspace_b, peer_b = await _create_workspace_with_peer(db_session)
+        session_name = str(generate_nanoid())
+        await _create_session(db_session, workspace_a.name, session_name, [peer_a.name])
+        await _create_message(db_session, workspace_a.name, session_name, peer_a.name)
+        await _create_session(db_session, workspace_b.name, session_name, [peer_b.name])
+        await _create_message(db_session, workspace_b.name, session_name, peer_b.name)
+
+        cloned = await crud.clone_session(db_session, workspace_a.name, session_name)
+
+        assert await _cloned_message_authors(db_session, cloned.name) == [peer_a.name]
+        assert await _cloned_session_peers(db_session, cloned.name) == [peer_a.name]
+        assert cloned.last_message_at == await db_session.scalar(
+            select(func.max(models.Message.created_at)).where(
+                models.Message.workspace_name == workspace_a.name,
+                models.Message.session_name == cloned.name,
+            )
+        )
+
+    @pytest.mark.asyncio
+    async def test_clone_session_does_not_leak_messages_between_workspaces(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """Peer names are also per-workspace, so two workspaces can share one (e.g.
+        "user"). Cloning an empty session must not silently pick up the messages
+        and members of the other workspace's same-named session."""
+        workspace_a, shared_peer = sample_data
+        workspace_b, _ = await _create_workspace_with_peer(
+            db_session, peer_name=shared_peer.name
+        )
+        session_name = str(generate_nanoid())
+        await _create_session(db_session, workspace_a.name, session_name, [])
+        await _create_session(
+            db_session, workspace_b.name, session_name, [shared_peer.name]
+        )
+        await _create_message(
+            db_session, workspace_b.name, session_name, shared_peer.name
+        )
+
+        cloned = await crud.clone_session(db_session, workspace_a.name, session_name)
+
+        assert await _cloned_message_authors(db_session, cloned.name) == []
+        assert await _cloned_session_peers(db_session, cloned.name) == []
+        assert cloned.last_message_at is None
+
+    @pytest.mark.asyncio
+    async def test_clone_session_without_messages_commits_clone_and_peers(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """A session with no messages still clones: the copy and its peers are
+        committed rather than left for the request's closing rollback."""
+        test_workspace, test_peer = sample_data
+        session_name = str(generate_nanoid())
+        await _create_session(
+            db_session, test_workspace.name, session_name, [test_peer.name]
+        )
+        await db_session.commit()
+
+        cloned = await crud.clone_session(db_session, test_workspace.name, session_name)
+        cloned_name = cloned.name
+        await db_session.rollback()
+
+        assert await db_session.scalar(
+            select(models.Session.name).where(
+                models.Session.workspace_name == test_workspace.name,
+                models.Session.name == cloned_name,
+            )
+        )
+        assert await _cloned_session_peers(db_session, cloned_name) == [test_peer.name]
+
+    @pytest.mark.asyncio
+    async def test_clone_session_rejects_cutoff_from_other_workspace(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """A cutoff message from another workspace's same-named session is not a
+        message of the session being cloned."""
+        workspace_a, peer_a = sample_data
+        workspace_b, peer_b = await _create_workspace_with_peer(db_session)
+        session_name = str(generate_nanoid())
+        await _create_session(db_session, workspace_a.name, session_name, [peer_a.name])
+        await _create_message(db_session, workspace_a.name, session_name, peer_a.name)
+        await _create_session(db_session, workspace_b.name, session_name, [peer_b.name])
+        foreign_message = await _create_message(
+            db_session, workspace_b.name, session_name, peer_b.name
+        )
+
+        with pytest.raises(
+            ValueError,
+            match="Message not found or doesn't belong to the specified session",
+        ):
+            await crud.clone_session(
+                db_session, workspace_a.name, session_name, foreign_message.public_id
+            )
+
+    @pytest.mark.asyncio
+    async def test_clone_session_preserves_token_counts(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """Cloned messages keep their token counts, which token-limited message
+        reads (session context) budget against."""
+        test_workspace, test_peer = sample_data
+        session_name = str(generate_nanoid())
+        await _create_session(
+            db_session, test_workspace.name, session_name, [test_peer.name]
+        )
+        await _create_message(
+            db_session,
+            test_workspace.name,
+            session_name,
+            test_peer.name,
+            token_count=7,
+        )
+
+        cloned = await crud.clone_session(db_session, test_workspace.name, session_name)
+
+        token_counts = (
+            await db_session.scalars(
+                select(models.Message.token_count).where(
+                    models.Message.workspace_name == test_workspace.name,
+                    models.Message.session_name == cloned.name,
+                )
+            )
+        ).all()
+        assert token_counts == [7]
+
+
+async def _create_workspace_with_peer(
+    db_session: AsyncSession, peer_name: str | None = None
+) -> tuple[models.Workspace, models.Peer]:
+    workspace = models.Workspace(name=str(generate_nanoid()))
+    peer = models.Peer(
+        name=peer_name or str(generate_nanoid()), workspace_name=workspace.name
+    )
+    db_session.add_all([workspace, peer])
+    await db_session.flush()
+    return workspace, peer
+
+
+async def _create_session(
+    db_session: AsyncSession,
+    workspace_name: str,
+    session_name: str,
+    peer_names: list[str],
+) -> None:
+    db_session.add(models.Session(name=session_name, workspace_name=workspace_name))
+    await db_session.flush()
+    db_session.add_all(
+        models.SessionPeer(
+            session_name=session_name,
+            peer_name=peer_name,
+            workspace_name=workspace_name,
+            configuration={},
+        )
+        for peer_name in peer_names
+    )
+    await db_session.flush()
+
+
+async def _create_message(
+    db_session: AsyncSession,
+    workspace_name: str,
+    session_name: str,
+    peer_name: str,
+    token_count: int = 0,
+) -> models.Message:
+    message = models.Message(
+        public_id=generate_nanoid(),
+        session_name=session_name,
+        workspace_name=workspace_name,
+        peer_name=peer_name,
+        content="hello",
+        token_count=token_count,
+        seq_in_session=1,
+    )
+    db_session.add(message)
+    await db_session.flush()
+    return message
+
+
+async def _cloned_message_authors(
+    db_session: AsyncSession, session_name: str
+) -> list[str]:
+    return list(
+        (
+            await db_session.scalars(
+                select(models.Message.peer_name).where(
+                    models.Message.session_name == session_name
+                )
+            )
+        ).all()
+    )
+
+
+async def _cloned_session_peers(
+    db_session: AsyncSession, session_name: str
+) -> list[str]:
+    return list(
+        (
+            await db_session.scalars(
+                select(models.SessionPeer.peer_name).where(
+                    models.SessionPeer.session_name == session_name
+                )
+            )
+        ).all()
+    )

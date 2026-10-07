@@ -110,13 +110,11 @@ async def test_enqueue_gated_on_pending_work(
         yield db_session
 
     monkeypatch.setattr(scheduler_module, "tracked_db", _db)
-    monkeypatch.setattr(
-        scheduler_module, "has_pending_work", AsyncMock(return_value=has_work)
+    task = RECONCILER_TASKS["sync_vectors"].model_copy(
+        update={"has_pending": AsyncMock(return_value=has_work)}
     )
 
-    enqueued = await ReconcilerScheduler()._try_enqueue_task(  # pyright: ignore[reportPrivateUsage]
-        RECONCILER_TASKS["sync_vectors"]
-    )
+    enqueued = await ReconcilerScheduler()._try_enqueue_task(task)  # pyright: ignore[reportPrivateUsage]
     rows = (
         (
             await db_session.execute(
@@ -133,6 +131,10 @@ async def test_enqueue_gated_on_pending_work(
     assert len(rows) == (1 if has_work else 0)
 
 
+def test_sync_vectors_registers_its_gate() -> None:
+    assert RECONCILER_TASKS["sync_vectors"].has_pending is has_pending_work
+
+
 async def test_cleanup_queue_is_not_gated(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -141,12 +143,9 @@ async def test_cleanup_queue_is_not_gated(
         yield db_session
 
     monkeypatch.setattr(scheduler_module, "tracked_db", _db)
-    gate = AsyncMock(return_value=False)
-    monkeypatch.setattr(scheduler_module, "has_pending_work", gate)
+    task = RECONCILER_TASKS["cleanup_queue"]
 
-    enqueued = await ReconcilerScheduler()._try_enqueue_task(  # pyright: ignore[reportPrivateUsage]
-        RECONCILER_TASKS["cleanup_queue"]
-    )
+    enqueued = await ReconcilerScheduler()._try_enqueue_task(task)  # pyright: ignore[reportPrivateUsage]
 
+    assert task.has_pending is None
     assert enqueued is True
-    gate.assert_not_awaited()

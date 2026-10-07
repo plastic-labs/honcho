@@ -746,6 +746,9 @@ class DBSettings(HonchoSettings):
     # deriver backs off and retries on a later poll).
     CONNECT_TIMEOUT_SECONDS: Annotated[int, Field(default=2, gt=0, le=60)] = 2
 
+    # Seconds a migrator waits for another migrator's advisory lock before failing
+    MIGRATION_LOCK_WAIT_SECONDS: Annotated[int, Field(default=300, gt=0, le=3600)] = 300
+
 
 class AuthSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="AUTH_", extra="ignore")  # pyright: ignore
@@ -1099,9 +1102,6 @@ class DialecticSettings(HonchoSettings):
     MAX_OUTPUT_TOKENS: Annotated[int, Field(default=8192, gt=0, le=100_000)] = 8192
     MAX_INPUT_TOKENS: Annotated[int, Field(default=100_000, gt=0, le=200_000)] = 100_000
 
-    # Token limit for get_recent_history tool within the agent
-    HISTORY_TOKEN_LIMIT: Annotated[int, Field(default=8192, gt=0, le=100_000)] = 8192
-
     # Extra tool rounds workspace chat gets on top of its level's limit. A
     # workspace query fans out over peers where a pair query reads one
     # representation, so it needs room to route and then recall. Not applied at
@@ -1369,11 +1369,6 @@ class DreamSettings(HonchoSettings):
 
     # Agent iteration limit - increased for extended reasoning workflow
     MAX_TOOL_ITERATIONS: Annotated[int, Field(default=20, gt=0, le=50)] = 20
-
-    # Token limit for get_recent_history tool within the agent
-    HISTORY_TOKEN_LIMIT: Annotated[int, Field(default=16_384, gt=0, le=200_000)] = (
-        16_384
-    )
 
     @staticmethod
     def _DEDUCTION_MODEL_CONFIG_DEFAULT() -> ConfiguredModelSettings:

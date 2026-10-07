@@ -2,3 +2,6 @@
 # wrangler dev reads this file automatically when it exists as `.dev.vars`.
 # For deployed Workers, use: wrangler secret put HONCHO_API_URL
 # HONCHO_API_URL=http://127.0.0.1:28000
+
+# Optional: report Worker errors to Sentry. Unset = no-op.
+# SENTRY_DSN=https://<key>@<org>.ingest.sentry.io/<project>
