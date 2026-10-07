@@ -28,18 +28,19 @@ Both the user and the AI agent have peer representations in Honcho:
 - **User peer**: observed from user messages. Learns preferences, goals, communication style.
 - **AI peer**: observed from assistant messages. Builds the agent's knowledge representation.
 
-Both representations are injected into the system prompt, giving Hermes awareness of both who it's talking to and what it knows.
+Both representations are injected into the user message at API-call time, giving Hermes awareness of both who it's talking to and what it knows. Only a static Honcho header goes in the system prompt, which keeps it stable for prompt caching.
 
 ## Available tools
 
-Hermes exposes four Honcho tools to the agent:
+Hermes exposes five Honcho tools to the agent (none when `recallMode` is `context`). Each takes an optional `peer` argument: `user` (default), `ai`, or any peer ID in the workspace.
 
 | Tool | What it does |
 |---|---|
-| `honcho_profile` | Fast peer card retrieval (no LLM). Returns curated key facts about the user. |
-| `honcho_search` | Semantic search over memory. Returns raw excerpts ranked by relevance. |
-| `honcho_context` | Dialectic Q&A powered by Honcho's LLM. Synthesizes answers from conversation history. |
-| `honcho_conclude` | Writes durable facts to Honcho when the user states preferences, corrections, or important context. |
+| `honcho_profile` | Fast peer card retrieval (no LLM). Returns curated key facts about the peer; pass `card` to overwrite it. |
+| `honcho_search` | Cross-session message search, hybrid semantic + keyword (no LLM). Returns ranked raw message excerpts. |
+| `honcho_context` | Full session context in one call (no LLM): summary, representation, peer card, and recent messages. |
+| `honcho_reasoning` | Dialectic Q&A via Honcho's `.chat()`, the only tool that runs an LLM. Synthesizes an answer; accepts an optional `reasoning_level`. |
+| `honcho_conclude` | Writes durable facts to Honcho when the user states preferences, corrections, or important context. Can also list conclusions and delete one by ID. |
 
 ## Running Honcho locally with Hermes
 
