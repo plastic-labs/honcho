@@ -1009,42 +1009,72 @@ class TestMessageEmbeddings:
         assert pending_emb.sync_state == "synced"
         assert pending_emb.sync_attempts == 0
 
-    async def test_reclaim_returns_only_rows_still_owned(
+    async def test_reclaim_requires_lease_token_match(
         self,
         db_session: AsyncSession,
         sample_data: tuple[models.Workspace, models.Peer],
     ) -> None:
-        """The pre-upsert reclaim must re-lease still-pending rows and exclude
-        rows another worker has already completed."""
+        """The pre-upsert reclaim must re-lease only rows whose ``last_sync_at``
+        still equals the token this worker wrote at claim time.
+
+        Two ways a row stops being owned: (1) another worker completed it
+        (``sync_state`` leaves ``pending``), or (2) another worker re-claimed it
+        and stamped a *different* ``last_sync_at`` while it is still pending.
+        Both must be excluded.
+        """
         workspace, peer = sample_data
-        still_pending = await self._create_pending_message_embedding(
+        still_owned = await self._create_pending_message_embedding(
             db_session, workspace, peer
         )
-        already_done = await self._create_pending_message_embedding(
+        completed_by_other = await self._create_pending_message_embedding(
+            db_session, workspace, peer
+        )
+        reclaimed_by_other = await self._create_pending_message_embedding(
             db_session, workspace, peer
         )
 
-        # Simulate another worker completing one of them while our lease lapsed.
+        our_token = datetime.datetime.now(datetime.UTC)
+        # Simulate our claim stamping all three with the same lease token.
+        for emb in (still_owned, completed_by_other, reclaimed_by_other):
+            await db_session.execute(
+                update(models.MessageEmbedding)
+                .where(models.MessageEmbedding.id == emb.id)
+                .values(last_sync_at=our_token)
+            )
+        await db_session.commit()
+
+        # Another worker completes one row (leaves pending) and re-claims a
+        # second (still pending, but stamps a different lease token).
+        other_token = our_token + datetime.timedelta(seconds=1)
         await db_session.execute(
             update(models.MessageEmbedding)
-            .where(models.MessageEmbedding.id == already_done.id)
+            .where(models.MessageEmbedding.id == completed_by_other.id)
             .values(sync_state="synced", last_sync_at=func.now())
+        )
+        await db_session.execute(
+            update(models.MessageEmbedding)
+            .where(models.MessageEmbedding.id == reclaimed_by_other.id)
+            .values(last_sync_at=other_token)
         )
         await db_session.commit()
 
         owned = await _reclaim_still_owned_message_embeddings(
-            db_session, [still_pending.id, already_done.id]
+            db_session,
+            {
+                still_owned.id: our_token,
+                completed_by_other.id: our_token,
+                reclaimed_by_other.id: our_token,
+            },
         )
         await db_session.commit()
 
-        assert still_pending.id in owned
-        assert already_done.id not in owned
+        assert owned == {still_owned.id}
 
-        # The still-owned row's lease is extended so no other worker can claim
-        # it for another SYNC_BACKOFF window.
-        await db_session.refresh(still_pending)
-        assert still_pending.sync_state == "pending"
-        assert still_pending.last_sync_at is not None
+        # The still-owned row's lease is re-stamped so no other worker can
+        # claim it for another SYNC_BACKOFF window.
+        await db_session.refresh(still_owned)
+        assert still_owned.sync_state == "pending"
+        assert still_owned.last_sync_at is not None
 
     async def test_external_upsert_skipped_when_lease_lost(
         self,

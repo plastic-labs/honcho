@@ -14,6 +14,7 @@ from typing import Any, cast
 
 import sentry_sdk
 from sqlalchemy import and_, delete, or_, select, update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import InstrumentedAttribute
 from sqlalchemy.sql import ColumnElement
@@ -254,7 +255,7 @@ async def _bump_message_embedding_sync_attempts(
 
 async def _reclaim_still_owned_message_embeddings(
     db: AsyncSession,
-    embedding_ids: list[int],
+    leases: dict[int, datetime.datetime],
 ) -> set[int]:
     """Re-verify ownership and re-lease rows immediately before an external
     upsert, returning the subset still owned.
@@ -266,32 +267,32 @@ async def _reclaim_still_owned_message_embeddings(
     the newer worker's external vector with this worker's (possibly stale)
     result, leaving the external index inconsistent with the completed DB row.
 
-    Re-claiming under ``FOR UPDATE SKIP LOCKED`` fences that window: only the
-    worker that actually holds the row lock — i.e. still owns a ``pending``
-    row — may proceed, and re-stamping ``last_sync_at`` extends the lease so no
-    other worker can claim the row for another ``SYNC_BACKOFF`` window (far
-    longer than the single upsert call that follows). Rows another worker
-    already completed are no longer ``pending`` and are excluded, so this
-    worker neither overwrites them nor counts them as synced.
+    Ownership is proven by a lease token, not by ``pending`` + unlocked: each
+    claim stamps a unique ``last_sync_at`` (stored in ``_ClaimedEmbedding``),
+    and a row is still owned only if its ``last_sync_at`` still equals the
+    token this worker wrote. ``FOR UPDATE SKIP LOCKED`` keeps the read
+    race-free, and re-stamping the same token extends the lease so no other
+    worker can claim the row for another ``SYNC_BACKOFF`` window. A row
+    another worker re-claimed carries a different ``last_sync_at`` and is
+    excluded, so this worker neither overwrites it nor counts it as synced.
     """
-    if not embedding_ids:
+    if not leases:
         return set()
 
     rows = (
         (
             await db.execute(
-                select(models.MessageEmbedding.id)
+                select(models.MessageEmbedding.id, models.MessageEmbedding.last_sync_at)
                 .where(
-                    models.MessageEmbedding.id.in_(embedding_ids),
+                    models.MessageEmbedding.id.in_(list(leases)),
                     models.MessageEmbedding.sync_state == "pending",
                 )
                 .with_for_update(skip_locked=True)
             )
         )
-        .scalars()
         .all()
     )
-    owned = set(rows)
+    owned = {emb_id for emb_id, last_sync_at in rows if last_sync_at == leases[emb_id]}
     if owned:
         await db.execute(
             update(models.MessageEmbedding)
@@ -502,6 +503,7 @@ class _ClaimedEmbedding:
     session_name: str
     peer_name: str
     embedding: Any | None  # pre-existing stored vector, if the row already had one
+    lease_token: datetime.datetime  # the ``last_sync_at`` this worker wrote at claim
 
 
 async def _claim_and_lease_message_embeddings(
@@ -519,6 +521,12 @@ async def _claim_and_lease_message_embeddings(
     if not rows:
         return []
 
+    # A per-claim lease token: the exact ``last_sync_at`` this worker stamps on
+    # the claimed rows. The reclaim fence later requires ``last_sync_at`` to
+    # still equal this token, so a worker whose lease lapsed and was re-claimed
+    # by someone else cannot mistake the row for still-owned.
+    lease_token = datetime.datetime.now(datetime.UTC)
+
     claimed = [
         _ClaimedEmbedding(
             id=row.id,
@@ -528,13 +536,14 @@ async def _claim_and_lease_message_embeddings(
             session_name=row.session_name,
             peer_name=row.peer_name,
             embedding=row.embedding,
+            lease_token=lease_token,
         )
         for row in rows
     ]
     await db.execute(
         update(models.MessageEmbedding)
         .where(models.MessageEmbedding.id.in_([c.id for c in claimed]))
-        .values(last_sync_at=func.now())
+        .values(last_sync_at=lease_token)
     )
     return claimed
 
@@ -685,16 +694,22 @@ async def _persist_message_embeddings(
                 }
                 if c.id in freshly_embedded:
                     sync_values["embedding"] = freshly_embedded[c.id]
-                await db.execute(
-                    update(models.MessageEmbedding)
-                    .where(
-                        models.MessageEmbedding.id == c.id,
-                        models.MessageEmbedding.sync_state == "pending",
-                    )
-                    .values(**sync_values)
+                result = cast(
+                    CursorResult[Any],
+                    await db.execute(
+                        update(models.MessageEmbedding)
+                        .where(
+                            models.MessageEmbedding.id == c.id,
+                            models.MessageEmbedding.sync_state == "pending",
+                        )
+                        .values(**sync_values)
+                    ),
                 )
+                # Count only rows actually persisted: a row another worker
+                # moved out of "pending" matched no row and must not count.
+                if result.rowcount:
+                    synced_count += 1
             await db.commit()
-            synced_count += len(vector_by_id)
         return synced_count, failed_count
 
     # External-store mode: positions in one short txn, upserts with no session,
@@ -708,10 +723,11 @@ async def _persist_message_embeddings(
     # (SYNC_BACKOFF), so another worker may have claimed and completed some of
     # these rows in the meantime. Only rows we still hold may be upserted, so a
     # late worker can't overwrite a newer worker's external vector.
+    leases: dict[int, datetime.datetime] = {
+        c.id: c.lease_token for c in claimed if c.id in vector_by_id
+    }
     async with tracked_db("reconciliation_embs_reclaim") as db:
-        owned_ids = await _reclaim_still_owned_message_embeddings(
-            db, list(vector_by_id)
-        )
+        owned_ids = await _reclaim_still_owned_message_embeddings(db, leases)
         await db.commit()
     if not owned_ids:
         return synced_count, failed_count
