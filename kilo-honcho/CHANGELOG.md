@@ -14,6 +14,15 @@ This package versions independently of the Honcho API, `@honcho-ai/sdk`, and oth
 - Kilo defaults: the `hosts.kilo` config block, workspace and agent peer `kilo`, telemetry headers `X-Honcho-Host: kilo` and `X-Honcho-Plugin: kilo-honcho`, and the `KILO_HONCHO_CONFIG_PATH` override.
 - The `honcho-memory` skill installs to `~/.config/kilo/skills`, or `$KILO_CONFIG_DIR/skills`, where Kilo looks for skills.
 - `.kilo` and `.kilocode` count as project-root markers alongside `.git`.
+- A Honcho section in Kilo's session sidebar, below Kilo's own Memory section. It shows whether Honcho is active, the user peer and workspace, how many conclusions reached the model, and how many messages were saved.
+- `/honcho:recall` shows the exact memory text Honcho added to the current session's prompt and system prompt.
+- The server writes this per-session record to `~/.honcho/kilo/sessions/<session id>.json` (mode 600) for the TUI to read. Files older than 14 days are removed at startup, and a file is removed when Kilo deletes its session.
+- `hosts.kilo.autoConclusions` turns keyword auto-conclusions back on.
+
+### Changed
+
+- Keyword auto-conclusions are off by default. They saved prompts containing words like "always" or "never" verbatim, including prompts such as "never mind, revert that", and duplicated what Honcho's deriver already extracts.
+- In `unified` observation mode the agent peer no longer observes the user. Nothing in unified mode read the agent's collection, so each message was derived twice. The session-start summary now reads the user's own collection in unified mode. The plugin sets the agent's session config once per session, because adding a peer to a session keeps its stored config.
 
 ### Fixed
 

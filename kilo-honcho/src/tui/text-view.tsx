@@ -9,8 +9,8 @@ const wrappedRows = (body: string) =>
 
 function TextView(props: { api: TuiPluginApi; title: string; body: string }) {
   const theme = () => props.api.theme.current
-  // The dialog frame and title take about 12 rows; the rest of the terminal scrolls the text.
-  const height = () => Math.max(3, Math.min(wrappedRows(props.body) + 1, props.api.renderer.terminalHeight - 12))
+  // Kilo centers the dialog, so 60% of the terminal leaves room for its frame and the title.
+  const height = () => Math.max(3, Math.min(wrappedRows(props.body) + 1, Math.floor(props.api.renderer.terminalHeight * 0.6)))
 
   return (
     <box paddingLeft={2} paddingRight={2} gap={1}>

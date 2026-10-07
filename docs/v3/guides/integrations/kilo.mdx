@@ -47,6 +47,7 @@ kilo plugin @honcho-ai/kilo-honcho --global --force
 
 - **Persistent Memory** — Kilo retains durable context across sessions
 - **Recall on every prompt** — Honcho's conclusions that match your prompt reach the model without being saved into Kilo's session history
+- **Visible recall** — A Honcho section in Kilo's sidebar shows what Honcho added, and `/honcho:recall` shows the exact text
 - **Cloud or Local Deployments** — Point at Honcho Cloud or a self-hosted / local instance
 - **Flexible Session Mapping** — Scope sessions per directory, repo, branch, chat instance, or globally
 - **Memory Skill** — A `honcho-memory` skill tells the agent when to search and save memory on its own
@@ -55,6 +56,24 @@ kilo plugin @honcho-ai/kilo-honcho --global --force
 ## Kilo Memory and Honcho
 
 Kilo has its own memory feature, Kilo Memory. It is off by default, and it stores facts about the current project on your machine. Honcho stores facts about you, and keeps them across every repo and every machine that uses the same workspace. The two run side by side. Kilo Memory's capture skips the text this plugin adds, so Honcho's recall is never copied into Kilo Memory.
+
+Kilo's sidebar shows `Memory • Disabled` while Kilo Memory is off. That line is about Kilo Memory only. The plugin adds its own Honcho section below it:
+
+```
+Honcho
+• Active
+Peer: alice (kilo)
+Profile: 6 conclusions
+Recalled: 4 conclusions
+Saved: 12 messages
+/honcho:recall to view
+```
+
+`Profile` counts the conclusions added to the system prompt when the session started. `Recalled` counts the conclusions attached to your most recent prompt that matched memory. `Saved` counts the messages this session sent to Honcho. Run `/honcho:recall` to read the exact text the model received.
+
+<Note>
+The sidebar and the `/honcho:*` commands belong to the Kilo CLI's terminal UI. The VS Code and JetBrains extensions do not load TUI plugins, so they show neither. Memory still works there.
+</Note>
 
 ## Configuration
 
@@ -77,7 +96,9 @@ Configuration lives in a single shared file at `~/.honcho/config.json`, shared w
 }
 ```
 
-Top-level shared fields are `apiKey`, `peerName`, and `baseUrl`. Kilo's host-scoped settings live under `hosts.kilo`: `workspace`, `aiPeer`, `recallMode`, `observationMode`, `agentObserveMe`, and `sessionStrategy`. Set `KILO_HONCHO_CONFIG_PATH` to use a different file.
+Top-level shared fields are `apiKey`, `peerName`, and `baseUrl`. Kilo's host-scoped settings live under `hosts.kilo`: `workspace`, `aiPeer`, `recallMode`, `observationMode`, `agentObserveMe`, `autoConclusions`, and `sessionStrategy`. Set `KILO_HONCHO_CONFIG_PATH` to use a different file.
+
+`autoConclusions` is off by default. When it is on, a prompt that contains phrases such as "I prefer", "always", "never" or "remember that" is saved verbatim as a conclusion, so it is available on the next prompt. Honcho already derives conclusions from every saved message, and the keyword rule also catches prompts like "never mind, revert that".
 
 A peer belongs to one workspace. With the defaults, Kilo writes to its own `kilo` workspace, so your Kilo peer starts empty and stays separate from your peer in other Honcho integrations. To share one memory of you across tools, set the same `workspace` for each of them.
 
@@ -126,6 +147,7 @@ If Kilo is running inside Docker or another remote environment, `localhost` won'
 | --- | --- |
 | `/honcho:setup` | First-time setup for cloud or local Honcho |
 | `/honcho:status` | Show effective Honcho status for the current Kilo project |
+| `/honcho:recall` | Show the exact memory text Honcho added to the current session |
 | `/honcho:settings` | Show effective config values and config paths |
 | `/honcho:config` | Edit shared Honcho fields |
 | `/honcho:import` | Preview or import local Kilo session history into Honcho |
@@ -158,6 +180,7 @@ The plugin hooks into these Kilo plugin capabilities:
 - `shell.env`
 - `tool`
 - `dispose`
+- the `sidebar_content` TUI slot
 
 ## What Install Writes
 
@@ -165,12 +188,15 @@ The plugin hooks into these Kilo plugin capabilities:
 - **Honcho config:** `~/.honcho/config.json`, created on first run if it does not exist, and updated by `/honcho:setup`, `/honcho:config`, and `honcho_set_config`. A file created on first run sets `peerName` to `user`; run `/honcho:setup` to use your own name. An `apiKey` written as `${HONCHO_API_KEY}` stays a reference.
 - **Skill:** `~/.config/kilo/skills/honcho-memory/SKILL.md`, or `$KILO_CONFIG_DIR/skills/honcho-memory/SKILL.md` when that variable is set.
 - **Import state:** `~/.honcho/kilo-import-state.json`, after you run `/honcho:import`.
+- **Session activity:** `~/.honcho/kilo/sessions/<session id>.json`, one file per Kilo session, with mode 600. It holds the memory text shown by `/honcho:recall`. Files older than 14 days are removed when the plugin starts, and a file is removed when Kilo deletes its session.
 
 ## Troubleshooting
 
 **The plugin does not load.** Run `kilo run --print-logs "hello"` and look for `kilo-honcho` and `Honcho session initialized for Kilo.` in the output. Setting `KILO_PURE=1` turns off every external plugin, including this one.
 
-**Kilo does not use memory.** Run `/honcho:status`. It shows the values the plugin uses, including any `HONCHO_API_KEY`, `HONCHO_URL`, or `HONCHO_WORKSPACE` set in your environment. If it reports no API key, run `/honcho:setup`. Recall starts once Honcho has something to recall; a new workspace has no conclusions until a few messages have been processed.
+**Kilo does not use memory.** Check the Honcho section in the sidebar. `Not set up` means there is no API key: run `/honcho:setup`. `Error` shows the reason the last Honcho request failed. Run `/honcho:status` to see the values the plugin uses, including any `HONCHO_API_KEY`, `HONCHO_URL`, or `HONCHO_WORKSPACE` set in your environment. Recall starts once Honcho has something to recall; a new workspace has no conclusions until a few messages have been processed.
+
+**The sidebar shows `Peer: user`.** The first run creates `~/.honcho/config.json` with `peerName` set to `user`. Run `/honcho:setup` to use your own name.
 
 **Memory is missing from another tool.** Each tool writes to its own workspace unless you set the same `workspace` for both. See [Configuration](#configuration).
 

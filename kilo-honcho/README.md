@@ -39,6 +39,7 @@ If you edit the config by hand, add `"@honcho-ai/kilo-honcho"` to the `plugin` a
 - **Cloud or local.** Use Honcho Cloud, or point at a self-hosted or local Honcho instance.
 - **Session mapping.** Sessions can be scoped per directory, repo, branch, chat instance or globally.
 - **Peer modeling.** User and agent observation are configurable (`observationMode`, `agentObserveMe`).
+- **Visible recall.** A Honcho section in Kilo's sidebar shows what Honcho added to the session, and `/honcho:recall` shows the exact text.
 
 ## Configuration
 
@@ -56,6 +57,7 @@ Configuration lives in the shared file `~/.honcho/config.json`, which other Honc
       "recallMode": "hybrid",
       "observationMode": "unified",
       "agentObserveMe": false,
+      "autoConclusions": false,
       "sessionStrategy": "per-directory",
       "removeUserPrefix": true,
       "apiKey": "hch-..." // optional; overrides the root apiKey for Kilo
@@ -92,11 +94,37 @@ This decides which Honcho collection `honcho_chat`, `honcho_create_conclusion` a
 | `unified` (default for new configs) | The user's own collection (`observer=user`, `observed=user`) | Several agents sharing what they learn about you |
 | `directional` | This agent's view of the user (`observer=aiPeer`, `observed=user`) | Memory kept separate per agent |
 
+In `unified` mode the agent peer does not observe the user, so Honcho derives each message once. If you switch to `directional`, the agent's view of you starts from the messages saved after the switch.
+
 A config file that existed before the plugin first ran, for example one written by another Honcho plugin, keeps `directional` and the legacy `user-<peerName>` peer until you choose otherwise with `/honcho:setup` or `/honcho:config`.
 
 ### Agent self-observation
 
 The agent peer is created with `observeMe: false`, so Honcho models you, not the assistant. Set `agentObserveMe: true` to give the agent its own representation.
+
+### Auto conclusions
+
+Honcho derives conclusions from every saved message. With `autoConclusions: true`, the plugin also saves a prompt verbatim as a conclusion when it contains phrases such as "I prefer", "always", "never" or "remember that". The conclusion is available on the next prompt, before Honcho's deriver runs. It is off by default because it also saves prompts like "never mind, revert that".
+
+## Seeing What Honcho Did
+
+Kilo's sidebar shows `Memory • Disabled` when Kilo's own memory feature is off. The plugin adds a Honcho section directly below it:
+
+```
+Honcho
+• Active
+Peer: alice (kilo)
+Profile: 6 conclusions
+Recalled: 4 conclusions
+Saved: 12 messages
+/honcho:recall to view
+```
+
+`Profile` counts the conclusions added to the system prompt when the session started. `Recalled` counts the conclusions attached to your most recent prompt that matched memory. `Saved` counts the messages this session sent to Honcho. The section shows `Not set up` before `/honcho:setup`, and `Error` with the reason when a Honcho request fails.
+
+`/honcho:recall` opens the exact text the model received. Kilo does not save this text in its session history.
+
+The server half writes this record to `~/.honcho/kilo/sessions/<session id>.json` with mode 600, and the TUI reads it. The sidebar and the `/honcho:*` commands belong to the Kilo CLI's terminal UI. The VS Code and JetBrains extensions do not load TUI plugins, so they show neither.
 
 ## Operator Commands
 
@@ -104,6 +132,7 @@ The agent peer is created with `observeMe: false`, so Honcho models you, not the
 | --- | --- |
 | `/honcho:setup` | First-time setup for cloud or local Honcho |
 | `/honcho:status` | Effective Honcho status for the current project |
+| `/honcho:recall` | The exact memory text Honcho added to the current session |
 | `/honcho:settings` | Effective config values and config paths |
 | `/honcho:config` | Edit shared Honcho fields in `~/.honcho/config.json` |
 | `/honcho:import` | Preview or import local Kilo session history into Honcho |
@@ -133,6 +162,7 @@ The agent peer is created with `observeMe: false`, so Honcho models you, not the
 | `HONCHO_*` variables for shell tools | `shell.env` |
 | `honcho_*` tools | `tool` |
 | Session start, assistant capture, cleanup | `event` |
+| Honcho sidebar section (TUI) | `sidebar_content` slot |
 
 The packaged `honcho-memory` skill is copied to `~/.config/kilo/skills/honcho-memory`, or `$KILO_CONFIG_DIR/skills/honcho-memory` when set.
 
@@ -143,6 +173,8 @@ bun install
 bun run check
 bun run test
 ```
+
+`bun run build` compiles the sidebar's JSX with `@opentui/solid`'s Bun plugin. `solid-js` and `@opentui/*` stay external: Kilo rewrites those imports to its own copies when it loads the plugin, so the sidebar shares Kilo's Solid runtime.
 
 To load a local build in Kilo, build it and point the `plugin` array at the server entry by file path. The exported plugin id makes a file-path entry valid:
 
