@@ -128,3 +128,11 @@ def test_model_visible_scaffold_carries_no_example_facts() -> None:
     for legacy in ("dog", "NYC", "25 years", "six years", "alice", "Rover", "Ann "):
         assert legacy not in prompt
         assert legacy not in schema
+
+
+def test_minimal_deriver_prompt_names_the_peer_id_as_subject() -> None:
+    """The subject instruction must carry the real id, so the model sees the
+    exact token it should write instead of the phrase "the target peer"."""
+    prompt = minimal_deriver_prompt(peer_id="x7", messages="", custom_instructions=None)
+
+    assert "Write `x7` as the subject of every observation" in prompt

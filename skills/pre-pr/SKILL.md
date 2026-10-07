@@ -23,7 +23,7 @@ Stop if any of these fail:
 - issue is closed (unless this PR is explicitly reopening it)
 - labels do not include `maintainer-approved`
 
-Say which check failed. Do not draft a PR body around it.
+Say which check failed. Do not draft a PR body around it. If there is no issue yet, file one following [Filing an issue](../../CONTRIBUTING.md#filing-an-issue) and wait for `maintainer-approved`.
 
 ## 2. Classify the diff
 

@@ -330,6 +330,23 @@ def test_deriver_init_does_not_touch_api_counters():
         assert sample(gauge) is None, f"{gauge} must be API-only"
 
 
+@pytest.mark.usefixtures("metrics_enabled")
+@pytest.mark.parametrize("scheduler", ["api", "deriver"])
+@pytest.mark.parametrize("instance_type", ["api", "deriver"])
+def test_backfill_pending_zero_init_follows_scheduler(
+    monkeypatch: pytest.MonkeyPatch, scheduler: str, instance_type: str
+):
+    """Only the process running the reconciler scheduler refreshes the gauge."""
+    from src.reconciler.backfill import BACKFILLS
+
+    monkeypatch.setattr("src.config.settings.DERIVER.SCHEDULER", scheduler)
+    prometheus_metrics.initialize_bounded_metrics(instance_type=instance_type)
+    expected = 0.0 if scheduler == instance_type else None
+    assert BACKFILLS
+    for name in BACKFILLS:
+        assert sample("backfill_pending", task=name) == expected
+
+
 # ---------------------------------------------------------------------------
 # telemetry_events_dropped: per-emitter child materialization
 # ---------------------------------------------------------------------------

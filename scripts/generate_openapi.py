@@ -67,6 +67,11 @@ def build_spec() -> dict[str, Any]:
     app.openapi_schema = None
 
     spec = app.openapi()
+    # The app advertises a relative server so a self-hosted /docs targets its
+    # own origin; the published reference must point at the hosted API.
+    spec["servers"] = [
+        {"url": "https://api.honcho.dev", "description": "Production SaaS Platform"}
+    ]
     _ = _hoist_defs(spec)
     return spec
 

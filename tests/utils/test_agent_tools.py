@@ -31,19 +31,15 @@ from src.utils.agent_tools import (
     ToolContext,
     _bounded_int,  # pyright: ignore[reportPrivateUsage]
     _format_message_snippets,  # pyright: ignore[reportPrivateUsage]
-    _handle_create_observations,  # pyright: ignore[reportPrivateUsage]
     _handle_create_observations_deductive,  # pyright: ignore[reportPrivateUsage]
+    _handle_create_observations_impl,  # pyright: ignore[reportPrivateUsage]
     _handle_create_observations_inductive,  # pyright: ignore[reportPrivateUsage]
     _handle_delete_observations,  # pyright: ignore[reportPrivateUsage]
-    _handle_extract_preferences,  # pyright: ignore[reportPrivateUsage]
-    _handle_finish_consolidation,  # pyright: ignore[reportPrivateUsage]
     _handle_get_messages_by_date_range,  # pyright: ignore[reportPrivateUsage]
     _handle_get_observation_context,  # pyright: ignore[reportPrivateUsage]
     _handle_get_peer_card,  # pyright: ignore[reportPrivateUsage]
     _handle_get_reasoning_chain,  # pyright: ignore[reportPrivateUsage]
-    _handle_get_recent_history,  # pyright: ignore[reportPrivateUsage]
     _handle_get_recent_observations,  # pyright: ignore[reportPrivateUsage]
-    _handle_get_session_summary,  # pyright: ignore[reportPrivateUsage]
     _handle_grep_messages,  # pyright: ignore[reportPrivateUsage]
     _handle_search_memory,  # pyright: ignore[reportPrivateUsage]
     _handle_search_messages,  # pyright: ignore[reportPrivateUsage]
@@ -53,9 +49,7 @@ from src.utils.agent_tools import (
     _validate_peer_card_entry,  # pyright: ignore[reportPrivateUsage]
     create_observations,
     create_tool_executor,
-    extract_preferences,
     get_observation_context,
-    get_recent_history,
 )
 from src.utils.evidence import EvidenceAccumulator
 
@@ -161,7 +155,6 @@ def make_tool_context(tool_test_data: Any) -> Callable[..., ToolContext]:
         *,
         current_messages: list[models.Message] | None = None,
         include_observation_ids: bool = False,
-        history_token_limit: int = 8192,
         session_name: str | None = None,
         run_id: str | None = None,
         agent_type: str | None = None,
@@ -175,7 +168,6 @@ def make_tool_context(tool_test_data: Any) -> Callable[..., ToolContext]:
             session_name=session_name if session_name is not None else session.name,
             current_messages=current_messages,
             include_observation_ids=include_observation_ids,
-            history_token_limit=history_token_limit,
             db_lock=shared_lock,
             run_id=run_id,
             agent_type=agent_type,
@@ -193,7 +185,7 @@ def make_tool_context(tool_test_data: Any) -> Callable[..., ToolContext]:
 
 @pytest.mark.asyncio
 class TestCreateObservations:
-    """Tests for _handle_create_observations."""
+    """Tests for _handle_create_observations_impl."""
 
     async def test_deriver_context_creates_with_message_ids(
         self,
@@ -209,7 +201,7 @@ class TestCreateObservations:
         workspace, peer1, peer2, _session, messages, _ = tool_test_data
         ctx = make_tool_context(current_messages=messages)
 
-        result = await _handle_create_observations(
+        result = await _handle_create_observations_impl(
             ctx,
             {
                 "observations": [
@@ -243,7 +235,7 @@ class TestCreateObservations:
         source_ids = [documents[0].id, documents[1].id]
         ctx = make_tool_context(current_messages=None)
 
-        result = await _handle_create_observations(
+        result = await _handle_create_observations_impl(
             ctx,
             {
                 "observations": [
@@ -281,7 +273,7 @@ class TestCreateObservations:
         even when they pass level='explicit' to the generic tool."""
         ctx = make_tool_context(current_messages=None)
 
-        result = await _handle_create_observations(
+        result = await _handle_create_observations_impl(
             ctx,
             {
                 "observations": [
@@ -312,7 +304,7 @@ class TestCreateObservations:
         *_, documents = tool_test_data
         ctx = make_tool_context(current_messages=None)
 
-        result = await _handle_create_observations(
+        result = await _handle_create_observations_impl(
             ctx,
             {
                 "observations": [
@@ -350,7 +342,7 @@ class TestCreateObservations:
         with false provenance."""
         ctx = make_tool_context(current_messages=None)
 
-        result = await _handle_create_observations(
+        result = await _handle_create_observations_impl(
             ctx,
             {
                 "observations": [
@@ -387,7 +379,7 @@ class TestCreateObservations:
         real_id = documents[0].id
         ctx = make_tool_context(current_messages=None)
 
-        result = await _handle_create_observations(
+        result = await _handle_create_observations_impl(
             ctx,
             {
                 "observations": [
@@ -421,7 +413,7 @@ class TestCreateObservations:
         real_id = documents[0].id
         ctx = make_tool_context(current_messages=None)
 
-        result = await _handle_create_observations(
+        result = await _handle_create_observations_impl(
             ctx,
             {
                 "observations": [
@@ -463,7 +455,7 @@ class TestCreateObservations:
         real_id = documents[1].id
         ctx = make_tool_context(current_messages=None)
 
-        result = await _handle_create_observations(
+        result = await _handle_create_observations_impl(
             ctx,
             {
                 "observations": [
@@ -499,7 +491,7 @@ class TestCreateObservations:
         """Empty observations list returns error message."""
         ctx = make_tool_context(current_messages=None)
 
-        result = await _handle_create_observations(ctx, {"observations": []})
+        result = await _handle_create_observations_impl(ctx, {"observations": []})
 
         assert "ERROR" in result
         # Handlers may return ToolResult (); str() returns .content.
@@ -1192,7 +1184,6 @@ class TestSearchMemory:
             session_name=None,
             current_messages=None,
             include_observation_ids=False,
-            history_token_limit=8192,
             db_lock=asyncio.Lock(),
         )
 
@@ -1568,45 +1559,6 @@ class TestGetMessagesByDateRange:
 
 
 @pytest.mark.asyncio
-class TestGetRecentHistory:
-    """Tests for _handle_get_recent_history."""
-
-    async def test_with_session_returns_messages(
-        self, make_tool_context: Callable[..., ToolContext]
-    ):
-        """Returns conversation history for session."""
-        ctx = make_tool_context()
-
-        result = await _handle_get_recent_history(ctx, {})
-
-        assert "Conversation history" in result
-        assert "messages" in str(result).lower()
-
-    async def test_without_session_uses_observed(
-        self,
-        tool_test_data: Any,
-    ):
-        """Without session, retrieves messages from observed peer."""
-        workspace, peer1, peer2, _, _, _ = tool_test_data
-
-        ctx = ToolContext(
-            workspace_name=workspace.name,
-            observer=peer1.name,
-            observed=peer2.name,
-            session_name=None,  # No session
-            current_messages=None,
-            include_observation_ids=False,
-            history_token_limit=8192,
-            db_lock=asyncio.Lock(),
-        )
-
-        result = await _handle_get_recent_history(ctx, {})
-
-        # Should get messages from peer2 across sessions
-        assert isinstance(result, str)
-
-
-@pytest.mark.asyncio
 class TestGetObservationContext:
     """Tests for _handle_get_observation_context."""
 
@@ -1710,63 +1662,6 @@ class TestGetReasoningChain:
         )
 
         assert "None found" in result
-
-
-@pytest.mark.asyncio
-class TestGetSessionSummary:
-    """Tests for _handle_get_session_summary."""
-
-    async def test_returns_summary_when_exists(
-        self,
-        db_session: AsyncSession,
-        tool_test_data: Any,
-        make_tool_context: Callable[..., ToolContext],
-    ):
-        """Returns session summary if one exists."""
-        from sqlalchemy import update
-
-        from src.cache.client import cache
-        from src.crud.session import session_cache_key
-
-        workspace, _, _, session, _, _ = tool_test_data
-
-        # Update the session's internal_metadata directly in DB
-        # Note: summary keys use the SummaryType enum values, not "short"/"long"
-        await db_session.execute(
-            update(models.Session)
-            .where(models.Session.name == session.name)
-            .where(models.Session.workspace_name == workspace.name)
-            .values(
-                internal_metadata={
-                    "summaries": {
-                        "honcho_chat_summary_short": {
-                            "content": "This is a test summary",
-                            "summary_type": "short",
-                        }
-                    }
-                }
-            )
-        )
-        await db_session.commit()
-
-        # Invalidate the session cache so the updated data is visible
-        cache_key = session_cache_key(workspace.name, session.name)
-        await cache.delete(cache_key)
-
-        ctx = make_tool_context()
-        result = await _handle_get_session_summary(ctx, {"summary_type": "short"})
-
-        assert "Session summary" in result
-        assert "This is a test summary" in result
-
-    async def test_returns_no_summary_when_missing(
-        self, make_tool_context: Callable[..., ToolContext]
-    ):
-        """Returns appropriate message when no summary exists."""
-        ctx = make_tool_context()
-        result = await _handle_get_session_summary(ctx, {"summary_type": "short"})
-
-        assert "No session summary" in result
 
 
 # =============================================================================
@@ -2106,7 +2001,6 @@ class TestGetPeerCard:
             session_name=None,
             current_messages=None,
             include_observation_ids=False,
-            history_token_limit=8192,
             db_lock=asyncio.Lock(),
         )
 
@@ -2118,122 +2012,6 @@ class TestGetPeerCard:
 # =============================================================================
 # Unit Tests: Consolidation Tools
 # =============================================================================
-
-
-@pytest.mark.asyncio
-class TestExtractPreferences:
-    """Tests for _handle_extract_preferences."""
-
-    async def test_finds_preference_patterns(
-        self,
-        db_session: AsyncSession,
-        tool_test_data: Any,
-        make_tool_context: Callable[..., ToolContext],
-    ):
-        """Finds preference patterns in messages."""
-        workspace, _, peer2, session, _, _ = tool_test_data
-
-        # Add messages with preference patterns
-        preference_msg = models.Message(
-            workspace_name=workspace.name,
-            session_name=session.name,
-            peer_name=peer2.name,
-            content="I prefer brief responses and always include code examples",
-            seq_in_session=100,
-            token_count=20,
-            created_at=datetime.now(UTC),
-        )
-        db_session.add(preference_msg)
-        await db_session.flush()
-
-        ctx = make_tool_context()
-        result = await _handle_extract_preferences(ctx, {})
-
-        # Should return some result about preferences
-        assert isinstance(result, str)
-
-    async def test_falls_back_to_per_query_embedding_when_batch_fails(
-        self,
-        tool_test_data: Any,
-        monkeypatch: pytest.MonkeyPatch,
-    ):
-        """Batch embedding failure should not abort preference extraction."""
-        workspace, _, observed_peer, session, _, _ = tool_test_data
-
-        async def fail_batch_embed(_texts: list[str]) -> list[list[float]]:
-            raise RuntimeError("embedding provider timeout")
-
-        async def unexpected_embed_call(_query: str) -> list[float]:
-            raise AssertionError(
-                "extract_preferences should not call embedding_client.embed "
-                + "when batch embedding fails"
-            )
-
-        embedding_args: list[list[float] | None] = []
-
-        async def fake_search_messages(
-            workspace_name: str,
-            session_name: str | None,
-            query: str,
-            limit: int,
-            context_window: int,
-            embedding: list[float] | None,
-            observer: str | None = None,
-            **_kwargs: Any,
-        ) -> list[tuple[list[models.Message], list[models.Message]]]:
-            _ = (limit, context_window, observer)
-            embedding_args.append(embedding)
-            msg = models.Message(
-                workspace_name=workspace_name,
-                session_name=session_name,
-                peer_name=observed_peer.name,
-                content=f"Relevant from {query}",
-                seq_in_session=1,
-                token_count=5,
-                created_at=datetime.now(UTC),
-            )
-            return [([msg], [])]
-
-        monkeypatch.setattr(
-            "src.utils.agent_tools.embedding_client.simple_batch_embed",
-            fail_batch_embed,
-        )
-        monkeypatch.setattr(
-            "src.utils.agent_tools.embedding_client.embed",
-            unexpected_embed_call,
-        )
-        monkeypatch.setattr(
-            "src.utils.agent_tools.crud.search_messages", fake_search_messages
-        )
-
-        result = await extract_preferences(
-            workspace_name=workspace.name,
-            session_name=session.name,
-            observed=observed_peer.name,
-        )
-
-        # We still get partial results despite one per-query failure.
-        assert result["messages"]
-        assert len(embedding_args) == 5
-        assert all(embedding is None for embedding in embedding_args)
-
-
-@pytest.mark.asyncio
-class TestFinishConsolidation:
-    """Tests for _handle_finish_consolidation."""
-
-    async def test_returns_completion_signal(
-        self, make_tool_context: Callable[..., ToolContext]
-    ):
-        """Returns correct completion signal."""
-        ctx = make_tool_context()
-
-        result = await _handle_finish_consolidation(
-            ctx, {"summary": "Consolidated 5 observations, updated peer card"}
-        )
-
-        assert "CONSOLIDATION_COMPLETE" in result
-        assert "Consolidated 5 observations" in result
 
 
 # =============================================================================
@@ -2269,11 +2047,10 @@ class TestToolExecutor:
             session_name=session.name,
         )
 
-        result = await executor("get_peer_card", {})
+        result = await executor("get_recent_observations", {})
 
         assert isinstance(result, str)
-        # Should be from get_peer_card handler
-        assert "peer card" in result.lower() or "No peer card" in result
+        assert "recent observations" in result
 
     async def test_executor_unknown_tool_returns_error(self, tool_test_data: Any):
         """Unknown tool name returns error message."""
@@ -2536,31 +2313,6 @@ class TestSessionAllowlistFailClosed:
     from the dialectic loop, so the allowlist is enforced at the boundary.
     """
 
-    async def test_get_recent_history_respects_allowlist(
-        self, db_session: AsyncSession, tool_test_data: Any
-    ):
-        workspace, _peer1, peer2, session, _messages, _ = tool_test_data
-
-        # session IS in the allowlist -> history returned
-        allowed = await get_recent_history(
-            db_session,
-            workspace_name=workspace.name,
-            session_name=session.name,
-            observed=peer2.name,
-            session_allowlist=[session.name],
-        )
-        assert allowed  # non-empty
-
-        # session is NOT in the allowlist -> fail closed
-        blocked = await get_recent_history(
-            db_session,
-            workspace_name=workspace.name,
-            session_name=session.name,
-            observed=peer2.name,
-            session_allowlist=["some-other-session"],
-        )
-        assert blocked == []
-
     async def test_get_observation_context_fails_closed(
         self, db_session: AsyncSession, tool_test_data: Any
     ):
@@ -2695,7 +2447,6 @@ class TestEvidenceCollection:
             session_name=session.name,
             current_messages=None,
             include_observation_ids=False,
-            history_token_limit=8192,
             db_lock=asyncio.Lock(),
             agent_type="dialectic",
             evidence=evidence,
@@ -2840,7 +2591,6 @@ class TestEvidenceCollection:
             session_name=session.name,
             current_messages=None,
             include_observation_ids=False,
-            history_token_limit=8192,
             db_lock=asyncio.Lock(),
             session_allowlist=[],
             agent_type="dialectic",

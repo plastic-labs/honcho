@@ -89,33 +89,58 @@
                   "v3/documentation/reference/sdk",
                   "v3/documentation/reference/cli"
                 ]
+              },
+              {
+                "group": "Migrations",
+                "pages": ["v3/guides/migrations/mem0"]
               }
             ]
           },
           {
-            "tab": "Guides",
-            "groups": [
+            "tab": "Integrations",
+            "pages": [
+              "v3/guides/overview",
+              "v3/guides/integrations/mcp",
               {
-                "group": "Overview",
-                "pages": ["v3/guides/overview"]
+                "group": "General Agents",
+                "pages": [
+                  "v3/guides/integrations/hermes",
+                  "v3/guides/integrations/openclaw"
+                ]
               },
               {
-                "group": "Integrations",
+                "group": "Coding Agents",
                 "pages": [
                   "v3/guides/integrations/claude-code",
-                  "v3/guides/integrations/opencode",
+                  "v3/guides/community/pi-honcho-memory",
                   "v3/guides/integrations/codex",
-                  "v3/guides/integrations/deepseek-harness",
+                  "v3/guides/integrations/opencode",
+                  "v3/guides/integrations/deepseek-harness"
+                ]
+              },
+              {
+                "group": "Frameworks & SDKs",
+                "pages": [
                   "v3/guides/integrations/vercel-ai-sdk",
-                  "v3/guides/integrations/crewai",
                   "v3/guides/integrations/langgraph",
-                  "v3/guides/integrations/mcp",
+                  "v3/guides/integrations/crewai",
+                  "v3/guides/community/agent0",
+                  "v3/guides/integrations/paperclip"
+                ]
+              },
+              {
+                "group": "Apps & Workflows",
+                "pages": [
+                  "v3/guides/integrations/sillytavern",
                   "v3/guides/integrations/n8n",
-                  "v3/guides/integrations/openclaw",
-                  "v3/guides/integrations/hermes",
-                  "v3/guides/integrations/zo-computer",
-                  "v3/guides/integrations/paperclip",
-                  "v3/guides/integrations/sillytavern"
+                  "v3/guides/integrations/zo-computer"
+                ]
+              },
+              {
+                "group": "Data Sources",
+                "pages": [
+                  "v3/guides/gmail",
+                  "v3/guides/granola"
                 ]
               },
               {
@@ -123,22 +148,9 @@
                 "pages": [
                   "v3/guides/recipes/unified-memory-setup",
                   "v3/guides/discord",
-                  "v3/guides/granola",
                   "v3/guides/telegram",
-                  "v3/guides/integrations/reachy-mini",
-                  "v3/guides/gmail"
+                  "v3/guides/integrations/reachy-mini"
                 ]
-              },
-              {
-                "group": "Community Integrations",
-                "pages": [
-                  "v3/guides/community/agent0",
-                  "v3/guides/community/pi-honcho-memory"
-                ]
-              },
-              {
-                "group": "Migrations",
-                "pages": ["v3/guides/migrations/mem0"]
               }
             ]
           },

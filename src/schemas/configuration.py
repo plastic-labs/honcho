@@ -5,9 +5,9 @@ the fully-resolved variants used at runtime.
 """
 
 from enum import Enum
-from typing import Any, Self, cast
+from typing import Annotated, Any, Self, cast
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
 
 from src.config import settings
 from src.utils.tokens import estimate_tokens
@@ -21,70 +21,6 @@ class DreamType(str, Enum):
     # peer-card tools. Used for event-driven refreshes (scope membership
     # changes, cold starts) — never creates or deletes observations.
     CARD_REFRESH = "card_refresh"
-
-
-class ReasoningConfiguration(BaseModel):
-    enabled: bool | None = Field(
-        default=None,
-        description="Whether to enable reasoning functionality.",
-    )
-    custom_instructions: str | None = Field(
-        default=None,
-        description="Optional custom instructions for the reasoning system on this workspace/session/message. Rejected if they exceed the deriver custom-instruction token cap.",
-    )
-
-    @field_validator("custom_instructions")
-    @classmethod
-    def validate_custom_instructions(cls, value: str | None) -> str | None:
-        return _validate_custom_instructions_budget(value)
-
-
-class PeerCardConfiguration(BaseModel):
-    use: bool | None = Field(
-        default=None,
-        description="Whether to use peer card related to this peer during reasoning process.",
-    )
-    create: bool | None = Field(
-        default=None,
-        description="Whether to generate peer card based on content.",
-    )
-
-
-class SummaryConfiguration(BaseModel):
-    enabled: bool | None = Field(
-        default=None,
-        description="Whether to enable summary functionality.",
-    )
-    messages_per_short_summary: int | None = Field(
-        default=None,
-        ge=10,
-        description="Number of messages per short summary. Must be positive, greater than or equal to 10, and less than messages_per_long_summary.",
-    )
-    messages_per_long_summary: int | None = Field(
-        default=None,
-        ge=20,
-        description="Number of messages per long summary. Must be positive, greater than or equal to 20, and greater than messages_per_short_summary.",
-    )
-
-    @model_validator(mode="after")
-    def validate_summary_thresholds(self) -> Self:
-        """Validate that short summary threshold <= long summary threshold."""
-        short = self.messages_per_short_summary
-        long = self.messages_per_long_summary
-
-        if short is not None and long is not None and short >= long:
-            raise ValueError(
-                "messages_per_short_summary must be less than messages_per_long_summary"
-            )
-
-        return self
-
-
-class DreamConfiguration(BaseModel):
-    enabled: bool | None = Field(
-        default=None,
-        description="Whether to enable dream functionality. If reasoning is disabled, dreams will also be disabled and this setting will be ignored.",
-    )
 
 
 def _validate_custom_instructions_budget(
@@ -107,6 +43,89 @@ def _validate_custom_instructions_budget(
     return custom_instructions
 
 
+CustomInstructions = Annotated[
+    str | None, AfterValidator(_validate_custom_instructions_budget)
+]
+
+
+class ReasoningConfiguration(BaseModel):
+    enabled: bool | None = Field(
+        default=None,
+        description="Whether to enable reasoning functionality.",
+    )
+    custom_instructions: CustomInstructions = Field(
+        default=None,
+        description="Custom instructions for the deriver. Overrides the top-level custom_instructions at the same level. Set to an empty string to explicitly use none.",
+    )
+
+
+class PeerCardConfiguration(BaseModel):
+    use: bool | None = Field(
+        default=None,
+        description="Whether to use peer card related to this peer during reasoning process.",
+    )
+    create: bool | None = Field(
+        default=None,
+        description="Whether to generate peer card based on content.",
+    )
+    custom_instructions: CustomInstructions = Field(
+        default=None,
+        description="Custom instructions for peer card updates. Added on top of the dream instructions and applied within the peer card's allowed entry kinds. Does not fall back to the top-level custom_instructions.",
+    )
+
+
+class SummaryConfiguration(BaseModel):
+    enabled: bool | None = Field(
+        default=None,
+        description="Whether to enable summary functionality.",
+    )
+    messages_per_short_summary: int | None = Field(
+        default=None,
+        ge=10,
+        description="Number of messages per short summary. Must be positive, greater than or equal to 10, and less than messages_per_long_summary.",
+    )
+    messages_per_long_summary: int | None = Field(
+        default=None,
+        ge=20,
+        description="Number of messages per long summary. Must be positive, greater than or equal to 20, and greater than messages_per_short_summary.",
+    )
+    custom_instructions: CustomInstructions = Field(
+        default=None,
+        description="Custom instructions for session summaries. Overrides the top-level custom_instructions at the same level. Set to an empty string to explicitly use none.",
+    )
+
+    @model_validator(mode="after")
+    def validate_summary_thresholds(self) -> Self:
+        """Validate that short summary threshold <= long summary threshold."""
+        short = self.messages_per_short_summary
+        long = self.messages_per_long_summary
+
+        if short is not None and long is not None and short >= long:
+            raise ValueError(
+                "messages_per_short_summary must be less than messages_per_long_summary"
+            )
+
+        return self
+
+
+class DreamConfiguration(BaseModel):
+    enabled: bool | None = Field(
+        default=None,
+        description="Whether to enable dream functionality. If reasoning is disabled, dreams will also be disabled and this setting will be ignored.",
+    )
+    custom_instructions: CustomInstructions = Field(
+        default=None,
+        description="Custom instructions for dreams. Overrides the top-level custom_instructions at the same level. Set to an empty string to explicitly use none.",
+    )
+
+
+class DialecticConfiguration(BaseModel):
+    custom_instructions: CustomInstructions = Field(
+        default=None,
+        description="Custom instructions for the dialectic chat endpoints. Overrides the top-level custom_instructions at the same level. Set to an empty string to explicitly use none.",
+    )
+
+
 class WorkspaceConfiguration(BaseModel):
     """
     The set of options that can be in a workspace DB-level configuration dictionary.
@@ -116,6 +135,10 @@ class WorkspaceConfiguration(BaseModel):
 
     model_config = ConfigDict(extra="allow")  # pyright: ignore
 
+    custom_instructions: CustomInstructions = Field(
+        default=None,
+        description="Custom instructions shared by the deriver, summarizer, dialectic, and dreamer. A module's own custom_instructions at the same level takes precedence, and session-level values beat workspace-level ones. Messages can only override reasoning.custom_instructions.",
+    )
     reasoning: ReasoningConfiguration | None = Field(
         default=None,
         description="Configuration for reasoning functionality.",
@@ -131,6 +154,10 @@ class WorkspaceConfiguration(BaseModel):
     dream: DreamConfiguration | None = Field(
         default=None,
         description="Configuration for dream functionality. If reasoning is disabled, dreams will also be disabled and these settings will be ignored.",
+    )
+    dialectic: DialecticConfiguration | None = Field(
+        default=None,
+        description="Configuration for the dialectic chat endpoints.",
     )
 
 
@@ -159,27 +186,34 @@ class MessageConfiguration(BaseModel):
 
 class ResolvedReasoningConfiguration(BaseModel):
     enabled: bool
-    custom_instructions: str | None = None
-
-    @field_validator("custom_instructions")
-    @classmethod
-    def validate_custom_instructions(cls, value: str | None) -> str | None:
-        return _validate_custom_instructions_budget(value)
+    custom_instructions: CustomInstructions = None
+    custom_instructions_source: str | None = None
 
 
 class ResolvedPeerCardConfiguration(BaseModel):
     use: bool
     create: bool
+    custom_instructions: CustomInstructions = None
+    custom_instructions_source: str | None = None
 
 
 class ResolvedSummaryConfiguration(BaseModel):
     enabled: bool
     messages_per_short_summary: int
     messages_per_long_summary: int
+    custom_instructions: CustomInstructions = None
+    custom_instructions_source: str | None = None
 
 
 class ResolvedDreamConfiguration(BaseModel):
     enabled: bool
+    custom_instructions: CustomInstructions = None
+    custom_instructions_source: str | None = None
+
+
+class ResolvedDialecticConfiguration(BaseModel):
+    custom_instructions: CustomInstructions = None
+    custom_instructions_source: str | None = None
 
 
 class ResolvedConfiguration(BaseModel):
@@ -192,6 +226,9 @@ class ResolvedConfiguration(BaseModel):
     peer_card: ResolvedPeerCardConfiguration
     summary: ResolvedSummaryConfiguration
     dream: ResolvedDreamConfiguration
+    dialectic: ResolvedDialecticConfiguration = Field(
+        default_factory=ResolvedDialecticConfiguration
+    )
 
     @model_validator(mode="before")
     @classmethod

@@ -37,6 +37,7 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
         - Listing a peer's sessions uses a new `session_peers (workspace_name, peer_name, session_name)` index and starts from that peer's rows instead of walking every session in the workspace (28.9ms to 0.15ms on a 326k-row test table). This release includes a migration. The index is not built `CONCURRENTLY`, so writes to `session_peers` wait while it builds (#1237)
         - LLM provider 5xx and connection errors are no longer sent to Sentry on every attempt by the Anthropic, OpenAI, and Google GenAI SDK integrations. Honcho reports the final error once its retries are exhausted, so an outage that recovers on retry no longer alerts. Client errors (400, 401, 404, 429) are still reported (#1242)
         - Dialectic and dreamer runs are typed `agent` in Langfuse, so they appear in the Agent Graph. Generation output with tool calls is an OpenAI-style assistant message carrying the tool arguments and any thinking, instead of just the tool names. The `langfuse` floor rises to `>=4.6.1` (#1258)
+        - The deriver prompt and output schema no longer carry example facts. New rules resolve relative dates against each message's `time`, treat details in a question or proposal the target peer accepts as stated by them, skip conversational mechanics (greetings, thanks, acknowledgements), and keep one fact per conclusion with its qualifiers attached and no reworded duplicates (#1263)
 
         ### Removed
 

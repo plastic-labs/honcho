@@ -10,24 +10,26 @@ for coordination.
 import asyncio
 import contextlib
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import sentry_sdk
 from pydantic import BaseModel
 from sqlalchemy import exists, select
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
 from src.config import settings
 from src.dependencies import tracked_db
 from src.models import QueueItem
-from src.reconciler.backfill_document_sources import (
-    has_pending_document_sources,
-)
+from src.reconciler.backfill import BACKFILLS, Backfill, record_backfill_pending
 from src.reconciler.sync_vectors import (
     has_pending_work,
     record_pending_embeddings_backlog,
 )
+from src.schemas import ReconcilerType
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +40,20 @@ class ReconcilerTask(BaseModel):
     name: str
     work_unit_key: str
     interval_seconds: int
+    payload: dict[str, Any]
+    # Enqueue is skipped when this returns False.
+    has_pending: Callable[[AsyncSession], Awaitable[bool]] | None = None
+
+
+def backfill_task(backfill: Backfill) -> ReconcilerTask:
+    """Reconciler task that runs one cycle of ``backfill``."""
+    return ReconcilerTask(
+        name=f"backfill_{backfill.name}",
+        work_unit_key=backfill.work_unit_key,
+        interval_seconds=backfill.interval_seconds,
+        payload=backfill.payload,
+        has_pending=backfill.has_pending,
+    )
 
 
 # Task intervals
@@ -49,17 +65,16 @@ RECONCILER_TASKS: dict[str, ReconcilerTask] = {
         name="sync_vectors",
         work_unit_key="reconciler:sync_vectors",
         interval_seconds=settings.VECTOR_STORE.RECONCILIATION_INTERVAL_SECONDS,
+        payload={"reconciler_type": ReconcilerType.SYNC_VECTORS.value},
+        has_pending=has_pending_work,
     ),
     "cleanup_queue": ReconcilerTask(
         name="cleanup_queue",
         work_unit_key="reconciler:cleanup_queue",
         interval_seconds=QUEUE_CLEANUP_INTERVAL_SECONDS,
+        payload={"reconciler_type": ReconcilerType.CLEANUP_QUEUE.value},
     ),
-    "backfill_document_sources": ReconcilerTask(
-        name="backfill_document_sources",
-        work_unit_key="reconciler:backfill_document_sources",
-        interval_seconds=settings.VECTOR_STORE.RECONCILIATION_INTERVAL_SECONDS,
-    ),
+    **{task.name: task for task in map(backfill_task, BACKFILLS.values())},
 }
 
 
@@ -158,7 +173,7 @@ class ReconcilerScheduler:
     async def _scheduler_loop(self) -> None:
         """
         Main scheduler loop that enqueues tasks based on their intervals, and
-        refreshes the service-wide pending-embeddings backlog gauge each pass.
+        refreshes the service-wide pending-embeddings and backfill gauges each pass.
 
         Each task has its own interval and the loop checks all tasks on each
         iteration, enqueueing any that are due. The loop sleeps until the next
@@ -176,6 +191,7 @@ class ReconcilerScheduler:
                 # forever. Full rationale in record_pending_embeddings_backlog.
                 # endregion
                 await record_pending_embeddings_backlog()
+                await record_backfill_pending()
 
                 # Check each task and enqueue if due
                 for task_name, task in RECONCILER_TASKS.items():
@@ -265,23 +281,14 @@ class ReconcilerScheduler:
                 )
                 return False
 
-            if task.name == "sync_vectors" and not await has_pending_work(db):
-                logger.debug("Task %s has nothing to do, skipping enqueue", task.name)
-                return False
-
-            if (
-                task.name == "backfill_document_sources"
-                and not await has_pending_document_sources(db)
-            ):
+            if task.has_pending is not None and not await task.has_pending(db):
                 logger.debug("Task %s has nothing to do, skipping enqueue", task.name)
                 return False
 
             # Enqueue the task using ORM
             queue_item = QueueItem(
                 work_unit_key=task.work_unit_key,
-                payload={
-                    "reconciler_type": task.name,
-                },
+                payload=task.payload,
                 session_id=None,
                 task_type="reconciler",
                 workspace_name=None,

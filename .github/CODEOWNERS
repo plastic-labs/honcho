@@ -45,6 +45,10 @@
 /src/vector_store/           @eisene @Rajat-Ahuja1997
 /src/llm/backends/           @eisene @Rajat-Ahuja1997
 
+# Harness integrations shipped from this repo.
+/hermes-plugin-honcho/       @akattelu @erosika @ajspig
+/harness-plugin-core/        @akattelu @erosika @ajspig
+
 # Documentation and contributor-facing policy.
 /docs/                       @ajspig @akattelu
 /README.md                   @ajspig @akattelu

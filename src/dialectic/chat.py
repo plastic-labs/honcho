@@ -124,6 +124,7 @@ async def agentic_chat(
         reasoning_level=reasoning_level,
         session_allowlist=session_allowlist,
         evidence=evidence,
+        instructions=configuration.dialectic,
     )
 
     return await agent.answer(query, response_model=response_model)
@@ -207,6 +208,7 @@ async def agentic_chat_stream(
         reasoning_level=reasoning_level,
         session_allowlist=session_allowlist,
         evidence=evidence,
+        instructions=configuration.dialectic,
     )
 
     async for chunk in agent.answer_stream(query, response_model=response_model):
@@ -224,13 +226,14 @@ async def workspace_chat(
 ) -> str:
     """Answer a query across all peers in a workspace."""
     async with tracked_db("dialectic.workspace_preflight", read_only=True) as db:
-        await crud.get_workspace(db, workspace_name=workspace_name)
+        workspace = await crud.get_workspace(db, workspace_name=workspace_name)
         session = None
         if session_name:
             session = await crud.get_session(
                 db, workspace_name=workspace_name, session_name=session_name
             )
         session_id = session.id if session else None
+        configuration = get_configuration(None, session, workspace)
     # DB session closed -- agent runs without holding a connection
 
     agent = WorkspaceDialecticAgent(
@@ -240,6 +243,7 @@ async def workspace_chat(
         reasoning_level=reasoning_level,
         session_allowlist=session_allowlist,
         evidence=evidence,
+        instructions=configuration.dialectic,
     )
     return await agent.answer(query, response_model=response_model)
 
@@ -255,13 +259,14 @@ async def workspace_chat_stream(
 ) -> AsyncIterator[str]:
     """Streaming variant of :func:`workspace_chat`."""
     async with tracked_db("dialectic.workspace_preflight", read_only=True) as db:
-        await crud.get_workspace(db, workspace_name=workspace_name)
+        workspace = await crud.get_workspace(db, workspace_name=workspace_name)
         session = None
         if session_name:
             session = await crud.get_session(
                 db, workspace_name=workspace_name, session_name=session_name
             )
         session_id = session.id if session else None
+        configuration = get_configuration(None, session, workspace)
 
     agent = WorkspaceDialecticAgent(
         workspace_name=workspace_name,
@@ -270,6 +275,7 @@ async def workspace_chat_stream(
         reasoning_level=reasoning_level,
         session_allowlist=session_allowlist,
         evidence=evidence,
+        instructions=configuration.dialectic,
     )
     async for chunk in agent.answer_stream(query, response_model=response_model):
         yield chunk

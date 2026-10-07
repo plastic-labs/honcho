@@ -74,7 +74,7 @@ Concretely: workspaces hold peers, peers participate in sessions, messages live 
 
 ## Quickstart
 
-Get an API key at [app.honcho.dev](https://app.honcho.dev) — when you sign up you'll be prompted to join an organization, which gets its own dedicated Honcho instance and $100 free credits. Or install the CLI and run [`honcho start --setup`](#cli), then point the SDK at `http://localhost:8000`.
+Get an API key at [app.honcho.dev](https://app.honcho.dev) — when you sign up you'll be prompted to join an organization, which gets its own dedicated Honcho instance. Or install the CLI and run [`honcho start --setup`](#cli), then point the SDK at `http://localhost:8000`.
 
 ### Python
 
@@ -489,6 +489,8 @@ uv run alembic upgrade head
 
 This will create all tables for Honcho including workspaces, peers, sessions,
 messages, and the queue system.
+
+Migrations hold a session-level advisory lock, so they need a session-mode connection (direct Postgres or a session pooler), not a transaction-mode pooler. A Supabase-style `:6543` port is rewritten to `:5432` automatically.
 
 6. **Launch Honcho**
 

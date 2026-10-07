@@ -35,6 +35,7 @@ Event Categories:
     reconciliation: Maintenance operations
     - SyncVectorsCompletedEvent: Vector store sync completed
     - CleanupStaleItemsCompletedEvent: Stale items cleanup completed
+    - BackfillCompletedEvent: Backfill cycle completed
 
 Usage:
     from src.telemetry.events import emit, RepresentationCompletedEvent
@@ -85,6 +86,7 @@ from src.telemetry.events.llm import (
     LLMCallCompletedEvent,
 )
 from src.telemetry.events.reconciliation import (
+    BackfillCompletedEvent,
     CleanupStaleItemsCompletedEvent,
     SyncVectorsCompletedEvent,
 )
@@ -133,6 +135,7 @@ __all__ = [
     # Reconciliation events
     "SyncVectorsCompletedEvent",
     "CleanupStaleItemsCompletedEvent",
+    "BackfillCompletedEvent",
     # Deletion events
     "DeletionCompletedEvent",
     # Lifecycle
@@ -182,6 +185,7 @@ ALL_EVENT_TYPES: tuple[str, ...] = (
     # reconciliation
     "reconciliation.sync_vectors.completed",
     "reconciliation.cleanup_stale_items.completed",
+    "reconciliation.backfill.completed",
     # trace stream
     # region ai
     # Only emitted when TELEMETRY.TRACE_PAYLOADS_ENABLED, but they flow through the

@@ -352,6 +352,21 @@ def _generation(client: FakeClient) -> FakeObs:
     return [o for o in client.observations if o.kwargs["as_type"] == "generation"][0]
 
 
+def test_custom_instructions_ride_in_generation_metadata(_exporter_env: FakeClient):
+    call = _call(run_id=None, trace_id="t1")
+    call.custom_instructions = "Always answer in German."
+    LangfuseExporter().export(call)
+
+    metadata = _generation(_exporter_env).kwargs["metadata"]
+    assert metadata["custom_instructions"] == "Always answer in German."
+
+
+def test_no_custom_instructions_key_without_instructions(_exporter_env: FakeClient):
+    LangfuseExporter().export(_call(run_id=None, trace_id="t1"))
+    metadata = cast(dict[str, str], _generation(_exporter_env).kwargs["metadata"])
+    assert "custom_instructions" not in metadata
+
+
 def test_text_only_output_stays_a_string(_exporter_env: FakeClient):
     LangfuseExporter().export(_call(run_id=None, trace_id="t1", content="hi"))
     assert _generation(_exporter_env).kwargs["output"] == "hi"
