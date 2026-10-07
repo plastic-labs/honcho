@@ -9,7 +9,15 @@
     "outDir": "./dist",
     "skipLibCheck": true,
     "esModuleInterop": true,
-    "types": ["bun", "node"]
+    "types": [
+      "bun",
+      "node"
+    ],
+    "jsx": "preserve",
+    "jsxImportSource": "@opentui/solid"
   },
-  "include": ["src/**/*.ts"]
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx"
+  ]
 }

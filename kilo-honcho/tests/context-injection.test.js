@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import os from "node:os"
 import path from "node:path"
-import { mkdtemp, writeFile } from "node:fs/promises"
+import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises"
 
 import { createHonchoRuntimePlugin } from "../dist/index.js"
 
@@ -53,7 +53,7 @@ const summary = (content) => ({
   token_count: 12,
 })
 
-const createHonchoFetch = ({ failStableHydration = false } = {}) => {
+const createHonchoFetch = ({ failStableHydration = false, failSessionContext = false } = {}) => {
   const calls = []
   const fetch = async (url, init = {}) => {
     const target = new URL(typeof url === "string" ? url : url.toString())
@@ -86,6 +86,12 @@ const createHonchoFetch = ({ failStableHydration = false } = {}) => {
 
     if (method === "POST" && /\/v3\/workspaces\/kilo\/sessions\/[^/]+\/peers$/.test(target.pathname)) {
       return new Response(null, { status: 204 })
+    }
+    if (method === "PUT" && /\/v3\/workspaces\/kilo\/sessions\/[^/]+\/peers\/[^/]+\/config$/.test(target.pathname)) {
+      return new Response(null, { status: 204 })
+    }
+    if (method === "POST" && target.pathname === "/v3/workspaces/kilo/conclusions") {
+      return jsonResponse(body.conclusions.map((item, index) => ({ id: `obs-${index}`, ...item, created_at: new Date(0).toISOString() })))
     }
     if (method === "POST" && /\/v3\/workspaces\/kilo\/sessions\/[^/]+\/messages$/.test(target.pathname)) {
       return jsonResponse([
@@ -131,6 +137,9 @@ const createHonchoFetch = ({ failStableHydration = false } = {}) => {
     }
 
     if (method === "GET" && /\/v3\/workspaces\/kilo\/sessions\/[^/]+\/context$/.test(target.pathname)) {
+      if (failSessionContext) {
+        return jsonResponse({ message: "context unavailable" }, { status: 400 })
+      }
       return jsonResponse({
         messages: [],
         summary: summary("Prompt-specific session summary."),
@@ -168,6 +177,7 @@ const runWithHarness = async (action, fetchOptions, settings) => {
   const rootDir = await mkdtemp(path.join(os.tmpdir(), "honcho-context-root-"))
   const homeDir = await mkdtemp(path.join(os.tmpdir(), "honcho-context-home-"))
   const configPath = settings ? path.join(homeDir, "honcho.json") : undefined
+  const activityDir = path.join(path.dirname(configPath ?? path.join(homeDir, ".honcho", "config.json")), "kilo", "sessions")
   if (configPath) {
     await writeFile(configPath, `${JSON.stringify(settings, null, 2)}\n`, "utf-8")
   }
@@ -182,7 +192,9 @@ const runWithHarness = async (action, fetchOptions, settings) => {
       HONCHO_BASE_URL: undefined,
     }, async () => {
       const hooks = await createPluginHarness(rootDir, configPath)
-      return action({ hooks, fetch })
+      const readActivityFile = async (sessionID) =>
+        JSON.parse(await readFile(path.join(activityDir, `${sessionID}.json`), "utf-8"))
+      return action({ hooks, fetch, activityDir, readActivityFile })
     }),
   )
 }
@@ -346,5 +358,83 @@ test("dispose waits for event work still in flight", async () => {
     await hooks.dispose()
     await slow
     expect(finished).toBe(true)
+  })
+})
+
+test("the agent session config is sent once per session and process", async () => {
+  await runWithHarness(async ({ hooks, fetch }) => {
+    for (const id of ["msg-a", "msg-b"]) {
+      await hooks["chat.message"](
+        { sessionID: "ses-config" },
+        { message: { id, role: "user", time: { created: Date.now() } }, parts: [{ type: "text", text: "fix memory injection" }] },
+      )
+    }
+    const puts = fetch.calls.filter((call) => call.method === "PUT" && call.pathname.endsWith("/peers/kilo/config"))
+    expect(puts).toHaveLength(1)
+    expect(puts[0].body).toEqual({ observe_me: false, observe_others: false })
+  }, undefined, { peerName: "eri", hosts: { kilo: { observationMode: "unified", removeUserPrefix: true } } })
+})
+
+test("keyword auto-conclusions are off unless autoConclusions is true", async () => {
+  const prompt = { message: { id: "msg-pref", role: "user", time: { created: Date.now() } }, parts: [{ type: "text", text: "I prefer squash merges" }] }
+  const conclusionPosts = (fetch) => fetch.calls.filter((call) => call.method === "POST" && call.pathname === "/v3/workspaces/kilo/conclusions")
+  await runWithHarness(async ({ hooks, fetch }) => {
+    await hooks["chat.message"]({ sessionID: "ses-auto-off" }, structuredClone(prompt))
+    expect(conclusionPosts(fetch)).toHaveLength(0)
+  })
+  await runWithHarness(async ({ hooks, fetch }) => {
+    await hooks["chat.message"]({ sessionID: "ses-auto-on" }, structuredClone(prompt))
+    expect(conclusionPosts(fetch)).toHaveLength(1)
+  }, undefined, { hosts: { kilo: { autoConclusions: true } } })
+})
+
+test("the activity file records saved messages, the recall block, and the system snapshot", async () => {
+  await runWithHarness(async ({ hooks, activityDir, readActivityFile }) => {
+    await hooks["chat.message"](
+      { sessionID: "ses_activity" },
+      { message: { id: "msg-recall", role: "user", time: { created: Date.now() } }, parts: [{ type: "text", text: "fix memory injection" }] },
+    )
+    await hooks["experimental.chat.system.transform"](systemInput({ sessionID: "ses_activity" }), { system: [] })
+
+    const activity = await readActivityFile("ses_activity")
+    expect(activity.state).toBe("active")
+    expect(activity.workspace).toBe("kilo")
+    expect(activity.saved).toBe(1)
+    expect(activity.recall.messageId).toBe("msg-recall")
+    expect(activity.recall.text).toContain("Prompt memory for memory-injection")
+    expect(activity.profile.text).toContain("The user prefers concise engineering analysis.")
+    // The file holds memory text, so only the owner can read it.
+    expect((await stat(path.join(activityDir, "ses_activity.json"))).mode & 0o777).toBe(0o600)
+  })
+})
+
+test("the activity file reports a failed Honcho call, then clears it after a success", async () => {
+  await runWithHarness(async ({ hooks, readActivityFile }) => {
+    await hooks["chat.message"](
+      { sessionID: "ses_failing" },
+      { message: { id: "msg-fail", role: "user", time: { created: Date.now() } }, parts: [{ type: "text", text: "fix memory injection" }] },
+    )
+    const failed = await readActivityFile("ses_failing")
+    expect(failed.state).toBe("error")
+    expect(failed.error).toContain("context unavailable")
+
+    await hooks["tool.execute.after"](
+      { tool: "bash", sessionID: "ses_failing", callID: "call-1", args: { command: "npm test" } },
+      { title: "Bash output", output: "Tests passed", metadata: {} },
+    )
+    const recovered = await readActivityFile("ses_failing")
+    expect(recovered.state).toBe("active")
+    expect(recovered.error).toBeUndefined()
+  }, { failSessionContext: true })
+})
+
+test("session.deleted removes the session's activity file", async () => {
+  await runWithHarness(async ({ hooks, activityDir }) => {
+    await hooks["chat.message"](
+      { sessionID: "ses_gone" },
+      { message: { id: "msg-gone", role: "user", time: { created: Date.now() } }, parts: [{ type: "text", text: "fix memory injection" }] },
+    )
+    await hooks.event({ event: { type: "session.deleted", properties: { info: { id: "ses_gone" }, sessionID: "ses_gone" } } })
+    await expect(stat(path.join(activityDir, "ses_gone.json"))).rejects.toThrow()
   })
 })

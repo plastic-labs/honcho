@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
+import { readActivity } from "../activity.js"
 import { createHonchoClient } from "../honcho-client.js"
 import { executeKiloImport, planKiloImport } from "../import.js"
 import {
@@ -18,6 +19,7 @@ import {
   unifiedImportFollowUp,
   type ObservationMode,
 } from "../core.js"
+import { recallMessage } from "./activity-view.js"
 import type { DialogOption, GlobalSettings, TuiCommandSpec, TuiSession } from "./dialogs.js"
 
 export const resolveConfigPath = () => sharedConfigPath(process.env.KILO_HONCHO_CONFIG_PATH)
@@ -35,6 +37,7 @@ const MODE_EDITABLE_FIELD_PATHS = [
   "hosts.kilo.recallMode",
   "hosts.kilo.observationMode",
   "hosts.kilo.agentObserveMe",
+  "hosts.kilo.autoConclusions",
   "hosts.kilo.sessionStrategy",
 ] as const
 
@@ -200,6 +203,7 @@ export const settingsMessage = (settings: GlobalSettings) => {
     `Recall mode: ${host.recallMode || DEFAULT_SETTINGS.recallMode}`,
     `Observation mode: ${host.observationMode || DEFAULT_SETTINGS.observationMode}`,
     `Agent observe me: ${host.agentObserveMe === true ? "true" : "false"}`,
+    `Auto conclusions: ${host.autoConclusions === true ? "true" : "false"}`,
     `Session strategy: ${host.sessionStrategy || DEFAULT_SETTINGS.sessionStrategy}`,
     ...(!isObservationMode(settings.hosts?.kilo?.observationMode) && settings.hosts?.kilo
       ? ["", observationUpgradeNotice()]
@@ -283,6 +287,7 @@ const importConfigFromSettings = (settings: GlobalSettings) => {
     agentPeerId,
     sessionStrategy: host.sessionStrategy || DEFAULT_SETTINGS.sessionStrategy,
     agentObserveMe: host.agentObserveMe === true,
+    observationMode: isObservationMode(host.observationMode) ? host.observationMode : DEFAULT_SETTINGS.observationMode,
   }
 }
 
@@ -534,6 +539,7 @@ export const runImport = async (session: TuiSession) => {
       honcho,
       userPeerId: config.userPeerId,
       agentObserveMe: config.agentObserveMe,
+      observationMode: config.observationMode,
     })
     await session.dialogs.alert({
       title: "Honcho import",
@@ -552,6 +558,19 @@ export const runImport = async (session: TuiSession) => {
   }
 }
 
+export const runRecall = async (session: TuiSession) => {
+  const { kiloSessionId } = session.liveStatus(await readGlobalSettings())
+  if (!kiloSessionId) {
+    await session.dialogs.alert({
+      title: "Honcho recall",
+      message: "Open a Kilo session to see the memory Honcho added to it.",
+    })
+    return
+  }
+  const activity = await readActivity(resolveConfigPath(), kiloSessionId)
+  await session.dialogs.view({ title: "Honcho recall", body: recallMessage(activity) })
+}
+
 export const COMMANDS: readonly TuiCommandSpec[] = [
   {
     id: "honcho.setup",
@@ -566,6 +585,13 @@ export const COMMANDS: readonly TuiCommandSpec[] = [
     description: "Show Honcho runtime health for the current Kilo session",
     slash: "honcho:status",
     run: runStatus,
+  },
+  {
+    id: "honcho.recall",
+    title: "Honcho Recall",
+    description: "Show the memory Honcho added to this Kilo session",
+    slash: "honcho:recall",
+    run: runRecall,
   },
   {
     id: "honcho.settings",

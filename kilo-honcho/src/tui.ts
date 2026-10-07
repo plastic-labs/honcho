@@ -1,10 +1,12 @@
 import type { TuiPluginModule } from "@kilocode/plugin/tui"
+import { recallMessage, sidebarRows } from "./tui/activity-view.js"
 import {
   modeEditableFieldPaths,
   normalizeSettings,
   readSharedConfig,
   resolveConfigPath,
   resolveSharedConfigField,
+  runRecall,
   saveSettings,
   settingsMessage,
   sharedConfigPresetOptions,
@@ -26,11 +28,14 @@ export const __testing = {
   normalizeSettings,
   modeEditableFieldPaths,
   readSharedConfig,
+  recallMessage,
   resolveSharedConfigField,
+  runRecall,
   saveSettings,
   settingsMessage,
   sharedConfigPath: resolveConfigPath,
   sharedConfigPresetOptions,
+  sidebarRows,
   statusMessage,
   validateCloudApiKey,
 }

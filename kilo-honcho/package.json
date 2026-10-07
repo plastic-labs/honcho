@@ -46,7 +46,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "bun --eval \"const { rm } = await import('node:fs/promises'); await rm('dist', { recursive: true, force: true })\" && bun build ./src/index.ts ./src/server.ts ./src/tui.ts ./src/import.ts --outdir ./dist --target node --external @kilocode/plugin && tsc --emitDeclarationOnly",
+    "build": "bun scripts/build.ts && tsc --emitDeclarationOnly",
     "check": "tsc --noEmit",
     "test": "bun run build && bun test ./tests",
     "prepublishOnly": "bun run build"
@@ -58,8 +58,10 @@
   },
   "devDependencies": {
     "@kilocode/plugin": "7.8.3",
+    "@opentui/solid": "0.5.11",
     "@types/bun": "^1.2.8",
     "@types/node": "^22.13.9",
+    "solid-js": "1.9.12",
     "typescript": "^5.9.3"
   }
 }

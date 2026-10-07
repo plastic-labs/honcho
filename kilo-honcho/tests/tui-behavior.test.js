@@ -11,13 +11,14 @@ test("native TUI Honcho commands register slash aliases including import", () =>
   assert.deepEqual(commands.map((command) => command.value), [
     "honcho.setup",
     "honcho.status",
+    "honcho.recall",
     "honcho.settings",
     "honcho.config",
     "honcho.import",
   ])
   assert.deepEqual(
     commands.map((command) => command.slash?.name),
-    ["honcho:setup", "honcho:status", "honcho:settings", "honcho:config", "honcho:import"],
+    ["honcho:setup", "honcho:status", "honcho:recall", "honcho:settings", "honcho:config", "honcho:import"],
   )
   assert.equal(tuiModule.id, "@honcho-ai/kilo-honcho")
 })
@@ -151,4 +152,74 @@ test("tui live status falls back to the kilo workspace, not the folder name", as
     const api = { route: { current: { name: "home" } }, state: { path: { worktree: "/tmp/demo" } } }
     assert.equal(__testing.deriveLiveStatus(api, { hosts: { kilo: { workspace: "team" } } }).workspaceName, "from-env")
   })
+})
+
+const activity = (extra = {}) => ({
+  kiloSessionId: "ses_view",
+  updatedAt: new Date(0).toISOString(),
+  state: "active",
+  workspace: "kilo",
+  userPeer: "eri",
+  saved: 0,
+  ...extra,
+})
+
+test("sidebar rows show setup, errors, and what Honcho did", () => {
+  assert.deepEqual(__testing.sidebarRows(activity({ state: "unconfigured" })), {
+    label: "Not set up",
+    tone: "muted",
+    details: ["Run /honcho:setup"],
+  })
+  assert.equal(__testing.sidebarRows(activity({ state: "error", error: "401 Unauthorized" })).details[0], "401 Unauthorized")
+  assert.equal(__testing.sidebarRows(activity()).tone, "muted")
+
+  const working = __testing.sidebarRows(
+    activity({
+      saved: 3,
+      profile: { at: new Date(0).toISOString(), conclusions: 12, text: "profile" },
+      recall: { at: new Date(0).toISOString(), messageId: "msg", conclusions: 1, text: "recall" },
+    }),
+  )
+  assert.equal(working.tone, "success")
+  assert.deepEqual(working.details, [
+    "Peer: eri (kilo)",
+    "Profile: 12 conclusions",
+    "Recalled: 1 conclusion",
+    "Saved: 3 messages",
+    "/honcho:recall to view",
+  ])
+})
+
+test("/honcho:recall shows the exact text Honcho added to the current session", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "honcho-tui-recall-"))
+  const configPath = path.join(dir, "config.json")
+  await mkdir(path.join(dir, "kilo", "sessions"), { recursive: true })
+  await writeFile(
+    path.join(dir, "kilo", "sessions", "ses_view.json"),
+    JSON.stringify(
+      activity({
+        recall: { at: new Date(0).toISOString(), messageId: "msg", conclusions: 1, text: "[2026-10-07 19:32:34] user runs cargo nextest" },
+        profile: { at: new Date(0).toISOString(), conclusions: 0, text: "## User Memory Profile\n- Prefers tokio" },
+      }),
+    ),
+  )
+  const previous = process.env.KILO_HONCHO_CONFIG_PATH
+  process.env.KILO_HONCHO_CONFIG_PATH = configPath
+  const shown = []
+  const session = (kiloSessionId) => ({
+    dialogs: { view: async (input) => shown.push(input), alert: async (input) => shown.push(input) },
+    liveStatus: () => ({ kiloSessionId }),
+  })
+  try {
+    await __testing.runRecall(session("ses_view"))
+    await __testing.runRecall(session(undefined))
+    await __testing.runRecall(session("ses_missing"))
+  } finally {
+    if (previous === undefined) delete process.env.KILO_HONCHO_CONFIG_PATH
+    else process.env.KILO_HONCHO_CONFIG_PATH = previous
+  }
+  assert.match(shown[0].body, /Attached to your prompt at .* \(1 conclusion\):\n\n\[2026-10-07 19:32:34\] user runs cargo nextest/)
+  assert.match(shown[0].body, /Added to the system prompt at .*\n\n## User Memory Profile\n- Prefers tokio/)
+  assert.match(shown[1].message, /Open a Kilo session/)
+  assert.match(shown[2].body, /has not added memory to this session yet/)
 })

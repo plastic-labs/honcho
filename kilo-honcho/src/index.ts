@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url"
 import type { Hooks, Plugin, PluginInput, tool } from "@kilocode/plugin"
 import { z } from "zod"
 import type { Honcho } from "@honcho-ai/sdk"
+import { activityPath, countConclusions, createActivityRecorder, pruneActivity, readActivity, type ActivityPatch } from "./activity.js"
 import { createHonchoClient, telemetryIdentity, type TelemetryOverrides } from "./honcho-client.js"
 import {
   DEFAULT_SETTINGS,
@@ -85,6 +86,7 @@ type HostScopedSettings = Partial<
     | "recallMode"
     | "observationMode"
     | "agentObserveMe"
+    | "autoConclusions"
     | "sessionStrategy"
     | "removeUserPrefix"
   >
@@ -172,7 +174,7 @@ const INTERNAL_CONTEXT_REFRESH: ContextRefreshSettings = {
   useSessionStartDialectic: true,
 }
 
-const BOOLEAN_KEYS = new Set<keyof HonchoSettings>(["removeUserPrefix", "agentObserveMe"])
+const BOOLEAN_KEYS = new Set<keyof HonchoSettings>(["removeUserPrefix", "agentObserveMe", "autoConclusions"])
 
 const ENUM_KEYS: Record<string, ReadonlySet<string>> = Object.fromEntries(
   Object.entries(SETTING_ENUMS).map(([key, values]) => [key, new Set(values)]),
@@ -187,6 +189,7 @@ const HOST_SETTING_FIELDS = new Set<keyof HonchoSettings>([
   "recallMode",
   "observationMode",
   "agentObserveMe",
+  "autoConclusions",
   "sessionStrategy",
   "removeUserPrefix",
 ])
@@ -200,6 +203,7 @@ const SETTING_FIELD_PATHS = new Set([
   "recallMode",
   "observationMode",
   "agentObserveMe",
+  "autoConclusions",
   "sessionStrategy",
   "removeUserPrefix",
 ])
@@ -1007,6 +1011,8 @@ const buildPeerTopology = (handle: Pick<
   "config" | "userPeerId" | "rootAgentPeerId" | "activeAgentPeerId" | "childAgentPeerId" | "parentAgentObserverPeerId"
 >): PeerTopology => {
   const agentObserveMe = resolveAgentObserveMe(handle.config)
+  // Unified mode reads the user's own collection, so an agent view of the user would be derived and never read.
+  const agentObserveOthers = !isUnifiedObservation(handle.config)
   const userPeer: PeerDescription = {
     id: handle.userPeerId,
     observeMe: true,
@@ -1015,12 +1021,12 @@ const buildPeerTopology = (handle: Pick<
   const rootAgentPeer: PeerDescription = {
     id: handle.rootAgentPeerId,
     observeMe: agentObserveMe,
-    observeOthers: true,
+    observeOthers: agentObserveOthers,
   }
   return {
     sessionPeerConfigs: {
       [userPeer.id]: { observeMe: true, observeOthers: false },
-      [rootAgentPeer.id]: { observeMe: agentObserveMe, observeOthers: true },
+      [rootAgentPeer.id]: { observeMe: agentObserveMe, observeOthers: agentObserveOthers },
     },
     describedPeers: {
       userPeer,
@@ -1038,6 +1044,7 @@ const createActiveRuntime = async (
   host: HostAdapter,
   input: Record<string, unknown> | undefined,
   telemetryFor: (sessionId: string) => TelemetryOverrides,
+  appliedAgentConfigs: Map<string, string>,
   configPathOverride?: string,
 ): Promise<ActiveRuntime> => {
   const handle = await deriveRuntimeHandle(host, input, configPathOverride)
@@ -1054,7 +1061,17 @@ const createActiveRuntime = async (
     configuration: { observeMe: resolveAgentObserveMe(handle.config) },
   })
   const session = await honcho.session(handle.sessionKey)
-  await session.addPeers(sessionPeerAdditions(buildPeerTopology(handle)) as never)
+  const topology = buildPeerTopology(handle)
+  await session.addPeers(sessionPeerAdditions(topology) as never)
+  // addPeers keeps the stored config of a peer already in the session, so a changed
+  // observationMode or agentObserveMe only reaches an existing session through this call.
+  const agentConfig = topology.sessionPeerConfigs[handle.rootAgentPeerId]
+  const configKey = `${handle.workspaceId}/${handle.sessionKey}`
+  const signature = JSON.stringify(agentConfig)
+  if (appliedAgentConfigs.get(configKey) !== signature) {
+    await session.setPeerConfiguration(handle.rootAgentPeerId, agentConfig)
+    appliedAgentConfigs.set(configKey, signature)
+  }
   return { ...handle, honcho, session, userPeer, agentPeer }
 }
 
@@ -1084,12 +1101,12 @@ const extractModelId = (input: Record<string, unknown> | undefined) => {
 }
 
 const durableConclusionCandidate = (text: string, settings: HonchoSettings) => {
+  if (!settings.autoConclusions) return null
   const trimmed = text.trim()
   if (!trimmed) return null
   if (!DURABLE_PATTERNS.some((pattern) => pattern.test(trimmed))) {
     return null
   }
-  void settings
   return clampText(trimmed, INTERNAL_DIALECTIC_MAX_CHARS)
 }
 
@@ -1230,8 +1247,22 @@ export const createHonchoCore = (host: HostAdapter, configPath?: string) => {
       }
     }
 
+    // workspace/session key → the agent session config this process last sent
+    const appliedAgentConfigs = new Map<string, string>()
+    const activity = createActivityRecorder(sharedConfigPath(configPath))
+
     const activateRuntime = (input: Record<string, unknown> | undefined) =>
-      createActiveRuntime(host, input, telemetryFor, configPath)
+      createActiveRuntime(host, input, telemetryFor, appliedAgentConfigs, configPath)
+
+    const noteActivity = (handle: RuntimeHandle, patch: ActivityPatch | ((current: { saved: number }) => ActivityPatch)) => {
+      if (handle.sessionId === "unknown-session") return Promise.resolve()
+      return activity.update(handle.sessionId, (current) => ({
+        workspace: handle.workspaceId,
+        userPeer: handle.userPeerId,
+        recallMode: handle.config.recallMode,
+        ...(typeof patch === "function" ? patch(current) : patch),
+      }))
+    }
 
     const getState = (stateKey: string) => {
       let current = sessionStates.get(stateKey)
@@ -1253,6 +1284,7 @@ export const createHonchoCore = (host: HostAdapter, configPath?: string) => {
     ) => {
       const handle = await deriveRuntimeHandle(host, input, configPath)
       if (!hasConfiguredAuth(handle.config)) {
+        await noteActivity(handle, { state: "unconfigured" })
         await log("warn", "Honcho runtime is missing an API key and is not configured for a localhost baseUrl.", {
           configPath: handle.configPath,
           globalConfigPath: handle.globalConfigPath,
@@ -1262,9 +1294,12 @@ export const createHonchoCore = (host: HostAdapter, configPath?: string) => {
         return fallback
       }
       try {
-        return await action(await activateRuntime(input))
+        const result = await action(await activateRuntime(input))
+        await noteActivity(handle, { state: "active" })
+        return result
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error)
+        await noteActivity(handle, { state: "error", error: detail })
         await log("error", "Honcho runtime operation failed.", {
           message: detail,
           sessionId: handle.sessionId,
@@ -1307,6 +1342,7 @@ export const createHonchoCore = (host: HostAdapter, configPath?: string) => {
             }
           : {}),
         agentObserveMe: handle.config.agentObserveMe,
+        autoConclusions: handle.config.autoConclusions,
         sessionStrategy: handle.config.sessionStrategy,
         peerName: handle.config.peerName,
         removeUserPrefix: handle.config.removeUserPrefix,
@@ -1333,6 +1369,7 @@ export const createHonchoCore = (host: HostAdapter, configPath?: string) => {
       const trimmed = clampText(content.trim(), INTERNAL_MESSAGE_MAX_CHARS)
       if (!trimmed) return
       await runtime.session.addMessages(peer.message(trimmed, { metadata, createdAt }))
+      await noteActivity(runtime, (current) => ({ saved: current.saved + 1 }))
     }
 
     const captureCompletedAssistantRecord = async (
@@ -1375,13 +1412,9 @@ export const createHonchoCore = (host: HostAdapter, configPath?: string) => {
           }),
           runtime.session.summaries(),
           dialecticEnabled
-            ? runtime.agentPeer.chat(
+            ? userMemoryObserverPeer(runtime).chat(
                 `Summarize what you know about ${runtime.userPeerId} in 2-3 sentences. Focus on durable preferences, current projects, and working style.`,
-                {
-                  target: runtime.userPeer,
-                  session: runtime.session,
-                  reasoningLevel: INTERNAL_DIALECTIC_REASONING_LEVEL,
-                },
+                userMemoryChatOptions(runtime),
               )
             : Promise.resolve(null),
           dialecticEnabled
@@ -1509,6 +1542,16 @@ export const createHonchoCore = (host: HostAdapter, configPath?: string) => {
       sessionStates.delete(deriveSessionStateKey(handle))
     }
 
+    const noteRecall = async (input: Record<string, unknown>, messageId: string, text: string) =>
+      noteActivity(await deriveRuntimeHandle(host, input, configPath), {
+        recall: { at: new Date().toISOString(), messageId, conclusions: countConclusions(text), text },
+      })
+
+    const forgetActivity = async (input: Record<string, unknown>) => {
+      const sessionId = extractSessionId(input)
+      if (sessionId !== "unknown-session") await activity.remove(sessionId)
+    }
+
     // Captures the user turn and returns the prompt-specific recall block when it changed,
     // or null when recall is off, the prompt is trivial, or the block is unchanged.
     const captureUserPrompt = (
@@ -1562,6 +1605,12 @@ export const createHonchoCore = (host: HostAdapter, configPath?: string) => {
         }
         state.systemContext = state.stableContext ?? ""
         state.systemContextSealed = true
+        if (state.systemContext) {
+          const text = state.systemContext
+          await noteActivity(handle, {
+            profile: { at: new Date().toISOString(), conclusions: countConclusions(text), text },
+          })
+        }
       }
       if (state.systemContext) {
         blocks.push(state.systemContext)
@@ -1966,6 +2015,9 @@ export const createHonchoCore = (host: HostAdapter, configPath?: string) => {
       runtimeStatus,
       hydrateSession,
       dropSessionState,
+      noteRecall,
+      forgetActivity,
+      flushActivity: activity.flush,
       captureUserPrompt,
       systemBlocks,
       continuityBlock,
@@ -1992,6 +2044,7 @@ export const createHonchoRuntimePlugin =
   async (pluginInput) => {
     const core = createHonchoCore(hostFromPluginInput(pluginInput), configPath)
     const recallBlocks = new Map<string, RecallBlock>()
+    void pruneActivity(sharedConfigPath(configPath))
     // Kilo does not await the event hook, so a one-shot `kilo run` can exit mid-upload.
     const inflight = new Set<Promise<void>>()
 
@@ -2003,6 +2056,7 @@ export const createHonchoRuntimePlugin =
         }
         if (event.type === "session.deleted" || event.type === "session.error") {
           await core.dropSessionState(payload)
+          if (event.type === "session.deleted") await core.forgetActivity(payload)
           return
         }
         if (event.type === "session.created") {
@@ -2045,11 +2099,14 @@ export const createHonchoRuntimePlugin =
         await pending
       },
       dispose: async () => {
-        if (inflight.size === 0) return
+        let timer: ReturnType<typeof setTimeout> | undefined
         await Promise.race([
-          Promise.allSettled([...inflight]),
-          new Promise((resolve) => setTimeout(resolve, DISPOSE_FLUSH_MS)),
+          Promise.allSettled([...inflight]).then(core.flushActivity),
+          new Promise((resolve) => {
+            timer = setTimeout(resolve, DISPOSE_FLUSH_MS)
+          }),
         ])
+        clearTimeout(timer)
       },
       "command.execute.before": async (input, output) => {
         const command = typeof input.command === "string" ? input.command : ""
@@ -2086,6 +2143,7 @@ export const createHonchoRuntimePlugin =
             sessionID: input.sessionID,
             text: block,
           })
+          await core.noteRecall(input, output.message.id, block)
         }
       },
       "experimental.chat.system.transform": async (input, output) => {
@@ -2127,6 +2185,11 @@ export const createHonchoRuntimePlugin =
 
 export const HonchoRuntimePlugin = createHonchoRuntimePlugin()
 export const __testing = {
+  activityPath,
+  countConclusions,
+  createActivityRecorder,
+  pruneActivity,
+  readActivity,
   createSessionState,
   honchoSessionKey,
   deriveUserPeerId,

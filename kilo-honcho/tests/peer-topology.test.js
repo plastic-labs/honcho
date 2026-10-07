@@ -30,3 +30,17 @@ test("agentObserveMe true turns on self-observation on the root agent peer", () 
 
   expect(topology.sessionPeerConfigs.kilo.observeMe).toBe(true)
 })
+
+test("unified mode stops the agent deriving its own copy of the user", () => {
+  const handle = (observationMode) => ({
+    config: { observationMode },
+    userPeerId: "eri",
+    rootAgentPeerId: "kilo",
+    activeAgentPeerId: "kilo",
+    childAgentPeerId: null,
+    parentAgentObserverPeerId: null,
+  })
+
+  expect(__testing.buildPeerTopology(handle("unified")).sessionPeerConfigs.kilo.observeOthers).toBe(false)
+  expect(__testing.buildPeerTopology(handle("directional")).sessionPeerConfigs.kilo.observeOthers).toBe(true)
+})

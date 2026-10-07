@@ -17,6 +17,7 @@ export type Dialogs = {
   }): Promise<boolean | undefined>
   select<T>(input: { title: string; options: DialogOption<T>[]; current?: T }): Promise<T | undefined>
   prompt(input: { title: string; value?: string; placeholder?: string }): Promise<string | undefined>
+  view(input: { title: string; body: string }): Promise<void>
 }
 
 export type LiveStatus = {
@@ -35,6 +36,7 @@ export type GlobalSettings = {
       recallMode?: RecallMode
       observationMode?: ObservationMode
       agentObserveMe?: boolean
+      autoConclusions?: boolean
       sessionStrategy?: SessionStrategy
       removeUserPrefix?: boolean
     }

@@ -82,6 +82,7 @@ export type HonchoSettings = {
   recallMode: RecallMode
   observationMode: ObservationMode
   agentObserveMe: boolean
+  autoConclusions: boolean
   sessionStrategy: SessionStrategy
   removeUserPrefix: boolean
 }
@@ -98,6 +99,8 @@ export const DEFAULT_SETTINGS: HonchoSettings = {
   observationMode: "directional",
   // Default false: Honcho models the user, not the assistant. Set true to opt into agent self-observation.
   agentObserveMe: false,
+  // Default false: Honcho's deriver already reasons over every message, so verbatim keyword copies only add noise.
+  autoConclusions: false,
   sessionStrategy: "per-directory",
   // Default false for upgrades: keep the legacy user-<peerName> peer. New installs stamp true.
   removeUserPrefix: false,

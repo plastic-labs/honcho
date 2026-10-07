@@ -11,6 +11,7 @@ import {
   isRecord,
   timestampToIso,
   userHomeDir,
+  type ObservationMode,
   type SessionStrategy,
 } from "./core.js"
 
@@ -295,6 +296,7 @@ export type ExecuteImportOptions = PlanImportOptions & {
   honcho: Honcho
   userPeerId: string
   agentObserveMe: boolean
+  observationMode: ObservationMode
   statePath?: string
 }
 
@@ -317,7 +319,8 @@ export const executeKiloImport = async (options: ExecuteImportOptions): Promise<
       const session = await options.honcho.session(sessionPlan.honchoSessionKey)
       await session.addPeers([
         [options.userPeerId, { observeMe: true, observeOthers: false }],
-        [options.agentPeerId, { observeMe: options.agentObserveMe === true, observeOthers: true }],
+        // Same rule as live sessions: the agent models the user only in directional mode.
+        [options.agentPeerId, { observeMe: options.agentObserveMe === true, observeOthers: options.observationMode === "directional" }],
       ] as never)
       const payload = sessionPlan.messages.map((message) => {
         const peer = message.role === "user" ? userPeer : agentPeer
