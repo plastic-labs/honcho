@@ -140,16 +140,49 @@ test("honcho_setup saves the peer name and can join another tool's workspace", a
   })
 })
 
-test("honcho_setup takes no API key and points the user at the setup command", async () => {
+// A stand-in for the platform's key window, first on PATH, so tests never open a real one.
+const withFakeKeyWindow = async (output, action) => {
+  const bin = await mkdtemp(path.join(os.tmpdir(), "honcho-fake-dialog-"))
+  const script = output === null ? "#!/bin/sh\nexit 1\n" : `#!/bin/sh\necho '${output}'\n`
+  for (const name of ["osascript", "zenity"]) await writeFile(path.join(bin, name), script, { mode: 0o755 })
+  return withEnv({ PATH: `${bin}:${process.env.PATH}`, DISPLAY: ":0" }, action)
+}
+
+test("honcho_setup takes the key from a window, never from the chat", async () => {
+  const rootDir = await mkdtemp(path.join(os.tmpdir(), "honcho-setup-window-"))
+  const homeDir = await mkdtemp(path.join(os.tmpdir(), "honcho-home-window-"))
+  const sharedConfigPath = path.join(homeDir, ".honcho", "config.json")
+  await withMockFetch(successfulValidationFetch, () =>
+    withFakeKeyWindow("hch-from-window", () =>
+      withEnv({ HOME: homeDir, USER: "ignored-user", XDG_CONFIG_HOME: undefined }, async () => {
+        const hooks = await createPluginHarness(rootDir)
+        expect(Object.keys(hooks.tool.honcho_setup.args)).not.toContain("apiKey")
+        const output = await hooks.tool.honcho_setup.execute({ peerName: "alice" }, toolContext(rootDir))
+        const result = JSON.parse(output)
+        expect(result.ok).toBe(true)
+        expect(result.message).toContain("Memory starts with the next message")
+        // The tool output goes back to the model, so the key must not be in it.
+        expect(output).not.toContain("hch-from-window")
+        const persisted = JSON.parse(await readFile(sharedConfigPath, "utf-8"))
+        expect(persisted.apiKey).toBe("hch-from-window")
+        expect(persisted.peerName).toBe("alice")
+      }),
+    ),
+  )
+})
+
+test("honcho_setup points at the setup command when the key window is closed", async () => {
   const rootDir = await mkdtemp(path.join(os.tmpdir(), "honcho-setup-nokey-"))
   const homeDir = await mkdtemp(path.join(os.tmpdir(), "honcho-home-nokey-"))
-  await withEnv({ HOME: homeDir, USER: "ignored-user", XDG_CONFIG_HOME: undefined }, async () => {
-    const hooks = await createPluginHarness(rootDir)
-    expect(Object.keys(hooks.tool.honcho_setup.args)).not.toContain("apiKey")
-    const result = JSON.parse(await hooks.tool.honcho_setup.execute({ peerName: "alice" }, toolContext(rootDir)))
-    expect(result.ok).toBe(false)
-    expect(result.message).toContain("npx @honcho-ai/kilo-honcho setup")
-  })
+  await withFakeKeyWindow(null, () =>
+    withEnv({ HOME: homeDir, USER: "ignored-user", XDG_CONFIG_HOME: undefined }, async () => {
+      const hooks = await createPluginHarness(rootDir)
+      const result = JSON.parse(await hooks.tool.honcho_setup.execute({ peerName: "alice" }, toolContext(rootDir)))
+      expect(result.ok).toBe(false)
+      expect(result.message).toContain("npx @honcho-ai/kilo-honcho setup")
+      await expect(readFile(path.join(homeDir, ".honcho", "config.json"), "utf-8")).rejects.toThrow()
+    }),
+  )
 })
 
 test("honcho_setup does not persist when cloud auth validation fails", async () => {
@@ -408,4 +441,31 @@ test("the setup command runs end to end from piped answers", async () => {
   expect(saved).toMatchObject({ peerName: "alice", baseUrl: "http://127.0.0.1:1", hosts: { kilo: { workspace: "kilo" } } })
   expect(saved.apiKey).toBeUndefined()
   expect(await readFile(path.join(dir, "xdg", "kilo", "kilo.jsonc"), "utf-8")).toContain("@honcho-ai/kilo-honcho")
+})
+
+test("an agent can run the setup command with flags while stdin stays open", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "honcho-cli-agent-"))
+  const proc = Bun.spawn(
+    ["node", path.join(import.meta.dir, "..", "dist", "cli.js"), "setup", "--url", "http://127.0.0.1:1", "--peer-name", "eri", "--workspace=team"],
+    {
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...process.env, HOME: dir, XDG_CONFIG_HOME: path.join(dir, "xdg"), KILO_HONCHO_CONFIG_PATH: path.join(dir, "honcho.json"), HONCHO_API_KEY: "" },
+    },
+  )
+  const timeout = setTimeout(() => proc.kill(), 10_000)
+  const exitCode = await proc.exited
+  clearTimeout(timeout)
+  expect(exitCode).toBe(0)
+  const saved = JSON.parse(await readFile(path.join(dir, "honcho.json"), "utf-8"))
+  expect(saved).toMatchObject({ peerName: "eri", baseUrl: "http://127.0.0.1:1", hosts: { kilo: { workspace: "team" } } })
+})
+
+test("the key window uses each platform's own password box, and none without a display", () => {
+  expect(__testing.keyDialogCommand("darwin", {})[0]).toBe("osascript")
+  expect(__testing.keyDialogCommand("darwin", {})[1].join(" ")).toContain("with hidden answer")
+  expect(__testing.keyDialogCommand("win32", {})[0]).toBe("powershell.exe")
+  expect(__testing.keyDialogCommand("linux", { DISPLAY: ":0" })).toEqual(["zenity", ["--password", "--title=Honcho API key"]])
+  expect(__testing.keyDialogCommand("linux", {})).toBeNull()
 })

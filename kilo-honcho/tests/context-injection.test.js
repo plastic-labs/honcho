@@ -442,7 +442,7 @@ test("session.deleted removes the session's activity file", async () => {
   })
 })
 
-test("without an API key the system prompt tells the agent to point at the setup command", async () => {
+test("without an API key the system prompt has the agent offer setup", async () => {
   const rootDir = await mkdtemp(path.join(os.tmpdir(), "honcho-nudge-root-"))
   const homeDir = await mkdtemp(path.join(os.tmpdir(), "honcho-nudge-home-"))
   await withEnv({ HOME: homeDir, USER: "test-user", XDG_CONFIG_HOME: undefined, HONCHO_API_KEY: undefined, HONCHO_URL: undefined, HONCHO_BASE_URL: undefined }, async () => {
@@ -450,7 +450,9 @@ test("without an API key the system prompt tells the agent to point at the setup
     const output = { system: [] }
     await hooks["experimental.chat.system.transform"](systemInput(), output)
     expect(output.system).toHaveLength(1)
+    expect(output.system[0]).toContain("offer once")
+    expect(output.system[0]).toContain("call honcho_setup")
+    expect(output.system[0]).toContain("Never ask for the key in chat")
     expect(output.system[0]).toContain("npx @honcho-ai/kilo-honcho setup")
-    expect(output.system[0]).toContain("never ask for the API key in chat")
   })
 })

@@ -7,7 +7,8 @@ import { z } from "zod"
 import type { Honcho } from "@honcho-ai/sdk"
 import { activityPath, countConclusions, createActivityRecorder, pruneActivity, readActivity, type ActivityPatch } from "./activity.js"
 import { createHonchoClient, telemetryIdentity, type TelemetryOverrides } from "./honcho-client.js"
-import { addKiloPlugin, kiloConfigDir } from "./setup.js"
+import { keyDialogCommand, promptForApiKey } from "./key-dialog.js"
+import { addKiloPlugin, checkHonchoConnection, kiloConfigDir } from "./setup.js"
 import {
   DEFAULT_SETTINGS,
   HOST_ID,
@@ -273,7 +274,9 @@ export const HONCHO_SYSTEM_INSTRUCTION = [
 export const HONCHO_SETUP_NUDGE = [
   "## Honcho Memory",
   "The Honcho memory plugin is installed but has no API key, so it remembers nothing yet.",
-  `In your first reply of this session, tell the user once, in one sentence: run \`${SETUP_COMMAND}\` in a terminal, or \`/honcho:setup\` in the Kilo CLI, then restart Kilo. Do not mention it again, and never ask for the API key in chat.`,
+  "In your first reply of this session, offer once, in one sentence, to set up Honcho memory. Do not raise it again unless the user does.",
+  "If the user agrees, ask what name Honcho should call them, then call honcho_setup with that peerName. The tool opens a window on the user's screen for their API key from app.honcho.dev. Never ask for the key in chat.",
+  `If honcho_setup reports that the window could not open, tell the user to run \`${SETUP_COMMAND}\` in a terminal.`,
 ].join("\n")
 
 // The skill is shipped with the package (see "files" in package.json) and copied
@@ -1045,18 +1048,6 @@ const createActiveRuntime = async (
   return { ...handle, honcho, session, userPeer, agentPeer }
 }
 
-const validateSetupConnection = async ({
-  apiKey,
-  baseUrl,
-  workspaceId,
-}: {
-  apiKey: string
-  baseUrl: string
-  workspaceId: string
-}) => {
-  const honcho = createHonchoClient({ apiKey, baseUrl, workspaceId })
-  await honcho.session(normalizeId(`setup-check:${workspaceId}`))
-}
 
 // Reported as providerID/modelID, since a bare model id is ambiguous across providers.
 // Reads a user message or hook input (`{ model: { providerID, modelID } }`) and an
@@ -1671,9 +1662,10 @@ export const createHonchoCore = (host: HostAdapter, configPath?: string) => {
       {
         name: "honcho_setup",
         description:
-          `Check the Honcho connection and save the peer name, workspace or a self-hosted baseUrl to ~/.honcho/config.json. Ask the user what name Honcho should call them and pass it as peerName; every Honcho tool on the machine reads that name. Pass workspace only when the user wants Kilo to share memory with another Honcho tool. This tool never takes an API key: if none is configured, tell the user to run \`${SETUP_COMMAND}\` in a terminal, or /honcho:setup in the Kilo CLI.`,
+          `Set up Honcho for Kilo and save it to ~/.honcho/config.json. Ask the user what name Honcho should call them and pass it as peerName; every Honcho tool on the machine reads that name. When no API key is configured, or replaceKey is true, this tool opens a window on the user's screen where they paste their key from app.honcho.dev, so never ask for the key in chat. Pass workspace only when the user wants Kilo to share memory with another Honcho tool, and baseUrl only for a self-hosted Honcho. Memory starts with the next message; no restart is needed. If the window cannot open, tell the user to run \`${SETUP_COMMAND}\` in a terminal.`,
         args: {
           baseUrl: z.string().optional(),
+          replaceKey: z.boolean().optional(),
           peerName: z.string().optional(),
           workspace: z.string().optional(),
           persistGlobal: z.boolean().optional(),
@@ -1693,20 +1685,42 @@ export const createHonchoCore = (host: HostAdapter, configPath?: string) => {
             const providedWorkspace = typeof args.workspace === "string" ? args.workspace.trim() : ""
             const providedObservationMode =
               typeof args.observationMode === "string" ? args.observationMode.trim() : ""
-            const effectiveApiKey = handle.config.apiKey || ""
+            let effectiveApiKey = handle.config.apiKey || ""
             const effectiveBaseUrl = providedBaseUrl || handle.config.baseUrl || DEFAULT_SETTINGS.baseUrl
             const effectivePeerName = providedPeerName || handle.config.peerName || defaultPeerName()
             const persistedFields: string[] = []
 
+            // The key goes from a native window straight to the config file; it never appears in the chat or this tool's output.
+            let enteredApiKey = ""
+            if (!isLocalBaseUrl(effectiveBaseUrl) && (!effectiveApiKey || args.replaceKey === true)) {
+              enteredApiKey = (await promptForApiKey()) ?? ""
+              if (!enteredApiKey) {
+                return JSON.stringify(
+                  {
+                    ok: false,
+                    globalConfigPath: handle.globalConfigPath,
+                    message: `No API key was entered. The window was closed, or it cannot open here (for example over SSH). Ask the user to run \`${SETUP_COMMAND}\` in a terminal instead.`,
+                  },
+                  null,
+                  2,
+                )
+              }
+              effectiveApiKey = enteredApiKey
+            }
+
             if (!isLocalBaseUrl(effectiveBaseUrl) && effectiveApiKey) {
-              await validateSetupConnection({
+              await checkHonchoConnection({
                 apiKey: effectiveApiKey,
                 baseUrl: effectiveBaseUrl,
-                workspaceId: handle.workspaceId,
+                workspace: providedWorkspace || handle.workspaceId,
               })
             }
 
             if (shouldPersistGlobal) {
+              if (enteredApiKey) {
+                nextGlobal[LEGACY_API_KEY_FIELD] = enteredApiKey
+                persistedFields.push(LEGACY_API_KEY_FIELD)
+              }
               nextGlobal.peerName = effectivePeerName
               if (!persistedFields.includes("peerName")) {
                 persistedFields.push("peerName")
@@ -1752,10 +1766,10 @@ export const createHonchoCore = (host: HostAdapter, configPath?: string) => {
             const status = await runtimeStatus({ sessionID })
             const readyMessage = effectiveApiKey
               ? effectiveBaseUrl === DEFAULT_SETTINGS.baseUrl
-                ? `Honcho setup is ready for cloud mode at ${DEFAULT_SETTINGS.baseUrl}.`
-                : `Honcho setup is ready with endpoint ${effectiveBaseUrl}.`
+                ? `Honcho is set up on Honcho Cloud. Memory starts with the next message.`
+                : `Honcho is set up with ${effectiveBaseUrl}. Memory starts with the next message.`
               : isLocalBaseUrl(effectiveBaseUrl)
-                ? `Honcho setup is ready for local mode at ${effectiveBaseUrl}.`
+                ? `Honcho is set up with the local server at ${effectiveBaseUrl}. Memory starts with the next message.`
                 : `No Honcho API key is configured. Tell the user to run \`${SETUP_COMMAND}\` in a terminal, or /honcho:setup in the Kilo CLI. For a local Honcho instance, pass baseUrl http://127.0.0.1:8000.`
             return JSON.stringify(
               {
@@ -2133,6 +2147,7 @@ export const createHonchoRuntimePlugin =
 
 export const HonchoRuntimePlugin = createHonchoRuntimePlugin()
 export const __testing = {
+  keyDialogCommand,
   activityPath,
   addKiloPlugin,
   kiloConfigDir,
