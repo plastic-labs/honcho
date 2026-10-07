@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
-- ChromaDB vector store backend: set `VECTOR_STORE_TYPE=chromadb` and pick a client with `VECTOR_STORE_CHROMA_CLIENT_MODE`: `persistent` (embedded, for dev and small deployments), `http` (self-hosted Chroma server), or `cloud` (Chroma Cloud, needs `VECTOR_STORE_CHROMA_API_KEY`). Each Honcho namespace gets its own Chroma collection and index. Ships as an optional extra (`uv sync --extra chromadb`), so default installs and the Docker image don't include it (#868)
+- ChromaDB vector store backend: set `VECTOR_STORE_TYPE=chromadb` and pick a client with `VECTOR_STORE_CHROMA_CLIENT_MODE`: `http` (self-hosted Chroma server, the default) or `cloud` (Chroma Cloud, needs `VECTOR_STORE_CHROMA_API_KEY`). Embedded `persistent` mode is rejected at startup, since it isn't safe across Honcho's API and deriver processes. Each Honcho namespace gets its own Chroma collection and index. Ships as an optional extra (`uv sync --extra chromadb`), so default installs and the Docker image don't include it (#868)
 - Custom instructions reach every agent, not just the deriver. A new top-level `custom_instructions` in workspace and session configuration is the shared fallback, and `summary`, `dialectic` (new section), `dream`, and `peer_card` each take their own `custom_instructions` override. Message, session, and workspace levels are checked in that order and the first that sets a value wins; within a level the module's value beats the shared one, and `""` means no instructions. `reasoning.custom_instructions` stays deriver-only, and `peer_card` instructions add to the dream instructions without falling back to the shared value. No migration: configuration is JSONB (#1303)
 - Telemetry records custom instructions. `representation.completed`, the summary event, `dialectic.completed`, and `dream.specialist` carry `custom_instructions_tokens` and `custom_instructions_source` (e.g. `session.shared`, `workspace.summary`); `llm.call.traced` links the injected text through `custom_instructions_ref`; Langfuse generations carry it under the `custom_instructions` metadata key. Additive fields, so `_schema_version` is unchanged (#1309)
 - `python -m src.migrate [revision]` runs migrations under a Postgres advisory lock, so replicas that start together no longer race on `alembic upgrade` (`tuple concurrently updated`). A waiter polls for up to `DB_MIGRATION_LOCK_WAIT_SECONDS` (default 300), then fails naming the holder's pid. `scripts/migrate_db.py` and `scripts/provision_db.py` wrap it (#1268)
@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - `/openapi.json` no longer hardcodes `https://api.honcho.dev` as its first server. Self-hosted `/docs` "Try it out" and generated clients target the origin they were served from; behind a prefix-stripping proxy, set `--root-path` (#1103)
 - Gemini `gemini-embedding-2` models embed up to 8192 input tokens instead of being capped at 2048. Other Gemini models keep the 2048 cap (#925)
 - `uv.lock` bumps `starlette` (1.0.0 → 1.6.0, CVE-2026-48710), `python-multipart`, `anyio`, and `idna` to patched versions, which the Docker image picks up through `uv sync --frozen` (#1266)
+
+### Removed
+
+- `DIALECTIC_HISTORY_TOKEN_LIMIT` and `DREAM_HISTORY_TOKEN_LIMIT`, along with the unused `get_recent_history` agent tool they fed. A leftover value is ignored (#1308)
 
 ### Fixed
 
