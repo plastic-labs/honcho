@@ -20,6 +20,7 @@ from src.embedding_client import EmbeddingTokenLimitError
 from src.reconciler.sync_vectors import (
     MAX_SYNC_ATTEMPTS,
     ReconciliationMetrics,
+    _ClaimedEmbedding,  # pyright: ignore[reportPrivateUsage]
     _get_documents_needing_sync,  # pyright: ignore[reportPrivateUsage]
     _get_message_embeddings_needing_sync,  # pyright: ignore[reportPrivateUsage]
     _reconcile_documents_batch,  # pyright: ignore[reportPrivateUsage]
@@ -976,7 +977,9 @@ class TestMessageEmbeddings:
         # window (claim lease lapsed). Our late retry-bump is fenced with
         # sync_state == "pending", so it must no-op instead of dragging the row
         # back to "pending".
-        async def embed_fails_and_second_worker_syncs(claimed):
+        async def embed_fails_and_second_worker_syncs(
+            claimed: list[_ClaimedEmbedding],
+        ) -> tuple[dict[int, list[float]], set[int]]:
             del claimed  # not inspected here
             await db_session.execute(
                 update(models.MessageEmbedding)

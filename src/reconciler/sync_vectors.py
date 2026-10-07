@@ -479,7 +479,7 @@ async def _claim_and_lease_message_embeddings(
             workspace_name=row.workspace_name,
             session_name=row.session_name,
             peer_name=row.peer_name,
-            embedding=cast(Any, row.embedding),
+            embedding=row.embedding,
         )
         for row in rows
     ]
@@ -630,20 +630,20 @@ async def _persist_message_embeddings(
             for c in claimed:
                 if c.id not in vector_by_id:
                     continue
-                values: dict[str, Any] = {
+                sync_values: dict[str, Any] = {
                     "sync_state": "synced",
                     "last_sync_at": func.now(),
                     "sync_attempts": 0,
                 }
                 if c.id in freshly_embedded:
-                    values["embedding"] = freshly_embedded[c.id]
+                    sync_values["embedding"] = freshly_embedded[c.id]
                 await db.execute(
                     update(models.MessageEmbedding)
                     .where(
                         models.MessageEmbedding.id == c.id,
                         models.MessageEmbedding.sync_state == "pending",
                     )
-                    .values(**values)
+                    .values(**sync_values)
                 )
             await db.commit()
             synced_count += len(vector_by_id)
