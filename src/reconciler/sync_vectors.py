@@ -5,6 +5,7 @@ This module provides a periodic reconciliation job that syncs documents and mess
 embeddings to the vector store on a rolling basis, healing any missed writes.
 """
 
+import asyncio
 import datetime
 import logging
 import time
@@ -521,36 +522,46 @@ async def _embed_claimed(
         workspace_name=workspaces.pop() if len(workspaces) == 1 else None,
         parent_category="reconciliation",
     ):
-        for c in embs_needing_embed:
-            try:
-                new_emb = await embedding_client.simple_batch_embed([c.content])
-                freshly_embedded[c.id] = new_emb[0]
-            except EmbeddingTokenLimitError as e:
-                # Oversized input is a permanent validation failure — the same
-                # text will never embed. Mark failed immediately instead of
-                # burning MAX_SYNC_ATTEMPTS retries on it.
-                logger.warning(
-                    "Message %s chunk %s oversized for embedding provider: %s",
-                    c.message_id,
-                    c.id,
-                    e,
-                )
-                permanently_failed.add(c.id)
-            except ValueError as e:
-                # Transient provider response errors (count/dimension mismatch,
-                # no embedding returned) — retryable, keep the row pending.
-                logger.warning(
-                    "Transient embedding error for message %s chunk %s; will retry: %s",
-                    c.message_id,
-                    c.id,
-                    e,
-                )
-            except Exception:
-                logger.exception(
-                    "Unexpected error embedding message %s chunk %s; will retry",
-                    c.message_id,
-                    c.id,
-                )
+        # Embed each text individually so a single oversized text can't poison
+        # the batch, but run them concurrently (bounded) so a large batch of
+        # sequential provider round trips doesn't burn the reconciliation time
+        # budget and let early-claimed row leases expire before persist.
+        sem = asyncio.Semaphore(8)
+
+        async def _embed_one(c: _ClaimedEmbedding) -> None:
+            async with sem:
+                try:
+                    new_emb = await embedding_client.simple_batch_embed([c.content])
+                    freshly_embedded[c.id] = new_emb[0]
+                except EmbeddingTokenLimitError as e:
+                    # Oversized input is a permanent validation failure — the
+                    # same text will never embed. Mark failed immediately
+                    # instead of burning MAX_SYNC_ATTEMPTS retries on it.
+                    logger.warning(
+                        "Message %s chunk %s oversized for embedding provider: %s",
+                        c.message_id,
+                        c.id,
+                        e,
+                    )
+                    permanently_failed.add(c.id)
+                except ValueError as e:
+                    # Transient provider response errors (count/dimension
+                    # mismatch, no embedding returned) — retryable, keep the
+                    # row pending.
+                    logger.warning(
+                        "Transient embedding error for message %s chunk %s; will retry: %s",
+                        c.message_id,
+                        c.id,
+                        e,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Unexpected error embedding message %s chunk %s; will retry",
+                        c.message_id,
+                        c.id,
+                    )
+
+        await asyncio.gather(*(_embed_one(c) for c in embs_needing_embed))
     return freshly_embedded, permanently_failed
 
 
