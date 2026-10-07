@@ -8,7 +8,7 @@ to the plain offset query.
 """
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, final
 
 import pytest
 from fastapi.testclient import TestClient
@@ -31,6 +31,7 @@ def _new_id() -> str:
     return str(generate_nanoid())
 
 
+@final
 class _Endpoint:
     """A list endpoint plus a way to seed it with `SEEDED` rows."""
 

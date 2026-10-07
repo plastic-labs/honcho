@@ -20,6 +20,7 @@ per page. Two things here remove that cost:
 import asyncio
 import hashlib
 import logging
+from collections.abc import Coroutine
 from typing import Any, ClassVar, Generic, TypeVar, cast
 
 from fastapi import HTTPException, Query, status
@@ -194,7 +195,7 @@ async def _paginate_offset_via_keyset(
     )
     prometheus_metrics.record_pagination_offset_shim(outcome)
 
-    writes = []
+    writes: list[Coroutine[Any, Any, None]] = []
     if cursor_page.next_page:
         # ai: nothing is stored after a last page: a position taken there would skip rows appended later that OFFSET puts on the next page
         writes.append(
