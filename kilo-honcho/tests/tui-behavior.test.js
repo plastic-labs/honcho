@@ -164,30 +164,22 @@ const activity = (extra = {}) => ({
   ...extra,
 })
 
-test("sidebar rows show setup, errors, and what Honcho did", () => {
+test("sidebar rows show the peer and a session link, or the session name off Honcho Cloud", () => {
   assert.deepEqual(__testing.sidebarRows(activity({ state: "unconfigured" })), {
     label: "Not set up",
     tone: "muted",
-    details: ["Run /honcho:setup"],
+    details: [{ text: "Run /honcho:setup" }],
   })
-  assert.equal(__testing.sidebarRows(activity({ state: "error", error: "401 Unauthorized" })).details[0], "401 Unauthorized")
-  assert.equal(__testing.sidebarRows(activity()).tone, "muted")
+  assert.equal(__testing.sidebarRows(activity({ state: "error", error: "401 Unauthorized" })).details[0].text, "401 Unauthorized")
 
-  const working = __testing.sidebarRows(
-    activity({
-      saved: 3,
-      profile: { at: new Date(0).toISOString(), conclusions: 12, text: "profile" },
-      recall: { at: new Date(0).toISOString(), messageId: "msg", conclusions: 1, text: "recall" },
-    }),
-  )
-  assert.equal(working.tone, "success")
-  assert.deepEqual(working.details, [
-    "Peer: eri (kilo)",
-    "Profile: 12 conclusions",
-    "Recalled: 1 conclusion",
-    "Saved: 3 messages",
-    "/honcho:recall to view",
+  const cloud = __testing.sidebarRows(activity({ session: "eri-per-directory-kilo-other-kilo", sessionUrl: "https://app.honcho.dev/explore?x" }))
+  assert.deepEqual(cloud.details, [
+    { text: "Peer: eri" },
+    { text: "Session: View in Honcho ↗", url: "https://app.honcho.dev/explore?x" },
   ])
+
+  const selfHosted = __testing.sidebarRows(activity({ session: "eri-per-directory-kilo-some-long-folder-name-kilo" }))
+  assert.equal(selfHosted.details[1].text, "Session: eri-per-direct…der-name-kilo")
 })
 
 test("/honcho:recall shows the exact text Honcho added to the current session", async () => {
@@ -222,4 +214,43 @@ test("/honcho:recall shows the exact text Honcho added to the current session", 
   assert.match(shown[0].body, /Added to the system prompt at .*\n\n## User Memory Profile\n- Prefers tokio/)
   assert.match(shown[1].message, /Open a Kilo session/)
   assert.match(shown[2].body, /has not added memory to this session yet/)
+})
+
+test("/honcho:setup prefills the shared peer name and can join another tool's workspace", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "honcho-tui-setup-"))
+  const configPath = path.join(dir, "config.json")
+  await writeFile(configPath, JSON.stringify({ peerName: "eri", hosts: { claude_code: { workspace: "claude-code" } } }))
+  const previous = process.env.KILO_HONCHO_CONFIG_PATH
+  process.env.KILO_HONCHO_CONFIG_PATH = configPath
+  const asked = []
+  const session = {
+    dialogs: {
+      select: async (input) => {
+        asked.push(input)
+        return input.title === "Configure Honcho" ? "cloud" : "claude-code"
+      },
+      prompt: async (input) => {
+        asked.push(input)
+        return input.title === "Honcho API key" ? "hch-test" : input.value
+      },
+      alert: async (input) => asked.push(input),
+    },
+    liveStatus: () => ({}),
+  }
+  try {
+    await withHonchoEnv({}, () => __testing.runSetup(session))
+  } finally {
+    if (previous === undefined) delete process.env.KILO_HONCHO_CONFIG_PATH
+    else process.env.KILO_HONCHO_CONFIG_PATH = previous
+  }
+  const namePrompt = asked.find((input) => input.title?.startsWith("Peer name"))
+  assert.equal(namePrompt.value, "eri")
+  assert.match(namePrompt.title, /other Honcho tools/)
+  const workspaceSelect = asked.find((input) => input.title === "Which Honcho workspace should Kilo use?")
+  assert.deepEqual(workspaceSelect.options.map((option) => option.value), ["kilo", "claude-code"])
+
+  const saved = JSON.parse(await readFile(configPath, "utf-8"))
+  assert.equal(saved.peerName, "eri")
+  assert.equal(saved.hosts.kilo.workspace, "claude-code")
+  assert.deepEqual(saved.hosts.claude_code, { workspace: "claude-code" })
 })

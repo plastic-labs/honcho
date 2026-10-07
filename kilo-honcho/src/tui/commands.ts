@@ -5,19 +5,18 @@ import { createHonchoClient } from "../honcho-client.js"
 import { executeKiloImport, planKiloImport } from "../import.js"
 import {
   DEFAULT_SETTINGS,
+  HOST_ID,
   SETTING_ENUMS,
-  directionalKeepFollowUp,
   getNestedValue,
   isLocalBaseUrl,
   isObservationMode,
   isRecord,
-  needsObservationUpgradePrompt,
-  observationUpgradeNotice,
+  peerCollisionError,
   resolveBaseUrl,
+  resolvePeerName,
   resolveSessionPeerIds,
   sharedConfigPath,
   unifiedImportFollowUp,
-  type ObservationMode,
 } from "../core.js"
 import { recallMessage } from "./activity-view.js"
 import type { DialogOption, GlobalSettings, TuiCommandSpec, TuiSession } from "./dialogs.js"
@@ -179,15 +178,12 @@ export const statusMessage = (
     `Deployment: ${deployment}`,
     `Base URL: ${normalized.baseUrl}`,
     `API key: ${normalized.apiKey ? "set" : "not set"}`,
-    `Peer name: ${normalized.peerName || "user"}`,
+    `Peer name: ${resolvePeerName(normalized.peerName)}`,
     ...(liveStatus?.workspaceName ? [`Workspace: ${liveStatus.workspaceName}`] : []),
     ...(liveStatus?.kiloSessionId ? [`Kilo session: ${liveStatus.kiloSessionId}`] : []),
     `Config path: ${resolveConfigPath()}`,
     "",
     configured ? "Honcho is ready for Kilo." : "Run /honcho:setup to finish configuration.",
-    ...(configured && needsObservationUpgradePrompt(settings as Record<string, unknown>)
-      ? ["", observationUpgradeNotice()]
-      : []),
   ].join("\n")
 }
 
@@ -196,7 +192,7 @@ export const settingsMessage = (settings: GlobalSettings) => {
   return [
     `Config path: ${resolveConfigPath()}`,
     `API key: ${settings.apiKey?.trim() ? "set" : "not set"}`,
-    `Peer name: ${settings.peerName?.trim() || "user"}`,
+    `Peer name: ${resolvePeerName(settings.peerName)}`,
     `Base URL: ${resolveBaseUrl(settings as Record<string, unknown>) || DEFAULT_SETTINGS.baseUrl}`,
     `Workspace: ${host.workspace || DEFAULT_SETTINGS.workspace}`,
     `AI peer: ${host.aiPeer || DEFAULT_SETTINGS.aiPeer}`,
@@ -205,24 +201,12 @@ export const settingsMessage = (settings: GlobalSettings) => {
     `Agent observe me: ${host.agentObserveMe === true ? "true" : "false"}`,
     `Auto conclusions: ${host.autoConclusions === true ? "true" : "false"}`,
     `Session strategy: ${host.sessionStrategy || DEFAULT_SETTINGS.sessionStrategy}`,
-    ...(!isObservationMode(settings.hosts?.kilo?.observationMode) && settings.hosts?.kilo
-      ? ["", observationUpgradeNotice()]
-      : []),
   ].join("\n")
 }
 
-const persistHostObservationMode = async (mode: ObservationMode) => {
-  const config = (await readSharedConfig()) ?? {}
-  const hosts = isRecord(config.hosts) ? { ...config.hosts } : {}
-  const host = isRecord(hosts.kilo) ? hosts.kilo : {}
-  hosts.kilo = { ...host, observationMode: mode }
-  config.hosts = hosts
-  return writeSharedConfig(config)
-}
-
-const observationUpgradeOptions = (): DialogOption<string>[] => [
-  { title: "Switch to unified", value: "unified", description: "shared self-collection" },
-  { title: "Keep directional", value: "directional", description: "split memory between agents" },
+const observationModeOptions = (): DialogOption<string>[] => [
+  { title: "unified", value: "unified", description: "Your own memory, shared with other unified Honcho tools" },
+  { title: "directional", value: "directional", description: "This Kilo agent's own view of you" },
 ]
 
 export const saveSettings = async (partial: Partial<GlobalSettings>) => {
@@ -238,9 +222,7 @@ export const saveSettings = async (partial: Partial<GlobalSettings>) => {
   const nextPeerName =
     typeof partial.peerName === "string" && partial.peerName.trim()
       ? partial.peerName.trim()
-      : typeof current.peerName === "string" && current.peerName.trim()
-        ? current.peerName.trim()
-        : "user"
+      : resolvePeerName(current.peerName)
   const currentHosts = isRecord(sharedRaw.hosts) ? { ...sharedRaw.hosts } : {}
   const currentHost = isRecord(currentHosts.kilo) ? currentHosts.kilo : {}
   currentHosts.kilo = {
@@ -274,11 +256,8 @@ const importConfigFromSettings = (settings: GlobalSettings) => {
   const host = settings.hosts?.kilo || {}
   const workspaceId = (host.workspace || DEFAULT_SETTINGS.workspace).trim() || DEFAULT_SETTINGS.workspace
   const aiPeer = host.aiPeer || DEFAULT_SETTINGS.aiPeer
-  const { userPeerId, agentPeerId } = resolveSessionPeerIds(
-    settings.peerName || "user",
-    aiPeer,
-    host.removeUserPrefix === true,
-  )
+  const { userPeerId, agentPeerId } = resolveSessionPeerIds(resolvePeerName(settings.peerName), aiPeer)
+  if (userPeerId === agentPeerId) throw new Error(peerCollisionError(userPeerId))
   return {
     apiKey: settings.apiKey || "",
     baseUrl: resolveBaseUrl(settings as Record<string, unknown>) || DEFAULT_SETTINGS.baseUrl,
@@ -309,39 +288,6 @@ const formatImportPreview = (plan: Awaited<ReturnType<typeof planKiloImport>>) =
 
 const isConfigured = (settings: GlobalSettings) =>
   Boolean(settings.apiKey?.trim()) || isLocalBaseUrl(resolveBaseUrl(settings as Record<string, unknown>))
-
-/** true when the user chose a mode and it was saved; false when they dismissed. */
-export const runObservationUpgrade = async (session: TuiSession, followUpLines: string[]) => {
-  const confirmed = await session.dialogs.confirm({
-    title: "New: Honcho observation mode!",
-    message:
-      "Unified: one self-collection, you can share with other unified agents (new default). Directional: keeps Honcho memory specific to your Kilo agent.",
-    label: { confirm: "Switch to unified", cancel: "Keep directional" },
-  })
-  if (confirmed === undefined) return false
-  const mode: ObservationMode = confirmed ? "unified" : "directional"
-  const configPath = await persistHostObservationMode(mode)
-  await session.dialogs.alert({
-    title: mode === "unified" ? "Switched to unified" : "Keeping directional",
-    message: [
-      ...followUpLines,
-      `Saved observationMode=${mode} to ${configPath}`,
-      mode === "unified" ? unifiedImportFollowUp() : directionalKeepFollowUp(),
-    ].join("\n"),
-  })
-  return true
-}
-
-export const maybePromptObservationUpgrade = async (session: TuiSession) => {
-  try {
-    const settings = await readGlobalSettings()
-    const raw = await readSharedConfig()
-    if (!isConfigured(settings) || !needsObservationUpgradePrompt(raw)) return
-    await runObservationUpgrade(session, [])
-  } catch {
-    return
-  }
-}
 
 export const runStatus = async (session: TuiSession) => {
   const settings = await readGlobalSettings()
@@ -390,7 +336,7 @@ export const runConfig = async (session: TuiSession) => {
             ? "Honcho observation mode"
             : `What should it be set to: ${presetOptions.join(", ")}`,
           options: fieldPath.endsWith("observationMode")
-            ? observationUpgradeOptions()
+            ? observationModeOptions()
             : presetOptions.map((option) => ({ title: option, value: option })),
           current: typeof currentValue === "string" ? currentValue : undefined,
         })
@@ -457,26 +403,76 @@ export const runSetup = async (session: TuiSession) => {
   }
 
   const current = await readGlobalSettings()
-  const peerName = await session.dialogs.prompt({
-    title: "Peer name",
+  const sharedName = typeof current.peerName === "string" && current.peerName.trim() !== ""
+  const enteredName = await session.dialogs.prompt({
+    title: sharedName ? "Peer name (your other Honcho tools use this name)" : "What should Honcho call you?",
     placeholder: "Your Honcho peer name",
-    value: typeof current.peerName === "string" ? current.peerName : "",
+    value: resolvePeerName(current.peerName),
   })
-  if (peerName === undefined) return
-
-  const configPath = await saveSettings({ apiKey: apiKey.trim(), baseUrl, peerName: peerName.trim() })
-  const summary = [
-    `Saved settings to ${configPath}`,
-    `Base URL: ${baseUrl}`,
-    `API key: ${apiKey.trim() ? "set" : mode === "local" ? "not required for localhost mode" : "not set"}`,
-    `Peer name: ${peerName.trim() || "user"}`,
-  ]
-  const raw = await readSharedConfig()
-  const settings = await readGlobalSettings()
-  if (isConfigured(settings) && needsObservationUpgradePrompt(raw) && (await runObservationUpgrade(session, summary))) {
+  if (enteredName === undefined) return
+  const peerName = enteredName.trim() || resolvePeerName(current.peerName)
+  const ids = resolveSessionPeerIds(peerName, current.hosts?.kilo?.aiPeer || DEFAULT_SETTINGS.aiPeer)
+  if (ids.userPeerId === ids.agentPeerId) {
+    await session.dialogs.alert({ title: "Honcho setup incomplete", message: peerCollisionError(ids.userPeerId) })
     return
   }
-  await session.dialogs.alert({ title: "Honcho configured", message: summary.join("\n") })
+
+  const workspace = await chooseWorkspace(session, current)
+  if (workspace === undefined) return
+
+  const configPath = await saveSettings({
+    apiKey: apiKey.trim(),
+    baseUrl,
+    peerName,
+    hosts: { kilo: { workspace } },
+  })
+  await session.dialogs.alert({
+    title: "Honcho configured",
+    message: [
+      `Saved settings to ${configPath}`,
+      `Base URL: ${baseUrl}`,
+      `API key: ${apiKey.trim() ? "set" : mode === "local" ? "not required for localhost mode" : "not set"}`,
+      `Peer name: ${peerName}`,
+      `Workspace: ${workspace}`,
+      "",
+      "Every Honcho tool on this machine reads the peer name from this file.",
+    ].join("\n"),
+  })
+}
+
+/** Workspaces that other Honcho tools in the shared config already write to. */
+export const otherToolWorkspaces = (raw: Record<string, unknown> | null) => {
+  const hosts = raw && isRecord(raw.hosts) ? raw.hosts : {}
+  const found = new Map<string, string>()
+  for (const [tool, block] of Object.entries(hosts)) {
+    if (tool === HOST_ID || !isRecord(block)) continue
+    const workspace = typeof block.workspace === "string" ? block.workspace.trim() : ""
+    if (workspace && !found.has(workspace)) found.set(workspace, tool)
+  }
+  return [...found].map(([workspace, tool]) => ({ workspace, tool }))
+}
+
+// Joining another tool's workspace only sets hosts.kilo.workspace; that tool's own settings stay as they are.
+const chooseWorkspace = async (session: TuiSession, current: GlobalSettings) => {
+  const currentWorkspace = current.hosts?.kilo?.workspace?.trim() || DEFAULT_SETTINGS.workspace
+  const shared = otherToolWorkspaces(await readSharedConfig()).filter(({ workspace }) => workspace !== DEFAULT_SETTINGS.workspace)
+  if (shared.length === 0) return currentWorkspace
+  const options: DialogOption<string>[] = [
+    { title: `Kilo's own (${DEFAULT_SETTINGS.workspace})`, value: DEFAULT_SETTINGS.workspace, description: "Kilo builds its own memory of you" },
+    ...shared.map(({ workspace, tool }) => ({
+      title: `Share with ${tool} (${workspace})`,
+      value: workspace,
+      description: `Kilo uses the memory ${tool} already has of you`,
+    })),
+  ]
+  if (!options.some((option) => option.value === currentWorkspace)) {
+    options.push({ title: `Keep ${currentWorkspace}`, value: currentWorkspace, description: "The workspace Kilo uses now" })
+  }
+  return session.dialogs.select<string>({
+    title: "Which Honcho workspace should Kilo use?",
+    options,
+    current: currentWorkspace,
+  })
 }
 
 export const runImport = async (session: TuiSession) => {

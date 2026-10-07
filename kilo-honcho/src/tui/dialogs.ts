@@ -38,7 +38,6 @@ export type GlobalSettings = {
       agentObserveMe?: boolean
       autoConclusions?: boolean
       sessionStrategy?: SessionStrategy
-      removeUserPrefix?: boolean
     }
   }
 }

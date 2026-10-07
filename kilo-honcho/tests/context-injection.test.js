@@ -309,8 +309,8 @@ test("prompt-specific memory is attached in messages.transform, not saved throug
         call.search.get("search_query") === "memory-injection",
     )
     expect(targeted).toBeDefined()
-    expect(targeted.search.get("peer_perspective")).toBe("user")
-    expect(targeted.search.get("peer_target")).toBe("user")
+    expect(targeted.search.get("peer_perspective")).toBe("test-user")
+    expect(targeted.search.get("peer_target")).toBe("test-user")
 
     const systemOutput = { system: [] }
     await hooks["experimental.chat.system.transform"](systemInput(), systemOutput)
@@ -388,7 +388,7 @@ test("keyword auto-conclusions are off unless autoConclusions is true", async ()
   }, undefined, { hosts: { kilo: { autoConclusions: true } } })
 })
 
-test("the activity file records saved messages, the recall block, and the system snapshot", async () => {
+test("the activity file records the session link, the recall block, and the system snapshot", async () => {
   await runWithHarness(async ({ hooks, activityDir, readActivityFile }) => {
     await hooks["chat.message"](
       { sessionID: "ses_activity" },
@@ -399,7 +399,10 @@ test("the activity file records saved messages, the recall block, and the system
     const activity = await readActivityFile("ses_activity")
     expect(activity.state).toBe("active")
     expect(activity.workspace).toBe("kilo")
-    expect(activity.saved).toBe(1)
+    expect(activity.userPeer).toBe("test-user")
+    expect(activity.sessionUrl).toBe(
+      `https://app.honcho.dev/explore?workspace=kilo&view=sessions&session=${encodeURIComponent(activity.session)}`,
+    )
     expect(activity.recall.messageId).toBe("msg-recall")
     expect(activity.recall.text).toContain("Prompt memory for memory-injection")
     expect(activity.profile.text).toContain("The user prefers concise engineering analysis.")

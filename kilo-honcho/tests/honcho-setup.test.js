@@ -113,7 +113,7 @@ const toolContext = (rootDir) => ({
   async ask() {},
 })
 
-test("honcho_setup persists shared credentials and stamps unified observation", async () => {
+test("honcho_setup saves the peer name and can join another tool's workspace", async () => {
   const rootDir = await mkdtemp(path.join(os.tmpdir(), "honcho-setup-cloud-"))
   const homeDir = await mkdtemp(path.join(os.tmpdir(), "honcho-home-"))
   const sharedConfigPath = path.join(homeDir, ".honcho", "config.json")
@@ -121,14 +121,16 @@ test("honcho_setup persists shared credentials and stamps unified observation", 
   await withMockFetch(successfulValidationFetch, async () => {
     await withEnv({ HOME: homeDir, USER: "ignored-user", XDG_CONFIG_HOME: undefined }, async () => {
       const hooks = await createPluginHarness(rootDir)
-      const result = JSON.parse(await hooks.tool.honcho_setup.execute({ apiKey: "new-key", peerName: "custom-peer" }, toolContext(rootDir)))
+      const result = JSON.parse(
+        await hooks.tool.honcho_setup.execute({ apiKey: "new-key", peerName: "custom-peer", workspace: "claude-code" }, toolContext(rootDir)),
+      )
       const persisted = JSON.parse(await readFile(sharedConfigPath, "utf-8"))
 
       expect(result.ok).toBe(true)
       expect(persisted.peerName).toBe("custom-peer")
       expect(persisted.apiKey).toBe("new-key")
-      expect(persisted.hosts.kilo.observationMode).toBe("unified")
-      expect(persisted.hosts.kilo.removeUserPrefix).toBe(true)
+      expect(persisted.hosts.kilo.workspace).toBe("claude-code")
+      expect(persisted.hosts.kilo.removeUserPrefix).toBeUndefined()
     })
   })
 })
@@ -147,11 +149,10 @@ test("honcho_setup does not persist when cloud auth validation fails", async () 
       await withEnv({ HOME: homeDir, USER: "ignored-user", XDG_CONFIG_HOME: undefined }, async () => {
         const hooks = await createPluginHarness(rootDir)
         const result = JSON.parse(await hooks.tool.honcho_setup.execute({ apiKey: "bad-key" }, toolContext(rootDir)))
-        const persisted = JSON.parse(await readFile(sharedConfigPath, "utf-8"))
 
         expect(result.ok).toBe(false)
         expect(result.error).toMatch(/Invalid API key/i)
-        expect(persisted.apiKey).toBeUndefined()
+        await expect(readFile(sharedConfigPath, "utf-8")).rejects.toThrow()
       })
     },
   )
@@ -221,37 +222,32 @@ test("honcho_status lets HONCHO_* env values override ~/.honcho/config.json", as
   )
 })
 
-test("fresh install stamps observationMode=unified and drops the user- prefix", async () => {
-  const rootDir = await mkdtemp(path.join(os.tmpdir(), "honcho-fresh-prefix-root-"))
-  const homeDir = await mkdtemp(path.join(os.tmpdir(), "honcho-fresh-prefix-home-"))
+test("without a peerName the user peer is the OS user name, and the plugin writes no config", async () => {
+  const rootDir = await mkdtemp(path.join(os.tmpdir(), "honcho-fresh-root-"))
+  const homeDir = await mkdtemp(path.join(os.tmpdir(), "honcho-fresh-home-"))
   const sharedConfigPath = path.join(homeDir, ".honcho", "config.json")
 
-  await withEnv(
-    { HOME: homeDir, USER: "ignored-user", XDG_CONFIG_HOME: undefined, HONCHO_PEER_NAME: "alice" },
-    async () => {
-      const hooks = await createPluginHarness(rootDir)
-      const result = JSON.parse(await hooks.tool.honcho_status.execute({}, toolContext(rootDir)))
-      const persisted = JSON.parse(await readFile(sharedConfigPath, "utf-8"))
+  await withEnv({ HOME: homeDir, USER: "first.last", XDG_CONFIG_HOME: undefined }, async () => {
+    const hooks = await createPluginHarness(rootDir)
+    const result = JSON.parse(await hooks.tool.honcho_status.execute({}, toolContext(rootDir)))
 
-      expect(result.observationMode).toBe("unified")
-      expect(result.peers.userPeer.id).toBe("alice")
-      expect(persisted.hosts.kilo.observationMode).toBe("unified")
-      expect(persisted.hosts.kilo.removeUserPrefix).toBe(true)
-    },
-  )
+    expect(result.observationMode).toBe("unified")
+    // Honcho rejects "." in ids, so only that character changes.
+    expect(result.peers.userPeer.id).toBe("first-last")
+    await expect(readFile(sharedConfigPath, "utf-8")).rejects.toThrow()
+  })
 })
 
-test("upgrading install keeps directional observation and the user- prefix", async () => {
-  const rootDir = await mkdtemp(path.join(os.tmpdir(), "honcho-legacy-prefix-root-"))
-  const homeDir = await mkdtemp(path.join(os.tmpdir(), "honcho-legacy-prefix-home-"))
+test("a config from another Honcho tool gives Kilo the same peer, unprefixed and unified", async () => {
+  const rootDir = await mkdtemp(path.join(os.tmpdir(), "honcho-shared-root-"))
+  const homeDir = await mkdtemp(path.join(os.tmpdir(), "honcho-shared-home-"))
   const sharedConfigPath = path.join(homeDir, ".honcho", "config.json")
 
   await mkdir(path.dirname(sharedConfigPath), { recursive: true })
   const initialConfig = {
-    peerName: "alice",
-    apiKey: "legacy-key",
-    baseUrl: "https://api.honcho.dev",
-    hosts: { kilo: { aiPeer: "kilo", workspace: "kilo" } },
+    peerName: "Alice",
+    apiKey: "shared-key",
+    hosts: { claude_code: { workspace: "claude-code", aiPeer: "claude" } },
   }
   await writeFile(sharedConfigPath, JSON.stringify(initialConfig, null, 2))
 
@@ -260,24 +256,25 @@ test("upgrading install keeps directional observation and the user- prefix", asy
     const result = JSON.parse(await hooks.tool.honcho_status.execute({}, toolContext(rootDir)))
     const persisted = JSON.parse(await readFile(sharedConfigPath, "utf-8"))
 
-    expect(result.observationMode).toBe("directional")
-    expect(result.observationModeNotice).toMatch(/\/honcho:import/)
-    expect(result.peers.userPeer.id).toBe("user-alice")
+    expect(result.observationMode).toBe("unified")
+    expect(result.peers.userPeer.id).toBe("Alice")
+    expect(result.workspace).toBe("kilo")
     expect(persisted).toEqual(initialConfig)
   })
 })
 
-test("bare peer colliding with the agent peer falls back to the prefix", async () => {
+test("a peerName equal to aiPeer fails with a clear error instead of renaming the user", async () => {
   const rootDir = await mkdtemp(path.join(os.tmpdir(), "honcho-collide-root-"))
   const homeDir = await mkdtemp(path.join(os.tmpdir(), "honcho-collide-home-"))
   const cfg = path.join(homeDir, ".honcho", "config.json")
   await mkdir(path.dirname(cfg), { recursive: true })
 
   await withEnv({ HOME: homeDir, USER: "ignored-user", XDG_CONFIG_HOME: undefined }, async () => {
-    await writeFile(cfg, JSON.stringify({ peerName: "kilo", hosts: { kilo: { aiPeer: "kilo", removeUserPrefix: true } } }))
-    const result = JSON.parse(await (await createPluginHarness(rootDir)).tool.honcho_status.execute({}, toolContext(rootDir)))
-    expect(result.ok).toBe(true)
-    expect(result.peers.userPeer.id).toBe("user-kilo")
+    await writeFile(cfg, JSON.stringify({ peerName: "kilo", apiKey: "key", hosts: { kilo: { aiPeer: "kilo" } } }))
+    const hooks = await createPluginHarness(rootDir)
+    const result = JSON.parse(await hooks.tool.honcho_chat.execute({ query: "what do you know?" }, toolContext(rootDir)))
+    expect(result.ok).toBe(false)
+    expect(result.error).toMatch(/peerName and aiPeer are both 'kilo'/)
   })
 })
 

@@ -12,22 +12,21 @@ import {
   HOST_ID,
   PLUGIN_ID,
   clampText,
+  defaultPeerName,
   deriveSessionScope,
   deriveUserPeerId as deriveUserPeerIdFromName,
   getNestedValue,
   honchoSessionKey,
+  honchoSessionUrl,
   isLocalBaseUrl,
   isRecord,
-  needsObservationUpgradePrompt,
   normalizeId,
-  observationUpgradeNextSteps,
-  observationUpgradeNotice,
+  peerCollisionError,
   resolveBaseUrl,
   resolveSessionPeerIds,
   SETTING_ENUMS,
   sharedConfigPath,
   sharedGlobalSettingsPath,
-  stampedHostObservationMode,
   timestampToIso,
   unifiedImportFollowUp,
   userHomeDir,
@@ -88,7 +87,6 @@ type HostScopedSettings = Partial<
     | "agentObserveMe"
     | "autoConclusions"
     | "sessionStrategy"
-    | "removeUserPrefix"
   >
 >
 
@@ -174,7 +172,7 @@ const INTERNAL_CONTEXT_REFRESH: ContextRefreshSettings = {
   useSessionStartDialectic: true,
 }
 
-const BOOLEAN_KEYS = new Set<keyof HonchoSettings>(["removeUserPrefix", "agentObserveMe", "autoConclusions"])
+const BOOLEAN_KEYS = new Set<keyof HonchoSettings>(["agentObserveMe", "autoConclusions"])
 
 const ENUM_KEYS: Record<string, ReadonlySet<string>> = Object.fromEntries(
   Object.entries(SETTING_ENUMS).map(([key, values]) => [key, new Set(values)]),
@@ -191,7 +189,6 @@ const HOST_SETTING_FIELDS = new Set<keyof HonchoSettings>([
   "agentObserveMe",
   "autoConclusions",
   "sessionStrategy",
-  "removeUserPrefix",
 ])
 
 const SETTING_FIELD_PATHS = new Set([
@@ -205,7 +202,6 @@ const SETTING_FIELD_PATHS = new Set([
   "agentObserveMe",
   "autoConclusions",
   "sessionStrategy",
-  "removeUserPrefix",
 ])
 
 const DURABLE_PATTERNS = [
@@ -840,7 +836,7 @@ const envSettings = (): Record<string, unknown> => ({
 
 const resolveSettings = async (configPathOverride?: string) => {
   const configPath = sharedConfigPath(configPathOverride)
-  const { globalConfigPath, globalRaw } = await ensureSharedGlobalSettings(configPath)
+  const { globalConfigPath, globalRaw } = await readSharedGlobalSettings(configPath)
   return {
     configPath,
     globalConfigPath,
@@ -856,16 +852,12 @@ const writeSettings = async (
   await writeFile(configPath, `${JSON.stringify(settings, null, 2)}\n`, "utf-8")
 }
 
-const currentUserName = () => "user"
-
-const deriveUserPeerId = (settings: Pick<HonchoSettings, "peerName" | "removeUserPrefix">) =>
-  deriveUserPeerIdFromName(settings.peerName || currentUserName(), Boolean(settings.removeUserPrefix))
+const deriveUserPeerId = (settings: Pick<HonchoSettings, "peerName">) =>
+  deriveUserPeerIdFromName(settings.peerName || defaultPeerName())
 
 const assertDistinctUserAndAgentPeers = (userPeerId: string, rootAgentPeerId: string) => {
   if (userPeerId === rootAgentPeerId) {
-    throw new Error(
-      `Invalid Honcho config: peerName and aiPeer both resolve to the peer id '${userPeerId}'; they must differ so user and agent memory stay separate.`,
-    )
+    throw new Error(peerCollisionError(userPeerId))
   }
 }
 
@@ -877,7 +869,6 @@ const hostDefaults = (settings: HonchoSettings): Record<string, unknown> => {
     aiPeer,
     recallMode: settings.recallMode,
     sessionStrategy: settings.sessionStrategy,
-    removeUserPrefix: settings.removeUserPrefix,
   }
 }
 
@@ -892,38 +883,11 @@ const writeSharedGlobalSettings = async (configPath: string, settings: Record<st
   await writeFile(configPath, `${JSON.stringify(next, null, 2)}\n`, "utf-8")
 }
 
-const ensureSharedGlobalSettings = async (configPath = sharedGlobalSettingsPath()) => {
-  const sharedRaw = await readJsonFile(configPath)
-  const currentShared = sharedRaw ?? {}
-  const mergedHostSettings = mergeSettings(normalizeScopedSettings(currentShared))
-  let next: Record<string, unknown>
-
-  if (sharedRaw) {
-    next = currentShared
-  } else {
-    // Brand-new install (no prior config): ship removeUserPrefix=true so new
-    // users get the bare `<peerName>` peer, and observationMode=unified so tools
-    // query the shared user self-collection. Existing configs take the `if`
-    // branch untouched and fall back to directional / prefixed peers.
-    next = {
-      peerName: currentUserName(),
-      baseUrl: mergedHostSettings.baseUrl,
-      hosts: {
-        [HOST_ID]: {
-          ...hostDefaults(mergedHostSettings),
-          removeUserPrefix: true,
-          observationMode: "unified",
-        },
-      },
-    }
-    await writeSharedGlobalSettings(configPath, next)
-  }
-
-  return {
-    globalConfigPath: configPath,
-    globalRaw: normalizedRawSettings(next),
-  }
-}
+// Read only: every Honcho tool shares this file, so Kilo writes it only from setup and config changes.
+const readSharedGlobalSettings = async (configPath = sharedGlobalSettingsPath()) => ({
+  globalConfigPath: configPath,
+  globalRaw: normalizedRawSettings((await readJsonFile(configPath)) ?? {}),
+})
 
 const deriveRuntimeHandle = async (
   host: HostAdapter,
@@ -936,11 +900,9 @@ const deriveRuntimeHandle = async (
   const repoName = path.basename(rootDir)
   const workspaceId = normalizeId(settings.workspace || DEFAULT_SETTINGS.workspace)
   const { userPeerId, agentPeerId: rootAgentPeerId } = resolveSessionPeerIds(
-    settings.peerName || currentUserName(),
+    settings.peerName || defaultPeerName(),
     settings.aiPeer || DEFAULT_SETTINGS.aiPeer,
-    Boolean(settings.removeUserPrefix),
   )
-  assertDistinctUserAndAgentPeers(userPeerId, rootAgentPeerId)
   const activeAgentPeerId = rootAgentPeerId
   const childAgentPeerId = null
   const parentAgentObserverPeerId = null
@@ -1048,6 +1010,7 @@ const createActiveRuntime = async (
   configPathOverride?: string,
 ): Promise<ActiveRuntime> => {
   const handle = await deriveRuntimeHandle(host, input, configPathOverride)
+  assertDistinctUserAndAgentPeers(handle.userPeerId, handle.rootAgentPeerId)
   const honcho = createHonchoClient({
     apiKey: handle.config.apiKey,
     baseUrl: handle.config.baseUrl,
@@ -1254,14 +1217,16 @@ export const createHonchoCore = (host: HostAdapter, configPath?: string) => {
     const activateRuntime = (input: Record<string, unknown> | undefined) =>
       createActiveRuntime(host, input, telemetryFor, appliedAgentConfigs, configPath)
 
-    const noteActivity = (handle: RuntimeHandle, patch: ActivityPatch | ((current: { saved: number }) => ActivityPatch)) => {
+    const noteActivity = (handle: RuntimeHandle, patch: ActivityPatch) => {
       if (handle.sessionId === "unknown-session") return Promise.resolve()
-      return activity.update(handle.sessionId, (current) => ({
+      return activity.update(handle.sessionId, {
         workspace: handle.workspaceId,
         userPeer: handle.userPeerId,
+        session: handle.sessionKey,
+        sessionUrl: honchoSessionUrl(handle.config.baseUrl, handle.workspaceId, handle.sessionKey),
         recallMode: handle.config.recallMode,
-        ...(typeof patch === "function" ? patch(current) : patch),
-      }))
+        ...patch,
+      })
     }
 
     const getState = (stateKey: string) => {
@@ -1315,12 +1280,6 @@ export const createHonchoCore = (host: HostAdapter, configPath?: string) => {
     const runtimeStatus = async (input: Record<string, unknown> | undefined) => {
       const handle = await deriveRuntimeHandle(host, input, configPath)
       const state = getState(deriveSessionStateKey(handle))
-      const globalRaw = await readJsonFile(handle.globalConfigPath)
-      const observationModeStamped = stampedHostObservationMode(globalRaw)
-      const upgradeNotice =
-        hasConfiguredAuth(handle.config) && needsObservationUpgradePrompt(globalRaw)
-          ? observationUpgradeNotice()
-          : null
       return {
         ok: true,
         configPath: handle.configPath,
@@ -1334,18 +1293,10 @@ export const createHonchoCore = (host: HostAdapter, configPath?: string) => {
         sessionName: handle.sessionKey,
         recallMode: handle.config.recallMode,
         observationMode: handle.config.observationMode,
-        observationModeStamped: Boolean(observationModeStamped),
-        ...(upgradeNotice
-          ? {
-              observationModeNotice: upgradeNotice,
-              nextSteps: observationUpgradeNextSteps(),
-            }
-          : {}),
         agentObserveMe: handle.config.agentObserveMe,
         autoConclusions: handle.config.autoConclusions,
         sessionStrategy: handle.config.sessionStrategy,
-        peerName: handle.config.peerName,
-        removeUserPrefix: handle.config.removeUserPrefix,
+        peerName: handle.config.peerName || defaultPeerName(),
         configured: hasConfiguredAuth(handle.config),
         localMode: isLocalBaseUrl(handle.config.baseUrl),
         baseUrl: handle.config.baseUrl,
@@ -1369,7 +1320,6 @@ export const createHonchoCore = (host: HostAdapter, configPath?: string) => {
       const trimmed = clampText(content.trim(), INTERNAL_MESSAGE_MAX_CHARS)
       if (!trimmed) return
       await runtime.session.addMessages(peer.message(trimmed, { metadata, createdAt }))
-      await noteActivity(runtime, (current) => ({ saved: current.saved + 1 }))
     }
 
     const captureCompletedAssistantRecord = async (
@@ -1714,11 +1664,12 @@ export const createHonchoCore = (host: HostAdapter, configPath?: string) => {
       {
         name: "honcho_setup",
         description:
-          "Validate Honcho setup for Kilo and persist shared Honcho credentials or a localhost baseUrl to ~/.honcho/config.json when provided. On upgrades where observationMode is unset, relay observationModeNotice and ask the user to keep directional or switch to unified before calling honcho_set_config. If they choose unified, mention /honcho:import.",
+          "Validate Honcho setup for Kilo and persist shared Honcho credentials or a localhost baseUrl to ~/.honcho/config.json. Before calling it, ask the user what name Honcho should know them by and pass it as peerName; ~/.honcho/config.json shares that name with their other Honcho tools. Pass workspace only when the user wants Kilo to share memory with another Honcho tool's workspace.",
         args: {
           apiKey: z.string().optional(),
           baseUrl: z.string().optional(),
           peerName: z.string().optional(),
+          workspace: z.string().optional(),
           persistGlobal: z.boolean().optional(),
           observationMode: z.string().optional(),
         },
@@ -1734,12 +1685,13 @@ export const createHonchoCore = (host: HostAdapter, configPath?: string) => {
             const providedApiKey = typeof args.apiKey === "string" ? args.apiKey.trim() : ""
             const providedBaseUrl = typeof args.baseUrl === "string" ? args.baseUrl.trim() : ""
             const providedPeerName = typeof args.peerName === "string" ? args.peerName.trim() : ""
+            const providedWorkspace = typeof args.workspace === "string" ? args.workspace.trim() : ""
             const providedObservationMode =
               typeof args.observationMode === "string" ? args.observationMode.trim() : ""
             const effectiveApiKey = providedApiKey || handle.config.apiKey || ""
             const effectiveBaseUrl =
               providedBaseUrl || (providedApiKey ? DEFAULT_SETTINGS.baseUrl : handle.config.baseUrl || DEFAULT_SETTINGS.baseUrl)
-            const effectivePeerName = providedPeerName || handle.config.peerName || currentUserName()
+            const effectivePeerName = providedPeerName || handle.config.peerName || defaultPeerName()
             const persistedFields: string[] = []
 
             if (!isLocalBaseUrl(effectiveBaseUrl) && effectiveApiKey) {
@@ -1774,10 +1726,14 @@ export const createHonchoCore = (host: HostAdapter, configPath?: string) => {
                 ...existingHost,
                 ...hostDefaults(nextResolved),
                 ...(observationModeValue ? { observationMode: observationModeValue } : {}),
+                ...(providedWorkspace ? { workspace: providedWorkspace } : {}),
               }
               nextGlobal.hosts = nextHosts
               if (observationModeValue) {
                 persistedFields.push("observationMode")
+              }
+              if (providedWorkspace) {
+                persistedFields.push("workspace")
               }
               if (providedBaseUrl || providedApiKey) {
                 persistedFields.push("baseUrl")
@@ -1801,20 +1757,12 @@ export const createHonchoCore = (host: HostAdapter, configPath?: string) => {
               : isLocalBaseUrl(effectiveBaseUrl)
                 ? `Honcho setup is ready for local mode at ${effectiveBaseUrl}.`
                 : "No Honcho API key is configured. Pass one to /honcho:setup <key> or set HONCHO_API_KEY before running setup. For a local Honcho instance, set baseUrl to http://127.0.0.1:8000 or http://localhost:8000."
-            const upgradeNotice =
-              typeof status.observationModeNotice === "string" ? status.observationModeNotice : null
             return JSON.stringify(
               {
                 ok: configured,
                 globalConfigPath: handle.globalConfigPath,
                 persistedFields,
-                message: upgradeNotice ? `${readyMessage} ${upgradeNotice}` : readyMessage,
-                ...(upgradeNotice
-                  ? {
-                      observationModeNotice: upgradeNotice,
-                      nextSteps: observationUpgradeNextSteps(),
-                    }
-                  : {}),
+                message: readyMessage,
                 status,
               },
               null,
@@ -1838,7 +1786,7 @@ export const createHonchoCore = (host: HostAdapter, configPath?: string) => {
       {
         name: "honcho_status",
         description:
-          "Show effective Honcho status for this Kilo project, including workspace, peers, sessions, and memory mode. If observationModeNotice is set, tell the user they are still on directional, explain unified vs directional, and that they can switch then optionally run /honcho:import.",
+          "Show effective Honcho status for this Kilo project, including workspace, peers, sessions, and memory mode.",
         args: {},
         async execute(_args, sessionID) {
           return JSON.stringify(await runtimeStatus({ sessionID }), null, 2)

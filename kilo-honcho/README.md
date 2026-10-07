@@ -28,8 +28,9 @@ If you edit the config by hand, add `"@honcho-ai/kilo-honcho"` to the `plugin` a
 2. Run `/honcho:setup`
 3. Keep the default `Honcho Cloud` option unless you want a self-hosted or local endpoint
 4. Enter your Honcho API key
-5. Enter your `peerName`
-6. Run `/honcho:status` to check the runtime
+5. Confirm the name Honcho should call you. Setup fills in the `peerName` your other Honcho tools use, or your OS user name.
+6. Choose a workspace: Kilo's own, or one another Honcho tool already uses
+7. Run `/honcho:status` to check the runtime
 
 ## What You Get
 
@@ -59,7 +60,6 @@ Configuration lives in the shared file `~/.honcho/config.json`, which other Honc
       "agentObserveMe": false,
       "autoConclusions": false,
       "sessionStrategy": "per-directory",
-      "removeUserPrefix": true,
       "apiKey": "hch-..." // optional; overrides the root apiKey for Kilo
     }
   }
@@ -91,12 +91,18 @@ This decides which Honcho collection `honcho_chat`, `honcho_create_conclusion` a
 
 | Mode | Collection | Best for |
 | --- | --- | --- |
-| `unified` (default for new configs) | The user's own collection (`observer=user`, `observed=user`) | Several agents sharing what they learn about you |
+| `unified` (default) | The user's own collection (`observer=user`, `observed=user`) | Several agents sharing what they learn about you |
 | `directional` | This agent's view of the user (`observer=aiPeer`, `observed=user`) | Memory kept separate per agent |
 
 In `unified` mode the agent peer does not observe the user, so Honcho derives each message once. If you switch to `directional`, the agent's view of you starts from the messages saved after the switch.
 
-A config file that existed before the plugin first ran, for example one written by another Honcho plugin, keeps `directional` and the legacy `user-<peerName>` peer until you choose otherwise with `/honcho:setup` or `/honcho:config`.
+### Peer name
+
+Your peer is your `peerName`, unchanged, so Kilo uses the same peer as your other Honcho tools. Kilo reads `HONCHO_PEER_NAME`, then `peerName` in `~/.honcho/config.json`, then your OS user name (`$USER`). Characters Honcho does not allow in ids become `-`. The plugin writes `~/.honcho/config.json` only when you run setup or change a setting.
+
+A peer belongs to one workspace. Kilo uses its own `kilo` workspace by default, so it starts with no memory of you. To share memory with another Honcho tool, choose that tool's workspace in `/honcho:setup`, or set `hosts.kilo.workspace` to it. This changes nothing for the other tool.
+
+`peerName` and `aiPeer` must differ. If they match, Honcho calls fail with an error in the sidebar until you change one.
 
 ### Agent self-observation
 
@@ -113,14 +119,11 @@ Kilo's sidebar shows `Memory • Disabled` when Kilo's own memory feature is off
 ```
 Honcho
 • Active
-Peer: alice (kilo)
-Profile: 6 conclusions
-Recalled: 4 conclusions
-Saved: 12 messages
-/honcho:recall to view
+Peer: alice
+Session: View in Honcho ↗
 ```
 
-`Profile` counts the conclusions added to the system prompt when the session started. `Recalled` counts the conclusions attached to your most recent prompt that matched memory. `Saved` counts the messages this session sent to Honcho. The section shows `Not set up` before `/honcho:setup`, and `Error` with the reason when a Honcho request fails.
+On Honcho Cloud, clicking `View in Honcho` opens the session in the Honcho dashboard, where you can read the saved messages and the conclusions. A self-hosted or local Honcho has no known dashboard, so the sidebar shows the session name, shortened in the middle to fit. The section shows `Not set up` before `/honcho:setup`, and `Error` with the reason when a Honcho request fails.
 
 `/honcho:recall` opens the exact text the model received. Kilo does not save this text in its session history.
 

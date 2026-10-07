@@ -1,7 +1,7 @@
 import type { TuiPlugin, TuiPluginApi } from "@kilocode/plugin/tui"
 import { DEFAULT_SETTINGS } from "../core.js"
 import { transcriptSourceFromClient } from "../import.js"
-import { COMMANDS, maybePromptObservationUpgrade, runGuarded } from "./commands.js"
+import { COMMANDS, runGuarded } from "./commands.js"
 import type { Dialogs, GlobalSettings, TuiSession } from "./dialogs.js"
 import { registerSidebar } from "./sidebar.js"
 import { showTextView } from "./text-view.js"
@@ -141,5 +141,4 @@ export const buildCommands = (api: TuiPluginApi) =>
 export const tui: TuiPlugin = async (api) => {
   api.command?.register(() => buildCommands(api))
   registerSidebar(api)
-  void maybePromptObservationUpgrade(sessionFromApi(api))
 }

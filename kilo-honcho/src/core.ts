@@ -41,37 +41,8 @@ export const isObservationMode = (value: unknown): value is ObservationMode =>
 export const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
 
-export const stampedHostObservationMode = (
-  raw: Record<string, unknown> | null | undefined,
-): ObservationMode | null => {
-  if (!isRecord(raw) || !isRecord(raw.hosts) || !isRecord(raw.hosts.kilo)) {
-    return null
-  }
-  const value = raw.hosts.kilo.observationMode
-  return isObservationMode(value) ? value : null
-}
-
-export const needsObservationUpgradePrompt = (raw: Record<string, unknown> | null | undefined) => {
-  if (!isRecord(raw) || !isRecord(raw.hosts) || !isRecord(raw.hosts.kilo)) {
-    return false
-  }
-  return stampedHostObservationMode(raw) === null
-}
-
-export const observationUpgradeNotice = () =>
-  `Observation mode is unset, so this install is still directional (this Kilo agent's view of you).
-New installs use unified (your self-collection, shared with other unified agents).
-Choose with /honcho:setup or /honcho:config (hosts.kilo.observationMode).
-If you switch to unified, you can run /honcho:import to reingest local Kilo transcripts into the new collection.`
-
-export const observationUpgradeNextSteps = () =>
-  "Ask the user whether to keep directional or switch to unified. Persist the choice with honcho_set_config field=observationMode. If they choose unified, mention they can run /honcho:import to backfill local Kilo history — optional, not required."
-
 export const unifiedImportFollowUp = () =>
   "Switched to unified. Optionally run /honcho:import to backfill local Kilo transcripts into the user self-collection. Skip if you do not want that history in the new collection."
-
-export const directionalKeepFollowUp = () =>
-  "Keeping directional. This Kilo agent continues using its own view of you. You can switch later with /honcho:config."
 
 export type HonchoSettings = {
   apiKey: string
@@ -84,7 +55,6 @@ export type HonchoSettings = {
   agentObserveMe: boolean
   autoConclusions: boolean
   sessionStrategy: SessionStrategy
-  removeUserPrefix: boolean
 }
 
 export const DEFAULT_SETTINGS: HonchoSettings = {
@@ -94,16 +64,12 @@ export const DEFAULT_SETTINGS: HonchoSettings = {
   aiPeer: HOST_ID,
   workspace: HOST_ID,
   recallMode: "hybrid",
-  // Fallback when the field is omitted: keep directional so existing installs
-  // do not silently switch collections. New installs stamp unified on disk.
-  observationMode: "directional",
+  observationMode: "unified",
   // Default false: Honcho models the user, not the assistant. Set true to opt into agent self-observation.
   agentObserveMe: false,
   // Default false: Honcho's deriver already reasons over every message, so verbatim keyword copies only add noise.
   autoConclusions: false,
   sessionStrategy: "per-directory",
-  // Default false for upgrades: keep the legacy user-<peerName> peer. New installs stamp true.
-  removeUserPrefix: false,
 }
 
 export const clampText = (value: string, maxChars: number) =>
@@ -151,6 +117,16 @@ export const resolveBaseUrl = (raw: Record<string, unknown>, hostId = HOST_ID) =
   const baseUrl = typeof raw.baseUrl === "string" ? raw.baseUrl.trim() : ""
   if (baseUrl) return baseUrl
   return endpointBaseUrl(isRecord(raw.hosts) ? raw.hosts[hostId] : undefined) || endpointBaseUrl(raw)
+}
+
+// Only Honcho Cloud has a known dashboard; a self-hosted or local server gets no link.
+export const honchoSessionUrl = (baseUrl: string, workspace: string, session: string) => {
+  try {
+    if (new URL(baseUrl).hostname !== "api.honcho.dev") return undefined
+  } catch {
+    return undefined
+  }
+  return `https://app.honcho.dev/explore?workspace=${encodeURIComponent(workspace)}&view=sessions&session=${encodeURIComponent(session)}`
 }
 
 export const normalizeId = (value: string) =>
@@ -248,22 +224,23 @@ export const honchoSessionKey = (
   lineage: readonly string[],
 ) => normalizeId(`${userPeerId}:${sessionStrategy}:${sessionScope}:${lineage.join(":")}`)
 
-export const deriveUserPeerId = (peerName: string, removeUserPrefix: boolean) => {
-  const name = peerName.trim() || "user"
-  // The sibling claude-honcho / hermes-honcho plugins use the peer name
-  // verbatim (no case folding), so removeUserPrefix=true must skip normalizeId
-  // to achieve real parity instead of silently lowercasing into a different peer.
-  return removeUserPrefix ? name : normalizeId(`user:${name}`)
-}
+/** The name Claude Code falls back to as well, so both tools pick the same peer when `peerName` is unset. */
+export const defaultPeerName = () => process.env.USER?.trim() || process.env.USERNAME?.trim() || "user"
 
-export const resolveSessionPeerIds = (peerName: string, aiPeer: string, removeUserPrefix: boolean) => {
-  const agentPeerId = normalizeId(aiPeer || DEFAULT_SETTINGS.aiPeer)
-  const name = peerName.trim() || "user"
-  let userPeerId = deriveUserPeerId(name, removeUserPrefix)
-  if (userPeerId === agentPeerId) {
-    // Bare peerName colliding with aiPeer: keep them distinct so user and agent
-    // memory do not share a peer. Callers on unguarded paths still assertDistinct.
-    userPeerId = normalizeId(`user:${name}`)
-  }
-  return { userPeerId, agentPeerId }
-}
+/** `HONCHO_PEER_NAME`, then the config's `peerName`, then the OS user name. */
+export const resolvePeerName = (configured: unknown) =>
+  process.env.HONCHO_PEER_NAME?.trim() ||
+  (typeof configured === "string" && configured.trim()) ||
+  defaultPeerName()
+
+// Other Honcho tools use the peer name as the peer id unchanged, so only characters Honcho rejects are replaced.
+export const deriveUserPeerId = (peerName: string) =>
+  peerName.trim().replace(/[^A-Za-z0-9_-]/g, "-") || "user"
+
+export const resolveSessionPeerIds = (peerName: string, aiPeer: string) => ({
+  userPeerId: deriveUserPeerId(peerName),
+  agentPeerId: normalizeId(aiPeer || DEFAULT_SETTINGS.aiPeer),
+})
+
+export const peerCollisionError = (peerId: string) =>
+  `peerName and aiPeer are both '${peerId}'. They must differ so Honcho keeps your memory apart from the agent's. Change one with /honcho:config.`

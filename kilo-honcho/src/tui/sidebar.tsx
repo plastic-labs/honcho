@@ -4,6 +4,7 @@ import { createSignal, For, onCleanup, Show } from "solid-js"
 import { readActivity, type HonchoActivity } from "../activity.js"
 import { sidebarRows } from "./activity-view.js"
 import { resolveConfigPath } from "./commands.js"
+import { openUrl } from "./open-url.js"
 
 const REFRESH_MS = 2_000
 
@@ -44,8 +45,14 @@ function HonchoSidebar(props: { api: TuiPluginApi; sessionID: string }) {
             </box>
             <For each={row().details}>
               {(line) => (
-                <text fg={theme().textMuted} wrapMode="word">
-                  {line}
+                <text
+                  fg={line.url ? theme().primary : theme().textMuted}
+                  wrapMode="word"
+                  onMouseUp={() => {
+                    if (line.url) openUrl(line.url)
+                  }}
+                >
+                  {line.text}
                 </text>
               )}
             </For>

@@ -34,15 +34,16 @@ test("activityPath refuses ids that could leave the sessions directory", () => {
   expect(__testing.activityPath("/home/a/.honcho/config.json", "a/b")).toBeNull()
 })
 
-test("concurrent updates are written in order and a new process continues the count", async () => {
+test("concurrent updates land in call order and a new process keeps the last recall", async () => {
   const configPath = await tempConfig()
   const first = __testing.createActivityRecorder(configPath)
-  await Promise.all(Array.from({ length: 10 }, () => first.update("ses_count", (current) => ({ saved: current.saved + 1 }))))
-  expect((await __testing.readActivity(configPath, "ses_count")).saved).toBe(10)
+  await Promise.all(Array.from({ length: 10 }, (_, index) => first.update("ses_order", { session: `s${index}` })))
+  expect((await __testing.readActivity(configPath, "ses_order")).session).toBe("s9")
 
+  await first.update("ses_order", { recall: { at: "t", messageId: "m", conclusions: 1, text: "kept" } })
   const second = __testing.createActivityRecorder(configPath)
-  await second.update("ses_count", (current) => ({ saved: current.saved + 1 }))
-  expect((await __testing.readActivity(configPath, "ses_count")).saved).toBe(11)
+  await second.update("ses_order", { state: "active" })
+  expect((await __testing.readActivity(configPath, "ses_order")).recall.text).toBe("kept")
 })
 
 test("pruneActivity removes session files older than 14 days and keeps recent ones", async () => {

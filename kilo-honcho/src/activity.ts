@@ -14,8 +14,9 @@ export type HonchoActivity = {
   error?: string
   workspace?: string
   userPeer?: string
+  session?: string
+  sessionUrl?: string
   recallMode?: string
-  saved: number
   profile?: { at: string; conclusions: number; text: string }
   recall?: { at: string; messageId: string; conclusions: number; text: string }
 }
@@ -40,7 +41,7 @@ const parseActivity = (value: unknown, kiloSessionId: string): HonchoActivity | 
   if (!isRecord(value) || value.kiloSessionId !== kiloSessionId) return null
   const state = value.state
   if (state !== "active" && state !== "unconfigured" && state !== "error") return null
-  return { ...(value as HonchoActivity), saved: typeof value.saved === "number" ? value.saved : 0 }
+  return value as HonchoActivity
 }
 
 export const readActivity = async (configPath: string, kiloSessionId: string): Promise<HonchoActivity | null> => {
@@ -102,23 +103,17 @@ export const createActivityRecorder = (configPath: string) => {
     return next
   }
 
-  const update = (
-    kiloSessionId: string,
-    change: ActivityPatch | ((current: HonchoActivity) => ActivityPatch),
-  ) => {
+  const update = (kiloSessionId: string, patch: ActivityPatch) => {
     const file = activityPath(configPath, kiloSessionId)
     if (!file) return Promise.resolve()
     return enqueue(kiloSessionId, async () => {
-      // A resumed session continues the counts its last run left on disk.
-      const current =
-        records.get(kiloSessionId) ??
+      // A resumed session keeps the recall its last run left on disk.
+      const current = records.get(kiloSessionId) ??
         (await readActivity(configPath, kiloSessionId)) ?? {
           kiloSessionId,
           updatedAt: new Date().toISOString(),
           state: "active",
-          saved: 0,
         }
-      const patch = typeof change === "function" ? change(current) : change
       const next: HonchoActivity = { ...current, ...patch, kiloSessionId, updatedAt: new Date().toISOString() }
       if (next.state !== "error") delete next.error
       records.set(kiloSessionId, next)

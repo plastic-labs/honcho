@@ -1,10 +1,22 @@
 import { clampText } from "../core.js"
 import type { HonchoActivity } from "../activity.js"
 
+export type SidebarLine = { text: string; url?: string }
+
 export type SidebarRows = {
   label: string
   tone: "success" | "muted" | "error"
-  details: string[]
+  details: SidebarLine[]
+}
+
+// "Session: " plus this fits Kilo's sidebar.
+const SESSION_NAME_MAX = 28
+
+// Cut from the middle: the end of a session name is the folder, which tells sessions apart.
+export const truncateMiddle = (value: string, max: number) => {
+  if (value.length <= max) return value
+  const keep = max - 1
+  return `${value.slice(0, Math.ceil(keep / 2))}…${value.slice(value.length - Math.floor(keep / 2))}`
 }
 
 const count = (value: number, noun: string) => `${value} ${noun}${value === 1 ? "" : "s"}`
@@ -17,28 +29,20 @@ const timeOf = (iso: string) => {
 /** The Honcho section of Kilo's session sidebar. */
 export const sidebarRows = (activity: HonchoActivity): SidebarRows => {
   if (activity.state === "unconfigured") {
-    return { label: "Not set up", tone: "muted", details: ["Run /honcho:setup"] }
+    return { label: "Not set up", tone: "muted", details: [{ text: "Run /honcho:setup" }] }
   }
   if (activity.state === "error") {
     return {
       label: "Error",
       tone: "error",
-      details: [clampText(activity.error || "A Honcho request failed.", 120), "Run /honcho:status"],
+      details: [{ text: clampText(activity.error || "A Honcho request failed.", 120) }, { text: "Run /honcho:status" }],
     }
   }
-  const details: string[] = []
-  if (activity.userPeer && activity.workspace) details.push(`Peer: ${activity.userPeer} (${activity.workspace})`)
-  if (activity.profile) {
-    details.push(`Profile: ${activity.profile.conclusions > 0 ? count(activity.profile.conclusions, "conclusion") : "loaded"}`)
-  }
-  if (activity.recall) {
-    details.push(`Recalled: ${activity.recall.conclusions > 0 ? count(activity.recall.conclusions, "conclusion") : "session summary"}`)
-  }
-  if (activity.recallMode === "tools") details.push("Recall: tools only")
-  details.push(`Saved: ${count(activity.saved, "message")}`)
-  if (activity.profile || activity.recall) details.push("/honcho:recall to view")
-  const working = Boolean(activity.profile || activity.recall || activity.saved > 0)
-  return { label: "Active", tone: working ? "success" : "muted", details }
+  const details: SidebarLine[] = []
+  if (activity.userPeer) details.push({ text: `Peer: ${activity.userPeer}` })
+  if (activity.sessionUrl) details.push({ text: "Session: View in Honcho ↗", url: activity.sessionUrl })
+  else if (activity.session) details.push({ text: `Session: ${truncateMiddle(activity.session, SESSION_NAME_MAX)}` })
+  return { label: "Active", tone: "success", details }
 }
 
 /** The body of `/honcho:recall`: the exact memory text this session sent to the model. */
@@ -52,6 +56,8 @@ export const recallMessage = (activity: HonchoActivity | null) => {
     ].join("\n")
   }
   const sections: string[] = []
+  const session = activity.sessionUrl ?? activity.session
+  if (session) sections.push(`Session: ${session}`, "")
   if (activity.recall) {
     sections.push(
       `Attached to your prompt at ${timeOf(activity.recall.at)} (${count(activity.recall.conclusions, "conclusion")}):`,
