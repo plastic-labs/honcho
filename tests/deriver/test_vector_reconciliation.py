@@ -1258,9 +1258,7 @@ class TestOversizeMessageEmbeddingReembed:
                         raise EmbeddingTokenLimitError(
                             f"Text exceeds maximum token limit: {text[:20]!r}"
                         )
-            return [
-                [float(sum(map(ord, text)) % 97) / 97.0] * 1024 for text in texts
-            ]
+            return [[float(sum(map(ord, text)) % 97) / 97.0] * 1024 for text in texts]
 
         with patch(
             "src.embedding_client.embedding_client.simple_batch_embed",
@@ -1272,9 +1270,7 @@ class TestOversizeMessageEmbeddingReembed:
 
         # The reconciler must opt into truncation...
         assert called_kwargs, "simple_batch_embed was not called"
-        assert all(
-            kwargs.get("on_oversize") == "truncate" for kwargs in called_kwargs
-        )
+        assert all(kwargs.get("on_oversize") == "truncate" for kwargs in called_kwargs)
         # ...and a batch containing an oversize row must still succeed.
         assert synced == 3
         assert failed == 0
