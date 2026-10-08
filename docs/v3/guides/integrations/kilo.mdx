@@ -26,6 +26,8 @@ Give Kilo Code long-term memory that survives context wipes, session restarts, a
     ```
 
     It asks for your API key without showing it, the name Honcho should call you, and a workspace. It then saves them to `~/.honcho/config.json` and adds the plugin to Kilo's global config. Restart Kilo to load it. You can skip Step 3.
+
+    Once the plugin is loaded, you can also [set up Honcho from the chat](#setting-up-from-the-desktop-app-or-an-extension).
   </Tab>
   <Tab title="Kilo CLI">
     Install the plugin, then run Step 3:
@@ -36,12 +38,6 @@ Give Kilo Code long-term memory that survives context wipes, session restarts, a
   </Tab>
 </Tabs>
 
-Install with the Kilo CLI:
-
-```bash
-kilo plugin @honcho-ai/kilo-honcho --global
-```
-
 To update an existing install:
 
 ```bash
@@ -50,7 +46,7 @@ kilo plugin @honcho-ai/kilo-honcho --global --force
 
 To add the plugin by hand, put `"@honcho-ai/kilo-honcho"` in the `plugin` array of `~/.config/kilo/kilo.jsonc` (or `kilo.json`), which loads the server half, and of `~/.config/kilo/tui.json`, which loads the `/honcho:*` commands. `kilo plugin` writes the same entries, but under Kilo's older `opencode.json` name; Kilo reads both. The desktop app and the VS Code and JetBrains extensions read the same global config, so one install covers every client.
 
-### Step 3: Run Setup in Kilo
+### Step 3: Run Setup in the Kilo CLI
 
 1. Start Kilo. The first time the plugin loads without an API key, it offers to set up Honcho.
 2. Choose **Set up now**, or run `/honcho:setup`
@@ -74,6 +70,32 @@ Already using Honcho with Claude Code, Hermes, or another tool? Kilo reads the s
 - **Memory Skill** — A `honcho-memory` skill tells the agent when to search and save memory on its own
 - **Agent Tools** — First-class tools for search, chat, and conclusion-writing inside Kilo
 
+## Kilo CLI, Desktop App, and IDE Extensions
+
+Every Kilo client starts its own local Kilo server, and the plugin runs inside that server. Memory works the same in all of them: Honcho recalls what it knows about you on each prompt, saves the conversation, and gives the agent its `honcho_*` tools. Setup and what you can see differ.
+
+| | Kilo CLI | Desktop app, VS Code, JetBrains |
+| --- | --- | --- |
+| Recall, saving, and `honcho_*` tools | Yes | Yes |
+| Setup | `/honcho:setup`, or **Set up now** when Kilo first loads the plugin | Ask the agent, or run `npx @honcho-ai/kilo-honcho setup` in a terminal |
+| Honcho section in the sidebar | Yes | No |
+| `/honcho:*` commands | Yes | No |
+| Check that Honcho is working | The sidebar, `/honcho:status`, `/honcho:recall` | Ask "Show my Honcho status". Honcho tool calls also appear in the chat. |
+
+The sidebar section and the `/honcho:*` commands come from the plugin's terminal UI half. The desktop app and the extensions do not load terminal UI plugins.
+
+### Setting Up from the Desktop App or an Extension
+
+Ask the agent: "Set up Honcho memory for me." It asks what name Honcho should call you, then opens a window on your screen for your API key. Paste the key into that window, never into the chat. Memory starts with your next message; you do not need to restart Kilo. The agent is also told to offer this when Honcho has no key.
+
+If the window cannot open, for example in a remote session, run `npx @honcho-ai/kilo-honcho setup` in a terminal.
+
+### Differences Outside the CLI
+
+- **Environment variables.** On macOS and Linux, the desktop app and an editor opened from the Dock or an app launcher do not see variables from your shell profile, such as `HONCHO_API_KEY` in `~/.zshrc`. Save the key with setup instead. An editor started from a terminal, for example with `code .`, does see them.
+- **Desktop chats.** Each desktop chat runs in its own folder, so each chat is its own Honcho session. Memory of you carries across chats. `honcho_search` searches the current session's messages only, so it finds nothing from other chats; `honcho_chat` and recall do.
+- **Kilo version.** The desktop app and the extensions bundle their own copy of Kilo, which can be a different version from your Kilo CLI. All of them read the same `~/.config/kilo` and `~/.honcho/config.json`, so one install and one setup cover every client.
+
 ## Kilo Memory and Honcho
 
 Kilo has its own memory feature, Kilo Memory. It is off by default, and it stores facts about the current project on your machine. Honcho stores facts about you, and keeps them across every repo and every machine that uses the same workspace. The two run side by side. Kilo Memory's capture skips the text this plugin adds, so Honcho's recall is never copied into Kilo Memory.
@@ -91,7 +113,7 @@ Session: View in Honcho ↗
 On Honcho Cloud, clicking `View in Honcho` opens the session in the Honcho dashboard, where you can read the saved messages and the conclusions. Any other Honcho server has no known dashboard address, so the sidebar shows the session name instead. Click `/honcho:recall`, or run it, to read the exact memory text the model received.
 
 <Note>
-The sidebar and the `/honcho:*` commands belong to the Kilo CLI's terminal UI. The desktop app and the VS Code and JetBrains extensions do not load TUI plugins, so they show neither. Memory still works there. When Honcho has no API key, the agent tells you once per session to run `npx @honcho-ai/kilo-honcho setup`.
+The sidebar section is part of the Kilo CLI. The desktop app and the IDE extensions do not show it; see [Kilo CLI, Desktop App, and IDE Extensions](#kilo-cli-desktop-app-and-ide-extensions).
 </Note>
 
 ## Configuration

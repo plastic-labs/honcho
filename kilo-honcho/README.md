@@ -120,6 +120,22 @@ The agent peer is created with `observeMe: false`, so Honcho models you, not the
 
 Honcho derives conclusions from every saved message. With `autoConclusions: true`, the plugin also saves a prompt verbatim as a conclusion when it contains phrases such as "I prefer", "always", "never" or "remember that". The conclusion is available on the next prompt, before Honcho's deriver runs. It is off by default because it also saves prompts like "never mind, revert that".
 
+## Kilo CLI, Desktop App and IDE Extensions
+
+Every Kilo client starts its own local Kilo server, and the plugin runs inside it. Recall, saving and the `honcho_*` tools work in all of them. The sidebar section and the `/honcho:*` commands come from the terminal UI half, which only the Kilo CLI loads.
+
+| | Kilo CLI | Desktop app, VS Code, JetBrains |
+| --- | --- | --- |
+| Setup | `/honcho:setup`, or **Set up now** on first load | Ask the agent ("Set up Honcho memory for me"), or `npx @honcho-ai/kilo-honcho setup` |
+| Honcho sidebar section and `/honcho:*` commands | Yes | No |
+| Check that Honcho is working | Sidebar, `/honcho:status`, `/honcho:recall` | Ask "Show my Honcho status" |
+
+Outside the CLI:
+
+- The desktop app and editors opened from the Dock or an app launcher do not see shell-profile variables such as `HONCHO_API_KEY`. Save the key with setup.
+- Each desktop chat runs in its own folder, so each chat is its own Honcho session. Memory of you carries across chats; `honcho_search` only searches the current session.
+- The desktop app and the extensions bundle their own Kilo version, and read the same `~/.config/kilo` and `~/.honcho/config.json` as the CLI.
+
 ## Seeing What Honcho Did
 
 Kilo's sidebar shows `Memory • Disabled` when Kilo's own memory feature is off. The plugin adds a Honcho section directly below it:
