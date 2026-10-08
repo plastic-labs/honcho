@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import os from "node:os"
 import path from "node:path"
-import { mkdtemp, stat, utimes } from "node:fs/promises"
+import { mkdtemp, readdir, stat, utimes } from "node:fs/promises"
 
 import { __testing } from "../dist/index.js"
 
@@ -31,20 +31,25 @@ test("redactShellCommand keeps the executable and drops credential-bearing argum
   expect(redactShellCommand("export API_KEY=abc123")).toBe("export (arguments redacted)")
 })
 
-test("ensureHonchoSkillInstalled honors KILO_CONFIG_DIR and skips identical writes", async () => {
-  const configDir = await mkdtemp(path.join(os.tmpdir(), "honcho-kilo-config-"))
-  const previous = process.env.KILO_CONFIG_DIR
-  process.env.KILO_CONFIG_DIR = configDir
+test("ensureHonchoSkillInstalled uses Kilo's global config dir, not KILO_CONFIG_DIR, and skips identical writes", async () => {
+  const xdg = await mkdtemp(path.join(os.tmpdir(), "honcho-kilo-xdg-"))
+  const desktopDir = await mkdtemp(path.join(os.tmpdir(), "honcho-kilo-desktop-"))
+  const previous = { XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME, KILO_CONFIG_DIR: process.env.KILO_CONFIG_DIR }
+  process.env.XDG_CONFIG_HOME = xdg
+  process.env.KILO_CONFIG_DIR = desktopDir
   try {
     const installedPath = await ensureHonchoSkillInstalled()
-    expect(installedPath).toBe(path.join(configDir, "skills", "honcho-memory", "SKILL.md"))
+    expect(installedPath).toBe(path.join(xdg, "kilo", "skills", "honcho-memory", "SKILL.md"))
+    expect(await readdir(desktopDir)).toEqual([])
 
     const old = new Date("2000-01-01T00:00:00.000Z")
     await utimes(installedPath, old, old)
     await ensureHonchoSkillInstalled()
     expect((await stat(installedPath)).mtime.getTime()).toBe(old.getTime())
   } finally {
-    if (previous === undefined) delete process.env.KILO_CONFIG_DIR
-    else process.env.KILO_CONFIG_DIR = previous
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
   }
 })

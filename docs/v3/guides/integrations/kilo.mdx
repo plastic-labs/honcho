@@ -203,7 +203,7 @@ The plugin exposes these tools inside Kilo:
 | `honcho_status` | Show effective runtime status |
 | `honcho_get_config` | Read effective and persisted settings |
 | `honcho_set_config` | Update a persisted shared setting. `apiKey` and `baseUrl` can only be changed by the user. |
-| `honcho_search` | Search Honcho session messages |
+| `honcho_search` | Search the messages in the current Honcho session only |
 | `honcho_chat` | Query Honcho for reasoning-backed context |
 | `honcho_create_conclusion` | Save a durable memory conclusion |
 
@@ -227,7 +227,7 @@ The plugin hooks into these Kilo plugin capabilities:
 
 - **Kilo config:** `@honcho-ai/kilo-honcho` in the `plugin` array of `~/.config/kilo/kilo.jsonc` (or `kilo.json` if you have one) and `~/.config/kilo/tui.json`, written by `npx @honcho-ai/kilo-honcho setup`. Setup keeps any comments in those files, and skips a file that already loads the plugin. `kilo plugin` writes the server entry to `~/.config/kilo/opencode.json` instead.
 - **Honcho config:** `~/.honcho/config.json`, written only by `npx @honcho-ai/kilo-honcho setup`, `/honcho:setup`, `/honcho:config`, `honcho_setup`, and `honcho_set_config`, with mode 600. Installing or starting the plugin does not write it. An `apiKey` written as `${HONCHO_API_KEY}` stays a reference.
-- **Skill:** `~/.config/kilo/skills/honcho-memory/SKILL.md`, or `$KILO_CONFIG_DIR/skills/honcho-memory/SKILL.md` when that variable is set.
+- **Skill:** `~/.config/kilo/skills/honcho-memory/SKILL.md`, or `$XDG_CONFIG_HOME/kilo/skills/honcho-memory/SKILL.md` when that variable is set. Every Kilo client reads it.
 - **Import state:** `~/.honcho/kilo-import-state.json`, after you run `/honcho:import`.
 - **Session activity:** `~/.honcho/kilo/sessions/<session id>.json`, one file per Kilo session, with mode 600. It holds the memory text shown by `/honcho:recall`. Files older than 14 days are removed when the plugin starts, and a file is removed when Kilo deletes its session.
 

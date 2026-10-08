@@ -18,8 +18,8 @@ Before non-trivial work, query memory instead of guessing:
 
 Use the Honcho tools:
 
-- `honcho_search` — semantic lookup over past messages
-- `honcho_chat` — ask a natural-language question about the user or project ("what's their testing style?")
+- `honcho_search` — semantic lookup over the messages in this Honcho session only; it does not reach other chats or sessions
+- `honcho_chat` — ask a natural-language question about the user or project ("what's their testing style?"); this is the tool for what Honcho knows across sessions
 
 ## When to save memory
 

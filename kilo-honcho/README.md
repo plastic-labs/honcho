@@ -175,7 +175,7 @@ The server half writes this record to `~/.honcho/kilo/sessions/<session id>.json
 | `honcho_status` | Show effective runtime status |
 | `honcho_get_config` | Read effective and persisted settings |
 | `honcho_set_config` | Update a persisted shared setting. `apiKey` and `baseUrl` can only be changed by the user. |
-| `honcho_search` | Search Honcho messages in the current session |
+| `honcho_search` | Search the messages in the current Honcho session only |
 | `honcho_chat` | Ask Honcho a question answered by reasoning over memory |
 | `honcho_create_conclusion` | Save a durable fact about the user |
 
@@ -192,7 +192,7 @@ The server half writes this record to `~/.honcho/kilo/sessions/<session id>.json
 | Session start, assistant capture, cleanup | `event` |
 | Honcho sidebar section (TUI) | `sidebar_content` slot |
 
-The packaged `honcho-memory` skill is copied to `~/.config/kilo/skills/honcho-memory`, or `$KILO_CONFIG_DIR/skills/honcho-memory` when set.
+The packaged `honcho-memory` skill is copied to `~/.config/kilo/skills/honcho-memory` (`$XDG_CONFIG_HOME/kilo/skills/honcho-memory` when that is set), which every Kilo client reads.
 
 ## Remote and Headless Use
 
