@@ -23,6 +23,8 @@ jobs:
         working-directory: kilo-honcho
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Install bun
         uses: oven-sh/setup-bun@v2

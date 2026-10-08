@@ -29,11 +29,14 @@ test("tui saveSettings persists only supported root and host fields", async () =
   const configPath = path.join(sharedConfigDir, "config.json")
   const previousHome = process.env.HOME
   const previousUserProfile = process.env.USERPROFILE
+  const previousOverride = process.env.KILO_HONCHO_CONFIG_PATH
 
   await mkdir(sharedConfigDir, { recursive: true })
   await writeFile(configPath, JSON.stringify({}, null, 2))
   process.env.HOME = homeDir
   process.env.USERPROFILE = homeDir
+  // An exported override would point saveSettings at a developer's real config.
+  delete process.env.KILO_HONCHO_CONFIG_PATH
 
   try {
     await __testing.saveSettings({
@@ -63,6 +66,7 @@ test("tui saveSettings persists only supported root and host fields", async () =
     else process.env.HOME = previousHome
     if (previousUserProfile === undefined) delete process.env.USERPROFILE
     else process.env.USERPROFILE = previousUserProfile
+    if (previousOverride !== undefined) process.env.KILO_HONCHO_CONFIG_PATH = previousOverride
   }
 })
 
@@ -95,7 +99,7 @@ test("tui honors KILO_HONCHO_CONFIG_PATH override for reads, writes, and display
     const persisted = JSON.parse(await readFile(overrideConfigPath, "utf-8"))
     assert.equal(persisted.apiKey, "key")
     assert.equal(persisted.peerName, "override-peer")
-    assert.rejects(readFile(globalConfigPath, "utf-8"))
+    await assert.rejects(readFile(globalConfigPath, "utf-8"))
 
     assert.match(__testing.settingsMessage({}), new RegExp(`Config path: ${overrideConfigPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`))
   } finally {

@@ -53,9 +53,10 @@ const summary = (content) => ({
   token_count: 12,
 })
 
-const createHonchoFetch = ({ failStableHydration = false, failSessionContext = false } = {}) => {
+const createHonchoFetch = ({ failStableHydration = false, failSessionContext = false, delayMs = 0 } = {}) => {
   const calls = []
   const fetch = async (url, init = {}) => {
+    if (delayMs) await new Promise((resolve) => setTimeout(resolve, delayMs))
     const target = new URL(typeof url === "string" ? url : url.toString())
     const method = init.method || "GET"
     const body = typeof init.body === "string" ? JSON.parse(init.body) : null
@@ -190,6 +191,7 @@ const runWithHarness = async (action, fetchOptions, settings) => {
       HONCHO_API_KEY: "test-key",
       HONCHO_URL: undefined,
       HONCHO_BASE_URL: undefined,
+      KILO_CONFIG_DIR: undefined,
     }, async () => {
       const hooks = await createPluginHarness(rootDir, configPath)
       const readActivityFile = async (sessionID) =>
@@ -350,15 +352,15 @@ test("system transform skips Kilo title generation and calls without a session",
 test("dispose waits for event work still in flight", async () => {
   await runWithHarness(async ({ hooks }) => {
     let finished = false
-    const slow = hooks.event({
+    // Kilo does not await the event hook, so this work is still running when dispose starts.
+    void hooks.event({
       event: { type: "session.created", properties: { info: { id: "ses-dispose", version: "7.8.3" } } },
     }).then(() => {
       finished = true
     })
     await hooks.dispose()
-    await slow
     expect(finished).toBe(true)
-  })
+  }, { delayMs: 40 })
 })
 
 test("the agent session config is sent once per session and process", async () => {

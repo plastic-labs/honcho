@@ -155,10 +155,10 @@ The server half writes this record to `~/.honcho/kilo/sessions/<session id>.json
 
 | Tool | Description |
 | --- | --- |
-| `honcho_setup` | Check the connection and save the peer name, workspace or endpoint. It never takes an API key. |
+| `honcho_setup` | Save the peer name and workspace, and ask for the API key in a window on the user's screen. A key never passes through the chat, and the saved key is never sent to a new server. |
 | `honcho_status` | Show effective runtime status |
 | `honcho_get_config` | Read effective and persisted settings |
-| `honcho_set_config` | Update a persisted shared setting |
+| `honcho_set_config` | Update a persisted shared setting. `apiKey` and `baseUrl` can only be changed by the user. |
 | `honcho_search` | Search Honcho messages in the current session |
 | `honcho_chat` | Ask Honcho a question answered by reasoning over memory |
 | `honcho_create_conclusion` | Save a durable fact about the user |
@@ -171,7 +171,7 @@ The server half writes this record to `~/.honcho/kilo/sessions/<session id>.json
 | Memory instructions and a stable snapshot | `experimental.chat.system.transform` |
 | Continuity block during compaction | `experimental.session.compacting` |
 | Record significant tool activity | `tool.execute.after` |
-| `HONCHO_*` variables for shell tools | `shell.env` |
+| `HONCHO_URL` and `HONCHO_WORKSPACE_ID` for shell tools (never the API key) | `shell.env` |
 | `honcho_*` tools | `tool` |
 | Session start, assistant capture, cleanup | `event` |
 | Honcho sidebar section (TUI) | `sidebar_content` slot |

@@ -6,7 +6,8 @@ import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises"
 import { __testing, createHonchoRuntimePlugin } from "../dist/index.js"
 
 // Tests set HONCHO_* themselves; values inherited from the shell would override the config under test.
-const HONCHO_ENV = ["HONCHO_API_KEY", "HONCHO_URL", "HONCHO_BASE_URL", "HONCHO_PEER_NAME", "HONCHO_WORKSPACE", "HONCHO_WORKSPACE_ID", "HONCHO_AI_PEER"]
+// KILO_* paths too: tests must never write to a developer's real config or skills directory.
+const HONCHO_ENV = ["HONCHO_API_KEY", "HONCHO_URL", "HONCHO_BASE_URL", "HONCHO_PEER_NAME", "HONCHO_WORKSPACE", "HONCHO_WORKSPACE_ID", "HONCHO_AI_PEER", "KILO_HONCHO_CONFIG_PATH", "KILO_CONFIG_DIR"]
 const inheritedEnv = {}
 beforeEach(() => {
   for (const key of HONCHO_ENV) {

@@ -46,6 +46,14 @@ This package versions independently of the Honcho API, `@honcho-ai/sdk`, and oth
 - Session keys start with the user peer, so teammates sharing a workspace get separate sessions.
 - Config writes keep an `apiKey` written as `${VAR}` instead of saving the expanded secret.
 - `/honcho:status` shows `HONCHO_*` environment values the server uses, and falls back to the `kilo` workspace instead of the folder name.
+- TUI dialogs return the user's answer. Kilo's `clear()` runs each dialog's close callback, which settled them as cancelled, so `/honcho:setup`, `/honcho:config` and import uploads stopped after the first choice.
+- The model cannot move the API key: `honcho_setup` sends the saved key only to the saved server, and a new server needs a key typed into a window that names it. `honcho_set_config` refuses `apiKey`, `baseUrl` and `${...}` values.
+- `shell.env` no longer gives every agent shell `HONCHO_API_KEY`.
+- Text Kilo adds itself, such as `@`-mentioned file contents, is no longer saved as the user's words. The importer also skips compaction summaries.
+- `/honcho:setup` with a blank key keeps the saved key instead of writing an empty one.
+- An unreadable `~/.honcho/config.json` pauses Honcho with an error in the sidebar instead of breaking every hook. Config writes are atomic.
+- Each Kilo chat has its own recall. Chats in one folder shared state, so the second chat could get no recall.
+- Compaction no longer copies recalled memory into Kilo's saved summary.
 
 ### Removed
 

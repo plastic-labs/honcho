@@ -177,10 +177,10 @@ The plugin exposes these tools inside Kilo:
 
 | Tool | Description |
 | --- | --- |
-| `honcho_setup` | Check the connection and save the peer name, workspace or endpoint. It never takes an API key. |
+| `honcho_setup` | Save the peer name and workspace, and ask for the API key in a window on the user's screen. A key never passes through the chat, and the saved key is never sent to a new server. |
 | `honcho_status` | Show effective runtime status |
 | `honcho_get_config` | Read effective and persisted settings |
-| `honcho_set_config` | Update a persisted shared setting |
+| `honcho_set_config` | Update a persisted shared setting. `apiKey` and `baseUrl` can only be changed by the user. |
 | `honcho_search` | Search Honcho session messages |
 | `honcho_chat` | Query Honcho for reasoning-backed context |
 | `honcho_create_conclusion` | Save a durable memory conclusion |
@@ -215,7 +215,9 @@ The plugin hooks into these Kilo plugin capabilities:
 
 **Kilo does not use memory.** Check the Honcho section in the sidebar. `Not set up` means there is no API key: run `/honcho:setup`. `Error` shows the reason the last Honcho request failed. Run `/honcho:status` to see the values the plugin uses, including any `HONCHO_API_KEY`, `HONCHO_URL`, or `HONCHO_WORKSPACE` set in your environment. Recall starts once Honcho has something to recall; a new workspace has no conclusions until a few messages have been processed.
 
-**The sidebar shows the wrong peer.** With no `peerName` set, Kilo uses your OS user name. Run `/honcho:setup` to choose a name. Every Honcho tool on the machine reads it from `~/.honcho/config.json`.
+**The sidebar shows the wrong peer.** Kilo uses `HONCHO_PEER_NAME` if it is set, then `peerName` from `~/.honcho/config.json`, then your OS user name. Unset `HONCHO_PEER_NAME` or run `/honcho:setup` to choose a name. Every Honcho tool on the machine reads it from `~/.honcho/config.json`.
+
+**The sidebar shows `Error: … could not be read`.** `~/.honcho/config.json` is not valid JSON. Honcho pauses until you fix the file, then resumes with the next message.
 
 **Memory is missing from another tool.** Each tool writes to its own workspace unless you set the same `workspace` for both. See [Configuration](#configuration).
 
