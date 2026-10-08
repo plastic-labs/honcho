@@ -274,3 +274,35 @@ test("the setup offer appears only while Honcho has no key", async () => {
   assert.equal(offers.length, 1)
   assert.equal(offers[0].title, "Honcho is installed. Set up memory now?")
 })
+
+// Kilo's dialog stack runs every open dialog's onClose inside clear(), then empties the stack.
+const kiloLikeApi = (answer) => {
+  let stack = []
+  const api = {
+    ui: {
+      dialog: {
+        replace: (render, onClose) => {
+          for (const item of stack) item.onClose?.()
+          stack = [{ onClose }]
+          render()
+        },
+        clear: () => {
+          for (const item of stack) item.onClose?.()
+          stack = []
+        },
+        setSize: () => {},
+      },
+      DialogSelect: (props) => queueMicrotask(() => props.onSelect({ value: answer })),
+      DialogPrompt: (props) => queueMicrotask(() => props.onConfirm(answer)),
+      DialogConfirm: (props) => queueMicrotask(() => props.onConfirm()),
+      DialogAlert: (props) => queueMicrotask(() => props.onConfirm()),
+    },
+  }
+  return api
+}
+
+test("dialogs return the user's answer even though Kilo's clear() runs the close callback", async () => {
+  assert.equal(await __testing.dialogsFromApi(kiloLikeApi("cloud")).select({ title: "t", options: [] }), "cloud")
+  assert.equal(await __testing.dialogsFromApi(kiloLikeApi("hch-key")).prompt({ title: "t" }), "hch-key")
+  assert.equal(await __testing.dialogsFromApi(kiloLikeApi(null)).confirm({ title: "t", message: "m" }), true)
+})

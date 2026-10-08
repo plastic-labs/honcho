@@ -16,6 +16,7 @@ const settle = <T>(resolve: (value: T) => void) => {
 }
 
 /** Lift Kilo's callback dialogs (`replace` + onSelect/onConfirm) to the promise `Dialogs` port. */
+// Handlers settle before clear(): Kilo's clear() runs the close callback, which would settle as cancelled.
 export const dialogsFromApi = (api: TuiPluginApi): Dialogs => ({
   alert: ({ title, message }) =>
     new Promise((resolve) => {
@@ -26,8 +27,8 @@ export const dialogsFromApi = (api: TuiPluginApi): Dialogs => ({
             title,
             message,
             onConfirm: () => {
-              api.ui.dialog.clear()
               done()
+              api.ui.dialog.clear()
             },
           }),
         () => done(),
@@ -46,12 +47,12 @@ export const dialogsFromApi = (api: TuiPluginApi): Dialogs => ({
             title,
             message: `${message}${suffix}`,
             onConfirm: () => {
-              api.ui.dialog.clear()
               done(true)
+              api.ui.dialog.clear()
             },
             onCancel: () => {
-              api.ui.dialog.clear()
               done(false)
+              api.ui.dialog.clear()
             },
           }),
         () => done(undefined),
@@ -68,8 +69,8 @@ export const dialogsFromApi = (api: TuiPluginApi): Dialogs => ({
             options,
             current,
             onSelect: (option) => {
-              api.ui.dialog.clear()
               done(option.value)
+              api.ui.dialog.clear()
             },
           }),
         () => done(undefined),
@@ -85,12 +86,12 @@ export const dialogsFromApi = (api: TuiPluginApi): Dialogs => ({
             value,
             placeholder,
             onConfirm: (text) => {
-              api.ui.dialog.clear()
               done(text)
+              api.ui.dialog.clear()
             },
             onCancel: () => {
-              api.ui.dialog.clear()
               done(undefined)
+              api.ui.dialog.clear()
             },
           }),
         () => done(undefined),

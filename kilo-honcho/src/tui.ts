@@ -15,7 +15,7 @@ import {
   statusMessage,
   validateCloudApiKey,
 } from "./tui/commands.js"
-import { buildCommands, deriveLiveStatus, tui } from "./tui/kilo.js"
+import { buildCommands, deriveLiveStatus, dialogsFromApi, tui } from "./tui/kilo.js"
 import { PACKAGE_ID } from "./honcho-client.js"
 
 
@@ -27,6 +27,7 @@ const plugin: TuiPluginModule & { id: string } = {
 export const __testing = {
   buildCommands,
   deriveLiveStatus,
+  dialogsFromApi,
   normalizeSettings,
   modeEditableFieldPaths,
   offerSetup,
