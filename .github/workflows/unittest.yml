@@ -138,17 +138,70 @@ jobs:
           SUMMARY_PROVIDER: openai
           SUMMARY_MODEL: test
 
+  # The migration suite is excluded from test-python (pyproject addopts
+  # --ignore=tests/alembic) because it creates and drops its own database
+  # and cannot share it across xdist workers. An explicit path overrides the
+  # ignore; -n 0 overrides -n auto.
+  test-alembic:
+    needs: changes
+    if: ${{ needs.changes.outputs.python == 'true' }}
+    runs-on: ubuntu-latest
+
+    services:
+      database:
+        image: pgvector/pgvector:pg15
+        env:
+          POSTGRES_DB: test_db
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v2
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: "Set up Python"
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: ".python-version"
+
+      - name: Install the project
+        run: uv sync --all-extras --dev
+
+      - name: Run Migration Tests
+        run: uv run pytest tests/alembic -n 0
+        env:
+          DB_CONNECTION_URI: postgresql+psycopg://postgres:postgres@localhost:5432/test_db
+          AUTH_USE_AUTH: false
+          SENTRY_ENABLED: false
+
   # Status check for branch protection rules
   # This job always runs and reports success only if all required jobs pass
   test-status:
     runs-on: ubuntu-latest
-    needs: [changes, test-python]
+    needs: [changes, test-python, test-alembic]
     if: always()
     steps:
       - name: Check test results
         run: |
           if [[ "${{ needs.changes.outputs.python }}" == "true" && "${{ needs.test-python.result }}" != "success" && "${{ needs.test-python.result }}" != "skipped" ]]; then
             echo "Python tests failed or were cancelled"
+            exit 1
+          fi
+          if [[ "${{ needs.changes.outputs.python }}" == "true" && "${{ needs.test-alembic.result }}" != "success" && "${{ needs.test-alembic.result }}" != "skipped" ]]; then
+            echo "Migration tests failed or were cancelled"
             exit 1
           fi
           echo "All required tests passed!"
