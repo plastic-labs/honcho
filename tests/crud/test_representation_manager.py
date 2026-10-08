@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from nanoid import generate as generate_nanoid
-from sqlalchemy import func, update
+from sqlalchemy import func, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
@@ -1120,3 +1120,59 @@ class TestVectorQueryTopKFloor:
                 )
 
         mock_get_store.assert_not_called()
+
+
+class TestSemanticQueryFailureDegrades:
+    """A failed semantic query must leave the session usable (HONCHO-1KV)."""
+
+    @pytest.mark.asyncio
+    async def test_db_error_in_semantic_query_does_not_poison_session(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        test_workspace, test_peer = sample_data
+        manager = RepresentationManager(
+            test_workspace.name, observer=test_peer.name, observed=test_peer.name
+        )
+
+        async def failing_query_documents(db: AsyncSession, **_kwargs: object):
+            # A real statement error aborts the transaction, like a pgbouncer
+            # query_wait_timeout mid-request.
+            await db.execute(text("SELECT 1/0"))
+
+        with patch(
+            "src.crud.representation.crud.query_documents",
+            side_effect=failing_query_documents,
+        ):
+            semantic = await manager._query_documents_semantic(  # pyright: ignore[reportPrivateUsage]
+                db_session, query="anything", top_k=5, embedding=[0.0] * 1536
+            )
+
+        assert semantic == []
+        # The next query on the same session must not raise PendingRollbackError.
+        recent = await manager._query_documents_recent(db_session, top_k=5)  # pyright: ignore[reportPrivateUsage]
+        assert recent == []
+
+    @pytest.mark.asyncio
+    async def test_non_db_error_in_semantic_query_still_degrades(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        test_workspace, test_peer = sample_data
+        manager = RepresentationManager(
+            test_workspace.name, observer=test_peer.name, observed=test_peer.name
+        )
+
+        with patch(
+            "src.crud.representation.crud.query_documents",
+            side_effect=RuntimeError("embedding service unavailable"),
+        ):
+            semantic = await manager._query_documents_semantic(  # pyright: ignore[reportPrivateUsage]
+                db_session, query="anything", top_k=5, embedding=[0.0] * 1536
+            )
+
+        assert semantic == []
+        recent = await manager._query_documents_recent(db_session, top_k=5)  # pyright: ignore[reportPrivateUsage]
+        assert recent == []

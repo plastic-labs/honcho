@@ -294,8 +294,9 @@ async def setup_test_database(db_url: URL):
         try:
             logger.info("Attempting to create pgvector extension...")
             await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
             await conn.commit()
-            logger.info("pgvector extension created successfully.")
+            logger.info("pgvector and pg_trgm extensions created successfully.")
         except ProgrammingError as e:
             logger.error(f"ProgrammingError: {e}")
             raise RuntimeError(

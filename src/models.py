@@ -273,6 +273,13 @@ class Message(Base):
             text("to_tsvector('english', content)"),
             postgresql_using="gin",
         ),
+        # Trigram index so content ILIKE '%q%' in message search can use an index
+        Index(
+            "ix_messages_content_trgm",
+            "content",
+            postgresql_using="gin",
+            postgresql_ops={"content": "gin_trgm_ops"},
+        ),
     )
 
     @override

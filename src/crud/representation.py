@@ -420,19 +420,25 @@ class RepresentationManager:
         embedding: list[float] | None = None,
         session_allowlist: list[str] | None = None,
     ) -> list[models.Document]:
-        """Query documents by semantic similarity."""
+        """Query documents by semantic similarity.
+
+        Failures degrade to no semantic observations. The query runs in a
+        savepoint so a database error rolls back only this step; without it the
+        session's transaction is left invalid and the caller's next query fails
+        with PendingRollbackError instead of degrading.
+        """
         try:
-            if level:
-                return await self._query_documents_for_level(
-                    db,
-                    query,
-                    level,
-                    top_k,
-                    max_distance,
-                    embedding=embedding,
-                    session_allowlist=session_allowlist,
-                )
-            else:
+            async with db.begin_nested():
+                if level:
+                    return await self._query_documents_for_level(
+                        db,
+                        query,
+                        level,
+                        top_k,
+                        max_distance,
+                        embedding=embedding,
+                        session_allowlist=session_allowlist,
+                    )
                 documents = await crud.query_documents(
                     db,
                     workspace_name=self.workspace_name,
@@ -447,11 +453,11 @@ class RepresentationManager:
                     )
                     or None,
                 )
-                db.expunge_all()
-                return list(documents)
+            db.expunge_all()
+            return list(documents)
 
-        except Exception as e:
-            logger.error(f"Error getting relevant observations: {e}")
+        except Exception:
+            logger.exception("Error getting relevant observations")
             return []
 
     async def _query_documents_recent(

@@ -6,6 +6,7 @@ from urllib.parse import urlparse, urlunparse
 
 from alembic import context
 from sqlalchemy import Connection, engine_from_config, text
+from sqlalchemy.exc import DBAPIError
 
 from src.config import settings
 
@@ -134,6 +135,15 @@ def _prepare_schema(connection: Connection) -> None:
     connection.execute(text(f"CREATE SCHEMA IF NOT EXISTS {schema}"))
     connection.execute(text(f"GRANT ALL ON SCHEMA {schema} TO current_user"))
     connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+    # pg_trgm backs the message-search ILIKE index. Roles that can't create
+    # extensions skip it; the revision that builds the index checks for it.
+    try:
+        with connection.begin_nested():
+            connection.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+    except DBAPIError:
+        logging.getLogger("alembic").warning(
+            "Could not create extension pg_trgm; message search will run unindexed"
+        )
     connection.execute(text(f"SET search_path TO {schema}, public, extensions"))
 
 
