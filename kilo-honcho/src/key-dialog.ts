@@ -2,8 +2,14 @@ import { execFile } from "node:child_process"
 
 const MESSAGE = "Paste your Honcho API key from app.honcho.dev. Kilo saves it to ~/.honcho/config.json."
 
-/** The native password box for this platform, or null where none can open (no display, unknown OS). */
+const KEY_WINDOW_TIMEOUT_MS = 2 * 60_000
+
+// Over SSH a macOS or Windows window would open on that machine's own screen, which the remote user cannot see.
+const overSsh = (env: NodeJS.ProcessEnv) => Boolean(env.SSH_CONNECTION || env.SSH_CLIENT || env.SSH_TTY)
+
+/** The native password box for this platform, or null where none can open or the user would not see it. */
 export const keyDialogCommand = (platform = process.platform, env = process.env): [string, string[]] | null => {
+  if ((platform === "darwin" || platform === "win32") && overSsh(env)) return null
   if (platform === "darwin") {
     return [
       "osascript",
@@ -32,7 +38,7 @@ type Outcome = { key: string | null; missing: boolean }
 
 const run = (command: string, args: string[]) =>
   new Promise<Outcome>((resolve) => {
-    execFile(command, args, { timeout: 5 * 60_000, windowsHide: false }, (error, stdout) => {
+    execFile(command, args, { timeout: KEY_WINDOW_TIMEOUT_MS, windowsHide: false }, (error, stdout) => {
       const missing = (error as NodeJS.ErrnoException | null)?.code === "ENOENT"
       resolve({ key: error ? null : stdout.trim() || null, missing })
     })

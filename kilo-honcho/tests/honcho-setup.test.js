@@ -468,4 +468,8 @@ test("the key window uses each platform's own password box, and none without a d
   expect(__testing.keyDialogCommand("win32", {})[0]).toBe("powershell.exe")
   expect(__testing.keyDialogCommand("linux", { DISPLAY: ":0" })).toEqual(["zenity", ["--password", "--title=Honcho API key"]])
   expect(__testing.keyDialogCommand("linux", {})).toBeNull()
+  // Over SSH the window would open on the far machine's screen, except with X forwarding on Linux.
+  expect(__testing.keyDialogCommand("darwin", { SSH_CONNECTION: "1.2.3.4 22 5.6.7.8 22" })).toBeNull()
+  expect(__testing.keyDialogCommand("win32", { SSH_CLIENT: "1.2.3.4 22 22" })).toBeNull()
+  expect(__testing.keyDialogCommand("linux", { DISPLAY: "localhost:10.0", SSH_CONNECTION: "x" })?.[0]).toBe("zenity")
 })

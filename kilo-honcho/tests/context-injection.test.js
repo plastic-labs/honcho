@@ -445,7 +445,7 @@ test("session.deleted removes the session's activity file", async () => {
 test("without an API key the system prompt has the agent offer setup", async () => {
   const rootDir = await mkdtemp(path.join(os.tmpdir(), "honcho-nudge-root-"))
   const homeDir = await mkdtemp(path.join(os.tmpdir(), "honcho-nudge-home-"))
-  await withEnv({ HOME: homeDir, USER: "test-user", XDG_CONFIG_HOME: undefined, HONCHO_API_KEY: undefined, HONCHO_URL: undefined, HONCHO_BASE_URL: undefined }, async () => {
+  await withEnv({ HOME: homeDir, USER: "test-user", XDG_CONFIG_HOME: undefined, HONCHO_API_KEY: undefined, HONCHO_URL: undefined, HONCHO_BASE_URL: undefined, CI: undefined }, async () => {
     const hooks = await createPluginHarness(rootDir)
     const output = { system: [] }
     await hooks["experimental.chat.system.transform"](systemInput(), output)
@@ -455,4 +455,17 @@ test("without an API key the system prompt has the agent offer setup", async () 
     expect(output.system[0]).toContain("Never ask for the key in chat")
     expect(output.system[0]).toContain("npx @honcho-ai/kilo-honcho setup")
   })
+})
+
+test("CI runs without an API key get no setup offer", async () => {
+  for (const [ci, offered] of [["true", false], ["1", false], ["false", true], ["0", true]]) {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), "honcho-ci-root-"))
+    const homeDir = await mkdtemp(path.join(os.tmpdir(), "honcho-ci-home-"))
+    await withEnv({ HOME: homeDir, USER: "test-user", XDG_CONFIG_HOME: undefined, HONCHO_API_KEY: undefined, HONCHO_URL: undefined, HONCHO_BASE_URL: undefined, CI: ci }, async () => {
+      const hooks = await createPluginHarness(rootDir)
+      const output = { system: [] }
+      await hooks["experimental.chat.system.transform"](systemInput(), output)
+      expect(output.system.length > 0).toBe(offered)
+    })
+  }
 })

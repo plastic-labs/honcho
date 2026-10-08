@@ -23,6 +23,9 @@ This package versions independently of the Honcho API, `@honcho-ai/sdk`, and oth
 - The TUI offers setup the first time the plugin loads without an API key. Without a key, the system prompt asks the agent to point the user at the setup command once per session.
 - The sidebar ends with `/honcho:recall`, which opens the recall view when clicked.
 - `environmentUrl`, which `honcho init` writes, is used when `baseUrl` is missing.
+- `honcho_setup` asks for the API key in the operating system's own password window, so the agent can finish setup without the key passing through the chat. The window does not open over SSH on macOS or Windows, and closes after 2 minutes.
+- The setup command takes `--peer-name`, `--workspace`, `--url` and `--cloud`, and opens the same window when it has no terminal.
+- The agent does not offer setup when the `CI` variable is set.
 
 ### Changed
 

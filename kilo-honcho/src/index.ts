@@ -270,6 +270,12 @@ export const HONCHO_SYSTEM_INSTRUCTION = [
   "- Use `honcho_create_conclusion` to actively save durable insights, user preferences, architectural decisions, and key patterns you learn during the conversation.",
 ].join("\n")
 
+// CI=false and CI=0 are how some runners say "not CI".
+const runningInCi = () => {
+  const value = process.env.CI?.trim().toLowerCase()
+  return Boolean(value) && value !== "false" && value !== "0"
+}
+
 // The desktop app and IDE extensions have no sidebar, so the agent is the only place to say Honcho is not set up.
 export const HONCHO_SETUP_NUDGE = [
   "## Honcho Memory",
@@ -1538,7 +1544,8 @@ export const createHonchoCore = (host: HostAdapter, configPath?: string) => {
     const systemBlocks = async (input: Record<string, unknown>): Promise<string[]> => {
       const handle = await deriveRuntimeHandle(host, input, configPath)
       if (!hasConfiguredAuth(handle.config)) {
-        return [HONCHO_SETUP_NUDGE]
+        // Scripts and CI have nobody to accept the offer, and it would end up in their output.
+        return runningInCi() ? [] : [HONCHO_SETUP_NUDGE]
       }
       const blocks = [HONCHO_SYSTEM_INSTRUCTION]
       if (handle.config.recallMode === "tools") {

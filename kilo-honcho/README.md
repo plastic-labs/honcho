@@ -178,6 +178,14 @@ The server half writes this record to `~/.honcho/kilo/sessions/<session id>.json
 
 The packaged `honcho-memory` skill is copied to `~/.config/kilo/skills/honcho-memory`, or `$KILO_CONFIG_DIR/skills/honcho-memory` when set.
 
+## Remote and Headless Use
+
+The plugin runs wherever Kilo's server runs, and reads `~/.honcho/config.json` on that machine.
+
+- **VS Code Remote SSH, dev containers, Codespaces.** Kilo's server runs on the remote machine, so it reads the remote's `~/.honcho/config.json`, not your laptop's. Run `npx @honcho-ai/kilo-honcho setup` in the remote terminal.
+- **Key window over SSH.** On macOS and Windows, `honcho_setup` does not open the key window in an SSH session, because it would appear on that machine's own screen. It points the user at the setup command instead. On Linux it opens only when a display is available, including through X forwarding. An unanswered window closes after 2 minutes.
+- **CI and scripts.** When the `CI` variable is set, the agent does not offer setup. Set `HONCHO_API_KEY` to use Honcho in CI, or `KILO_PURE=1` to turn off every plugin.
+
 ## Development
 
 ```bash
