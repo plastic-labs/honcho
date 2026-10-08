@@ -982,7 +982,9 @@ const deriveRuntimeHandle = async (
   }
 }
 
-const deriveSessionStateKey = (handle: Pick<RuntimeHandle, "sessionId" | "sessionKey">) => handle.sessionKey || handle.sessionId
+// Per Kilo chat, not per Honcho session: chats in one folder share a Honcho session but each needs its own recall and system snapshot.
+const deriveSessionStateKey = (handle: Pick<RuntimeHandle, "sessionId" | "sessionKey">) =>
+  handle.sessionId !== "unknown-session" ? handle.sessionId : handle.sessionKey
 
 const resolveAgentObserveMe = (settings: Pick<HonchoSettings, "agentObserveMe"> | Record<string, unknown> | undefined) =>
   settings && "agentObserveMe" in settings ? settings.agentObserveMe !== false : DEFAULT_SETTINGS.agentObserveMe
@@ -1608,9 +1610,9 @@ export const createHonchoCore = (host: HostAdapter, configPath?: string) => {
       return blocks
     }
 
+    // Kilo saves the compaction summary in the session, so this names where memory lives but carries no memory text.
     const continuityBlock = async (input: Record<string, unknown>) => {
       const handle = await deriveRuntimeHandle(host, input, configPath)
-      const state = getState(deriveSessionStateKey(handle))
       const topology = buildPeerTopology(handle)
       const rootAgent = topology.describedPeers.rootAgentPeer
       const userPeer = topology.describedPeers.userPeer
@@ -1628,10 +1630,7 @@ export const createHonchoCore = (host: HostAdapter, configPath?: string) => {
         handle.parentAgentObserverPeerId
           ? `Parent observer peer: ${handle.parentAgentObserverPeerId} (observe_me=false, observe_others=true, models_only=${handle.childAgentPeerId || "none"})`
           : "Parent observer peer: none",
-        state.lastInjectedContext ? `Last injected memory:\n${state.lastInjectedContext}` : "Last injected memory: none",
-        state.recentConclusions.length > 0
-          ? `Recent durable conclusions:\n- ${state.recentConclusions.join("\n- ")}`
-          : "Recent durable conclusions: none",
+        "Recall for the next prompt is fetched fresh from Honcho after compaction.",
       ].join("\n")
     }
 
@@ -2069,6 +2068,8 @@ export const createHonchoRuntimePlugin =
   async (pluginInput) => {
     const core = createHonchoCore(hostFromPluginInput(pluginInput), configPath)
     const recallBlocks = new Map<string, RecallBlock>()
+    // Sessions whose next messages.transform builds the compaction request, which must not carry recall into the saved summary.
+    const compacting = new Set<string>()
     void pruneActivity(sharedConfigPath(configPath))
     // Kilo does not await the event hook, so a one-shot `kilo run` can exit mid-upload.
     const inflight = new Set<Promise<void>>()
@@ -2079,9 +2080,10 @@ export const createHonchoRuntimePlugin =
         if (event.type === "command.executed") {
           return
         }
-        if (event.type === "session.deleted" || event.type === "session.error") {
+        // Not on session.error: an aborted turn would reset the chat's sealed system snapshot mid-session.
+        if (event.type === "session.deleted") {
           await core.dropSessionState(payload)
-          if (event.type === "session.deleted") await core.forgetActivity(payload)
+          await core.forgetActivity(payload)
           return
         }
         if (event.type === "session.created") {
@@ -2184,9 +2186,12 @@ export const createHonchoRuntimePlugin =
         output.system.push(...blocks)
       },
       "experimental.chat.messages.transform": async (_input, output) => {
+        const sessionID = output.messages?.find((message) => typeof message.info?.sessionID === "string")?.info.sessionID
+        if (sessionID && compacting.delete(sessionID)) return
         attachRecallBlocks(recallBlocks, output.messages)
       },
       "experimental.session.compacting": async (input, output) => {
+        compacting.add(input.sessionID)
         output.context = output.context || []
         output.context.push(await core.continuityBlock(input))
       },

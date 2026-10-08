@@ -511,3 +511,39 @@ test("an unreadable shared config pauses Honcho instead of breaking every hook",
     }),
   )
 })
+
+test("two Kilo chats in one folder each get recall for the same topic", async () => {
+  await runWithHarness(async ({ hooks }) => {
+    const attached = async (sessionID, id) => {
+      await hooks["chat.message"](
+        { sessionID },
+        { message: { id, role: "user", time: { created: Date.now() } }, parts: [{ type: "text", text: "fix memory injection" }] },
+      )
+      const step = { messages: [{ info: { id, role: "user", sessionID }, parts: [{ id: `prt_${id}`, type: "text", text: "fix memory injection" }] }] }
+      await hooks["experimental.chat.messages.transform"]({}, step)
+      return step.messages[0].parts.some((part) => part.synthetic)
+    }
+    expect(await attached("ses_chat_a", "msg-a")).toBe(true)
+    expect(await attached("ses_chat_b", "msg-b")).toBe(true)
+  })
+})
+
+test("compaction gets no recalled memory, so Kilo's saved summary cannot contain it", async () => {
+  await runWithHarness(async ({ hooks }) => {
+    await hooks["chat.message"](
+      { sessionID: "ses_compact" },
+      { message: { id: "msg-c", role: "user", time: { created: Date.now() } }, parts: [{ type: "text", text: "fix memory injection" }] },
+    )
+    const request = () => ({ messages: [{ info: { id: "msg-c", role: "user", sessionID: "ses_compact" }, parts: [{ id: "prt_c", type: "text", text: "fix memory injection" }] }] })
+    const compactionContext = { context: [] }
+    await hooks["experimental.session.compacting"]({ sessionID: "ses_compact" }, compactionContext)
+    expect(compactionContext.context.join("\n")).not.toContain("Prompt memory for")
+    const compactionRequest = request()
+    await hooks["experimental.chat.messages.transform"]({}, compactionRequest)
+    expect(compactionRequest.messages[0].parts.some((part) => part.synthetic)).toBe(false)
+    // The next normal step gets recall again.
+    const nextStep = request()
+    await hooks["experimental.chat.messages.transform"]({}, nextStep)
+    expect(nextStep.messages[0].parts.some((part) => part.synthetic)).toBe(true)
+  })
+})
