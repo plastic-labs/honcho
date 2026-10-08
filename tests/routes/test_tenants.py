@@ -47,6 +47,15 @@ def _create_body(
     }
 
 
+def test_the_tenant_api_is_absent_from_the_public_schema():
+    """The published OpenAPI spec documents the public API only."""
+    from src.main import app
+
+    paths = app.openapi()["paths"]
+
+    assert not [path for path in paths if path.startswith("/v3/tenants")]
+
+
 # ---------------------------------------------------------------------------
 # Auth plane: disabled / unauthorized matrix
 # ---------------------------------------------------------------------------
