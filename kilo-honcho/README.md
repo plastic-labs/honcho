@@ -22,15 +22,7 @@ kilo plugin @honcho-ai/kilo-honcho --global
 
 For the Kilo desktop app or the VS Code and JetBrains extensions, install **Honcho** from the Kilo Marketplace, then type `/honcho` in the chat. The agent asks what name Honcho should call you and opens a window on your screen for your API key. You can skip Step 3.
 
-Until Honcho is listed in the Kilo Marketplace, run this in any terminal instead:
-
-```bash
-npx @honcho-ai/kilo-honcho setup
-```
-
-It asks for your API key without echoing it, the name Honcho should call you, and a workspace. It saves them to `~/.honcho/config.json` with mode 600 and adds the plugin to `~/.config/kilo/kilo.jsonc` (or `kilo.json`) and `~/.config/kilo/tui.json`, keeping any comments. Restart Kilo to load it.
-
-If you edit the config by hand, add `"@honcho-ai/kilo-honcho"` to the `plugin` array in both files.
+Until Honcho is listed in the Kilo Marketplace, add `"@honcho-ai/kilo-honcho"` to the `plugin` array of `~/.config/kilo/kilo.jsonc` yourself, creating the file if it does not exist. Restart Kilo, then type `/honcho`.
 
 ### Step 3: Run Setup in Kilo
 
@@ -207,10 +199,13 @@ The packaged `honcho-memory` skill is copied to `~/.config/kilo/skills/honcho-me
 
 ## Remote and Headless Use
 
-The plugin runs wherever Kilo's server runs, and reads `~/.honcho/config.json` on that machine. When no window can open on your screen, set up from a terminal on that machine with `npx @honcho-ai/kilo-honcho setup`.
+The plugin runs wherever Kilo's server runs, and reads `~/.honcho/config.json` on that machine. When no window can open on your screen, finish setup on that machine in one of two ways:
 
-- **VS Code Remote SSH, dev containers, Codespaces.** Kilo's server runs on the remote machine, so it reads the remote's `~/.honcho/config.json`, not your laptop's. Run `npx @honcho-ai/kilo-honcho setup` in the remote terminal.
-- **Key window over SSH.** On macOS and Windows, `honcho_setup` does not open the key window in an SSH session, because it would appear on that machine's own screen. It points the user at the setup command instead. On Linux it opens only when a display is available, including through X forwarding. An unanswered window closes after 2 minutes.
+- Run `/honcho:setup` in the Kilo CLI there, if that machine has it.
+- Write `~/.honcho/config.json` yourself with at least `apiKey` and `peerName` (see [Configuration](#configuration)), then run `chmod 600 ~/.honcho/config.json`.
+
+- **VS Code Remote SSH, dev containers, Codespaces.** Kilo's server runs on the remote machine, so it reads the remote's `~/.honcho/config.json`, not your laptop's. Set Honcho up on the remote.
+- **Key window over SSH.** On macOS and Windows, `honcho_setup` does not open the key window in an SSH session, because it would appear on that machine's own screen. The agent tells you to finish setup one of the two ways above instead. On Linux it opens only when a display is available, including through X forwarding. An unanswered window closes after 2 minutes.
 - **CI and scripts.** When the `CI` variable is set, the agent does not offer setup. Set `HONCHO_API_KEY` to use Honcho in CI, or `KILO_PURE=1` to turn off every plugin.
 
 ## Development

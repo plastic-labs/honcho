@@ -22,13 +22,15 @@ Give Kilo Code long-term memory that survives context wipes, session restarts, a
     Install **Honcho** from the Kilo Marketplace, then type `/honcho` in the chat. The agent asks what name Honcho should call you and opens a window on your screen for your API key. You can skip Step 3. See [Setting Up from the Desktop App or an Extension](#setting-up-from-the-desktop-app-or-an-extension).
 
     <Note>
-    Until Honcho is listed in the Kilo Marketplace, run this in any terminal instead, including the desktop app's built-in terminal or VS Code's:
+    Until Honcho is listed in the Kilo Marketplace, add it to Kilo's global config yourself. Put it in the `plugin` array of `~/.config/kilo/kilo.jsonc`, and create the file if it does not exist:
 
-    ```bash
-    npx @honcho-ai/kilo-honcho setup
+    ```jsonc
+    {
+      "plugin": ["@honcho-ai/kilo-honcho"]
+    }
     ```
 
-    It asks for your API key without showing it, the name Honcho should call you, and a workspace. It then saves them to `~/.honcho/config.json` and adds the plugin to Kilo's global config. Restart Kilo to load it.
+    Restart Kilo, then type `/honcho`.
     </Note>
   </Tab>
   <Tab title="Kilo CLI">
@@ -163,6 +165,7 @@ For **self-hosted or local Honcho**:
 
 - `baseUrl` should point to your deployment (e.g. `http://127.0.0.1:8000`). Without `baseUrl`, Kilo uses the `environmentUrl` that `honcho init` writes.
 - `apiKey` is only required if the deployment is authenticated
+- The agent's `honcho_setup` will not switch Kilo to a local `baseUrl`. Set it in the file, or with `/honcho:setup` in the Kilo CLI.
 
 <Warning>
 If Kilo is running inside Docker or another remote environment, `localhost` won't refer to your host machine. The `baseUrl` must be reachable from the Kilo server.
@@ -237,8 +240,8 @@ The plugin hooks into these Kilo plugin capabilities:
 
 ## What Install Writes
 
-- **Kilo config:** `@honcho-ai/kilo-honcho` in the `plugin` array of `~/.config/kilo/kilo.jsonc` (or `kilo.json` if you have one) and `~/.config/kilo/tui.json`, written by `npx @honcho-ai/kilo-honcho setup`. Setup keeps any comments in those files, and skips a file that already loads the plugin. `kilo plugin` writes the server entry to `~/.config/kilo/opencode.json` instead.
-- **Honcho config:** `~/.honcho/config.json`, written only by `npx @honcho-ai/kilo-honcho setup`, `/honcho:setup`, `/honcho:config`, `honcho_setup`, and `honcho_set_config`, with mode 600. Installing or starting the plugin does not write it. An `apiKey` written as `${HONCHO_API_KEY}` stays a reference.
+- **Kilo config:** `@honcho-ai/kilo-honcho` in the `plugin` array of Kilo's global config. `kilo plugin --global` writes it to `~/.config/kilo/opencode.json` and `~/.config/kilo/tui.json`. The Kilo Marketplace adds the same `plugin` entry.
+- **Honcho config:** `~/.honcho/config.json`, written only by `/honcho:setup`, `/honcho:config`, `honcho_setup`, and `honcho_set_config`, with mode 600. Installing or starting the plugin does not write it. An `apiKey` written as `${HONCHO_API_KEY}` stays a reference.
 - **Skill:** `~/.config/kilo/skills/honcho-memory/SKILL.md`, or `$XDG_CONFIG_HOME/kilo/skills/honcho-memory/SKILL.md` when that variable is set. Every Kilo client reads it.
 - **Import state:** `~/.honcho/kilo-import-state.json`, after you run `/honcho:import`.
 - **Session activity:** `~/.honcho/kilo/sessions/<session id>.json`, one file per Kilo session, with mode 600. It holds the memory text shown by `/honcho:recall`. Files older than 14 days are removed when the plugin starts, and a file is removed when Kilo deletes its session.
@@ -257,10 +260,13 @@ The plugin hooks into these Kilo plugin capabilities:
 
 ## Remote and Headless Use
 
-The plugin runs wherever Kilo's server runs, and reads `~/.honcho/config.json` on that machine. When no window can open on your screen, set up from a terminal on that machine with `npx @honcho-ai/kilo-honcho setup`.
+The plugin runs wherever Kilo's server runs, and reads `~/.honcho/config.json` on that machine. When no window can open on your screen, finish setup on that machine in one of two ways:
 
-- **VS Code Remote SSH, dev containers, Codespaces.** Kilo's server runs on the remote machine, so it reads the remote's `~/.honcho/config.json`, not your laptop's. Run `npx @honcho-ai/kilo-honcho setup` in the remote terminal.
-- **Key window over SSH.** On macOS and Windows, `honcho_setup` does not open the key window in an SSH session, because it would appear on that machine's own screen. It points the user at the setup command instead. On Linux it opens only when a display is available, including through X forwarding. An unanswered window closes after 2 minutes.
+- Run `/honcho:setup` in the Kilo CLI there, if that machine has it.
+- Write `~/.honcho/config.json` yourself with at least `apiKey` and `peerName` (see [Configuration](#configuration)), then run `chmod 600 ~/.honcho/config.json`.
+
+- **VS Code Remote SSH, dev containers, Codespaces.** Kilo's server runs on the remote machine, so it reads the remote's `~/.honcho/config.json`, not your laptop's. Set Honcho up on the remote.
+- **Key window over SSH.** On macOS and Windows, `honcho_setup` does not open the key window in an SSH session, because it would appear on that machine's own screen. The agent tells you to finish setup one of the two ways above instead. On Linux it opens only when a display is available, including through X forwarding. An unanswered window closes after 2 minutes.
 - **CI and scripts.** When the `CI` variable is set, the agent does not offer setup. Set `HONCHO_API_KEY` to use Honcho in CI, or `KILO_PURE=1` to turn off every plugin.
 
 ## Building with Teammates

@@ -9,12 +9,11 @@ import { activityPath, countConclusions, createActivityRecorder, pruneActivity, 
 import { createHonchoClient, telemetryIdentity, type TelemetryOverrides } from "./honcho-client.js"
 import { HONCHO_FILES_BLOCKED, touchesHonchoFiles } from "./file-guard.js"
 import { keyDialogCommand, keyWindowMessage, promptForApiKey } from "./key-dialog.js"
-import { addKiloPlugin, checkHonchoConnection, kiloConfigDir } from "./setup.js"
+import { checkHonchoConnection, kiloConfigDir } from "./setup.js"
 import {
   DEFAULT_SETTINGS,
   HOST_ID,
   PLUGIN_ID,
-  SETUP_COMMAND,
   clampText,
   defaultPeerName,
   deriveSessionScope,
@@ -528,6 +527,9 @@ const hasConfiguredAuth = (settings: HonchoSettings) =>
 
 const isAuthRejection = (error: unknown) =>
   isRecord(error) && (error.status === 401 || error.name === "AuthenticationError")
+
+// Where no key window can open, the user finishes setup without the agent.
+const MANUAL_SETUP = "run /honcho:setup in the Kilo CLI, or add their key to ~/.honcho/config.json themselves"
 
 const SETUP_NEXT_STEP =
   "Honcho is not set up. Offer to set it up, and call honcho_setup if the user agrees; it asks for the key in a window, never in chat."
@@ -1736,7 +1738,7 @@ export const createHonchoCore = (host: HostAdapter, configPath?: string) => {
       {
         name: "honcho_setup",
         description:
-          `Set up Honcho for Kilo and save it to ~/.honcho/config.json. Ask the user what name Honcho should call them and pass it as peerName; every Honcho tool on the machine reads that name. When no API key is configured, or replaceKey is true, this tool opens a window on the user's screen where they paste their key from app.honcho.dev, so never ask for the key in chat. Pass workspace only when the user wants Kilo to share memory with another Honcho tool. Pass baseUrl only when the user asks to use a self-hosted Honcho server; the window then names that server and asks for its key. Memory starts with the next message; no restart is needed. If the window cannot open, tell the user to run \`${SETUP_COMMAND}\` in a terminal.`,
+          `Set up Honcho for Kilo and save it to ~/.honcho/config.json. Ask the user what name Honcho should call them and pass it as peerName; every Honcho tool on the machine reads that name. When no API key is configured, or replaceKey is true, this tool opens a window on the user's screen where they paste their key from app.honcho.dev, so never ask for the key in chat. Pass workspace only when the user wants Kilo to share memory with another Honcho tool. Pass baseUrl only when the user asks to use a self-hosted Honcho server; the window then names that server and asks for its key. Memory starts with the next message; no restart is needed. If the window cannot open, tell the user to ${MANUAL_SETUP}.`,
         args: {
           baseUrl: z.string().optional(),
           replaceKey: z.boolean().optional(),
@@ -1768,7 +1770,7 @@ export const createHonchoCore = (host: HostAdapter, configPath?: string) => {
             const baseUrlChanged = Boolean(providedBaseUrl) && providedBaseUrl !== currentBaseUrl
             if (baseUrlChanged && (!httpOrigin(providedBaseUrl) || isLocalBaseUrl(providedBaseUrl))) {
               return refuse(
-                `honcho_setup cannot switch to ${providedBaseUrl}. For a local server, ask the user to run \`${SETUP_COMMAND} --url <url>\` in a terminal.`,
+                `honcho_setup cannot switch to ${providedBaseUrl}. For a local server, ask the user to run /honcho:setup in the Kilo CLI, or to set baseUrl in ~/.honcho/config.json themselves.`,
               )
             }
             // The saved key never goes to a new server; a new server gets a key the user types into a window that names it.
@@ -1785,7 +1787,7 @@ export const createHonchoCore = (host: HostAdapter, configPath?: string) => {
                   {
                     ok: false,
                     globalConfigPath: handle.globalConfigPath,
-                    message: `No API key was entered. The window was closed, or it cannot open here (for example over SSH). Ask the user to run \`${SETUP_COMMAND}\` in a terminal instead.`,
+                    message: `No API key was entered. The window was closed, or it cannot open here (for example over SSH). Ask the user to ${MANUAL_SETUP}.`,
                   },
                   null,
                   2,
@@ -1859,7 +1861,7 @@ export const createHonchoCore = (host: HostAdapter, configPath?: string) => {
                 : `Honcho is set up with ${effectiveBaseUrl}. Memory starts with the next message.`
               : isLocalBaseUrl(effectiveBaseUrl)
                 ? `Honcho is set up with the local server at ${effectiveBaseUrl}. Memory starts with the next message.`
-                : `No Honcho API key is configured. Tell the user to run \`${SETUP_COMMAND}\` in a terminal, or /honcho:setup in the Kilo CLI.`
+                : `No Honcho API key is configured. Ask the user to ${MANUAL_SETUP}.`
             return JSON.stringify(
               {
                 ok: configured,
@@ -1910,7 +1912,7 @@ export const createHonchoCore = (host: HostAdapter, configPath?: string) => {
           try {
             field = parseSettingField(String(args.field ?? ""))
             if (USER_ONLY_FIELDS.has(field)) {
-              throw new Error(`${field} decides where the API key is sent, so only the user can change it: /honcho:setup in the Kilo CLI, or \`${SETUP_COMMAND}\` in a terminal.`)
+              throw new Error(`${field} decides where the API key is sent, so only the user can change it: /honcho:setup in the Kilo CLI, or by editing ~/.honcho/config.json.`)
             }
             if (containsEnvReference(args.value)) {
               throw new Error("Values cannot contain ${...} references.")
@@ -2264,7 +2266,6 @@ export const __testing = {
   keyDialogCommand,
   keyWindowMessage,
   activityPath,
-  addKiloPlugin,
   kiloConfigDir,
   countConclusions,
   createActivityRecorder,

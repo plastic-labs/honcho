@@ -13,9 +13,6 @@ export const PLUGIN_ID = "kilo-honcho"
 /** npm package name. Kilo uses it as the plugin id and the Marketplace matches installs on it. */
 export const PACKAGE_ID = "@honcho-ai/kilo-honcho"
 
-/** Terminal setup for clients without the Kilo CLI's `/honcho:setup`: the desktop app and the IDE extensions. */
-export const SETUP_COMMAND = `npx ${PACKAGE_ID} setup`
-
 export const SESSION_STRATEGIES = [
   "per-repo",
   "per-directory",

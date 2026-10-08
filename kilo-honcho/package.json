@@ -23,14 +23,8 @@
   },
   "author": "Plastic Labs <hello@plasticlabs.ai>",
   "license": "MIT",
-  "engines": {
-    "node": ">=18"
-  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "bin": {
-    "kilo-honcho": "./dist/cli.js"
-  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -64,7 +58,6 @@
     "@opentui/solid": "0.5.11",
     "@types/bun": "^1.2.8",
     "@types/node": "^22.13.9",
-    "jsonc-parser": "3.3.1",
     "solid-js": "1.9.12",
     "typescript": "^5.9.3",
     "zod": "4.1.8"

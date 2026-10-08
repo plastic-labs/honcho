@@ -172,7 +172,7 @@ test("honcho_setup takes the key from a window, never from the chat", async () =
   )
 })
 
-test("honcho_setup points at the setup command when the key window is closed", async () => {
+test("honcho_setup tells the agent how the user can finish setup when the key window is closed", async () => {
   const rootDir = await mkdtemp(path.join(os.tmpdir(), "honcho-setup-nokey-"))
   const homeDir = await mkdtemp(path.join(os.tmpdir(), "honcho-home-nokey-"))
   await withFakeKeyWindow(null, () =>
@@ -180,7 +180,8 @@ test("honcho_setup points at the setup command when the key window is closed", a
       const hooks = await createPluginHarness(rootDir)
       const result = JSON.parse(await hooks.tool.honcho_setup.execute({ peerName: "alice" }, toolContext(rootDir)))
       expect(result.ok).toBe(false)
-      expect(result.message).toContain("npx @honcho-ai/kilo-honcho setup")
+      expect(result.message).toContain("/honcho:setup in the Kilo CLI")
+      expect(result.message).not.toContain("npx")
       await expect(readFile(path.join(homeDir, ".honcho", "config.json"), "utf-8")).rejects.toThrow()
     }),
   )
@@ -387,41 +388,6 @@ test("honcho init's environmentUrl is used when there is no baseUrl", async () =
   })
 })
 
-test("addKiloPlugin writes kilo.jsonc and tui.json and keeps comments", async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), "honcho-kilo-config-"))
-  await writeFile(path.join(dir, "kilo.jsonc"), '{\n  // my models\n  "plugin": ["other-plugin"]\n}\n')
-
-  const first = await __testing.addKiloPlugin(dir)
-  expect(first.map((item) => [path.basename(item.file), item.status])).toEqual([
-    ["kilo.jsonc", "added"],
-    ["tui.json", "added"],
-  ])
-  const server = await readFile(path.join(dir, "kilo.jsonc"), "utf-8")
-  expect(server).toContain("// my models")
-  expect(server).toContain('"other-plugin"')
-  expect(server).toContain('"@honcho-ai/kilo-honcho"')
-  expect(JSON.parse(await readFile(path.join(dir, "tui.json"), "utf-8")).plugin).toEqual(["@honcho-ai/kilo-honcho"])
-
-  const second = await __testing.addKiloPlugin(dir)
-  expect(second.map((item) => item.status)).toEqual(["present", "present"])
-})
-
-test("addKiloPlugin creates kilo.jsonc when Kilo has no config yet, and counts a `kilo plugin` install as present", async () => {
-  const fresh = await mkdtemp(path.join(os.tmpdir(), "honcho-kilo-fresh-"))
-  expect((await __testing.addKiloPlugin(fresh))[0].file).toBe(path.join(fresh, "kilo.jsonc"))
-
-  const viaKiloPlugin = await mkdtemp(path.join(os.tmpdir(), "honcho-kilo-cli-install-"))
-  await writeFile(path.join(viaKiloPlugin, "opencode.json"), JSON.stringify({ plugin: ["@honcho-ai/kilo-honcho@0.1.0"] }))
-  const [server] = await __testing.addKiloPlugin(viaKiloPlugin)
-  expect(server.status).toBe("present")
-  await expect(readFile(path.join(viaKiloPlugin, "kilo.jsonc"), "utf-8")).rejects.toThrow()
-
-  const broken = await mkdtemp(path.join(os.tmpdir(), "honcho-kilo-broken-"))
-  await writeFile(path.join(broken, "kilo.json"), "{ not json")
-  expect((await __testing.addKiloPlugin(broken))[0].status).toBe("unreadable")
-  expect(await readFile(path.join(broken, "kilo.json"), "utf-8")).toBe("{ not json")
-})
-
 test("kiloConfigDir follows XDG_CONFIG_HOME like Kilo does", async () => {
   await withEnv({ XDG_CONFIG_HOME: "/tmp/xdg", HOME: "/home/a" }, async () => {
     expect(__testing.kiloConfigDir()).toBe("/tmp/xdg/kilo")
@@ -429,42 +395,6 @@ test("kiloConfigDir follows XDG_CONFIG_HOME like Kilo does", async () => {
   await withEnv({ XDG_CONFIG_HOME: undefined, HOME: "/home/a" }, async () => {
     expect(__testing.kiloConfigDir()).toBe("/home/a/.config/kilo")
   })
-})
-
-test("the setup command runs end to end from piped answers", async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), "honcho-cli-"))
-  const proc = Bun.spawn(["node", path.join(import.meta.dir, "..", "dist", "cli.js"), "setup"], {
-    stdin: new TextEncoder().encode("2\nhttp://127.0.0.1:1\n\nalice\n"),
-    stdout: "pipe",
-    stderr: "pipe",
-    env: { ...process.env, HOME: dir, XDG_CONFIG_HOME: path.join(dir, "xdg"), KILO_HONCHO_CONFIG_PATH: path.join(dir, "honcho.json"), HONCHO_API_KEY: "" },
-  })
-  const output = await new Response(proc.stdout).text()
-  expect(await proc.exited).toBe(0)
-  expect(output).toContain("Peer: alice")
-  const saved = JSON.parse(await readFile(path.join(dir, "honcho.json"), "utf-8"))
-  expect(saved).toMatchObject({ peerName: "alice", baseUrl: "http://127.0.0.1:1", hosts: { kilo: { workspace: "kilo" } } })
-  expect(saved.apiKey).toBeUndefined()
-  expect(await readFile(path.join(dir, "xdg", "kilo", "kilo.jsonc"), "utf-8")).toContain("@honcho-ai/kilo-honcho")
-})
-
-test("an agent can run the setup command with flags while stdin stays open", async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), "honcho-cli-agent-"))
-  const proc = Bun.spawn(
-    ["node", path.join(import.meta.dir, "..", "dist", "cli.js"), "setup", "--url", "http://127.0.0.1:1", "--peer-name", "eri", "--workspace=team"],
-    {
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "pipe",
-      env: { ...process.env, HOME: dir, XDG_CONFIG_HOME: path.join(dir, "xdg"), KILO_HONCHO_CONFIG_PATH: path.join(dir, "honcho.json"), HONCHO_API_KEY: "" },
-    },
-  )
-  const timeout = setTimeout(() => proc.kill(), 10_000)
-  const exitCode = await proc.exited
-  clearTimeout(timeout)
-  expect(exitCode).toBe(0)
-  const saved = JSON.parse(await readFile(path.join(dir, "honcho.json"), "utf-8"))
-  expect(saved).toMatchObject({ peerName: "eri", baseUrl: "http://127.0.0.1:1", hosts: { kilo: { workspace: "team" } } })
 })
 
 test("the key window uses each platform's own password box, and none without a display", () => {
@@ -534,7 +464,7 @@ test("honcho_setup sends nothing to a new server when the key window is closed, 
         expect(closed.ok).toBe(false)
         const local = JSON.parse(await hooks.tool.honcho_setup.execute({ baseUrl: "http://127.0.0.1:8000" }, toolContext(rootDir)))
         expect(local.ok).toBe(false)
-        expect(local.message).toContain("--url")
+        expect(local.message).toContain("set baseUrl in ~/.honcho/config.json")
         const reference = JSON.parse(await hooks.tool.honcho_setup.execute({ peerName: "${AWS_SECRET_ACCESS_KEY}" }, toolContext(rootDir)))
         expect(reference.ok).toBe(false)
         expect(fetch.requests).toHaveLength(0)
