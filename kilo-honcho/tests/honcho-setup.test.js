@@ -237,6 +237,7 @@ test("honcho_status ignores a local .kilo/honcho.json", async () => {
     expect(result.configPath).toBe(sharedConfigPath)
     expect(result.baseUrl).toBe("https://api.honcho.dev")
     expect(result.workspace).toBe("kilo")
+    expect(result.sessionUrl).toBe(`https://app.honcho.dev/explore?workspace=kilo&view=sessions&session=${encodeURIComponent(result.sessionName)}`)
   })
 })
 

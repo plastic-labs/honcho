@@ -35,3 +35,7 @@ Keep each conclusion to one concise statement with the *why*. Review before addi
 ## When not to bother
 
 Skip memory for throwaway or purely mechanical tasks — running a build, answering a general knowledge question, trivial edits. Don't narrate that you checked memory; just use it.
+
+## Honcho's own files
+
+Never read, print or edit `~/.honcho/config.json`, and never run Honcho setup commands in a shell. The file holds the user's API key. Call `honcho_status` to see Honcho's settings, and `honcho_setup` to set Honcho up; it asks for the key in a window, never in chat. The user can also type `/honcho`.
