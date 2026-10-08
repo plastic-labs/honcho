@@ -1,5 +1,4 @@
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises"
-import path from "node:path"
+import { readFile } from "node:fs/promises"
 import { readActivity } from "../activity.js"
 import { createHonchoClient } from "../honcho-client.js"
 import { executeKiloImport, planKiloImport } from "../import.js"
@@ -17,6 +16,7 @@ import {
   resolveSessionPeerIds,
   sharedConfigPath,
   unifiedImportFollowUp,
+  writeFileAtomic,
 } from "../core.js"
 import { recallMessage } from "./activity-view.js"
 import type { DialogOption, GlobalSettings, TuiCommandSpec, TuiSession } from "./dialogs.js"
@@ -71,11 +71,9 @@ export const readSharedConfig = async (): Promise<Record<string, unknown> | null
   }
 }
 
-// The file can hold an API key, so only its owner may read it.
+// The file can hold an API key, so only its owner may read it. Other Honcho tools read it too, so it is never half-written.
 const writeConfigFile = async (configPath: string, settings: Record<string, unknown>) => {
-  await mkdir(path.dirname(configPath), { recursive: true })
-  await writeFile(configPath, `${JSON.stringify(settings, null, 2)}\n`, { encoding: "utf-8", mode: 0o600 })
-  await chmod(configPath, 0o600)
+  await writeFileAtomic(configPath, `${JSON.stringify(settings, null, 2)}\n`, 0o600)
   return configPath
 }
 

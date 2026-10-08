@@ -1,8 +1,8 @@
 import { existsSync } from "node:fs"
-import { mkdir, readFile, writeFile } from "node:fs/promises"
+import { readFile } from "node:fs/promises"
 import path from "node:path"
 import { applyEdits, modify, parse, type ParseError } from "jsonc-parser/lib/esm/main.js"
-import { PACKAGE_ID, userHomeDir } from "./core.js"
+import { PACKAGE_ID, userHomeDir, writeFileAtomic } from "./core.js"
 import { createHonchoClient } from "./honcho-client.js"
 
 /** Kilo's global config directory: `$XDG_CONFIG_HOME/kilo`, else `~/.config/kilo`, on every platform. */
@@ -43,8 +43,7 @@ const addToConfigFile = async (dir: string, names: string[]): Promise<PluginConf
   const plugins: unknown[] = Array.isArray(data.plugin) ? data.plugin : []
   const base = text.trim() ? text : "{}\n"
   const edits = modify(base, ["plugin"], [...plugins, PACKAGE_ID], { formattingOptions: { insertSpaces: true, tabSize: 2 } })
-  await mkdir(dir, { recursive: true })
-  await writeFile(file, applyEdits(base, edits), "utf-8")
+  await writeFileAtomic(file, applyEdits(base, edits))
   return { file, status: "added" }
 }
 

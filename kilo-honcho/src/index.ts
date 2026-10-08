@@ -1,4 +1,4 @@
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises"
+import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { randomBytes } from "node:crypto"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
@@ -34,6 +34,7 @@ import {
   unifiedImportFollowUp,
   userHomeDir,
   walkToProjectRoot,
+  writeFileAtomic,
   type HonchoSettings,
   type ObservationMode,
 } from "./core.js"
@@ -95,6 +96,7 @@ type HostScopedSettings = Partial<
 
 type RuntimeHandle = {
   rootDir: string
+  configError: string | null
   configPath: string
   globalConfigPath: string
   config: HonchoSettings
@@ -870,20 +872,29 @@ const envSettings = (): Record<string, unknown> => ({
 
 const resolveSettings = async (configPathOverride?: string) => {
   const configPath = sharedConfigPath(configPathOverride)
-  const { globalConfigPath, globalRaw } = await readSharedGlobalSettings(configPath)
-  return {
-    configPath,
-    globalConfigPath,
-    settings: mergeSettings(normalizeScopedSettings(globalRaw), envSettings()),
+  try {
+    const { globalConfigPath, globalRaw } = await readSharedGlobalSettings(configPath)
+    return {
+      configPath,
+      globalConfigPath,
+      settings: mergeSettings(normalizeScopedSettings(globalRaw), envSettings()),
+      configError: null,
+    }
+  } catch (error) {
+    // A typo or another tool's half-written file must not throw out of every hook. Honcho pauses until the file reads.
+    const detail = error instanceof Error ? error.message : String(error)
+    return {
+      configPath,
+      globalConfigPath: configPath,
+      settings: mergeSettings(envSettings()),
+      configError: `${configPath} could not be read (${detail}). Fix the file; Honcho resumes with the next message.`,
+    }
   }
 }
 
-// The file can hold an API key, so only its owner may read it.
-const writeSettings = async (configPath: string, settings: Record<string, unknown>) => {
-  await mkdir(path.dirname(configPath), { recursive: true })
-  await writeFile(configPath, `${JSON.stringify(settings, null, 2)}\n`, { encoding: "utf-8", mode: 0o600 })
-  await chmod(configPath, 0o600)
-}
+// The file can hold an API key, so only its owner may read it. Other Honcho tools read it too, so it is never half-written.
+const writeSettings = (configPath: string, settings: Record<string, unknown>) =>
+  writeFileAtomic(configPath, `${JSON.stringify(settings, null, 2)}\n`, 0o600)
 
 const deriveUserPeerId = (settings: Pick<HonchoSettings, "peerName">) =>
   deriveUserPeerIdFromName(settings.peerName || defaultPeerName())
@@ -927,7 +938,7 @@ const deriveRuntimeHandle = async (
   configPathOverride?: string,
 ): Promise<RuntimeHandle> => {
   const rootDir = deriveProjectRoot(host)
-  const { configPath, globalConfigPath, settings } = await resolveSettings(configPathOverride)
+  const { configPath, globalConfigPath, settings, configError } = await resolveSettings(configPathOverride)
   const sessionId = extractSessionId(input)
   const repoName = path.basename(rootDir)
   const workspaceId = normalizeId(settings.workspace || DEFAULT_SETTINGS.workspace)
@@ -956,6 +967,7 @@ const deriveRuntimeHandle = async (
 
   return {
     rootDir,
+    configError,
     configPath,
     globalConfigPath,
     config: settings,
@@ -1268,6 +1280,11 @@ export const createHonchoCore = (host: HostAdapter, configPath?: string) => {
       fallback: T,
     ) => {
       const handle = await deriveRuntimeHandle(host, input, configPath)
+      if (handle.configError) {
+        await noteActivity(handle, { state: "error", error: handle.configError })
+        await log("warn", "Honcho is paused: the shared config could not be read.", { message: handle.configError })
+        return isRecord(fallback) && typeof fallback.error === "string" ? ({ ...fallback, error: handle.configError } as T) : fallback
+      }
       if (!hasConfiguredAuth(handle.config)) {
         await noteActivity(handle, { state: "unconfigured" })
         await log("warn", "Honcho runtime is missing an API key and is not configured for a localhost baseUrl.", {
@@ -1313,6 +1330,7 @@ export const createHonchoCore = (host: HostAdapter, configPath?: string) => {
         sessionName: handle.sessionKey,
         recallMode: handle.config.recallMode,
         observationMode: handle.config.observationMode,
+        ...(handle.configError ? { configError: handle.configError } : {}),
         agentObserveMe: handle.config.agentObserveMe,
         autoConclusions: handle.config.autoConclusions,
         sessionStrategy: handle.config.sessionStrategy,
@@ -1559,6 +1577,7 @@ export const createHonchoCore = (host: HostAdapter, configPath?: string) => {
     // on first use so the system prompt stays byte-identical for the rest of the session.
     const systemBlocks = async (input: Record<string, unknown>): Promise<string[]> => {
       const handle = await deriveRuntimeHandle(host, input, configPath)
+      if (handle.configError) return []
       if (!hasConfiguredAuth(handle.config)) {
         // Scripts and CI have nobody to accept the offer, and it would end up in their output.
         return runningInCi() ? [] : [HONCHO_SETUP_NUDGE]
@@ -1958,6 +1977,9 @@ export const createHonchoCore = (host: HostAdapter, configPath?: string) => {
         args: { content: z.string() },
         async execute(args, sessionID) {
           const handle = await deriveRuntimeHandle(host, { ...args, sessionID }, configPath)
+          if (handle.configError) {
+            return JSON.stringify({ ok: false, error: handle.configError }, null, 2)
+          }
           if (!hasConfiguredAuth(handle.config)) {
             return JSON.stringify(
               {

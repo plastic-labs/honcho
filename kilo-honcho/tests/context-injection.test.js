@@ -487,3 +487,27 @@ test("text Kilo adds itself, like @-mentioned file contents, is not saved as the
     expect(saved[0].body.messages[0].content).toBe("review the parser")
   })
 })
+
+test("an unreadable shared config pauses Honcho instead of breaking every hook", async () => {
+  const rootDir = await mkdtemp(path.join(os.tmpdir(), "honcho-broken-root-"))
+  const homeDir = await mkdtemp(path.join(os.tmpdir(), "honcho-broken-home-"))
+  const configPath = path.join(homeDir, "honcho.json")
+  await writeFile(configPath, "{ \"apiKey\": \"key\", ")
+  const fetch = createHonchoFetch()
+  await withMockFetch(fetch, () =>
+    withEnv({ HOME: homeDir, USER: "test-user", XDG_CONFIG_HOME: undefined, HONCHO_API_KEY: "env-key" }, async () => {
+      const hooks = await createPluginHarness(rootDir, configPath)
+      await hooks["chat.message"](
+        { sessionID: "ses_broken" },
+        { message: { id: "msg-broken", role: "user", time: { created: Date.now() } }, parts: [{ type: "text", text: "fix memory injection" }] },
+      )
+      const output = { system: [] }
+      await hooks["experimental.chat.system.transform"](systemInput({ sessionID: "ses_broken" }), output)
+      expect(output.system).toEqual([])
+      expect(fetch.calls).toHaveLength(0)
+      const activity = JSON.parse(await readFile(path.join(homeDir, "kilo", "sessions", "ses_broken.json"), "utf-8"))
+      expect(activity.state).toBe("error")
+      expect(activity.error).toContain("could not be read")
+    }),
+  )
+})

@@ -1,6 +1,7 @@
+import { randomBytes } from "node:crypto"
 import { existsSync } from "node:fs"
 import { homedir } from "node:os"
-import { readFile } from "node:fs/promises"
+import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises"
 import path from "node:path"
 
 /** Kilo host id: the `hosts.kilo` config key and the `X-Honcho-Host` header name. */
@@ -73,6 +74,15 @@ export const DEFAULT_SETTINGS: HonchoSettings = {
   // Default false: Honcho's deriver already reasons over every message, so verbatim keyword copies only add noise.
   autoConclusions: false,
   sessionStrategy: "per-directory",
+}
+
+/** Writes a temp file and renames it over the target, so a reader never sees half a file. Keeps the old mode unless one is given. */
+export const writeFileAtomic = async (file: string, text: string, mode?: number) => {
+  await mkdir(path.dirname(file), { recursive: true })
+  const fileMode = mode ?? (await stat(file).then((info) => info.mode & 0o777, () => 0o644))
+  const tmp = `${file}.${randomBytes(6).toString("hex")}.tmp`
+  await writeFile(tmp, text, { encoding: "utf-8", mode: fileMode })
+  await rename(tmp, file)
 }
 
 export const clampText = (value: string, maxChars: number) =>
