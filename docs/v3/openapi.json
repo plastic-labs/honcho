@@ -5409,6 +5409,20 @@
             "title": "Query",
             "description": "Dialectic API Prompt"
           },
+          "semantic_query": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 10000,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Semantic Query",
+            "description": "Optional text used only to prefetch relevant conclusions. Defaults to `query`. Set it when `query` carries instructions or formatting that would dilute the retrieval embedding; the reasoning agent still receives `query` in full."
+          },
           "stream": {
             "type": "boolean",
             "title": "Stream",

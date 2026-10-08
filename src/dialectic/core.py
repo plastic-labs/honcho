@@ -326,7 +326,10 @@ class DialecticAgent:
             return None
 
     async def _prepare_query(
-        self, query: str, telemetry: LLMTelemetryContext
+        self,
+        query: str,
+        telemetry: LLMTelemetryContext,
+        semantic_query: str | None = None,
     ) -> tuple[
         Callable[[str, dict[str, Any]], Any],
         str,
@@ -344,6 +347,7 @@ class DialecticAgent:
         Args:
             query: The question to answer about the peer
             telemetry: Telemetry context for the run
+            semantic_query: Optional text to prefetch with instead of ``query``
 
         Returns:
             A tuple of (tool_executor, task_name, run_id, start_time, run)
@@ -359,7 +363,9 @@ class DialecticAgent:
         start_time = time.perf_counter()
         run = start_captured_span("run", telemetry, input=query)
         try:
-            tool_executor = await self._prepare_messages(query, task_name)
+            tool_executor = await self._prepare_messages(
+                query, task_name, semantic_query
+            )
         except BaseException:
             if run is not None:
                 run.end(is_error=True)
@@ -367,7 +373,7 @@ class DialecticAgent:
         return tool_executor, task_name, run_id, start_time, run
 
     async def _prepare_messages(
-        self, query: str, task_name: str
+        self, query: str, task_name: str, semantic_query: str | None = None
     ) -> Callable[[str, dict[str, Any]], Any]:
         """Prefetch observations, append the user message, and build the tool executor."""
         accumulate_metric(
@@ -383,8 +389,14 @@ class DialecticAgent:
             "blob",
         )
         accumulate_metric(task_name, "query", query, "blob")
+        if semantic_query is not None:
+            accumulate_metric(task_name, "semantic_query", semantic_query, "blob")
 
-        prefetched_observations = await self._prefetch_relevant_observations(query)
+        # The prefetch embeds its argument, so it gets the retrieval text; the
+        # agent's user message below still carries the full query.
+        prefetched_observations = await self._prefetch_relevant_observations(
+            semantic_query if semantic_query is not None else query
+        )
 
         if prefetched_observations:
             user_content = (
@@ -546,7 +558,10 @@ class DialecticAgent:
         )
 
     async def answer(
-        self, query: str, response_model: type[BaseModel] | None = None
+        self,
+        query: str,
+        response_model: type[BaseModel] | None = None,
+        semantic_query: str | None = None,
     ) -> str:
         """
         Answer a query about the peer using agentic tool calling.
@@ -560,13 +575,15 @@ class DialecticAgent:
             query: The question to answer about the peer
             response_model: Optional Pydantic model the final synthesis must
                 conform to. When set, the returned string is JSON.
+            semantic_query: Optional text used only to prefetch conclusions.
+                Defaults to ``query``.
 
         Returns:
             The synthesized answer string
         """
         telemetry = self._telemetry_context(track_name="Dialectic Agent")
         tool_executor, task_name, run_id, start_time, run = await self._prepare_query(
-            query, telemetry
+            query, telemetry, semantic_query
         )
 
         # Get level-specific settings
@@ -639,7 +656,10 @@ class DialecticAgent:
         return content
 
     async def answer_stream(
-        self, query: str, response_model: type[BaseModel] | None = None
+        self,
+        query: str,
+        response_model: type[BaseModel] | None = None,
+        semantic_query: str | None = None,
     ) -> AsyncIterator[str]:
         """
         Answer a query about the peer using agentic tool calling, streaming the response.
@@ -654,13 +674,15 @@ class DialecticAgent:
             response_model: Optional Pydantic model the final synthesis must
                 conform to. When set, the streamed text accumulates to JSON
                 (chunks are raw text; no parsing happens on the stream path).
+            semantic_query: Optional text used only to prefetch conclusions.
+                Defaults to ``query``.
 
         Yields:
             Chunks of the response text as they are generated
         """
         telemetry = self._telemetry_context(track_name="Dialectic Agent Stream")
         tool_executor, task_name, run_id, start_time, run = await self._prepare_query(
-            query, telemetry
+            query, telemetry, semantic_query
         )
 
         # Get level-specific settings
