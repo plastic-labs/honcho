@@ -292,7 +292,7 @@ async def setup_test_database(db_url: URL):
     engine = create_async_engine(db_url, echo=False)
     async with engine.connect() as conn:
         try:
-            logger.info("Attempting to create pgvector extension...")
+            logger.info("Attempting to create pgvector and pg_trgm extensions...")
             await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
             await conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
             await conn.commit()
@@ -300,7 +300,7 @@ async def setup_test_database(db_url: URL):
         except ProgrammingError as e:
             logger.error(f"ProgrammingError: {e}")
             raise RuntimeError(
-                "Failed to create pgvector extension. Make sure it's installed on the PostgreSQL server."
+                "Failed to create pgvector/pg_trgm extensions. Make sure they're installed on the PostgreSQL server."
             ) from e
         except OperationalError as e:
             logger.error(f"OperationalError: {e}")

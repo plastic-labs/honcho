@@ -7,6 +7,7 @@ from contextlib import suppress
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, exceptions, models, schemas
@@ -422,23 +423,26 @@ class RepresentationManager:
     ) -> list[models.Document]:
         """Query documents by semantic similarity.
 
-        Failures degrade to no semantic observations. The query runs in a
-        savepoint so a database error rolls back only this step; without it the
-        session's transaction is left invalid and the caller's next query fails
-        with PendingRollbackError instead of degrading.
+        Failures degrade to no semantic observations so the representation can
+        still be built from the other sources. Callers pass read-only
+        (AUTOCOMMIT) sessions, so a failed statement can't leave an aborted
+        transaction behind. A dropped connection can, though: SQLAlchemy
+        invalidates it and refuses every further query on the session with
+        PendingRollbackError until rollback() is called, so roll back before
+        degrading. Under AUTOCOMMIT the rollback is a no-op on the wire.
         """
         try:
-            async with db.begin_nested():
-                if level:
-                    return await self._query_documents_for_level(
-                        db,
-                        query,
-                        level,
-                        top_k,
-                        max_distance,
-                        embedding=embedding,
-                        session_allowlist=session_allowlist,
-                    )
+            if level:
+                return await self._query_documents_for_level(
+                    db,
+                    query,
+                    level,
+                    top_k,
+                    max_distance,
+                    embedding=embedding,
+                    session_allowlist=session_allowlist,
+                )
+            else:
                 documents = await crud.query_documents(
                     db,
                     workspace_name=self.workspace_name,
@@ -453,9 +457,14 @@ class RepresentationManager:
                     )
                     or None,
                 )
-            db.expunge_all()
-            return list(documents)
+                db.expunge_all()
+                return list(documents)
 
+        except DBAPIError as e:
+            if e.connection_invalidated:
+                await db.rollback()
+            logger.exception("Error getting relevant observations")
+            return []
         except Exception:
             logger.exception("Error getting relevant observations")
             return []

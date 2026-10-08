@@ -51,6 +51,10 @@ target_metadata = Base.metadata
 # ... etc.
 
 
+# insufficient_privilege, feature_not_supported ("extension is not available")
+OPTIONAL_EXTENSION_ERRORS = frozenset({"42501", "0A000"})
+
+
 def get_url() -> str:
     url = settings.DB.CONNECTION_URI
     if url is None:
@@ -135,12 +139,18 @@ def _prepare_schema(connection: Connection) -> None:
     connection.execute(text(f"CREATE SCHEMA IF NOT EXISTS {schema}"))
     connection.execute(text(f"GRANT ALL ON SCHEMA {schema} TO current_user"))
     connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-    # pg_trgm backs the message-search ILIKE index. Roles that can't create
-    # extensions skip it; the revision that builds the index checks for it.
+    # region ai
+    # pg_trgm backs the message-search ILIKE index. Where it can't be created
+    # (no privilege, or not installed on the server) it is skipped; the revision
+    # that builds the index checks for it. Other errors, e.g. a lock timeout
+    # that run_with_lock_retry should retry, propagate.
+    # endregion
     try:
         with connection.begin_nested():
             connection.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
-    except DBAPIError:
+    except DBAPIError as e:
+        if getattr(e.orig, "sqlstate", None) not in OPTIONAL_EXTENSION_ERRORS:
+            raise
         logging.getLogger("alembic").warning(
             "Could not create extension pg_trgm; message search will run unindexed"
         )
@@ -172,6 +182,9 @@ def _run_migrations_with_connection(
 
     A caller-owned transaction gets a transaction-scoped lock and no retry.
     """
+    # Revisions that need an autocommit block read this: it can only run when
+    # env.py owns the transaction.
+    config.attributes["owns_transaction"] = owns_transaction
     if not owns_transaction:
         acquire_migration_lock(connection, transaction_scoped=True)
         _prepare_schema(connection)
