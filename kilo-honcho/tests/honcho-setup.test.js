@@ -585,3 +585,25 @@ test("the key window names a non-cloud server by its origin only", () => {
   const [, args] = __testing.keyDialogCommand("darwin", {}, 'say "hi" \\ there')
   expect(args[1]).toContain('display dialog "say \\"hi\\" \\\\ there"')
 })
+
+test("a server that refuses requests without a key counts as not set up, so the agent offers setup", async () => {
+  const unauthorized = async () =>
+    new Response(JSON.stringify({ detail: "Missing API key" }), { status: 401, headers: { "content-type": "application/json" } })
+  await withMockFetch(unauthorized, () =>
+    withSavedConfig({ baseUrl: "https://honcho.example.com" }, async ({ hooks, rootDir }) => {
+      const before = JSON.parse(await hooks.tool.honcho_status.execute({}, toolContext(rootDir)))
+      // Until a request is refused, a non-cloud URL may be a server without auth.
+      expect(before.configured).toBe(true)
+      await hooks["chat.message"](
+        { sessionID: "ses_needs_key" },
+        { message: { id: "msg-k", role: "user", time: { created: Date.now() } }, parts: [{ type: "text", text: "what am I building?" }] },
+      )
+      const system = { system: [] }
+      await hooks["experimental.chat.system.transform"]({ sessionID: "ses_needs_key", model: {} }, system)
+      expect(system.system.join("\n")).toContain("call honcho_setup")
+      const after = JSON.parse(await hooks.tool.honcho_status.execute({}, toolContext(rootDir)))
+      expect(after.configured).toBe(false)
+      expect(after.nextStep).toContain("honcho_setup")
+    }),
+  )
+})
