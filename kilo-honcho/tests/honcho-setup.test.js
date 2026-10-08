@@ -589,7 +589,8 @@ test("the key window names a non-cloud server by its origin only", () => {
 test("a server that refuses requests without a key counts as not set up, so the agent offers setup", async () => {
   const unauthorized = async () =>
     new Response(JSON.stringify({ detail: "Missing API key" }), { status: 401, headers: { "content-type": "application/json" } })
-  await withMockFetch(unauthorized, () =>
+  // CI suppresses the setup offer, and GitHub Actions sets it.
+  await withMockFetch(unauthorized, () => withEnv({ CI: undefined }, () =>
     withSavedConfig({ baseUrl: "https://honcho.example.com" }, async ({ hooks, rootDir }) => {
       const before = JSON.parse(await hooks.tool.honcho_status.execute({}, toolContext(rootDir)))
       // Until a request is refused, a non-cloud URL may be a server without auth.
@@ -605,5 +606,5 @@ test("a server that refuses requests without a key counts as not set up, so the 
       expect(after.configured).toBe(false)
       expect(after.nextStep).toContain("honcho_setup")
     }),
-  )
+  ))
 })
