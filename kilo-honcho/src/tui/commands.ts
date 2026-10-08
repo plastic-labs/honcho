@@ -442,7 +442,8 @@ export const runSetup = async (session: TuiSession) => {
   if (workspace === undefined) return
 
   const configPath = await saveSettings({
-    apiKey: apiKey.trim(),
+    // A blank key keeps the saved one; writing "" would sign out every Honcho tool that shares the file.
+    apiKey: apiKey.trim() || undefined,
     baseUrl,
     peerName,
     hosts: { kilo: { workspace } },
@@ -452,7 +453,7 @@ export const runSetup = async (session: TuiSession) => {
     message: [
       `Saved settings to ${configPath}`,
       `Base URL: ${baseUrl}`,
-      `API key: ${apiKey.trim() ? "set" : mode === "local" ? "not required for localhost mode" : "not set"}`,
+      `API key: ${apiKey.trim() ? "set" : current.apiKey?.trim() ? "unchanged" : mode === "local" ? "not required for localhost mode" : "not set"}`,
       `Peer name: ${peerName}`,
       `Workspace: ${workspace}`,
       "",

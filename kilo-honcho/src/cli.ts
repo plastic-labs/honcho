@@ -151,7 +151,7 @@ export const runSetupCli = async (flags: Flags = {}) => {
 
   const savedKey = typeof current.apiKey === "string" ? current.apiKey.trim() : ""
   const envKey = process.env.HONCHO_API_KEY?.trim() || ""
-  const keyHint = savedKey ? "Enter keeps the saved key" : envKey ? "Enter uses HONCHO_API_KEY" : isLocalBaseUrl(baseUrl) ? "optional for local" : "from app.honcho.dev"
+  const keyHint = savedKey ? "Enter keeps the saved key" : envKey ? "Enter saves the key in HONCHO_API_KEY" : isLocalBaseUrl(baseUrl) ? "optional for local" : "from app.honcho.dev"
   let enteredKey = await askHidden(`Honcho API key (hidden, ${keyHint}): `)
   // Without a terminal to type into, the key comes from a window on the user's screen.
   if (!enteredKey && !savedKey && !envKey && !isLocalBaseUrl(baseUrl) && !process.stdin.isTTY) {

@@ -306,3 +306,26 @@ test("dialogs return the user's answer even though Kilo's clear() runs the close
   assert.equal(await __testing.dialogsFromApi(kiloLikeApi("hch-key")).prompt({ title: "t" }), "hch-key")
   assert.equal(await __testing.dialogsFromApi(kiloLikeApi(null)).confirm({ title: "t", message: "m" }), true)
 })
+
+test("/honcho:setup with a blank key keeps the key other Honcho tools share", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "honcho-tui-blank-key-"))
+  const configPath = path.join(dir, "config.json")
+  await writeFile(configPath, JSON.stringify({ apiKey: "shared-key", peerName: "eri" }))
+  const previous = process.env.KILO_HONCHO_CONFIG_PATH
+  process.env.KILO_HONCHO_CONFIG_PATH = configPath
+  const session = {
+    dialogs: {
+      select: async (input) => (input.title === "Configure Honcho" ? "local" : undefined),
+      prompt: async (input) => (input.title === "Optional Honcho API key" ? "" : input.value),
+      alert: async () => {},
+    },
+    liveStatus: () => ({}),
+  }
+  try {
+    await withHonchoEnv({}, () => __testing.runSetup(session))
+  } finally {
+    if (previous === undefined) delete process.env.KILO_HONCHO_CONFIG_PATH
+    else process.env.KILO_HONCHO_CONFIG_PATH = previous
+  }
+  assert.equal(JSON.parse(await readFile(configPath, "utf-8")).apiKey, "shared-key")
+})

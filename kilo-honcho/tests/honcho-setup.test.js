@@ -145,7 +145,7 @@ const withFakeKeyWindow = async (output, action) => {
   const bin = await mkdtemp(path.join(os.tmpdir(), "honcho-fake-dialog-"))
   const script = output === null ? "#!/bin/sh\nexit 1\n" : `#!/bin/sh\necho '${output}'\n`
   for (const name of ["osascript", "zenity"]) await writeFile(path.join(bin, name), script, { mode: 0o755 })
-  return withEnv({ PATH: `${bin}:${process.env.PATH}`, DISPLAY: ":0" }, action)
+  return withEnv({ PATH: `${bin}:${process.env.PATH}`, DISPLAY: ":0", SSH_CONNECTION: undefined, SSH_CLIENT: undefined, SSH_TTY: undefined }, action)
 }
 
 test("honcho_setup takes the key from a window, never from the chat", async () => {
@@ -342,10 +342,13 @@ test("hosts.kilo.apiKey is used when the root apiKey is absent", async () => {
       baseUrl: "http://127.0.0.1:8000",
       hosts: { kilo: { workspace: "kilo", aiPeer: "kilo", apiKey: "host-kilo-jwt" } },
     }))
-    const hooks = await createPluginHarness(rootDir)
-    const env = { env: {} }
-    await hooks["shell.env"]({}, env)
-    expect(env.env.HONCHO_API_KEY).toBe("host-kilo-jwt")
+    const fetch = recordingFetch()
+    await withMockFetch(fetch, async () => {
+      const hooks = await createPluginHarness(rootDir)
+      await hooks.tool.honcho_chat.execute({ query: "hi" }, toolContext(rootDir))
+    })
+    expect(fetch.requests.length).toBeGreaterThan(0)
+    expect(fetch.requests.every((request) => request.auth === "Bearer host-kilo-jwt")).toBe(true)
   })
 })
 
@@ -466,10 +469,118 @@ test("the key window uses each platform's own password box, and none without a d
   expect(__testing.keyDialogCommand("darwin", {})[0]).toBe("osascript")
   expect(__testing.keyDialogCommand("darwin", {})[1].join(" ")).toContain("with hidden answer")
   expect(__testing.keyDialogCommand("win32", {})[0]).toBe("powershell.exe")
-  expect(__testing.keyDialogCommand("linux", { DISPLAY: ":0" })).toEqual(["zenity", ["--password", "--title=Honcho API key"]])
+  expect(__testing.keyDialogCommand("linux", { DISPLAY: ":0" })?.[0]).toBe("zenity")
   expect(__testing.keyDialogCommand("linux", {})).toBeNull()
   // Over SSH the window would open on the far machine's screen, except with X forwarding on Linux.
   expect(__testing.keyDialogCommand("darwin", { SSH_CONNECTION: "1.2.3.4 22 5.6.7.8 22" })).toBeNull()
   expect(__testing.keyDialogCommand("win32", { SSH_CLIENT: "1.2.3.4 22 22" })).toBeNull()
   expect(__testing.keyDialogCommand("linux", { DISPLAY: "localhost:10.0", SSH_CONNECTION: "x" })?.[0]).toBe("zenity")
+})
+
+// Records which server each Honcho request went to and which key it carried.
+const recordingFetch = () => {
+  const requests = []
+  const fetch = async (url, init = {}) => {
+    const target = new URL(typeof url === "string" ? url : url.toString())
+    const headers = new Headers(init.headers)
+    requests.push({ origin: target.origin, auth: headers.get("authorization") })
+    return new Response(JSON.stringify({ id: "kilo", metadata: {}, configuration: {} }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })
+  }
+  fetch.requests = requests
+  return fetch
+}
+
+const withSavedConfig = async (config, action) => {
+  const rootDir = await mkdtemp(path.join(os.tmpdir(), "honcho-guard-root-"))
+  const homeDir = await mkdtemp(path.join(os.tmpdir(), "honcho-guard-home-"))
+  const configPath = path.join(homeDir, ".honcho", "config.json")
+  await mkdir(path.dirname(configPath), { recursive: true })
+  await writeFile(configPath, JSON.stringify(config))
+  return withEnv({ HOME: homeDir, USER: "ignored-user", XDG_CONFIG_HOME: undefined }, async () => {
+    const hooks = await createPluginHarness(rootDir)
+    return action({ hooks, rootDir, configPath })
+  })
+}
+
+test("honcho_setup never sends the saved key to a new server", async () => {
+  const fetch = recordingFetch()
+  await withMockFetch(fetch, () =>
+    withFakeKeyWindow("key-for-new-server", () =>
+      withSavedConfig({ apiKey: "saved-key" }, async ({ hooks, rootDir, configPath }) => {
+        const result = JSON.parse(await hooks.tool.honcho_setup.execute({ baseUrl: "https://honcho.example.com" }, toolContext(rootDir)))
+        expect(result.ok).toBe(true)
+        const toNewServer = fetch.requests.filter((request) => request.origin === "https://honcho.example.com")
+        expect(toNewServer.length).toBeGreaterThan(0)
+        expect(toNewServer.every((request) => request.auth === "Bearer key-for-new-server")).toBe(true)
+        expect(fetch.requests.some((request) => request.auth === "Bearer saved-key")).toBe(false)
+        const saved = JSON.parse(await readFile(configPath, "utf-8"))
+        expect(saved).toMatchObject({ apiKey: "key-for-new-server", baseUrl: "https://honcho.example.com" })
+      }),
+    ),
+  )
+})
+
+test("honcho_setup sends nothing to a new server when the key window is closed, and refuses local and ${} values", async () => {
+  const fetch = recordingFetch()
+  await withMockFetch(fetch, () =>
+    withFakeKeyWindow(null, () =>
+      withSavedConfig({ apiKey: "saved-key" }, async ({ hooks, rootDir, configPath }) => {
+        const closed = JSON.parse(await hooks.tool.honcho_setup.execute({ baseUrl: "https://honcho.example.com" }, toolContext(rootDir)))
+        expect(closed.ok).toBe(false)
+        const local = JSON.parse(await hooks.tool.honcho_setup.execute({ baseUrl: "http://127.0.0.1:8000" }, toolContext(rootDir)))
+        expect(local.ok).toBe(false)
+        expect(local.message).toContain("--url")
+        const reference = JSON.parse(await hooks.tool.honcho_setup.execute({ peerName: "${AWS_SECRET_ACCESS_KEY}" }, toolContext(rootDir)))
+        expect(reference.ok).toBe(false)
+        expect(fetch.requests).toHaveLength(0)
+        expect(JSON.parse(await readFile(configPath, "utf-8"))).toEqual({ apiKey: "saved-key" })
+      }),
+    ),
+  )
+})
+
+test("honcho_set_config cannot set apiKey, baseUrl or a ${} reference", async () => {
+  await withSavedConfig({ apiKey: "saved-key" }, async ({ hooks, rootDir, configPath }) => {
+    for (const [field, value] of [["apiKey", "x"], ["baseUrl", "https://evil.example"], ["peerName", "${GITHUB_TOKEN}"]]) {
+      const result = JSON.parse(await hooks.tool.honcho_set_config.execute({ field, value }, toolContext(rootDir)))
+      expect(result.ok).toBe(false)
+    }
+    expect(JSON.parse(await readFile(configPath, "utf-8"))).toEqual({ apiKey: "saved-key" })
+  })
+})
+
+test("honcho_setup saves only what it was given, not env values", async () => {
+  await withMockFetch(recordingFetch(), () =>
+    withSavedConfig({ apiKey: "saved-key", peerName: "eri" }, ({ hooks, rootDir, configPath }) =>
+      withEnv({ HONCHO_URL: "https://env-only.example", HONCHO_PEER_NAME: "from-env" }, async () => {
+        await hooks.tool.honcho_setup.execute({ workspace: "team" }, toolContext(rootDir))
+        const saved = JSON.parse(await readFile(configPath, "utf-8"))
+        expect(saved.peerName).toBe("eri")
+        expect(saved.baseUrl).toBeUndefined()
+        expect(saved.hosts.kilo.workspace).toBe("team")
+      }),
+    ),
+  )
+})
+
+test("agent shells get the Honcho URL and workspace, not the API key", async () => {
+  await withSavedConfig({ apiKey: "saved-key" }, async ({ hooks }) => {
+    const output = { env: {} }
+    await hooks["shell.env"]({ sessionID: "ses_shell", cwd: "/tmp" }, output)
+    expect(output.env.HONCHO_WORKSPACE_ID).toBe("kilo")
+    expect(output.env.HONCHO_API_KEY).toBeUndefined()
+    expect(JSON.stringify(output.env)).not.toContain("saved-key")
+  })
+})
+
+test("the key window names a non-cloud server by its origin only", () => {
+  expect(__testing.keyWindowMessage()).toContain("app.honcho.dev")
+  const message = __testing.keyWindowMessage('https://evil.example/"; do shell script "x')
+  expect(message).toContain("https://evil.example")
+  expect(message).not.toContain("do shell script")
+  const [, args] = __testing.keyDialogCommand("darwin", {}, 'say "hi" \\ there')
+  expect(args[1]).toContain('display dialog "say \\"hi\\" \\\\ there"')
 })
