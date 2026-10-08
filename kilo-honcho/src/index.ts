@@ -347,7 +347,8 @@ const SENSITIVE_SHORT_FLAGS = new Set(["u", "p"])
 const SENSITIVE_LONG_FLAG_PATTERN = /^(user|username|userid)/
 
 // user:password@host style URLs embed credentials directly.
-const CREDENTIAL_URL_PATTERN = /^[a-z][a-z0-9+.-]*:\/\/[^\s/@]+:[^\s/@]+@/i
+// The user part excludes ":" so a token of many colons cannot make the match backtrack quadratically.
+const CREDENTIAL_URL_PATTERN = /^[a-z][a-z0-9+.-]*:\/\/[^\s/@:]+:[^\s/@]+@/i
 
 const ENV_ASSIGNMENT_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*=/
 
