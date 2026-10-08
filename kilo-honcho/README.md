@@ -20,7 +20,9 @@ kilo plugin @honcho-ai/kilo-honcho --global
 
 `kilo plugin` installs the package and adds it to the `plugin` list of Kilo's global config (the server half) and `~/.config/kilo/tui.json` (the `/honcho:*` commands). It still uses Kilo's older `opencode.json` name for the server entry; Kilo reads `kilo.jsonc`, `kilo.json` and `opencode.json` alike. To update an existing install, add `--force`. To add it by hand, put `"@honcho-ai/kilo-honcho"` in the `plugin` array of `~/.config/kilo/kilo.jsonc` and `~/.config/kilo/tui.json`.
 
-For the Kilo desktop app or the VS Code and JetBrains extensions, run this in any terminal instead:
+For the Kilo desktop app or the VS Code and JetBrains extensions, install **Honcho** from the Kilo Marketplace, then type `/honcho` in the chat. The agent asks what name Honcho should call you and opens a window on your screen for your API key. You can skip Step 3.
+
+Until Honcho is listed in the Kilo Marketplace, run this in any terminal instead:
 
 ```bash
 npx @honcho-ai/kilo-honcho setup
@@ -122,13 +124,14 @@ Honcho derives conclusions from every saved message. With `autoConclusions: true
 
 ## Kilo CLI, Desktop App and IDE Extensions
 
-Every Kilo client starts its own local Kilo server, and the plugin runs inside it. Recall, saving and the `honcho_*` tools work in all of them. The sidebar section and the `/honcho:*` commands come from the terminal UI half, which only the Kilo CLI loads.
+Every Kilo client starts its own local Kilo server, and the plugin runs inside it. Recall, saving, the `honcho_*` tools and the `/honcho` command work in all of them. The sidebar section and the `/honcho:*` commands come from the terminal UI half, which only the Kilo CLI loads.
 
 | | Kilo CLI | Desktop app, VS Code, JetBrains |
 | --- | --- | --- |
-| Setup | `/honcho:setup`, or **Set up now** on first load | Ask the agent ("Set up Honcho memory for me"), or `npx @honcho-ai/kilo-honcho setup` |
+| Setup | `/honcho:setup`, or **Set up now** on first load | `/honcho`, or yes to the agent's offer |
+| `/honcho` | Yes | Yes |
 | Honcho sidebar section and `/honcho:*` commands | Yes | No |
-| Check that Honcho is working | Sidebar, `/honcho:status`, `/honcho:recall` | Ask "Show my Honcho status" |
+| Check that Honcho is working | Sidebar, `/honcho:status`, `/honcho:recall` | `/honcho` |
 
 Outside the CLI:
 
@@ -152,18 +155,21 @@ On Honcho Cloud, clicking `View in Honcho` opens the session in the Honcho dashb
 
 `/honcho:recall` opens the exact text the model received. Kilo does not save this text in its session history.
 
-The server half writes this record to `~/.honcho/kilo/sessions/<session id>.json` with mode 600, and the TUI reads it. The sidebar and the `/honcho:*` commands belong to the Kilo CLI's terminal UI. The desktop app and the VS Code and JetBrains extensions do not load TUI plugins, so they show neither. When Honcho has no API key, the agent tells the user once per session to run `npx @honcho-ai/kilo-honcho setup`.
+The server half writes this record to `~/.honcho/kilo/sessions/<session id>.json` with mode 600, and the TUI reads it. The sidebar and the `/honcho:*` commands belong to the Kilo CLI's terminal UI. The desktop app and the VS Code and JetBrains extensions do not load TUI plugins, so they show neither. When Honcho has no API key, the agent offers setup once per session.
 
 ## Operator Commands
 
 | Command | Description |
 | --- | --- |
+| `/honcho` | Set up Honcho from the chat, or show your peer, workspace, session link and latest recall. Every Kilo client lists it. |
 | `/honcho:setup` | First-time setup for cloud or local Honcho |
 | `/honcho:status` | Effective Honcho status for the current project |
 | `/honcho:recall` | The exact memory text Honcho added to the current session |
 | `/honcho:settings` | Effective config values and config paths |
 | `/honcho:config` | Edit shared Honcho fields in `~/.honcho/config.json` |
 | `/honcho:import` | Preview or import local Kilo session history into Honcho |
+
+The `/honcho:*` commands are part of the Kilo CLI only. `/honcho` is a prompt to the agent, so it uses a model call.
 
 `/honcho:import` reads history through the Kilo SDK client, maps sessions with the same `sessionStrategy` as live capture, and uploads user and assistant text with the original timestamps. The first run is a dry run. Imported sessions are recorded in `~/.honcho/kilo-import-state.json` and skipped next time.
 
@@ -179,16 +185,21 @@ The server half writes this record to `~/.honcho/kilo/sessions/<session id>.json
 | `honcho_chat` | Ask Honcho a question answered by reasoning over memory |
 | `honcho_create_conclusion` | Save a durable fact about the user |
 
+The agent cannot read Honcho's config. The plugin refuses any Kilo tool call that names `~/.honcho`, the config file in use, or the session activity folder, and tells the agent to call `honcho_status` instead. It checks file paths and command text, so it stops an agent that means well, but not one that hides the path on purpose.
+
 ## Plugin Surfaces
 
 | Purpose | Kilo hook |
 | --- | --- |
 | Record your prompt, fetch prompt-specific recall | `chat.message` |
+| Attach recall to the request without saving it to Kilo's history | `experimental.chat.messages.transform` |
 | Memory instructions and a stable snapshot | `experimental.chat.system.transform` |
 | Continuity block during compaction | `experimental.session.compacting` |
+| Refuse tool calls that name Honcho's config | `tool.execute.before` |
 | Record significant tool activity | `tool.execute.after` |
 | `HONCHO_URL` and `HONCHO_WORKSPACE_ID` for shell tools (never the API key) | `shell.env` |
 | `honcho_*` tools | `tool` |
+| The `/honcho` command in every client | `config` |
 | Session start, assistant capture, cleanup | `event` |
 | Honcho sidebar section (TUI) | `sidebar_content` slot |
 
@@ -196,7 +207,7 @@ The packaged `honcho-memory` skill is copied to `~/.config/kilo/skills/honcho-me
 
 ## Remote and Headless Use
 
-The plugin runs wherever Kilo's server runs, and reads `~/.honcho/config.json` on that machine.
+The plugin runs wherever Kilo's server runs, and reads `~/.honcho/config.json` on that machine. When no window can open on your screen, set up from a terminal on that machine with `npx @honcho-ai/kilo-honcho setup`.
 
 - **VS Code Remote SSH, dev containers, Codespaces.** Kilo's server runs on the remote machine, so it reads the remote's `~/.honcho/config.json`, not your laptop's. Run `npx @honcho-ai/kilo-honcho setup` in the remote terminal.
 - **Key window over SSH.** On macOS and Windows, `honcho_setup` does not open the key window in an SSH session, because it would appear on that machine's own screen. It points the user at the setup command instead. On Linux it opens only when a display is available, including through X forwarding. An unanswered window closes after 2 minutes.

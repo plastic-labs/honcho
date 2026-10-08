@@ -19,15 +19,17 @@ Give Kilo Code long-term memory that survives context wipes, session restarts, a
 
 <Tabs>
   <Tab title="Desktop app, VS Code, JetBrains">
-    Run this in any terminal, including the desktop app's built-in terminal or VS Code's:
+    Install **Honcho** from the Kilo Marketplace, then type `/honcho` in the chat. The agent asks what name Honcho should call you and opens a window on your screen for your API key. You can skip Step 3. See [Setting Up from the Desktop App or an Extension](#setting-up-from-the-desktop-app-or-an-extension).
+
+    <Note>
+    Until Honcho is listed in the Kilo Marketplace, run this in any terminal instead, including the desktop app's built-in terminal or VS Code's:
 
     ```bash
     npx @honcho-ai/kilo-honcho setup
     ```
 
-    It asks for your API key without showing it, the name Honcho should call you, and a workspace. It then saves them to `~/.honcho/config.json` and adds the plugin to Kilo's global config. Restart Kilo to load it. You can skip Step 3.
-
-    Once the plugin is loaded, you can also [set up Honcho from the chat](#setting-up-from-the-desktop-app-or-an-extension).
+    It asks for your API key without showing it, the name Honcho should call you, and a workspace. It then saves them to `~/.honcho/config.json` and adds the plugin to Kilo's global config. Restart Kilo to load it.
+    </Note>
   </Tab>
   <Tab title="Kilo CLI">
     Install the plugin, then run Step 3:
@@ -77,18 +79,21 @@ Every Kilo client starts its own local Kilo server, and the plugin runs inside t
 | | Kilo CLI | Desktop app, VS Code, JetBrains |
 | --- | --- | --- |
 | Recall, saving, and `honcho_*` tools | Yes | Yes |
-| Setup | `/honcho:setup`, or **Set up now** when Kilo first loads the plugin | Ask the agent, or run `npx @honcho-ai/kilo-honcho setup` in a terminal |
+| Setup | `/honcho:setup`, or **Set up now** when Kilo first loads the plugin | `/honcho`, or say yes when the agent offers |
+| `/honcho` command | Yes | Yes |
 | Honcho section in the sidebar | Yes | No |
 | `/honcho:*` commands | Yes | No |
-| Check that Honcho is working | The sidebar, `/honcho:status`, `/honcho:recall` | Ask "Show my Honcho status". Honcho tool calls also appear in the chat. |
+| Check that Honcho is working | The sidebar, `/honcho:status`, `/honcho:recall` | `/honcho`. Honcho tool calls also appear in the chat. |
 
-The sidebar section and the `/honcho:*` commands come from the plugin's terminal UI half. The desktop app and the extensions do not load terminal UI plugins.
+The sidebar section and the `/honcho:*` commands come from the plugin's terminal UI half. The desktop app and the extensions do not load terminal UI plugins. `/honcho` comes from the server half, so every client lists it.
 
 ### Setting Up from the Desktop App or an Extension
 
-Ask the agent: "Set up Honcho memory for me." It asks what name Honcho should call you, then opens a window on your screen for your API key. Paste the key into that window, never into the chat. Memory starts with your next message; you do not need to restart Kilo. The agent is also told to offer this when Honcho has no key.
+Type `/honcho` in the chat. The agent asks what name Honcho should call you, then opens a window on your screen for your API key. Paste the key into that window, never into the chat. Memory starts with your next message; you do not need to restart Kilo. Asking "Set up Honcho memory for me" does the same, and the agent offers it on its own when Honcho has no key.
 
-If the window cannot open, for example in a remote session, run `npx @honcho-ai/kilo-honcho setup` in a terminal.
+Once Honcho is set up, `/honcho` shows your peer, the workspace, a link to the session, and a summary of what Honcho recalled most recently. `/honcho` is a prompt to the agent, so it uses a model call.
+
+If the window cannot open, for example in a remote session, see [Remote and Headless Use](#remote-and-headless-use).
 
 ### Differences Outside the CLI
 
@@ -186,12 +191,15 @@ If Kilo is running inside Docker or another remote environment, `localhost` won'
 
 | Command | Description |
 | --- | --- |
+| `/honcho` | Set up Honcho from the chat, or show your peer, workspace, session link, and latest recall. Every Kilo client lists it. |
 | `/honcho:setup` | First-time setup for cloud or local Honcho |
 | `/honcho:status` | Show effective Honcho status for the current Kilo project |
 | `/honcho:recall` | Show the exact memory text Honcho added to the current session |
 | `/honcho:settings` | Show effective config values and config paths |
 | `/honcho:config` | Edit shared Honcho fields |
 | `/honcho:import` | Preview or import local Kilo session history into Honcho |
+
+The `/honcho:*` commands are part of the Kilo CLI only.
 
 ## Agent Tools
 
@@ -207,15 +215,19 @@ The plugin exposes these tools inside Kilo:
 | `honcho_chat` | Query Honcho for reasoning-backed context |
 | `honcho_create_conclusion` | Save a durable memory conclusion |
 
+The agent cannot read Honcho's config. The plugin refuses any Kilo tool call that names `~/.honcho`, the config file in use, or the session activity folder, and tells the agent to call `honcho_status` instead. It checks file paths and command text, so it stops an agent that means well, but not one that hides the path on purpose.
+
 ## Plugin Surfaces
 
 The plugin hooks into these Kilo plugin capabilities:
 
+- `config`
 - `event`
 - `chat.message`
 - `experimental.chat.messages.transform`
 - `experimental.chat.system.transform`
 - `experimental.session.compacting`
+- `tool.execute.before`
 - `tool.execute.after`
 - `command.execute.before`
 - `shell.env`
@@ -235,7 +247,7 @@ The plugin hooks into these Kilo plugin capabilities:
 
 **The plugin does not load.** Run `kilo run --print-logs "hello"` and look for `kilo-honcho` and `Honcho session initialized for Kilo.` in the output. Setting `KILO_PURE=1` turns off every external plugin, including this one.
 
-**Kilo does not use memory.** Check the Honcho section in the sidebar. `Not set up` means there is no API key: run `/honcho:setup`. `Error` shows the reason the last Honcho request failed. Run `/honcho:status` to see the values the plugin uses, including any `HONCHO_API_KEY`, `HONCHO_URL`, or `HONCHO_WORKSPACE` set in your environment. Recall starts once Honcho has something to recall; a new workspace has no conclusions until a few messages have been processed.
+**Kilo does not use memory.** In the desktop app or an extension, type `/honcho`. In the CLI, check the Honcho section in the sidebar. `Not set up` means there is no API key: run `/honcho:setup`. `Error` shows the reason the last Honcho request failed. Run `/honcho:status` to see the values the plugin uses, including any `HONCHO_API_KEY`, `HONCHO_URL`, or `HONCHO_WORKSPACE` set in your environment. Recall starts once Honcho has something to recall; a new workspace has no conclusions until a few messages have been processed.
 
 **The sidebar shows the wrong peer.** Kilo uses `HONCHO_PEER_NAME` if it is set, then `peerName` from `~/.honcho/config.json`, then your OS user name. Unset `HONCHO_PEER_NAME` or run `/honcho:setup` to choose a name. Every Honcho tool on the machine reads it from `~/.honcho/config.json`.
 
@@ -245,7 +257,7 @@ The plugin hooks into these Kilo plugin capabilities:
 
 ## Remote and Headless Use
 
-The plugin runs wherever Kilo's server runs, and reads `~/.honcho/config.json` on that machine.
+The plugin runs wherever Kilo's server runs, and reads `~/.honcho/config.json` on that machine. When no window can open on your screen, set up from a terminal on that machine with `npx @honcho-ai/kilo-honcho setup`.
 
 - **VS Code Remote SSH, dev containers, Codespaces.** Kilo's server runs on the remote machine, so it reads the remote's `~/.honcho/config.json`, not your laptop's. Run `npx @honcho-ai/kilo-honcho setup` in the remote terminal.
 - **Key window over SSH.** On macOS and Windows, `honcho_setup` does not open the key window in an SSH session, because it would appear on that machine's own screen. It points the user at the setup command instead. On Linux it opens only when a display is available, including through X forwarding. An unanswered window closes after 2 minutes.
