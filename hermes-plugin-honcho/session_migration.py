@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import errno
 import hashlib
 import json
 import logging
 import threading
-import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -17,17 +15,8 @@ from hermes_constants import get_hermes_home
 from utils import atomic_json_write
 
 from .client import resolve_effective_base_url
+from .file_lock import file_lock
 from .session_auth import HonchoAuthError
-
-try:
-    import fcntl
-except ImportError:  # pragma: no cover - Windows
-    fcntl = None  # type: ignore[assignment]
-
-try:
-    import msvcrt
-except ImportError:  # pragma: no cover - POSIX
-    msvcrt = None  # type: ignore[assignment]
 
 logger = logging.getLogger("plugins.memory.honcho.session")
 
@@ -51,59 +40,6 @@ _MEMORY_FILES = (
 )
 
 
-def _acquire_migration_file_lock(lock_path: Path):
-    """Acquire a portable non-blocking file lock before the deadline."""
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    lock_file = open(lock_path, "a+", encoding="utf-8")  # noqa: SIM115 - returned to the lock owner
-    if msvcrt is not None:
-        lock_file.seek(0, 2)
-        if lock_file.tell() == 0:
-            lock_file.write(" ")
-            lock_file.flush()
-
-    deadline = time.monotonic() + _MIGRATION_LOCK_TIMEOUT_SECONDS
-    while True:
-        try:
-            if fcntl is not None:
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            elif msvcrt is not None:
-                lock_file.seek(0)
-                msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
-            else:  # pragma: no cover - supported platforms provide one primitive
-                logger.warning(
-                    "Honcho migration skipped: no file-lock primitive available"
-                )
-                lock_file.close()
-                return None
-            return lock_file
-        except OSError as exc:
-            if exc.errno not in {errno.EACCES, errno.EAGAIN, errno.EDEADLK}:
-                logger.warning("Honcho migration lock failed: %s", exc)
-                lock_file.close()
-                return None
-            if time.monotonic() >= deadline:
-                logger.warning(
-                    "Honcho migration skipped: timed out acquiring %s", lock_path
-                )
-                lock_file.close()
-                return None
-            time.sleep(0.05)
-
-
-def _release_migration_file_lock(lock_file) -> None:
-    """Release a lock acquired by :func:`_acquire_migration_file_lock`."""
-    try:
-        if fcntl is not None:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
-        elif msvcrt is not None:
-            lock_file.seek(0)
-            msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
-    except OSError as exc:
-        logger.warning("Failed to release Honcho migration lock: %s", exc)
-    finally:
-        lock_file.close()
-
-
 @contextmanager
 def _migration_lock(lock_path: Path):
     """Bound concurrent migration attempts across threads and processes."""
@@ -112,19 +48,10 @@ def _migration_lock(lock_path: Path):
         yield False
         return
 
-    lock_file = None
     try:
-        try:
-            lock_file = _acquire_migration_file_lock(lock_path)
-        except OSError as exc:
-            logger.warning("Honcho migration lock failed: %s", exc)
-        if lock_file is None:
-            yield False
-            return
-        yield True
+        with file_lock(lock_path, _MIGRATION_LOCK_TIMEOUT_SECONDS) as acquired:
+            yield acquired
     finally:
-        if lock_file is not None:
-            _release_migration_file_lock(lock_file)
         _MIGRATION_THREAD_LOCK.release()
 
 
@@ -147,6 +74,32 @@ def _load_migration_state(state_path: Path) -> dict[str, Any] | None:
         )
         return None
     return state
+
+
+def _migration_completed_files(
+    state: dict[str, Any],
+    target_key: str,
+    target: dict[str, str],
+    source_key: str,
+    source_path: str,
+) -> dict[str, Any] | None:
+    """Initialize and validate the target/source/file ledger mappings."""
+    current = state["targets"]
+    for key, default, kind, identity in (
+        (target_key, {**target, "sources": {}}, "target", target_key),
+        ("sources", {}, "target", target_key),
+        (source_key, {"path": source_path, "files": {}}, "source", source_path),
+        ("files", None, "source", source_path),
+    ):
+        current = (
+            current.setdefault(key, default)
+            if default is not None
+            else current.get(key)
+        )
+        if not isinstance(current, dict):
+            logger.warning("Honcho migration %s state is invalid: %s", kind, identity)
+            return None
+    return current
 
 
 class SessionMigrationMixin:
@@ -262,35 +215,10 @@ class SessionMigrationMixin:
             if state is None:
                 return False
 
-            target_state = state["targets"].setdefault(
-                target_key,
-                {**target, "sources": {}},
+            completed_files = _migration_completed_files(
+                state, target_key, target, source_key, source_path
             )
-            if not isinstance(target_state, dict):
-                logger.warning(
-                    "Honcho migration target state is invalid: %s", target_key
-                )
-                return False
-            sources = target_state.setdefault("sources", {})
-            if not isinstance(sources, dict):
-                logger.warning(
-                    "Honcho migration target state is invalid: %s", target_key
-                )
-                return False
-            source_state = sources.setdefault(
-                source_key,
-                {"path": source_path, "files": {}},
-            )
-            if not isinstance(source_state, dict):
-                logger.warning(
-                    "Honcho migration source state is invalid: %s", source_path
-                )
-                return False
-            completed_files = source_state.get("files")
-            if not isinstance(completed_files, dict):
-                logger.warning(
-                    "Honcho migration source state is invalid: %s", source_path
-                )
+            if completed_files is None:
                 return False
 
             marker_ready = False
@@ -343,7 +271,7 @@ class SessionMigrationMixin:
                         ),
                     )
                 except HonchoAuthError:
-                    logger.error(
+                    logger.warning(
                         "Honcho memory migration stopped before %s: auth failed",
                         filename,
                     )
@@ -405,7 +333,7 @@ class SessionMigrationMixin:
 
                     self._authed_call("memory migration upload", _upload)
                 except HonchoAuthError:
-                    logger.error(
+                    logger.warning(
                         "Honcho memory migration stopped after %s: auth failed",
                         filename,
                     )

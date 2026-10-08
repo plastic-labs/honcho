@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import threading
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -15,6 +16,7 @@ from hermes_honcho.session import (
     HonchoSession,
     HonchoSessionManager,
 )
+from hermes_honcho.session_auth import HonchoAuthError
 from honcho.session import Session
 
 
@@ -280,6 +282,51 @@ def test_corrupt_state_fails_closed(tmp_path, monkeypatch, caplog):
     assert "migration state is unreadable" in caplog.text
 
 
+@pytest.mark.parametrize("invalid_layer", ["target", "sources", "source", "files"])
+def test_invalid_nested_state_fails_closed(
+    tmp_path, monkeypatch, caplog, invalid_layer
+):
+    memory_dir = tmp_path / "memories"
+    _write_memory_files(memory_dir, "MEMORY.md")
+    manager, remote = _manager(tmp_path, monkeypatch)
+    assert manager.migrate_memory_files("cli:test", str(memory_dir)) is True
+    state_path = tmp_path / "state" / "honcho_migration.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    target_key, target = next(iter(state["targets"].items()))
+    source_key, source = next(iter(target["sources"].items()))
+    if invalid_layer == "target":
+        state["targets"][target_key] = []
+    elif invalid_layer == "sources":
+        target["sources"] = []
+    elif invalid_layer == "source":
+        target["sources"][source_key] = []
+    else:
+        source["files"] = []
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    remote.reset_mock()
+
+    assert manager.migrate_memory_files("cli:test", str(memory_dir)) is False
+    remote.upload_file.assert_not_called()
+    assert "state is invalid" in caplog.text
+
+
+@pytest.mark.parametrize("stage", ["reconciliation", "upload"])
+def test_optional_migration_auth_failure_is_a_warning(
+    tmp_path, monkeypatch, caplog, stage
+):
+    memory_dir = tmp_path / "memories"
+    _write_memory_files(memory_dir, "MEMORY.md", "USER.md")
+    manager, remote = _manager(tmp_path, monkeypatch)
+    operation = remote.messages if stage == "reconciliation" else remote.upload_file
+    operation.side_effect = HonchoAuthError("credentials rejected")
+
+    assert manager.migrate_memory_files("cli:test", str(memory_dir)) is False
+    records = [record for record in caplog.records if "auth failed" in record.message]
+    assert len(records) == 1
+    assert records[0].levelno == logging.WARNING
+    assert remote.upload_file.call_count == (stage == "upload")
+
+
 def test_thread_lock_timeout_skips_migration(tmp_path, monkeypatch, caplog):
     memory_dir = tmp_path / "memories"
     _write_memory_files(memory_dir, "MEMORY.md")
@@ -467,8 +514,8 @@ def test_another_process_lock_prevents_upload(tmp_path, monkeypatch):
             "-c",
             "import runpy, sys; from pathlib import Path; "
             "runpy.run_path(sys.argv[1]); "
-            "from hermes_honcho.session_migration import _acquire_migration_file_lock; "
-            "lock = _acquire_migration_file_lock(Path(sys.argv[2])); "
+            "from hermes_honcho.file_lock import acquire_file_lock; "
+            "lock = acquire_file_lock(Path(sys.argv[2])); "
             "assert lock is not None; print('locked', flush=True); sys.stdin.readline()",
             str(Path(__file__).with_name("conftest.py")),
             str(lock_path),
