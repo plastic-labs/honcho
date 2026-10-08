@@ -151,7 +151,7 @@ const unwrap = <T>(result: { data?: T; error?: unknown }, what: string): T => {
 const extractTextFromParts = (parts: KiloPart[]) => {
   const texts: string[] = []
   for (const part of parts) {
-    if (part.type !== "text" || part.ignored === true) continue
+    if (part.type !== "text" || part.ignored === true || part.synthetic === true) continue
     const text = part.text.trim()
     if (text) texts.push(text)
   }
@@ -161,6 +161,8 @@ const extractTextFromParts = (parts: KiloPart[]) => {
 const extractImportMessages = (page: KiloMessagePage): ImportMessage[] => {
   const out: ImportMessage[] = []
   for (const { info, parts } of page) {
+    // A compaction summary restates the conversation, and can carry recalled memory, so it is not imported.
+    if ((info as { summary?: unknown }).summary === true) continue
     const content = clampText(extractTextFromParts(parts), MAX_IMPORT_MESSAGE_CHARS)
     if (!content) continue
     out.push({ role: info.role, content, createdAt: timestampToIso(info.time.created) })

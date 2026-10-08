@@ -469,3 +469,21 @@ test("CI runs without an API key get no setup offer", async () => {
     })
   }
 })
+
+test("text Kilo adds itself, like @-mentioned file contents, is not saved as the user's words", async () => {
+  await runWithHarness(async ({ hooks, fetch }) => {
+    await hooks["chat.message"](
+      { sessionID: "ses_synthetic" },
+      {
+        message: { id: "msg-file", role: "user", time: { created: Date.now() } },
+        parts: [
+          { type: "text", text: "review the parser" },
+          { type: "text", text: "Called the Read tool with the following input: SECRET FILE CONTENTS", synthetic: true },
+        ],
+      },
+    )
+    const saved = fetch.calls.filter((call) => call.method === "POST" && /\/sessions\/[^/]+\/messages$/.test(call.pathname))
+    expect(saved).toHaveLength(1)
+    expect(saved[0].body.messages[0].content).toBe("review the parser")
+  })
+})

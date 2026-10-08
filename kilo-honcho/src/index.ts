@@ -513,7 +513,8 @@ const readVisibleTextPart = (part: unknown) => {
   if (!isRecord(part) || part.type !== "text" || typeof part.text !== "string") {
     return null
   }
-  if (part.ignored === true) {
+  // Kilo marks text it adds itself as synthetic, such as the contents of an @-mentioned file; it is not the user's words.
+  if (part.ignored === true || part.synthetic === true) {
     return null
   }
   const text = part.text.trim()
