@@ -408,6 +408,16 @@ _TRANSIENT_CACHE_ERRORS = (
 )
 
 
+async def safe_cache_get(key: str, *, timeout: float | None = None) -> Any:
+    """Best-effort cache read: returns None on a miss, an error, or after `timeout` seconds."""
+    try:
+        async with asyncio.timeout(timeout):
+            return await cache.get(key)
+    except Exception:
+        logger.warning("Cache get failed for key %s", key, exc_info=True)
+        return None
+
+
 async def safe_cache_set(key: str, value: Any, expire: int | float) -> None:
     """Best-effort cache set with retries on transient errors. Failures are logged but never propagate."""
     try:
@@ -449,5 +459,6 @@ __all__ = [
     "cache_key_namespace",
     "cache_prefix_namespace",
     "safe_cache_delete",
+    "safe_cache_get",
     "safe_cache_set",
 ]

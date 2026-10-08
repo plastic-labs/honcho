@@ -51,6 +51,12 @@ class TokenTypes(Enum):
     OUTPUT = "output"
 
 
+class PaginationShimOutcomes(Enum):
+    FIRST = "first"
+    HIT = "hit"
+    MISS = "miss"
+
+
 class DeriverTaskTypes(Enum):
     INGESTION = "ingestion"
     SUMMARY = "summary"
@@ -118,6 +124,12 @@ embed_now_tasks_shed_counter = NamespacedCounter(
     "embed_now_tasks_shed",
     "Immediate-embed background tasks skipped because MAX_PENDING_EMBED_TASKS was reached",
     ["namespace"],
+)
+
+pagination_offset_shim_counter = NamespacedCounter(
+    "pagination_offset_shim",
+    "Offset-paginated list requests served by the offset shim, by outcome: first (page 1, always a fresh query), hit (sought from a stored position) or miss (no stored position, so an OFFSET query)",
+    ["namespace", "outcome"],
 )
 
 embed_now_tasks_in_flight_gauge = NamespacedGauge(
@@ -366,6 +378,12 @@ class PrometheusMetrics:
         except Exception as e:
             self._handle_metric_error("record_embed_now_task_shed", e)
 
+    def record_pagination_offset_shim(self, outcome: PaginationShimOutcomes) -> None:
+        try:
+            pagination_offset_shim_counter.labels(outcome=outcome.value).inc()
+        except Exception as e:
+            self._handle_metric_error("record_pagination_offset_shim", e)
+
     def set_embed_now_tasks_in_flight(self, count: int) -> None:
         try:
             embed_now_tasks_in_flight_gauge.labels().set(count)
@@ -594,6 +612,10 @@ class PrometheusMetrics:
             # ai: embed_now fast path runs as an API-process background task
             self._touch(embed_now_tasks_shed_counter)
             self.set_embed_now_tasks_in_flight(0)
+            # ai: only processes that can take the shim path emit it (see src/utils/pagination.py)
+            if settings.CACHE.ENABLED and settings.CACHE.PAGINATION_OFFSET_SHIM:
+                for outcome in PaginationShimOutcomes:
+                    self._touch(pagination_offset_shim_counter, outcome=outcome.value)
 
             self.set_deriver_metrics()
             self.set_deriver_outstanding_work(seconds=0)

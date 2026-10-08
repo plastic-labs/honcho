@@ -272,6 +272,7 @@ src/
 │   ├── representation.py # Representation formatting (distinct from crud/representation.py)
 │   ├── search.py, filter.py, formatting.py
 │   ├── tokens.py         # tiktoken-based counting
+│   ├── pagination.py     # List pagination: opt-in cursor mode + the cached offset shim
 │   ├── work_unit.py, queue_payload.py
 │   ├── config_helpers.py, json_parser.py, files.py
 │   └── types.py
@@ -291,6 +292,7 @@ src/
 - Token counting on messages for usage tracking
 - JSONB metadata fields for extensibility
 - HNSW indexes for vector similarity search
+- **A `Select` that feeds a list endpoint MUST have a total ORDER BY ending in a unique column** (e.g. `created_at, id`). `paginate_offset_or_cursor` (`src/utils/pagination.py`) seeks by the sort key in both cursor mode and the offset shim; without a unique tail, rows that share a sort key are skipped or repeated across pages.
 
 ### Key Architectural Decisions
 

@@ -1338,6 +1338,16 @@ class CacheSettings(HonchoSettings):
         5  # how long to hold a lock on a resource when fetching DB after cache miss
     )
 
+    # Serve offset-paginated list requests (`?page=N`) with a keyset seek from
+    # a cached position where possible; see src/utils/pagination.py.
+    PAGINATION_OFFSET_SHIM: bool = True
+    # ai: long enough to span a pause in a client's walk, short enough that abandoned walks expire
+    PAGINATION_POSITION_TTL_SECONDS: Annotated[
+        int, Field(default=600, ge=1, le=86_400)
+    ] = 600
+    # How stale `total` may be on pages after the first.
+    PAGINATION_COUNT_TTL_SECONDS: Annotated[int, Field(default=60, ge=1, le=3_600)] = 60
+
     # Polling interval while waiting for another worker's fetch lock. cashews
     # defaults to 0, which busy-spins the event loop for the whole wait.
     LOCK_WAIT_CHECK_INTERVAL_SECONDS: Annotated[
