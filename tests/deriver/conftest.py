@@ -338,7 +338,7 @@ def mock_representation_manager(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:  
 SeedWorkUnit = Callable[..., Awaitable[list[models.QueueItem]]]
 
 
-async def _read_batch_row(db: AsyncSession, work_unit_key: str) -> Row[Any] | None:
+async def read_batch_row(db: AsyncSession, work_unit_key: str) -> Row[Any] | None:
     """Read one batch row as plain columns, outside the ORM identity map.
 
     The triggers write this table behind the session's back, so a mapped
@@ -356,13 +356,13 @@ async def _read_batch_row(db: AsyncSession, work_unit_key: str) -> Row[Any] | No
     return result.one_or_none()
 
 
-async def _read_batch_keys(db: AsyncSession) -> set[str]:
+async def read_batch_keys(db: AsyncSession) -> set[str]:
     """Every work unit the batch table currently considers pending."""
     result = await db.execute(select(models.QueueItemBatch.work_unit_key))
     return set(result.scalars().all())
 
 
-def _independent_sessions(db_engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
+def independent_sessions(db_engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
     """A factory for sessions on their own connections, for concurrency tests."""
     return async_sessionmaker(bind=db_engine, expire_on_commit=False)
 

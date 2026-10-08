@@ -33,12 +33,14 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from src import models
 from src.config import settings
-from src.deriver.enqueue import _insert_queue_records
+from src.deriver.enqueue import (
+    _insert_queue_records,  # pyright: ignore[reportPrivateUsage]
+)
 from src.models import DEFAULT_TENANT_ID
 from tests.deriver.conftest import (
     SeedWorkUnit,
-    _independent_sessions,
-    _read_batch_row,
+    independent_sessions,
+    read_batch_row,
 )
 
 # How long the blocked statement is given to prove it is really blocked, and how
@@ -132,7 +134,7 @@ class TestACompletionRacingAnEnqueue:
             seed_work_unit, unit_name="delete-guard-race", token_count=41
         )
 
-        sessions = _independent_sessions(db_engine)
+        sessions = independent_sessions(db_engine)
         async with sessions() as enqueuing, sessions() as completing:
             await _enqueue_pending_item(
                 enqueuing,
@@ -157,10 +159,10 @@ class TestACompletionRacingAnEnqueue:
             finally:
                 completion.cancel()
 
-            recomputed_row = await _read_batch_row(completing, work_unit_key)
+            recomputed_row = await read_batch_row(completing, work_unit_key)
             await completing.commit()
 
-        committed_row = await _read_batch_row(db_session, work_unit_key)
+        committed_row = await read_batch_row(db_session, work_unit_key)
 
         assert recomputed_row is not None, (
             "the recompute saw the enqueued item once it woke, so the unit is "
@@ -198,7 +200,7 @@ class TestACompletionRacingAnEnqueue:
             seed_work_unit, unit_name="clobber-race", token_count=101
         )
 
-        sessions = _independent_sessions(db_engine)
+        sessions = independent_sessions(db_engine)
         async with sessions() as enqueuing, sessions() as completing:
             await _enqueue_pending_item(
                 enqueuing,
@@ -223,7 +225,7 @@ class TestACompletionRacingAnEnqueue:
 
             await completing.commit()
 
-        committed_row = await _read_batch_row(db_session, work_unit_key)
+        committed_row = await read_batch_row(db_session, work_unit_key)
 
         assert committed_row is not None
         assert committed_row.pending_count == 2, (

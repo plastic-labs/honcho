@@ -26,9 +26,9 @@ from src.deriver.queue_manager import QueueManager
 from src.models import DEFAULT_TENANT_ID
 from tests.deriver.conftest import (
     SeedWorkUnit,
-    _independent_sessions,
-    _read_batch_keys,
-    _read_batch_row,
+    independent_sessions,
+    read_batch_keys,
+    read_batch_row,
 )
 
 
@@ -64,7 +64,7 @@ class TestEnqueueMaintainsTheBatches:
             work_unit_key, token_counts=(5, 7, 11), ages_seconds=(30, 20, 10)
         )
 
-        batch_row = await _read_batch_row(db_session, work_unit_key)
+        batch_row = await read_batch_row(db_session, work_unit_key)
 
         assert batch_row is not None
         assert batch_row.pending_count == 3
@@ -87,7 +87,7 @@ class TestEnqueueMaintainsTheBatches:
             work_unit_key, token_counts=(4,), ages_seconds=(600,)
         )
 
-        batch_row = await _read_batch_row(db_session, work_unit_key)
+        batch_row = await read_batch_row(db_session, work_unit_key)
 
         assert batch_row is not None
         assert batch_row.pending_count == 2
@@ -103,7 +103,7 @@ class TestEnqueueMaintainsTheBatches:
         work_unit_key = "representation:tenantless"
         await seed_work_unit(work_unit_key, token_counts=(6, 9), tenant_id=None)
 
-        batch_row = await _read_batch_row(db_session, work_unit_key)
+        batch_row = await read_batch_row(db_session, work_unit_key)
 
         assert batch_row is not None
         assert batch_row.tenant_id is None
@@ -118,7 +118,7 @@ class TestEnqueueMaintainsTheBatches:
         work_unit_key = "representation:born-processed"
         await seed_work_unit(work_unit_key, token_counts=(50,), processed=True)
 
-        assert await _read_batch_row(db_session, work_unit_key) is None
+        assert await read_batch_row(db_session, work_unit_key) is None
 
 
 @pytest.mark.asyncio
@@ -139,7 +139,7 @@ class TestCompletionRecomputesTheBatches:
         queue_items[0].processed = True
         await db_session.commit()
 
-        batch_row = await _read_batch_row(db_session, work_unit_key)
+        batch_row = await read_batch_row(db_session, work_unit_key)
 
         assert batch_row is not None
         assert batch_row.pending_count == 2
@@ -159,8 +159,8 @@ class TestCompletionRecomputesTheBatches:
             queue_item.processed = True
         await db_session.commit()
 
-        assert await _read_batch_row(db_session, work_unit_key) is None
-        assert await _read_batch_keys(db_session) == set()
+        assert await read_batch_row(db_session, work_unit_key) is None
+        assert await read_batch_keys(db_session) == set()
 
     async def test_reopening_a_completed_item_brings_the_row_back(
         self,
@@ -176,7 +176,7 @@ class TestCompletionRecomputesTheBatches:
         queue_items[0].processed = False
         await db_session.commit()
 
-        batch_row = await _read_batch_row(db_session, work_unit_key)
+        batch_row = await read_batch_row(db_session, work_unit_key)
 
         assert batch_row is not None
         assert batch_row.pending_count == 1
@@ -203,7 +203,7 @@ class TestDeletionRecomputesTheBatches:
         )
         await db_session.commit()
 
-        batch_row = await _read_batch_row(db_session, work_unit_key)
+        batch_row = await read_batch_row(db_session, work_unit_key)
 
         assert batch_row is not None
         assert batch_row.pending_count == 2
@@ -226,7 +226,7 @@ class TestDeletionRecomputesTheBatches:
         )
         await db_session.commit()
 
-        assert await _read_batch_row(db_session, work_unit_key) is None
+        assert await read_batch_row(db_session, work_unit_key) is None
 
     async def test_deleting_a_processed_item_leaves_the_row_alone(
         self,
@@ -241,14 +241,14 @@ class TestDeletionRecomputesTheBatches:
         completed_items = await seed_work_unit(
             work_unit_key, token_counts=(100,), processed=True
         )
-        before = await _read_batch_row(db_session, work_unit_key)
+        before = await read_batch_row(db_session, work_unit_key)
 
         await db_session.execute(
             delete(models.QueueItem).where(models.QueueItem.id == completed_items[0].id)
         )
         await db_session.commit()
 
-        after = await _read_batch_row(db_session, work_unit_key)
+        after = await read_batch_row(db_session, work_unit_key)
 
         assert before is not None
         assert after is not None
@@ -277,7 +277,7 @@ class TestNonRepresentationUnits:
             with_messages=False,
         )
 
-        batch_row = await _read_batch_row(db_session, work_unit_key)
+        batch_row = await read_batch_row(db_session, work_unit_key)
         claimed_work_units = await QueueManager().get_and_claim_work_units()
 
         assert batch_row is not None
@@ -296,7 +296,7 @@ class TestNonRepresentationUnits:
         work_unit_key = "deletion:seeded-workspace:session:abc"
         await seed_work_unit(work_unit_key, task_type="deletion", token_counts=(500,))
 
-        batch_row = await _read_batch_row(db_session, work_unit_key)
+        batch_row = await read_batch_row(db_session, work_unit_key)
         claimed_work_units = await QueueManager().get_and_claim_work_units()
 
         assert batch_row is not None
@@ -318,7 +318,7 @@ class TestTriggerEffectsAreTransactional:
         workspace, _peer = sample_data
         work_unit_key = "representation:rolled-back"
 
-        async with _independent_sessions(db_engine)() as writer:
+        async with independent_sessions(db_engine)() as writer:
             writer.add(
                 models.QueueItem(
                     work_unit_key=work_unit_key,
@@ -330,11 +330,11 @@ class TestTriggerEffectsAreTransactional:
                 )
             )
             await writer.flush()
-            uncommitted_row = await _read_batch_row(writer, work_unit_key)
+            uncommitted_row = await read_batch_row(writer, work_unit_key)
             await writer.rollback()
 
         assert uncommitted_row is not None
-        assert await _read_batch_row(db_session, work_unit_key) is None
+        assert await read_batch_row(db_session, work_unit_key) is None
 
     async def test_a_deduped_insert_never_counts_toward_the_batches(
         self,
@@ -352,7 +352,7 @@ class TestTriggerEffectsAreTransactional:
             with_messages=False,
         )
 
-        async with _independent_sessions(db_engine)() as loser:
+        async with independent_sessions(db_engine)() as loser:
             loser.add(
                 models.QueueItem(
                     work_unit_key=work_unit_key,
@@ -365,7 +365,7 @@ class TestTriggerEffectsAreTransactional:
                 await loser.flush()
             await loser.rollback()
 
-        batch_row = await _read_batch_row(db_session, work_unit_key)
+        batch_row = await read_batch_row(db_session, work_unit_key)
 
         assert batch_row is not None
         assert batch_row.pending_count == 1
@@ -424,7 +424,7 @@ class TestClaimReadsTheBatches:
         await seed_work_unit(work_unit_key, token_counts=(10,))
 
         claimed_work_units = await QueueManager().get_and_claim_work_units()
-        batch_row = await _read_batch_row(db_session, work_unit_key)
+        batch_row = await read_batch_row(db_session, work_unit_key)
 
         assert claimed_work_units == {}
         assert batch_row is not None
@@ -469,7 +469,7 @@ class TestClaimReadsTheBatches:
 
         assert list(candidate_keys) == [free_key]
         assert set(claimed_work_units) == {free_key}
-        assert await _read_batch_keys(db_session) == {claimed_key, free_key}
+        assert await read_batch_keys(db_session) == {claimed_key, free_key}
 
     async def test_a_stale_claim_row_still_hides_its_unit_from_the_claim(
         self,
@@ -512,7 +512,7 @@ class TestClaimReadsTheBatches:
         claimed_work_units = await QueueManager().get_and_claim_work_units()
 
         assert claimed_work_units == {}
-        assert await _read_batch_keys(db_session) == set()
+        assert await read_batch_keys(db_session) == set()
 
 
 @pytest.mark.asyncio
@@ -540,7 +540,7 @@ class TestConcurrentClaimersTakeDisjointUnits:
                 work_unit_key, token_counts=(50,), ages_seconds=(age_seconds,)
             )
 
-        sessions = _independent_sessions(db_engine)
+        sessions = independent_sessions(db_engine)
         candidate_query = _claim_candidate_query(limit=2)
         async with (
             sessions() as first_claimer,

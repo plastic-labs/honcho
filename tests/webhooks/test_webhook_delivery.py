@@ -405,8 +405,8 @@ async def test_process_item_webhook_threads_queue_item_tenant_to_deliver_webhook
     await process_item(queue_item)
 
     deliver_mock.assert_awaited_once()
-    _, call_kwargs = deliver_mock.await_args
-    assert call_kwargs["tenant_id"] == "tenant-abc"
+    assert deliver_mock.await_args is not None
+    assert deliver_mock.await_args.kwargs["tenant_id"] == "tenant-abc"
 
 
 @pytest.mark.asyncio

@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
 from src.config import settings
+from src.main import app
 
 # A stable, non-empty service secret for the enabled cases. Constant-time
 # comparison against this is the whole of the tenant API's auth check.
@@ -45,6 +46,13 @@ def _create_body(
             else vector_correlation_id
         ),
     }
+
+
+def test_the_tenant_api_is_absent_from_the_public_schema():
+    """The published OpenAPI spec documents the public API only."""
+    paths = app.openapi()["paths"]
+
+    assert not [path for path in paths if path.startswith("/v3/tenants")]
 
 
 # ---------------------------------------------------------------------------
@@ -510,6 +518,9 @@ def test_patch_rejects_everything_outside_the_allowlist(
 
 
 def test_patch_requires_the_service_secret(client: TestClient, enabled: str):
+    # enabled must be set up after client: the startup validator refuses to boot
+    # with MULTI_TENANT on and auth off, and a usefixtures mark would run first.
+    del enabled
     response = client.patch(
         f"/v3/tenants/{generate_nanoid()}", json={"derivation_paused": True}
     )
@@ -569,5 +580,8 @@ def test_list_requires_the_paused_filter(
 
 
 def test_list_requires_the_service_secret(client: TestClient, enabled: str):
+    # enabled must be set up after client: the startup validator refuses to boot
+    # with MULTI_TENANT on and auth off, and a usefixtures mark would run first.
+    del enabled
     response = client.get("/v3/tenants", params={"derivation_paused": "true"})
     assert response.status_code == 401, response.text

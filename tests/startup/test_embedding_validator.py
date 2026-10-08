@@ -317,6 +317,7 @@ async def test_external_sample_skips_tenants_without_a_namespace_key(
             *,
             prefix: str | None = None,
         ) -> str:
+            del observer, observed
             assert prefix, "an unkeyed tenant must never reach the resolver"
             return f"{prefix}.{namespace_type[:3]}.{workspace_name}"
 

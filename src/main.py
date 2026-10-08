@@ -232,7 +232,10 @@ app.include_router(scopes.router, prefix="/v3")
 app.include_router(messages.router, prefix="/v3")
 app.include_router(conclusions.router, prefix="/v3")
 app.include_router(keys.router, prefix="/v3")
-app.include_router(tenants.router, prefix="/v3")
+# The tenant registry is the hosting provisioner's API, not part of the public
+# surface: keep it out of the published schema. Its routes still refuse every
+# request unless MULTI_TENANT and TENANT_API.SECRET are set (require_tenant_api).
+app.include_router(tenants.router, prefix="/v3", include_in_schema=False)
 app.include_router(webhooks.router, prefix="/v3")
 app.include_router(deriver_metrics.router)
 
