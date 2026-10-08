@@ -10,6 +10,7 @@ from datetime import datetime
 from functools import cache
 from inspect import cleandoc as c
 
+from src.utils.formatting import custom_instructions_section
 from src.utils.tokens import estimate_tokens
 
 _MESSAGE_TAG = re.compile(r"<(?=/?message\b)", re.IGNORECASE)
@@ -42,23 +43,6 @@ def _normalized_custom_instructions(custom_instructions: str | None) -> str | No
     return normalized or None
 
 
-def _custom_instructions_section(custom_instructions: str | None) -> str:
-    """Render optional custom instructions for the deriver prompt."""
-    normalized_custom_instructions = _normalized_custom_instructions(
-        custom_instructions
-    )
-    if normalized_custom_instructions is None:
-        return ""
-
-    return c(
-        f"""
-        CUSTOM INSTRUCTIONS:
-        These instructions apply to the target peer identified below.
-        {normalized_custom_instructions}
-        """
-    )
-
-
 def minimal_deriver_prompt(
     peer_id: str,
     messages: str,
@@ -74,7 +58,10 @@ def minimal_deriver_prompt(
     Returns:
         Formatted prompt string for observation extraction.
     """
-    custom_instructions_section = _custom_instructions_section(custom_instructions)
+    instructions_section = custom_instructions_section(
+        custom_instructions,
+        note="These instructions apply to the target peer identified below.",
+    )
     return c(
         f"""
 Analyze messages to extract **explicit atomic facts** about the target peer.
@@ -94,15 +81,16 @@ RULES:
 - Do not record conversational mechanics (greeting, thanking, acknowledging, asking or answering a question) or anything true of nearly every participant.
 - Each conclusion states exactly one independent fact. Keep a fact's reason, purpose, tool, place, and qualifiers attached to it; they are part of the same fact. Split when a conclusion joins independent facts, or when a clause adds a new fact about a person or thing.
 - Do not emit two conclusions that state the same fact in different words.
-- Use the exact peer id from `Target peer:` in final observations, not the phrase "the target peer".
-- Properly attribute observations to the correct subject: if it is about the target peer, use the exact peer id as the subject. If the target peer is referencing someone or something else, make that clear.
-- Write each observation for a reader who knows only the target peer id: identify other people and things by their relation to the target peer, and leave no pronoun, "it", "there", or relative time unresolved.
+- Properly attribute observations to the correct subject. If the target peer is referencing someone or something else, make that clear.
+- Write each observation for a reader who knows only the peer id: identify other people and things by their relation to this peer, and leave no pronoun, "it", "there", or relative time unresolved.
 - Include only what is needed to identify who or what the observation is about and to state the fact. Do not add explanation or background.
 
-{custom_instructions_section}
+{instructions_section}
 
 Target peer:
 {peer_id}
+
+Write `{peer_id}` as the subject of every observation about this peer. Never write "the target peer" or "the user" in its place.
 
 Messages to analyze:
 <messages>

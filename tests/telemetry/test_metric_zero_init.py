@@ -25,6 +25,7 @@ from src.telemetry.events import ALL_EVENT_TYPES, HIGH_VOLUME_EVENT_TYPES
 from src.telemetry.events.base import BaseEvent
 from src.telemetry.prometheus.metrics import (
     _DERIVER_TOKEN_COMBOS_BY_TASK,  # pyright: ignore[reportPrivateUsage]
+    SUMMARY_REJECTION_DEGENERATE,
     DeriverComponents,
     DeriverTaskTypes,
     DialecticComponents,
@@ -227,6 +228,15 @@ def test_deriver_init_materializes_token_and_backlog():
             )
             is not None
         ), f"specialist {specialist_name!r} was not zero-initialized"
+    for summary_type in ("short", "long"):
+        assert (
+            sample(
+                "summary_rejections_total",
+                summary_type=summary_type,
+                reason=SUMMARY_REJECTION_DEGENERATE,
+            )
+            is not None
+        )
     assert sample("message_embeddings_pending") == 0.0  # gauge zero-init
 
 
@@ -328,6 +338,23 @@ def test_deriver_init_does_not_touch_api_counters():
     # so are the deriver-work gauges: the deriver never measures its own backlog
     for gauge in _API_DERIVER_METRIC_GAUGES:
         assert sample(gauge) is None, f"{gauge} must be API-only"
+
+
+@pytest.mark.usefixtures("metrics_enabled")
+@pytest.mark.parametrize("scheduler", ["api", "deriver"])
+@pytest.mark.parametrize("instance_type", ["api", "deriver"])
+def test_backfill_pending_zero_init_follows_scheduler(
+    monkeypatch: pytest.MonkeyPatch, scheduler: str, instance_type: str
+):
+    """Only the process running the reconciler scheduler refreshes the gauge."""
+    from src.reconciler.backfill import BACKFILLS
+
+    monkeypatch.setattr("src.config.settings.DERIVER.SCHEDULER", scheduler)
+    prometheus_metrics.initialize_bounded_metrics(instance_type=instance_type)
+    expected = 0.0 if scheduler == instance_type else None
+    assert BACKFILLS
+    for name in BACKFILLS:
+        assert sample("backfill_pending", task=name) == expected
 
 
 # ---------------------------------------------------------------------------

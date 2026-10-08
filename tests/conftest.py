@@ -89,6 +89,7 @@ _RUNTIME_MOCK_TEST_BLOCKLIST_PREFIXES = (
     "tests/crud/test_session_scope_clauses.py",
     # Pure prompt-rendering tests — string assembly only, no DB needed.
     "tests/deriver/test_prompts.py",
+    "tests/utils/test_custom_instructions_prompts.py",
     # Pure JWT scope tests — operate on src.security directly, no DB needed.
     "tests/test_security.py",
     "tests/test_generate_jwt_script.py",
@@ -288,7 +289,7 @@ async def setup_test_database(db_url: URL):
     Returns:
         engine: SQLAlchemy engine
     """
-    engine = create_async_engine(str(db_url), echo=False)
+    engine = create_async_engine(db_url, echo=False)
     async with engine.connect() as conn:
         try:
             logger.info("Attempting to create pgvector extension...")
@@ -985,6 +986,7 @@ def mock_tracked_db(request: pytest.FixtureRequest):
         "src.crud.document.tracked_db",
         "src.crud.message.tracked_db",
         "src.reconciler.sync_vectors.tracked_db",
+        "src.reconciler.backfill.tracked_db",
         "src.reconciler.embed_now.tracked_db",
         "src.dialectic.core.tracked_db",
         "src.dreamer.specialists.tracked_db",

@@ -15,13 +15,12 @@ from src.deriver.scope_backfill import (
 from src.dreamer import process_dream
 from src.exceptions import ResourceNotFoundException, ValidationException
 from src.models import Message
-from src.reconciler.backfill_document_sources import (
-    run_document_sources_backfill_cycle,
-)
+from src.reconciler.backfill import resolve_backfill, run_backfill_cycle
 from src.reconciler.queue_cleanup import cleanup_queue_items
 from src.reconciler.sync_vectors import run_vector_reconciliation_cycle
 from src.schemas import ReconcilerType, ResolvedConfiguration
 from src.telemetry.events import (
+    BackfillCompletedEvent,
     CleanupStaleItemsCompletedEvent,
     DeletionCompletedEvent,
     SyncVectorsCompletedEvent,
@@ -392,8 +391,8 @@ async def process_reconciler(payload: ReconcilerPayload) -> None:
     - sync_vectors: Syncs pending documents/message embeddings to vector store
       and cleans up soft-deleted documents.
     - cleanup_queue: Removes old processed queue items.
-    - backfill_document_sources: Drains legacy JSONB source linkage into
-      the document_sources table.
+    - backfill (and legacy per-backfill types): Runs one cycle of a
+      registered backfill.
 
     Args:
         payload: The reconciler payload containing the reconciler type
@@ -447,9 +446,20 @@ async def process_reconciler(payload: ReconcilerPayload) -> None:
                     total_duration_ms=duration_ms,
                 )
             )
-    elif reconciler_type == ReconcilerType.BACKFILL_DOCUMENT_SOURCES:
-        logger.debug("Processing backfill_document_sources task")
-        await run_document_sources_backfill_cycle()
+    elif (
+        backfill := resolve_backfill(reconciler_type, payload.backfill_name)
+    ) is not None:
+        logger.debug("Processing backfill %s", backfill.name)
+        result = await run_backfill_cycle(backfill)
+        emit(
+            BackfillCompletedEvent(
+                backfill_name=backfill.name,
+                rows_touched=result.rows_touched,
+                batches=result.batches,
+                still_pending=result.still_pending,
+                total_duration_ms=result.duration_ms,
+            )
+        )
 
     else:
         raise ValueError(f"Unsupported reconciler type: {reconciler_type}")

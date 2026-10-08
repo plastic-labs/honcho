@@ -17,7 +17,7 @@ from typing import ClassVar
 
 from pydantic import Field
 
-from src.telemetry.events.base import BaseEvent
+from src.telemetry.events.base import BaseEvent, CustomInstructionsFields
 
 
 class AgentIterationEvent(BaseEvent):
@@ -183,7 +183,7 @@ class AgentToolPeerCardUpdatedEvent(BaseEvent):
         return f"{self.run_id}:{self.iteration}:peer_card_updated"
 
 
-class AgentToolSummaryCreatedEvent(BaseEvent):
+class AgentToolSummaryCreatedEvent(BaseEvent, CustomInstructionsFields):
     """Emitted when a summary is created.
 
     Tracks summary creation with full context about what was summarized
@@ -258,8 +258,8 @@ class AgentToolSummaryCreatedEvent(BaseEvent):
     prompt_scaffold_tokens: int = Field(
         default=0,
         description=(
-            "Estimated tokens for the static scaffold portion of the prompt "
-            "(from estimate_short/long_summary_prompt_tokens)."
+            "Estimated tokens for the scaffold portion of the prompt, including "
+            "any custom instructions (from estimate_short/long_summary_prompt_tokens)."
         ),
     )
 
@@ -276,7 +276,7 @@ class AgentToolCallCompletedEvent(BaseEvent):
     peer_card_updated, summary_created), which carry semantic information
     about specific tools, with a lightweight per-call telemetry record that
     covers every tool — including read-only tools (`search_memory`,
-    `get_recent_history`, etc.) that have no dedicated event today.
+    `get_recent_observations`, etc.) that have no dedicated event today.
 
     Resource id includes `tool_call_seq` so the model can legitimately call
     the same tool twice in one iteration (it does) without colliding event

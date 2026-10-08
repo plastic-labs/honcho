@@ -746,6 +746,9 @@ class DBSettings(HonchoSettings):
     # deriver backs off and retries on a later poll).
     CONNECT_TIMEOUT_SECONDS: Annotated[int, Field(default=2, gt=0, le=60)] = 2
 
+    # Seconds a migrator waits for another migrator's advisory lock before failing
+    MIGRATION_LOCK_WAIT_SECONDS: Annotated[int, Field(default=300, gt=0, le=3600)] = 300
+
 
 class AuthSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="AUTH_", extra="ignore")  # pyright: ignore
@@ -1099,9 +1102,6 @@ class DialecticSettings(HonchoSettings):
     MAX_OUTPUT_TOKENS: Annotated[int, Field(default=8192, gt=0, le=100_000)] = 8192
     MAX_INPUT_TOKENS: Annotated[int, Field(default=100_000, gt=0, le=200_000)] = 100_000
 
-    # Token limit for get_recent_history tool within the agent
-    HISTORY_TOKEN_LIMIT: Annotated[int, Field(default=8192, gt=0, le=100_000)] = 8192
-
     # Extra tool rounds workspace chat gets on top of its level's limit. A
     # workspace query fans out over peers where a pair query reads one
     # representation, so it needs room to route and then recall. Not applied at
@@ -1223,8 +1223,25 @@ class SummarySettings(HonchoSettings):
             )
         return data  # pyright: ignore[reportUnknownVariableType]
 
-    MAX_TOKENS_SHORT: Annotated[int, Field(default=1000, gt=0, le=10_000)] = 1000
-    MAX_TOKENS_LONG: Annotated[int, Field(default=4000, gt=0, le=20_000)] = 4000
+    # Per-call output caps. The prompt asks for a fraction of these as a soft
+    # target (SUMMARY_TARGET_RATIO in src/utils/summarizer.py), leaving the rest
+    # as headroom so a summary can finish instead of truncating.
+    MAX_TOKENS_SHORT: Annotated[int, Field(default=1500, gt=0, le=10_000)] = 1500
+    MAX_TOKENS_LONG: Annotated[int, Field(default=6000, gt=0, le=20_000)] = 6000
+
+    @model_validator(mode="after")
+    def _validate_caps_within_model_ceiling(self) -> "SummarySettings":
+        """Keep MODEL_CONFIG.max_output_tokens a ceiling over both summary caps."""
+        ceiling = self.MODEL_CONFIG.max_output_tokens
+        if ceiling is None:
+            return self
+        for name in ("MAX_TOKENS_SHORT", "MAX_TOKENS_LONG"):
+            if getattr(self, name) > ceiling:
+                raise ValueError(
+                    f"summary.{name} must not exceed "
+                    + "summary.MODEL_CONFIG.max_output_tokens"
+                )
+        return self
 
 
 class WebhookSettings(HonchoSettings):
@@ -1369,11 +1386,6 @@ class DreamSettings(HonchoSettings):
 
     # Agent iteration limit - increased for extended reasoning workflow
     MAX_TOOL_ITERATIONS: Annotated[int, Field(default=20, gt=0, le=50)] = 20
-
-    # Token limit for get_recent_history tool within the agent
-    HISTORY_TOKEN_LIMIT: Annotated[int, Field(default=16_384, gt=0, le=200_000)] = (
-        16_384
-    )
 
     @staticmethod
     def _DEDUCTION_MODEL_CONFIG_DEFAULT() -> ConfiguredModelSettings:

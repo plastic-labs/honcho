@@ -8,7 +8,7 @@
 
 ---
 
-![Static Badge](https://img.shields.io/badge/Server-3.2.2-blue)
+![Static Badge](https://img.shields.io/badge/Server-3.3.0-blue)
 [![PyPI version](https://img.shields.io/pypi/v/honcho-ai.svg)](https://pypi.org/project/honcho-ai/)
 [![NPM version](https://img.shields.io/npm/v/@honcho-ai/sdk.svg)](https://npmjs.org/package/@honcho-ai/sdk)
 [![CLI](https://img.shields.io/pypi/v/honcho-cli.svg?label=honcho-cli)](https://pypi.org/project/honcho-cli/)
@@ -74,7 +74,7 @@ Concretely: workspaces hold peers, peers participate in sessions, messages live 
 
 ## Quickstart
 
-Get an API key at [app.honcho.dev](https://app.honcho.dev) — when you sign up you'll be prompted to join an organization, which gets its own dedicated Honcho instance and $100 free credits. Or install the CLI and run [`honcho start --setup`](#cli), then point the SDK at `http://localhost:8000`.
+Get an API key at [app.honcho.dev](https://app.honcho.dev) — when you sign up you'll be prompted to join an organization, which gets its own dedicated Honcho instance. Or install the CLI and run [`honcho start --setup`](#cli), then point the SDK at `http://localhost:8000`.
 
 ### Python
 
@@ -489,6 +489,8 @@ uv run alembic upgrade head
 
 This will create all tables for Honcho including workspaces, peers, sessions,
 messages, and the queue system.
+
+Migrations hold a session-level advisory lock, so they need a session-mode connection (direct Postgres or a session pooler), not a transaction-mode pooler. A Supabase-style `:6543` port is rewritten to `:5432` automatically.
 
 6. **Launch Honcho**
 

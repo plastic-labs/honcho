@@ -36,6 +36,8 @@ class TestDeriverProcessing:
         )
         configuration = Mock()
         configuration.reasoning.enabled = True
+        configuration.reasoning.custom_instructions = None
+        configuration.reasoning.custom_instructions_source = None
 
         mock_response = HonchoLLMCallResponse(
             content=PromptRepresentation(explicit=[]),
@@ -87,6 +89,8 @@ class TestDeriverProcessing:
         )
         configuration = Mock()
         configuration.reasoning.enabled = True
+        configuration.reasoning.custom_instructions = None
+        configuration.reasoning.custom_instructions_source = None
 
         mock_response = HonchoLLMCallResponse(
             content=PromptRepresentation(
@@ -142,6 +146,8 @@ class TestDeriverProcessing:
         )
         configuration = Mock()
         configuration.reasoning.enabled = True
+        configuration.reasoning.custom_instructions = None
+        configuration.reasoning.custom_instructions_source = None
 
         mock_response = HonchoLLMCallResponse(
             content=PromptRepresentation(
@@ -205,6 +211,8 @@ class TestDeriverProcessing:
         )
         configuration = Mock()
         configuration.reasoning.enabled = True
+        configuration.reasoning.custom_instructions = None
+        configuration.reasoning.custom_instructions_source = None
 
         mock_response = HonchoLLMCallResponse(
             content=PromptRepresentation(
@@ -256,6 +264,8 @@ class TestDeriverProcessing:
         )
         configuration = Mock()
         configuration.reasoning.enabled = True
+        configuration.reasoning.custom_instructions = None
+        configuration.reasoning.custom_instructions_source = None
         configuration.reasoning.custom_instructions = (
             "Prefer explicit facts with dates."
         )
@@ -407,6 +417,8 @@ class TestDeriverProcessing:
         )
         configuration = Mock()
         configuration.reasoning.enabled = True
+        configuration.reasoning.custom_instructions = None
+        configuration.reasoning.custom_instructions_source = None
 
         mock_response = HonchoLLMCallResponse(
             content=PromptRepresentation(explicit=[]),
@@ -459,6 +471,8 @@ class TestDeriverProcessing:
         )
         configuration = Mock()
         configuration.reasoning.enabled = True
+        configuration.reasoning.custom_instructions = None
+        configuration.reasoning.custom_instructions_source = None
 
         mock_response = HonchoLLMCallResponse(
             content=PromptRepresentation(explicit=[]),
@@ -509,6 +523,8 @@ class TestDeriverProcessing:
         )
         configuration = Mock()
         configuration.reasoning.enabled = True
+        configuration.reasoning.custom_instructions = None
+        configuration.reasoning.custom_instructions_source = None
 
         mock_response = HonchoLLMCallResponse(
             content=PromptRepresentation(

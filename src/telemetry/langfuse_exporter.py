@@ -371,7 +371,7 @@ class LangfuseExporter:
             model=call.model,
             input=self._input(call),
             output=self._output(call),
-            metadata=self._step_metadata(call),
+            metadata=self._generation_metadata(call),
             usage_details=self._usage(call),
             level=level,
         )
@@ -510,6 +510,14 @@ class LangfuseExporter:
         md["attempt"] = str(call.attempt)
         md["provider"] = str(call.transport)
         md["model"] = str(call.model)
+        return md
+
+    def _generation_metadata(self, call: CapturedLLMCall) -> dict[str, str]:
+        # Operator-written instructions get their own key: the input embeds them
+        # in a prompt, which makes them hard to find or filter on.
+        md = self._step_metadata(call)
+        if call.custom_instructions:
+            md["custom_instructions"] = call.custom_instructions
         return md
 
     @staticmethod

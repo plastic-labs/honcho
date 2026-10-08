@@ -350,7 +350,6 @@ The Dialectic API provides theory-of-mind informed responses. It uses a tiered r
 # Global dialectic settings
 DIALECTIC_MAX_OUTPUT_TOKENS=8192
 DIALECTIC_MAX_INPUT_TOKENS=100000
-DIALECTIC_HISTORY_TOKEN_LIMIT=8192
 DIALECTIC_SESSION_HISTORY_MAX_TOKENS=4096
 ```
 
@@ -473,13 +472,15 @@ Session summaries provide compressed context for long conversations — short su
 SUMMARY_ENABLED=true
 SUMMARY_MODEL_CONFIG__TRANSPORT=openai
 SUMMARY_MODEL_CONFIG__MODEL=gpt-5.4-mini
-SUMMARY_MAX_TOKENS_SHORT=1000
-SUMMARY_MAX_TOKENS_LONG=4000
+SUMMARY_MAX_TOKENS_SHORT=1500
+SUMMARY_MAX_TOKENS_LONG=6000
 # SUMMARY_MODEL_CONFIG__THINKING_EFFORT=minimal
 # SUMMARY_MODEL_CONFIG__THINKING_BUDGET_TOKENS=1024
 SUMMARY_MESSAGES_PER_SHORT_SUMMARY=20
 SUMMARY_MESSAGES_PER_LONG_SUMMARY=60
 ```
+
+`SUMMARY_MAX_TOKENS_SHORT` / `SUMMARY_MAX_TOKENS_LONG` are the output caps for each summary call. The prompt asks for about 60% of the cap as a soft target, so a summary has room to finish instead of being cut off. If you set `SUMMARY_MODEL_CONFIG__MAX_OUTPUT_TOKENS`, it acts as a ceiling: startup fails if either summary cap is larger than it.
 
 **Dream Processing:**
 
@@ -492,7 +493,6 @@ DREAM_IDLE_TIMEOUT_MINUTES=60
 DREAM_MIN_HOURS_BETWEEN_DREAMS=8
 DREAM_ENABLED_TYPES=["omni"]
 DREAM_MAX_TOOL_ITERATIONS=20
-DREAM_HISTORY_TOKEN_LIMIT=16384
 
 # Specialist model configs (each is independent)
 DREAM_DEDUCTION_MODEL_CONFIG__TRANSPORT=openai
@@ -572,6 +572,8 @@ DB_SQL_DEBUG=false
 # Per-connection establish timeout (seconds) so a single connection attempt
 # fails fast instead of hanging when the server/pooler is unreachable.
 DB_CONNECT_TIMEOUT_SECONDS=2
+# Seconds a migrator waits for another migrator's lock before failing
+DB_MIGRATION_LOCK_WAIT_SECONDS=300
 ```
 
 ### Authentication
@@ -699,6 +701,7 @@ before interruption. `trace.content` remains at schema version 1.
 | `duration_ms`, `outcome`, `error_class`, `attempt`, `retry_attempts`, `is_final_attempt` | Execution diagnostics for both LLM and embedding calls. `is_final_attempt` means the configured retry budget is exhausted, so an earlier successful attempt can have `false`. |
 | `was_stream`, `was_fallback`, `effective_max_output_tokens` | LLM execution mode, selected fallback, and effective output limit. |
 | `system_prompt_ref`, `system_prompt_refs`, `output_reasoning_ref` | References into `trace.content` for the system prompt and normalized provider reasoning details. `system_prompt_refs` lists each system message as the provider saw it; `system_prompt_ref` is a single ref for the whole system prompt — the lone message when there is one, otherwise their concatenation shipped under its own hash. |
+| `custom_instructions_ref` | Reference into `trace.content` for the operator-written custom instructions added to this call's prompt (role `__custom_instructions__`, `honcho_authored=false`). Unset when no instructions applied. Unlike the system prompt that embeds them, this record is tenant-visible. |
 
 Fields remain null or empty when unavailable or inapplicable. Root spans have no
 parent; `parent_event_id` is populated only when a caller supplies an actual
@@ -798,8 +801,8 @@ model = "gpt-5.4-mini"
 
 [summary]
 ENABLED = true
-MAX_TOKENS_SHORT = 1000
-MAX_TOKENS_LONG = 4000
+MAX_TOKENS_SHORT = 1500
+MAX_TOKENS_LONG = 6000
 
 [summary.model_config]
 transport = "openai"
@@ -843,6 +846,8 @@ uv run alembic upgrade head     # Upgrade to latest
 uv run alembic downgrade <rev>  # Downgrade to specific revision
 uv run alembic revision --autogenerate -m "Description"  # Create new migration
 ```
+
+Migrations hold a session-level advisory lock, so they need a session-mode connection (direct Postgres or a session pooler), not a transaction-mode pooler. A Supabase-style `:6543` port is rewritten to `:5432` automatically.
 
 ## Troubleshooting
 

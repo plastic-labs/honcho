@@ -37,6 +37,8 @@ from src.utils.agent_tools import (
     INDUCTION_SPECIALIST_TOOLS,
     create_tool_executor,
 )
+from src.utils.formatting import custom_instructions_section
+from src.utils.tokens import estimate_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -137,6 +139,50 @@ A list longer than the cap is refused as a whole — nothing is written and the 
 - Otherwise drop the least durable entries — the ones most likely to change or already implied by another entry.
 
 If the tool reports that your list was over the cap, consolidate further and retry once with the complete list. After two over-cap failures, card updates are disabled for the rest of this run and the existing card is preserved; continue with your other tasks. Do not respond by dropping the new marker and re-sending the old card unchanged."""
+
+
+def custom_instructions_prompt(
+    configuration: ResolvedConfiguration | None, *, peer_card_enabled: bool
+) -> str:
+    """Render the dream and peer card custom instructions for a specialist.
+
+    Peer card instructions are additive on top of the dream instructions and
+    only apply when the specialist can write the card.
+    """
+    if configuration is None:
+        return ""
+    sections = [custom_instructions_section(configuration.dream.custom_instructions)]
+    if peer_card_enabled:
+        sections.append(
+            custom_instructions_section(
+                configuration.peer_card.custom_instructions,
+                heading="PEER CARD CUSTOM INSTRUCTIONS:",
+                note="Apply these within the allowed entry kinds and rules of the PEER CARD section.",
+            )
+        )
+    return "".join(f"\n\n{section}" for section in sections if section)
+
+
+def _custom_instructions_telemetry(
+    configuration: ResolvedConfiguration | None, *, peer_card_enabled: bool
+) -> dict[str, Any]:
+    """DreamSpecialistEvent fields for the instructions actually injected."""
+    if configuration is None:
+        return {}
+    fields: dict[str, Any] = {
+        "custom_instructions_tokens": estimate_tokens(
+            configuration.dream.custom_instructions
+        ),
+        "custom_instructions_source": configuration.dream.custom_instructions_source,
+    }
+    if peer_card_enabled:
+        fields["peer_card_custom_instructions_tokens"] = estimate_tokens(
+            configuration.peer_card.custom_instructions
+        )
+        fields["peer_card_custom_instructions_source"] = (
+            configuration.peer_card.custom_instructions_source
+        )
+    return fields
 
 
 class BaseSpecialist(ABC):
@@ -275,6 +321,16 @@ If you update it, send the full deduplicated list and remove stale entries.
         created_counts_by_level: Counter[str] = Counter()
         deleted_counts_by_level: Counter[str] = Counter()
 
+        # Determine if peer card tools should be included. Specialists that
+        # cannot write to the peer card (e.g., induction) skip the fetch and
+        # the prompt section entirely.
+        peer_card_enabled = self.can_update_peer_card and (
+            configuration is None or configuration.peer_card.create
+        )
+        injected_instructions = custom_instructions_prompt(
+            configuration, peer_card_enabled=peer_card_enabled
+        )
+
         try:
             # Short-lived DB session for preflight operations
             async with tracked_db("dream.specialist.preflight") as db:
@@ -286,13 +342,6 @@ If you update it, send the full deduplicated list and remove stale entries.
                 await crud.get_peer(db, workspace_name, observer)
                 if observer != observed:
                     await crud.get_peer(db, workspace_name, observed)
-
-                # Determine if peer card tools should be included. Specialists that
-                # cannot write to the peer card (e.g., induction) skip the fetch and
-                # the prompt section entirely.
-                peer_card_enabled = self.can_update_peer_card and (
-                    configuration is None or configuration.peer_card.create
-                )
 
                 # Fetch current peer card to inject into prompt (saves a tool call).
                 # Skipped when inject_peer_card is False (card-refresh rebuild
@@ -313,7 +362,8 @@ If you update it, send the full deduplicated list and remove stale entries.
                     "role": "system",
                     "content": self.build_system_prompt(
                         observed, peer_card_enabled=peer_card_enabled
-                    ),
+                    )
+                    + injected_instructions,
                 },
                 {
                     "role": "user",
@@ -334,7 +384,6 @@ If you update it, send the full deduplicated list and remove stale entries.
                 observed=observed,
                 session_name=session_name,
                 include_observation_ids=True,
-                history_token_limit=settings.DREAM.HISTORY_TOKEN_LIMIT,
                 configuration=configuration,
                 run_id=run_id,
                 agent_type=self.name,
@@ -385,6 +434,7 @@ If you update it, send the full deduplicated list and remove stale entries.
                     observers=[observer],
                     session_id=session_id,
                     queue_item_ids=[queue_item_id] if queue_item_id is not None else [],
+                    custom_instructions=injected_instructions.strip() or None,
                 ),
             )
 
@@ -523,6 +573,9 @@ If you update it, send the full deduplicated list and remove stale entries.
                         # omitted, not enumerated).
                         created_counts_by_level=dict(created_counts_by_level),
                         deleted_counts_by_level=dict(deleted_counts_by_level),
+                        **_custom_instructions_telemetry(
+                            configuration, peer_card_enabled=peer_card_enabled
+                        ),
                     )
                 )
             except Exception:  # pragma: no cover - telemetry must not raise

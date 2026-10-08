@@ -35,6 +35,8 @@ TRACING = false
 # Per-connection establish timeout (seconds) so a single connection attempt
 # fails fast instead of hanging when the server/pooler is unreachable.
 CONNECT_TIMEOUT_SECONDS = 2
+# Seconds a migrator waits for another migrator's lock before failing.
+MIGRATION_LOCK_WAIT_SECONDS = 300
 
 # Authentication settings
 [auth]
@@ -153,7 +155,6 @@ ENABLED = true
 [dialectic]
 MAX_OUTPUT_TOKENS = 8192
 MAX_INPUT_TOKENS = 100000
-HISTORY_TOKEN_LIMIT = 8192
 SESSION_HISTORY_MAX_TOKENS = 4096
 
 # Per-level settings for reasoning levels
@@ -205,8 +206,8 @@ model = "gpt-5.4-mini"
 ENABLED = true
 MESSAGES_PER_SHORT_SUMMARY = 20
 MESSAGES_PER_LONG_SUMMARY = 60
-MAX_TOKENS_SHORT = 1000
-MAX_TOKENS_LONG = 4000
+MAX_TOKENS_SHORT = 1500
+MAX_TOKENS_LONG = 6000
 
 [summary.model_config]
 transport = "openai"
@@ -226,7 +227,6 @@ IDLE_TIMEOUT_MINUTES = 60
 MIN_HOURS_BETWEEN_DREAMS = 8
 ENABLED_TYPES = ["omni"]
 MAX_TOOL_ITERATIONS = 20
-HISTORY_TOKEN_LIMIT = 16384
 
 [dream.deduction_model_config]
 transport = "openai"
