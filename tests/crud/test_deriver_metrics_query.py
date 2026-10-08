@@ -202,7 +202,7 @@ class TestDeriverMetrics:
         db_session: AsyncSession,
         sample_data: tuple[models.Workspace, models.Peer],
     ):
-        workspace, _peer = sample_data
+        _workspace, _peer = sample_data
 
         db_session.add(
             models.QueueItem(

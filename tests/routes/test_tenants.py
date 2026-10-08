@@ -519,6 +519,9 @@ def test_patch_rejects_everything_outside_the_allowlist(
 
 
 def test_patch_requires_the_service_secret(client: TestClient, enabled: str):
+    # The app has to boot (client) before the flag turns on (enabled), so the
+    # fixture stays an argument after client rather than a usefixtures mark.
+    del enabled
     response = client.patch(
         f"/v3/tenants/{generate_nanoid()}", json={"derivation_paused": True}
     )
@@ -578,5 +581,8 @@ def test_list_requires_the_paused_filter(
 
 
 def test_list_requires_the_service_secret(client: TestClient, enabled: str):
+    # The app has to boot (client) before the flag turns on (enabled), so the
+    # fixture stays an argument after client rather than a usefixtures mark.
+    del enabled
     response = client.get("/v3/tenants", params={"derivation_paused": "true"})
     assert response.status_code == 401, response.text

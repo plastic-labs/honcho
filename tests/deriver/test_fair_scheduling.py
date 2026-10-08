@@ -31,9 +31,10 @@ from src.backlog import outstanding_work_seconds
 from src.config import settings
 from src.crud.deriver import not_paused_clause
 from src.deriver import queue_manager as queue_manager_module
-from src.deriver.enqueue import _stamp_tenant_id
+from src.deriver.enqueue import _stamp_tenant_id  # pyright: ignore[reportPrivateUsage]
 from src.deriver.queue_manager import QueueManager
-from tests.deriver.conftest import SeedWorkUnit, _read_batch_keys
+from src.telemetry import prometheus_metrics
+from tests.deriver.conftest import SeedWorkUnit, read_batch_keys
 
 # The tenant ids used as batch-table partitions. They are opaque strings on a
 # no-FK attribution column, so a test may mint whatever reads clearly.
@@ -654,7 +655,7 @@ class TestThePauseSeam:
         first_claim = await QueueManager().get_and_claim_work_units()
         assert set(first_claim) == {live_key, reconciler_key}
         # Skipped, not drained.
-        assert await _read_batch_keys(db_session) == {
+        assert await read_batch_keys(db_session) == {
             *paused_keys,
             live_key,
             reconciler_key,
@@ -813,7 +814,7 @@ class TestTheQueueLaneCheck:
 
         await db_session.commit()
 
-        assert await _read_batch_keys(db_session) == {
+        assert await read_batch_keys(db_session) == {
             "reconciler:sync_vectors",
             representation_key(LIVE_TENANT, "with-workspace"),
         }
@@ -873,7 +874,7 @@ class TestThePoolDerivedWorkerCap:
         # gauge can only be observed with metrics turned on.
         monkeypatch.setattr(settings.METRICS, "ENABLED", True)
         monkeypatch.setattr(
-            queue_manager_module.prometheus_metrics,
+            prometheus_metrics,
             "set_deriver_effective_worker_cap",
             published_caps.append,
         )
