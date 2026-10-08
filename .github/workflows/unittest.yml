@@ -138,10 +138,9 @@ jobs:
           SUMMARY_PROVIDER: openai
           SUMMARY_MODEL: test
 
-  # The migration suite is excluded from test-python (pyproject addopts
-  # --ignore=tests/alembic) because it creates and drops its own database
-  # and cannot share it across xdist workers. An explicit path overrides the
-  # ignore; -n 0 overrides -n auto.
+  # tests/alembic is excluded from test-python by the pyproject addopts
+  # (--ignore=tests/alembic). It creates and drops a fixed-name database, so
+  # it runs with -n 0. An explicit path overrides the ignore.
   test-alembic:
     needs: changes
     if: ${{ needs.changes.outputs.python == 'true' }}
