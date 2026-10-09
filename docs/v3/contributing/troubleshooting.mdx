@@ -229,6 +229,12 @@ CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE INDEX CONCURRENTLY ix_messages_content_trgm ON "<schema>".messages USING gin (content gin_trgm_ops);
 ```
 
+### Migration waits a long time on "Building ix_messages_content_trgm concurrently"
+
+**Cause:** A concurrent index build waits for every open transaction that has touched `messages` (including sessions left `idle in transaction`), and then for every transaction in the database still holding an older snapshot, such as a long-running query on any table. Either one holds it up, and the build itself takes time proportional to the size of `messages`. The migration gives up after 60 minutes and leaves an invalid index, which the next run drops and rebuilds.
+
+**Fix:** On large or busy databases, build the index before upgrading, with the `CREATE INDEX CONCURRENTLY` statement above. The migration then finds it and returns immediately. To see what the build is waiting on, check `pg_stat_activity` for sessions in `idle in transaction` and for old `xact_start` or `backend_xmin` values.
+
 ## Cache & Redis
 
 ### Redis is optional

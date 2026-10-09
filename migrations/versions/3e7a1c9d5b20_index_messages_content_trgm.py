@@ -12,11 +12,17 @@ The index is built CONCURRENTLY so message writes are not blocked during the
 build. That cannot run inside a transaction, so it runs in an autocommit
 block. The migration connection carries a 1s lock_timeout (from
 src.migrate.run_with_lock_retry) and a 5 minute statement_timeout (from
-env.py), and a concurrent build waits for every open transaction on the table
-before it starts, so both are replaced for the build: no lock_timeout, and a
-statement_timeout of BUILD_TIMEOUT so a stuck idle-in-transaction session
-fails the migration instead of hanging it. A build that fails part-way leaves
-an INVALID index behind, which is dropped and rebuilt on the next run.
+env.py). A concurrent build waits for every open transaction that has touched
+messages, and then for every transaction in the database still holding a
+snapshot older than the build: a long-running query or a REPEATABLE READ
+transaction, on any table. So both are replaced for the build: no
+lock_timeout, and a statement_timeout of BUILD_TIMEOUT so a stuck
+idle-in-transaction session fails the migration instead of hanging it. A build that fails part-way leaves an INVALID index
+behind, which is dropped and rebuilt on the next run.
+
+On a large or busy database, build the index ahead of the release with the
+same CREATE INDEX CONCURRENTLY statement; if_not_exists then makes this
+revision a no-op instead of holding the deploy for the length of the build.
 
 When env.py runs on a caller-supplied connection (the alembic test pipeline),
 the caller owns the surrounding transaction and an autocommit block can't
@@ -146,8 +152,10 @@ def upgrade() -> None:
                 if_exists=True,
             )
         logger.info(
-            "Building %s concurrently; waits for open transactions on messages",
+            "Building %s concurrently; waits for open transactions on messages"
+            + " and older snapshots anywhere in the database, up to %s",
             INDEX_NAME,
+            BUILD_TIMEOUT,
         )
         op.create_index(
             INDEX_NAME,

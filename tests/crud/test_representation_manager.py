@@ -1211,6 +1211,41 @@ class TestSemanticQueryFailureDegrades:
             assert recent == []
 
     @pytest.mark.asyncio
+    async def test_dropped_connection_on_write_session_propagates(
+        self,
+        db_engine: AsyncEngine,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """A transactional session is not rolled back: that would drop its writes."""
+        test_workspace, test_peer = sample_data
+        manager = RepresentationManager(
+            test_workspace.name, observer=test_peer.name, observed=test_peer.name
+        )
+
+        async def dropped_connection(db: AsyncSession, **_kwargs: object):
+            conn = await db.connection()
+            await conn.invalidate()
+            raise DBAPIError(
+                "SELECT 1",
+                {},
+                Exception("server closed the connection unexpectedly"),
+                connection_invalidated=True,
+            )
+
+        session_factory = async_sessionmaker(bind=db_engine, expire_on_commit=False)
+        async with session_factory() as write_db:
+            with (
+                patch(
+                    "src.crud.representation.crud.query_documents",
+                    side_effect=dropped_connection,
+                ),
+                pytest.raises(DBAPIError),
+            ):
+                await manager._query_documents_semantic(  # pyright: ignore[reportPrivateUsage]
+                    write_db, query="anything", top_k=5, embedding=[0.0] * 1536
+                )
+
+    @pytest.mark.asyncio
     async def test_non_db_error_still_degrades(
         self,
         db_engine: AsyncEngine,

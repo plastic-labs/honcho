@@ -8,7 +8,7 @@ from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.exc import DBAPIError
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from src import crud, exceptions, models, schemas
 from src.config import settings
@@ -30,6 +30,15 @@ from src.utils.sanitization import strip_nul
 from src.utils.types import embedding_call_purpose
 
 logger = logging.getLogger(__name__)
+
+
+def _is_autocommit(db: AsyncSession) -> bool:
+    """True when the session is bound to an AUTOCOMMIT (read-only) engine."""
+    bind = db.bind
+    return (
+        isinstance(bind, AsyncEngine)
+        and bind.get_execution_options().get("isolation_level") == "AUTOCOMMIT"
+    )
 
 
 def _observation_text(obs: ExplicitObservation | DeductiveObservation) -> str:
@@ -429,7 +438,9 @@ class RepresentationManager:
         transaction behind. A dropped connection can, though: SQLAlchemy
         invalidates it and refuses every further query on the session with
         PendingRollbackError until rollback() is called, so roll back before
-        degrading. Under AUTOCOMMIT the rollback is a no-op on the wire.
+        degrading. Under AUTOCOMMIT the rollback is a no-op on the wire. On a
+        transactional session it would discard the caller's uncommitted
+        writes, so there the error propagates instead.
         """
         try:
             if level:
@@ -462,6 +473,8 @@ class RepresentationManager:
 
         except DBAPIError as e:
             if e.connection_invalidated:
+                if not _is_autocommit(db):
+                    raise
                 await db.rollback()
             logger.exception("Error getting relevant observations")
             return []
