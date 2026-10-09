@@ -79,6 +79,22 @@ const answer = await peer.chat(query, { reasoningLevel: "high" });
 ```
 </CodeGroup>
 
+## Separating Retrieval from Instructions
+
+Before answering, peer chat prefetches the conclusions most similar to your `query`. If the query also carries instructions or formatting, that text pulls the embedding away from what you actually want recalled. Pass `semantic_query` to the HTTP API to embed a different string for the prefetch. The reasoning agent still receives `query` in full, and `semantic_query` defaults to `query` when omitted.
+
+```bash cURL
+curl -X POST "https://api.honcho.dev/v3/workspaces/$WORKSPACE/peers/$PEER/chat" \
+  -H "Authorization: Bearer $HONCHO_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "The user asked about the weather in Prague. Using what they have said before, what should I know to answer well?",
+    "semantic_query": "weather in Prague"
+  }'
+```
+
+The SDKs do not expose this parameter yet.
+
 ## Streaming Responses
 
 For longer answers, use streaming to get incremental responses:
