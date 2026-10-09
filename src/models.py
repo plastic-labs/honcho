@@ -273,6 +273,16 @@ class Message(Base):
             text("to_tsvector('english', content)"),
             postgresql_using="gin",
         ),
+        # Trigram index so content ILIKE '%q%' in message search can use an index.
+        # Declared unconditionally, but migration 3e7a1c9d5b20 skips it when
+        # pg_trgm is missing, so autogenerate against such a database will keep
+        # proposing it; drop that op from the generated revision.
+        Index(
+            "ix_messages_content_trgm",
+            "content",
+            postgresql_using="gin",
+            postgresql_ops={"content": "gin_trgm_ops"},
+        ),
     )
 
     @override

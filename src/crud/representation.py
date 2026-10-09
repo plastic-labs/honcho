@@ -7,7 +7,8 @@ from contextlib import suppress
 from typing import Any
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import DBAPIError
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from src import crud, exceptions, models, schemas
 from src.config import settings
@@ -29,6 +30,15 @@ from src.utils.sanitization import strip_nul
 from src.utils.types import embedding_call_purpose
 
 logger = logging.getLogger(__name__)
+
+
+def _is_autocommit(db: AsyncSession) -> bool:
+    """True when the session is bound to an AUTOCOMMIT (read-only) engine."""
+    bind = db.bind
+    return (
+        isinstance(bind, AsyncEngine)
+        and bind.get_execution_options().get("isolation_level") == "AUTOCOMMIT"
+    )
 
 
 def _observation_text(obs: ExplicitObservation | DeductiveObservation) -> str:
@@ -420,7 +430,18 @@ class RepresentationManager:
         embedding: list[float] | None = None,
         session_allowlist: list[str] | None = None,
     ) -> list[models.Document]:
-        """Query documents by semantic similarity."""
+        """Query documents by semantic similarity.
+
+        Failures degrade to no semantic observations so the representation can
+        still be built from the other sources. Callers pass read-only
+        (AUTOCOMMIT) sessions, so a failed statement can't leave an aborted
+        transaction behind. A dropped connection can, though: SQLAlchemy
+        invalidates it and refuses every further query on the session with
+        PendingRollbackError until rollback() is called, so roll back before
+        degrading. Under AUTOCOMMIT the rollback is a no-op on the wire. On a
+        transactional session it would discard the caller's uncommitted
+        writes, so there the error propagates instead.
+        """
         try:
             if level:
                 return await self._query_documents_for_level(
@@ -450,8 +471,15 @@ class RepresentationManager:
                 db.expunge_all()
                 return list(documents)
 
-        except Exception as e:
-            logger.error(f"Error getting relevant observations: {e}")
+        except DBAPIError as e:
+            if e.connection_invalidated:
+                if not _is_autocommit(db):
+                    raise
+                await db.rollback()
+            logger.exception("Error getting relevant observations")
+            return []
+        except Exception:
+            logger.exception("Error getting relevant observations")
             return []
 
     async def _query_documents_recent(
