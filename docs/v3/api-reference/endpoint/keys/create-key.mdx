@@ -13,3 +13,13 @@ carrying none of them is rejected. A key scoped to a peer or a session must also
 carry its `workspace_id`. On Honcho Cloud, pass either `admin=true` or a
 `workspace_id`.
 </Note>
+
+For a directly accessed Honcho instance with authentication enabled, pass
+`workspace_id` and `scope_id` to mint a JWT bound to a single named scope. It
+supports scoped recall and message ingestion; do not combine `scope_id` with
+`peer_id` or `session_id`. The scope must exist before the key is used. Existing
+keys and minting inputs keep their behavior.
+
+This new core JWT option does not add named-scope grants to Honcho Cloud's
+managed key service. See [named-scope keys](/v3/documentation/features/advanced/scopes#named-scope-api-keys)
+for allowed operations, SDK usage, and rollout requirements.
