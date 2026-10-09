@@ -47,7 +47,7 @@ The Honcho project is split between several repositories, with this one hosting 
 
 | I want to...                           | Path                                                       | Get started                   |
 | -------------------------------------- | ---------------------------------------------------------- | ----------------------------- |
-| Give my coding agent persistent memory | Claude Code, OpenCode, OpenClaw, Hermes, or any MCP client | [Integrations](#integrations) |
+| Give my coding agent persistent memory | Claude Code, OpenCode, Kilo Code, OpenClaw, Hermes, or any MCP client | [Integrations](#integrations) |
 | Add memory to my product               | Python or TypeScript SDK                                   | [Quickstart](#quickstart)     |
 | Run Honcho locally                     | Install CLI, then `honcho start --setup`                   | [CLI](#cli)                   |
 | Inspect a deployment                   | `honcho workspace inspect`, `honcho doctor`                | [CLI](#cli)                   |
@@ -61,7 +61,7 @@ The Honcho project is split between several repositories, with this one hosting 
 | Peer-centric model      | Tracks users, agents, groups, projects, and ideas as entities that change over time. |
 | Multi-peer perspective  | Models what one peer knows about another when configured.                            |
 | Managed or self-hosted  | Use `api.honcho.dev`, `honcho start` locally, or run the FastAPI server yourself.    |
-| Agent-tool integrations | MCP, Claude Code, OpenCode, OpenClaw, Hermes, Cursor-compatible clients.             |
+| Agent-tool integrations | MCP, Claude Code, OpenCode, Kilo Code, OpenClaw, Hermes, Cursor-compatible clients.  |
 
 ## The Honcho Loop
 
@@ -185,6 +185,7 @@ gives them one shared memory.
 | Cursor           | `curl -fsSL .../cursor-honcho/main/install.sh \| bash`  | [cursor-honcho](https://github.com/plastic-labs/cursor-honcho)     |
 | DeepSeek Harness | `dsh plugin --profile <name> add @honcho-ai/dsh-honcho` | [dsh-honcho](https://github.com/plastic-labs/dsh-honcho)           |
 | OpenCode         | `opencode plugin "@honcho-ai/opencode-honcho" --global` | [opencode-honcho](https://github.com/plastic-labs/opencode-honcho) |
+| Kilo Code        | `kilo plugin @honcho-ai/kilo-honcho --global`           | [kilo-honcho](kilo-honcho/)                                        |
 | OpenClaw         | `openclaw plugins install @honcho-ai/openclaw-honcho`   | [openclaw-honcho](https://github.com/plastic-labs/openclaw-honcho) |
 | Hermes           | `hermes memory setup`                                   | built in upstream                                                  |
 | Any MCP client   | `claude mcp add honcho --transport http ...`            | [MCP guide](https://honcho.dev/docs/v3/guides/integrations/mcp)    |
@@ -247,6 +248,15 @@ opencode plugin "@honcho-ai/opencode-honcho" --global
 ```
 
 Details: [OpenCode guide](https://honcho.dev/docs/v3/guides/integrations/opencode) · [repo](https://github.com/plastic-labs/opencode-honcho).
+
+### Kilo Code
+
+```bash
+kilo plugin @honcho-ai/kilo-honcho --global
+```
+
+One install covers the Kilo CLI, the VS Code extension, and the JetBrains plugin, since all three run the same Kilo server.
+Details: [Kilo Code guide](https://honcho.dev/docs/v3/guides/integrations/kilo) · [source](kilo-honcho/).
 
 ### OpenClaw
 
