@@ -11,3 +11,18 @@ dependencies = [
     "honcho-ai>=2.2.0,<3",
     "httpx>=0.27,<1",
 ]
+
+# Not installed by Hermes: `uv run --group test pytest tests` from this directory runs the unit suite
+# against a pinned Hermes, whose core modules (agent.*, hermes_cli.*, tools.*) the plugin imports.
+[dependency-groups]
+test = [
+    "hermes-agent @ git+https://github.com/NousResearch/hermes-agent@1e4952ddba1bc585416ad43438d60183380035cd",
+    "pytest==9.1.1",
+    "pytest-asyncio==1.3.0",
+]
+
+[tool.uv]
+package = false
+# Hermes' setup.py refuses wheel builds outside its Nix derivation (`HERMES_NIX_BUILD=1`) because
+# shell installs are editable; a pinned git build for tests is the same sealed-wheel case.
+extra-build-variables = { hermes-agent = { HERMES_NIX_BUILD = "1" } }
