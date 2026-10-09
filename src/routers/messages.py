@@ -11,8 +11,7 @@ from fastapi import (
     Query,
     UploadFile,
 )
-from fastapi_pagination import Page
-from fastapi_pagination.ext.sqlalchemy import apaginate
+from fastapi_pagination.bases import AbstractParams
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -26,6 +25,12 @@ from src.security import require_auth
 from src.telemetry import prometheus_metrics
 from src.telemetry.events import FileUploadedEvent, MessageCreatedEvent, emit
 from src.utils.files import process_file_uploads_for_messages
+from src.utils.pagination import (
+    CursorPage,
+    Page,
+    paginate_offset_or_cursor,
+    pagination_params,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -304,7 +309,7 @@ async def create_messages_with_file(
 
 @router.post(
     "/list",
-    response_model=Page[schemas.Message],
+    response_model=Page[schemas.Message] | CursorPage[schemas.Message],
     dependencies=[Depends(require_session_read)],
 )
 async def get_messages(
@@ -316,6 +321,7 @@ async def get_messages(
     reverse: bool | None = Query(
         False, description="Whether to reverse the order of results"
     ),
+    params: AbstractParams = Depends(pagination_params),
     db: AsyncSession = read_db,
 ):
     """Get all messages for a Session with optional filters. Results are paginated."""
@@ -333,7 +339,7 @@ async def get_messages(
             reverse=reverse,
         )
 
-        return await apaginate(db, messages_query)
+        return await paginate_offset_or_cursor(db, messages_query, params)
     except ValueError as e:
         logger.warning(f"Failed to get messages for session {session_id}: {str(e)}")
         raise ResourceNotFoundException("Session not found") from e

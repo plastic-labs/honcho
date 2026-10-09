@@ -4,8 +4,7 @@ import logging
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Response
 from fastapi.responses import StreamingResponse
-from fastapi_pagination import Page
-from fastapi_pagination.ext.sqlalchemy import apaginate
+from fastapi_pagination.bases import AbstractParams
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,6 +19,12 @@ from src.security import JWTParams, require_auth
 from src.telemetry import prometheus_metrics
 from src.utils.evidence import EvidenceAccumulator
 from src.utils.filter import MAX_SESSION_ALLOWLIST_ENTRIES
+from src.utils.pagination import (
+    CursorPage,
+    Page,
+    paginate_offset_or_cursor,
+    pagination_params,
+)
 from src.utils.schema_conversion import json_response_schema_to_pydantic
 from src.utils.scopes import validate_scope_read_option
 from src.utils.search import search
@@ -69,7 +74,7 @@ async def get_or_create_workspace(
 
 @router.post(
     "/list",
-    response_model=Page[schemas.Workspace],
+    response_model=Page[schemas.Workspace] | CursorPage[schemas.Workspace],
     dependencies=[Depends(require_auth(admin=True))],
 )
 async def get_all_workspaces(
@@ -77,6 +82,7 @@ async def get_all_workspaces(
         None, description="Filtering and pagination options for the workspaces list"
     ),
     reverse: bool = Query(False, description="Whether to reverse the order of results"),
+    params: AbstractParams = Depends(pagination_params),
     db: AsyncSession = read_db,
 ):
     """Get all Workspaces, paginated with optional filters."""
@@ -86,9 +92,10 @@ async def get_all_workspaces(
         if filter_param == {}:
             filter_param = None
 
-    return await apaginate(
+    return await paginate_offset_or_cursor(
         db,
         await crud.get_all_workspaces(filters=filter_param, reverse=reverse),
+        params,
     )
 
 

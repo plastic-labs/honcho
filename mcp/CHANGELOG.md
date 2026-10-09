@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 This package versions independently of the Honcho API, `@honcho-ai/sdk`, and host plugins.
 
-## [Unreleased]
+## [3.1.0] - 2026-10-07
 
 ### Added
 

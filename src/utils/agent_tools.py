@@ -264,6 +264,17 @@ def _truncate_tool_output(
     return truncated, original_chars, True
 
 
+def _truncation_metadata(was_truncated: bool, original_chars: int) -> dict[str, Any]:
+    """`ToolResult.metadata` fields that `AgentToolCallCompletedEvent` reads
+    to report truncation; empty when the output was not clamped."""
+    if not was_truncated:
+        return {}
+    return {
+        "was_truncated": True,
+        "result_chars_before_truncation": original_chars,
+    }
+
+
 def _maybe_truncated_result(output: str) -> "str | ToolResult":
     """Run `_truncate_tool_output` and wrap in `ToolResult` only when the
     output was actually clamped, so the truncation signal reaches the
@@ -277,10 +288,7 @@ def _maybe_truncated_result(output: str) -> "str | ToolResult":
         return content
     return ToolResult(
         content=content,
-        metadata={
-            "was_truncated": True,
-            "result_chars_before_truncation": original_chars,
-        },
+        metadata=_truncation_metadata(was_truncated, original_chars),
     )
 
 
@@ -1702,6 +1710,8 @@ async def _handle_search_memory(
         if ctx.agent_type in ("dialectic", "workspace_dialectic"):
             limit = _bounded_int(tool_input.get("top_k"), 20, hi=20)
             message_output = None
+            msg_truncated = False
+            msg_original = 0
             snippets = await crud.search_messages(
                 workspace_name=ctx.workspace_name,
                 session_name=ctx.session_name,
@@ -1714,11 +1724,15 @@ async def _handle_search_memory(
             )
             _record_snippet_evidence(ctx, snippets)
             if snippets:
-                message_output = _format_message_snippets(
+                message_output, msg_truncated, msg_original = _format_message_snippets(
                     snippets, f"for query '{query}'"
                 )
             if message_output:
-                fallback_meta = {**zero_hit_meta, "results_count": len(snippets)}
+                fallback_meta = {
+                    **zero_hit_meta,
+                    "results_count": len(snippets),
+                    **_truncation_metadata(msg_truncated, msg_original),
+                }
                 return ToolResult(
                     content=f"No observations yet. Message search results:\n\n{message_output}",
                     metadata=fallback_meta,
@@ -1812,8 +1826,13 @@ async def _handle_search_messages(
             content=f"No messages found for query '{query}'",
             metadata=search_meta,
         )
-    formatted = _format_message_snippets(snippets, f"for query '{query}'")
-    return ToolResult(content=formatted, metadata=search_meta)
+    formatted, was_truncated, original_chars = _format_message_snippets(
+        snippets, f"for query '{query}'"
+    )
+    return ToolResult(
+        content=formatted,
+        metadata={**search_meta, **_truncation_metadata(was_truncated, original_chars)},
+    )
 
 
 async def _handle_grep_messages(
@@ -2002,8 +2021,13 @@ async def _handle_search_messages_temporal(
             metadata=search_meta,
         )
 
-    formatted = _format_message_snippets(snippets, f"for query '{query}'{filter_desc}")
-    return ToolResult(content=formatted, metadata=search_meta)
+    formatted, was_truncated, original_chars = _format_message_snippets(
+        snippets, f"for query '{query}'{filter_desc}"
+    )
+    return ToolResult(
+        content=formatted,
+        metadata={**search_meta, **_truncation_metadata(was_truncated, original_chars)},
+    )
 
 
 async def _handle_get_recent_observations(
@@ -2118,15 +2142,31 @@ async def _handle_delete_observations(
     )
 
 
+def _omission_notice(shown: int, total: int) -> str:
+    """Notice appended when whole-snippet truncation drops some snippets."""
+    omitted = total - shown
+    if omitted <= 0:
+        return ""
+    return (
+        f"\n\n[{shown} of {total} snippets shown"
+        f" - {omitted} omitted to fit output budget]"
+    )
+
+
 def _format_message_snippets(
     snippets: list[tuple[list[models.Message], list[models.Message]]], desc: str
-) -> str:
+) -> tuple[str, bool, int]:
     """Format message snippets for output.
 
-    Returns bare `str` because callers concatenate it into other strings
-    or place it into `ToolResult.content`. Callers that need the
-    truncation telemetry signal route their own output through
-    `_maybe_truncated_result` themselves.
+    Truncates at whole-snippet boundaries rather than mid-snippet: when the
+    assembled output exceeds ``MAX_TOOL_OUTPUT_CHARS``, trailing snippets are
+    dropped and a ``[N of M snippets shown]`` notice is appended, so the model
+    sees that content was omitted and can narrow its query instead of
+    re-issuing a broad one that returns a byte-identical truncated payload.
+
+    Returns ``(text, was_truncated, original_chars_before_truncation)`` so
+    callers can thread the truncation signal into their ``ToolResult.metadata``
+    for ``AgentToolCallCompletedEvent``.
     """
     snippet_texts: list[str] = []
     total_matches = sum(len(matches) for matches, _ in snippets)
@@ -2143,16 +2183,41 @@ def _format_message_snippets(
             + "\n".join(lines)
         )
 
-    output = (
+    header = (
         f"Found {total_matches} matching messages in {len(snippets)} conversation snippets {desc}.\n"
         + "These are raw messages with no observation ID - do not cite them in "
         + "source_ids; use their text in premises/sources instead:\n\n"
-        + "\n\n".join(snippet_texts)
     )
-    # `[0]` extracts the truncated text — telemetry signal is discarded here
-    # because callers wrap the result into ToolResult themselves (and so any
-    # downstream truncation telemetry should come from the caller's path).
-    return _truncate_tool_output(output)[0]
+    full_output = header + "\n\n".join(snippet_texts)
+    original_chars = len(full_output)
+    max_chars = settings.LLM.MAX_TOOL_OUTPUT_CHARS
+    if original_chars <= max_chars:
+        return full_output, False, original_chars
+
+    # Whole-snippet truncation. For each retained prefix, compute the actual
+    # omission notice length (not a fixed reserve) so a snippet is never
+    # rejected for a notice that is actually shorter than the reservation.
+    shown_texts: list[str] = []
+    for text in snippet_texts:
+        candidate = header + "\n\n".join([*shown_texts, text])
+        remaining = len(snippet_texts) - len(shown_texts) - 1
+        notice = _omission_notice(len(shown_texts) + 1, len(snippet_texts))
+        if len(candidate) + (len(notice) if remaining else 0) <= max_chars:
+            shown_texts.append(text)
+        else:
+            break
+
+    if not shown_texts:
+        # Even the first snippet exceeds the budget on its own (the ~10k-char
+        # single-snippet case). Fall back to head-truncation of the whole
+        # output so the model still gets a leading portion plus a notice.
+        return _truncate_tool_output(full_output, max_chars)[0], True, original_chars
+
+    content = header + "\n\n".join(shown_texts)
+    omitted = len(snippet_texts) - len(shown_texts)
+    if omitted:
+        content += _omission_notice(len(shown_texts), len(snippet_texts))
+    return content, True, original_chars
 
 
 async def _handle_get_reasoning_chain(

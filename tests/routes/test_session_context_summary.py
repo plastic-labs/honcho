@@ -22,6 +22,7 @@ from nanoid import generate as generate_nanoid
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import schemas
+from src.config import settings
 from src.models import Peer, Workspace
 from src.routers.sessions import (
     _select_summary_for_context,  # pyright: ignore[reportPrivateUsage]
@@ -36,7 +37,7 @@ from src.utils.summarizer import (
 # explicit observations costing ~1176 tokens. Only the `peer_target` path pays
 # this, and the unified `config_summary` fixtures do not take that path.
 _FIXTURE_REPRESENTATION_TOKENS = 1176
-_SHORT_SUMMARY_CAP = 1000  # SUMMARY.MAX_TOKENS_SHORT default
+_SHORT_SUMMARY_CAP = settings.SUMMARY.MAX_TOKENS_SHORT
 
 
 def _summary_schema(token_count: int) -> schemas.Summary:
@@ -72,7 +73,7 @@ def test_representation_can_exhaust_the_budget_entirely() -> None:
 
 
 def test_a_conforming_summary_can_still_be_dropped() -> None:
-    """With that representation, 2500 leaves 529 — under `SUMMARY.MAX_TOKENS_SHORT`."""
+    """With that representation, 2500 leaves 529 for the summary, under its cap."""
     adjusted = 2500 - _FIXTURE_REPRESENTATION_TOKENS
     chosen, _, _ = _select_summary_for_context(
         _summary_schema(_SHORT_SUMMARY_CAP), None, adjusted, True
@@ -81,11 +82,10 @@ def test_a_conforming_summary_can_still_be_dropped() -> None:
 
 
 def test_fixture_limit_fits_any_conforming_summary() -> None:
-    """4000 leaves room even when a representation is subtracted."""
-    adjusted = 4000 - _FIXTURE_REPRESENTATION_TOKENS
-    assert int(adjusted * 0.4) >= _SHORT_SUMMARY_CAP
+    """The unified fixtures' 4000-token unscoped read fits a summary at its cap."""
+    assert int(4000 * 0.4) >= _SHORT_SUMMARY_CAP
     chosen, _, _ = _select_summary_for_context(
-        _summary_schema(_SHORT_SUMMARY_CAP), None, adjusted, True
+        _summary_schema(_SHORT_SUMMARY_CAP), None, 4000, True
     )
     assert chosen is not None
 

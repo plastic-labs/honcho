@@ -11,6 +11,37 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 - Session responses now expose nullable `last_message_at`, backfilled and maintained from the newest message timestamp. `POST /v3/workspaces/{workspace_id}/sessions/list` accepts `sort_by=created_at|last_message_at` alongside the existing `reverse` parameter, with stable ID tie-breaking and sessions without messages placed last in either direction (#965).
 
+## [3.3.0] - 2026-10-07
+
+### Added
+
+- ChromaDB vector store backend: set `VECTOR_STORE_TYPE=chromadb` and pick a client with `VECTOR_STORE_CHROMA_CLIENT_MODE`: `http` (self-hosted Chroma server, the default) or `cloud` (Chroma Cloud, needs `VECTOR_STORE_CHROMA_API_KEY`). Embedded `persistent` mode is rejected at startup, since it isn't safe across Honcho's API and deriver processes. Each Honcho namespace gets its own Chroma collection and index. Ships as an optional extra (`uv sync --extra chromadb`), so default installs and the Docker image don't include it (#868)
+- Custom instructions reach every agent, not just the deriver. A new top-level `custom_instructions` in workspace and session configuration is the shared fallback, and `summary`, `dialectic` (new section), `dream`, and `peer_card` each take their own `custom_instructions` override. Message, session, and workspace levels are checked in that order and the first that sets a value wins; within a level the module's value beats the shared one, and `""` means no instructions. `reasoning.custom_instructions` stays deriver-only, and `peer_card` instructions add to the dream instructions without falling back to the shared value. No migration: configuration is JSONB (#1303)
+- Telemetry records custom instructions. `representation.completed`, the summary event, `dialectic.completed`, and `dream.specialist` carry `custom_instructions_tokens` and `custom_instructions_source` (e.g. `session.shared`, `workspace.summary`); `llm.call.traced` links the injected text through `custom_instructions_ref`; Langfuse generations carry it under the `custom_instructions` metadata key. Additive fields, so `_schema_version` is unchanged (#1309)
+- `python -m src.migrate [revision]` runs migrations under a Postgres advisory lock, so replicas that start together no longer race on `alembic upgrade` (`tuple concurrently updated`). A waiter polls for up to `DB_MIGRATION_LOCK_WAIT_SECONDS` (default 300), then fails naming the holder's pid. `scripts/migrate_db.py` and `scripts/provision_db.py` wrap it (#1268)
+
+### Changed
+
+- The deriver prompt states the target peer's id as the subject of every conclusion about that peer, instead of "the target peer" or "the user" (#1273)
+- `search_messages` (and the `search_memory` fallback and `search_messages_temporal`) drops whole trailing snippets when its output exceeds the tool budget and appends `[N of M snippets shown - K omitted to fit output budget]`, instead of cutting the text mid-snippet with no notice. Tool-call telemetry reports `was_truncated` and the pre-truncation size (#1265)
+- Reconciler backfills are registered through a generic `Backfill` definition, each scheduled as `reconciler:backfill.<name>` only while it has pending rows. The existing document-sources backfill keeps its queue shape, so pre-3.3 workers sharing the queue still run it during a rolling deploy (#1275)
+- `/openapi.json` no longer hardcodes `https://api.honcho.dev` as its first server. Self-hosted `/docs` "Try it out" and generated clients target the origin they were served from; behind a prefix-stripping proxy, set `--root-path` (#1103)
+- Gemini `gemini-embedding-2` models embed up to 8192 input tokens instead of being capped at 2048. Other Gemini models keep the 2048 cap (#925)
+- `uv.lock` bumps `starlette` (1.0.0 → 1.6.0, CVE-2026-48710), `python-multipart`, `anyio`, and `idna` to patched versions, which the Docker image picks up through `uv sync --frozen` (#1266)
+- Session summaries ask for about 60% of their token cap instead of a hard word limit, leaving headroom so dense content finishes instead of being cut off mid-summary. The default caps rise from 1000/4000 to 1500/6000 (`SUMMARY_MAX_TOKENS_SHORT` / `SUMMARY_MAX_TOKENS_LONG`), so default summaries stay about the same length. When `SUMMARY_MODEL_CONFIG__MAX_OUTPUT_TOKENS` is set it is a ceiling: settings fail to load if either cap exceeds it, so a deployment that sets it below 6000 must lower the caps to match or raise it (#1318)
+- The deriver's semantic deduplication looks up candidates for the whole batch in one query instead of one query per conclusion (#1202)
+
+### Removed
+
+- `DIALECTIC_HISTORY_TOKEN_LIMIT` and `DREAM_HISTORY_TOKEN_LIMIT`, along with the unused `get_recent_history` agent tool they fed. A leftover value is ignored (#1308)
+
+### Fixed
+
+- Cloning a session matched the source's messages, peers, and cutoff message by session name alone, so it could copy a same-named session's data from another workspace or fail with a 500. Lookups are scoped to the workspace. Cloned messages also keep `token_count`, and cloning a session with no messages copies its peers and commits instead of returning a 201 for a session that was rolled back (#1284)
+- JWTs with an expiry (`--expires` on `scripts/generate_jwt.py`, `expires_at` on `POST /v3/keys`) failed every request with a 401, because `exp` was written as an ISO string instead of a NumericDate. Expiring keys now authenticate until they expire, and an expired key returns `JWT expired` (#1025)
+- OpenAI `gpt-6` models failed with a 400 `unsupported_parameter` because Honcho sent `max_tokens`; they now get `max_completion_tokens` like `gpt-5` and the o-series (#1233)
+- A summary that hits its cap while repeating itself (fewer than 35% distinct 4-word sequences) is discarded and the previous summary kept, instead of overwriting it. Rejections are counted in `summary_rejections{summary_type,reason}` (#1318)
+
 ## [3.2.2] - 2026-09-29
 
 ### Added

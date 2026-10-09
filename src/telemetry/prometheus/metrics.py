@@ -51,6 +51,12 @@ class TokenTypes(Enum):
     OUTPUT = "output"
 
 
+class PaginationShimOutcomes(Enum):
+    FIRST = "first"
+    HIT = "hit"
+    MISS = "miss"
+
+
 class DeriverTaskTypes(Enum):
     INGESTION = "ingestion"
     SUMMARY = "summary"
@@ -120,6 +126,12 @@ embed_now_tasks_shed_counter = NamespacedCounter(
     ["namespace"],
 )
 
+pagination_offset_shim_counter = NamespacedCounter(
+    "pagination_offset_shim",
+    "Offset-paginated list requests served by the offset shim, by outcome: first (page 1, always a fresh query), hit (sought from a stored position) or miss (no stored position, so an OFFSET query)",
+    ["namespace", "outcome"],
+)
+
 embed_now_tasks_in_flight_gauge = NamespacedGauge(
     "embed_now_tasks_in_flight",
     "Immediate-embed background tasks currently in flight for this process",
@@ -142,6 +154,14 @@ deriver_tokens_processed_counter = NamespacedCounter(
     "deriver_tokens_processed",
     "Total tokens processed by the deriver",
     ["namespace", "task_type", "token_type", "component"],
+)
+
+SUMMARY_REJECTION_DEGENERATE = "degenerate_repetition"
+
+summary_rejections_counter = NamespacedCounter(
+    "summary_rejections",
+    "Total summaries rejected by validation before persistence",
+    ["namespace", "summary_type", "reason"],
 )
 
 dialectic_tokens_processed_counter = NamespacedCounter(
@@ -358,6 +378,12 @@ class PrometheusMetrics:
         except Exception as e:
             self._handle_metric_error("record_embed_now_task_shed", e)
 
+    def record_pagination_offset_shim(self, outcome: PaginationShimOutcomes) -> None:
+        try:
+            pagination_offset_shim_counter.labels(outcome=outcome.value).inc()
+        except Exception as e:
+            self._handle_metric_error("record_pagination_offset_shim", e)
+
     def set_embed_now_tasks_in_flight(self, count: int) -> None:
         try:
             embed_now_tasks_in_flight_gauge.labels().set(count)
@@ -409,6 +435,14 @@ class PrometheusMetrics:
             ).inc(count)
         except Exception as e:
             self._handle_metric_error("record_deriver_tokens", e)
+
+    def record_summary_rejection(self, *, summary_type: str, reason: str) -> None:
+        try:
+            summary_rejections_counter.labels(
+                summary_type=summary_type, reason=reason
+            ).inc()
+        except Exception as e:
+            self._handle_metric_error("record_summary_rejection", e)
 
     def record_dialectic_tokens(
         self,
@@ -578,6 +612,10 @@ class PrometheusMetrics:
             # ai: embed_now fast path runs as an API-process background task
             self._touch(embed_now_tasks_shed_counter)
             self.set_embed_now_tasks_in_flight(0)
+            # ai: only processes that can take the shim path emit it (see src/utils/pagination.py)
+            if settings.CACHE.ENABLED and settings.CACHE.PAGINATION_OFFSET_SHIM:
+                for outcome in PaginationShimOutcomes:
+                    self._touch(pagination_offset_shim_counter, outcome=outcome.value)
 
             self.set_deriver_metrics()
             self.set_deriver_outstanding_work(seconds=0)
@@ -612,6 +650,13 @@ class PrometheusMetrics:
                         specialist_name=specialist.name,
                         token_type=token_type.value,
                     )
+            # summary rejections: summary_type x reason.
+            for summary_type in ("short", "long"):
+                self._touch(
+                    summary_rejections_counter,
+                    summary_type=summary_type,
+                    reason=SUMMARY_REJECTION_DEGENERATE,
+                )
             # ai: init at 0 so the gauge is visible before its first per-replica refresh
             self.set_message_embeddings_pending(count=0)
             if settings.DERIVER.SCHEDULER == "deriver":

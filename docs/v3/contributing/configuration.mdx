@@ -472,13 +472,15 @@ Session summaries provide compressed context for long conversations — short su
 SUMMARY_ENABLED=true
 SUMMARY_MODEL_CONFIG__TRANSPORT=openai
 SUMMARY_MODEL_CONFIG__MODEL=gpt-5.4-mini
-SUMMARY_MAX_TOKENS_SHORT=1000
-SUMMARY_MAX_TOKENS_LONG=4000
+SUMMARY_MAX_TOKENS_SHORT=1500
+SUMMARY_MAX_TOKENS_LONG=6000
 # SUMMARY_MODEL_CONFIG__THINKING_EFFORT=minimal
 # SUMMARY_MODEL_CONFIG__THINKING_BUDGET_TOKENS=1024
 SUMMARY_MESSAGES_PER_SHORT_SUMMARY=20
 SUMMARY_MESSAGES_PER_LONG_SUMMARY=60
 ```
+
+`SUMMARY_MAX_TOKENS_SHORT` / `SUMMARY_MAX_TOKENS_LONG` are the output caps for each summary call. The prompt asks for about 60% of the cap as a soft target, so a summary has room to finish instead of being cut off. If you set `SUMMARY_MODEL_CONFIG__MAX_OUTPUT_TOKENS`, it acts as a ceiling: startup fails if either summary cap is larger than it.
 
 **Dream Processing:**
 
@@ -594,6 +596,16 @@ CACHE_NAMESPACE=honcho
 CACHE_DEFAULT_TTL_SECONDS=300
 CACHE_DEFAULT_LOCK_TTL_SECONDS=5  # Cache stampede prevention
 ```
+
+With the cache enabled, offset-paginated list requests (`?page=N`) are also served faster: after each page, Honcho remembers where it ended, so the next page seeks straight to it instead of scanning past every earlier row. Responses are unchanged, except that `total` on pages after the first may be up to `CACHE_PAGINATION_COUNT_TTL_SECONDS` old.
+
+```bash
+CACHE_PAGINATION_OFFSET_SHIM=true
+CACHE_PAGINATION_POSITION_TTL_SECONDS=600
+CACHE_PAGINATION_COUNT_TTL_SECONDS=60
+```
+
+List endpoints also accept a `cursor` query parameter (empty for the first page, then each response's `next_page`), which pages by cursor with no count at all, with or without the cache.
 
 ### Webhooks
 
@@ -799,8 +811,8 @@ model = "gpt-5.4-mini"
 
 [summary]
 ENABLED = true
-MAX_TOKENS_SHORT = 1000
-MAX_TOKENS_LONG = 4000
+MAX_TOKENS_SHORT = 1500
+MAX_TOKENS_LONG = 6000
 
 [summary.model_config]
 transport = "openai"

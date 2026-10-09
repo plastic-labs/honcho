@@ -11,6 +11,12 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 - `Session.last_message_at` exposes the newest message timestamp, and sync/async `Honcho.sessions()` accept `sort_by="created_at" | "last_message_at"` while preserving `reverse` across pagination. Requires a Honcho server with the matching API support.
 
+## [2.6.0] - 2026-10-07
+
+### Added
+
+- `custom_instructions` on `WorkspaceConfiguration` and `SessionConfiguration` (the shared fallback) and on `SummaryConfiguration`, `DreamConfiguration`, and `PeerCardConfiguration`, plus a new `DialecticConfiguration` type under the `dialectic` key. Requires Honcho v3.3.0+ (#1303)
+
 ## [2.5.1] - 2026-09-22
 
 ### Added

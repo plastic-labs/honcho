@@ -1223,8 +1223,25 @@ class SummarySettings(HonchoSettings):
             )
         return data  # pyright: ignore[reportUnknownVariableType]
 
-    MAX_TOKENS_SHORT: Annotated[int, Field(default=1000, gt=0, le=10_000)] = 1000
-    MAX_TOKENS_LONG: Annotated[int, Field(default=4000, gt=0, le=20_000)] = 4000
+    # Per-call output caps. The prompt asks for a fraction of these as a soft
+    # target (SUMMARY_TARGET_RATIO in src/utils/summarizer.py), leaving the rest
+    # as headroom so a summary can finish instead of truncating.
+    MAX_TOKENS_SHORT: Annotated[int, Field(default=1500, gt=0, le=10_000)] = 1500
+    MAX_TOKENS_LONG: Annotated[int, Field(default=6000, gt=0, le=20_000)] = 6000
+
+    @model_validator(mode="after")
+    def _validate_caps_within_model_ceiling(self) -> "SummarySettings":
+        """Keep MODEL_CONFIG.max_output_tokens a ceiling over both summary caps."""
+        ceiling = self.MODEL_CONFIG.max_output_tokens
+        if ceiling is None:
+            return self
+        for name in ("MAX_TOKENS_SHORT", "MAX_TOKENS_LONG"):
+            if getattr(self, name) > ceiling:
+                raise ValueError(
+                    f"summary.{name} must not exceed "
+                    + "summary.MODEL_CONFIG.max_output_tokens"
+                )
+        return self
 
 
 class WebhookSettings(HonchoSettings):
@@ -1320,6 +1337,16 @@ class CacheSettings(HonchoSettings):
     DEFAULT_LOCK_TTL_SECONDS: Annotated[int, Field(default=5, ge=1, le=86_400)] = (
         5  # how long to hold a lock on a resource when fetching DB after cache miss
     )
+
+    # Serve offset-paginated list requests (`?page=N`) with a keyset seek from
+    # a cached position where possible; see src/utils/pagination.py.
+    PAGINATION_OFFSET_SHIM: bool = True
+    # ai: long enough to span a pause in a client's walk, short enough that abandoned walks expire
+    PAGINATION_POSITION_TTL_SECONDS: Annotated[
+        int, Field(default=600, ge=1, le=86_400)
+    ] = 600
+    # How stale `total` may be on pages after the first.
+    PAGINATION_COUNT_TTL_SECONDS: Annotated[int, Field(default=60, ge=1, le=3_600)] = 60
 
     # Polling interval while waiting for another worker's fetch lock. cashews
     # defaults to 0, which busy-spins the event loop for the whole wait.
