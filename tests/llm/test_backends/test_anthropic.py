@@ -335,6 +335,25 @@ async def test_anthropic_backend_skips_assistant_prefill_for_claude_4_models() -
     assert call["messages"][0]["content"].startswith("Hello\n\nRespond with valid JSON")
 
 
+@pytest.mark.parametrize(
+    ("model", "expected"),
+    [
+        ("claude-3-5-haiku-20241022", True),
+        ("claude-3-7-sonnet-latest", True),
+        ("claude-sonnet-4-5", False),
+        ("claude-haiku-4-5-20251001", False),
+        ("claude-opus-5-5", False),
+        ("claude-haiku-5-5", False),
+        ("claude-fable-5-1", False),
+    ],
+)
+def test_anthropic_backend_supports_assistant_prefill(
+    model: str, expected: bool
+) -> None:
+    supports = AnthropicBackend._supports_assistant_prefill  # pyright: ignore[reportPrivateUsage]
+    assert supports(model) is expected
+
+
 @pytest.mark.asyncio
 async def test_anthropic_backend_forwards_provider_params_passthroughs() -> None:
     """provider_params.extra_body/extra_headers/extra_query reach the Anthropic
