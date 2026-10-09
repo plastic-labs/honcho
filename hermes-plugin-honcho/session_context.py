@@ -6,6 +6,7 @@ import logging
 import re
 from typing import Any, Callable
 
+from .chat_signal import ChatAnswer, chat_with_signal, next_reasoning_level
 from .session_auth import HonchoAuthError
 
 logger = logging.getLogger("plugins.memory.honcho.session")
@@ -41,6 +42,19 @@ def usable_honcho_summary(text: object) -> str | None:
     if not cleaned or "<think" in lowered or "</think" in lowered or _PLANNING_HEAD_RE.search(cleaned):
         return None
     return cleaned
+
+
+def _capped_out_marker(level: str, iterations: int | None) -> str:
+    """Agent-visible marker appended to a capped-out dialectic answer (explicit tool calls only).
+
+    Honcho's cap-out is invisible in the answer text itself: a request that keeps calling tools
+    returns a tool-less synthesis that reads like a normal one. ``iterations`` is the tool loop's
+    own count, budget + 1 on a capped answer.
+    """
+    detail = f" at reasoning_level={level}" + (f", iterations={iterations}" if iterations is not None else "")
+    return (
+        f"\n\n[honcho: recall truncated — the dialectic tool loop capped out{detail}; treat this answer as incomplete]"
+    )
 
 
 class SessionContextMixin:
@@ -374,11 +388,17 @@ class SessionContextMixin:
     def dialectic_query(
         self, session_key: str, query: str, reasoning_level: str | None = None, peer: str = "user",
         apply_injection_cap: bool = True, raise_errors: bool = False,
+        mark_truncated: bool = False, retry_on_capped: bool | None = None,
     ) -> str:
         """Ask Honcho's dialectic endpoint about a peer (LLM on the backend; run off-thread).
         ``reasoning_level`` is honored only when dialecticDynamic is true. ``apply_injection_cap``
         clips to ``dialecticMaxChars`` (automatic injection only). ``raise_errors`` re-raises backend
         failures instead of returning "" so explicit tool calls can tell a timeout from an empty answer.
+        ``mark_truncated`` appends an agent-visible marker when Honcho reports the answer as capped
+        out (explicit tool calls pass True; automatic injection stays verbatim). ``retry_on_capped``
+        re-asks ONCE at the next reasoning level up on a capped-out answer — None defers to the
+        ``dialecticRetryOnCapped`` config, which is off by default, so no second request is spent
+        unless the operator opts in.
         Raises HonchoAuthError when credentials are rejected after a forced refresh and one retry.
 
         Args: session_key: The session key to query against. query: Natural language question.
@@ -389,6 +409,8 @@ class SessionContextMixin:
         Re-raise backend failures instead of returning "". Explicit tool calls pass True so a timeout or
         server error surfaces as an error, not as "no result" (#36098 issue 4: collapsing failures to ""
         made auth errors, timeouts, and genuinely-empty answers indistinguishable).
+        mark_truncated: Mark a capped-out answer as truncated in the returned text.
+        retry_on_capped: Force/forbid the single capped-out escalation for this call; None uses config.
         """
         session = self._cached_session(session_key)
         target_peer_id = self._resolve_peer_id(session, peer) if session else None
@@ -397,17 +419,27 @@ class SessionContextMixin:
         if len(query) > self._dialectic_max_input_chars:
             query = query[:self._dialectic_max_input_chars].rsplit(" ", 1)[0]
         level = reasoning_level if (self._dialectic_dynamic and reasoning_level) else self._dialectic_reasoning_level
+        retry = self._dialectic_retry_on_capped if retry_on_capped is None else retry_on_capped
 
-        def _chat_once() -> str:
+        def _chat(chat_level: str) -> ChatAnswer:
             # The AI peer observes others when allowed; otherwise each peer queries its own context.
             if self._ai_observes_others(session) and target_peer_id != session.assistant_peer_id:
                 observer = self._get_or_create_peer(session.assistant_peer_id)
-                return observer.chat(query, target=target_peer_id, reasoning_level=level) or ""
-            return self._get_or_create_peer(target_peer_id).chat(query, reasoning_level=level) or ""
+                return chat_with_signal(observer, query, target=target_peer_id, reasoning_level=chat_level)
+            return chat_with_signal(self._get_or_create_peer(target_peer_id), query, reasoning_level=chat_level)
+
+        def _chat_once() -> ChatAnswer:
+            return _chat(level)
+
         try:
-            result = self._authed_call("dialectic query", _chat_once)
+            answer = self._authed_call("dialectic query", _chat_once)
+            answer, answer_level = self._handle_capped_answer(answer, level, _chat, retry_on_capped=retry)
+            result = answer.content or ""
             cap = self._dialectic_max_chars if apply_injection_cap else 0
-            return result[:cap].rsplit(" ", 1)[0] + " …" if result and cap and len(result) > cap else result
+            result = result[:cap].rsplit(" ", 1)[0] + " …" if result and cap and len(result) > cap else result
+            if mark_truncated and answer.truncated:
+                result += _capped_out_marker(answer_level, answer.iterations)
+            return result
         except HonchoAuthError:
             raise
         except Exception as e:
@@ -415,3 +447,69 @@ class SessionContextMixin:
             if raise_errors:
                 raise
             return ""
+
+    def _handle_capped_answer(
+        self,
+        answer: ChatAnswer,
+        level: str,
+        chat: Callable[[str], ChatAnswer],
+        *,
+        retry_on_capped: bool,
+    ) -> tuple[ChatAnswer, str]:
+        """Report a capped-out dialectic answer, and optionally re-ask once one level up.
+
+        Returns the answer to use and the reasoning level that produced it. A capped answer is
+        retried at most ONCE: an escalated answer that is itself capped is reported, never
+        re-retried. ``capped_out`` None means Honcho did not say — treated as unknown, not as
+        complete, and never as a trigger to spend a second request.
+        """
+        if not answer.truncated:
+            if answer.capped_out is None and answer.iterations is not None:
+                logger.debug(
+                    "Honcho dialectic answer reported iterations=%s with no capped_out flag — truncation unknown",
+                    answer.iterations,
+                )
+            return answer, level
+        if not retry_on_capped:
+            logger.warning(
+                "Honcho dialectic answer truncated: the tool loop capped out (level=%s, iterations=%s) — "
+                "this is Honcho's tool-less synthesis, not a complete recall answer "
+                "(dialecticRetryOnCapped re-asks once at a higher level)",
+                level,
+                answer.iterations,
+            )
+            return answer, level
+        escalated = next_reasoning_level(level)
+        if escalated is None:
+            logger.warning(
+                "Honcho dialectic answer truncated (level=%s, iterations=%s) and no higher reasoning "
+                "level exists to escalate to — keeping the truncated answer",
+                level,
+                answer.iterations,
+            )
+            return answer, level
+        logger.warning(
+            "Honcho dialectic answer truncated (level=%s, iterations=%s); re-asking once at level=%s",
+            level,
+            answer.iterations,
+            escalated,
+        )
+        try:
+            retry_answer = self._authed_call("dialectic query (capped retry)", lambda: chat(escalated))
+        except HonchoAuthError:
+            raise
+        except Exception as e:
+            logger.warning("Honcho capped-out retry at level=%s failed (%s) — keeping the truncated answer", escalated, e)
+            return answer, level
+        if retry_answer.truncated:
+            logger.warning(
+                "Honcho capped-out retry at level=%s also capped out (iterations=%s) — not retrying again",
+                escalated,
+                retry_answer.iterations,
+            )
+        if not retry_answer.content:
+            logger.warning(
+                "Honcho capped-out retry at level=%s returned no content — keeping the truncated answer", escalated
+            )
+            return answer, level
+        return retry_answer, escalated
