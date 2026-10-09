@@ -4,34 +4,44 @@ Two paths, and which one runs depends on `peer_target`:
 
 - Without it, `summarizer.get_session_context` gives the summary 40% of the
   requested `tokens`.
-- With it, `sessions._select_summary_for_context` gives it 40% of what remains
-  *after* the peer representation and card are subtracted, so an observer with
-  many observations can starve a perfectly valid summary.
+- With it, `sessions._select_summary_for_context` gives it the same 40%, and
+  the peer card and representation are fitted into what remains, so an
+  observer with many observations can no longer starve a valid summary.
 
-Either way the caller just sees `summary: null`, indistinguishable from a
-session that has none, which is why both paths now log when they drop one.
+Either way a summary that does not fit leaves the caller with `summary: null`,
+indistinguishable from a session that has none, which is why both paths log
+when they drop one.
 """
 
 from __future__ import annotations
 
 import datetime as dt
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 from nanoid import generate as generate_nanoid
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src import schemas
+from src import crud, models, schemas
 from src.config import settings
 from src.models import Peer, Workspace
 from src.routers.sessions import (
+    _fit_representation_to_budget,  # pyright: ignore[reportPrivateUsage]
     _select_summary_for_context,  # pyright: ignore[reportPrivateUsage]
+)
+from src.utils.representation import (
+    DeductiveObservation,
+    ExplicitObservation,
+    Representation,
 )
 from src.utils.summarizer import (
     Summary,
     SummaryType,
     _save_summary,  # pyright: ignore[reportPrivateUsage]
 )
+from src.utils.tokens import estimate_tokens
+from tests.conftest import _content_to_embedding  # pyright: ignore[reportPrivateUsage]
 
 # Measured from CI run 33779689337: 12 messages from one peer produce 12
 # explicit observations costing ~1176 tokens. Only the `peer_target` path pays
@@ -165,3 +175,299 @@ async def test_fixture_path_ignores_representation_budget(
 
     assert data["summary"] is not None
     assert data.get("peer_representation") is None
+
+
+async def _seed_observations(
+    db_session: AsyncSession,
+    workspace: Workspace,
+    peer: Peer,
+    session_id: str,
+    count: int,
+) -> None:
+    """Store `count` explicit observations of `peer`, oldest first."""
+    db_session.add(
+        models.Collection(
+            workspace_name=workspace.name, observer=peer.name, observed=peer.name
+        )
+    )
+    await db_session.flush()
+    base = dt.datetime(2026, 1, 1, tzinfo=dt.UTC)
+    db_session.add_all(
+        [
+            models.Document(
+                workspace_name=workspace.name,
+                observer=peer.name,
+                observed=peer.name,
+                session_name=session_id,
+                content=(
+                    f"Observation number {i}: the peer described a long and "
+                    "detailed preference about their tooling and daily schedule"
+                ),
+                created_at=base + dt.timedelta(minutes=i),
+            )
+            for i in range(count)
+        ]
+    )
+    await db_session.commit()
+
+
+def _context_tokens(data: dict[str, Any]) -> int:
+    """Tokens of everything `get_context` returned, measured as served."""
+    total = estimate_tokens(data.get("peer_representation"))
+    total += estimate_tokens(data.get("peer_card"))
+    if data.get("summary"):
+        total += data["summary"]["token_count"]
+    return total + sum(m["token_count"] for m in data["messages"])
+
+
+async def test_tokens_bounds_the_representation_and_keeps_the_summary(
+    client: TestClient,
+    sample_data: tuple[Workspace, Peer],
+    db_session: AsyncSession,
+) -> None:
+    """`tokens` covers the representation too, so it cannot starve the summary.
+
+    60 observations render to well over 1000 tokens. The whole response must
+    still fit in `tokens=1000`, the summary must keep its 40% share, and the
+    representation keeps the newest observations rather than the oldest.
+    """
+    workspace, peer = sample_data
+    session_id = str(generate_nanoid())
+    client.post(
+        f"/v3/workspaces/{workspace.name}/sessions",
+        json={"id": session_id, "peers": {peer.name: {}}},
+    )
+    await _seed_observations(db_session, workspace, peer, session_id, 60)
+    await _save_summary(db_session, _stored_summary(99), workspace.name, session_id)
+    await db_session.commit()
+
+    url = f"/v3/workspaces/{workspace.name}/sessions/{session_id}/context"
+    unbounded = client.get(f"{url}?peer_target={peer.name}").json()
+    assert estimate_tokens(unbounded["peer_representation"]) > 1000
+
+    data = client.get(f"{url}?peer_target={peer.name}&tokens=1000").json()
+
+    assert _context_tokens(data) <= 1000
+    assert data["summary"] is not None
+    representation = data["peer_representation"]
+    assert "Observation number 59:" in representation
+    assert "Observation number 0:" not in representation
+
+
+async def test_messages_fill_only_what_the_representation_leaves(
+    client: TestClient,
+    sample_data: tuple[Workspace, Peer],
+    db_session: AsyncSession,
+) -> None:
+    """Messages share `tokens` with the representation instead of adding to it.
+
+    The representation fits whole and the messages alone exceed `tokens`, so
+    only the message budget decides whether the response stays in bounds.
+    """
+    workspace, peer = sample_data
+    session_id = str(generate_nanoid())
+    client.post(
+        f"/v3/workspaces/{workspace.name}/sessions",
+        json={"id": session_id, "peers": {peer.name: {}}},
+    )
+    await _seed_observations(db_session, workspace, peer, session_id, 10)
+    response = client.post(
+        f"/v3/workspaces/{workspace.name}/sessions/{session_id}/messages",
+        json={
+            "messages": [
+                {
+                    "content": (
+                        f"Message number {i}: the peer walked through a long "
+                        "and detailed plan for migrating their build pipeline"
+                    ),
+                    "peer_id": peer.name,
+                }
+                for i in range(80)
+            ]
+        },
+    )
+    assert response.status_code == 201
+    tokens = 1000
+    assert sum(m["token_count"] for m in response.json()) > tokens
+
+    url = f"/v3/workspaces/{workspace.name}/sessions/{session_id}/context"
+    data = client.get(f"{url}?peer_target={peer.name}&tokens={tokens}").json()
+
+    assert _context_tokens(data) <= tokens
+    for i in range(10):
+        assert f"Observation number {i}:" in data["peer_representation"]
+    assert data["messages"]
+    assert data["messages"][-1]["content"].startswith("Message number 79:")
+
+
+async def test_representation_within_budget_is_served_whole(
+    client: TestClient,
+    sample_data: tuple[Workspace, Peer],
+    db_session: AsyncSession,
+) -> None:
+    """A representation that already fits is not trimmed."""
+    workspace, peer = sample_data
+    session_id = str(generate_nanoid())
+    client.post(
+        f"/v3/workspaces/{workspace.name}/sessions",
+        json={"id": session_id, "peers": {peer.name: {}}},
+    )
+    await _seed_observations(db_session, workspace, peer, session_id, 5)
+    await _save_summary(db_session, _stored_summary(99), workspace.name, session_id)
+    await db_session.commit()
+
+    url = f"/v3/workspaces/{workspace.name}/sessions/{session_id}/context"
+    data = client.get(f"{url}?peer_target={peer.name}&tokens=4000").json()
+
+    assert data["summary"] is not None
+    for i in range(5):
+        assert f"Observation number {i}:" in data["peer_representation"]
+
+
+async def test_tight_budget_keeps_the_search_match_over_recent_filler(
+    client: TestClient,
+    sample_data: tuple[Workspace, Peer],
+    db_session: AsyncSession,
+) -> None:
+    """With `search_query`, trimming drops recent filler before the match.
+
+    The one semantic match is older than ten unrelated observations that only
+    fill the rest of the representation. A budget that fits a couple of
+    observations must still serve the match, or `search_query` has no effect.
+    """
+    workspace, peer = sample_data
+    session_id = str(generate_nanoid())
+    client.post(
+        f"/v3/workspaces/{workspace.name}/sessions",
+        json={"id": session_id, "peers": {peer.name: {}}},
+    )
+    db_session.add(
+        models.Collection(
+            workspace_name=workspace.name, observer=peer.name, observed=peer.name
+        )
+    )
+    await db_session.flush()
+    match = "QUERY MATCH: the peer's favorite color is green"
+    base = dt.datetime(2026, 1, 1, tzinfo=dt.UTC)
+    contents = [match] + [
+        (
+            f"Unrelated observation {i}: the peer mentioned a long and detailed "
+            "preference about their tooling and daily schedule"
+        )
+        for i in range(10)
+    ]
+    db_session.add_all(
+        [
+            models.Document(
+                workspace_name=workspace.name,
+                observer=peer.name,
+                observed=peer.name,
+                session_name=session_id,
+                content=content,
+                level="explicit",
+                embedding=_content_to_embedding(content),
+                created_at=base + dt.timedelta(minutes=i),
+            )
+            for i, content in enumerate(contents)
+        ]
+    )
+    await db_session.commit()
+
+    url = f"/v3/workspaces/{workspace.name}/sessions/{session_id}/context"
+    params = {"peer_target": peer.name, "search_query": match, "search_top_k": 1}
+    unbounded = client.get(url, params=params).json()["peer_representation"]
+    assert match in unbounded
+    assert "Unrelated observation 9:" in unbounded
+
+    data = client.get(url, params={**params, "tokens": 60}).json()
+
+    assert _context_tokens(data) <= 60
+    representation = data["peer_representation"]
+    assert match in representation
+    assert "Unrelated observation 0:" not in representation
+
+
+async def test_peer_card_is_served_when_it_fits_and_dropped_when_not(
+    client: TestClient,
+    sample_data: tuple[Workspace, Peer],
+    db_session: AsyncSession,
+) -> None:
+    """The peer card counts toward `tokens` and is omitted, not overrun."""
+    workspace, peer = sample_data
+    session_id = str(generate_nanoid())
+    client.post(
+        f"/v3/workspaces/{workspace.name}/sessions",
+        json={"id": session_id, "peers": {peer.name: {}}},
+    )
+    card = [f"Card fact {i}: the peer works on distributed systems" for i in range(8)]
+    await crud.set_peer_card(
+        db_session, workspace.name, card, observer=peer.name, observed=peer.name
+    )
+    await db_session.commit()
+    card_tokens = estimate_tokens(card)
+
+    url = f"/v3/workspaces/{workspace.name}/sessions/{session_id}/context"
+    fits = client.get(f"{url}?peer_target={peer.name}&tokens={card_tokens}").json()
+    assert fits["peer_card"] == card
+    assert _context_tokens(fits) <= card_tokens
+
+    tight = client.get(f"{url}?peer_target={peer.name}&tokens={card_tokens - 1}")
+    data = tight.json()
+    assert data["peer_card"] is None
+    assert _context_tokens(data) <= card_tokens - 1
+
+
+def _mixed_representation() -> Representation:
+    """Explicit and deductive observations interleaved in time."""
+    base = dt.datetime(2026, 1, 1, tzinfo=dt.UTC)
+    return Representation(
+        explicit=[
+            ExplicitObservation(
+                id=f"e{i}",
+                content=f"explicit {i}",
+                created_at=base + dt.timedelta(minutes=2 * i),
+                message_ids=[i],
+            )
+            for i in range(3)
+        ],
+        deductive=[
+            DeductiveObservation(
+                id=f"d{i}",
+                conclusion=f"deductive {i}",
+                premises=[f"explicit {i}"],
+                created_at=base + dt.timedelta(minutes=2 * i + 1),
+                message_ids=[i],
+            )
+            for i in range(3)
+        ],
+    )
+
+
+def test_keep_top_counts_across_levels() -> None:
+    kept = _mixed_representation().keep_top(3)
+    assert [o.content for o in kept.explicit] == ["explicit 2"]
+    assert [o.conclusion for o in kept.deductive] == ["deductive 1", "deductive 2"]
+
+
+def test_keep_top_puts_ranked_ids_ahead_of_recency() -> None:
+    representation = _mixed_representation()
+    kept = representation.keep_top(2, ranked_ids=["e0"])
+    assert [o.content for o in kept.explicit] == ["explicit 0"]
+    assert [o.conclusion for o in kept.deductive] == ["deductive 2"]
+
+
+def test_fit_representation_keeps_the_newest_that_fit() -> None:
+    representation = _mixed_representation()
+    full = estimate_tokens(representation.format_as_markdown())
+
+    assert _fit_representation_to_budget(representation, full) is representation
+
+    trimmed = _fit_representation_to_budget(representation, full - 1)
+    assert 0 < trimmed.len() < representation.len()
+    assert estimate_tokens(trimmed.format_as_markdown()) <= full - 1
+    assert trimmed.deductive[-1].conclusion == "deductive 2"
+
+    assert _fit_representation_to_budget(representation, 0).is_empty()
+
+    ranked = _fit_representation_to_budget(representation, full - 1, ["e0"])
+    assert ranked.explicit[0].content == "explicit 0"
