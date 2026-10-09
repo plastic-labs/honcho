@@ -253,6 +253,7 @@ class ToolResult:
     """
 
     content: str
+    # disable_tool=True retires this tool for the remaining tool-loop invocation.
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __contains__(self, item: object) -> bool:
