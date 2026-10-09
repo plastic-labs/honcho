@@ -164,6 +164,9 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
         self._prefetch_thread_started_at: float = 0.0
         self._prefetch_result_fired_at: int = -999
         self._dialectic_empty_streak: int = 0
+        # Set once a process that starts past turn 1 has replayed the previous turn's refresh.
+        self._resume_catch_up_done = False
+        self._previous_turn_message = ""
 
         # Tools-only mode may defer session initialization until a tool call.
         self._session_initialized = False
@@ -599,6 +602,75 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
             return self._log_injection("fetched-but-empty")
         return self._log_injection("injected", self._truncate_to_budget("\n\n".join(parts)))
 
+    def _previous_user_message(self) -> str:
+        """The user message that opened the previous turn.
+
+        Hermes passes it from its own transcript. Honcho's copy, rejoined from the chunks
+        sync_turn stored, is only a fallback: with saveMessages off nothing is stored."""
+        if self._previous_turn_message:
+            return self._previous_turn_message
+        try:
+            messages = list(self._manager.get_or_create(self._session_key).messages)
+        except Exception as e:
+            logger.debug("Honcho resumed session history unavailable: %s", e)
+            return ""
+        end = len(messages)
+        while end and messages[end - 1].get("role") != "user":
+            end -= 1
+        start = end
+        while start and messages[start - 1].get("role") == "user":
+            start -= 1
+        chunks = [str(m.get("content") or "") for m in messages[start:end]]
+        if not chunks:
+            return ""
+        return "\n".join([chunks[0], *(c.removeprefix("[continued] ") for c in chunks[1:])]).strip()
+
+    def _catch_up_budget(self) -> float:
+        """How long each catch-up step may wait: as long as a dialectic thread may run before it is stale."""
+        timeout = self._config.timeout if self._config and self._config.timeout else 8.0
+        return timeout * self._STALE_THREAD_MULTIPLIER
+
+    def _catch_up_resumed_session(self) -> None:
+        """Run the refresh the previous turn would have queued, and wait for it.
+
+        In a long-lived process, turn N's injection comes from the context and dialectic that
+        queue_prefetch() fired at the end of turn N-1, keyed on N-1's message. A process that
+        resumes a session starts at turn N with that refresh never fired, and later turns never
+        wait, so it would inject nothing. This replays it once with the same gates. Each step
+        waits as long as a dialectic thread may run before it is treated as stale."""
+        self._resume_catch_up_done = True
+        query = self._previous_user_message()
+        if not query or self._is_trivial_prompt(query):
+            return
+        previous_turn = self._turn_count - 1
+        budget = self._catch_up_budget()
+
+        with self._base_context_lock:
+            self._base_context_cache = ""
+            self._last_context_turn = previous_turn
+        if self._injection_frequency != "first-turn":
+            fetched: dict[str, dict] = {}
+
+            def _fetch_context() -> None:
+                fetched["ctx"] = self._manager.get_prefetch_context(self._session_key, query) or {}
+
+            self._spawn_write(_fetch_context, "honcho-resume-context",
+                              "Honcho resumed-session context fetch failed: %s").join(timeout=budget)
+            # Adopted before the dialectic runs: a live process holds base context by then,
+            # and the dialectic picks its warm, session-scoped prompt from that.
+            if formatted := self._format_first_turn_context(fetched.get("ctx") or {}):
+                with self._base_context_lock:
+                    self._base_context_cache = formatted
+
+        # Process start fired a generic prewarm; the live process fired it once, before turn 1.
+        if self._prefetch_thread is not None:
+            self._prefetch_thread.join(timeout=budget)
+        with self._prefetch_lock:
+            self._prefetch_result, self._prefetch_result_fired_at = "", -999
+        if previous_turn - self._last_dialectic_turn >= self._effective_cadence():
+            self._spawn_dialectic(query, thread_name="honcho-resume-dialectic", fired_at=previous_turn,
+                                  log_label="resumed-session dialectic").join(timeout=budget)
+
     def _pop_auth_notice(self) -> str:
         """One-time model-facing notice that Honcho auth expired and memory is paused."""
         # getattr (not a direct call): test fakes install minimal managers without pop_auth_notice.
@@ -721,8 +793,17 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
         several participants, and the peer resolved at session init only names whoever opened it."""
         self._recall_generation = object()
         self._turn_count = turn_number
+        self._previous_turn_message = kwargs.get("previous_message") or ""
         self._turn_author = {"id": kwargs.get("author_id") or None, "name": kwargs.get("author_name") or None,
                              "is_bot": bool(kwargs.get("author_is_bot"))}
+        # Here rather than in prefetch(): the memory manager abandons a prefetch after a few
+        # seconds, and the catch-up waits on Honcho as long as the refresh it replaces could.
+        if (turn_number > 1 and self._base_context_cache is None and not self._resume_catch_up_done
+                and not self._cron_skipped and self._recall_mode != "tools" and not self._recall_sync):
+            if self._init_thread is not None:
+                self._init_thread.join(timeout=self._catch_up_budget())
+            if self._session_ready():
+                self._catch_up_resumed_session()
 
     def on_session_switch(self, new_session_id: str, **kwargs) -> None:
         """Discard in-flight recall even when the configured backend session is pinned."""
