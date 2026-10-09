@@ -5,8 +5,8 @@ within a peer. Internally a scope is a peer named ``scope.<name>`` that
 observes its member sessions and never speaks; these routes are the facade
 that keeps the observer/observed mechanics hidden.
 
-All scopes routes require a workspace-level (or admin) key: scopes are an
-app-level admin surface, so peer- and session-scoped keys are rejected.
+Scope management requires a workspace-level (or admin) key. Named-scope keys
+can read their own scope, membership, and status; peer/session keys are rejected.
 
 Retroactive membership changes are handled asynchronously: adding a session
 that already has messages enqueues a backfill-by-copy job, removing a session
@@ -92,7 +92,13 @@ async def get_scopes(
 @router.get(
     "/{scope_id}",
     response_model=schemas.Scope,
-    dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
+    dependencies=[
+        Depends(
+            require_auth(
+                workspace_name="workspace_id", scope_name="scope_id", allow_scope=True
+            )
+        )
+    ],
 )
 async def get_scope(
     workspace_id: str = Path(...),
@@ -167,7 +173,13 @@ async def remove_session_from_scope(
 @router.post(
     "/{scope_id}/sessions/list",
     response_model=Page[schemas.Session] | CursorPage[schemas.Session],
-    dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
+    dependencies=[
+        Depends(
+            require_auth(
+                workspace_name="workspace_id", scope_name="scope_id", allow_scope=True
+            )
+        )
+    ],
 )
 async def get_scope_sessions(
     workspace_id: str = Path(...),
@@ -196,7 +208,13 @@ async def get_scope_sessions(
 @router.get(
     "/{scope_id}/status",
     response_model=schemas.ScopeStatus,
-    dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
+    dependencies=[
+        Depends(
+            require_auth(
+                workspace_name="workspace_id", scope_name="scope_id", allow_scope=True
+            )
+        )
+    ],
     responses={
         404: {"model": schemas.ErrorResponse, "description": "Scope does not exist"},
     },

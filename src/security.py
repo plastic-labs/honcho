@@ -18,6 +18,10 @@ security = HTTPBearer(
     auto_error=False,
 )
 
+# Old servers reject an audience they were not configured to accept. Without
+# this, they would ignore `sc` and grant the token's parent workspace access.
+NAMED_SCOPE_AUDIENCE = "honcho:named-scope"
+
 
 #
 #  jwt params
@@ -40,6 +44,9 @@ class JWTParams(BaseModel):
     A peer key will allow the listing and creation of peer-level messages
     and querying the peer's dialectic endpoint.
 
+    A named-scope key permits scoped recall and ingestion in active member
+    sessions. Its dedicated audience makes older servers reject it safely.
+
     Names shortened to minimize token size. Timestamp is included
     so that many unique tokens can be generated for the same resource.
     Note that the timestamp itself is not used for security, and can
@@ -53,6 +60,7 @@ class JWTParams(BaseModel):
     `w`: (string) workspace name
     `p`: (string) peer name
     `s`: (string) session name
+    `sc`: (string) named scope; requires `w`, cannot be combined with `ad`/`p`/`s`
     """
 
     t: str = Field(default_factory=utc_now_iso)
@@ -61,6 +69,7 @@ class JWTParams(BaseModel):
     w: str | None = None
     p: str | None = None
     s: str | None = None
+    sc: str | None = None
 
 
 def create_admin_jwt() -> str:
@@ -72,12 +81,32 @@ def create_admin_jwt() -> str:
 
 def create_jwt(params: JWTParams) -> str:
     """Create a JWT from the given parameters."""
+    if params.sc is not None:
+        validate_named_scope_key(params)
     payload = {k: v for k, v in params.__dict__.items() if v is not None}
+    if params.sc is not None:
+        payload["aud"] = NAMED_SCOPE_AUDIENCE
     if not settings.AUTH.JWT_SECRET:
         raise ValueError("AUTH_JWT_SECRET is not set, cannot create JWT.")
     return jwt.encode(
         payload, settings.AUTH.JWT_SECRET.encode("utf-8"), algorithm="HS256"
     )
+
+
+def validate_named_scope_key(params: JWTParams) -> None:
+    """Validate named-scope claims at minting and verification, before admin bypass."""
+    # Schemas import JWTParams through the scope helpers.
+    from src.schemas import ScopeCreate
+
+    if not isinstance(params.sc, str) or not params.sc:
+        raise ValueError("A named-scope key requires a nonempty scope name")
+    ScopeCreate(name=params.sc)
+    if not isinstance(params.w, str) or not params.w:
+        raise ValueError("A named-scope key requires a workspace")
+    if params.ad or params.p is not None or params.s is not None:
+        raise ValueError(
+            "A named-scope key cannot include admin, peer, or session claims"
+        )
 
 
 def scope_requires_workspace(
@@ -109,9 +138,22 @@ def verify_jwt(token: str) -> JWTParams:
     try:
         if not settings.AUTH.JWT_SECRET:
             raise ValueError("AUTH_JWT_SECRET is not set, cannot verify JWT.")
-        decoded = jwt.decode(
-            token, settings.AUTH.JWT_SECRET.encode("utf-8"), algorithms=["HS256"]
-        )
+        secret = settings.AUTH.JWT_SECRET.encode("utf-8")
+        try:
+            # Preserve the legacy verifier for every existing key type.
+            decoded = jwt.decode(token, secret, algorithms=["HS256"])
+        except jwt.InvalidAudienceError:
+            decoded = jwt.decode(
+                token,
+                secret,
+                algorithms=["HS256"],
+                audience=NAMED_SCOPE_AUDIENCE,
+                options={"strict_aud": True},
+            )
+            if "sc" not in decoded:
+                raise AuthenticationException(
+                    "Named-scope audience requires a scope"
+                ) from None
         if "t" in decoded:
             params.t = decoded["t"]
         if "ad" in decoded:
@@ -124,6 +166,14 @@ def verify_jwt(token: str) -> JWTParams:
             params.p = decoded["p"] or None
         if "s" in decoded:
             params.s = decoded["s"] or None
+        if "sc" in decoded:
+            if decoded.get("aud") != NAMED_SCOPE_AUDIENCE:
+                raise AuthenticationException("Named-scope keys require their audience")
+            params.sc = decoded["sc"]
+            try:
+                validate_named_scope_key(params)
+            except ValueError as exc:
+                raise AuthenticationException("Invalid JWT scope") from exc
         # Token-shape invariant: a peer- or session-scoped token MUST also
         # carry its parent workspace, otherwise the route-level check cannot
         # rule out cross-workspace use.
@@ -146,6 +196,9 @@ def require_auth(
     peer_name: str | None = None,
     session_name: str | None = None,
     allow_member_read: bool = False,
+    allow_scope: bool = False,
+    scope_name: str | None = None,
+    authorize_body: bool = False,
 ):
     """
     Generate a dependency that requires authentication for the given parameters.
@@ -153,6 +206,12 @@ def require_auth(
     Set `allow_member_read=True` on read-only session routes to additionally
     grant access to peer-scoped keys whose peer is an active member of the
     session. Never set it on routes that mutate state.
+
+    `allow_scope` opts a route into named-scope keys (both reads and ingestion).
+    Session routes check active membership; recall routes must bind their view
+    to the key's scope in the handler. Other routes reject these keys by default.
+    `authorize_body` leaves legacy resource checks to a body-aware handler;
+    named-scope keys still undergo workspace/scope checks here first.
     """
 
     async def auth_dependency(
@@ -184,12 +243,16 @@ def require_auth(
             peer_name=peer_name_param,
             session_name=session_name_param,
             allow_member_read=allow_member_read,
+            allow_scope=allow_scope,
+            scope_name=request.path_params.get(scope_name) if scope_name else None,
+            authorize_body=authorize_body,
         )
 
     # Tag the closure so route-policy tests can introspect which routes opt into
     # member read without re-deriving it from HTTP method (an unreliable
     # read/write signal here — some read routes use POST for a richer body).
     auth_dependency.honcho_allow_member_read = allow_member_read  # pyright: ignore[reportFunctionMemberAccess]
+    auth_dependency.honcho_allow_scope = allow_scope  # pyright: ignore[reportFunctionMemberAccess]
 
     return auth_dependency
 
@@ -201,6 +264,9 @@ async def auth(
     peer_name: str | None = None,
     session_name: str | None = None,
     allow_member_read: bool = False,
+    allow_scope: bool = False,
+    scope_name: str | None = None,
+    authorize_body: bool = False,
 ) -> JWTParams:
     """Authenticate the given JWT and return the decoded parameters."""
     if not settings.AUTH.USE_AUTH:
@@ -219,7 +285,29 @@ async def auth(
     if admin:
         raise AuthenticationException("Resource requires admin privileges")
 
-    if not any([session_name, peer_name, workspace_name]):
+    # This must precede self-authorizing and workspace routes: a scope claim
+    # never degrades to its parent workspace's authority.
+    if jwt_params.sc is not None:
+        if (
+            not allow_scope
+            or not workspace_name
+            or jwt_params.w != workspace_name
+            or (scope_name is not None and scope_name != jwt_params.sc)
+        ):
+            raise AuthenticationException("JWT not permissioned for this resource")
+        from src.crud.scope import get_scope_or_raise
+        from src.crud.session import is_peer_in_session
+        from src.dependencies import tracked_db
+
+        async with tracked_db("auth.named_scope", read_only=True) as scope_db:
+            scope = await get_scope_or_raise(scope_db, workspace_name, jwt_params.sc)
+            if session_name and not await is_peer_in_session(
+                scope_db, workspace_name, session_name, scope.name
+            ):
+                raise AuthenticationException("JWT not permissioned for this resource")
+        return jwt_params
+
+    if authorize_body or not any([session_name, peer_name, workspace_name]):
         # Self-authorizing routes decode the token here and compare the claims
         # against body/path data inside the handler. This is needed for routes
         # whose resource identifier is not available to require_auth().

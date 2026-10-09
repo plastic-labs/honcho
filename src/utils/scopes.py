@@ -105,3 +105,14 @@ def validate_scope_read_option(
         raise AuthenticationException(
             "`scope` requires a workspace- or admin-level key"
         )
+
+
+def bind_scope_key(
+    scope: str | list[str] | None, jwt_params: JWTParams
+) -> str | list[str] | None:
+    """A named-scope key always recalls its own projection, including when omitted."""
+    if jwt_params.sc is None:
+        return scope
+    if scope is not None and scope != jwt_params.sc:
+        raise AuthenticationException("JWT not permissioned for this scope")
+    return jwt_params.sc
