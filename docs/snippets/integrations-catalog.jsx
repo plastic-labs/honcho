@@ -25,7 +25,7 @@ export const IntegrationsCatalog = () => {
       icon: "square-terminal",
       href: "#coding-agents",
       cta: "Pick your agent",
-      desc: "Long-term memory for Claude Code, Codex, OpenCode, Pi, and more — preferences and project context that survive context wipes.",
+      desc: "Long-term memory for Claude Code, Codex, OpenCode, Kilo Code, Pi, and more — preferences and project context that survive context wipes.",
     },
   ];
 
@@ -59,6 +59,7 @@ export const IntegrationsCatalog = () => {
         { name: "Pi", icon: "https://cdn.jsdelivr.net/npm/simple-icons@16.33.0/icons/pi.svg", href: "/v3/guides/community/pi-honcho-memory", desc: "Persistent memory extension for the pi coding agent CLI.", status: "community" },
         { name: "Codex", icon: "https://cdn.jsdelivr.net/npm/simple-icons@15.22.0/icons/openai.svg", href: "/v3/guides/integrations/codex", desc: "Lifecycle hooks capture Codex sessions and restore context on start.", status: "official" },
         { name: "OpenCode", icon: "https://cdn.jsdelivr.net/npm/simple-icons@16.33.0/icons/opencode.svg", href: "/v3/guides/integrations/opencode", desc: "Per-directory, per-repo, or branch-scoped session memory.", status: "official" },
+        { name: "Kilo Code", icon: "https://cdn.jsdelivr.net/npm/@lobehub/icons-static-svg@1.95.1/icons/kilocode.svg", href: "/v3/guides/integrations/kilo", desc: "Memory across the Kilo CLI, VS Code, and JetBrains from one install.", status: "official" },
         { name: "DeepSeek Harness", icon: "https://cdn.jsdelivr.net/npm/simple-icons@16.33.0/icons/deepseek.svg", href: "/v3/guides/integrations/deepseek-harness", desc: "Context injection, turn capture, and honcho_search for dsh.", status: "official" },
         { name: "Cline", icon: "https://cdn.jsdelivr.net/npm/simple-icons@16.33.0/icons/cline.svg", href: "/v3/guides/integrations/mcp#cline", desc: "Connect Cline to the Honcho MCP server.", status: "official", via: "MCP" },
         { name: "Cursor", icon: "https://cdn.jsdelivr.net/npm/simple-icons@16.33.0/icons/cursor.svg", href: "/v3/guides/integrations/mcp#cursor", desc: "Add Honcho as an HTTP MCP server in Cursor's global or per-project config.", status: "official", via: "MCP" },

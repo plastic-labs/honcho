@@ -4,8 +4,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from nanoid import generate as generate_nanoid
-from sqlalchemy import func, update
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import func, text, update
+from sqlalchemy.exc import DBAPIError
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from src import models
 from src.crud.document import CreateDocumentsResult
@@ -1120,3 +1121,150 @@ class TestVectorQueryTopKFloor:
                 )
 
         mock_get_store.assert_not_called()
+
+
+class TestSemanticQueryFailureDegrades:
+    """Semantic-query failures degrade to no observations on read-only sessions.
+
+    Production callers pass read-only sessions, which run in AUTOCOMMIT mode,
+    so these tests build one from the test engine rather than using the
+    transactional ``db_session`` fixture.
+    """
+
+    @asynccontextmanager
+    async def _read_session(self, db_engine: AsyncEngine):
+        session_factory = async_sessionmaker(
+            bind=db_engine.execution_options(isolation_level="AUTOCOMMIT"),
+            expire_on_commit=False,
+        )
+        async with session_factory() as session:
+            yield session
+
+    @pytest.mark.asyncio
+    async def test_semantic_query_runs_on_read_session(
+        self,
+        db_engine: AsyncEngine,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        test_workspace, test_peer = sample_data
+        manager = RepresentationManager(
+            test_workspace.name, observer=test_peer.name, observed=test_peer.name
+        )
+        doc = models.Document(
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer.name,
+            content="observation",
+        )
+
+        async def query_documents(db: AsyncSession, **_kwargs: object):
+            await db.execute(text("SELECT 1"))
+            return [doc]
+
+        async with self._read_session(db_engine) as read_db:
+            with patch(
+                "src.crud.representation.crud.query_documents",
+                side_effect=query_documents,
+            ):
+                semantic = await manager._query_documents_semantic(  # pyright: ignore[reportPrivateUsage]
+                    read_db, query="anything", top_k=5, embedding=[0.0] * 1536
+                )
+
+        assert semantic == [doc]
+
+    @pytest.mark.asyncio
+    async def test_dropped_connection_does_not_poison_session(
+        self,
+        db_engine: AsyncEngine,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        test_workspace, test_peer = sample_data
+        manager = RepresentationManager(
+            test_workspace.name, observer=test_peer.name, observed=test_peer.name
+        )
+
+        async def dropped_connection(db: AsyncSession, **_kwargs: object):
+            # A connection the server or pooler drops mid-query is invalidated by
+            # SQLAlchemy, which then refuses the session until rollback().
+            conn = await db.connection()
+            await conn.invalidate()
+            raise DBAPIError(
+                "SELECT 1",
+                {},
+                Exception("server closed the connection unexpectedly"),
+                connection_invalidated=True,
+            )
+
+        async with self._read_session(db_engine) as read_db:
+            await read_db.execute(text("SELECT 1"))
+            with patch(
+                "src.crud.representation.crud.query_documents",
+                side_effect=dropped_connection,
+            ):
+                semantic = await manager._query_documents_semantic(  # pyright: ignore[reportPrivateUsage]
+                    read_db, query="anything", top_k=5, embedding=[0.0] * 1536
+                )
+
+            assert semantic == []
+            # The next query on the same session must not raise PendingRollbackError.
+            recent = await manager._query_documents_recent(read_db, top_k=5)  # pyright: ignore[reportPrivateUsage]
+            assert recent == []
+
+    @pytest.mark.asyncio
+    async def test_dropped_connection_on_write_session_propagates(
+        self,
+        db_engine: AsyncEngine,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """A transactional session is not rolled back: that would drop its writes."""
+        test_workspace, test_peer = sample_data
+        manager = RepresentationManager(
+            test_workspace.name, observer=test_peer.name, observed=test_peer.name
+        )
+
+        async def dropped_connection(db: AsyncSession, **_kwargs: object):
+            conn = await db.connection()
+            await conn.invalidate()
+            raise DBAPIError(
+                "SELECT 1",
+                {},
+                Exception("server closed the connection unexpectedly"),
+                connection_invalidated=True,
+            )
+
+        session_factory = async_sessionmaker(bind=db_engine, expire_on_commit=False)
+        async with session_factory() as write_db:
+            with (
+                patch(
+                    "src.crud.representation.crud.query_documents",
+                    side_effect=dropped_connection,
+                ),
+                pytest.raises(DBAPIError),
+            ):
+                await manager._query_documents_semantic(  # pyright: ignore[reportPrivateUsage]
+                    write_db, query="anything", top_k=5, embedding=[0.0] * 1536
+                )
+
+    @pytest.mark.asyncio
+    async def test_non_db_error_still_degrades(
+        self,
+        db_engine: AsyncEngine,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        test_workspace, test_peer = sample_data
+        manager = RepresentationManager(
+            test_workspace.name, observer=test_peer.name, observed=test_peer.name
+        )
+
+        async with self._read_session(db_engine) as read_db:
+            with patch(
+                "src.crud.representation.crud.query_documents",
+                side_effect=RuntimeError("embedding service unavailable"),
+            ):
+                semantic = await manager._query_documents_semantic(  # pyright: ignore[reportPrivateUsage]
+                    read_db, query="anything", top_k=5, embedding=[0.0] * 1536
+                )
+
+            assert semantic == []
+            recent = await manager._query_documents_recent(read_db, top_k=5)  # pyright: ignore[reportPrivateUsage]
+            assert recent == []
