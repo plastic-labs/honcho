@@ -1167,3 +1167,114 @@ class TestComputeChunkPositions:
         assert positions[a0] == 0
         assert positions[a1] == 1
         assert positions[b0] == 0
+
+
+@pytest.mark.asyncio
+class TestOversizeMessageEmbeddingReembed:
+    """Regression test for #1327: the message-embedding re-embed path must
+    truncate oversize inputs instead of raising and failing the whole batch.
+
+    The fake simple_batch_embed mimics the real client's contract: it raises
+    EmbeddingTokenLimitError unless called with on_oversize="truncate", so a
+    revert of the fix fails this test.
+    """
+
+    async def _create_pending_message_embeddings(
+        self,
+        db_session: AsyncSession,
+        workspace: models.Workspace,
+        peer: models.Peer,
+        contents: list[str],
+    ) -> list[models.MessageEmbedding]:
+        session = models.Session(
+            name=str(generate_nanoid()), workspace_name=workspace.name
+        )
+        db_session.add(session)
+        await db_session.commit()
+
+        rows: list[models.MessageEmbedding] = []
+        for i, content in enumerate(contents):
+            message = models.Message(
+                public_id=str(generate_nanoid()),
+                session_name=session.name,
+                workspace_name=workspace.name,
+                peer_name=peer.name,
+                content=content,
+                seq_in_session=i + 1,
+            )
+            db_session.add(message)
+            await db_session.commit()
+            emb = models.MessageEmbedding(
+                content=content,
+                message_id=message.public_id,
+                workspace_name=workspace.name,
+                session_name=session.name,
+                peer_name=peer.name,
+                sync_state="pending",
+                embedding=None,
+            )
+            db_session.add(emb)
+            await db_session.commit()
+            await db_session.refresh(emb)
+            rows.append(emb)
+        return rows
+
+    async def test_oversize_row_does_not_fail_the_batch(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+        mock_vector_store: VectorStore,
+    ) -> None:
+        """An oversize row must not drop the other rows claimed in the batch.
+
+        Mirrors the real client's contract: simple_batch_embed raises
+        EmbeddingTokenLimitError unless called with on_oversize="truncate",
+        in which case it embeds a token-capped prefix.
+        """
+        from src.embedding_client import EmbeddingTokenLimitError
+
+        workspace, peer = sample_data
+        embs = await self._create_pending_message_embeddings(
+            db_session,
+            workspace,
+            peer,
+            ["short a", "o" * 20, "short b"],
+        )
+        # Match rows by content so label/position drift can't hide a bug.
+        oversize = next(e for e in embs if len(e.content) > 12)
+        short_a, short_b = [e for e in embs if e is not oversize]
+
+        called_kwargs: list[dict[str, object]] = []
+
+        async def fake_simple_batch_embed(
+            texts: list[str], **kwargs: object
+        ) -> list[list[float]]:
+            called_kwargs.append(kwargs)
+            # Behave exactly like the real client: raise unless the caller
+            # opted into truncation (this is the regression being pinned).
+            if kwargs.get("on_oversize") != "truncate":
+                for text in texts:
+                    if len(text) > 12:  # pretend-tokenizer cap
+                        raise EmbeddingTokenLimitError(
+                            f"Text exceeds maximum token limit: {text[:20]!r}"
+                        )
+            return [[float(sum(map(ord, text)) % 97) / 97.0] * 1024 for text in texts]
+
+        with patch(
+            "src.embedding_client.embedding_client.simple_batch_embed",
+            side_effect=fake_simple_batch_embed,
+        ):
+            synced, failed = await _sync_message_embeddings(
+                db_session, embs, mock_vector_store
+            )
+
+        # The reconciler must opt into truncation...
+        assert called_kwargs, "simple_batch_embed was not called"
+        assert all(kwargs.get("on_oversize") == "truncate" for kwargs in called_kwargs)
+        # ...and a batch containing an oversize row must still succeed.
+        assert synced == 3
+        assert failed == 0
+        for emb in (oversize, short_a, short_b):
+            await db_session.refresh(emb)
+            assert emb.sync_state == "synced"
+            assert emb.sync_attempts == 0
