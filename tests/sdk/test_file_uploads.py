@@ -1,5 +1,6 @@
 import json
 from datetime import UTC
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -305,31 +306,40 @@ async def test_file_upload_with_configuration(
     text_file = BytesIO(text_content.encode("utf-8"))
     text_file.name = "test_config.txt"
 
-    configuration = {"skip_deriver": True, "custom_flag": "test"}
+    # Non-default values so a silently dropped configuration would fail.
+    configuration = {
+        "reasoning": {"enabled": False, "custom_instructions": "Focus on dates."}
+    }
 
-    if client_type == "async":
-        session = await honcho_client.aio.session(id="test-session-config")
-        user = await honcho_client.aio.peer(id="user-config")
-        messages = await session.aio.upload_file(
-            file=text_file,
-            peer=user.id,
-            configuration=configuration,
-        )
-    else:
-        session = honcho_client.session(id="test-session-config")
-        user = honcho_client.peer(id="user-config")
-        messages = session.upload_file(
-            file=text_file,
-            peer=user.id,
-            configuration=configuration,
-        )
+    with patch("src.routers.messages.enqueue", new=AsyncMock()) as mock_enqueue:
+        if client_type == "async":
+            session = await honcho_client.aio.session(id="test-session-config")
+            user = await honcho_client.aio.peer(id="user-config")
+            messages = await session.aio.upload_file(
+                file=text_file,
+                peer=user.id,
+                configuration=configuration,
+            )
+        else:
+            session = honcho_client.session(id="test-session-config")
+            user = honcho_client.peer(id="user-config")
+            messages = session.upload_file(
+                file=text_file,
+                peer=user.id,
+                configuration=configuration,
+            )
 
     assert len(messages) >= 1
     assert text_content in messages[0].content
     assert messages[0].peer_id == user.id
     assert messages[0].session_id == session.id
-    # Configuration is used during processing, not directly stored in message
-    # This test confirms the endpoint accepts it without error
+    # Configuration isn't stored on the message; it is forwarded to the deriver
+    # queue with every message created from the file.
+    assert mock_enqueue.await_args is not None
+    payloads = mock_enqueue.await_args.args[0]
+    assert len(payloads) == len(messages)
+    for payload in payloads:
+        assert payload["configuration"].model_dump(exclude_none=True) == configuration
 
 
 @pytest.mark.asyncio
@@ -395,30 +405,31 @@ async def test_file_upload_with_all_parameters(
     text_file.name = "test_all_params.txt"
 
     metadata: dict[str, object] = {"source": "comprehensive_test", "version": "1.0"}
-    configuration = {"skip_deriver": False, "test_mode": True}
+    configuration = {"reasoning": {"enabled": False}}
     test_timestamp = datetime(2023, 6, 20, 14, 15, 30, tzinfo=UTC)
     created_at_str = test_timestamp.isoformat()
 
-    if client_type == "async":
-        session = await honcho_client.aio.session(id="test-session-all")
-        user = await honcho_client.aio.peer(id="user-all")
-        messages = await session.aio.upload_file(
-            file=text_file,
-            peer=user.id,
-            metadata=metadata,
-            configuration=configuration,
-            created_at=created_at_str,
-        )
-    else:
-        session = honcho_client.session(id="test-session-all")
-        user = honcho_client.peer(id="user-all")
-        messages = session.upload_file(
-            file=text_file,
-            peer=user.id,
-            metadata=metadata,
-            configuration=configuration,
-            created_at=created_at_str,
-        )
+    with patch("src.routers.messages.enqueue", new=AsyncMock()) as mock_enqueue:
+        if client_type == "async":
+            session = await honcho_client.aio.session(id="test-session-all")
+            user = await honcho_client.aio.peer(id="user-all")
+            messages = await session.aio.upload_file(
+                file=text_file,
+                peer=user.id,
+                metadata=metadata,
+                configuration=configuration,
+                created_at=created_at_str,
+            )
+        else:
+            session = honcho_client.session(id="test-session-all")
+            user = honcho_client.peer(id="user-all")
+            messages = session.upload_file(
+                file=text_file,
+                peer=user.id,
+                metadata=metadata,
+                configuration=configuration,
+                created_at=created_at_str,
+            )
 
     assert len(messages) >= 1
     assert text_content in messages[0].content
@@ -430,6 +441,12 @@ async def test_file_upload_with_all_parameters(
     # Message.created_at from honcho_core is a datetime object
     message_timestamp = messages[0].created_at
     assert abs((message_timestamp - test_timestamp).total_seconds()) < 1
+    # Check configuration was forwarded to the deriver queue
+    assert mock_enqueue.await_args is not None
+    payloads = mock_enqueue.await_args.args[0]
+    assert len(payloads) == len(messages)
+    for payload in payloads:
+        assert payload["configuration"].model_dump(exclude_none=True) == configuration
 
 
 @pytest.mark.asyncio
