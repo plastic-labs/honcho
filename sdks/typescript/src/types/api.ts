@@ -487,3 +487,37 @@ export interface PageResponse<T> {
   total: number
   pages: number
 }
+
+/** A live page; active claims can disappear between requests. */
+export interface CursorPageResponse<T> {
+  items: T[]
+  next_page: string | null
+}
+
+/** Wire format for an active memory work attempt. */
+export interface QueueWorkUnitResponse {
+  id: string
+  task_type: 'representation' | 'summary' | 'dream'
+  workspace_id: string
+  session_id: string | null
+  observer: string | null
+  observers: string[]
+  observed: string | null
+  started_at: string | null
+  stage: string | null
+  last_activity_at: string | null
+}
+
+/** Last observed progress, without an estimated percentage or heartbeat. */
+export interface QueueWorkUnit {
+  id: string
+  taskType: 'representation' | 'summary' | 'dream'
+  workspaceId: string
+  sessionId: string | null
+  observer: string | null
+  observers: string[]
+  observed: string | null
+  startedAt: string | null
+  stage: string | null
+  lastActivityAt: string | null
+}

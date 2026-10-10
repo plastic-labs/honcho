@@ -519,6 +519,21 @@ class ConclusionQueryParams(BaseModel):
 # ==============================================================================
 
 
+class QueueWorkUnit(BaseModel):
+    """An active claim attempt; timestamps are unknown for pre-upgrade claims."""
+
+    id: str
+    task_type: Literal["representation", "summary", "dream"]
+    workspace_id: str
+    session_id: str | None = None
+    observer: str | None = None
+    observers: list[str] = Field(default_factory=list)
+    observed: str | None = None
+    started_at: datetime.datetime | None = None
+    stage: str | None = None
+    last_activity_at: datetime.datetime | None = None
+
+
 class SessionQueueStatus(BaseModel):
     """Status for a specific session in the queue."""
 

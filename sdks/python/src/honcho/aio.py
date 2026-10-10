@@ -39,6 +39,7 @@ from .api_types import (
     PeerContextResponse,
     PeerResponse,
     QueueStatusResponse,
+    QueueWorkUnit,
     RepresentationResponse,
     ScopeBackfillJob,
     ScopeResponse,
@@ -60,7 +61,7 @@ from .conclusions import (
 from .http import routes
 from .message import Message
 from .mixins import AsyncMetadataConfigMixin
-from .pagination import AsyncPage
+from .pagination import AsyncCursorPage, AsyncPage
 from .session_context import SessionContext, SessionSummaries, Summary
 from .types import AsyncDialecticStreamResponse, ChatResponse
 from .utils import (
@@ -660,6 +661,43 @@ class HonchoAio(AsyncMetadataConfigMixin):
             Message.from_api_response(MessageResponse.model_validate(item))
             for item in data
         ]
+
+    @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
+    async def queue_work_units(
+        self,
+        *,
+        task_type: Literal["representation", "summary", "dream"] | None = None,
+        observer: str | PeerBase | None = None,
+        sender: str | PeerBase | None = None,
+        session: str | SessionBase | None = None,
+        size: int = Field(default=50, ge=1, le=100),
+        cursor: str = "",
+    ) -> AsyncCursorPage[QueueWorkUnit]:
+        """List active memory attempts. Scope filters intersect; pages are live views.
+
+        Requires a workspace/admin key. Iterate to fetch subsequent pages, or
+        inspect ``items`` for only this page. Claims disappear after completion.
+        ``last_activity_at`` reports observed stages, never a heartbeat.
+        """
+        await self._honcho._ensure_workspace_async()
+        query: dict[str, Any] = {"size": size}
+        for key, value in (
+            ("task_type", task_type),
+            ("observer_id", resolve_id(observer)),
+            ("sender_id", resolve_id(sender)),
+            ("session_id", resolve_id(session)),
+        ):
+            if value is not None:
+                query[key] = value
+
+        async def fetch(cursor: str) -> AsyncCursorPage[QueueWorkUnit]:
+            data = await self._honcho._async_http_client.get(
+                routes.workspace_queue_work_units(self._honcho.workspace_id),
+                query={**query, "cursor": cursor},
+            )
+            return AsyncCursorPage(data, QueueWorkUnit, fetch)
+
+        return await fetch(cursor)
 
     async def queue_status(
         self,
