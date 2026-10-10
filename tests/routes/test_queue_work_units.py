@@ -298,3 +298,29 @@ async def test_stage_scope_is_bound_to_actual_batch_not_enqueue_order(
         "representation"
     )
     assert len(client.get(url, params={"observer_id": "queued"}).json()["items"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_explicit_null_observers_preserve_legacy_scope(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[models.Workspace, models.Peer],
+) -> None:
+    workspace, _ = sample_data
+    claim = await add_work(
+        db_session, workspace.name, "legacy-null", task="representation"
+    )
+    await db_session.execute(
+        update(models.QueueItem)
+        .where(models.QueueItem.work_unit_key == claim.work_unit_key)
+        .values(payload={"observer": "alice", "observers": None, "observed": "bob"})
+    )
+    await db_session.commit()
+    response = client.get(
+        f"/v3/workspaces/{workspace.name}/queue/work-units",
+        params={"observer_id": "alice", "sender_id": "bob"},
+    )
+    assert response.status_code == 200
+    row = response.json()["items"][0]
+    assert row["observer"] == "alice"
+    assert row["observers"] == []

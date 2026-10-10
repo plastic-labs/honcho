@@ -54,9 +54,15 @@ def get_queue_work_units(
             item.c.task_type,
             session_scope.label("session_id"),
             item.c.payload["observer"].astext.label("observer"),
-            func.coalesce(item.c.payload["observers"], func.jsonb_build_array()).label(
-                "observers"
-            ),
+            # ->> also maps explicit JSON null to SQL NULL, matching the
+            # worker's legacy observer fallback for both absent and null keys.
+            case(
+                (
+                    item.c.payload["observers"].astext.is_(None),
+                    func.jsonb_build_array(),
+                ),
+                else_=item.c.payload["observers"],
+            ).label("observers"),
             item.c.payload["observed"].astext.label("observed"),
             claim.started_at,
             claim.stage,
