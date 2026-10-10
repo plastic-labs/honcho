@@ -95,6 +95,7 @@ def _payload(
         "profile": profile.name,
         "status": status,
         "image": profile.image,
+        "providers": profile.providers,
         "endpoints": profile.endpoints(),
         "services": services or {},
         "hint": f"HONCHO_BASE_URL={profile.base_url} honcho workspace list",
@@ -142,6 +143,9 @@ def _inspect(profile: LocalProfile) -> tuple[dict[str, str], bool]:
 
 
 def start(
+    providers: str | None = typer.Option(
+        None, "--providers", help="live (default) or local mock providers"
+    ),
     backend: str | None = typer.Option(
         None, "--backend", help="compose (default for new profiles) or native"
     ),
@@ -216,6 +220,14 @@ def start(
         image=image,
     )
     selected_backend = backend or profile.backend
+    selected_providers = providers or profile.providers
+    if selected_providers not in {"live", "mock"}:
+        _die("INVALID_PROVIDERS", "Use --providers live or --providers mock.")
+    if selected_providers == "mock" and setup:
+        _die(
+            "INVALID_OPTION",
+            "--providers mock supplies fake credentials; omit --setup.",
+        )
     if selected_backend not in {"native", "compose"}:
         _die("INVALID_BACKEND", "Use --backend compose or --backend native.")
     if profile.profile_file().exists() and selected_backend != profile.backend:
@@ -275,6 +287,7 @@ def start(
                 timeout=timeout,
                 migrate=migrate,
                 api_workers=api_workers,
+                providers=selected_providers,
                 pinned=pinned_ports,
             )
             _print_stack(data)
@@ -300,6 +313,9 @@ def start(
 
     try:
         already_running = stack_healthy(profile)
+        if already_running and selected_providers != profile.providers:
+            _die("STACK_RUNNING", "Stop the profile before changing --providers.")
+        profile = profile.overlay(providers=selected_providers)
         if already_running and not setup:
             ok(f"Already running ({profile.base_url})")
             _print_running(profile)
@@ -330,7 +346,7 @@ def start(
             _console.print(
                 f"  [dim]Other settings live in {profile.config_file()}[/dim]"
             )
-        elif not has_provider_key(profile, extra):
+        elif selected_providers != "mock" and not has_provider_key(profile, extra):
             _die("MISSING_LLM_KEY", _MISSING_LLM_KEY)
 
         step(f"Writing stack config to {profile.dir()}")

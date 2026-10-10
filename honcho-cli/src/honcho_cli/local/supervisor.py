@@ -17,6 +17,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from honcho_cli.local.health import api_healthy
+
 
 def read_state(directory: Path) -> dict[str, Any]:
     try:
@@ -87,6 +89,17 @@ def run(directory: Path, instance: str) -> int:
                     stderr=subprocess.STDOUT,
                     start_new_session=True,
                 )
+            endpoint = state.get("healthChecks", {}).get(name)
+            if endpoint:
+                deadline = time.monotonic() + 30
+                while not api_healthy(endpoint):
+                    if (
+                        stopping
+                        or children[name].poll() is not None
+                        or time.monotonic() > deadline
+                    ):
+                        raise RuntimeError(f"{name} failed its startup health check")
+                    time.sleep(0.1)
         state.update(pid=os.getpid(), status="running")
         state["services"] = {
             name: {"pid": p.pid, "state": "running"} for name, p in children.items()
@@ -121,20 +134,24 @@ def run(directory: Path, instance: str) -> int:
         print(f"Native supervisor failed: {exc}", file=sys.stderr, flush=True)
         code = 1
     finally:
-        # Send TERM once to each entry point; it owns signal forwarding/drain.
-        for process in children.values():
-            if process.poll() is None:
-                with contextlib.suppress(ProcessLookupError):
-                    process.terminate()
         deadline = time.monotonic() + state.get("shutdownTimeout", 30)
-        for process in children.values():
-            with contextlib.suppress(subprocess.TimeoutExpired):
-                process.wait(timeout=max(0.01, deadline - time.monotonic()))
-        # Reap any descendants that survived a failed entry point or its drain.
-        for process in children.values():
-            with contextlib.suppress(ProcessLookupError):
-                os.killpg(process.pid, signal.SIGKILL)
-            process.wait()
+        support = set(state.get("healthChecks", {}))
+        # Keep providers alive while API/deriver finish in-flight calls.
+        for group in (
+            [p for name, p in children.items() if name not in support],
+            [p for name, p in children.items() if name in support],
+        ):
+            for process in group:
+                if process.poll() is None:
+                    with contextlib.suppress(ProcessLookupError):
+                        process.terminate()
+            for process in group:
+                with contextlib.suppress(subprocess.TimeoutExpired):
+                    process.wait(timeout=max(0.01, deadline - time.monotonic()))
+            for process in group:
+                with contextlib.suppress(ProcessLookupError):
+                    os.killpg(process.pid, signal.SIGKILL)
+                process.wait()
         state["services"] = {
             name: {"pid": p.pid, "state": "exited", "exitCode": p.returncode}
             for name, p in children.items()

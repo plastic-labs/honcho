@@ -141,6 +141,8 @@ def test_stale_pid_cannot_signal_another_process(checkout, profile):
     )
     with pytest.raises(native.NativeError, match="supervisor is unreachable"):
         native.stop(profile)
+    with pytest.raises(native.NativeError, match="supervisor is unreachable"):
+        launch(profile, checkout)
     state = read_state(profile.dir())
     state["status"] = "stopped"
     (profile.dir() / "native.json").write_text(json.dumps(state))
@@ -215,3 +217,22 @@ def test_migration_failure_never_starts_services(checkout, profile):
         )
     assert not control(read_state(profile.dir()))
     assert native.port_available(profile.api_port)
+
+
+def test_owned_dependencies_reject_nested_external_database(
+    checkout, profile, monkeypatch
+):
+    monkeypatch.setenv(
+        "DB", '{"CONNECTION_URI":"postgresql://external.example/production"}'
+    )
+    monkeypatch.setattr(native, "allocate_host_ports", lambda p, **kwargs: (p, {}))
+    with pytest.raises(native.NativeError, match="owns the database/cache endpoints"):
+        native.start(
+            profile,
+            source=checkout,
+            dependencies="docker",
+            timeout=5,
+            migrate=False,
+            api_workers=1,
+        )
+    assert not profile.profile_file().exists()
