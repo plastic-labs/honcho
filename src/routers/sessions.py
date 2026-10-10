@@ -2,7 +2,9 @@
 
 import logging
 from contextlib import suppress
+from functools import partial
 from time import perf_counter
+from typing import Literal
 
 from fastapi import APIRouter, Body, Depends, Path, Query, Response
 from fastapi_pagination.bases import AbstractParams
@@ -32,6 +34,7 @@ from src.utils.pagination import (
 )
 from src.utils.representation import Representation
 from src.utils.search import search
+from src.utils.session_pagination import paginate_session_activity
 from src.utils.tokens import estimate_tokens
 from src.utils.types import embedding_call_purpose
 
@@ -280,6 +283,9 @@ async def get_sessions(
         None, description="Filtering and pagination options for the sessions list"
     ),
     reverse: bool = Query(False, description="Whether to reverse the order of results"),
+    sort_by: Literal["created_at", "last_message_at"] = Query(
+        "created_at", description="Session timestamp used to order results"
+    ),
     params: AbstractParams = Depends(pagination_params),
     db: AsyncSession = read_db,
 ):
@@ -297,8 +303,12 @@ async def get_sessions(
             workspace_name=workspace_id,
             filters=filter_param,
             reverse=reverse,
+            sort_by=sort_by,
         ),
         params,
+        cursor_paginator=partial(paginate_session_activity, reverse=reverse)
+        if sort_by == "last_message_at"
+        else None,
     )
 
 

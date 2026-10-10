@@ -20,7 +20,7 @@ per page. Two things here remove that cost:
 import asyncio
 import hashlib
 import logging
-from collections.abc import Coroutine
+from collections.abc import Awaitable, Callable, Coroutine
 from typing import Any, ClassVar, Generic, TypeVar, cast
 
 from fastapi import HTTPException, Query, status
@@ -71,6 +71,11 @@ class CursorPage(_CursorPage[T], Generic[T]):
     __params_type__: ClassVar[type[AbstractParams]] = CursorParams
 
 
+CursorPaginator = Callable[
+    [AsyncSession, Select[Any], CursorParams], Awaitable[CursorPage[Any]]
+]
+
+
 def _invalid_cursor() -> HTTPException:
     # ai: HTTPException, not a HonchoException: the HonchoException handler logs a traceback at ERROR, and this is a client mistake
     return HTTPException(
@@ -104,8 +109,17 @@ def pagination_params(
 
 
 async def _apaginate_cursor(
-    db: AsyncSession, stmt: Select[Any], params: CursorParams, **apaginate_kwargs: Any
+    db: AsyncSession,
+    stmt: Select[Any],
+    params: CursorParams,
+    *,
+    cursor_paginator: CursorPaginator | None = None,
+    **apaginate_kwargs: Any,
 ) -> CursorPage[Any]:
+    if cursor_paginator is not None:
+        if apaginate_kwargs:
+            raise TypeError("Custom cursor paginators own their response options")
+        return await cursor_paginator(db, stmt, params)
     # ai: the routes' response model is a union, so fastapi-pagination can't infer the page class from it
     return await apaginate(
         db, stmt, params=params, config=Config(page_cls=CursorPage), **apaginate_kwargs
@@ -137,6 +151,7 @@ async def _paginate_offset_via_keyset(
     db: AsyncSession,
     stmt: Select[Any],
     params: Params,
+    cursor_paginator: CursorPaginator | None = None,
     **apaginate_kwargs: Any,
 ) -> Page[Any]:
     """
@@ -191,6 +206,7 @@ async def _paginate_offset_via_keyset(
         db,
         stmt_for_page,
         CursorParams(cursor=position, size=params.size),
+        cursor_paginator=cursor_paginator,
         **apaginate_kwargs,
     )
     prometheus_metrics.record_pagination_offset_shim(outcome)
@@ -224,6 +240,8 @@ async def paginate_offset_or_cursor(
     db: AsyncSession,
     stmt: Select[Any],
     params: AbstractParams,
+    *,
+    cursor_paginator: CursorPaginator | None = None,
     **apaginate_kwargs: Any,
 ) -> Any:
     """
@@ -235,7 +253,9 @@ async def paginate_offset_or_cursor(
     """
     if isinstance(params, CursorParams):
         try:
-            return await _apaginate_cursor(db, stmt, params, **apaginate_kwargs)
+            return await _apaginate_cursor(
+                db, stmt, params, cursor_paginator=cursor_paginator, **apaginate_kwargs
+            )
         except (InvalidPage, DataError, ProgrammingError):
             if not params.cursor:
                 raise
@@ -248,7 +268,9 @@ async def paginate_offset_or_cursor(
         and settings.CACHE.ENABLED
         and settings.CACHE.PAGINATION_OFFSET_SHIM
     ):
-        return await _paginate_offset_via_keyset(db, stmt, params, **apaginate_kwargs)
+        return await _paginate_offset_via_keyset(
+            db, stmt, params, cursor_paginator, **apaginate_kwargs
+        )
     return await apaginate(
         db, stmt, params=params, config=Config(page_cls=Page), **apaginate_kwargs
     )
