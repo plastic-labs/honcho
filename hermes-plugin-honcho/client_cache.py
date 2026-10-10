@@ -96,8 +96,10 @@ def _client_cache_key(config: HonchoClientConfig | None) -> tuple:
 
 
 def _slot_identity(key: tuple) -> tuple:
-    """(kind, host, paths) — the part of a cache key that survives credential/timeout churn."""
-    return key[:3] if key[0] == "ambient" else (key[0], key[1], key[5], key[6])
+    """(kind, host, [workspace,] paths) — the part of a cache key that survives credential/timeout churn. The
+    workspace is identity, not churn: one profile holds a client per routed project workspace at once, and
+    evicting one on every switch would rebuild a client per access."""
+    return key[:3] if key[0] == "ambient" else (key[0], key[1], key[2], key[5], key[6])
 
 
 def _slot_for(key: tuple) -> SingletonSlot:
