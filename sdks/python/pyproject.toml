@@ -3,14 +3,16 @@ name = "honcho-ai"
 version = "2.6.0"
 description = "Official DX Optimized Python SDK for Honcho"
 dynamic = ["readme"]
-license = "Apache-2.0"
+# Python 3.8's last supported setuptools predates SPDX string metadata.
+license = {text = "Apache-2.0"}
 authors = [
 { name = "Plastic Labs", email = "hello@plasticlabs.ai" },
 ]
 dependencies = [
     "httpx>=0.28.0, <1",
-    "pydantic>=2.0.0, <3",
-    "typing-extensions>=4.12.0; python_version < \"3.12\"",
+    "pydantic>=2.8.0, <3",
+    "typing-extensions>=4.12.0",
+    "eval-type-backport>=0.2.0; python_version < \"3.10\"",
 ]
 requires-python = ">= 3.8"
 classifiers = [
