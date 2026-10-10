@@ -29,14 +29,14 @@ def test_sync_cursor_preserves_scope_and_handles_empty_tail() -> None:
     client = Honcho(
         workspace_id="progress", api_key="test", base_url="http://localhost"
     )
-    pages = [
+    pages: list[dict[str, Any]] = [
         {"items": [item("a")], "next_page": "cursor-a"},
         {"items": [item("b")], "next_page": "cursor-b"},
         {"items": [], "next_page": None},
     ]
     with (
         patch.object(client, "_ensure_workspace"),
-        patch.object(client._http, "get", side_effect=pages) as get,
+        patch.object(client._http, "get", side_effect=pages) as get,  # pyright: ignore[reportPrivateUsage]
     ):
         page = client.queue_work_units(
             task_type="dream", observer="alice", sender="bob", session="session", size=1
@@ -66,14 +66,17 @@ async def test_async_cursor_preserves_scope_and_stops_at_empty_tail() -> None:
     client = Honcho(
         workspace_id="progress", api_key="test", base_url="http://localhost"
     )
-    pages = [
+    pages: list[dict[str, Any]] = [
         {"items": [item("a")], "next_page": "next"},
         {"items": [], "next_page": None},
     ]
     with (
         patch.object(client, "_ensure_workspace_async", new_callable=AsyncMock),
         patch.object(
-            client._async_http_client, "get", new_callable=AsyncMock, side_effect=pages
+            client._async_http_client,  # pyright: ignore[reportPrivateUsage]
+            "get",
+            new_callable=AsyncMock,
+            side_effect=pages,
         ) as get,
     ):
         page = await client.aio.queue_work_units(

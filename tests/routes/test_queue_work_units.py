@@ -168,7 +168,7 @@ async def test_cursor_survives_removed_anchor_and_finished_work(
     ],
 )
 def test_invalid_progress_parameters(
-    client: TestClient, params: dict[str, object], code: int
+    client: TestClient, params: dict[str, str | int], code: int
 ) -> None:
     assert (
         client.get("/v3/workspaces/test/queue/work-units", params=params).status_code

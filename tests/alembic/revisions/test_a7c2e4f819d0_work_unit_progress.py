@@ -11,7 +11,7 @@ def prepare_progress(verifier: MigrationVerifier) -> None:
     verifier.conn.execute(
         text(
             f'INSERT INTO "{verifier.schema}".active_queue_sessions (id, work_unit_key) '
-            "VALUES ('progress-old', 'progress-old')"
+            + "VALUES ('progress-old', 'progress-old')"
         )
     )
 
@@ -23,14 +23,14 @@ def verify_progress(verifier: MigrationVerifier) -> None:
     old = verifier.conn.execute(
         text(
             f'SELECT started_at, last_activity_at, stage FROM "{verifier.schema}".active_queue_sessions '
-            "WHERE id = 'progress-old'"
+            + "WHERE id = 'progress-old'"
         )
     ).one()
     assert tuple(old) == (None, None, None)
     new = verifier.conn.execute(
         text(
             f'INSERT INTO "{verifier.schema}".active_queue_sessions (id, work_unit_key) '
-            "VALUES ('progress-new', 'progress-new') RETURNING started_at, last_activity_at, stage"
+            + "VALUES ('progress-new', 'progress-new') RETURNING started_at, last_activity_at, stage"
         )
     ).one()
     assert new.started_at is not None
@@ -39,6 +39,6 @@ def verify_progress(verifier: MigrationVerifier) -> None:
     verifier.conn.execute(
         text(
             f'DELETE FROM "{verifier.schema}".active_queue_sessions '
-            "WHERE id IN ('progress-old', 'progress-new')"
+            + "WHERE id IN ('progress-old', 'progress-new')"
         )
     )

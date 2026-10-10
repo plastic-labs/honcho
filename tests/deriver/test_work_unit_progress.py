@@ -104,7 +104,7 @@ async def test_replaced_claim_cannot_be_updated_or_cleaned_by_old_worker(
         replacement.last_activity_at,
     )
     await report("induction")
-    assert not await QueueManager()._cleanup_work_unit(old_id, key)
+    assert not await QueueManager()._cleanup_work_unit(old_id, key)  # pyright: ignore[reportPrivateUsage]
     await db_session.refresh(replacement)
     assert replacement.stage == "claimed"
     assert (
@@ -114,7 +114,7 @@ async def test_replaced_claim_cannot_be_updated_or_cleaned_by_old_worker(
     ) == original
     assert replacement.id != old_id
     # The current owner can clean up. A late callback cannot recreate its row.
-    assert await QueueManager()._cleanup_work_unit(replacement.id, key)
+    assert await QueueManager()._cleanup_work_unit(replacement.id, key)  # pyright: ignore[reportPrivateUsage]
     await work_unit_progress(key, replacement.id)("deduction")
     assert (
         await db_session.execute(

@@ -1,12 +1,14 @@
 """FastAPI routes for workspace resources and workspace-scoped operations."""
 
 import logging
-from typing import Literal
+from collections.abc import Sequence
+from typing import Any, Literal
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Response
 from fastapi.responses import StreamingResponse
 from fastapi_pagination.bases import AbstractParams
 from pydantic import BaseModel
+from sqlalchemy.engine import Row
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
@@ -257,6 +259,14 @@ async def list_queue_work_units(
     """
     params = pagination_params(page=1, size=size, cursor=cursor)
     assert isinstance(params, CursorParams)
+
+    def transform(rows: Sequence[Row[Any]]) -> list[schemas.QueueWorkUnit]:
+        return [
+            # SQLAlchemy exposes its public mapping view as Row._mapping.
+            schemas.QueueWorkUnit(workspace_id=workspace_id, **row._mapping)  # pyright: ignore[reportPrivateUsage]
+            for row in rows
+        ]
+
     return await paginate_offset_or_cursor(
         db,
         get_queue_work_units(
@@ -270,10 +280,7 @@ async def list_queue_work_units(
         # The lateral query already yields one row per claim. JSONB observer
         # arrays are not hashable, so SQLAlchemy must not unique() these rows.
         unique=False,
-        transformer=lambda rows: [
-            schemas.QueueWorkUnit(workspace_id=workspace_id, **row._mapping)
-            for row in rows
-        ],
+        transformer=transform,
     )
 
 
