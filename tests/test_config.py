@@ -1,6 +1,13 @@
+import logging
+
 import pytest
 
-from src.config import ConfiguredModelSettings, DeriverSettings
+from src.config import (
+    AppSettings,
+    ConfiguredModelSettings,
+    DeriverSettings,
+    LLMSettings,
+)
 
 
 def _make_deriver_settings(
@@ -128,3 +135,78 @@ def test_provider_timeout_on_fallback_overrides_is_validated_at_config_load() ->
                 },
             }
         )
+
+
+def test_unused_provider_keys_warn_without_exposing_values(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.WARNING, logger="src.config"):
+        AppSettings(
+            LLM=LLMSettings(
+                OPENAI_API_KEY="fake-openai-key",
+                ANTHROPIC_API_KEY="fake-unused-anthropic-key",
+                GEMINI_API_KEY="fake-unused-gemini-key",
+            )
+        )
+
+    assert "LLM_ANTHROPIC_API_KEY" in caplog.text
+    assert "LLM_GEMINI_API_KEY" in caplog.text
+    assert "LLM_OPENAI_API_KEY" not in caplog.text
+    assert "fake-" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "workload",
+    [
+        {"DERIVER": {"MODEL_CONFIG": {"transport": "gemini"}}},
+        {"SUMMARY": {"MODEL_CONFIG": {"transport": "gemini"}}},
+        {"DREAM": {"DEDUCTION_MODEL_CONFIG": {"transport": "gemini"}}},
+        {"DREAM": {"INDUCTION_MODEL_CONFIG": {"transport": "gemini"}}},
+        *[
+            {
+                "DIALECTIC": {
+                    "LEVELS": {level: {"MODEL_CONFIG": {"transport": "gemini"}}}
+                }
+            }
+            for level in ("minimal", "low", "medium", "high", "max")
+        ],
+        {"EMBEDDING": {"MODEL_CONFIG": {"transport": "gemini"}}},
+        {
+            "DERIVER": {
+                "MODEL_CONFIG": {
+                    "fallback": {"transport": "gemini", "model": "gemini-test"}
+                }
+            }
+        },
+    ],
+)
+def test_key_used_by_any_workload_does_not_warn(
+    workload: dict[str, object], caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level(logging.WARNING, logger="src.config"):
+        AppSettings.model_validate(
+            {
+                "LLM": {
+                    "OPENAI_API_KEY": None,
+                    "ANTHROPIC_API_KEY": None,
+                    "GEMINI_API_KEY": "fake-used-key",
+                },
+                **workload,
+            }
+        )
+
+    assert "LLM_GEMINI_API_KEY" not in caplog.text
+
+
+@pytest.mark.parametrize("key", [None, ""])
+def test_absent_provider_keys_do_not_warn(
+    key: str | None, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level(logging.WARNING, logger="src.config"):
+        AppSettings(
+            LLM=LLMSettings(
+                OPENAI_API_KEY=key, ANTHROPIC_API_KEY=key, GEMINI_API_KEY=key
+            )
+        )
+
+    assert "API_KEY" not in caplog.text
