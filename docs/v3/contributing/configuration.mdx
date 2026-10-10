@@ -106,6 +106,8 @@ DREAM_INDUCTION_MODEL_CONFIG__MODEL=anthropic/claude-haiku-4-5
 
 Instead of an OpenAI-compatible proxy, you can use vendor APIs directly. Each transport picks up its own `LLM_{TRANSPORT}_API_KEY`.
 
+At configuration load, Honcho warns if a non-empty `LLM_{TRANSPORT}_API_KEY` is set but no configured workload uses that transport. The check includes all dialectic levels, the deriver, summary, both dream specialists, fallback models, and embeddings. It logs the setting name, never the credential value, and does not prevent startup. Remove unused keys from your configuration when you migrate providers.
+
 If you keep the built-in defaults, only `LLM_OPENAI_API_KEY` is required:
 
 ```bash
