@@ -460,6 +460,11 @@ Maintainers read every issue, and many are drafted by agents. Keep it short and 
 - Link code with permalinks (a commit SHA, not `main`), and quote a few lines at most. Don't
   paste whole functions or patches.
 - Write "unknown" for a version you can't find. Don't guess.
+- Write in English.
+- Keep the prose under 600 words, not counting fenced code and log blocks. A filled-in form
+  runs about 300. Put the log lines and config keys that matter in code blocks, not whole
+  files. Proposed fixes and alternative hypotheses belong in a pull request or a follow-up
+  comment, not the report.
 
 Issues opened with `gh issue create` or the API skip the form. Copy the matching template's
 fields from
@@ -475,16 +480,21 @@ API keys, JWTs, and production user content out of any log or payload you attach
 
 ### What happens after you file
 
-Each new issue gets a first pass, from an agent or a maintainer, before review:
+Each new issue gets a first pass, from an agent or a maintainer, before review. Only a maintainer applies `maintainer-approved`. That label is what lets a pull request through the gate; see [Before you write code](#before-you-write-code).
 
-- It gets labels for its type, and for the integration if it came through one. If it belongs
-  to a different layer in this repo, it is relabelled rather than closed.
-- If it duplicates an existing issue, describes documented behavior, or belongs in another
-  repo, it is closed with a comment linking the reason. If we got it wrong, say so on the
-  issue.
-- If a required field is missing, you will be asked for it.
-- Only a maintainer applies `maintainer-approved`. That label is what lets a pull request
-  through the gate; see [Before you write code](#before-you-write-code).
+If something is missing or wrong, one of these labels is applied with a comment saying what
+to fix. Any reply from you resets the clock.
+
+| Label | Applied when | Closed after |
+| --- | --- | --- |
+| `needs-repro` | No steps or version to reproduce, or the problem was found by reading the code, in a synthetic test, or carried over from another repo without being run against Honcho | 7 days without a reply |
+| `needs-info` | A required field is missing, the issue is not in English, or the prose runs over 600 words | 7 days without a reply |
+| `invalid` | Illegible, spam, a security finding filed publicly, or belongs in another repo | 3 days |
+| `question` | A support question rather than a defect. Ask in [Discord](https://discord.gg/honcho), or email <support@honcho.dev> about the managed service | 3 days |
+| `duplicate` | Same root cause as an existing issue, linked in the comment | 3 days, unless you explain why it is different |
+| `wontfix` | Documented behavior, or an unsupported build or platform: a forked or patched build, an unsupported operating system, third-party packaging | Closed by a maintainer |
+
+If we got it wrong, say so on the issue and it will be reopened.
 
 ## Security
 
