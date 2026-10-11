@@ -21,6 +21,7 @@ from agent.memory_manager import sanitize_context
 from agent.memory_provider import MemoryProvider, is_trivial_prompt
 from agent.coding_context import INTERACTIVE_CODING_PLATFORMS as _LOCAL_PLATFORMS
 from agent.turn_author import a2a_key
+from gateway.config import Platform
 from .client import HonchoClientConfig, resolve_config_path
 from .client import _host_block, _HostLookup
 from .client import join_plugin_threads, spawn_context_thread
@@ -114,7 +115,9 @@ _PREWARM_QUERY = "Summarize what you know about this user. Focus on preferences,
 # that keeps running in the background either way, so only the blocking join is skipped here — never
 # the dialectic itself, and never the recall HTTP calls. Interactive platforms (cli/tui/…) keep the
 # wait: there a human is at a prompt and only the first message of a session is affected.
-_NO_FIRST_TURN_DIALECTIC_WAIT_PLATFORMS = frozenset({"api_server"})
+# The name comes from the host's own ``Platform`` enum — the same value ``initialize()`` receives —
+# so an upstream rename cannot silently stop matching the string this gate compares against.
+_NO_FIRST_TURN_DIALECTIC_WAIT_PLATFORMS = frozenset({Platform.API_SERVER.value})
 
 
 class HonchoMemoryProvider(DialecticMixin, MemoryProvider):

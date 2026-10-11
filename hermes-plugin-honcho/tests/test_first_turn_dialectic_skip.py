@@ -1,17 +1,21 @@
 """The first-turn dialectic join must be skipped on api_server (chat) platforms.
 
 Every api_server POST builds a fresh agent, so ``_turn_count == 1`` on every request and the
-2.0 s first-turn dialectic join (``firstTurnDialecticWait``) is paid on every single turn while
-the caller waits for the reply — measured ~2.16 s of a ~3.5 s trivial Open WebUI answer, and the
-same fixed cost again on each hidden per-message task call. The dialectic itself is an LLM call on
-the memory host (~17 s measured) that continues in the background; only the blocking join is
-skipped, and only for the api_server platform. Interactive platforms keep the wait.
+bounded first-turn dialectic join (``firstTurnDialecticWait``) is paid on every single turn while
+the caller waits for the reply — and the agent that waited is discarded with the response, so the
+join buys latency and nothing else. The dialectic itself is an LLM call on the memory host that
+continues in the background; only the blocking join is skipped, and only for the api_server
+platform. Interactive platforms keep the wait.
 
 ``firstTurnDialecticWait`` cannot express this: it is read from the per-host config block
 (``client.py``: ``look.parsed("firstTurnDialecticWait", ...)``), so a host that serves both the
 CLI and api_server — the normal self-hosted shape — cannot zero it for the chat path without also
 removing the wait for a human at a prompt. The gate therefore keys on the platform the provider
 was built for, not on config.
+
+Every timing assertion here is expressed relative to the cap this suite configures itself, so each
+one describes the behaviour (a bounded join vs no join) rather than how long anything took on the
+machine or deployment the suite happened to run on.
 """
 
 from __future__ import annotations
@@ -24,7 +28,7 @@ import pytest
 
 from hermes_honcho import HonchoMemoryProvider
 
-_DIALECTIC_WAIT = 0.5  # the configured cap under test; smaller than the 2.0 s default, same shape
+_DIALECTIC_WAIT = 0.5  # the join cap this suite configures; every timing assertion is relative to it
 
 
 def _config(*, dialectic_wait: float = _DIALECTIC_WAIT) -> SimpleNamespace:
@@ -171,5 +175,5 @@ def test_api_server_consumes_a_ready_dialectic_without_waiting(monkeypatch):
     out = provider.prefetch("what did we decide about the rollback plan?")
     elapsed = time.perf_counter() - started
 
-    assert elapsed < 0.3
+    assert elapsed < _DIALECTIC_WAIT * 0.6, f"a landed dialectic still cost {elapsed:.3f}s of waiting"
     assert "the user prefers terse answers" in out
