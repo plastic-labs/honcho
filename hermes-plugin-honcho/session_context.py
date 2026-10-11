@@ -24,6 +24,29 @@ _PLANNING_HEAD_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Honcho embeds an auto-recall ``search_query`` with the deployment's embedding model, which can
+# silently drop everything past a window far shorter than the turn that produced the query. This
+# bounds the query at the caller and logs every trim, so an oversized turn shows up as a logged cut
+# rather than as a mysteriously generic representation. ``recallMaxQueryChars`` overrides the
+# default; ``0`` disables the cap. The recalled query is a retrieval key, not a transcript.
+_MAX_RECALL_QUERY_CHARS = 1000
+
+
+def bound_recall_query(query: str | None, max_chars: int = _MAX_RECALL_QUERY_CHARS) -> str | None:
+    """Trim an auto-recall query to what the embedder actually reads; None when there is no query.
+
+    Word-boundary trim, mirroring the ``dialecticMaxInputChars`` cap. The cut is logged so a
+    suddenly generic representation can be traced back to an oversized turn. ``max_chars <= 0``
+    disables the cap.
+    """
+    text = (query or "").strip()
+    if not text or max_chars <= 0 or len(text) <= max_chars:
+        return text or None
+    head = text[:max_chars]
+    bounded = head.rsplit(" ", 1)[0] or head
+    logger.debug("Honcho recall query truncated for embedding: %d -> %d chars", len(text), len(bounded))
+    return bounded
+
 
 def usable_honcho_summary(text: object) -> str | None:
     """A session summary safe to inject, or None to omit it. Honcho summarizers can persist the
@@ -124,11 +147,14 @@ class SessionContextMixin:
         self, session_key: str, user_message: str | None = None, *, current_query_only: bool = False,
     ) -> dict[str, str]:
         """Pre-fetch user + AI peer context (representation, card) plus the session summary.
-        ``user_message`` is passed as search_query so Honcho returns topic-relevant conclusions.
-        Stops early (returning what it has) once auth is dead."""
+        ``user_message`` is passed as search_query so Honcho returns topic-relevant conclusions,
+        bounded by :func:`bound_recall_query`. Stops early (returning what it has) once auth is dead."""
         session = self._cached_session(session_key)
         if not session:
             return {}
+        # Every recall query the provider emits comes from here, so bound it once for both branches:
+        # the embedder reads only the head of an oversized turn regardless.
+        user_message = bound_recall_query(user_message, self._recall_max_query_chars)
         result: dict[str, str] = {}
 
         def _summary() -> None:
