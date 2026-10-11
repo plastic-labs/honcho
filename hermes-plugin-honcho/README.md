@@ -251,6 +251,7 @@ With multiple profiles: saving a root-cascading map asks whether the edit applie
 |-----|------|---------|-------------|
 | `recallMode` | string | `"hybrid"` | `"hybrid"` (auto-inject + tools), `"context"` (auto-inject only, tools hidden), `"tools"` (tools only, no injection). Legacy `"auto"` → `"hybrid"` |
 | `recallSync` | boolean | `false` | Wait for current-query automatic recall within `timeout` / `requestTimeout` (5s when unset or invalid); omit late/busy results. Context/hybrid only |
+| `recallMaxQueryChars` | int | `1000` | Max chars of the auto-recall `search_query` sent to the embedder. A longer turn is cut at a word boundary and the cut is logged at DEBUG, so an oversized turn is visible rather than silently degrading recall. `0` leaves the query uncapped |
 | `observationMode` | string | `"directional"` | Preset: `"directional"` (all on) or `"unified"` (user observes self, AI observes others). Use `observation` object for granular control |
 | `observation` | object | — | Per-peer observation config (see Observation section) |
 

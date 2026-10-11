@@ -24,16 +24,11 @@ _PLANNING_HEAD_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Honcho embeds an auto-recall ``search_query`` with the deployment's embedding model, and that
-# endpoint is often narrower than the turn that produced it. Measured 2026-09-15 on a self-hosted
-# stack (all-minilm:l6-v2 behind an ollama OpenAI-compatible endpoint): the endpoint reads at most
-# 256 tokens — a 1,400-char prose query and a 6,000-char one returned byte-identical vectors, while
-# 1,200 chars is 253 tokens and 1,400 is 256 — and SILENTLY drops the rest. The provider passes the
-# user's whole turn as the query, so a pasted document (33,336 chars observed in production) bought
-# a vector of its first ~1,400 characters at the price of a 9,778-token embed call, and on a stack
-# still at honcho's 8192-token EMBEDDING_MAX_INPUT_TOKENS default it degraded the semantic third of
-# the representation silently rather than erroring. Bound the query at the caller: 1,000 chars sits
-# inside every window in play here, and the recalled query is a retrieval key, not a transcript.
+# Honcho embeds an auto-recall ``search_query`` with the deployment's embedding model, which can
+# silently drop everything past a window far shorter than the turn that produced the query. This
+# bounds the query at the caller and logs every trim, so an oversized turn shows up as a logged cut
+# rather than as a mysteriously generic representation. ``recallMaxQueryChars`` overrides the
+# default; ``0`` disables the cap. The recalled query is a retrieval key, not a transcript.
 _MAX_RECALL_QUERY_CHARS = 1000
 
 
@@ -159,7 +154,7 @@ class SessionContextMixin:
             return {}
         # Every recall query the provider emits comes from here, so bound it once for both branches:
         # the embedder reads only the head of an oversized turn regardless.
-        user_message = bound_recall_query(user_message)
+        user_message = bound_recall_query(user_message, self._recall_max_query_chars)
         result: dict[str, str] = {}
 
         def _summary() -> None:

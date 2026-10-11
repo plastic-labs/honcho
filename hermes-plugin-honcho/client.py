@@ -311,6 +311,7 @@ def _behavior_fields(look: _HostLookup, explicitly_configured: bool) -> dict[str
         "save_messages": look.pick_set("saveMessages", True),
         "write_frequency": write_frequency,
         "context_tokens": look.parsed("contextTokens", int, None),
+        "recall_max_query_chars": look.parsed("recallMaxQueryChars", int, 1000),
         "dialectic_reasoning_level": look.pick("dialecticReasoningLevel") or "low",
         "dialectic_dynamic": look.flag("dialecticDynamic", default=True),
         "dialectic_max_chars": look.parsed("dialecticMaxChars", int, 600),
@@ -365,6 +366,7 @@ class HonchoClientConfig:
     save_messages: bool = True
     write_frequency: str | int = "async"  # "async" | "turn" | "session" | every-N-turns int
     context_tokens: int | None = None  # prefetch budget; None = uncapped
+    recall_max_query_chars: int = 1000  # auto-recall search_query cap; every trim is logged; 0 = uncapped
     # Dialectic (peer.chat) settings
     dialectic_reasoning_level: str = "low"  # minimal | low | medium | high | max
     dialectic_dynamic: bool = True  # model may override the level via honcho_reasoning

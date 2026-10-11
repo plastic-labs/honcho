@@ -52,7 +52,7 @@ class _RecordingPeer:
         return ["fact"]
 
 
-def _manager_with_cached_session(*, ai_observe_others=True):
+def _manager_with_cached_session(*, ai_observe_others=True, recall_max_query_chars=1000):
     cfg = SimpleNamespace(
         write_frequency="turn",
         dialectic_reasoning_level="low",
@@ -65,6 +65,7 @@ def _manager_with_cached_session(*, ai_observe_others=True):
         ai_observe_others=ai_observe_others,
         message_max_chars=25000,
         dialectic_max_input_chars=10000,
+        recall_max_query_chars=recall_max_query_chars,
     )
     mgr = HonchoSessionManager(honcho=SimpleNamespace(), config=cfg)
     session = HonchoSession(
@@ -79,8 +80,8 @@ def _manager_with_cached_session(*, ai_observe_others=True):
     return mgr, fake_honcho_session
 
 
-def _manager_with_recording_peer():
-    mgr, _session = _manager_with_cached_session()
+def _manager_with_recording_peer(*, recall_max_query_chars=1000):
+    mgr, _session = _manager_with_cached_session(recall_max_query_chars=recall_max_query_chars)
     peer = _RecordingPeer()
     mgr._get_or_create_peer = lambda peer_id: peer
     return mgr, peer
@@ -157,6 +158,25 @@ def test_empty_recall_query_is_none_not_empty_string():
 # ---------------------------------------------------------------------------
 # The bound itself
 # ---------------------------------------------------------------------------
+
+
+def test_recall_query_cap_comes_from_config():
+    """``recallMaxQueryChars`` sets the bound, and 0 disables it — the same convention the
+    dialectic cap uses. The unset default must stay the module constant's value."""
+    from hermes_honcho.client import HonchoClientConfig
+    from hermes_honcho.session_context import _MAX_RECALL_QUERY_CHARS
+
+    message = _huge_turn()
+
+    mgr, peer = _manager_with_recording_peer(recall_max_query_chars=200)
+    query = _recall_query_emitted(mgr, peer, message)
+    assert len(query) <= 200 < len(message)
+    assert message.startswith(query)
+
+    uncapped, uncapped_peer = _manager_with_recording_peer(recall_max_query_chars=0)
+    assert _recall_query_emitted(uncapped, uncapped_peer, message) == message.strip()
+
+    assert HonchoClientConfig().recall_max_query_chars == _MAX_RECALL_QUERY_CHARS
 
 
 def test_bound_recall_query_handles_blank_and_disabled_cap():
