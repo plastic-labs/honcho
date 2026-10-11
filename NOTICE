@@ -1,0 +1,11 @@
+sentica-memory
+
+This program is a modified fork of Honcho by Plastic Labs
+(https://github.com/plastic-labs/honcho).
+
+Honcho is licensed under the GNU Affero General Public License, version 3.
+The license text is in the LICENSE file. Upstream copyright notices and
+attribution are unchanged. Modifications made for Sentica are listed in
+FORK_CHANGES.md.
+
+The pinned upstream release is recorded in PROGRESS.md.

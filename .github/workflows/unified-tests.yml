@@ -1,16 +1,9 @@
 name: Unified Tests (Fly Runner)
 
+# Fork: do not start the Plastic Labs Fly runner on push or pull request.
+# The suite stays in the file for upstream sync. It does not run automatically.
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'src/**'
-      - 'tests/**'
-  # Manual trigger for PRs: add the `run-unified-tests` label to run the suite
-  # against the PR's merge commit. The label is purged as soon as the run
-  # starts so it can be re-added to trigger another run.
-  pull_request:
-    types: [labeled]
+  workflow_dispatch:
 
 # Cap spend: at most one active run per PR (per ref for push). Re-triggering
 # a PR run cancels the in-flight one instead of stacking Fly machines; pushes
@@ -45,11 +38,7 @@ jobs:
     # Label adds other than run-unified-tests trigger the workflow but skip
     # every job here; the run-unified-tests label additionally requires the
     # gate's CODEOWNERS check to have passed.
-    if: >-
-      always() &&
-      (github.event_name == 'push' ||
-       (github.event.label.name == 'run-unified-tests' &&
-        needs.gate.outputs.authorized == 'true'))
+    if: false
     uses: ./.github/workflows/start-fly-runner.yml
     secrets: inherit
 
@@ -58,9 +47,7 @@ jobs:
     runs-on: ${{ fromJSON(format('[{0}]', needs.start-runner.outputs.runner-labels)) }}
     needs: start-runner
     # !cancelled() so this doesn't inherit gate's skip on push events.
-    if: >-
-      !cancelled() &&
-      needs.start-runner.outputs.runner-ready == 'true'
+    if: false
     timeout-minutes: 90
     environment: unified-tests
     permissions:
@@ -164,7 +151,7 @@ jobs:
     name: Cleanup Fly Machine and Runner
     runs-on: ubuntu-latest
     needs: [start-runner, unified-tests]
-    if: always() && needs.start-runner.outputs.machine-id != ''
+    if: false
     env:
       FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_TESTING }}
       GITHUB_TOKEN: ${{ secrets.GH_TOKEN_ACTIONS }}

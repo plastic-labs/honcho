@@ -1,0 +1,111 @@
+# Local sentica-memory stack.
+#
+#   docker compose up -d --build
+#
+# Starts the API, the deriver worker, Postgres with pgvector, and Redis.
+# Ports bind to 127.0.0.1. Redis does not persist. /tmp in the API and deriver
+# containers is tmpfs. This file is tracked; upstream keeps a gitignored copy
+# generated from docker-compose.yml.example.
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        INSTALL_LANCEDB: ${INSTALL_LANCEDB:-false}
+    entrypoint: ["sh", "docker/entrypoint.sh"]
+    depends_on:
+      database:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${SENTICA_API_PORT:-8000}:8000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "/app/.venv/bin/python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2).read()",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    tmpfs:
+      - /tmp
+    environment:
+      - DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@database:5432/postgres
+      - CACHE_URL=redis://redis:6379/0?suppress=true
+      - CACHE_ENABLED=true
+      - AUTH_USE_AUTH=false
+    env_file:
+      - path: .env
+        required: false
+    restart: unless-stopped
+
+  deriver:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        INSTALL_LANCEDB: ${INSTALL_LANCEDB:-false}
+    entrypoint: ["/app/.venv/bin/python", "-m", "src.deriver"]
+    depends_on:
+      api:
+        condition: service_healthy
+      database:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    tmpfs:
+      - /tmp
+    environment:
+      - DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@database:5432/postgres
+      - CACHE_URL=redis://redis:6379/0?suppress=true
+      - CACHE_ENABLED=true
+      - AUTH_USE_AUTH=false
+    env_file:
+      - path: .env
+        required: false
+    restart: unless-stopped
+
+  database:
+    image: pgvector/pgvector:pg15
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${SENTICA_POSTGRES_PORT:-5432}:5432"
+    command: ["postgres", "-c", "max_connections=200"]
+    environment:
+      - POSTGRES_DB=postgres
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_HOST_AUTH_METHOD=trust
+      - PGDATA=/var/lib/postgresql/data/pgdata
+    volumes:
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - pgdata:/var/lib/postgresql/data/
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:8.2
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "127.0.0.1:${SENTICA_REDIS_PORT:-6379}:6379"
+    tmpfs:
+      - /data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:

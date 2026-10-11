@@ -1,24 +1,7 @@
 name: Live LLM Tests
 
+# Fork: do not call live model providers from pull requests or main pushes.
 on:
-  # Runs on main pushes that can affect the LLM transport (narrower than
-  # unified-tests' src/** — live provider calls aren't worth burning on
-  # changes that can't reach the backends).
-  push:
-    branches: [main]
-    paths:
-      - 'src/llm/**'
-      - 'src/config.py'
-      - 'tests/live_llm/**'
-      - 'pyproject.toml'
-      - 'uv.lock'
-      - '.python-version'
-      - '.github/workflows/live-llm-tests.yml'
-  # Manual trigger for PRs: add the `run-live-llm` label to run the suite
-  # against the PR's merge commit. The label is purged as soon as the run
-  # starts so it can be re-added to trigger another run.
-  pull_request:
-    types: [labeled]
   workflow_dispatch:
 
 # Cap spend: at most one active run per PR (per ref for push/dispatch).
@@ -52,12 +35,7 @@ jobs:
     # always() lets this run on push events, where the gate's jobs are skipped.
     # Manual triggers (label / workflow_dispatch) additionally require the
     # gate's CODEOWNERS check to have passed.
-    if: >-
-      always() &&
-      (github.event_name == 'push' ||
-       ((github.event_name == 'workflow_dispatch' ||
-         github.event.label.name == 'run-live-llm') &&
-        needs.gate.outputs.authorized == 'true'))
+    if: false
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: unified-tests
