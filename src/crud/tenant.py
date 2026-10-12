@@ -21,6 +21,21 @@ from src.utils.types import GetOrCreateResult
 
 logger = logging.getLogger(__name__)
 
+VECTOR_CORRELATION_ID_UNIQUE_INDEX = "uq_tenants_vector_correlation_id"
+
+
+def _is_vector_correlation_id_conflict(exc: IntegrityError) -> bool:
+    """Whether ``exc`` is a violation of the unique index on
+    ``vector_correlation_id`` rather than some other constraint."""
+    diag = getattr(exc.orig, "diag", None)
+    return getattr(diag, "constraint_name", None) == VECTOR_CORRELATION_ID_UNIQUE_INDEX
+
+
+def _vector_correlation_id_conflict() -> ConflictException:
+    # ai: deliberately names neither tenant — the caller already knows its own
+    # key, and the other holder's id is not the caller's to learn.
+    return ConflictException("vector_correlation_id is already held by another tenant")
+
 
 async def get_tenant(
     db: AsyncSession, tenant_id: str, *, for_update: bool = False
@@ -69,10 +84,12 @@ async def get_or_create_tenant(
     db.add(tenant)
     try:
         await db.commit()
-    except IntegrityError:
+    except IntegrityError as exc:
+        await db.rollback()
+        if _is_vector_correlation_id_conflict(exc):
+            raise _vector_correlation_id_conflict() from None
         # Lost the create race to a concurrent retry of the same provisioning
         # call — apply the same idempotency contract to the winner's row.
-        await db.rollback()
         existing = await db.get(models.Tenant, tenant_id)
         if existing is None:  # pragma: no cover - delete raced the retry
             # region ai
@@ -117,8 +134,9 @@ async def update_tenant(
     re-asserting the value a row already holds is a 200, so a control plane
     that retries never trips a conflict. ``vector_correlation_id`` is
     set-once — a ``NULL`` row accepts a value (200), an equal value is a
-    no-op (200), and a row that already holds a different value is a 409;
-    both fields, when present, apply in one commit.
+    no-op (200), and a row that already holds a different value is a 409, as
+    is a value another tenant already holds; both fields, when present, apply
+    in one commit.
     """
     # region ai
     # The row is locked for the read-compare-write. Without the lock two
@@ -153,7 +171,13 @@ async def update_tenant(
                 + "cannot be changed"
             )
     if needs_update:
-        await db.commit()
+        try:
+            await db.commit()
+        except IntegrityError as exc:
+            await db.rollback()
+            if _is_vector_correlation_id_conflict(exc):
+                raise _vector_correlation_id_conflict() from None
+            raise
     return tenant
 
 

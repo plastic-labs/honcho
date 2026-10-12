@@ -179,6 +179,44 @@ def test_create_tenant_conflict_different_tier(client: TestClient, enabled: str)
     assert conflict.status_code == 409, conflict.text
 
 
+def test_create_tenant_conflict_key_held_by_another_tenant(
+    client: TestClient, enabled: str
+):
+    """A second tenant cannot take a vector_correlation_id another tenant holds:
+    the key names vector-store namespaces, so sharing it would share vectors.
+    The 409 names neither tenant, and the second tenant is not created."""
+    key = f"vec-{generate_nanoid()}"
+    holder, newcomer = generate_nanoid(), generate_nanoid()
+
+    first = client.post(
+        "/v3/tenants",
+        json=_create_body(holder, vector_correlation_id=key),
+        headers={HEADER: enabled},
+    )
+    assert first.status_code == 201, first.text
+
+    conflict = client.post(
+        "/v3/tenants",
+        json=_create_body(newcomer, vector_correlation_id=key),
+        headers={HEADER: enabled},
+    )
+    assert conflict.status_code == 409, conflict.text
+    assert "another tenant" in conflict.text
+    assert holder not in conflict.text
+    assert (
+        client.get(f"/v3/tenants/{newcomer}", headers={HEADER: enabled}).status_code
+        == 404
+    )
+
+    # The holder's own identical retry is unaffected: still the idempotent 200.
+    retry = client.post(
+        "/v3/tenants",
+        json=_create_body(holder, vector_correlation_id=key),
+        headers={HEADER: enabled},
+    )
+    assert retry.status_code == 200, retry.text
+
+
 def test_create_tenant_invalid_id(client: TestClient, enabled: str):
     """A tenant_id violating RESOURCE_NAME_PATTERN (a ':') is a 422."""
     response = client.post(
@@ -464,6 +502,31 @@ async def test_patch_vector_correlation_id_is_set_once(
     after = current()
     assert after["derivation_paused"] is True
     assert after["vector_correlation_id"] == v
+
+
+@pytest.mark.asyncio
+async def test_patch_vector_correlation_id_held_by_another_tenant_is_409(
+    client: TestClient, enabled: str, db_session: AsyncSession
+):
+    """Setting a NULL key to one another tenant already holds is a 409, not a
+    500, and leaves the row unchanged; two tenants may both still be NULL."""
+    holder = generate_nanoid()
+    key = _created(client, enabled, holder)["vector_correlation_id"]
+
+    unset_a, unset_b = generate_nanoid(), generate_nanoid()
+    db_session.add_all(
+        [
+            models.Tenant(tenant_id=unset_a, tier="shared"),
+            models.Tenant(tenant_id=unset_b, tier="shared"),
+        ]
+    )
+    await db_session.commit()
+
+    conflict = _patch(client, enabled, unset_a, {"vector_correlation_id": key})
+    assert conflict.status_code == 409, conflict.text
+    assert holder not in conflict.text
+    unchanged = client.get(f"/v3/tenants/{unset_a}", headers={HEADER: enabled})
+    assert unchanged.json()["vector_correlation_id"] is None
 
 
 def test_patch_unknown_tenant_is_404(client: TestClient, enabled: str):
