@@ -86,11 +86,13 @@ async def get_or_create_tenant(
         await db.commit()
     except IntegrityError as exc:
         await db.rollback()
-        if _is_vector_correlation_id_conflict(exc):
-            raise _vector_correlation_id_conflict() from None
         # Lost the create race to a concurrent retry of the same provisioning
         # call — apply the same idempotency contract to the winner's row.
+        # ai: re-read before inspecting the constraint, so a same-tenant retry
+        # stays idempotent whichever of the two unique indexes Postgres reports.
         existing = await db.get(models.Tenant, tenant_id)
+        if existing is None and _is_vector_correlation_id_conflict(exc):
+            raise _vector_correlation_id_conflict() from None
         if existing is None:  # pragma: no cover - delete raced the retry
             # region ai
             # Reachable only when a DELETE of this tenant_id commits between
