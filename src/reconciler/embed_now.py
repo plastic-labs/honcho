@@ -140,7 +140,7 @@ class _ClaimedChunk:
     id: int
     message_id: str
     content: str
-    # ai: the claim is cross-tenant, so each chunk carries its own tenant — it is what resolves the row's vector namespace
+    # ai: each chunk carries its tenant because prefix_for_tenant takes it per row — the same call the reconciler makes
     tenant_id: str
     workspace_name: str
     session_name: str | None
@@ -347,7 +347,7 @@ async def _upsert_external(
     async with tracked_db("embed_now_positions", tenant_id=tenant_id) as db:
         chunk_position = await compute_chunk_positions(db, message_ids)
 
-    # ai: contained per chunk — this claim spans tenants, and an unresolvable one must leave the rest of the batch to the reconciler rather than abort it
+    # ai: contained per chunk — an unresolvable key leaves those chunks to the reconciler's backoff instead of failing the whole fast path
     by_namespace: dict[str, list[_ClaimedChunk]] = {}
     for c in claimed:
         try:

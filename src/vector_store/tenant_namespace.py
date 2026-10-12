@@ -86,8 +86,9 @@ async def resolve_namespace_prefix(explicit: str | None = None) -> str:
 async def prefix_for_tenant(tenant_id: str | None) -> str:
     """The namespace prefix for a named tenant.
 
-    For the cross-tenant background paths, which have no ambient tenant and work a row
-    at a time: each row carries its own ``tenant_id``, so each gets its own namespace.
+    For paths that resolve a namespace row by row from the row's own ``tenant_id``
+    rather than an ambient tenant: the cross-tenant reconciler and soft-delete sweep,
+    and immediate embedding. Each row gets its own tenant's namespace.
 
     Raises:
         VectorNamespaceUnresolved: ``MULTI_TENANT`` is on and the row has no tenant,
