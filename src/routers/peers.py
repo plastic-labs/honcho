@@ -396,6 +396,7 @@ async def chat(
                     response_model=response_model,
                     evidence=evidence,
                     semantic_query=options.semantic_query,
+                    reasoning_context=options.reasoning_context,
                 ),
                 evidence,
             ),
@@ -416,6 +417,7 @@ async def chat(
         response_model=response_model,
         evidence=evidence,
         semantic_query=options.semantic_query,
+        reasoning_context=options.reasoning_context,
     )
 
     # Prometheus metrics

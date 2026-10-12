@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Peer chat accepts optional `semantic_query` for conclusion prefetching and `reasoning_context` for additional user-level instructions. The full `query` is preserved for reasoning, omitted retrieval text falls back to `query`, and both streaming and non-streaming responses support the options. Python and TypeScript SDKs expose both fields (#754).
+
 ## [3.3.0] - 2026-10-09
 
 ### Added

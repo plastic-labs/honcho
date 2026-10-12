@@ -5423,6 +5423,20 @@
             "title": "Semantic Query",
             "description": "Optional text used only to prefetch relevant conclusions. Defaults to `query`. Set it when `query` carries instructions or formatting that would dilute the retrieval embedding; the reasoning agent still receives `query` in full."
           },
+          "reasoning_context": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 10000,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reasoning Context",
+            "description": "Optional additional instructions for the reasoning agent, included alongside `query` but not in the prefetch embedding."
+          },
           "stream": {
             "type": "boolean",
             "title": "Stream",

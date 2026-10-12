@@ -555,6 +555,21 @@ class DialecticParams(BaseModel):
     session_id: str | None = None
     target: str | None = None
     query: str = Field(min_length=1, max_length=10000)
+    semantic_query: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=10000,
+        description="Semantic prefetch retrieval text; defaults to query when omitted",
+    )
+    reasoning_context: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=10000,
+        description=(
+            "Additional user-level instructions alongside the full query; "
+            "never embedded for semantic prefetch"
+        ),
+    )
     stream: bool = False
     reasoning_level: ReasoningLevel = "low"
     response_format: dict[str, Any] | None = None

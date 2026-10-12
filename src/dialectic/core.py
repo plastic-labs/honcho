@@ -330,6 +330,7 @@ class DialecticAgent:
         query: str,
         telemetry: LLMTelemetryContext,
         semantic_query: str | None = None,
+        reasoning_context: str | None = None,
     ) -> tuple[
         Callable[[str, dict[str, Any]], Any],
         str,
@@ -348,6 +349,7 @@ class DialecticAgent:
             query: The question to answer about the peer
             telemetry: Telemetry context for the run
             semantic_query: Optional text to prefetch with instead of ``query``
+            reasoning_context: Additional instructions, excluded from prefetch
 
         Returns:
             A tuple of (tool_executor, task_name, run_id, start_time, run)
@@ -364,7 +366,7 @@ class DialecticAgent:
         run = start_captured_span("run", telemetry, input=query)
         try:
             tool_executor = await self._prepare_messages(
-                query, task_name, semantic_query
+                query, task_name, semantic_query, reasoning_context
             )
         except BaseException:
             if run is not None:
@@ -373,7 +375,11 @@ class DialecticAgent:
         return tool_executor, task_name, run_id, start_time, run
 
     async def _prepare_messages(
-        self, query: str, task_name: str, semantic_query: str | None = None
+        self,
+        query: str,
+        task_name: str,
+        semantic_query: str | None = None,
+        reasoning_context: str | None = None,
     ) -> Callable[[str, dict[str, Any]], Any]:
         """Prefetch observations, append the user message, and build the tool executor."""
         accumulate_metric(
@@ -392,8 +398,8 @@ class DialecticAgent:
         if semantic_query is not None:
             accumulate_metric(task_name, "semantic_query", semantic_query, "blob")
 
-        # The prefetch embeds its argument, so it gets the retrieval text; the
-        # agent's user message below still carries the full query.
+        # Only retrieval text is embedded; additional instructions stay in the
+        # user message alongside the original query.
         prefetched_observations = await self._prefetch_relevant_observations(
             semantic_query if semantic_query is not None else query
         )
@@ -410,6 +416,9 @@ class DialecticAgent:
             )
         else:
             user_content = f"Query: {query}"
+
+        if reasoning_context is not None:
+            user_content += f"\n\nReasoning context: {reasoning_context}"
 
         self.messages.append({"role": "user", "content": user_content})
 
@@ -562,6 +571,7 @@ class DialecticAgent:
         query: str,
         response_model: type[BaseModel] | None = None,
         semantic_query: str | None = None,
+        reasoning_context: str | None = None,
     ) -> str:
         """
         Answer a query about the peer using agentic tool calling.
@@ -577,13 +587,15 @@ class DialecticAgent:
                 conform to. When set, the returned string is JSON.
             semantic_query: Optional text used only to prefetch conclusions.
                 Defaults to ``query``.
+            reasoning_context: Additional instructions for the reasoning agent,
+                excluded from the prefetch embedding.
 
         Returns:
             The synthesized answer string
         """
         telemetry = self._telemetry_context(track_name="Dialectic Agent")
         tool_executor, task_name, run_id, start_time, run = await self._prepare_query(
-            query, telemetry, semantic_query
+            query, telemetry, semantic_query, reasoning_context
         )
 
         # Get level-specific settings
@@ -660,6 +672,7 @@ class DialecticAgent:
         query: str,
         response_model: type[BaseModel] | None = None,
         semantic_query: str | None = None,
+        reasoning_context: str | None = None,
     ) -> AsyncIterator[str]:
         """
         Answer a query about the peer using agentic tool calling, streaming the response.
@@ -676,13 +689,15 @@ class DialecticAgent:
                 (chunks are raw text; no parsing happens on the stream path).
             semantic_query: Optional text used only to prefetch conclusions.
                 Defaults to ``query``.
+            reasoning_context: Additional instructions for the reasoning agent,
+                excluded from the prefetch embedding.
 
         Yields:
             Chunks of the response text as they are generated
         """
         telemetry = self._telemetry_context(track_name="Dialectic Agent Stream")
         tool_executor, task_name, run_id, start_time, run = await self._prepare_query(
-            query, telemetry, semantic_query
+            query, telemetry, semantic_query, reasoning_context
         )
 
         # Get level-specific settings

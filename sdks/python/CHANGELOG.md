@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- `semantic_query` and `reasoning_context` on synchronous and asynchronous `Peer.chat()` and `Peer.chat_stream()`, and on `DialecticParams` (#754). `semantic_query` overrides only semantic prefetch retrieval text; `reasoning_context` adds user-level instructions alongside the full query and is never embedded for prefetch. Both are optional non-empty strings of up to 10000 characters, and omitted options leave existing requests unchanged.
+
 ## [2.6.0] - 2026-10-07
 
 ### Added

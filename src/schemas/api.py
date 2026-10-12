@@ -820,6 +820,19 @@ class DialecticOptions(BaseModel):
         ),
         NulStripped,
     ]
+    reasoning_context: Annotated[
+        str | None,
+        Field(
+            default=None,
+            min_length=1,
+            max_length=10000,
+            description=(
+                "Optional additional instructions for the reasoning agent, "
+                "included alongside `query` but not in the prefetch embedding."
+            ),
+        ),
+        NulStripped,
+    ]
     stream: bool = False
     reasoning_level: ReasoningLevel = Field(
         default="low",

@@ -281,6 +281,8 @@ class Peer(PeerBase, MetadataConfigMixin):
         self,
         query: str,
         *,
+        semantic_query: str | None = None,
+        reasoning_context: str | None = None,
         target: str | PeerBase | None = None,
         session: str | SessionBase | None = None,
         scope: str | ScopeBase | Sequence[str | ScopeBase] | None = None,
@@ -297,6 +299,8 @@ class Peer(PeerBase, MetadataConfigMixin):
         self,
         query: str,
         *,
+        semantic_query: str | None = None,
+        reasoning_context: str | None = None,
         target: str | PeerBase | None = None,
         session: str | SessionBase | None = None,
         scope: str | ScopeBase | Sequence[str | ScopeBase] | None = None,
@@ -313,6 +317,8 @@ class Peer(PeerBase, MetadataConfigMixin):
         self,
         query: str,
         *,
+        semantic_query: str | None = None,
+        reasoning_context: str | None = None,
         target: str | PeerBase | None = None,
         session: str | SessionBase | None = None,
         scope: str | ScopeBase | Sequence[str | ScopeBase] | None = None,
@@ -329,6 +335,8 @@ class Peer(PeerBase, MetadataConfigMixin):
         self,
         query: str,
         *,
+        semantic_query: str | None = None,
+        reasoning_context: str | None = None,
         target: str | PeerBase | None = None,
         session: str | SessionBase | None = None,
         scope: str | ScopeBase | Sequence[str | ScopeBase] | None = None,
@@ -345,6 +353,18 @@ class Peer(PeerBase, MetadataConfigMixin):
         self,
         query: str = Field(..., min_length=1, description="The natural language query"),
         *,
+        semantic_query: str | None = Field(
+            None,
+            min_length=1,
+            max_length=10000,
+            description="Text used for semantic prefetch instead of the query",
+        ),
+        reasoning_context: str | None = Field(
+            None,
+            min_length=1,
+            max_length=10000,
+            description="Additional user-level instructions alongside the full query",
+        ),
         target: str | PeerBase | None = None,
         session: str | SessionBase | None = None,
         scope: str | ScopeBase | Sequence[str | ScopeBase] | None = None,
@@ -366,6 +386,13 @@ class Peer(PeerBase, MetadataConfigMixin):
 
         Args:
             query: The natural language question to ask.
+            semantic_query: Optional non-empty text (up to 10000 characters) used
+                            only for semantic prefetch retrieval. Defaults to
+                            ``query`` when omitted; the full query is still used
+                            to answer the question.
+            reasoning_context: Optional non-empty user-level instructions (up to
+                               10000 characters) supplied alongside the full query.
+                               This text is never embedded for semantic prefetch.
             target: Optional target peer for local representation query. If provided,
                     queries what this peer knows about the target peer rather than
                     querying the peer's global representation. Can be a peer ID string
@@ -417,6 +444,10 @@ class Peer(PeerBase, MetadataConfigMixin):
         resolved_session_id = resolve_id(session)
 
         body: dict[str, Any] = {"query": query, "stream": False}
+        if semantic_query is not None:
+            body["semantic_query"] = semantic_query
+        if reasoning_context is not None:
+            body["reasoning_context"] = reasoning_context
         body.update(
             scope_recall_fields(
                 scope=scope, sessions=sessions, session_id=resolved_session_id
@@ -446,6 +477,18 @@ class Peer(PeerBase, MetadataConfigMixin):
         self,
         query: str = Field(..., min_length=1, description="The natural language query"),
         *,
+        semantic_query: str | None = Field(
+            None,
+            min_length=1,
+            max_length=10000,
+            description="Text used for semantic prefetch instead of the query",
+        ),
+        reasoning_context: str | None = Field(
+            None,
+            min_length=1,
+            max_length=10000,
+            description="Additional user-level instructions alongside the full query",
+        ),
         target: str | PeerBase | None = None,
         session: str | SessionBase | None = None,
         scope: str | ScopeBase | Sequence[str | ScopeBase] | None = None,
@@ -464,6 +507,13 @@ class Peer(PeerBase, MetadataConfigMixin):
 
         Args:
             query: The natural language question to ask.
+            semantic_query: Optional non-empty text (up to 10000 characters) used
+                            only for semantic prefetch retrieval. Defaults to
+                            ``query`` when omitted; the full query is still used
+                            to answer the question.
+            reasoning_context: Optional non-empty user-level instructions (up to
+                               10000 characters) supplied alongside the full query.
+                               This text is never embedded for semantic prefetch.
             target: Optional target peer for local representation query. If provided,
                     queries what this peer knows about the target peer rather than
                     querying the peer's global representation. Can be a peer ID string
@@ -498,6 +548,10 @@ class Peer(PeerBase, MetadataConfigMixin):
         resolved_session_id = resolve_id(session)
 
         body: dict[str, Any] = {"query": query, "stream": True}
+        if semantic_query is not None:
+            body["semantic_query"] = semantic_query
+        if reasoning_context is not None:
+            body["reasoning_context"] = reasoning_context
         body.update(
             scope_recall_fields(
                 scope=scope, sessions=sessions, session_id=resolved_session_id

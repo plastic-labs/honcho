@@ -58,6 +58,7 @@ async def agentic_chat(
     response_model: type[BaseModel] | None = None,
     evidence: EvidenceAccumulator | None = None,
     semantic_query: str | None = None,
+    reasoning_context: str | None = None,
 ) -> str:
     """
     Answer a query about a peer using the agentic dialectic.
@@ -74,6 +75,7 @@ async def agentic_chat(
             When set, the returned string is JSON matching the model's schema.
         semantic_query: Optional text used only to prefetch conclusions.
             Defaults to ``query``.
+        reasoning_context: Additional instructions, excluded from prefetch.
 
     Returns:
         The synthesized answer string
@@ -131,7 +133,10 @@ async def agentic_chat(
     )
 
     return await agent.answer(
-        query, response_model=response_model, semantic_query=semantic_query
+        query,
+        response_model=response_model,
+        semantic_query=semantic_query,
+        reasoning_context=reasoning_context,
     )
 
 
@@ -146,6 +151,7 @@ async def agentic_chat_stream(
     response_model: type[BaseModel] | None = None,
     evidence: EvidenceAccumulator | None = None,
     semantic_query: str | None = None,
+    reasoning_context: str | None = None,
 ) -> AsyncIterator[str]:
     """
     Stream an answer to a query about a peer using the agentic dialectic.
@@ -163,6 +169,7 @@ async def agentic_chat_stream(
             model's schema.
         semantic_query: Optional text used only to prefetch conclusions.
             Defaults to ``query``.
+        reasoning_context: Additional instructions, excluded from prefetch.
 
     Yields:
         Chunks of the response text as they are generated
@@ -220,7 +227,10 @@ async def agentic_chat_stream(
     )
 
     async for chunk in agent.answer_stream(
-        query, response_model=response_model, semantic_query=semantic_query
+        query,
+        response_model=response_model,
+        semantic_query=semantic_query,
+        reasoning_context=reasoning_context,
     ):
         yield chunk
 
