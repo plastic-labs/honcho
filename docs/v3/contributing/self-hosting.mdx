@@ -9,6 +9,10 @@ This guide helps you set up a local environment to run Honcho for development, t
 
 **Just want a running instance?** `uv tool install honcho-cli` only installs the `honcho` command. Then run [`honcho start --setup`](/v3/documentation/reference/cli#local-stack) (Docker + an LLM provider key) — that pulls a published image and starts API, deriver, Postgres, and Redis. The rest of this page is for building from source, contributing, or deploying without the CLI.
 
+<Tip>
+**Don't want to run Postgres, Redis, and a background worker?** Honcho Cloud runs the same open-source server for you, with a generous free tier. [Get an API key](https://app.honcho.dev/api-keys?utm_source=docs&utm_medium=callout&utm_content=selfhost_callout) and point the SDK at it — no infrastructure required.
+</Tip>
+
 ## Overview
 
 By the end of this guide, you'll have:
