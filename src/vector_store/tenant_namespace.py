@@ -32,8 +32,8 @@ from src.exceptions import VectorNamespaceUnresolved, VectorStoreError
 #
 # Safe because the registry's PATCH treats the key as set-once (schemas.TenantUpdate,
 # enforced under a row lock in src/crud/tenant.py): NULL may become a value, and a value
-# may never change. A NULL key is never cached (_load_prefix raises before the write
-# below), so the one transition the API allows is one no process holds.
+# may never change. A NULL key is never cached (prefix_for_tenant raises before its
+# cache write), so the one transition the API allows is one no process holds.
 #
 # There is no TTL, so any change outside that path takes effect only after every replica
 # restarts: deleting an empty tenant and recreating the same id with a different key, or
@@ -107,13 +107,7 @@ async def prefix_for_tenant(tenant_id: str | None) -> str:
     if cached is not None:
         return cached
 
-    prefix = await _load_prefix(tenant_id)
-    _prefix_cache[tenant_id] = prefix
-    return prefix
-
-
-async def _load_prefix(tenant_id: str) -> str:
-    """Read one tenant's key. Cross-tenant by nature, so it runs on the service role."""
+    # The key read is cross-tenant by nature, so it runs on the service role.
     # ai: deferred for the same reason as above — keep src.vector_store cheap to import
     from src import models
     from src.dependencies import service_db
@@ -147,6 +141,7 @@ async def _load_prefix(tenant_id: str) -> str:
             + "had its own instance, its tenant id otherwise. Refusing rather than "
             + "guessing: guessing would orphan an existing corpus behind an empty search."
         )
+    _prefix_cache[tenant_id] = key
     return key
 
 
