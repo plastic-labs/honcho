@@ -10,10 +10,10 @@ from typing import ClassVar
 
 from pydantic import Field
 
-from src.telemetry.events.base import BaseEvent
+from src.telemetry.events.base import BaseEvent, CustomInstructionsFields
 
 
-class RepresentationCompletedEvent(BaseEvent):
+class RepresentationCompletedEvent(BaseEvent, CustomInstructionsFields):
     """Emitted when a representation task completes processing a message batch.
 
     Representation tasks extract conclusions from messages to build peer

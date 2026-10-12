@@ -29,6 +29,7 @@ ROLE_OUTPUT = "assistant"
 ROLE_TOOL_SCHEMA = "__tool_schema__"
 ROLE_THINKING = "__thinking__"
 ROLE_REASONING = "__reasoning__"
+ROLE_CUSTOM_INSTRUCTIONS = "__custom_instructions__"
 
 
 def canonical_json(obj: Any) -> str:
@@ -154,6 +155,7 @@ class CapturedLLMCall:
     retry_attempts: int | None = None
     is_final_attempt: bool | None = None
     effective_max_output_tokens: int | None = None
+    custom_instructions: str | None = None
 
 
 def _normalize_message(
@@ -354,6 +356,7 @@ def build_captured_call(
             attempt >= retry_attempts if retry_attempts is not None else None
         ),
         effective_max_output_tokens=effective_max_output_tokens,
+        custom_instructions=telemetry.custom_instructions if telemetry else None,
     )
 
 

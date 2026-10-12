@@ -15,6 +15,7 @@ from typing import Any
 
 from src.config import settings
 from src.llm.capture import (
+    ROLE_CUSTOM_INSTRUCTIONS,
     ROLE_OUTPUT,
     ROLE_REASONING,
     ROLE_THINKING,
@@ -115,6 +116,13 @@ class TraceExporter:
             )
             was_truncated = was_truncated or truncated
 
+        custom_instructions_ref: str | None = None
+        if call.custom_instructions:
+            custom_instructions_ref, truncated = self._emit_hashed_content(
+                run_key, ROLE_CUSTOM_INSTRUCTIONS, call.custom_instructions
+            )
+            was_truncated = was_truncated or truncated
+
         output_reasoning_ref: str | None = None
         if call.reasoning_details:
             output_reasoning_ref, truncated = self._emit_hashed_content(
@@ -152,6 +160,7 @@ class TraceExporter:
                 system_prompt_refs=system_prompt_refs,
                 tool_schema_refs=tool_schema_refs,
                 tool_choice=call.tool_choice,
+                custom_instructions_ref=custom_instructions_ref,
                 output_content_ref=output_content_ref,
                 output_tool_calls=call.output_tool_calls,
                 output_thinking_ref=output_thinking_ref,

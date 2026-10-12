@@ -25,7 +25,7 @@ from src.telemetry.sentry import with_sentry_transaction
 from src.utils.config_helpers import get_configuration
 from src.utils.representation import PromptRepresentation, Representation
 from src.utils.retryable_errors import is_retryable_error
-from src.utils.tokens import track_deriver_input_tokens
+from src.utils.tokens import estimate_tokens, track_deriver_input_tokens
 
 from .prompts import (
     estimate_deriver_prompt_tokens,
@@ -184,6 +184,7 @@ async def process_representation_tasks_batch(
             track_name="Minimal Deriver",
             trace_id=trace_id,
             span_id=trace_id,
+            custom_instructions=custom_instructions,
         ),
     )
     llm_duration = (time.perf_counter() - llm_start) * 1000
@@ -349,6 +350,8 @@ async def process_representation_tasks_batch(
             extra_context_message_count=extra_context_message_count,
             extra_context_tokens=extra_context_tokens,
             prompt_scaffold_tokens=prompt_tokens,
+            custom_instructions_tokens=estimate_tokens(custom_instructions),
+            custom_instructions_source=message_level_configuration.reasoning.custom_instructions_source,
             batch_max_tokens=batch_max_tokens,
             max_input_tokens=settings.DERIVER.MAX_INPUT_TOKENS,
             was_flush_enabled=was_flush_enabled,

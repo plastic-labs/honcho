@@ -112,6 +112,10 @@ class LLMTelemetryContext:
     # (e.g. "Dialectic Agent", "Minimal Deriver"). Also labels the sentry
     # `ai_track` decorator.
     track_name: str | None = None
+    # Operator-written custom instructions added to this call's prompt. Shipped
+    # to the trace stream as its own tenant-visible content record, since the
+    # system prompt around it is tagged Honcho-authored.
+    custom_instructions: str | None = None
     # Per-span memo for O(N) message capture in CapturedLLMCall
     hash_memo: dict[int, CapturedMessage] | None = field(
         default=None, compare=False, repr=False

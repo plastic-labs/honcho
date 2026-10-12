@@ -1,11 +1,13 @@
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
+import * as Sentry from "@sentry/bun";
 import {
   honchoClients,
   identityHeaders,
   parseConfig,
   type Env,
   type HonchoConfig,
+  sentryOptions,
 } from "./config.js";
 import { createServer } from "./server.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -280,6 +282,7 @@ export async function fetch(
   try {
     return await handleMcp(request);
   } catch (e) {
+    Sentry.captureException(e);
     const message =
       e instanceof Error ? e.message : "Internal server error";
     return jsonResponse({ error: message }, 500);
@@ -288,6 +291,7 @@ export async function fetch(
 
 const isMain = Boolean((import.meta as { main?: boolean }).main);
 if (isMain) {
+  Sentry.init(sentryOptions({ SENTRY_DSN: process.env.SENTRY_DSN }));
   const hostname = process.env.HOST?.trim() || "0.0.0.0";
   const port = Number(process.env.PORT) || 3000;
   Bun.serve({ hostname, port, fetch });
