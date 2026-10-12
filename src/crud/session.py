@@ -42,6 +42,7 @@ from src.exceptions import (
     ResourceNotFoundException,
     ValidationException,
 )
+from src.telemetry.events import SessionCreatedEvent, emit
 from src.utils.filter import apply_filter
 from src.utils.scopes import is_scope_peer, scope_peer_name
 from src.utils.types import GetOrCreateResult
@@ -377,6 +378,12 @@ async def get_or_create_session(
         await peers_result.post_commit()
     if scopes_result is not None:
         await scopes_result.post_commit()
+    if created:
+        emit(
+            SessionCreatedEvent(
+                workspace_name=workspace_name, session_name=session.name
+            )
+        )
 
     # Backfill (DEV-1999): a pre-existing session added to scopes at
     # create-or-get time may already have messages; those need a
