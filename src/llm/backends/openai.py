@@ -666,7 +666,15 @@ class OpenAIBackend:
                     else:
                         continue
                     if reasoning.get("type") == "reasoning":
-                        response_input.append(reasoning)
+                        # Output-only status and null SDK fields are not valid
+                        # Responses input; retain the encrypted reasoning payload.
+                        response_input.append(
+                            {
+                                key: value
+                                for key, value in reasoning.items()
+                                if key != "status" and value is not None
+                            }
+                        )
             if isinstance(content, str):
                 if content:
                     response_input.append({"role": role, "content": content})

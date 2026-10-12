@@ -1406,15 +1406,20 @@ async def test_responses_dict_reasoning_survives_completion_normalization() -> N
 
 
 @pytest.mark.asyncio
-async def test_responses_reasoning_details_are_replayed_for_tool_continuation() -> None:
+@pytest.mark.parametrize("as_sdk_model", [False, True])
+@pytest.mark.parametrize("encrypted_content", ["encrypted-replay", None])
+async def test_responses_reasoning_details_are_replayed_for_tool_continuation(
+    as_sdk_model: bool, encrypted_content: str | None
+) -> None:
     client = Mock()
-    reasoning = ResponseReasoningItem(
+    reasoning_item = ResponseReasoningItem(
         id="reasoning_replay",
         summary=[],
         type="reasoning",
-        encrypted_content="encrypted-replay",
+        encrypted_content=encrypted_content,
         status="completed",
-    ).model_dump()
+    )
+    reasoning = reasoning_item if as_sdk_model else reasoning_item.model_dump()
     final = _responses_final_response(text="done")
     client.responses.stream = Mock(
         return_value=_FakeResponsesStream(
@@ -1452,9 +1457,16 @@ async def test_responses_reasoning_details_are_replayed_for_tool_continuation() 
     )
 
     response_input = client.responses.stream.call_args.kwargs["input"]
+    expected_reasoning: dict[str, Any] = {
+        "id": "reasoning_replay",
+        "summary": [],
+        "type": "reasoning",
+    }
+    if encrypted_content is not None:
+        expected_reasoning["encrypted_content"] = encrypted_content
     assert response_input == [
         {"role": "user", "content": "Look it up"},
-        reasoning,
+        expected_reasoning,
         {
             "type": "function_call",
             "call_id": "call_replay",
@@ -1467,6 +1479,13 @@ async def test_responses_reasoning_details_are_replayed_for_tool_continuation() 
             "output": "found it",
         },
     ]
+    original = (
+        reasoning.model_dump()
+        if isinstance(reasoning, ResponseReasoningItem)
+        else reasoning
+    )
+    assert original["status"] == "completed"
+    assert original["content"] is None
 
 
 @pytest.mark.asyncio
