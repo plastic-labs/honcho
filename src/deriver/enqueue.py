@@ -29,12 +29,15 @@ from src.utils.work_unit import (
 logger = logging.getLogger(__name__)
 
 
-async def enqueue(payload: list[dict[str, Any]]) -> None:
+async def enqueue(payload: list[dict[str, Any]], *, tenant_id: str | None) -> None:
     """
     Add message(s) to the deriver queue for processing.
 
     Args:
         payload: List of message payload dictionaries
+        tenant_id: The tenant the messages belong to, captured by the caller
+            while its request was still bound to it; None when MULTI_TENANT
+            is off
     """
 
     # Cancel any pending dreams for affected collections since user is active again.
@@ -48,7 +51,7 @@ async def enqueue(payload: list[dict[str, Any]]) -> None:
             peer_name = message.get("peer_name")
             if workspace_name and peer_name:
                 cancelled = await dream_scheduler.cancel_dreams_for_observed(
-                    workspace_name, peer_name
+                    workspace_name, peer_name, tenant_id=tenant_id
                 )
                 cancelled_dreams.update(cancelled)
 
@@ -61,10 +64,12 @@ async def enqueue(payload: list[dict[str, Any]]) -> None:
     # Per-tenant work: the payload is a single session's messages (one workspace +
     # session, below), so the session/workspace/peer resolution in handle_session
     # must be RLS-scoped to the caller's tenant, not run on the cross-tenant service
-    # session. tracked_db inherits the ambient tenant; the queue table has no RLS,
-    # so the insert is fine on it too.
+    # session. The tenant arrives as an argument rather than from the ambient
+    # tenant_context: this runs as a background task, and whether the request's
+    # binding is still in place by then is a FastAPI ordering detail. The queue
+    # table has no RLS, so the insert is fine on this session too.
     # endregion
-    async with tracked_db("message_enqueue") as db_session:
+    async with tracked_db("message_enqueue", tenant_id=tenant_id) as db_session:
         try:
             # Determine if batch or single processing
             if not payload:  # Empty list check

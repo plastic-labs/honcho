@@ -1,4 +1,6 @@
+import sys
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -8,6 +10,8 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
+from src.config import settings
+from src.db import tenant_context
 from src.deriver import enqueue
 from src.deriver.enqueue import generate_queue_records
 from src.models import Peer, QueueItem, Workspace
@@ -77,7 +81,7 @@ class TestEnqueueFunction:
     async def test_empty_payload_skips_enqueue(self, caplog: pytest.LogCaptureFixture):
         """Test that empty payload list is handled gracefully"""
         with caplog.at_level("DEBUG"):
-            await enqueue([])
+            await enqueue([], tenant_id=None)
 
     @pytest.mark.asyncio
     async def test_malformed_payload_logs_error(self, caplog: pytest.LogCaptureFixture):
@@ -85,7 +89,9 @@ class TestEnqueueFunction:
         malformed_payload = [{"incomplete": "data"}]
 
         with caplog.at_level("ERROR"):
-            await enqueue(malformed_payload)  # Should not raise, but log error
+            await enqueue(
+                malformed_payload, tenant_id=None
+            )  # Should not raise, but log error
 
     # SESSION MESSAGES
     @pytest.mark.asyncio
@@ -114,7 +120,7 @@ class TestEnqueueFunction:
         )
 
         initial_count = await self.count_queue_items(db_session)
-        await enqueue(payload)
+        await enqueue(payload, tenant_id=None)
         final_count = await self.count_queue_items(db_session)
 
         # When deriver is disabled, only summary records should be created (if applicable)
@@ -152,7 +158,7 @@ class TestEnqueueFunction:
         )
 
         initial_count = await self.count_queue_items(db_session)
-        await enqueue(payload)
+        await enqueue(payload, tenant_id=None)
         final_count = await self.count_queue_items(db_session)
 
         # Should create 1 queue items: 1 representation
@@ -208,7 +214,7 @@ class TestEnqueueFunction:
         )
 
         initial_count = await self.count_queue_items(db_session)
-        await enqueue(payload)
+        await enqueue(payload, tenant_id=None)
         final_count = await self.count_queue_items(db_session)
 
         # Should create NUM_MESSAGES * queue items:
@@ -267,7 +273,7 @@ class TestEnqueueFunction:
         )
 
         initial_count = await self.count_queue_items(db_session)
-        await enqueue(payload)
+        await enqueue(payload, tenant_id=None)
         final_count = await self.count_queue_items(db_session)
 
         # With deduplication: 1 queue item per message (with all observers in a list)
@@ -337,7 +343,7 @@ class TestEnqueueFunction:
         )
 
         initial_count = await self.count_queue_items(db_session)
-        await enqueue(payload)
+        await enqueue(payload, tenant_id=None)
         final_count = await self.count_queue_items(db_session)
 
         # With deduplication: 1 queue item per message (with all observers in a list)
@@ -394,7 +400,7 @@ class TestEnqueueFunction:
         )
 
         initial_count = await self.count_queue_items(db_session)
-        await enqueue(payload)
+        await enqueue(payload, tenant_id=None)
         final_count = await self.count_queue_items(db_session)
 
         # Should create 0 queue items
@@ -455,7 +461,7 @@ class TestEnqueueFunction:
         payload = payload1 + payload2
 
         initial_count = await self.count_queue_items(db_session)
-        await enqueue(payload)
+        await enqueue(payload, tenant_id=None)
         final_count = await self.count_queue_items(db_session)
 
         # With deduplication: 1 queue item per message (2 messages total)
@@ -540,7 +546,7 @@ class TestEnqueueFunction:
         )
 
         initial_count = await self.count_queue_items(db_session)
-        await enqueue(payload)
+        await enqueue(payload, tenant_id=None)
         final_count = await self.count_queue_items(db_session)
 
         # With deduplication: 1 queue item per message with all observers
@@ -621,7 +627,7 @@ class TestEnqueueFunction:
         )
 
         initial_count = await self.count_queue_items(db_session)
-        await enqueue(payload)
+        await enqueue(payload, tenant_id=None)
         final_count = await self.count_queue_items(db_session)
 
         # With deduplication: 1 queue item per message with all observers
@@ -723,7 +729,7 @@ class TestEnqueueFunction:
         )
 
         initial_count = await self.count_queue_items(db_session)
-        await enqueue(payload)
+        await enqueue(payload, tenant_id=None)
         final_count = await self.count_queue_items(db_session)
 
         # With deduplication: 1 queue item per message with all observers
@@ -975,7 +981,7 @@ class TestAdvancedEnqueueEdgeCases:
         )
 
         initial_count = await self.count_queue_items(db_session)
-        await enqueue(payload)
+        await enqueue(payload, tenant_id=None)
         final_count = await self.count_queue_items(db_session)
 
         # Should create only 1 queue item: representation for sender only
@@ -1060,7 +1066,7 @@ class TestAdvancedEnqueueEdgeCases:
         )
 
         initial_count = await self.count_queue_items(db_session)
-        await enqueue(payload)
+        await enqueue(payload, tenant_id=None)
         final_count = await self.count_queue_items(db_session)
 
         # Should create only 1 queue item: representation for sender (using default config)
@@ -1117,7 +1123,7 @@ class TestAdvancedEnqueueEdgeCases:
         )
 
         initial_count = await self.count_queue_items(db_session)
-        await enqueue(payload)
+        await enqueue(payload, tenant_id=None)
         final_count = await self.count_queue_items(db_session)
 
         # With deduplication: 1 queue item per message with all observers
@@ -1299,3 +1305,92 @@ class TestGenerateQueueRecordsSeqInSession:
             for record in summary_records:
                 # Should use the value from CRUD fallback (60)
                 assert record["payload"]["message_seq_in_session"] == 60
+
+
+class TestEnqueueTenant:
+    """Under MULTI_TENANT, enqueue works from the tenant it is handed, not from
+    whatever tenant happens to be bound when the background task runs."""
+
+    async def _session_payload(
+        self, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+    ) -> list[dict[str, Any]]:
+        test_workspace, test_peer = sample_data
+        test_session = (
+            await crud.get_or_create_session(
+                db_session,
+                schemas.SessionCreate(
+                    name=str(generate_nanoid()),
+                    peers={test_peer.name: schemas.SessionPeerConfig(observe_me=True)},
+                ),
+                test_workspace.name,
+            )
+        ).resource
+        await db_session.commit()
+        return await TestEnqueueFunction().create_sample_payload(
+            db_session,
+            workspace_name=test_workspace.name,
+            session_name=test_session.name,
+            peer_name=test_peer.name,
+        )
+
+    async def _queued_tenants(
+        self, db_session: AsyncSession, payload: list[dict[str, Any]]
+    ) -> list[str | None]:
+        message_ids = [item["message_id"] for item in payload]
+        result = await db_session.execute(
+            select(QueueItem.tenant_id).where(QueueItem.message_id.in_(message_ids))
+        )
+        return list(result.scalars())
+
+    @pytest.mark.asyncio
+    async def test_explicit_tenant_needs_nothing_bound(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        payload = await self._session_payload(db_session, sample_data)
+        monkeypatch.setattr(settings, "MULTI_TENANT", True)
+        assert tenant_context.get() is None
+
+        await enqueue(payload, tenant_id="tenant-t")
+
+        assert await self._queued_tenants(db_session, payload) == ["tenant-t"]
+
+    @pytest.mark.asyncio
+    async def test_without_a_tenant_nothing_is_enqueued(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """The failure the explicit tenant prevents: with nothing bound and none
+        passed, the work-unit key can't be built and the batch is dropped."""
+        payload = await self._session_payload(db_session, sample_data)
+        monkeypatch.setattr(settings, "MULTI_TENANT", True)
+
+        await enqueue(payload, tenant_id=None)
+
+        assert await self._queued_tenants(db_session, payload) == []
+
+    @pytest.mark.asyncio
+    async def test_dream_cancellation_is_scoped_to_the_passed_tenant(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        scheduler = SimpleNamespace(
+            cancel_dreams_for_observed=AsyncMock(return_value=set())
+        )
+        # The package re-exports the function under the module's name, so reach
+        # the module itself through sys.modules.
+        monkeypatch.setattr(
+            sys.modules["src.deriver.enqueue"], "get_dream_scheduler", lambda: scheduler
+        )
+
+        await enqueue(
+            [{"workspace_name": "ws", "peer_name": "alice", "session_name": None}],
+            tenant_id="tenant-t",
+        )
+
+        scheduler.cancel_dreams_for_observed.assert_awaited_once_with(
+            "ws", "alice", tenant_id="tenant-t"
+        )

@@ -209,7 +209,7 @@ async def test_first_write_and_first_claim_need_no_tenant(
     monkeypatch.setattr(_ENQUEUE_MODULE, "service_db", fresh_tracked_db)
 
     with caplog.at_level("ERROR"):
-        await enqueue(payload)
+        await enqueue(payload, tenant_id=None)
 
     async with sessions() as db:
         queued = (

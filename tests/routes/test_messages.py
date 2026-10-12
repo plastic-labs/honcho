@@ -1,4 +1,5 @@
 import datetime
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -75,6 +76,52 @@ async def test_create_message_schedules_immediate_embed(
     assert response.status_code == 201
     public_id = response.json()[0]["id"]
     mock_embed_now.assert_awaited_once_with([public_id], tenant_id=None)
+
+
+@pytest.mark.parametrize("upload", [False, True])
+@pytest.mark.asyncio
+async def test_create_message_hands_enqueue_the_requests_tenant(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+    upload: bool,
+):
+    """Both create routes read the tenant while the request is bound and pass it
+    to the enqueue task, so the task never depends on the request's binding still
+    being in place when background tasks run."""
+    import io
+
+    test_workspace, test_peer = sample_data
+    test_session = models.Session(
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
+    )
+    db_session.add(test_session)
+    await db_session.commit()
+    url = f"/v3/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages"
+
+    with (
+        patch(
+            "src.routers.messages.tenant_context",
+            SimpleNamespace(get=lambda: "tenant-from-request"),
+        ),
+        patch("src.routers.messages.enqueue", new=AsyncMock()) as mock_enqueue,
+    ):
+        if upload:
+            response = client.post(
+                f"{url}/upload",
+                files={"file": ("note.txt", io.BytesIO(b"hello"), "text/plain")},
+                data={"peer_id": test_peer.name},
+            )
+        else:
+            response = client.post(
+                url,
+                json={"messages": [{"content": "hello", "peer_id": test_peer.name}]},
+            )
+
+    assert response.status_code == 201
+    mock_enqueue.assert_awaited_once()
+    assert mock_enqueue.await_args is not None
+    assert mock_enqueue.await_args.kwargs == {"tenant_id": "tenant-from-request"}
 
 
 @pytest.mark.asyncio

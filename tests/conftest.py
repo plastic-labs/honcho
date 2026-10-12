@@ -36,7 +36,7 @@ from sqlalchemy_utils import (
 from src import models
 from src.cache.client import cache
 from src.config import settings
-from src.db import Base
+from src.db import Base, tenant_context
 from src.dependencies import get_db, get_read_db
 from src.exceptions import HonchoException
 from src.models import Peer, Workspace
@@ -1042,9 +1042,11 @@ def mock_tracked_db(request: pytest.FixtureRequest):
     async def mock_tracked_db_context(
         _: str | None = None, *, read_only: bool = False, tenant_id: str | None = None
     ):
-        # read_only and tenant_id are accepted (and ignored): in tests both engines
-        # resolve to the same per-test database session, and RLS isn't applied.
-        del read_only, tenant_id
+        # read_only is accepted and ignored: in tests both engines resolve to the
+        # same per-test database, and RLS isn't applied. tenant_id is bound into
+        # tenant_context for the block, as the real tracked_db does, because code
+        # inside the block (work-unit key construction) reads it from there.
+        del read_only
         # region ai
         # Mirrors the real tracked_db/service_db teardown (rollback, then close).
         # The rollback expires every loaded instance and the close detaches it,
@@ -1052,11 +1054,16 @@ def mock_tracked_db(request: pytest.FixtureRequest):
         # exactly as it does in production, instead of passing on a stand-in
         # that merely closed.
         # endregion
-        async with session_factory() as session:
-            try:
-                yield session
-            finally:
-                await session.rollback()
+        tenant_token = tenant_context.set(tenant_id) if tenant_id is not None else None
+        try:
+            async with session_factory() as session:
+                try:
+                    yield session
+                finally:
+                    await session.rollback()
+        finally:
+            if tenant_token is not None:
+                tenant_context.reset(tenant_token)
 
     # Each module imports tracked_db by name, so patch every import site.
     # Use ExitStack (not a parenthesized `with`) to stay under CPython's
