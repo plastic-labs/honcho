@@ -49,4 +49,9 @@ def test_single_tenant_key_carries_no_tenant(
     response = client.post("/v3/keys", params={"workspace_id": "ws-t"})
 
     assert response.status_code == 200, response.text
-    assert response.json()["key"] == create_jwt(JWTParams(w="ws-t"))
+    # Assert the claims, not the encoded token: JWTParams.t defaults to a
+    # second-truncated utc_now_iso(), so comparing two independently minted tokens
+    # fails whenever the two mints straddle a second boundary.
+    minted = verify_jwt(response.json()["key"])
+    assert minted.tn is None
+    assert minted.w == "ws-t"

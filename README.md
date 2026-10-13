@@ -468,6 +468,10 @@ uv run python scripts/generate_jwt.py --admin
 # Admin token expiring in 24 hours
 uv run python scripts/generate_jwt.py --admin --expires 24h
 
+# Admin token for a tenant -- required when MULTI_TENANT is enabled, since a
+# token with no tenant claim is rejected for every caller, admin included
+uv run python scripts/generate_jwt.py --admin --tenant acme
+
 # Workspace-scoped token
 uv run python scripts/generate_jwt.py --workspace my-workspace --expires 30d
 

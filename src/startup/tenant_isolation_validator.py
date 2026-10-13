@@ -2,8 +2,8 @@
 
 Gates boot (API and deriver) when ``MULTI_TENANT`` is on, converting five silent
 half-states — where isolation looks enabled but cannot hold, or cannot serve — into
-a hard boot failure. Listed in check order: the first two are settings-only and need
-no connection; (3) and (4) introspect the database (with retry).
+a hard boot failure. Listed in check order: the first three are settings-only and need
+no connection; (4) and (5) introspect the database (with retry).
 
 1. Flag vs auth (API processes only). ``MULTI_TENANT`` on with
    ``AUTH_USE_AUTH`` off means every request authenticates as a tenant-less admin,
@@ -20,19 +20,19 @@ no connection; (3) and (4) introspect the database (with retry).
    cross-tenant read that fails OPEN (the dangerous direction). Refuse to boot in
    that combination.
 
-3. Flag vs policies. ``MULTI_TENANT`` on but the data tables lack RLS
+3. Flag vs service role. The cross-tenant service paths (deriver claim,
+   reconciler, dreamer) must run on a role that bypasses RLS; with
+   ``DB_SERVICE_CONNECTION_URI`` unset they would run on the RLS-enforced app role
+   and silently read zero rows.
+
+4. Flag vs policies. ``MULTI_TENANT`` on but the data tables lack RLS
    enabled + forced means the binding is set but nothing enforces it — no
    isolation, no error.
 
-4. Role vs policies. Postgres does not enforce row-level security for a
-   superuser or a role with BYPASSRLS, so on such a role every check in (3)
+5. Role vs policies. Postgres does not enforce row-level security for a
+   superuser or a role with BYPASSRLS, so on such a role every check in (4)
    passes vacuously while isolation is actually off. Refuse to boot if the
    TENANT engine's connecting role (``DB_CONNECTION_URI``) is either.
-
-5. Flag vs service role. With RLS enforced, the cross-tenant service paths
-   (deriver claim, reconciler, dreamer) must run on a role that bypasses it; with
-   ``DB_SERVICE_CONNECTION_URI`` unset they would run on the RLS-enforced app role
-   and silently read zero rows.
 
 No-op when ``MULTI_TENANT`` is off: self-host runs on plain, RLS-free Postgres.
 
@@ -110,18 +110,21 @@ async def validate_tenant_isolation(
     if not s.MULTI_TENANT:
         return
 
+    # Every settings-only check runs first: a misconfiguration that needs no
+    # database should be reported immediately, not after the introspection retries
+    # have spent themselves failing to reach a database that may also be down.
     _assert_auth_enabled(s, instance_type)
     _assert_pooler_mode_safe(s.DB.POOLER_MODE)
+    _assert_service_role_configured(s)
 
     rls = await _introspect_rls_with_retry(engine, s.DB.SCHEMA)
     _assert_rls_enforced(rls, schema=s.DB.SCHEMA)
     rolname, rolsuper, rolbypassrls = await _introspect_tenant_role_with_retry(engine)
     _assert_tenant_role_cannot_bypass_rls(rolname, rolsuper, rolbypassrls)
-    _assert_service_role_configured(s)
 
 
 def _assert_service_role_configured(s: AppSettings) -> None:
-    """Require a distinct service connection once RLS is enforced."""
+    """Require a distinct service connection for the cross-tenant paths."""
     # region ai
     # The cross-tenant service paths (deriver claim, reconciler, dreamer, enqueue)
     # read tenant data across tenants and must run on a role that BYPASSES RLS.
@@ -289,8 +292,11 @@ async def _introspect_tenant_role_once(engine: AsyncEngine) -> tuple[str, bool, 
     (see ``_assert_service_role_configured``) and must not trip this check.
     """
     query = text(
-        "SELECT rolname, rolsuper, rolbypassrls FROM pg_roles"
-        + " WHERE rolname = current_user"
+        """
+        SELECT rolname, rolsuper, rolbypassrls
+        FROM pg_roles
+        WHERE rolname = current_user
+        """
     )
     async with engine.connect() as conn:
         row = (await conn.execute(query)).one()
