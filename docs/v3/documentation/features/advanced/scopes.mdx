@@ -92,7 +92,7 @@ dedicated audience are rejected by the new server as well.
 | Session context | Requires active membership; target representation and card use the key's projection |
 | Messages: create, upload, list, get, update metadata | Allowed in active member sessions |
 | Session summaries and message search | Allowed in active member sessions |
-| Create/get session | A fresh session joins the key's scope; an existing session must already be an active member |
+| Create/get session | A fresh session joins the key's scope; an existing session must already be an active member, and the call cannot change its metadata, configuration, or peers |
 | Get scope, list its sessions, backfill status | Only the key's scope |
 | Add/remove scope membership, create scopes, mint keys | Requires a privileged key |
 | Workspace-wide recall/listing, global peer context/cards, generic conclusions, other resource management | Rejected |

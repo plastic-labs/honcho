@@ -130,6 +130,33 @@ def test_cannot_enroll_unrelated_sessions(
 
 
 @pytest.mark.parametrize(
+    "body",
+    [
+        {"id": "member", "metadata": {"owned": True}},
+        {"id": "member", "configuration": {"summary": {"enabled": False}}},
+        {"id": "member", "peers": {"mallory": {}}},
+    ],
+)
+def test_cannot_modify_existing_member_session(
+    client: TestClient,
+    scope_key: tuple[str, dict[str, str]],
+    sample_data: tuple[models.Workspace, models.Peer],
+    body: dict[str, Any],
+):
+    root, headers = scope_key
+    _, peer = sample_data
+    assert (
+        client.post(f"{root}/sessions", json=body, headers=headers).status_code == 401
+    )
+    # Default client headers carry the admin key.
+    session = client.post(f"{root}/sessions", json={"id": "member"}).json()
+    assert session["metadata"] == {}
+    assert session["configuration"] == {}
+    peers = client.get(f"{root}/sessions/member/peers").json()["items"]
+    assert [p["id"] for p in peers] == [peer.name]
+
+
+@pytest.mark.parametrize(
     ("method", "path", "body"),
     [
         (
