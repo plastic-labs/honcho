@@ -4,6 +4,7 @@ import weakref
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
+from functools import partial
 from typing import Any, cast
 
 from pydantic import ValidationError
@@ -37,6 +38,7 @@ from src.utils.representation import (
     allowlist_safe_levels,
 )
 from src.utils.sanitization import strip_nul
+from src.utils.scopes import is_scope_peer_name
 from src.utils.types import ToolResult, embedding_call_purpose, get_current_iteration
 
 logger = logging.getLogger(__name__)
@@ -2242,8 +2244,19 @@ async def _handle_get_reasoning_chain(
         return f"ERROR: Invalid direction '{direction}'. Must be 'premises', 'conclusions', or 'both'"
 
     # Get the observation itself
+    # IDs can come from the caller's query, not just scoped search results.
+    # Confine every hop of a named scope's chain to its collection.
+    fetch_chain_documents = (
+        partial(
+            crud.fetch_documents_by_ids, observer=ctx.observer, observed=ctx.observed
+        )
+        if is_scope_peer_name(ctx.observer)
+        else crud.get_documents_by_ids
+    )
     async with tracked_db("tool.get_reasoning_chain", read_only=True) as db:
-        docs = await crud.get_documents_by_ids(db, ctx.workspace_name, [observation_id])
+        docs = await fetch_chain_documents(
+            db, ctx.workspace_name, document_ids=[observation_id]
+        )
         if not docs or not docs[0]:
             return f"ERROR: Observation '{observation_id}' not found"
 
@@ -2259,8 +2272,8 @@ async def _handle_get_reasoning_chain(
         # Get premises/sources if requested
         if direction in ("premises", "both"):
             if level == "deductive" and doc.source_ids:
-                premises = await crud.get_documents_by_ids(
-                    db, ctx.workspace_name, doc.source_ids
+                premises = await fetch_chain_documents(
+                    db, ctx.workspace_name, document_ids=doc.source_ids
                 )
                 _record_conclusion_evidence(ctx, premises)
                 if premises:
@@ -2277,8 +2290,8 @@ async def _handle_get_reasoning_chain(
                         f"\n**Premises:** Referenced {len(doc.source_ids)} premise IDs but none found in database"
                     )
             elif level == "inductive" and doc.source_ids:
-                sources = await crud.get_documents_by_ids(
-                    db, ctx.workspace_name, doc.source_ids
+                sources = await fetch_chain_documents(
+                    db, ctx.workspace_name, document_ids=doc.source_ids
                 )
                 _record_conclusion_evidence(ctx, sources)
                 if sources:

@@ -196,6 +196,7 @@ async def get_or_create_session(
     workspace_name: str,
     *,
     acting_peer: str | None = None,
+    acting_scope: str | None = None,
     _retry: bool = False,
 ) -> GetOrCreateResult[models.Session]:
     """
@@ -215,6 +216,9 @@ async def get_or_create_session(
         acting_peer: Peer a peer-scoped caller acts as. An existing session is
             then only returned to an active member, and its metadata and
             configuration are left untouched.
+        acting_scope: Scope a restricted caller acts within. Only fresh sessions
+            may be enrolled; existing sessions must already be active members,
+            and their metadata, configuration, and peers are left untouched.
         _retry: Whether to retry after a concurrent create conflict
 
     Returns:
@@ -223,8 +227,9 @@ async def get_or_create_session(
     Raises:
         ValueError: If session.name is empty
         ResourceNotFoundException: If the named session exists but is inactive
-        AuthenticationException: If ``acting_peer`` is not a member of the
-            existing session, or tries to change its metadata or configuration
+        AuthenticationException: If ``acting_peer`` or ``acting_scope`` is not
+            a member of the existing session, or tries to change its metadata
+            or configuration (or, for ``acting_scope``, its peers)
         ObserverException: If adding peers would exceed the observer limit
         ConflictException: If concurrent creation prevents fetching or creating
             the session
@@ -292,9 +297,32 @@ async def get_or_create_session(
                     f"Unable to create or get session: {session.name}"
                 ) from None
             return await get_or_create_session(
-                db, session, workspace_name, acting_peer=acting_peer, _retry=True
+                db,
+                session,
+                workspace_name,
+                acting_peer=acting_peer,
+                acting_scope=acting_scope,
+                _retry=True,
             )
     else:
+        if acting_scope is not None:
+            if not await is_peer_in_session(
+                db, workspace_name, session.name, scope_peer_name(acting_scope)
+            ):
+                raise AuthenticationException("JWT not permissioned for this resource")
+            # Edits go through the dedicated session routes, which scope keys
+            # cannot reach; adding peers would also grant them member read.
+            if (
+                session.metadata is not None
+                or session.configuration is not None
+                or session.peer_names
+            ):
+                raise AuthenticationException(
+                    "Scope-scoped keys cannot modify an existing session"
+                )
+            # Never upsert this membership: a removal after the check must not
+            # be undone by create-or-get, nor trigger a new backfill.
+            session.scopes = None
         # Checked here rather than in the handler so a session created between
         # the handler's check and this read cannot be joined or modified.
         if acting_peer is not None:
