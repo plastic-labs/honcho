@@ -164,6 +164,12 @@ Five bidirectional tools. All accept an optional `peer` parameter (`"user"` or `
 | `honcho_reasoning` | Yes | LLM-synthesized answer via dialectic `.chat()` |
 | `honcho_conclude` | No | Write, list/search, or delete persistent conclusions (list surfaces the ids delete needs) |
 
+When `honcho_conclude` cannot save a conclusion, its error includes the API reason
+and HTTP status when available. Timeout and connection errors include specific
+checks. Confirm whether the conclusion was saved before retrying either error;
+the plugin adds no retry for these failures. Error details are redacted and capped
+at 1000 characters. Background memory writes keep their existing failure handling.
+
 Tool visibility depends on `recallMode`: hidden in `context` mode, always present in `tools` and `hybrid`.
 
 ## Config Resolution
