@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, Mock
 import httpx
 import pytest
 from openai import BadRequestError
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from src.exceptions import ValidationException
 from src.llm.backends.openai import (
@@ -1410,3 +1410,29 @@ async def test_openai_backend_structured_without_tools_still_uses_parse() -> Non
 
     assert result.content is parsed
     client.chat.completions.create.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_structured_output_parse_validation_error_hides_payload() -> None:
+    """parse() validates the body itself, so prose never reaches the repair
+    path. For PromptRepresentation it surfaces as StructuredOutputError without
+    pydantic's input_value, which would echo the model's output."""
+    secret = "my-sentinel-secret-4417"
+    with pytest.raises(ValidationError) as raised:
+        PromptRepresentation.model_validate_json(f"user said {secret}")
+    validation_error = raised.value
+    client = Mock()
+    client.chat.completions.parse = AsyncMock(side_effect=validation_error)
+
+    backend = OpenAIBackend(client)
+    with pytest.raises(StructuredOutputError) as exc_info:
+        await backend.complete(
+            model="gpt-4.1",
+            messages=[{"role": "user", "content": "Hello"}],
+            max_tokens=100,
+            response_format=PromptRepresentation,
+        )
+
+    assert secret in str(validation_error)
+    assert secret not in str(exc_info.value)
+    assert exc_info.value.__cause__ is None

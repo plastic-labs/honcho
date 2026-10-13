@@ -227,6 +227,17 @@ class OpenAIBackend:
                     truncated,
                     content_override=content,
                 )
+            except ValidationError as exc:
+                # parse() validates the body itself, so a malformed one never
+                # reaches the repair path. Pydantic's message echoes the model
+                # output as input_value, so re-raise without it.
+                if response_format is not PromptRepresentation:
+                    raise
+                raise StructuredOutputError(
+                    "PromptRepresentation structured output failed "
+                    + f"failure_class=ValidationError model={model} "
+                    + f"error_count={exc.error_count()}"
+                ) from None
             except BadRequestError:
                 # A 400 means the provider rejected the request shape — most
                 # often it doesn't support OpenAI Structured Outputs (json_schema).
