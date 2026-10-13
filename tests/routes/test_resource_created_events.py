@@ -79,3 +79,28 @@ def test_implicit_creation_emits_once_per_row(
     response = client.post(f"{base}/sessions", json=body)
     assert response.status_code == 200, response.text
     assert _created(emitted) == []
+
+
+def test_peer_route_and_clone_emit_created(
+    client: TestClient, emitted: list[BaseEvent]
+):
+    """POST /peers into a new workspace reports the workspace too, and a clone
+    reports the session it inserts."""
+    workspace = generate_nanoid()
+    base = f"/v3/workspaces/{workspace}"
+
+    response = client.post(f"{base}/peers", json={"id": "gus"})
+    assert response.status_code == 201, response.text
+    assert _created(emitted) == [
+        ("peer.created", f"{workspace}:gus"),
+        ("workspace.created", workspace),
+    ]
+
+    response = client.post(f"{base}/sessions", json={"id": "s1"})
+    assert response.status_code == 201, response.text
+    emitted.clear()
+    response = client.post(f"{base}/sessions/s1/clone")
+    assert response.status_code == 201, response.text
+    assert _created(emitted) == [
+        ("session.created", f"{workspace}:{response.json()['id']}"),
+    ]

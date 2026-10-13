@@ -889,6 +889,11 @@ async def clone_session(
         db.add(new_session_peer)
 
     await db.commit()
+    emit(
+        SessionCreatedEvent(
+            workspace_name=workspace_name, session_name=new_session.name
+        )
+    )
     logger.debug("Session %s cloned successfully", original_session_name)
 
     # Cache will be populated on next read - read-through pattern
