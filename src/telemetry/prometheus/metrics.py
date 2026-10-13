@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import datetime
 import logging
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from enum import Enum
 from typing import cast, final
 
@@ -287,6 +288,30 @@ deriver_queue_work_units_claimed_gauge = NamespacedGauge(
     ["namespace"],
 )
 
+# Per-tenant fairness (DERIVER_TENANT_FAIRNESS_METRICS). The claim runs on the
+# service session with no tenant bound, so tenant_id is passed explicitly, never
+# taken from TenantScopedCounter's ambient tenant.
+deriver_claims_counter = NamespacedCounter(
+    "deriver_claims",
+    "Work units claimed, by the tenant they belong to",
+    ["namespace", "tenant_id"],
+)
+
+deriver_claim_wait_seconds = NamespacedHistogram(
+    "deriver_claim_wait_seconds",
+    "Time from a work unit's oldest pending item to its claim, by tenant",
+    ["namespace", "tenant_id"],
+    buckets=(0.5, 1, 2, 5, 10, 30, 60, 120, 300, 600, 1800, 3600),
+)
+
+deriver_inflight_units_gauge = NamespacedGauge(
+    "deriver_inflight_units",
+    "Work units held by a live claim, by tenant. A series exists only while the "
+    + "tenant has work in flight. Service-wide DB count, reported independently by "
+    + "every API replica — aggregate with max() or avg(), never sum()",
+    ["namespace", "tenant_id"],
+)
+
 deriver_queue_items_pending_gauge = NamespacedGauge(
     "deriver_queue_items_pending",
     "Unprocessed queue rows, whether or not they are claimable yet. "
@@ -441,6 +466,21 @@ class PrometheusMetrics:
             ).inc()
         except Exception as e:
             self._handle_metric_error("record_dialectic_call", e)
+
+    def record_deriver_claims(
+        self, claims: Iterable[tuple[str | None, datetime.datetime]]
+    ) -> None:
+        """Count each claimed unit and its wait, from (tenant_id, oldest_created_at)."""
+        try:
+            now = datetime.datetime.now(datetime.UTC)
+            for tenant_id, oldest_created_at in claims:
+                tenant = tenant_id or ""
+                deriver_claims_counter.labels(tenant_id=tenant).inc()
+                deriver_claim_wait_seconds.labels(tenant_id=tenant).observe(
+                    max(0.0, (now - oldest_created_at).total_seconds())
+                )
+        except Exception as e:
+            self._handle_metric_error("record_deriver_claims", e)
 
     def record_deriver_queue_item(
         self,
@@ -722,6 +762,7 @@ class PrometheusMetrics:
         excluded_work_units: int = 0,
         excluded_work_units_by_tenant: Mapping[str, int] | None = None,
         claimed_work_units: int = 0,
+        inflight_units_by_tenant: Mapping[str, int] | None = None,
         pending_items: int = 0,
         oldest_pending_age_seconds: float = 0.0,
         embeddings_pending: int = 0,
@@ -741,6 +782,15 @@ class PrometheusMetrics:
                     tenant_id=tenant_id
                 ).set(count)
             deriver_queue_work_units_claimed_gauge.labels().set(claimed_work_units)
+            # region ai
+            # None means the fairness flag is off, so the gauge keeps no series at
+            # all. Otherwise rebuilt each pass, like the excluded-by-tenant gauge:
+            # a tenant whose work finished must lose its series.
+            # endregion
+            if inflight_units_by_tenant is not None:
+                deriver_inflight_units_gauge.clear()
+                for tenant_id, count in inflight_units_by_tenant.items():
+                    deriver_inflight_units_gauge.labels(tenant_id=tenant_id).set(count)
             deriver_queue_items_pending_gauge.labels().set(pending_items)
             deriver_queue_oldest_pending_age_seconds_gauge.labels().set(
                 oldest_pending_age_seconds

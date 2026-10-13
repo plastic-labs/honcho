@@ -154,6 +154,8 @@ class DeriverMetrics(BaseModel):
     # Tenants with derivation paused in the registry. Always 0 flag-off.
     paused_tenants: int = 0
     claimed_work_units: int = 0
+    # Live claims by tenant; None unless DERIVER_TENANT_FAIRNESS_METRICS is on.
+    inflight_units_by_tenant: dict[str, int] | None = None
     pending_items: int = 0
     oldest_pending_age_seconds: float = 0.0
     embeddings_pending: int = 0
