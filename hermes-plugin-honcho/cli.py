@@ -1843,6 +1843,31 @@ Step 6  Next steps
 
 # ── dispatch / argparse ────────────────────────────────────────────────────
 
+def cmd_import(args) -> None:
+    """Run the import with meaningful exit codes and no raw payload/credential errors."""
+    from .history_import import ImportInputError, run_import
+    from .import_state import ImportStateError
+
+    try:
+        code = run_import(args)
+    except (ImportInputError, ImportStateError) as exc:
+        print(f"  Import stopped: {exc}")
+        code = 2
+    except KeyboardInterrupt:
+        print("  Import interrupted. Re-run to reconcile any pending batch before another upload.")
+        code = 3
+    except Exception as exc:
+        from honcho.http.exceptions import APIError
+
+        if isinstance(exc, APIError) and exc.status == 401:
+            print("  Honcho rejected this profile's credentials. Run 'hermes honcho setup', then resume the import.")
+        else:
+            print(f"  Import stopped ({type(exc).__name__}). Re-run to check saved progress; no uncertain batch is automatically resent.")
+        code = 1
+    if code:
+        raise SystemExit(code)
+
+
 # (subcommand, help, handler, ((arg, kwargs), ...)); order defines --help order.
 _SUBCOMMANDS = (
     ("setup", "Initial Honcho setup (redirects to hermes memory setup)", None, ()),
@@ -1881,6 +1906,14 @@ _SUBCOMMANDS = (
         ("--show", dict(action="store_true", help="Show current AI peer representation from Honcho")),
     )),
     ("migrate", "Step-by-step migration guide from openclaw-honcho to Hermes Honcho", cmd_migrate, ()),
+    ("import", "Import historical conversations from this profile's state.db", cmd_import, (
+        ("--days", dict(type=int, default=30, metavar="N", help="Recent message history in days (default: 30)")),
+        ("--workspace", dict(metavar="NAME", help="Override the destination workspace for this import")),
+        ("--source", dict(default="cli,desktop", metavar="CSV", help="Sources to include (default: cli,desktop); gateway sources are opt-in")),
+        ("--before", dict(metavar="ISO8601", help="Import strictly before a known historical cutoff, with timezone")),
+        ("--dry-run", dict(action="store_true", help="Read-only local preview; never uploads")),
+        ("--yes", dict(action="store_true", help="Confirm the displayed destination without interactive input")),
+    )),
     ("enable", "Enable Honcho for the active profile", cmd_enable, ()),
     ("disable", "Disable Honcho for the active profile", cmd_disable, ()),
     ("sync", "Sync Honcho config to all existing profiles", cmd_sync, ()),
@@ -1900,7 +1933,7 @@ def honcho_command(args) -> None:
     handler = cmd_status if sub is None else _HANDLERS.get(sub)
     if handler is None:
         return print(f"  Unknown honcho command: {sub}\n"
-                     "  Available: status, sessions, map, peer, mode, strategy, tokens, identity, migrate, enable, disable, sync\n")
+                     "  Available: status, sessions, map, peer, mode, strategy, tokens, identity, migrate, import, enable, disable, sync\n")
     try:
         handler(args)
     except ConfigWriteRefused as e:

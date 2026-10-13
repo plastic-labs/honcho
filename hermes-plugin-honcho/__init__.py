@@ -8,7 +8,6 @@ Config chain: $HERMES_HOME/honcho.json -> ~/.honcho/config.json -> env vars.
 from __future__ import annotations
 
 import contextlib
-import hashlib
 import json
 import logging
 import os
@@ -20,12 +19,11 @@ from typing import Any, Callable, Dict, List, Optional
 from agent.memory_manager import sanitize_context
 from agent.memory_provider import MemoryProvider, is_trivial_prompt
 from agent.coding_context import INTERACTIVE_CODING_PLATFORMS as _LOCAL_PLATFORMS
-from agent.turn_author import a2a_key
 from .client import HonchoClientConfig, resolve_config_path
 from .client import _host_block, _HostLookup
 from .client import join_plugin_threads, spawn_context_thread
 from .dialectic import DialecticMixin
-from .session_peers import assistant_peer_id_for, sanitize_peer_id
+from .session_peers import a2a_session_key_for
 from .session_context import usable_honcho_summary
 from .tool_schemas import ALL_TOOL_SCHEMAS
 from tools.registry import tool_error
@@ -832,11 +830,7 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
 
         This agent's ``aiPeer`` is in the key because two profiles can share a workspace and a session
         key. The digest keeps two ids apart when sanitizing would make them equal."""
-        prefix, _, ident = (a2a_key(author) or "").partition(":")
-        digest = hashlib.sha256(ident.encode("utf-8")).hexdigest()[:8]
-        recipient = assistant_peer_id_for(self._config)
-        key = f"{self._session_key}:{prefix}:{recipient}:{sanitize_peer_id(ident)}-{digest}"
-        return HonchoClientConfig._enforce_session_id_limit(key, key)
+        return a2a_session_key_for(self._session_key, self._config, author)
 
     def _bot_turn_write_refusal(self) -> Optional[str]:
         """Refusal for memory writes while a bot-authored turn runs. Conclusions and cards describe the human."""
