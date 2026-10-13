@@ -1666,6 +1666,35 @@ class AppSettings(HonchoSettings):
 
         return self
 
+    @model_validator(mode="after")
+    def warn_unused_provider_keys(self) -> "AppSettings":
+        """Flag credentials whose transport is absent from configured workloads."""
+        model_configs = [
+            self.DERIVER.MODEL_CONFIG,
+            self.SUMMARY.MODEL_CONFIG,
+            self.DREAM.DEDUCTION_MODEL_CONFIG,
+            self.DREAM.INDUCTION_MODEL_CONFIG,
+            *(level.MODEL_CONFIG for level in self.DIALECTIC.LEVELS.values()),
+        ]
+        transports = {config.transport for config in model_configs}
+        transports.update(
+            config.fallback.transport
+            for config in model_configs
+            if config.fallback is not None
+        )
+        transports.add(self.EMBEDDING.MODEL_CONFIG.transport)
+
+        for transport in get_args(ModelTransport):
+            key_name = f"{transport.upper()}_API_KEY"
+            if getattr(self.LLM, key_name) and transport not in transports:
+                logger.warning(
+                    "LLM_%s is set but no configured workload uses transport=%s. "
+                    + "Remove it from your configuration if it is no longer needed.",
+                    key_name,
+                    transport,
+                )
+        return self
+
 
 # Create a single global instance of the settings
 settings: AppSettings = AppSettings()
