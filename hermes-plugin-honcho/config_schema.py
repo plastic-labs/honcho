@@ -94,6 +94,11 @@ CONFIG_SCHEMA = ProviderConfigSchema(
                placeholder='["low", "medium"]', group="Dialectic"),
         _field("dialecticMaxInputChars", "Max input chars", KIND_NUMBER, "Max chars of query input sent to peer.chat().",
                placeholder="10000", group="Dialectic"),
+        _field("dialecticRetryOnCapped", "Retry capped recall", KIND_BOOL,
+               "Re-ask once at the next reasoning level up when Honcho reports a dialectic answer as capped "
+               "out (its tool loop exhausted the iteration budget and answered without tools). Off logs the "
+               "truncation and keeps the answer, spending no second request.",
+               default="false", group="Dialectic"),
         # — Reasoning —
         _field("reasoningHeuristic", "Reasoning heuristic", KIND_BOOL, "Scale the reasoning level up on longer queries.",
                default="true", group="Reasoning"),

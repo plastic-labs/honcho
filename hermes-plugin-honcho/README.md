@@ -140,6 +140,22 @@ Override with `dialecticDepthLevels`: an explicit array of reasoning level strin
 
 The auto-injected dialectic scales `dialecticReasoningLevel` by query length: +1 level at ≥120 chars, +2 at ≥400, clamped at `reasoningLevelCap` (default `"high"`). Disable with `reasoningHeuristic: false` to pin every auto call to `dialecticReasoningLevel`.
 
+### Truncated (Capped-Out) Answers
+
+Honcho's dialectic layer runs a tool loop with a per-level iteration budget. A request that keeps calling tools exhausts that budget and answers with a tool-less synthesis — which reads like a normal answer but is not built from the retrieved facts. A deployment that reports the loop's diagnostics answers the chat route with `capped_out` alongside the loop's own `iterations` count; either key being absent (`None`) means *unknown*, never "not capped", and a server that reports neither keeps the previous behaviour exactly.
+
+When the keys are present the plugin consumes both and reacts three ways:
+
+| Behaviour | Applies to | Cost |
+|-----------|------------|------|
+| `WARNING` log line naming the request as truncated (level + iterations) | every capped-out answer, always on | none |
+| Marker appended to the answer (`[honcho: recall truncated — …]`) | explicit `honcho_reasoning` tool calls only | none |
+| One re-ask at the next reasoning level up | `dialecticRetryOnCapped: true` | one extra dialectic request per capped answer |
+
+The re-ask is a single escalation, never a loop: a retry that also caps out is logged and kept. Auto-injected context is never marked — it is injected verbatim.
+
+The diagnostics are read by posting the chat route through the SDK's own HTTP client, because `Peer.chat()` returns `data.get("content")` and drops the rest. If that seam is ever unavailable the call falls back to `Peer.chat()` and the signal reads *unknown*.
+
 ### Three Orthogonal Dialectic Knobs
 
 | Knob | Controls | Type |
@@ -344,6 +360,7 @@ Host key is derived from the active Hermes profile: `hermes` (default) or `herme
 | `dialecticDynamic` | bool | `true` | When `true`, model can override reasoning level per-call via `honcho_reasoning` tool. When `false`, always uses `dialecticReasoningLevel` |
 | `dialecticMaxChars` | int | `600` | Max chars of the auto-injected dialectic supplement. Applies only to auto-injection — explicit `honcho_reasoning` tool results return in full |
 | `dialecticMaxInputChars` | int | `10000` | Max chars for dialectic query input to `.chat()`. Honcho cloud limit: 10k |
+| `dialecticRetryOnCapped` | bool | `false` | Re-ask once at the next reasoning level up when the deployment reports the answer as capped out (its tool loop exhausted the per-level iteration budget and answered without tools). Off logs the truncation and keeps the answer |
 | `reasoningHeuristic` | bool | `true` | Query-adaptive: auto-scale the auto-injected dialectic's level up by query length (+1 at ≥120 chars, +2 at ≥400), clamped at `reasoningLevelCap`. `false` pins every auto call to `dialecticReasoningLevel` |
 | `reasoningLevelCap` | string | `"high"` | Ceiling for `reasoningHeuristic` scaling: `"minimal"`, `"low"`, `"medium"`, `"high"`, `"max"` |
 

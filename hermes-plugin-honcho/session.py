@@ -98,6 +98,9 @@ class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMi
             ("ai_observe_me", True), ("ai_observe_others", True),
         ):
             setattr(self, f"_{name}", getattr(config, name) if config else default)
+        # Defaulted rather than read off the loop above: config objects built by older callers
+        # (and tests) predate this key, and a missing attribute must not fail a manager build.
+        self._dialectic_retry_on_capped: bool = bool(getattr(config, "dialectic_retry_on_capped", False))
         self._turn_counter: int = 0
         # honcho session id -> observation booleans. Whole dicts are swapped in one assignment, so readers never see a partial one.
         self._session_observation: dict[str, dict[str, bool]] = {}

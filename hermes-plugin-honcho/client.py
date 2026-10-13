@@ -313,6 +313,7 @@ def _behavior_fields(look: _HostLookup, explicitly_configured: bool) -> dict[str
         "context_tokens": look.parsed("contextTokens", int, None),
         "dialectic_reasoning_level": look.pick("dialecticReasoningLevel") or "low",
         "dialectic_dynamic": look.flag("dialecticDynamic", default=True),
+        "dialectic_retry_on_capped": look.flag("dialecticRetryOnCapped", default=False),
         "dialectic_max_chars": look.parsed("dialecticMaxChars", int, 600),
         "dialectic_depth": depth,
         "dialectic_depth_levels": _parse_dialectic_depth_levels(look.vals("dialecticDepthLevels"), depth),
@@ -368,6 +369,10 @@ class HonchoClientConfig:
     # Dialectic (peer.chat) settings
     dialectic_reasoning_level: str = "low"  # minimal | low | medium | high | max
     dialectic_dynamic: bool = True  # model may override the level via honcho_reasoning
+    # Honcho reports capped_out when its tool loop burned the whole iteration budget and answered
+    # with a tool-less synthesis. True re-asks ONCE at the next reasoning level up (one extra
+    # request per capped answer); False logs the truncation and keeps the answer.
+    dialectic_retry_on_capped: bool = False
     dialectic_max_chars: int = 600  # auto-injection cap; explicit calls bypass it
     dialectic_depth: int = 1  # .chat() passes per cycle (1-3): audit / synthesis / reconcile
     dialectic_depth_levels: list[str] | None = None  # per-pass levels; None = proportional defaults
