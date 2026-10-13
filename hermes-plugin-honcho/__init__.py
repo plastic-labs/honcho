@@ -33,6 +33,46 @@ from tools.registry import tool_error
 logger = logging.getLogger(__name__)
 
 
+def _conclusion_error_message(exc: Exception) -> str:
+    """Return a bounded, redacted diagnostic without inspecting transport objects."""
+    fallback = "Failed to save conclusion. Error details unavailable; check the Honcho logs."
+    try:
+        from agent.redact import redact_sensitive_text
+        from honcho.http.exceptions import APIError, ConnectionError, TimeoutError
+
+        from .session_context import ConclusionWriteError
+
+        prefix = "Failed to save conclusion"
+        if isinstance(exc, TimeoutError):
+            detail = (
+                "Honcho request timed out. Check server availability and the timeout setting. "
+                "Confirm whether the conclusion was saved before retrying."
+            )
+        elif isinstance(exc, ConnectionError):
+            detail = (
+                "Could not connect to Honcho. Check the service address and availability. "
+                "Confirm whether the conclusion was saved before retrying."
+            )
+        elif isinstance(exc, APIError):
+            status = exc.status
+            if type(status) is int and 100 <= status <= 599:
+                prefix += f" ({status})"
+            detail = exc.message
+        elif isinstance(exc, ConclusionWriteError):
+            detail = str(exc)
+        else:
+            detail = f"Unexpected {type(exc).__name__}; check the Honcho logs."
+        message = redact_sensitive_text(
+            f"{prefix}: {detail}", force=True, redact_url_credentials=True,
+        )
+        # Hermes masks URL passwords but retains usernames; omit the whole userinfo here.
+        message = re.sub(r"(://)[^/\s?#@]+@", r"\1***@", message)
+        message = " ".join(re.sub(r"[\x00-\x1f\x7f-\x9f]", " ", message).split())
+        return message if len(message) <= 1000 else message[:997] + "..."
+    except Exception:
+        return fallback
+
+
 # Gateway-internal notifications arrive through the same user-role channel as genuine
 # user messages; they are execution metadata and must never become durable memory.
 # Deliberately anchored: a human discussing one of these strings mid-message is valid input.
@@ -990,7 +1030,19 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
             if self._manager.delete_conclusion(self._session_key, delete_id, peer=peer):
                 return json.dumps({"result": f"Conclusion {delete_id} deleted."})
             return tool_error(f"Failed to delete conclusion {delete_id}.")
-        if self._manager.create_conclusion(self._session_key, conclusion, peer=peer):
+        from .session_auth import HonchoAuthError
+
+        try:
+            saved = self._manager.create_conclusion(
+                self._session_key, conclusion, peer=peer, raise_on_error=True,
+            )
+        except HonchoAuthError:
+            raise  # preserve handle_tool_call's auth-specific response
+        except Exception as exc:
+            message = _conclusion_error_message(exc)
+            logger.warning("honcho_conclude failed: %s", message)
+            return tool_error(message)
+        if saved:
             return json.dumps({"result": f"Conclusion saved for {peer}: {conclusion}"})
         return tool_error("Failed to save conclusion.")
 
