@@ -1,4 +1,8 @@
+import asyncio
+import json
 import sys
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import httpx
 import pytest
@@ -394,3 +398,49 @@ def test_sdk_sends_default_host_header_unless_overridden():
         http_client=httpx.Client(transport=transport, base_url="http://test"),
     ).get_metadata()
     assert seen[-1]["X-Honcho-Host"] == "claude-code/2.1.3 (darwin)"
+
+
+def test_aio_works_across_event_loops():
+    """One Honcho client kept across asyncio.run() calls -- a module-level client
+    in a Lambda handler or a CLI that runs each command with asyncio.run() --
+    must not reuse a pooled connection opened by an earlier, closed event loop."""
+    requests_seen: list[str] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        # HTTP/1.1 keeps the connection open, so the client pools it.
+        protocol_version: str = "HTTP/1.1"
+
+        def do_POST(self) -> None:
+            self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            requests_seen.append(self.path)
+            body = json.dumps(
+                {
+                    "id": "ws",
+                    "metadata": {},
+                    "configuration": {},
+                    "created_at": "2026-01-01T00:00:00Z",
+                }
+            ).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        honcho = Honcho(
+            workspace_id="ws", base_url=f"http://127.0.0.1:{server.server_port}"
+        )
+        for _ in range(3):
+            assert asyncio.run(honcho.aio.get_metadata()) == {}
+        assert len(requests_seen) == 3
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
