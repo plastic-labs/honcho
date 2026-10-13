@@ -68,29 +68,6 @@ def repair_response_model_json(
             else:
                 failure_class = "ValidationError"
             final = ""
-
-        deductive = repaired_mapping.get("deductive") if repaired_mapping else None
-        if response_model is PromptRepresentation and isinstance(deductive, list):
-            for item in cast(list[object], deductive):
-                if isinstance(item, dict):
-                    item_mapping = cast(dict[str, object], item)
-                    premises = item_mapping.get("premises")
-                    if "conclusion" not in item_mapping and premises is not None:
-                        if isinstance(premises, list) and premises:
-                            premise_items = cast(list[object], premises)
-                            item_mapping["conclusion"] = (
-                                "[Incomplete reasoning from premises: "
-                                f"{str(premise_items[0])[:100]}...]"
-                            )
-                        else:
-                            item_mapping["conclusion"] = (
-                                "[Incomplete reasoning - conclusion missing]"
-                            )
-                    if "premises" not in item_mapping:
-                        item_mapping["premises"] = []
-
-        if final:
-            final = json.dumps(repaired_data)
     except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
         failure_class = type(exc).__name__
         final = ""
