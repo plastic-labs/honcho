@@ -1,5 +1,6 @@
 import datetime
 from typing import Any
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -11,6 +12,7 @@ from src import crud, models
 from src.config import settings
 from src.models import Peer, Workspace
 from src.security import JWTParams, create_jwt
+from src.utils.representation import Representation
 
 
 def test_get_or_create_peer(client: TestClient, sample_data: tuple[Workspace, Peer]):
@@ -844,24 +846,68 @@ def test_get_peer_representation_with_include_most_frequent(
     assert "representation" in data
 
 
-def test_get_peer_representation_with_max_observations(
+def test_get_peer_representation_forwards_max_conclusions(
     client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
-    """Test peer representation with max_observations parameter"""
+    """max_conclusions is forwarded to the representation query as its cap"""
     test_workspace, test_peer = sample_data
 
-    # Test with various max_observations values
-    for max_obs in [1, 25, 50, 100]:
+    for max_conclusions in [1, 25, 50, 100]:
+        with patch(
+            "src.crud.get_working_representation",
+            new=AsyncMock(return_value=Representation()),
+        ) as mock_get:
+            response = client.post(
+                f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}/representation",
+                json={
+                    "search_query": "test query",
+                    "max_conclusions": max_conclusions,
+                },
+            )
+        assert response.status_code == 200
+        assert "representation" in response.json()
+        assert mock_get.await_args is not None
+        assert mock_get.await_args.kwargs["max_observations"] == max_conclusions
+
+
+@pytest.mark.asyncio
+async def test_get_peer_representation_max_conclusions_caps_results(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    """With more stored conclusions than the cap, only max_conclusions are returned"""
+    test_workspace, test_peer = sample_data
+    db_session.add(
+        models.Collection(
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer.name,
+        )
+    )
+    await db_session.flush()
+    contents = [f"cap-conclusion-{i}" for i in range(5)]
+    db_session.add_all(
+        models.Document(
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer.name,
+            content=content,
+        )
+        for content in contents
+    )
+    await db_session.commit()
+
+    def returned(max_conclusions: int) -> list[str]:
         response = client.post(
             f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}/representation",
-            json={
-                "search_query": "test query",
-                "max_observations": max_obs,
-            },
+            json={"max_conclusions": max_conclusions},
         )
         assert response.status_code == 200
-        data = response.json()
-        assert "representation" in data
+        representation = response.json()["representation"]
+        return [c for c in contents if c in representation]
+
+    # Oracle: an uncapped request sees every seeded conclusion.
+    assert len(returned(10)) == 5
+    assert len(returned(2)) == 2
 
 
 def test_get_peer_representation_with_all_parameters(
@@ -895,7 +941,7 @@ def test_get_peer_representation_with_all_parameters(
             "search_top_k": 15,
             "search_max_distance": 0.75,
             "include_most_frequent": True,
-            "max_observations": 30,
+            "max_conclusions": 30,
         },
     )
     assert response.status_code == 200
@@ -917,7 +963,7 @@ def test_get_peer_representation_boundary_values(
             "search_query": "test",
             "search_top_k": 1,
             "search_max_distance": 0.0,
-            "max_observations": 1,
+            "max_conclusions": 1,
         },
     )
     assert response.status_code == 200
@@ -929,55 +975,80 @@ def test_get_peer_representation_boundary_values(
             "search_query": "test",
             "search_top_k": 100,
             "search_max_distance": 1.0,
-            "max_observations": 100,
+            "max_conclusions": 100,
         },
     )
     assert response.status_code == 200
 
 
-def test_get_peer_representation_default_max_observations(
+def test_get_peer_representation_default_max_conclusions(
     client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
-    """Test that max_observations defaults to 25 when not provided"""
+    """Test that max_conclusions defaults to 25 when not provided"""
     test_workspace, test_peer = sample_data
 
-    # Test without max_observations - should use default of 25
-    response = client.post(
-        f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}/representation",
-        json={
-            "search_query": "test query",
-        },
-    )
+    # Omit max_conclusions entirely - the schema default of 25 should be used
+    with patch(
+        "src.crud.get_working_representation",
+        new=AsyncMock(return_value=Representation()),
+    ) as mock_get:
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}/representation",
+            json={
+                "search_query": "test query",
+            },
+        )
     assert response.status_code == 200
     data = response.json()
     assert "representation" in data
+    assert mock_get.await_args is not None
+    assert mock_get.await_args.kwargs["max_observations"] == 25
+
+
+def _seed_peer_messages(
+    client: TestClient, workspace: Workspace, peer: Peer, contents: list[str]
+) -> dict[str, str]:
+    """Create a session with `peer` and post `contents`; return content -> id."""
+    session_id = str(generate_nanoid())
+    response = client.post(
+        f"/v3/workspaces/{workspace.name}/sessions",
+        json={"id": session_id, "peers": {peer.name: {}}},
+    )
+    assert response.status_code == 201
+    response = client.post(
+        f"/v3/workspaces/{workspace.name}/sessions/{session_id}/messages",
+        json={"messages": [{"content": c, "peer_id": peer.name} for c in contents]},
+    )
+    assert response.status_code == 201
+    return {m["content"]: m["id"] for m in response.json()}
 
 
 def test_search_peer(client: TestClient, sample_data: tuple[Workspace, Peer]):
     """Test the peer search functionality"""
     test_workspace, test_peer = sample_data
 
-    # Add some messages to search through
-    client.post(
-        f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}/sessions/test_session/messages",
-        json={
-            "messages": [
-                {"content": "Search this content", "peer_id": test_peer.name},
-                {"content": "Another searchable message", "peer_id": test_peer.name},
-            ]
-        },
-    )
-
-    # Search with a query
-    response = client.post(
-        f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}/search",
-        json={"query": "search query", "limit": 10},
-    )
+    # Lexical search only, so results are deterministic.
+    with patch.object(settings, "EMBED_MESSAGES", False):
+        ids = _seed_peer_messages(
+            client,
+            test_workspace,
+            test_peer,
+            [
+                "Search this content",
+                "Another searchable message",
+                "The weather is nice today",
+            ],
+        )
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}/search",
+            json={"query": "searchable", "limit": 10},
+        )
     assert response.status_code == 200
-    data = response.json()
+    data: list[dict[str, Any]] = response.json()
 
     # Response should be a direct list of messages
     assert isinstance(data, list)
+    assert {m["id"] for m in data} == {ids["Another searchable message"]}
 
 
 def test_search_peer_empty_query(
@@ -1021,27 +1092,30 @@ def test_search_peer_with_messages(
     """Test peer search with actual messages"""
     test_workspace, test_peer = sample_data
 
-    # Add some messages to search through
-    client.post(
-        f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}/sessions/test_session/messages",
-        json={
-            "messages": [
-                {"content": "Search this content", "peer_id": test_peer.name},
-                {"content": "Another searchable message", "peer_id": test_peer.name},
-            ]
-        },
-    )
-
-    # Search for content
-    response = client.post(
-        f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}/search",
-        json={"query": "search", "limit": 10},
-    )
+    with patch.object(settings, "EMBED_MESSAGES", False):
+        ids = _seed_peer_messages(
+            client,
+            test_workspace,
+            test_peer,
+            [
+                "Search this content",
+                "Another searchable message",
+                "The weather is nice today",
+            ],
+        )
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}/search",
+            json={"query": "search", "limit": 10},
+        )
     assert response.status_code == 200
-    data = response.json()
+    data: list[dict[str, Any]] = response.json()
 
     # Response should be a direct list of messages
     assert isinstance(data, list)
+    assert {m["id"] for m in data} == {
+        ids["Search this content"],
+        ids["Another searchable message"],
+    }
 
 
 def test_search_peer_with_limit(
@@ -1050,29 +1124,26 @@ def test_search_peer_with_limit(
     """Test peer search with custom limit"""
     test_workspace, test_peer = sample_data
 
-    # Add some messages to search through
-    client.post(
-        f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}/sessions/test_session/messages",
-        json={
-            "messages": [
-                {"content": "Search this content", "peer_id": test_peer.name},
-                {"content": "Another searchable message", "peer_id": test_peer.name},
-                {"content": "More searchable content", "peer_id": test_peer.name},
-            ]
-        },
-    )
-
-    # Search with custom limit
-    response = client.post(
-        f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}/search",
-        json={"query": "search", "limit": 2},
-    )
+    matching = [
+        "Search this content",
+        "Another searchable message",
+        "More searchable content",
+    ]
+    with patch.object(settings, "EMBED_MESSAGES", False):
+        ids = _seed_peer_messages(
+            client, test_workspace, test_peer, [*matching, "The weather is nice"]
+        )
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}/search",
+            json={"query": "search", "limit": 2},
+        )
 
     assert response.status_code == 200
     data: list[dict[str, Any]] = response.json()
     assert isinstance(data, list)
-    # Should not exceed the limit
-    assert len(data) <= 2
+    # Three candidates match, so the limit is what stops the result at two
+    assert len(data) == 2
+    assert {m["id"] for m in data} <= {ids[c] for c in matching}
 
 
 def test_get_peers_with_complex_filter(

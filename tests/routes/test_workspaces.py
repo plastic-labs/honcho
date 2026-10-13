@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi.testclient import TestClient
 from nanoid import generate as generate_nanoid
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
@@ -398,8 +399,12 @@ def test_search_workspace_nonexistent(client: TestClient):
     assert len(data) == 0
 
 
-def test_delete_workspace(client: TestClient):
-    """Test deleting a workspace"""
+async def test_delete_workspace(client: TestClient, db_session: AsyncSession):
+    """Deleting a workspace is accepted and enqueues a background deletion task.
+
+    The route does not delete synchronously, so the observable effect is the
+    queued deletion item (processing is covered in tests/crud/test_workspace.py).
+    """
     name = str(generate_nanoid())
 
     # Create a workspace
@@ -412,12 +417,22 @@ def test_delete_workspace(client: TestClient):
     response = client.delete(f"/v3/workspaces/{name}")
     assert response.status_code == 202
 
-    # Verify the workspace no longer exists by trying to update it
-    response = client.put(
-        f"/v3/workspaces/{name}", json={"metadata": {"test": "value"}}
+    queued = (
+        (
+            await db_session.execute(
+                select(models.QueueItem).where(
+                    models.QueueItem.workspace_name == name,
+                    models.QueueItem.task_type == "deletion",
+                )
+            )
+        )
+        .scalars()
+        .all()
     )
-    # Should create a new workspace since the old one was deleted
-    assert response.status_code == 200
+    assert len(queued) == 1
+    assert queued[0].payload["deletion_type"] == "workspace"
+    assert queued[0].payload["resource_id"] == name
+    assert queued[0].processed is False
 
 
 def test_delete_nonexistent_workspace(client: TestClient):

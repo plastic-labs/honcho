@@ -1933,13 +1933,34 @@ async def test_malformed_filter_structures(
 
 
 @pytest.mark.asyncio
-async def test_performance_with_complex_filters(
+async def test_complex_nested_filters_select_expected_peers(
     client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
-    """Test performance with very complex nested filters"""
+    """Deeply nested AND/OR/NOT filters select exactly the peers they describe"""
     test_workspace, _test_peer = sample_data
 
-    # Create a very complex filter structure
+    # Every peer carries every key so no clause depends on missing-key NULL
+    # semantics. Keys: type, status, priority, score, premium, level.
+    rows = {
+        "score_path": ("A", "active", 1, 90, False, 9),  # matches via score
+        "premium_path": ("B", "inactive", 9, 10, True, 3),  # matches via premium
+        "wrong_type": ("D", "active", 9, 90, True, 3),
+        "not_excluded": ("C", "inactive", 2, 95, True, 3),
+        "neither_or": ("A", "active", 9, 50, False, 3),
+        "premium_bad_level": ("A", "active", 9, 10, True, 9),
+    }
+    keys = ("type", "status", "priority", "score", "premium", "level")
+    names = {label: str(generate_nanoid()) for label in rows}
+    for label, values in rows.items():
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/peers",
+            json={
+                "name": names[label],
+                "metadata": dict(zip(keys, values, strict=True)),
+            },
+        )
+        assert response.status_code in (200, 201)
+
     complex_filter = {
         "AND": [
             {
@@ -1973,13 +1994,15 @@ async def test_performance_with_complex_filters(
         ]
     }
 
-    # This should complete without timeout
     response = client.post(
         f"/v3/workspaces/{test_workspace.name}/peers/list",
-        json={"filters": complex_filter},
+        json={
+            "filters": {"AND": [complex_filter, {"id": {"in": list(names.values())}}]}
+        },
     )
     assert response.status_code == 200
-    # Should return results in reasonable time (this is more of a performance test)
+    found = {item["id"] for item in response.json()["items"]}
+    assert found == {names["score_path"], names["premium_path"]}
 
 
 @pytest.mark.asyncio
@@ -2365,8 +2388,13 @@ async def test_float_precision_edge_cases(client: TestClient):
     assert response.status_code == 200
     data = response.json()
     contents = [item["content"] for item in data["items"]]
-    # 0.1 + 0.2 is actually > 0.3 due to floating point precision
-    # This test reveals the actual behavior
+    # 0.1 + 0.2 is stored as 0.30000000000000004, so it is strictly > 0.3;
+    # 0.30000000000000001 is the same double as 0.3 and must not match.
+    assert set(contents) == {
+        "Point one plus point two",
+        "Large precise float",
+        "Repeating decimal",
+    }
 
     # Test very small numbers and scientific notation
     response = client.post(
@@ -2516,8 +2544,15 @@ async def test_mixed_type_comparisons(client: TestClient):
     assert response.status_code == 200
     data = response.json()
     contents = [item["content"] for item in data["items"]]
-    # Behavior depends on how JSONB handles string-to-number conversion
-    # Should definitely include numeric values >= 5
+    # Values are cast to Numeric, so numeric strings ("5", "05", "10") compare
+    # numerically; the empty string becomes NULL and never matches.
+    assert set(contents) == {
+        "String number five",
+        "Integer five",
+        "Float five",
+        "String vs numeric comparison",
+        "Leading zeros and formats",
+    }
 
     # Test string boolean vs actual boolean
     response = client.post(
@@ -2548,7 +2583,16 @@ async def test_mixed_type_comparisons(client: TestClient):
     assert response.status_code == 200
     data = response.json()
     contents = [item["content"] for item in data["items"]]
-    # Should include 10.5 (both string and float versions)
+    # 10.5, "10.5" and "010.50" are > 10; 10 and "2" are not.
+    # "NaN" is deliberately left unasserted: Postgres orders NaN above every
+    # number, so it currently matches, but that is not a contract we pin here.
+    assert {
+        "String number five",
+        "Integer five",
+        "Leading zeros and formats",
+    } <= set(contents)
+    assert "Float five" not in contents
+    assert "String vs numeric comparison" not in contents
 
     # Test zero comparisons (string "0" vs integer 0)
     response = client.post(

@@ -381,7 +381,7 @@ class TestThresholdFilter:
         db_session: AsyncSession,
         sample_data: tuple[models.Workspace, models.Peer],
     ):
-        """60 explicit + 0 derived → should trigger (60 ≥ threshold 50)."""
+        """60 explicit + 0 derived → should trigger (60 > threshold 50)."""
         collection = await self._make_collection(db_session, sample_data)
         for _ in range(60):
             await self._insert_doc(db_session, collection, "explicit")
@@ -394,6 +394,27 @@ class TestThresholdFilter:
 
         assert scheduled is True
         assert mock_schedule.called, "schedule_dream should fire when threshold met"
+
+    @pytest.mark.asyncio
+    async def test_explicit_exactly_at_threshold(
+        self,
+        dream_scheduler: DreamScheduler,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """50 explicit → should trigger: the comparison is inclusive (50 ≥ 50)."""
+        collection = await self._make_collection(db_session, sample_data)
+        for _ in range(50):
+            await self._insert_doc(db_session, collection, "explicit")
+        await db_session.commit()
+
+        with patch.object(
+            dream_scheduler, "schedule_dream", new_callable=AsyncMock
+        ) as mock_schedule:
+            scheduled = await check_and_schedule_dream(db_session, collection)
+
+        assert scheduled is True
+        assert mock_schedule.called, "schedule_dream should fire at the threshold"
 
     @pytest.mark.asyncio
     async def test_contradiction_excluded_from_count(

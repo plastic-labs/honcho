@@ -220,11 +220,8 @@ async def test_deliver_webhook_catches_request_errors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(settings.WEBHOOK, "SECRET", "delivery-secret")
-    monkeypatch.setattr(
-        webhook_delivery,
-        "_get_webhook_urls",
-        AsyncMock(side_effect=httpx.RequestError("network issue")),
-    )
+    get_urls = AsyncMock(side_effect=httpx.RequestError("network issue"))
+    monkeypatch.setattr(webhook_delivery, "_get_webhook_urls", get_urls)
 
     def async_client_factory(*args: Any, **kwargs: Any) -> FakeAsyncClient:
         _ = (args, kwargs)
@@ -234,3 +231,5 @@ async def test_deliver_webhook_catches_request_errors(
 
     payload = WebhookPayload(event_type="workspace.updated", data={"id": "ws_1"})
     await webhook_delivery.deliver_webhook(payload, "workspace-a")
+
+    get_urls.assert_awaited_once()
