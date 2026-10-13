@@ -18,7 +18,7 @@ from src.crud.session import session_cache_key
 from src.dependencies import tracked_db
 from src.exceptions import ResourceNotFoundException
 from src.llm import HonchoLLMCallResponse, honcho_llm_call
-from src.llm.types import LLMTelemetryContext
+from src.llm.types import LLMTelemetryContext, hit_output_cap
 from src.models import Message
 from src.telemetry import prometheus_metrics
 from src.telemetry.events import AgentToolSummaryCreatedEvent, emit
@@ -114,8 +114,6 @@ class SummaryType(Enum):
 # so 0.35 leaves the clean case a 1.33x margin and the degenerate case two orders below.
 _DEGENERATE_NGRAM_N = 4
 _DEGENERATE_DISTINCT_RATIO = 0.35
-# Provider-native cap-hit spellings; never normalized by completion_result_to_response.
-_CAP_FINISH_REASONS = frozenset({"max_tokens", "length"})
 
 
 def _distinct_ngram_ratio(text: str, n: int = _DEGENERATE_NGRAM_N) -> float:
@@ -125,11 +123,6 @@ def _distinct_ngram_ratio(text: str, n: int = _DEGENERATE_NGRAM_N) -> float:
         return 1.0
     grams = [tuple(words[i : i + n]) for i in range(len(words) - n + 1)]
     return len(set(grams)) / len(grams)
-
-
-def _hit_output_cap(finish_reasons: list[str]) -> bool:
-    """True when any provider reported stopping at the output-token cap."""
-    return any(r.lower() in _CAP_FINISH_REASONS for r in finish_reasons)
 
 
 def _basic_fallback_summary(
@@ -706,7 +699,7 @@ async def _create_summary(
             summary_tokens = estimate_tokens(summary_text) if summary_text else 0
             llm_input_tokens = 0
             llm_output_tokens = 0
-        elif _hit_output_cap(response.finish_reasons):
+        elif hit_output_cap(response.finish_reasons):
             repetition_ratio = _distinct_ngram_ratio(summary_text)
             if repetition_ratio < _DEGENERATE_DISTINCT_RATIO:
                 logger.error(
