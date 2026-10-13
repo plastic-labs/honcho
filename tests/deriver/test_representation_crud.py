@@ -1,4 +1,8 @@
 import datetime
+from typing import Any
+
+import pytest
+from pydantic import ValidationError
 
 from src.utils.representation import (
     DeductiveObservation,
@@ -167,3 +171,10 @@ def test_prompt_representation_proper_dicts_explicit_pass_through():
         {"explicit": [{"content": "A"}, {"content": "B"}]}
     )
     assert [e.content for e in pr.explicit] == ["A", "B"]
+
+
+@pytest.mark.parametrize("explicit", [123, {"content": "A"}, [123]])
+def test_prompt_representation_rejects_unsupported_explicit(explicit: Any):
+    """Shapes outside the normalized set still fail validation."""
+    with pytest.raises(ValidationError):
+        PromptRepresentation.model_validate({"explicit": explicit})

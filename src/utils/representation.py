@@ -154,9 +154,9 @@ class PromptRepresentation(BaseModel):
 
         Some structured-output backends occasionally emit ``explicit`` as a
         bare string or a list of strings instead of the declared list of
-        ``{"content": str}`` objects. When that happens the whole deriver
-        batch currently falls through to the empty-fallback representation,
-        dropping otherwise usable observations (see issue #524).
+        ``{"content": str}`` objects. Without coercion, validation fails and
+        the structured-output repair path returns an empty representation,
+        dropping every observation in the batch.
 
         This validator coerces the following shapes into the declared one:
 

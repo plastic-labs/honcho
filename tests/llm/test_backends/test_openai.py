@@ -922,6 +922,34 @@ async def test_structured_output_json_object_mode_repairs_markdown() -> None:
 
 
 @pytest.mark.asyncio
+async def test_structured_output_json_object_mode_keeps_string_observations() -> None:
+    """A loose provider emitting ``explicit`` as plain strings keeps its
+    observations instead of falling through to an empty representation."""
+    client = Mock()
+    client.chat.completions.parse = AsyncMock()
+    client.chat.completions.create = AsyncMock(
+        return_value=_structured_create_return(
+            '{"explicit": ["User likes coffee", "User works remotely"]}'
+        )
+    )
+
+    backend = OpenAIBackend(client)
+    result = await backend.complete(
+        model="glm-4.6",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        response_format=PromptRepresentation,
+        extra_params={"structured_output_mode": "json_object"},
+    )
+
+    assert isinstance(result.content, PromptRepresentation)
+    assert [e.content for e in result.content.explicit] == [
+        "User likes coffee",
+        "User works remotely",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_structured_output_json_object_mode_with_dynamic_model() -> None:
     """json_object mode composes with a caller-supplied schema converted at
     request time (the dialectic's response_format path): the generated class's
