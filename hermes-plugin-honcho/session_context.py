@@ -12,6 +12,11 @@ logger = logging.getLogger("plugins.memory.honcho.session")
 
 _FAILED = object()  # sentinel: a guarded call raised (distinct from a legitimately empty/None result)
 
+
+class ConclusionWriteError(RuntimeError):
+    """A local precondition prevented a conclusion write."""
+
+
 # Reasoning-channel markers a summarizer model can leave inside a persisted session summary.
 _THINK_BLOCK_RE = re.compile(
     r"<\s*(?:think|thinking|reasoning|thought|reasoning_scratchpad)\s*>.*?"
@@ -273,24 +278,34 @@ class SessionContextMixin:
         observer = self._get_or_create_peer(session.assistant_peer_id if ai_observes else target_peer_id)
         return observer.conclusions_of(target_peer_id)
 
-    def create_conclusion(self, session_key: str, content: str, peer: str = "user") -> bool:
-        """Write a conclusion (durable fact) about ``peer`` back to Honcho."""
+    def create_conclusion(
+        self, session_key: str, content: str, peer: str = "user", *, raise_on_error: bool = False,
+    ) -> bool:
+        """Write a conclusion; explicit tool calls can opt into the original exception."""
         if not content or not content.strip():
+            if raise_on_error:
+                raise ConclusionWriteError("Conclusion content is empty.")
             return False
         session = self._cached_session(session_key)
         if not session:
+            if raise_on_error:
+                raise ConclusionWriteError("No Honcho session is cached. Initialize the session before saving a conclusion.")
             logger.warning("No session cached for '%s', skipping conclusion", session_key)
             return False
 
         def _create() -> bool:
             target_peer_id = self._resolve_peer_id(session, peer)
             if target_peer_id is None:
+                if raise_on_error:
+                    raise ConclusionWriteError("Could not resolve the conclusion peer for this session.")
                 logger.warning("Could not resolve conclusion peer '%s' for session '%s'", peer, session_key)
                 return False
             payload = [{"content": content.strip(), "session_id": session.honcho_session_id}]
             self._authed_call("conclusion create", lambda: self._conclusions_scope(session, target_peer_id).create(payload))
             logger.info("Created conclusion about %s for %s: %s", target_peer_id, session_key, content[:80])
             return True
+        if raise_on_error:
+            return _create()
         return self._guarded(_create, False, logging.ERROR, "Failed to create conclusion: %s")
 
     def delete_conclusion(self, session_key: str, conclusion_id: str, peer: str = "user") -> bool:
