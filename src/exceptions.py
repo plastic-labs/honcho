@@ -232,6 +232,13 @@ class EmptyRepresentationError(DegradedLLMResponseError):
 
 
 @final
+class EmptySummaryError(DegradedLLMResponseError):
+    """The summarizer's response was empty and degraded."""
+
+    detail: str = "Summarizer generated an empty summary"
+
+
+@final
 class UpstreamLLMError(HonchoException):
     """Raised when the upstream model provider is unreachable or failing.
 
