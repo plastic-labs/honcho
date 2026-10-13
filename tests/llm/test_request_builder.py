@@ -4,7 +4,7 @@ from pydantic import BaseModel
 from src.config import ModelConfig
 from src.exceptions import ValidationException
 from src.llm.caching import PromptCachePolicy
-from src.llm.request_builder import execute_completion
+from src.llm.request_builder import execute_completion, execute_stream
 from tests.llm.conftest import FakeBackend
 
 
@@ -94,6 +94,31 @@ async def test_provider_params_are_merged_into_extra_params(
         max_tokens=100,
     )
 
+    call = fake_backend.calls[0]
+    assert call["extra_params"]["top_p"] == 0.9
+    assert call["extra_params"]["custom_flag"] is True
+
+
+async def test_provider_params_are_merged_into_stream_extra_params(
+    fake_backend: FakeBackend,
+) -> None:
+    """The shared config translation also reaches the streaming backend call."""
+    config = ModelConfig(
+        model="gpt-4.1-mini",
+        transport="openai",
+        top_p=0.9,
+        provider_params={"custom_flag": True},
+    )
+
+    stream = await execute_stream(
+        fake_backend,
+        config,
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+    )
+    chunks = [chunk async for chunk in stream]
+
+    assert len(chunks) == 1
     call = fake_backend.calls[0]
     assert call["extra_params"]["top_p"] == 0.9
     assert call["extra_params"]["custom_flag"] is True
