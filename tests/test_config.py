@@ -1,4 +1,5 @@
 import logging
+import os
 
 import pytest
 
@@ -138,8 +139,17 @@ def test_provider_timeout_on_fallback_overrides_is_validated_at_config_load() ->
 
 
 def test_unused_provider_keys_warn_without_exposing_values(
-    caplog: pytest.LogCaptureFixture,
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # Run against the built-in workload defaults (all openai): drop workload
+    # overrides from env (.env is already loaded into it) and config.toml.
+    monkeypatch.setattr("src.config.TOML_CONFIG", {})
+    for name in list(os.environ):
+        if name.startswith(
+            ("DERIVER_", "SUMMARY_", "DREAM_", "DIALECTIC_", "EMBEDDING_")
+        ):
+            monkeypatch.delenv(name)
+
     with caplog.at_level(logging.WARNING, logger="src.config"):
         AppSettings(
             LLM=LLMSettings(
