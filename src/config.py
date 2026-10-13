@@ -1645,14 +1645,6 @@ class AppSettings(HonchoSettings):
     # endregion
     MULTI_TENANT: bool = False
 
-    # Escape hatch for the migration window ONLY: skip the startup assertion that
-    # RLS is enabled+forced on the data tables when MULTI_TENANT is on.
-    # region ai
-    # Lets the app boot after the flag flips but before the cloud RLS policies land.
-    # Off in steady state — leaving it on defeats the isolation guarantee.
-    # endregion
-    MULTI_TENANT_SKIP_RLS_ASSERT: bool = False
-
     # Nested settings models
     DB: DBSettings = Field(default_factory=DBSettings)
     AUTH: AuthSettings = Field(default_factory=AuthSettings)

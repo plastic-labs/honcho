@@ -42,10 +42,6 @@ _STRAY_SECRET = "copied-from-a-shared-instance-config"
 Subordinate = Callable[[pytest.MonkeyPatch], None]
 
 
-def _skip_rls_assert(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(settings, "MULTI_TENANT_SKIP_RLS_ASSERT", True)
-
-
 def _service_connection_uri(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         settings.DB,
@@ -64,7 +60,6 @@ def _tenant_api_secret(monkeypatch: pytest.MonkeyPatch) -> None:
 
 # Every setting the flag-on path consults. Extend this when a new one is added.
 _SUBORDINATES: tuple[Subordinate, ...] = (
-    _skip_rls_assert,
     _service_connection_uri,
     _transaction_pooler,
     _tenant_api_secret,

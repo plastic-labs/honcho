@@ -35,7 +35,6 @@ def _flag_on_settings() -> AppSettings:
     """
     s = settings.model_copy(deep=True)
     s.MULTI_TENANT = True
-    s.MULTI_TENANT_SKIP_RLS_ASSERT = False
     s.AUTH.USE_AUTH = True
     s.AUTH.JWT_SECRET = "test-secret"
     s.DB.POOLER_MODE = "session"
@@ -101,7 +100,6 @@ async def test_flag_off_is_a_no_op_that_never_touches_the_engine() -> None:
     s.AUTH.USE_AUTH = False
     s.DB.POOLER_MODE = "transaction"
     s.DB.SERVICE_CONNECTION_URI = None
-    s.MULTI_TENANT_SKIP_RLS_ASSERT = False
 
     await validate_tenant_isolation(_NO_ENGINE, instance_type="api", app_settings=s)
 
@@ -120,13 +118,16 @@ async def test_refuses_boot_when_auth_is_off() -> None:
 
 
 @pytest.mark.asyncio
-async def test_deriver_instance_skips_the_auth_check() -> None:
+async def test_deriver_instance_skips_the_auth_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # A deriver binds its tenant from the claimed work unit's key and verifies no
     # JWT, so it is not forced to carry the API's auth config. Everything else it
-    # would be checked for is set so the validator returns before touching the DB.
+    # would be checked for passes, with the DB introspection faked.
+    _fake_enforced_rls(monkeypatch)
+    _fake_tenant_role(monkeypatch, "honcho_app", False, False)
     s = _flag_on_settings()
     s.AUTH.USE_AUTH = False
-    s.MULTI_TENANT_SKIP_RLS_ASSERT = True
     await validate_tenant_isolation(_NO_ENGINE, instance_type="deriver", app_settings=s)
 
 
@@ -139,14 +140,26 @@ async def test_refuses_boot_under_a_transaction_mode_pooler() -> None:
 
 
 @pytest.mark.asyncio
-async def test_skip_rls_assert_warns_and_returns_before_introspection(
-    caplog: pytest.LogCaptureFixture,
+async def test_a_leftover_skip_rls_assert_variable_skips_nothing(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    s = _flag_on_settings()
-    s.MULTI_TENANT_SKIP_RLS_ASSERT = True
-    with caplog.at_level("WARNING"):
-        await validate_tenant_isolation(_NO_ENGINE, instance_type="api", app_settings=s)
-    assert "MULTI_TENANT_SKIP_RLS_ASSERT is set" in caplog.text
+    # The variable once skipped the RLS, role and service-role checks. A deployment
+    # that still sets it must boot as if it were absent: settings ignore unknown
+    # variables, and unenforced RLS is still refused.
+    monkeypatch.setenv("MULTI_TENANT_SKIP_RLS_ASSERT", "true")
+    AppSettings()
+    assert "MULTI_TENANT_SKIP_RLS_ASSERT" not in AppSettings.model_fields
+    monkeypatch.setattr(
+        "src.startup.tenant_isolation_validator._introspect_rls_with_retry",
+        AsyncMock(
+            return_value={table: (False, False) for table in _RLS_REQUIRED_TABLES}
+        ),
+    )
+
+    with pytest.raises(StartupValidationError, match="RLS is not enabled"):
+        await validate_tenant_isolation(
+            _NO_ENGINE, instance_type="api", app_settings=_flag_on_settings()
+        )
 
 
 @pytest.mark.asyncio

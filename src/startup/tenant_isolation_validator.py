@@ -3,9 +3,7 @@
 Gates boot (API and deriver) when ``MULTI_TENANT`` is on, converting five silent
 half-states — where isolation looks enabled but cannot hold, or cannot serve — into
 a hard boot failure. Listed in check order: the first two are settings-only and need
-no connection; the last three are skipped together when
-``MULTI_TENANT_SKIP_RLS_ASSERT`` is set (migration window only), and (3) and (4)
-introspect the database (with retry).
+no connection; (3) and (4) introspect the database (with retry).
 
 1. Flag vs auth (API processes only). ``MULTI_TENANT`` on with
    ``AUTH_USE_AUTH`` off means every request authenticates as a tenant-less admin,
@@ -114,14 +112,6 @@ async def validate_tenant_isolation(
 
     _assert_auth_enabled(s, instance_type)
     _assert_pooler_mode_safe(s.DB.POOLER_MODE)
-
-    if s.MULTI_TENANT_SKIP_RLS_ASSERT:
-        logger.warning(
-            "MULTI_TENANT_SKIP_RLS_ASSERT is set: skipping the RLS-enforced"
-            + " assertion. Intended for the migration window only — the tenant"
-            + " isolation guarantee is NOT verified while this is on."
-        )
-        return
 
     rls = await _introspect_rls_with_retry(engine, s.DB.SCHEMA)
     _assert_rls_enforced(rls, schema=s.DB.SCHEMA)
@@ -259,8 +249,7 @@ def _assert_rls_enforced(rls: dict[str, tuple[bool, bool]], *, schema: str) -> N
             "MULTI_TENANT is on but RLS is not enabled+forced on: "
             + ", ".join(unenforced)
             + ". Apply the tenant-isolation policies (ENABLE + FORCE ROW LEVEL"
-            + " SECURITY) before enabling the flag, or set"
-            + " MULTI_TENANT_SKIP_RLS_ASSERT for the migration window."
+            + " SECURITY) before enabling the flag."
         )
 
 
@@ -317,7 +306,7 @@ def _assert_tenant_role_cannot_bypass_rls(
     # tables (the checks _assert_rls_enforced just ran) — so on such a role
     # every one of those checks passes vacuously while isolation is actually
     # off. Do not special-case or soften this: there is no "skip if superuser"
-    # escape hatch, unlike MULTI_TENANT_SKIP_RLS_ASSERT above.
+    # escape hatch.
     # endregion
     reasons: list[str] = []
     if rolsuper:
