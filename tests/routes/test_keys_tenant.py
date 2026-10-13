@@ -8,10 +8,12 @@ from src.config import settings
 from src.security import JWTParams, auth, create_jwt, verify_jwt
 
 
-def _admin_client(client: TestClient, token: str, monkeypatch: pytest.MonkeyPatch):
+def _as_admin(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, *, tn: str | None
+) -> TestClient:
     monkeypatch.setattr(settings.AUTH, "USE_AUTH", True)
     monkeypatch.setattr(settings.AUTH, "JWT_SECRET", "test-secret")
-    client.headers["Authorization"] = f"Bearer {token}"
+    client.headers["Authorization"] = f"Bearer {create_jwt(JWTParams(ad=True, tn=tn))}"
     return client
 
 
@@ -22,9 +24,7 @@ async def test_multi_tenant_key_carries_the_callers_tenant_and_authenticates(
     """Under MULTI_TENANT auth rejects a tenant-less token, so the minted key must
     carry the minting admin's tenant to be usable at all."""
     monkeypatch.setattr(settings, "MULTI_TENANT", True)
-    monkeypatch.setattr(settings.AUTH, "JWT_SECRET", "test-secret")
-    admin = create_jwt(JWTParams(ad=True, tn="tenant-t"))
-    _admin_client(client, admin, monkeypatch)
+    _as_admin(client, monkeypatch, tn="tenant-t")
 
     response = client.post("/v3/keys", params={"workspace_id": "ws-t"})
 
@@ -38,14 +38,13 @@ async def test_multi_tenant_key_carries_the_callers_tenant_and_authenticates(
     assert params.tn == "tenant-t"
 
 
-def test_single_tenant_key_is_unchanged(
+def test_single_tenant_key_carries_no_tenant(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ):
-    """Flag off nothing is bound, so the key has no tenant claim and is the same
-    token the route minted before it read the tenant."""
+    """Flag off the key carries no tenant claim, even when the minting admin's
+    token has one."""
     monkeypatch.setattr(settings, "MULTI_TENANT", False)
-    monkeypatch.setattr(settings.AUTH, "JWT_SECRET", "test-secret")
-    _admin_client(client, create_jwt(JWTParams(ad=True)), monkeypatch)
+    _as_admin(client, monkeypatch, tn="tenant-t")
 
     response = client.post("/v3/keys", params={"workspace_id": "ws-t"})
 
