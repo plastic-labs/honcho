@@ -1311,6 +1311,18 @@ class TestEnqueueTenant:
     """Under MULTI_TENANT, enqueue works from the tenant it is handed, not from
     whatever tenant happens to be bound when the background task runs."""
 
+    @pytest.fixture(autouse=True)
+    def _no_dream_scheduler(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The scheduler is a process global that other tests install and never
+        # clear, so whether enqueue reaches tracked_db or stops at dream
+        # cancellation would depend on test order. Pin it off; the cancellation
+        # test installs its own.
+        # The package re-exports the function under the module's name, so reach
+        # the module itself through sys.modules.
+        monkeypatch.setattr(
+            sys.modules["src.deriver.enqueue"], "get_dream_scheduler", lambda: None
+        )
+
     async def _session_payload(
         self, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
     ) -> list[dict[str, Any]]:
@@ -1380,8 +1392,6 @@ class TestEnqueueTenant:
         scheduler = SimpleNamespace(
             cancel_dreams_for_observed=AsyncMock(return_value=set())
         )
-        # The package re-exports the function under the module's name, so reach
-        # the module itself through sys.modules.
         monkeypatch.setattr(
             sys.modules["src.deriver.enqueue"], "get_dream_scheduler", lambda: scheduler
         )
