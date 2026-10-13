@@ -188,6 +188,14 @@ class DegradedLLMResponseError(HonchoException):
     status_code: int = 500
     detail: str = "Structured LLM response was empty and degraded"
 
+    # Raised only after the retry budget and the fallback are spent, so it is
+    # memory or a summary that did not get written: an error, not a client
+    # response. Each subclass gets its own fingerprint so the per-issue spike
+    # alert counts that failure's real rate instead of splitting it by stack.
+    sentry_policy: ClassVar[SentryPolicy | None] = SentryPolicy(
+        level="error", fingerprint="honcho-llm-degraded-empty-response"
+    )
+
     def __init__(
         self,
         detail: str,
@@ -229,6 +237,9 @@ class EmptyRepresentationError(DegradedLLMResponseError):
     """The deriver's structured response for a batch was empty and degraded."""
 
     detail: str = "Deriver generated an empty representation"
+    sentry_policy: ClassVar[SentryPolicy | None] = SentryPolicy(
+        level="error", fingerprint="honcho-deriver-degraded-empty-representation"
+    )
 
 
 @final
@@ -236,6 +247,9 @@ class EmptySummaryError(DegradedLLMResponseError):
     """The summarizer's response was empty and degraded."""
 
     detail: str = "Summarizer generated an empty summary"
+    sentry_policy: ClassVar[SentryPolicy | None] = SentryPolicy(
+        level="error", fingerprint="honcho-summary-degraded-empty-summary"
+    )
 
 
 @final
