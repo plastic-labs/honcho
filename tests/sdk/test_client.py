@@ -1,4 +1,8 @@
+import asyncio
+import json
 import sys
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import httpx
 import pytest
@@ -400,11 +404,6 @@ def test_aio_works_across_event_loops():
     """One Honcho client kept across asyncio.run() calls -- a module-level client
     in a Lambda handler or a CLI that runs each command with asyncio.run() --
     must not reuse a pooled connection opened by an earlier, closed event loop."""
-    import asyncio
-    import json
-    import threading
-    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-
     requests_seen: list[str] = []
 
     class Handler(BaseHTTPRequestHandler):

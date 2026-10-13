@@ -78,11 +78,14 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
     _metadata: dict[str, object] | None = PrivateAttr(default=None)
     _configuration: WorkspaceConfiguration | None = PrivateAttr(default=None)
     _http: HonchoHTTPClient = PrivateAttr()
-    # An async client supplied by the caller; used as is, never replaced.
+    # An async client injected directly (the test fixtures do this); there is no
+    # public parameter for it. Used as is, never replaced.
     _async_http: AsyncHonchoHTTPClient | None = PrivateAttr(default=None)
     # The async client the SDK built and a weak reference to the event loop it was
     # built on (None outside asyncio). One attribute, so a thread never pairs one
-    # loop's client with another thread's loop.
+    # loop's client with another thread's loop. A single slot rather than a
+    # WeakKeyDictionary keyed by loop: pooled connections hold their loop strongly,
+    # so each value would keep its own key alive and no entry would ever be freed.
     _async_http_built: (
         tuple[
             weakref.ReferenceType[asyncio.AbstractEventLoop] | None,
@@ -177,6 +180,10 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
         Pooled connections belong to the event loop that opened them, so a client
         reused under a later loop fails on its pooled connections, e.g. on the
         second asyncio.run(). Build a new client whenever the running loop changes.
+
+        Only one SDK-built client is kept, so threads that each run their own loop
+        on one shared Honcho rebuild the client (and its connections) whenever
+        another thread's call came in between. Give each such thread its own Honcho.
         """
         if self._async_http is not None:
             return self._async_http
