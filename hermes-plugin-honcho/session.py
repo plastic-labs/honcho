@@ -16,6 +16,7 @@ from .session_auth import HonchoAuthError, SessionAuthMixin
 from .session_context import SessionContextMixin
 from .session_migration import SessionMigrationMixin
 from .session_peers import SessionPeersMixin
+from .session_projects import SessionProjectsMixin, project_routed
 
 if TYPE_CHECKING:
     from honcho import Honcho
@@ -47,6 +48,9 @@ class HonchoSession:
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
     metadata: dict[str, Any] = field(default_factory=dict)
+    # Project workspace this session was routed to (honcho-projects.json), None for the configured workspace.
+    # Writes follow this stamp, not the manager instance they are issued through.
+    workspace: str | None = None
     # Held by _flush_session across select, send and the _synced flip. It lives with the message list it guards.
     _flush_lock: threading.RLock = field(default_factory=threading.RLock, repr=False, compare=False)
 
@@ -56,9 +60,10 @@ class HonchoSession:
         self.updated_at = datetime.now()
 
 
-class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMixin, SessionMigrationMixin):
+class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMixin, SessionMigrationMixin,
+                          SessionProjectsMixin):
     """Conversation sessions backed by Honcho, alongside hermes' SQLite state and file memory.
-    Auth retry, peer-ID resolution, recall and memory-file migration live in the mixins."""
+    Auth retry, peer-ID resolution, recall, memory-file migration and project routing live in the mixins."""
 
     def __init__(
         self, honcho: Honcho | None = None, context_tokens: int | None = None, config: Any | None = None,
@@ -323,6 +328,7 @@ class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMi
         if evicted:
             logger.info("Honcho session cache idle sweep evicted %d session(s)", evicted)
 
+    @project_routed
     def get_or_create(self, key: str, *, user_peer_id: str | None = None) -> HonchoSession:
         """Get an existing session or create a new one for ``key`` (usually channel:chat_id).
         ``user_peer_id`` replaces the resolved user peer when the session's participant is not the
@@ -347,6 +353,7 @@ class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMi
 
         session = HonchoSession(
             key=key, user_peer_id=user_peer_id, assistant_peer_id=assistant_peer_id, honcho_session_id=honcho_session_id,
+            workspace=self._project_workspace,
             messages=[
                 {"role": "assistant" if msg.peer_id == assistant_peer_id else "user", "content": msg.content,
                  "timestamp": msg.created_at.isoformat() if msg.created_at else "", "_synced": True}
@@ -403,6 +410,8 @@ class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMi
     def _flush_session(self, session: HonchoSession) -> bool:
         """Write unsynced messages to Honcho synchronously. The session's lock keeps the async writer and an
         exit-time flush_all() from posting the same batch."""
+        if (owner := self._project_owner(session)) is not self:
+            return owner._flush_session(session)
         with session._flush_lock:
             return self._flush_session_locked(session)
 
@@ -525,6 +534,9 @@ class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMi
     def save(self, session: HonchoSession) -> None:
         """Save messages per write_frequency: "async" enqueues for the background thread, "turn"
         flushes now, "session" defers until flush_all(), int N flushes every N turns."""
+        if (owner := self._project_owner(session)) is not self:
+            owner.save(session)
+            return
         self._turn_counter += 1
         wf = self._write_frequency
         if wf == "async" and self._async_queue is not None:
@@ -544,6 +556,7 @@ class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMi
         """Flush unsynced messages for all cached sessions, then drain the async queue inline. ``timeout`` bounds
         when a flush may start and how long it waits for a session's lock, not an upload already in flight, which
         runs to the client's HTTP timeout. A session skipped keeps its messages and is counted in one warning."""
+        timeout = self._fan_out_to_project_children("flush_all", timeout)
         deadline = None if timeout is None else time.monotonic() + timeout
         skipped = self._flush_cached_before(deadline)
         skipped.extend(self._drain_async_queue(deadline))
@@ -588,12 +601,13 @@ class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMi
 
     def _ensure_async_writer_locked(self) -> None:
         if self._async_thread is None or not self._async_thread.is_alive():
-            self._async_thread = spawn_context_thread(self._async_writer_loop, name="honcho-async-writer", owner=self)
+            self._async_thread = spawn_context_thread(self._async_writer_loop, name="honcho-async-writer", owner=self._thread_owner())
             self._async_thread.start()
 
     def stop_async_writer(self, timeout: float = 10.0) -> None:
         """Join the async writer, then drain whatever was queued before the join, both within ``timeout``.
         saveMessages: false never enqueues, so the drain is a no-op there and the exit stays clean."""
+        timeout = self._fan_out_to_project_children("stop_async_writer", timeout)
         self._warn_unsynced(self._stop_async_writer_before(time.monotonic() + timeout), timeout)
 
     def _stop_async_writer_before(self, deadline: float) -> list[HonchoSession]:
@@ -613,6 +627,8 @@ class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMi
         HTTP timeout. Whatever stayed unsynced is counted in one warning."""
         with self._async_thread_lock:
             self._shutting_down = True
+        # Project children own their writers; each drains within the shared budget before this manager does.
+        timeout = self._fan_out_to_project_children("shutdown", timeout)
         if self._async_queue is not None:
             deadline = time.monotonic() + timeout
             skipped = self._flush_cached_before(deadline)
@@ -622,6 +638,7 @@ class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMi
 
     # ----- Prefetch cache -----
 
+    @project_routed
     def prefetch_context(self, session_key: str, user_message: str | None = None) -> None:
         """Fire get_prefetch_context in a background thread; consumed next turn via pop_context_result().
         No-op once shutdown began, so nothing is left running after the join."""
@@ -633,8 +650,9 @@ class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMi
             if result:
                 self.set_context_result(session_key, result)
 
-        spawn_context_thread(_run, name="honcho-context-prefetch", owner=self).start()
+        spawn_context_thread(_run, name="honcho-context-prefetch", owner=self._thread_owner()).start()
 
+    @project_routed
     def set_context_result(self, session_key: str, result: dict[str, str]) -> None:
         """Store a prefetched context result in a thread-safe way."""
         if not result:
@@ -642,6 +660,7 @@ class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMi
         with self._prefetch_cache_lock:
             self._context_cache[session_key] = result
 
+    @project_routed
     def pop_context_result(self, session_key: str) -> dict[str, str]:
         """Return and clear the cached context result ({} if none ready yet)."""
         with self._prefetch_cache_lock:
