@@ -11,19 +11,13 @@ import time
 import webbrowser
 
 import typer
-from honcho import (
-    APIError,
-    AuthenticationError,
-    ConnectionError as HonchoConnectionError,
-    Honcho,
-    TimeoutError as HonchoTimeoutError,
-)
+from honcho import Honcho
 from rich.console import Console
 from rich.panel import Panel
 
 from honcho_cli import __version__, oauth
 from honcho_cli.branding import BANNER, BRAND, ICON_FAIL, ICON_OK, ICON_RUN
-from honcho_cli.common import get_resolved_config, maybe_refresh_token
+from honcho_cli.common import get_resolved_config, maybe_refresh_token, probe_connection
 from honcho_cli.config import (
     CONFIG_FILE,
     DEFAULT_BASE_URL,
@@ -64,26 +58,8 @@ def _read_file_values() -> tuple[str, str]:
     return key, url
 
 
-def _test_connection(base_url: str, api_key: str) -> tuple[bool, str]:
-    """Probe the Honcho API by listing workspaces. Returns (ok, detail).
-
-    Dispatches on the SDK's typed exception hierarchy instead of matching
-    substrings of error messages — robust to SDK message changes and locale.
-    """
-    try:
-        client = Honcho(base_url=base_url, api_key=api_key, default_headers=identity_headers())
-        list(client.workspaces())
-        return True, "OK"
-    except AuthenticationError:
-        return False, "Unauthorized — check your API key"
-    except HonchoConnectionError:
-        return False, "Connection refused — is the server running?"
-    except HonchoTimeoutError:
-        return False, "Request timed out"
-    except APIError as e:
-        return False, f"API error ({e.status}): {e}"
-    except Exception as e:
-        return False, str(e)
+# Shared with `honcho config`; kept under this name so tests can patch it here.
+_test_connection = probe_connection
 
 
 def _pick(flag_val: str | None, file_val: str) -> str:
@@ -430,7 +406,8 @@ def doctor(
     else:
         color = BRAND if passed == total else ("yellow" if passed > total // 2 else "red")
         hint = "" if config.workspace_id else "  [dim](pass -w / -p to include workspace, peer, queue checks)[/dim]"
-        _console.print(f"\n  [{color}]{passed}/{total}[/{color}] checks passed{hint}\n")
+        _console.print(f"\n  [{color}]{passed}/{total}[/{color}] checks passed{hint}")
+        _console.print("  [dim]Filing an issue? Attach `honcho config --json --deep` — secrets are redacted.[/dim]\n")
 
     # Config file + API connectivity are hard requirements.
     critical = {"Config file", "Credentials configured", "API connectivity"}
