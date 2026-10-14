@@ -35,21 +35,17 @@ def test_budget_line_wording():
 
 
 @pytest.mark.parametrize(
-    ("level", "shown"),
-    [
-        ("minimal", False),
-        ("low", True),
-        ("medium", False),
-        ("high", True),
-        ("max", True),
-    ],
+    ("iterations", "shown"), [(1, False), (2, False), (3, True), (10, True)]
 )
-def test_budget_line_only_at_levels_with_three_or_more_iterations(
-    level: ReasoningLevel, shown: bool, monkeypatch: pytest.MonkeyPatch
+def test_budget_line_only_with_three_or_more_iterations(
+    iterations: int, shown: bool, monkeypatch: pytest.MonkeyPatch
 ):
+    # Set the count explicitly: deployments (and CI) override per-level limits.
     monkeypatch.setattr(settings.DIALECTIC, "BUDGET_ENABLED", True)
-    level_settings = settings.DIALECTIC.LEVELS[level]
-    assert (_agent(level)._budget_line(level_settings) is not None) is shown  # pyright: ignore[reportPrivateUsage]
+    level_settings = settings.DIALECTIC.LEVELS["low"].model_copy(
+        update={"MAX_TOOL_ITERATIONS": iterations}
+    )
+    assert (_agent()._budget_line(level_settings) is not None) is shown  # pyright: ignore[reportPrivateUsage]
 
 
 def test_budget_line_off_by_default():
