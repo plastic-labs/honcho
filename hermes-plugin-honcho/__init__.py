@@ -21,6 +21,7 @@ from agent.memory_manager import sanitize_context
 from agent.memory_provider import MemoryProvider, is_trivial_prompt
 from agent.coding_context import INTERACTIVE_CODING_PLATFORMS as _LOCAL_PLATFORMS
 from agent.turn_author import a2a_key
+from gateway.config import Platform
 from .client import HonchoClientConfig, resolve_config_path
 from .client import _host_block, _HostLookup
 from .client import join_plugin_threads, spawn_context_thread
@@ -108,6 +109,16 @@ _CONTEXT_SECTIONS = (
 
 _PREWARM_QUERY = "Summarize what you know about this user. Focus on preferences, current projects, and working style."
 
+# Platforms that build a FRESH agent for every request (the Open WebUI / api_server chat path): the
+# turn counter restarts at 1 on every POST, so the first-turn dialectic join below would be paid on
+# EVERY request while the caller waits for the reply. The dialectic is an LLM call on the memory host
+# that keeps running in the background either way, so only the blocking join is skipped here — never
+# the dialectic itself, and never the recall HTTP calls. Interactive platforms (cli/tui/…) keep the
+# wait: there a human is at a prompt and only the first message of a session is affected.
+# The name comes from the host's own ``Platform`` enum — the same value ``initialize()`` receives —
+# so an upstream rename cannot silently stop matching the string this gate compares against.
+_NO_FIRST_TURN_DIALECTIC_WAIT_PLATFORMS = frozenset({Platform.API_SERVER.value})
+
 
 class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
     """Honcho AI-native memory with dialectic Q&A and persistent user modeling."""
@@ -177,6 +188,10 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
         # Set when no user peer could be named (no runtime identity, no peerName). Init is not retried.
         self._init_peer_failure: Optional[str] = None
         self._init_peer_platform: str = "cli"
+        # Platform this provider was built for (the ``platform`` kwarg of initialize()); gates the
+        # first-turn dialectic join for fresh-agent-per-request platforms (see
+        # _NO_FIRST_TURN_DIALECTIC_WAIT_PLATFORMS).
+        self._platform: str = "cli"
         self._init_peer_notice_emitted = False
         self._cron_skipped = False  # cron and flush contexts disable the plugin entirely
 
@@ -222,6 +237,9 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
         self._recall_generation = object()
         try:
             agent_context, platform = kwargs.get("agent_context", ""), kwargs.get("platform", "cli")
+            # Recorded before any early return: the api_server gate below must hold even when the
+            # provider bails out of session init (no config, cron context).
+            self._platform = str(platform or "cli")
             if agent_context in {"cron", "flush"} or platform == "cron":
                 logger.debug("Honcho skipped: cron/flush context (agent_context=%s, platform=%s)",
                              agent_context, platform)
@@ -539,7 +557,12 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
 
     def _first_turn_dialectic_wait(self, query: str) -> None:
         """Turn 1 only: reuse an in-flight prewarm or start one dialectic, then wait briefly.
-        Unfinished work stays async and surfaces on a later turn."""
+        Unfinished work stays async and surfaces on a later turn.
+
+        On a platform that builds a fresh agent per request the bounded join is skipped entirely
+        (the dialectic is spawned as usual and keeps running in the background): the wait can never
+        pay off there, because the turn counter restarts at 1 and the agent is discarded with the
+        response, so all it buys is ~firstTurnDialecticWait of latency on every chat turn."""
         with self._prefetch_lock:
             prewarm_landed = bool(self._prefetch_result)
         if prewarm_landed and self._last_dialectic_turn == -999:
@@ -547,10 +570,15 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
         if self._last_dialectic_turn != -999 or not query:
             return
 
-        dia_wait = self._first_turn_wait(self._FIRST_TURN_DIALECTIC_CAP)
+        skip_wait = self._platform in _NO_FIRST_TURN_DIALECTIC_WAIT_PLATFORMS
         if not self._thread_is_live():
             self._spawn_dialectic(query, thread_name="honcho-prefetch-first", fired_at=self._turn_count,
                                   log_label="first-turn dialectic")
+        if skip_wait:
+            logger.debug("Honcho first-turn dialectic wait skipped on %s platform — "
+                         "dialectic continues in the background", self._platform)
+            return
+        dia_wait = self._first_turn_wait(self._FIRST_TURN_DIALECTIC_CAP)
         if (live := self._prefetch_thread) is not None:
             live.join(timeout=dia_wait)
         if self._prefetch_thread and self._prefetch_thread.is_alive():
