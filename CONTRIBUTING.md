@@ -343,6 +343,48 @@ orchestrates. Run them with `uv run pytest tests/ -k typescript` from the repo r
 `bun test` on its own will fail. To type-check the SDK alone:
 `cd sdks/typescript && bun run tsc --noEmit`.
 
+### Migrations
+
+On every managed Honcho instance, migrations run when the api pod starts, with no other
+coordination. Rollback means swapping back to the previous image, and it never runs a
+downgrade. Any migration has to keep both of those working, which means:
+
+- **Expand, then contract.** A release can add schema or remove it, never both. Code
+  that ships with a new column, table or index reads from and writes to both the old
+  and new locations. Dropping or tightening the old location waits for a later release.
+  `make_column_non_nullable_safe` in `migrations/utils.py` follows this pattern.
+- **Online DDL only.** Add nullable columns or columns with a constant default, create
+  tables, and create indexes `CONCURRENTLY`. A migration that builds an index has to
+  check that the index is valid, not only that it exists. Never rewrite a large table.
+  A table rename is allowed only as an expand step: the same transaction creates a view
+  under the old name, and the rename gets a revision of its own. `migrations/env.py`
+  runs the upgrade under a one-second `lock_timeout` and retries with jittered backoff
+  (`run_with_lock_retry` in `src/migrate.py`), so you don't need to add your own.
+- **Backfills are reconciler tasks.** The migration adds the column and stops. To copy
+  data, register a `Backfill` in `src/reconciler/backfill.py`. You supply a
+  `has_pending` predicate, a `count_pending` query and an idempotent `run_batch`, and
+  state the `retire_after` condition. The reconciler enqueues it while the predicate
+  holds, commits each batch in its own session, and exports
+  `backfill_pending{task=<name>}`. `backfill_document_sources.py` is the reference
+  implementation.
+- **One lock for the whole run.** `python -m src.migrate [revision]` is the migrate
+  entry point, and `scripts/migrate_db.py` wraps it. `migrations/env.py` holds a
+  session-level advisory lock for the entire upgrade, so plain `alembic upgrade` is
+  serialized too. A second migrator waits up to `DB_MIGRATION_LOCK_WAIT_SECONDS`
+  (default 300), then fails and reports the pid that holds the lock.
+- **One head.** `scripts/check_alembic_heads.py` fails when the migration graph has more
+  than one head. It runs as a pre-push hook and in the Static Analysis workflow against
+  the PR's merge ref. That ref is only as fresh as the last CI run, so rebase onto
+  current `main` and let the check pass again before a migration PR merges.
+- **The previous release has to run on the new schema.** Every revision needs a test in
+  `tests/alembic/` (`uv run python scripts/run_alembic_tests.py`). CI does not yet run
+  the previous release's code against a candidate schema, so call out in the PR anything
+  that the previous image would read or write differently.
+
+Maintainers take care of batching migrations into releases, declaring the compatibility
+floor, and applying the revision graph to the shared and dedicated databases. Expect a
+migration PR to wait for the next migration release.
+
 ### Documentation
 
 Update docs in the same PR when you change a public surface: `/v3` endpoints, SDK exports,
