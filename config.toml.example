@@ -233,6 +233,8 @@ INDUCTION_MAX_TOOL_ITERATIONS = 10
 BRIEF_ENABLED = false
 BRIEF_MAX_NEW_CONCLUSIONS = 50
 BUDGET_ENABLED = false
+NOTES_MODE = "off"  # off | shadow | on
+NOTES_MAX_TOKENS = 3000
 # WRITE_WINDOW_ITERATIONS = 2  # default: 15% of each specialist's limit
 
 [dream.deduction_model_config]

@@ -101,7 +101,7 @@ async def test_specialist_event_reports_its_iteration_limit(
 async def test_brief_includes_the_work_list(monkeypatch: pytest.MonkeyPatch):
     import datetime
 
-    from src.dreamer.working_memory import NotesCursor, WorkItem, WorkList
+    from src.dreamer.working_memory import DreamState, NotesCursor, WorkItem, WorkList
 
     monkeypatch.setattr(settings.DREAM, "BRIEF_ENABLED", True)
     work_list = WorkList(
@@ -113,10 +113,10 @@ async def test_brief_includes_the_work_list(monkeypatch: pytest.MonkeyPatch):
             )
         ],
         remaining=0,
-        cursor=NotesCursor(),
     )
+    state = DreamState(cursor=NotesCursor(), work_list=work_list)
     with patch("src.dreamer.specialists.emit") as emit:
-        _, user = await _run(InductionSpecialist(), work_list=work_list)
+        _, user = await _run(InductionSpecialist(), state=state)
     assert "## NEW SINCE THE LAST DREAM" in user["content"]
     assert "[id:n1] [2026-10-01] moved to Lisbon" in user["content"]
     assert emit.call_args.args[0].new_conclusions_shown == 1

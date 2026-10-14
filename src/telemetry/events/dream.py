@@ -215,6 +215,17 @@ class DreamSpecialistEvent(BaseEvent, CustomInstructionsFields):
         description="Search calls refused because they came during the write window.",
     )
 
+    # Working notes (dream.specialist only)
+    notes_added: int = Field(
+        default=0, description="Note entries added by update_notes."
+    )
+    notes_replaced: int = Field(
+        default=0, description="Note entries rewritten by update_notes."
+    )
+    notes_removed: int = Field(
+        default=0, description="Note entries removed by update_notes."
+    )
+
     # Since-last-dream work list (dream.specialist only)
     new_conclusions_shown: int = Field(
         default=0,

@@ -23,7 +23,13 @@ from nanoid import generate as generate_nanoid
 from src import crud
 from src.config import ConfiguredModelSettings, settings
 from src.dependencies import tracked_db
-from src.dreamer.working_memory import WorkList, format_work_list
+from src.dreamer.working_memory import (
+    UPDATE_NOTES_TOOL,
+    DreamState,
+    format_work_list,
+    make_update_notes_handler,
+    notes_system_section,
+)
 from src.exceptions import ValidationException
 from src.llm import HonchoLLMCallResponse, honcho_llm_call
 from src.llm.types import LLMTelemetryContext
@@ -134,10 +140,15 @@ You have {limit} tool calls. The {last} {reserved} reserved for writing: searche
 Ending without writing anything is a valid outcome when nothing new is worth writing. Finish with DONE."""
 
 
-def _write_window_resolver(
-    first_write_round: int,
+def _handler_resolver(
+    first_write_round: int | None,
+    extra_handlers: dict[str, Callable[[ToolContext, dict[str, Any]], Any]],
 ) -> Callable[[str], Callable[[ToolContext, dict[str, Any]], Any] | None]:
-    """Handler lookup that refuses search tools from `first_write_round` on."""
+    """Handler lookup for a dreamer pass.
+
+    Refuses search tools from `first_write_round` on (None means never), and
+    serves `extra_handlers` for tools outside the shared handler table.
+    """
 
     async def refuse(_ctx: ToolContext, _tool_input: dict[str, Any]) -> ToolResult:
         return ToolResult(
@@ -150,10 +161,13 @@ def _write_window_resolver(
 
     def resolve(tool_name: str) -> Callable[[ToolContext, dict[str, Any]], Any] | None:
         if (
-            tool_name in SEARCH_TOOL_NAMES
+            first_write_round is not None
+            and tool_name in SEARCH_TOOL_NAMES
             and get_current_iteration() >= first_write_round
         ):
             return refuse
+        if tool_name in extra_handlers:
+            return extra_handlers[tool_name]
         return get_tool_handler(tool_name)
 
     return resolve
@@ -278,7 +292,8 @@ class BaseSpecialist(ABC):
         "Only update this with durable identity markers via `update_peer_card`."
     )
     # Whether the working-memory settings apply: DREAM.BRIEF_ENABLED (memory
-    # layout and counts) and DREAM.BUDGET_ENABLED (budget line, write window).
+    # layout, counts, work list), DREAM.BUDGET_ENABLED (budget line, write
+    # window) and DREAM.NOTES_MODE (working notes).
     uses_working_memory: bool = True
 
     @abstractmethod
@@ -351,7 +366,7 @@ If you update it, send the full deduplicated list and remove stale entries.
         *,
         session_id: str | None = None,
         queue_item_id: int | None = None,
-        work_list: WorkList | None = None,
+        state: DreamState | None = None,
     ) -> SpecialistResult:
         """
         Run the specialist agent.
@@ -366,8 +381,8 @@ If you update it, send the full deduplicated list and remove stale entries.
             hints: Optional hints to guide exploration (specialists explore freely if None)
             configuration: Resolved configuration for checking feature flags (optional)
             parent_run_id: Optional run_id from orchestrator for correlation
-            work_list: Explicit conclusions created since the last dream,
-                shown when the brief is enabled
+            state: Working state loaded by the orchestrator (cursor, notes and
+                the since-last-dream work list), when any of it is enabled
 
         Returns:
             SpecialistResult with metrics and content
@@ -397,6 +412,9 @@ If you update it, send the full deduplicated list and remove stale entries.
         peer_card_updated = False
         search_tool_calls_count = 0
         refused_search_count = 0
+        notes_added = 0
+        notes_replaced = 0
+        notes_removed = 0
         duration_ms = 0.0
         # Per-level rollups — accumulated from each create/delete_observations
         # tool call's metadata.levels list. Counter rather than list[str] so
@@ -418,6 +436,13 @@ If you update it, send the full deduplicated list and remove stale entries.
         budget_enabled = self.uses_working_memory and settings.DREAM.BUDGET_ENABLED
         max_iterations = self.get_max_iterations()
         window = write_window_size(max_iterations)
+        # Notes need the dream number from the loaded state.
+        notes_enabled = (
+            self.uses_working_memory
+            and settings.DREAM.NOTES_MODE != "off"
+            and state is not None
+        )
+        work_list = state.work_list if state is not None else None
 
         try:
             # Short-lived DB session for preflight operations
@@ -453,6 +478,8 @@ If you update it, send the full deduplicated list and remove stale entries.
             # DB session closed — LLM calls happen without holding a connection
 
             tools = self.get_tools(peer_card_enabled=peer_card_enabled)
+            if notes_enabled:
+                tools = [*tools, UPDATE_NOTES_TOOL]
             system_prompt = self.build_system_prompt(
                 observed, peer_card_enabled=peer_card_enabled
             )
@@ -462,6 +489,10 @@ If you update it, send the full deduplicated list and remove stale entries.
                 )
             if budget_enabled:
                 system_prompt += "\n\n" + budget_system_section(max_iterations, window)
+            if notes_enabled:
+                system_prompt += "\n\n" + notes_system_section(
+                    settings.DREAM.NOTES_MAX_TOKENS
+                )
             user_prompt = self.build_user_prompt(
                 observed=observed,
                 hints=hints,
@@ -492,8 +523,19 @@ If you update it, send the full deduplicated list and remove stale entries.
                 agent_type=self.name,
                 parent_category="dream",
                 handler_resolver=(
-                    _write_window_resolver(max_iterations - window + 1)
-                    if budget_enabled
+                    _handler_resolver(
+                        max_iterations - window + 1 if budget_enabled else None,
+                        {
+                            "update_notes": make_update_notes_handler(
+                                specialist=self.name,
+                                run_id=run_id,
+                                dream_number=state.dream_number,
+                            )
+                        }
+                        if notes_enabled and state is not None
+                        else {},
+                    )
+                    if budget_enabled or notes_enabled
                     else None
                 ),
             )
@@ -616,6 +658,9 @@ If you update it, send the full deduplicated list and remove stale entries.
                     deleted_observation_count += int(deleted_val)
                     if meta_dict.get("peer_card_updated"):
                         peer_card_updated = True
+                    notes_added += int(meta_dict.get("notes_added") or 0)
+                    notes_replaced += int(meta_dict.get("notes_replaced") or 0)
+                    notes_removed += int(meta_dict.get("notes_removed") or 0)
                     # Accumulate per-level counts from create/delete observations.
                     # Both handlers stash `{"levels": ["explicit", "deductive", ...]}`
                     # in metadata (agent_tools.py:1373 + agent_tools.py:2011).
@@ -691,6 +736,9 @@ If you update it, send the full deduplicated list and remove stale entries.
                         write_window_used=budget_enabled
                         and iterations >= max_iterations - window + 1,
                         refused_search_count=refused_search_count,
+                        notes_added=notes_added,
+                        notes_replaced=notes_replaced,
+                        notes_removed=notes_removed,
                         new_conclusions_shown=(
                             len(work_list.items)
                             if brief_enabled and work_list is not None

@@ -14,8 +14,15 @@ from src.dreamer.working_memory import (
     WorkList,
     advance_cursor,
     format_work_list,
-    load_work_list,
+    load_dream_state,
 )
+
+
+async def load_work_list(workspace: str, *, observer: str, observed: str):
+    return await load_dream_state(
+        workspace, observer=observer, observed=observed, include_work_list=True
+    )
+
 
 T0 = datetime.datetime(2026, 10, 1, 12, tzinfo=datetime.UTC)
 
@@ -89,18 +96,22 @@ async def test_backlog_is_worked_through_over_consecutive_dreams(
         internal_metadata={"dream": {"last_dream_at": "2026-09-01T00:00:00+00:00"}},
     )
 
-    first = await load_work_list(workspace, observer=peer, observed=peer)
+    first_state = await load_work_list(workspace, observer=peer, observed=peer)
+    first = first_state.work_list
+    assert first is not None
     assert [i.id for i in first.items] == [_id("a"), _id("b")]
     assert first.remaining == 1
     await advance_cursor(
-        workspace, observer=peer, observed=peer, work_list=first, run_id="r1"
+        workspace, observer=peer, observed=peer, state=first_state, run_id="r1"
     )
 
-    second = await load_work_list(workspace, observer=peer, observed=peer)
+    second_state = await load_work_list(workspace, observer=peer, observed=peer)
+    second = second_state.work_list
+    assert second is not None
     assert [i.id for i in second.items] == [_id("c")]
     assert second.remaining == 0
     await advance_cursor(
-        workspace, observer=peer, observed=peer, work_list=second, run_id="r2"
+        workspace, observer=peer, observed=peer, state=second_state, run_id="r2"
     )
 
     metadata = await _stored_notes(db_session, workspace, peer)
@@ -109,8 +120,8 @@ async def test_backlog_is_worked_through_over_consecutive_dreams(
     # The scheduler's key is untouched.
     assert metadata["dream"] == {"last_dream_at": "2026-09-01T00:00:00+00:00"}
 
-    third = await load_work_list(workspace, observer=peer, observed=peer)
-    assert third.items == [] and third.remaining == 0
+    third = (await load_work_list(workspace, observer=peer, observed=peer)).work_list
+    assert third is not None and third.items == [] and third.remaining == 0
 
 
 @pytest.mark.asyncio
@@ -129,7 +140,10 @@ async def test_first_list_starts_at_the_last_dream(
             "dream": {"last_dream_at": (T0 - datetime.timedelta(days=1)).isoformat()}
         },
     )
-    work_list = await load_work_list(workspace, observer=peer, observed=peer)
+    work_list = (
+        await load_work_list(workspace, observer=peer, observed=peer)
+    ).work_list
+    assert work_list is not None
     assert [i.id for i in work_list.items] == [_id("new")]
 
 
@@ -145,7 +159,7 @@ async def test_cursor_merge_keeps_other_note_keys(
         internal_metadata={NOTES_KEY: {"entries": [{"id": "n1"}]}},
     )
     await advance_cursor(
-        workspace, observer=peer, observed=peer, work_list=None, run_id="r1"
+        workspace, observer=peer, observed=peer, state=None, run_id="r1"
     )
     notes = (await _stored_notes(db_session, workspace, peer))[NOTES_KEY]
     assert notes["entries"] == [{"id": "n1"}]
@@ -158,7 +172,6 @@ def test_format_lists_items_and_the_remainder():
         WorkList(
             items=[WorkItem(id="a1", content="likes tea", created_at=T0)],
             remaining=3,
-            cursor=NotesCursor(),
         )
     )
     assert "- [id:a1] [2026-10-01] likes tea" in text
@@ -166,7 +179,7 @@ def test_format_lists_items_and_the_remainder():
 
 
 def test_format_empty_list():
-    text = format_work_list(WorkList(items=[], remaining=0, cursor=NotesCursor()))
+    text = format_work_list(WorkList(items=[], remaining=0))
     assert "No explicit conclusions have been created" in text
 
 

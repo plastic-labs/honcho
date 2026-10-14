@@ -7,7 +7,7 @@ from src.config import settings
 from src.dreamer.specialists import (
     DeductionSpecialist,
     InductionSpecialist,
-    _write_window_resolver,  # pyright: ignore[reportPrivateUsage]
+    _handler_resolver,  # pyright: ignore[reportPrivateUsage]
     dream_budget_line,
     write_window_size,
 )
@@ -45,7 +45,7 @@ def test_budget_line_wording():
 
 @pytest.mark.asyncio
 async def test_resolver_refuses_searches_only_inside_the_window():
-    resolve = _write_window_resolver(11)
+    resolve = _handler_resolver(11, {})
 
     set_current_iteration(10)
     assert resolve("search_memory") is get_tool_handler("search_memory")

@@ -32,7 +32,7 @@ from src.dreamer.specialists import (
     SpecialistResult,
 )
 from src.dreamer.surprisal import SurprisalScore  # type: ignore
-from src.dreamer.working_memory import WorkList, advance_cursor, load_work_list
+from src.dreamer.working_memory import DreamState, advance_cursor, load_dream_state
 from src.exceptions import SurprisalError
 from src.llm.runtime import CapturedAgentSpan, start_captured_span
 from src.llm.types import LLMTelemetryContext
@@ -70,8 +70,13 @@ class DreamResult:
     input_tokens: int
     output_tokens: int
 
-    # Since-last-dream list shown to the specialists, when the brief is on
-    work_list: WorkList | None = None
+    # Working state shown to the specialists, when the brief or notes are on
+    state: DreamState | None = None
+
+
+def working_memory_enabled() -> bool:
+    """Whether dreams keep the cursor: needed by the work list and by notes."""
+    return settings.DREAM.BRIEF_ENABLED or settings.DREAM.NOTES_MODE != "off"
 
 
 def _start_dream_trace(
@@ -228,16 +233,21 @@ async def run_dream(
             accumulate_metric(task_name, "surprisal_error", str(e), "blob")
             # Specialists will explore freely without hints
 
-    # One list for both specialists, so deduction's writes don't change what
-    # induction is shown and the cursor advances once per dream.
-    work_list: WorkList | None = None
-    if settings.DREAM.BRIEF_ENABLED:
+    # Loaded once for both specialists, so deduction's writes don't change the
+    # work list induction is shown and the cursor advances once per dream.
+    state: DreamState | None = None
+    if working_memory_enabled():
         try:
-            work_list = await load_work_list(
-                workspace_name, observer=observer, observed=observed
+            state = await load_dream_state(
+                workspace_name,
+                observer=observer,
+                observed=observed,
+                include_work_list=settings.DREAM.BRIEF_ENABLED,
             )
         except Exception as e:
-            logger.error(f"[{run_id}] Loading the work list failed: {e}", exc_info=True)
+            logger.error(
+                f"[{run_id}] Loading dream working state failed: {e}", exc_info=True
+            )
 
     # Specialist phase wrapped in try/finally so DreamRunEvent ALWAYS emits —
     # both for graceful failures (specialist raises Exception) AND unexpected
@@ -270,7 +280,7 @@ async def run_dream(
                 parent_run_id=run_id,
                 session_id=resolved_session_id,
                 queue_item_id=queue_item_id,
-                work_list=work_list,
+                state=state,
             )
             logger.info(
                 f"[{run_id}] Deduction completed: {deduction_result.content[:200]}..."
@@ -301,7 +311,7 @@ async def run_dream(
                 parent_run_id=run_id,
                 session_id=resolved_session_id,
                 queue_item_id=queue_item_id,
-                work_list=work_list,
+                state=state,
             )
             logger.info(
                 f"[{run_id}] Induction completed: {induction_result.content[:200]}..."
@@ -386,7 +396,7 @@ async def run_dream(
         total_duration_ms=duration_ms,
         input_tokens=total_input_tokens,
         output_tokens=total_output_tokens,
-        work_list=work_list,
+        state=state,
     )
 
 
@@ -650,12 +660,12 @@ DREAM: {payload.dream_type} documents for {workspace_name}/{payload.observer}/{p
                             update_data={"dream": dream_meta},
                         )
 
-                    if settings.DREAM.BRIEF_ENABLED:
+                    if working_memory_enabled():
                         await advance_cursor(
                             workspace_name,
                             observer=payload.observer,
                             observed=payload.observed,
-                            work_list=result.work_list,
+                            state=result.state,
                             run_id=result.run_id,
                         )
 
