@@ -11,6 +11,7 @@ from .deriver import (
 )
 from .document import (
     CreateDocumentsResult,
+    DocumentLevelSummary,
     create_documents,
     create_observations,
     delete_document,
@@ -25,6 +26,7 @@ from .document import (
     query_documents_most_derived,
     query_documents_recent,
     query_external_vector_document_ids,
+    summarize_documents_by_level,
 )
 from .message import (
     create_messages,
@@ -126,6 +128,8 @@ __all__ = [
     "query_documents",
     "query_documents_most_derived",
     "query_documents_recent",
+    "summarize_documents_by_level",
+    "DocumentLevelSummary",
     "query_external_vector_document_ids",
     "delete_document",
     "delete_document_by_id",

@@ -1399,6 +1399,9 @@ class DreamSettings(HonchoSettings):
     MAX_TOOL_ITERATIONS: Annotated[int, Field(default=20, gt=0, le=50)] = 20
     DEDUCTION_MAX_TOOL_ITERATIONS: Annotated[int, Field(default=12, ge=1, le=50)] = 12
     INDUCTION_MAX_TOOL_ITERATIONS: Annotated[int, Field(default=10, ge=1, le=50)] = 10
+    # Deduction and induction start with a description of how memory is
+    # organized and conclusion counts by level.
+    BRIEF_ENABLED: bool = False
 
     @staticmethod
     def _DEDUCTION_MODEL_CONFIG_DEFAULT() -> ConfiguredModelSettings:

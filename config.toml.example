@@ -230,6 +230,7 @@ ENABLED_TYPES = ["omni"]
 MAX_TOOL_ITERATIONS = 20
 DEDUCTION_MAX_TOOL_ITERATIONS = 12
 INDUCTION_MAX_TOOL_ITERATIONS = 10
+BRIEF_ENABLED = false
 
 [dream.deduction_model_config]
 transport = "openai"

@@ -38,6 +38,7 @@ from src.utils.agent_tools import (
     create_tool_executor,
 )
 from src.utils.formatting import custom_instructions_section
+from src.utils.memory_brief import format_memory_counts, memory_layout_section
 from src.utils.tokens import estimate_tokens
 
 logger = logging.getLogger(__name__)
@@ -191,6 +192,9 @@ class BaseSpecialist(ABC):
     peer_card_update_instruction: str = (
         "Only update this with durable identity markers via `update_peer_card`."
     )
+    # Whether DREAM.BRIEF_ENABLED applies: the memory-layout section in the
+    # system prompt and conclusion counts in the user prompt.
+    uses_brief: bool = True
 
     @abstractmethod
     def get_tools(self, *, peer_card_enabled: bool = True) -> list[dict[str, Any]]:
@@ -321,6 +325,7 @@ If you update it, send the full deduplicated list and remove stale entries.
         injected_instructions = custom_instructions_prompt(
             configuration, peer_card_enabled=peer_card_enabled
         )
+        brief_enabled = self.uses_brief and settings.DREAM.BRIEF_ENABLED
 
         try:
             # Short-lived DB session for preflight operations
@@ -345,25 +350,36 @@ If you update it, send the full deduplicated list and remove stale entries.
                         observer=observer,
                         observed=observed,
                     )
+
+                memory_counts: str | None = None
+                if brief_enabled:
+                    memory_counts = format_memory_counts(
+                        await crud.summarize_documents_by_level(
+                            db, workspace_name, observer=observer, observed=observed
+                        )
+                    )
             # DB session closed — LLM calls happen without holding a connection
+
+            tools = self.get_tools(peer_card_enabled=peer_card_enabled)
+            system_prompt = self.build_system_prompt(
+                observed, peer_card_enabled=peer_card_enabled
+            )
+            if brief_enabled:
+                system_prompt += "\n\n" + memory_layout_section(
+                    available_tools=(tool["name"] for tool in tools), cite_ids=True
+                )
+            user_prompt = self.build_user_prompt(
+                observed=observed,
+                hints=hints,
+                peer_card=current_peer_card,
+            )
+            if memory_counts is not None:
+                user_prompt = f"{memory_counts}\n\n{user_prompt}"
 
             # Build messages
             messages: list[dict[str, str]] = [
-                {
-                    "role": "system",
-                    "content": self.build_system_prompt(
-                        observed, peer_card_enabled=peer_card_enabled
-                    )
-                    + injected_instructions,
-                },
-                {
-                    "role": "user",
-                    "content": self.build_user_prompt(
-                        observed=observed,
-                        hints=hints,
-                        peer_card=current_peer_card,
-                    ),
-                },
+                {"role": "system", "content": system_prompt + injected_instructions},
+                {"role": "user", "content": user_prompt},
             ]
 
             # Create tool executor with telemetry context
@@ -403,7 +419,7 @@ If you update it, send the full deduplicated list and remove stale entries.
                 model_config=model_config,
                 prompt="",  # Ignored since we pass messages
                 max_tokens=effective_max_tokens,
-                tools=self.get_tools(peer_card_enabled=peer_card_enabled),
+                tools=tools,
                 tool_choice=None,
                 tool_executor=tool_executor,
                 max_tool_iterations=self.get_max_iterations(),
@@ -859,6 +875,7 @@ class CardRefreshSpecialist(BaseSpecialist):
     """
 
     name: str = "card_refresh"
+    uses_brief: bool = False
     peer_card_update_instruction: str = "Update this with `update_peer_card`. See the PEER CARD section in the system prompt for the allowed entry kinds and rules."
 
     # Low iteration ceiling for this lightweight, single-purpose run.

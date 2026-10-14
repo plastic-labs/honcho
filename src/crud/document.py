@@ -181,6 +181,53 @@ async def query_documents_recent(
     return result.scalars().all()
 
 
+@dataclass(frozen=True)
+class DocumentLevelSummary:
+    """Live conclusion counts for one observer/observed pair."""
+
+    counts_by_level: dict[str, int]
+    earliest: datetime.datetime | None
+    latest: datetime.datetime | None
+
+
+async def summarize_documents_by_level(
+    db: AsyncSession,
+    workspace_name: str,
+    *,
+    observer: str,
+    observed: str,
+) -> DocumentLevelSummary:
+    """Count live documents per level and the span of their creation times."""
+    stmt = (
+        select(
+            models.Document.level,
+            func.count(models.Document.id),
+            func.min(models.Document.created_at),
+            func.max(models.Document.created_at),
+        )
+        .where(
+            models.Document.workspace_name == workspace_name,
+            models.Document.observer == observer,
+            models.Document.observed == observed,
+            models.Document.deleted_at.is_(None),
+        )
+        .group_by(models.Document.level)
+    )
+    rows = (await db.execute(stmt)).all()
+    counts: dict[str, int] = {}
+    earliest: datetime.datetime | None = None
+    latest: datetime.datetime | None = None
+    for level, count, level_min, level_max in rows:
+        counts[str(level)] = int(count)
+        if level_min is not None and (earliest is None or level_min < earliest):
+            earliest = level_min
+        if level_max is not None and (latest is None or level_max > latest):
+            latest = level_max
+    return DocumentLevelSummary(
+        counts_by_level=counts, earliest=earliest, latest=latest
+    )
+
+
 async def query_documents_most_derived(
     db: AsyncSession,
     workspace_name: str,
