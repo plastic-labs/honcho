@@ -593,13 +593,27 @@ async def load_map_entries(
     """The `map` entries for a pair, for the dialectic.
 
     Other kinds are unverified working hypotheses an answering agent could
-    repeat as facts, so they are never returned.
+    repeat as facts, so they are never returned. Pruning only runs when a dream
+    loads the notes, so the same rule is applied here: an entry whose cited
+    conclusions have all been deleted since is skipped.
     """
     async with tracked_db("dialectic.dream_map", read_only=True) as db:
         stored = await crud.get_collection_internal_metadata_value(
             db, workspace_name, observer, observed, NOTES_KEY
         )
-    return [entry for entry in parse_entries(stored) if entry.kind == "map"]
+        entries = [entry for entry in parse_entries(stored) if entry.kind == "map"]
+        cited = sorted({cited_id for entry in entries for cited_id in entry.ids})
+        live_ids = {
+            doc.id
+            for doc in await crud.fetch_documents_by_ids(
+                db, workspace_name, observer, observed, cited
+            )
+        }
+    return [
+        entry
+        for entry in entries
+        if not entry.ids or any(cited_id in live_ids for cited_id in entry.ids)
+    ]
 
 
 NotesHandler = Callable[[Any, dict[str, Any]], Coroutine[Any, Any, ToolResult | str]]

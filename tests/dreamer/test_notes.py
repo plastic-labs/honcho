@@ -340,20 +340,28 @@ async def test_dialectic_reads_only_map_entries(
     from src.dreamer.working_memory import load_map_entries
 
     _, peer = sample_data
+    dead_map = {
+        **_entry("n9", "map").model_dump(mode="json"),
+        "ids": ["gone".ljust(21, "0")],
+    }
     ctx = await _seed_collection(
         db_session,
         sample_data,
         {
             "entries": [
-                _entry(f"n{i}", kind).model_dump(mode="json")
-                for i, kind in enumerate(["pending", "open", "covered", "map"])
+                *(
+                    _entry(f"n{i}", kind).model_dump(mode="json")
+                    for i, kind in enumerate(["pending", "open", "covered", "map"])
+                ),
+                # Every conclusion it cited is gone, and no dream has pruned it.
+                dead_map,
             ]
         },
     )
     entries = await load_map_entries(
         ctx.workspace_name, observer=peer.name, observed=peer.name
     )
-    assert [e.kind for e in entries] == ["map"]
+    assert [(e.id, e.kind) for e in entries] == [("n3", "map")]
 
 
 @pytest.mark.asyncio

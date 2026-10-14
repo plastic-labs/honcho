@@ -660,7 +660,11 @@ DREAM: {payload.dream_type} documents for {workspace_name}/{payload.observer}/{p
                             update_data={"dream": dream_meta},
                         )
 
-                    if working_memory_enabled():
+                    # Advance only if a specialist actually worked the list;
+                    # otherwise the next dream gets the same conclusions again.
+                    if working_memory_enabled() and (
+                        result.deduction_success or result.induction_success
+                    ):
                         await advance_cursor(
                             workspace_name,
                             observer=payload.observer,
