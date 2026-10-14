@@ -29,6 +29,7 @@ import {
   FilterSchema,
   type Filters,
   LimitSchema,
+  MaxDistanceSchema,
   type MessageConfiguration,
   MessageConfigurationSchema,
   MessageContentSchema,
@@ -296,6 +297,7 @@ export class Peer {
     query: string
     filters?: Record<string, unknown>
     limit?: number
+    max_distance?: number
   }): Promise<MessageResponse[]> {
     await this._ensureWorkspace()
     return this._http.post<MessageResponse[]>(
@@ -830,12 +832,15 @@ export class Peer {
    * @param query The search query to use
    * @param filters - Optional filters to scope the search. See [search filters documentation](https://honcho.dev/docs/v3/documentation/core-concepts/features/using-filters).
    * @param limit - Optional limit on the number of results to return.
+   * @param options.maxDistance - Optional maximum cosine distance (0-2) for semantic matches.
+   *                              Farther semantic hits are dropped, so fewer than `limit`
+   *                              results (or none) may be returned. Full-text matches are unaffected.
    * @returns Promise resolving to an array of Message objects representing the search results.
    *          Returns an empty array if no messages are found.
    */
   async search(
     query: string,
-    options?: { filters?: Filters; limit?: number }
+    options?: { filters?: Filters; limit?: number; maxDistance?: number }
   ): Promise<Message[]> {
     const validatedQuery = SearchQuerySchema.parse(query)
     const validatedFilters = options?.filters
@@ -844,10 +849,15 @@ export class Peer {
     const validatedLimit = options?.limit
       ? LimitSchema.parse(options.limit)
       : undefined
+    const validatedMaxDistance =
+      options?.maxDistance !== undefined
+        ? MaxDistanceSchema.parse(options.maxDistance)
+        : undefined
     const response = await this._search({
       query: validatedQuery,
       filters: validatedFilters,
       limit: validatedLimit,
+      max_distance: validatedMaxDistance,
     })
     return response.map(Message.fromApiResponse)
   }

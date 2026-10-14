@@ -739,6 +739,17 @@ class MessageSearchOptions(BaseModel):
         le=100,
         description="Number of results to return",
     )
+    max_distance: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=2.0,
+        description=(
+            "Optional maximum cosine distance for semantic matches. Semantic hits "
+            "farther than this are dropped, so fewer than `limit` results (or "
+            "none) are returned when nothing is close enough. Full-text matches "
+            "are not affected."
+        ),
+    )
 
 
 class WorkspaceMessageSearchOptions(MessageSearchOptions):

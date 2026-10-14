@@ -366,6 +366,46 @@ def test_search_workspace(client: TestClient, sample_data: tuple[Workspace, Peer
     assert isinstance(data, list)
 
 
+@pytest.mark.parametrize("route", ["workspace", "peer", "session"])
+def test_search_routes_pass_max_distance_to_search(
+    client: TestClient, sample_data: tuple[Workspace, Peer], route: str
+):
+    """`max_distance` reaches the search layer from every message search route (#1177)."""
+    test_workspace, test_peer = sample_data
+    base = f"/v3/workspaces/{test_workspace.name}"
+    session_id = str(generate_nanoid())
+    client.post(f"{base}/sessions", json={"id": session_id})
+    paths = {
+        "workspace": (f"{base}/search", "src.routers.workspaces.search"),
+        "peer": (f"{base}/peers/{test_peer.name}/search", "src.routers.peers.search"),
+        "session": (
+            f"{base}/sessions/{session_id}/search",
+            "src.routers.sessions.search",
+        ),
+    }
+    path, target = paths[route]
+
+    with patch(target, new=AsyncMock(return_value=[])) as mock_search:
+        response = client.post(path, json={"query": "q", "max_distance": 0.35})
+
+    assert response.status_code == 200, response.text
+    assert mock_search.await_args is not None
+    assert mock_search.await_args.kwargs["max_distance"] == 0.35
+
+
+def test_search_workspace_rejects_max_distance_outside_cosine_range(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    test_workspace, _ = sample_data
+
+    response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/search",
+        json={"query": "q", "max_distance": 2.5},
+    )
+
+    assert response.status_code == 422, response.text
+
+
 def test_search_workspace_empty_query(
     client: TestClient, sample_data: tuple[Workspace, Peer]
 ):

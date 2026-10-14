@@ -80,6 +80,7 @@ async def query_external_vector_message_ids(
     embedding_query: list[float],
     limit: int,
     filters: dict[str, Any] | None = None,
+    max_distance: float | None = None,
 ) -> list[str]:
     """Query the external vector store and return ordered message IDs."""
     if limit <= 0:
@@ -105,6 +106,7 @@ async def query_external_vector_message_ids(
         embedding_query,
         top_k=limit * 3,
         filters=vector_filters if vector_filters else None,
+        max_distance=max_distance,
         include_attributes=["message_id"],
     )
 
@@ -144,6 +146,7 @@ async def _semantic_search_pgvector(
     embedding_query: list[float],
     limit: int,
     filters: dict[str, Any] | None = None,
+    max_distance: float | None = None,
 ) -> list[models.Message]:
     """
     Perform semantic message search using pgvector in Postgres.
@@ -154,6 +157,7 @@ async def _semantic_search_pgvector(
         embedding_query: Pre-computed embedding for the search query
         limit: Maximum number of results to return
         filters: Optional filters to apply to the message query
+        max_distance: Optional maximum cosine distance; farther hits are dropped
 
     Returns:
         list of messages ordered by semantic similarity
@@ -169,6 +173,8 @@ async def _semantic_search_pgvector(
         .where(models.MessageEmbedding.embedding.isnot(None))
         .where(models.MessageEmbedding.workspace_name == workspace_name)
     )
+    if max_distance is not None:
+        stmt = stmt.where(distance_expr <= max_distance)
 
     if filters:
         internal_filters = filters.copy()
@@ -319,6 +325,7 @@ async def search(
     *,
     filters: dict[str, Any] | None = None,
     limit: int = 10,
+    max_distance: float | None = None,
 ) -> list[models.Message]:
     """
     Search across message content using a hybrid approach with Reciprocal Rank Fusion (RRF).
@@ -332,6 +339,9 @@ async def search(
             Special filter 'peer_perspective' will search across all messages from sessions that the peer is/was a member of,
             filtered by the time window when they were actually in the session.
         limit: Maximum number of results to return
+        max_distance: Optional maximum cosine distance for semantic matches. Semantic
+            hits farther than this are dropped; full-text matches are unaffected, so
+            fewer than `limit` results (or none) can be returned.
 
     Returns:
         list of messages that match the search query, ordered by RRF relevance or individual search relevance
@@ -402,6 +412,7 @@ async def search(
                 embedding_query=query_embedding,
                 limit=semantic_limit,
                 filters=filters,
+                max_distance=max_distance,
             )
 
     async def _run_search(active_db: AsyncSession) -> list[models.Message]:
@@ -419,6 +430,7 @@ async def search(
                     embedding_query=query_embedding,
                     limit=semantic_limit,
                     filters=filters,
+                    max_distance=max_distance,
                 )
             else:
                 semantic_results = await fetch_messages_by_ids(

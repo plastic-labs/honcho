@@ -191,7 +191,12 @@ async def search_workspace(
             return no_results
         filters["session_id"] = {"in": scope_sessions}
     filters["workspace_id"] = workspace_id
-    return await search(body.query, filters=filters, limit=body.limit)
+    return await search(
+        body.query,
+        filters=filters,
+        limit=body.limit,
+        max_distance=body.max_distance,
+    )
 
 
 @router.get(

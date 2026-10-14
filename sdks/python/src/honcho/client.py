@@ -886,6 +886,12 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
             default=10, ge=1, le=100, description="Number of results to return"
         ),
         *,
+        max_distance: float | None = Field(
+            None,
+            ge=0.0,
+            le=2.0,
+            description="Maximum cosine distance for semantic matches",
+        ),
         scope: str | ScopeBase | None = Field(
             None,
             description="Optional scope restricting the search to its member sessions",
@@ -900,6 +906,9 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
             query: The search query to use
             filters: Filters to scope the search. See [search filters documentation](https://honcho.dev/docs/v3/documentation/core-concepts/features/using-filters).
             limit: Number of results to return (1-100, default: 10)
+            max_distance: Optional maximum cosine distance (0-2) for semantic
+                matches. Farther semantic hits are dropped, so fewer than ``limit``
+                results (or none) may be returned. Full-text matches are unaffected.
             scope: Optional scope (ID or Scope object) restricting the search to
                 that scope's member sessions. Mutually exclusive with a
                 ``session_id`` filter. A scope with no member sessions matches
@@ -911,6 +920,8 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
         """
         self._ensure_workspace()
         body: dict[str, Any] = {"query": query, "filters": filters, "limit": limit}
+        if max_distance is not None:
+            body["max_distance"] = max_distance
         if scope is not None:
             body["scope"] = validate_scope_id(resolve_id(scope))
         data = self._http.post(
