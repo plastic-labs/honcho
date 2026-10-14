@@ -75,7 +75,13 @@ class JWTParams(BaseModel):
 
 
 def create_admin_jwt() -> str:
-    """Create a JWT for admin operations."""
+    """Create a tenant-less JWT for admin operations.
+
+    Carries no ``tn`` claim, so under ``MULTI_TENANT`` ``auth()`` rejects it -- the
+    tenant gate runs before the admin short-circuit, and admin is admin only within
+    a tenant. Test-only today; a tenanted caller must mint via ``POST /v3/keys`` or
+    ``scripts/generate_jwt.py --tenant``.
+    """
     params = JWTParams(t="", ad=True)
     key = create_jwt(params)
     return key

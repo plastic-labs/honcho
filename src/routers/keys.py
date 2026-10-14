@@ -4,6 +4,7 @@ import logging
 from fastapi import APIRouter, Depends, Query
 
 from src.config import settings
+from src.db import tenant_context
 from src.exceptions import DisabledException, ValidationException
 from src.security import (
     JWTParams,
@@ -60,6 +61,12 @@ async def create_key(
             w=workspace_id,
             p=peer_id,
             s=session_id,
+            # region ai
+            # The caller's tenant, bound by require_auth from its verified token and
+            # never read from the request, so an admin can only mint keys for its own
+            # tenant. Without it, MULTI_TENANT auth rejects the key. None flag-off.
+            # endregion
+            tn=tenant_context.get(),
         )
     )
     return {
