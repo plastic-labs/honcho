@@ -730,6 +730,7 @@ async def execute_tool_loop(
             iterations=iteration + 1,
             hit_input_token_cap=hit_input_token_cap,
             run_span=run_span,
+            hit_iteration_limit=True,
         )
 
     current_attempt.set(1)
@@ -810,6 +811,7 @@ async def execute_tool_loop(
     final_response.hit_input_token_cap = (
         final_response.hit_input_token_cap or hit_input_token_cap
     )
+    final_response.hit_iteration_limit = True
     return final_response
 
 

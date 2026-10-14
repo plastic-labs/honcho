@@ -326,6 +326,8 @@ If you update it, send the full deduplicated list and remove stale entries.
             configuration, peer_card_enabled=peer_card_enabled
         )
         brief_enabled = self.uses_brief and settings.DREAM.BRIEF_ENABLED
+        # Wired up with the write window; nothing shows a budget line yet.
+        budget_enabled = False
 
         try:
             # Short-lived DB session for preflight operations
@@ -556,6 +558,9 @@ If you update it, send the full deduplicated list and remove stale entries.
                 input_tokens = response.input_tokens if response is not None else 0
                 output_tokens = response.output_tokens if response is not None else 0
                 iterations = response.iterations if response is not None else 0
+                hit_iteration_limit = (
+                    response.hit_iteration_limit if response is not None else False
+                )
                 emit(
                     DreamSpecialistEvent(
                         run_id=run_id,
@@ -570,6 +575,9 @@ If you update it, send the full deduplicated list and remove stale entries.
                         duration_ms=duration_ms,
                         success=specialist_success,
                         error_class=specialist_error_class,
+                        hit_iteration_limit=hit_iteration_limit,
+                        iteration_limit=self.get_max_iterations(),
+                        budget_line_enabled=budget_enabled,
                         # denormalized rollups (all 0 on the failure path)
                         created_observation_count=created_observation_count,
                         deleted_observation_count=deleted_observation_count,

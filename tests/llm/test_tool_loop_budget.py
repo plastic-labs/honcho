@@ -125,3 +125,14 @@ async def test_no_budget_line_by_default() -> None:
     model = _ScriptedModel([["look"], []])
     await _run(model)
     assert _user_texts(model.seen[1]) == ["q"]
+
+
+@pytest.mark.asyncio
+async def test_hit_iteration_limit_only_when_the_loop_runs_out() -> None:
+    stopped = await _run(_ScriptedModel([["look"], []]))
+    assert stopped.hit_iteration_limit is False
+
+    exhausted = await _run(
+        _ScriptedModel([["look"], ["look"], []]), max_tool_iterations=2
+    )
+    assert exhausted.hit_iteration_limit is True

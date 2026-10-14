@@ -469,6 +469,9 @@ class DialecticAgent:
         thinking_content: str | None,
         iterations: int,
         hit_input_token_cap: bool = False,
+        hit_iteration_limit: bool = False,
+        iteration_limit: int | None = None,
+        budget_line_enabled: bool = False,
     ) -> None:
         """
         Log metrics common to both streaming and non-streaming responses.
@@ -485,6 +488,10 @@ class DialecticAgent:
             tool_calls_count: Number of tool calls made
             thinking_content: Thinking trace content (if any)
             iterations: Number of iterations in the tool execution loop
+            hit_input_token_cap: Whether an iteration's input exceeded the cap
+            hit_iteration_limit: Whether the tool loop ran out of iterations
+            iteration_limit: Tool-iteration limit this query was given
+            budget_line_enabled: Whether the model was shown its remaining budget
         """
         accumulate_metric(task_name, "tool_calls", tool_calls_count, "count")
 
@@ -538,6 +545,9 @@ class DialecticAgent:
                 cache_read_tokens=cache_read_input_tokens or 0,
                 cache_creation_tokens=cache_creation_input_tokens or 0,
                 hit_input_token_cap=hit_input_token_cap,
+                hit_iteration_limit=hit_iteration_limit,
+                iteration_limit=iteration_limit,
+                budget_line_enabled=budget_line_enabled,
                 custom_instructions_tokens=estimate_tokens(
                     self.instructions.custom_instructions
                 ),
@@ -634,6 +644,8 @@ class DialecticAgent:
             thinking_content=response.thinking_content,
             iterations=response.iterations,
             hit_input_token_cap=response.hit_input_token_cap,
+            hit_iteration_limit=response.hit_iteration_limit,
+            iteration_limit=self._max_tool_iterations(level_settings),
         )
 
         return content
@@ -728,4 +740,6 @@ class DialecticAgent:
             thinking_content=response.thinking_content,
             iterations=response.iterations,
             hit_input_token_cap=response.hit_input_token_cap,
+            hit_iteration_limit=response.hit_iteration_limit,
+            iteration_limit=self._max_tool_iterations(level_settings),
         )

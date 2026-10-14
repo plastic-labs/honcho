@@ -78,3 +78,16 @@ async def test_card_refresh_never_gets_the_brief(monkeypatch: pytest.MonkeyPatch
     system, user = await _run(CardRefreshSpecialist())
     assert "HOW MEMORY IS ORGANIZED" not in system["content"]
     assert "Memory counts" not in user["content"]
+
+
+@pytest.mark.asyncio
+async def test_specialist_event_reports_its_iteration_limit(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(settings.DREAM, "DEDUCTION_MAX_TOOL_ITERATIONS", 9)
+    with patch("src.dreamer.specialists.emit") as emit:
+        await _run(DeductionSpecialist())
+    event = emit.call_args.args[0]
+    assert event.iteration_limit == 9
+    assert event.hit_iteration_limit is False
+    assert event.budget_line_enabled is False

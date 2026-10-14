@@ -191,6 +191,20 @@ class DreamSpecialistEvent(BaseEvent, CustomInstructionsFields):
         description="Exception class name when success=False; None on success.",
     )
 
+    # Tool-loop budget (shared with dialectic.completed)
+    hit_iteration_limit: bool = Field(
+        default=False,
+        description="True when the tool loop ran out of iterations and made its final call without a natural stop.",
+    )
+    iteration_limit: int | None = Field(
+        default=None,
+        description="Tool-iteration limit this run was given.",
+    )
+    budget_line_enabled: bool = Field(
+        default=False,
+        description="True when the model was shown how many tool calls it had left.",
+    )
+
     # Peer card custom instructions (dream's own pair comes from the mixin)
     peer_card_custom_instructions_tokens: int = Field(
         default=0,

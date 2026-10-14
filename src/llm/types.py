@@ -168,6 +168,9 @@ class HonchoLLMCallResponse(BaseModel, Generic[T]):
     # case). Maps 1:1 to `RepresentationCompletedEvent.hit_input_token_cap`
     # and `DialecticCompletedEvent.hit_input_token_cap`.
     hit_input_token_cap: bool = False
+    # True when the tool loop ran out of iterations and made its final call
+    # without a natural stop.
+    hit_iteration_limit: bool = False
 
 
 class HonchoLLMCallStreamChunk(BaseModel):
@@ -208,6 +211,7 @@ class StreamingResponseWithMetadata:
     thinking_content: str | None
     iterations: int
     hit_input_token_cap: bool
+    hit_iteration_limit: bool
     _run_span: Any | None
 
     def __init__(
@@ -222,6 +226,7 @@ class StreamingResponseWithMetadata:
         iterations: int = 0,
         hit_input_token_cap: bool = False,
         run_span: Any | None = None,
+        hit_iteration_limit: bool = False,
     ):
         self._stream = stream
         self.tool_calls_made = tool_calls_made
@@ -232,6 +237,7 @@ class StreamingResponseWithMetadata:
         self.thinking_content = thinking_content
         self.iterations = iterations
         self.hit_input_token_cap = hit_input_token_cap
+        self.hit_iteration_limit = hit_iteration_limit
         self._run_span = run_span
 
     def __aiter__(self) -> AsyncIterator[HonchoLLMCallStreamChunk]:
