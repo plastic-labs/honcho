@@ -82,8 +82,6 @@ class ImportOptions:
 
 
 def parse_options(args: Any) -> ImportOptions:
-    from gateway.config import Platform
-
     days = getattr(args, "days", 30)
     if type(days) is not int or days <= 0:
         raise ImportInputError("--days must be a positive integer.")
@@ -102,6 +100,12 @@ def parse_options(args: Any) -> ImportOptions:
         raise ImportInputError("--source must contain at least one source.")
     for source in sources:
         if source not in {"cli", "desktop", "subagent"}:
+            try:
+                from gateway.config import Platform
+            except ImportError as exc:
+                raise ImportInputError(
+                    "Gateway sources require the Hermes gateway package."
+                ) from exc
             try:
                 Platform(source)
             except ValueError as exc:
@@ -719,6 +723,25 @@ def payload_hash(
     )
 
 
+def _normalize_import_text(text: str) -> str:
+    """Use one fail-closed payload for chunking, hashing, upload, and recovery."""
+    try:
+        from agent.redact import redact_sensitive_text
+
+        # Strip NUL first so an obfuscated credential is visible to the redactor.
+        cleaned = sanitize_context(text.replace("\x00", ""))
+        cleaned = redact_sensitive_text(
+            cleaned, force=True, redact_url_credentials=True
+        )
+        if not isinstance(cleaned, str):
+            raise TypeError("redactor returned a non-string")
+        return cleaned.replace("\x00", "").strip()
+    except Exception as exc:
+        raise ImportInputError(
+            "Historical text could not be safely normalized. No upload was started."
+        ) from exc
+
+
 def planned_rows(
     snapshot: SourceSnapshot, target: ImportTarget, options: ImportOptions, limit: int
 ) -> Iterator[PlannedRow]:
@@ -728,7 +751,9 @@ def planned_rows(
     while True:
         rows = snapshot.db.get_messages(
             target.segment_id,
-            include_inactive=False,
+            # Audit paging retains physical row IDs and genuine repeated rows.
+            # Select active/compacted history below, without display deduplication.
+            include_inactive=True,
             include_compacted=False,
             after_id=cursor,
             limit=PAGE_SIZE,
@@ -740,14 +765,13 @@ def planned_rows(
                     "state.db returned invalid message row IDs; paging stopped before upload."
                 )
             cursor = row_id
+            if not row.get("active", 1) and not row.get("compacted", 0):
+                yield PlannedRow(row_id, skipped="messages_rewound")
+                continue
             role, text = row.get("role"), _text(row.get("content"))
             if role == "user":
                 suppress_turn = text is None or _is_internal_gateway_turn(text)
-            if (
-                role not in {"user", "assistant"}
-                or row.get("_compressed_summary")
-                or row.get("compacted")
-            ):
+            if role not in {"user", "assistant"} or row.get("_compressed_summary"):
                 yield PlannedRow(row_id, skipped="messages_tool_system_or_summary")
                 continue
             if text is None:
@@ -788,7 +812,7 @@ def planned_rows(
             ):
                 yield PlannedRow(row_id, skipped="messages_outside_time_window")
                 continue
-            cleaned = sanitize_context(text).strip()
+            cleaned = _normalize_import_text(text)
             if not cleaned:
                 yield PlannedRow(row_id, skipped="messages_empty_after_cleanup")
                 continue
@@ -830,6 +854,84 @@ def planned_rows(
             break
 
 
+@contextmanager
+def _ordered_target_rows(
+    snapshot: SourceSnapshot,
+    targets: list[ImportTarget],
+    options: ImportOptions,
+    limit: int,
+) -> Iterator[tuple[Iterator[tuple[ImportTarget, PlannedRow]], dict[str, int]]]:
+    """Sort all source rows for one destination without retaining their bodies in RAM."""
+    with tempfile.TemporaryDirectory(prefix="honcho-history-order-") as directory:
+        path = Path(directory) / "rows.db"
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        os.close(fd)
+        restrict_private_file(path)
+        connection = sqlite3.connect(path)
+        try:
+            # This disposable spool never needs recovery or sidecar journal files.
+            connection.execute("PRAGMA journal_mode = OFF")
+            connection.execute(
+                "CREATE TABLE rows (time_us INTEGER, row_id INTEGER, segment TEXT, chunks TEXT)"
+            )
+            scanned, by_segment = {}, {target.segment_id: target for target in targets}
+            epoch = datetime(1970, 1, 1, tzinfo=UTC)
+            for target in targets:
+                for row in planned_rows(snapshot, target, options, limit):
+                    scanned[target.segment_id] = row.row_id
+                    if not row.chunks:
+                        continue
+                    time_us = (row.chunks[0].created_at - epoch) // timedelta(
+                        microseconds=1
+                    )
+                    serialized = json.dumps(
+                        [
+                            {**chunk.checkpoint(), "content": chunk.content}
+                            for chunk in row.chunks
+                        ]
+                    )
+                    connection.execute(
+                        "INSERT INTO rows VALUES (?, ?, ?, ?)",
+                        (time_us, row.row_id, target.segment_id, serialized),
+                    )
+            connection.execute(
+                "CREATE INDEX row_order ON rows (time_us, row_id, segment)"
+            )
+            connection.commit()
+
+            def ordered() -> Iterator[tuple[ImportTarget, PlannedRow]]:
+                for segment_id, row_id, serialized in connection.execute(
+                    "SELECT segment, row_id, chunks FROM rows ORDER BY time_us, row_id, segment"
+                ):
+                    target = by_segment[segment_id]
+                    chunks = tuple(
+                        PlannedChunk(
+                            target,
+                            row_id,
+                            chunk["content"],
+                            chunk["peer_id"],
+                            datetime.fromisoformat(chunk["created_at"]),
+                            chunk["part_index"],
+                            chunk["part_count"],
+                            chunk["key"],
+                            chunk["payload_sha256"],
+                            chunk["row_hash"],
+                        )
+                        for chunk in json.loads(serialized)
+                    )
+                    yield target, PlannedRow(row_id, chunks=chunks)
+
+            rows = ordered()
+            try:
+                yield rows, scanned
+            finally:
+                # Early batch failure must release the SELECT cursor before
+                # Windows removes the private spool file.
+                rows.close()
+        finally:
+            connection.close()
+
+
 @dataclass
 class ImportSummary:
     source_messages: int = 0
@@ -866,7 +968,7 @@ def _row_progress(segment: dict | None, row: PlannedRow) -> int:
             row.chunks
         ):
             raise ImportStateError(
-                "A source row changed after import. No duplicate was uploaded; restore the original source before resuming."
+                "An imported row's normalized payload changed. Verify its remote history and original progress before resuming; nothing was resent."
             )
         return record["confirmed_parts"]
     return 0
@@ -1330,6 +1432,79 @@ def _send_batch(
     return 0
 
 
+def _upload_target(
+    client,
+    target_id: str,
+    targets: list[ImportTarget],
+    snapshot: SourceSnapshot,
+    config: HonchoClientConfig,
+    options: ImportOptions,
+    scope: dict,
+    state: dict,
+    state_path: Path,
+    remote: dict,
+    summary: ImportSummary,
+) -> int:
+    session, batch = None, []
+
+    def flush() -> int:
+        nonlocal session
+        if not batch:
+            return 0
+        session = session or _prepare_session(client, target_id, targets, config)
+        # Timestamp order may differ from source ID order. Commit row-part proofs
+        # per batch, but advance scan cursors only after the entire target completes.
+        code = _send_batch(
+            client,
+            session,
+            batch,
+            {},
+            scope,
+            state,
+            state_path,
+            snapshot.source_id,
+            summary,
+        )
+        if code == 0:
+            batch.clear()
+        return code
+
+    with _ordered_target_rows(snapshot, targets, options, config.message_max_chars) as (
+        rows,
+        scanned,
+    ):
+        for target, row in rows:
+            segment = get_segment(scope, target.segment_id, target.mapping, create=True)
+            covered = _row_progress(segment, row)
+            for chunk in row.chunks[covered:]:
+                existing = remote.get((snapshot.source_id, chunk.key))
+                if existing is not None:
+                    if not _matches_checkpoint(
+                        existing, chunk.checkpoint(), snapshot.source_id, target_id
+                    ):
+                        raise ImportStateError(
+                            "Remote import data conflicts with the source payload. No duplicate was uploaded."
+                        )
+                    if code := flush():
+                        return code
+                    confirm_batch(scope, _pending_batch(target_id, [chunk], {}))
+                    summary.remote_covered += 1
+                    write_state(state_path, state)
+                else:
+                    batch.append(chunk)
+                    if len(batch) == BATCH_SIZE and (code := flush()):
+                        return code
+        if code := flush():
+            return code
+        for segment_id, row_id in scanned.items():
+            segment = scope["segments"][segment_id]
+            segment["last_scanned_message_id"] = max(
+                segment["last_scanned_message_id"], row_id
+            )
+        write_state(state_path, state)
+    return 0
+
+
 def upload_plan(
     snapshot: SourceSnapshot,
     config: HonchoClientConfig,
@@ -1408,7 +1583,7 @@ def upload_plan(
                             )
                             continue
                     # Detect remote hash conflicts and partial new rows before any message write.
-                    conflict = False
+                    conflict, earliest_new = False, None
                     for target in target_segments:
                         segment = get_segment(scope, target.segment_id, target.mapping)
                         for row in planned_rows(
@@ -1436,6 +1611,16 @@ def upload_plan(
                                 segment, row
                             ):
                                 conflict = True
+                            covered = _row_progress(segment, row)
+                            for chunk, message in zip(
+                                row.chunks[covered:], found[covered:], strict=True
+                            ):
+                                if message is None:
+                                    earliest_new = (
+                                        chunk.created_at
+                                        if earliest_new is None
+                                        else min(earliest_new, chunk.created_at)
+                                    )
                     if conflict:
                         blocked.add(target_id)
                         summary.blocked_targets += 1
@@ -1443,6 +1628,31 @@ def upload_plan(
                             "A target contains conflicting or partial imported source data. It was not resent; reconcile its original progress first."
                         )
                         continue
+                    # Honcho assigns seq_in_session on append; created_at cannot
+                    # insert older history before existing messages, even with --before.
+                    if earliest_new is not None and messages:
+                        if any(
+                            not isinstance(message.created_at, datetime)
+                            or message.created_at.tzinfo is None
+                            or message.created_at.utcoffset() is None
+                            for message in messages
+                        ):
+                            blocked.add(target_id)
+                            summary.blocked_targets += 1
+                            summary.errors.append(
+                                "A target has invalid remote timestamps. Its order could not be verified; nothing was uploaded to it."
+                            )
+                            continue
+                        newest_remote = max(
+                            message.created_at.astimezone(UTC) for message in messages
+                        )
+                        if earliest_new < newest_remote:
+                            blocked.add(target_id)
+                            summary.blocked_targets += 1
+                            summary.errors.append(
+                                "Selected older history would be appended after newer remote messages. Nothing was uploaded to that target. Import the full desired window into an empty destination workspace or session; this command cannot reorder existing messages."
+                            )
+                            continue
                     remote_indexes[target_id] = indexed
             if unmarked_blocked:
                 summary.errors.append(
@@ -1452,119 +1662,38 @@ def upload_plan(
                 targets = [
                     target for target in plan.targets if target.session_id == target_id
                 ]
-                remote = remote_indexes[target_id]
-                session, batch, cursors = None, [], {}
-                for target in targets:
-                    segment = get_segment(
-                        scope, target.segment_id, target.mapping, create=True
+                code = _upload_target(
+                    client,
+                    target_id,
+                    targets,
+                    snapshot,
+                    config,
+                    options,
+                    scope,
+                    state,
+                    state_path,
+                    remote_indexes[target_id],
+                    summary,
+                )
+                if code:
+                    partial = (
+                        summary.uploaded_chunks
+                        or summary.remote_covered
+                        or summary.recovered_chunks
                     )
-                    for row in planned_rows(
-                        snapshot, target, options, config.message_max_chars
-                    ):
-                        covered = _row_progress(segment, row)
-                        if not row.chunks:
-                            cursors[target.segment_id] = row.row_id
-                            continue
-                        for chunk in row.chunks[covered:]:
-                            if existing := remote.get((snapshot.source_id, chunk.key)):
-                                if not _matches_checkpoint(
-                                    existing,
-                                    chunk.checkpoint(),
-                                    snapshot.source_id,
-                                    target_id,
-                                ):
-                                    raise ImportStateError(
-                                        "Remote import data conflicts with the source payload. No duplicate was uploaded."
-                                    )
-                                # Flush earlier new chunks before committing later remote-confirmed parts.
-                                if batch:
-                                    session = session or _prepare_session(
-                                        client, target_id, targets, config
-                                    )
-                                    code = _send_batch(
-                                        client,
-                                        session,
-                                        batch,
-                                        cursors,
-                                        scope,
-                                        state,
-                                        state_path,
-                                        snapshot.source_id,
-                                        summary,
-                                    )
-                                    if code:
-                                        return (
-                                            summary,
-                                            3
-                                            if summary.uploaded_chunks or code == 3
-                                            else 1,
-                                        )
-                                    batch, cursors = [], {}
-                                part_cursors = (
-                                    {target.segment_id: row.row_id}
-                                    if chunk.part_index + 1 == chunk.part_count
-                                    else {}
-                                )
-                                confirm_batch(
-                                    scope,
-                                    _pending_batch(target_id, [chunk], part_cursors),
-                                )
-                                write_state(state_path, state)
-                                summary.remote_covered += 1
-                                continue
-                            batch.append(chunk)
-                            if chunk.part_index + 1 == chunk.part_count:
-                                cursors[target.segment_id] = row.row_id
-                            if len(batch) == BATCH_SIZE:
-                                session = session or _prepare_session(
-                                    client, target_id, targets, config
-                                )
-                                code = _send_batch(
-                                    client,
-                                    session,
-                                    batch,
-                                    cursors,
-                                    scope,
-                                    state,
-                                    state_path,
-                                    snapshot.source_id,
-                                    summary,
-                                )
-                                if code:
-                                    return (
-                                        summary,
-                                        3
-                                        if summary.uploaded_chunks or code == 3
-                                        else 1,
-                                    )
-                                batch, cursors = [], {}
-                        if covered == len(row.chunks):
-                            cursors[target.segment_id] = row.row_id
-                if batch:
-                    session = session or _prepare_session(
-                        client, target_id, targets, config
-                    )
-                    code = _send_batch(
-                        client,
-                        session,
-                        batch,
-                        cursors,
-                        scope,
-                        state,
-                        state_path,
-                        snapshot.source_id,
-                        summary,
-                    )
-                    if code:
-                        return summary, 3 if summary.uploaded_chunks or code == 3 else 1
-                    cursors = {}
-                for segment_id, row_id in cursors.items():
-                    segment = scope["segments"][segment_id]
-                    segment["last_scanned_message_id"] = max(
-                        segment["last_scanned_message_id"], row_id
-                    )
-                write_state(state_path, state)
+                    return summary, 3 if partial or code == 3 else 1
             return summary, 3 if summary.blocked_targets or summary.data_issues else 0
+        except Exception as exc:
+            if (
+                summary.uploaded_chunks
+                or summary.remote_covered
+                or summary.recovered_chunks
+            ):
+                summary.errors.append(
+                    f"Import stopped after partial progress ({type(exc).__name__}). Re-run to check saved progress; nothing will be automatically resent."
+                )
+                return summary, 3
+            raise
         finally:
             client._http.close()
 

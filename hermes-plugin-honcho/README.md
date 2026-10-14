@@ -440,7 +440,10 @@ Presets:
 Import conversations stored before you enabled Honcho. The command reads the active
 profile's `state.db` through a temporary SQLite backup, including committed WAL data.
 It preserves each message's original timestamp and uses the current session and peer
-mapping. It does not upload compression summaries, tools, hidden sessions, or subagents.
+mapping. Original messages archived by in-place compression are included. Compression
+summaries, undone turns, tools, hidden sessions, and subagents are excluded. Text passes
+through Hermes' secret redactor before chunking or hashing, even when ordinary display
+redaction is disabled. NUL characters are removed before upload and verification.
 
 1. Configure Honcho for the profile. Check its owner peer, server, workspace, and mappings.
 2. Preview the default 30-day window:
@@ -495,6 +498,14 @@ hermes honcho import --before 2026-09-01T00:00:00Z --yes
 This boundary comes from you. It is not automatic content deduplication. Identical
 text in different source rows is preserved.
 
+Messages from all sources mapped to one target are uploaded in original timestamp
+order. Honcho assigns conversation sequence numbers when messages are appended; a
+timestamp cannot insert an older message into an existing sequence. If selected new
+history is older than any message already in the target, that target is blocked,
+including with `--before`. The command does not delete or reorder existing messages.
+Choose the full desired time window on the first run. To import an earlier window
+after newer messages are present, use an empty destination workspace or session.
+
 ### Resume an Import
 
 Progress is stored in `~/.honcho/hermes-import-state.json`. It contains IDs, hashes,
@@ -503,8 +514,11 @@ workspaces, profiles, and source databases. A local process lock serializes writ
 it does not provide a uniqueness guarantee across machines or separate ledgers.
 
 Run the same command again to resume. Confirmed chunks are skipped. New source rows
-are imported, and a larger time window rescans earlier rows. Keep the original
-ledger: changed mappings, replaced databases, and damaged state stop recovery.
+are imported, and a larger time window rescans earlier rows subject to the ordering
+rule above. Keep the original ledger: changed mappings, replaced databases, and damaged
+state stop recovery. If mandatory text normalization changes a previously imported
+payload, recovery stops rather than uploading it again. Check the remote history and
+original progress; do not reset the ledger to bypass this check.
 
 Each request is sent once, with SDK retries disabled. Timeouts, server errors, and
 incomplete responses leave a pending batch. The next run checks its remote metadata.

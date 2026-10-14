@@ -94,12 +94,18 @@ hermes -p coder honcho import --days 90 --dry-run
 Pause live writes for the selected profile, then run `hermes honcho import` and
 confirm the displayed server and workspace. Use `--yes` for a non-interactive run
 after checking the preview. The default window is 30 days, with `cli,desktop` sources.
-Messages retain their original timestamps. A dry-run makes no remote calls and
-writes no configuration or import progress.
+Messages retain their original timestamps. Historical text is redacted through Hermes
+before upload; NUL characters are removed before hashing and verification. Original
+messages archived by compression are included, while summaries and undone turns are
+excluded. A dry-run makes no remote calls and writes no configuration or import progress.
 
 Targets with unmarked live history are blocked. If you know when Honcho was first
 enabled, use `--before` with a timestamp and explicit timezone, such as
-`--before 2026-09-01T00:00:00Z`. The importer does not infer this boundary.
+`--before 2026-09-01T00:00:00Z`. The importer does not infer this boundary. This flag
+does not override conversation order: selected new history older than any message
+already in its target is blocked. Choose the full window for the first import, or
+use an empty destination workspace/session for an earlier window. Sources sharing a
+target are uploaded together in original timestamp order.
 
 Run the same command to resume. Keep `~/.honcho/hermes-import-state.json` and use one
 importer per source database. Unknown request outcomes are checked against remote

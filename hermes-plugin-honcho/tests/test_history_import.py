@@ -168,6 +168,8 @@ class FakeHonchoAPI:
                     "session_id": session_id,
                     "token_count": 1,
                 }
+                # Match MessageCreate.sanitize_content at the actual API boundary.
+                stored["content"] = stored["content"].replace("\x00", "")
                 session["messages"].append(stored)
                 response.append(stored)
             if failure == "timeout_after":
@@ -578,9 +580,15 @@ def test_older_session_recent_messages_and_expanded_window(history_source):
     assert result["imported"] == 1
     assert run_cli(["import", "--yes"]) == 0
     assert [m["content"] for m in source.api.writes[0]] == ["Recent in an old session"]
-    assert run_cli(["import", "--days", "60", "--yes"]) == 0
-    assert [m["content"] for m in source.api.writes[1]] == ["Forty days old"]
-    assert run_cli(["import", "--days", "60", "--yes"]) == 0
+    assert run_cli(["import", "--days", "60", "--yes"]) == 3
+    assert len(source.api.writes) == 1
+    assert (
+        run_cli(["import", "--days", "60", "--workspace", "fresh-window", "--yes"]) == 0
+    )
+    assert [m["content"] for m in source.api.writes[1]] == [
+        "Forty days old",
+        "Recent in an old session",
+    ]
     assert len(source.api.writes) == 2
 
 
@@ -857,7 +865,7 @@ def test_compression_lineage_is_scanned_once_without_absorbing_fork(
     assert "Logical sessions: 2; target sessions: 3" in capsys.readouterr().out
 
 
-def test_remote_unmarked_history_blocks_until_known_cutoff(history_source):
+def test_known_cutoff_does_not_override_existing_sequence_order(history_source):
     source = history_source
     source.session()
     source.message(
@@ -884,7 +892,12 @@ def test_remote_unmarked_history_blocks_until_known_cutoff(history_source):
     assert run_cli(["import", "--yes"]) == 3
     assert not source.api.writes
     before = datetime.fromtimestamp(source.now - 3 * 86400, UTC).isoformat()
-    assert run_cli(["import", "--before", before, "--yes"]) == 0
+    assert run_cli(["import", "--before", before, "--yes"]) == 3
+    assert not source.api.writes
+    assert (
+        run_cli(["import", "--before", before, "--workspace", "fresh-history", "--yes"])
+        == 0
+    )
     assert [m["content"] for batch in source.api.writes for m in batch] == [
         "History before activation"
     ]
@@ -1056,7 +1069,7 @@ def test_message_source_paging_and_batches_are_bounded(history_source, monkeypat
     assert [len(batch) for batch in source.api.writes] == [100, 100, 5]
     assert all(
         call["limit"] == 200
-        and call["include_inactive"] is False
+        and call["include_inactive"] is True
         and call["include_compacted"] is False
         for call in calls
     )
