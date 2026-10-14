@@ -71,7 +71,7 @@ class NoteEntry(BaseModel):
 
     def render(self) -> str:
         cited = f" (refs: {', '.join(f'id:{i}' for i in self.ids)})" if self.ids else ""
-        return f"- [{self.id}] {self.kind}: {self.text}{cited}"
+        return f"- [{self.id}] {self.kind} ({self.specialist}): {self.text}{cited}"
 
 
 def entry_expired(entry: NoteEntry, dream_number: int) -> bool:
@@ -342,7 +342,7 @@ def notes_system_section(max_tokens: int) -> str:
     """System-prompt section explaining the notes and their kinds."""
     return f"""## WORKING NOTES
 
-You keep short notes for this peer that carry over to your next dream. Edit them with `update_notes`, one entry at a time:
+You keep short notes for this peer that carry over to your next dream. Edit them with `update_notes`, one entry at a time. Each entry shows which specialist wrote it; you can see every entry, but you can only replace or remove your own.
 - `pending`: a write you decided on but could not make. The next dream must make it or discard it. Dropped after {PENDING_TTL_DREAMS} dreams if unresolved.
 - `open`: something to check next time, such as a conflict waiting on more evidence.
 - `covered`: ground you reviewed and found nothing to update, so the next dream can skip it. Expires after {COVERED_TTL_DREAMS} dreams.
@@ -376,6 +376,19 @@ class _NotesEdit:
     replaced: list[str] = field(default_factory=list)
     removed: list[str] = field(default_factory=list)
     pending_removed: int = 0
+
+
+def _require_own(entry: NoteEntry, specialist: str, index: int) -> None:
+    """Reject an edit to another specialist's entry.
+
+    Deduction and induction share one set of notes but keep separate working
+    state; one rewriting the other's entry would lose that state.
+    """
+    if entry.specialist != specialist:
+        raise ValueError(
+            f"operation {index}: entry {entry.id} belongs to {entry.specialist}; "
+            + "you can only replace or remove your own entries"
+        )
 
 
 def apply_note_operations(
@@ -430,19 +443,20 @@ def apply_note_operations(
         elif op == "replace":
             if not isinstance(entry_id, str) or entry_id not in by_id:
                 raise ValueError(f"operation {index}: no entry {entry_id!r}")
+            _require_own(by_id[entry_id], specialist, index)
             if not isinstance(text, str) or not text.strip():
                 raise ValueError(f"operation {index}: replace needs text")
             target = by_id[entry_id]
             target.text = text.strip()
             if "ids" in op_input:
                 target.ids = _clean_ids(op_input.get("ids"))
-            target.specialist = specialist
             target.updated_at = now
             target.run_id = run_id
             edit.replaced.append(entry_id)
         elif op == "remove":
             if not isinstance(entry_id, str) or entry_id not in by_id:
                 raise ValueError(f"operation {index}: no entry {entry_id!r}")
+            _require_own(by_id[entry_id], specialist, index)
             removed_entry = by_id.pop(entry_id)
             updated.remove(removed_entry)
             edit.removed.append(entry_id)
@@ -477,6 +491,8 @@ class LoadedNotes:
     entries: list[NoteEntry]
     pending_expired: int = 0
     dropped_for_missing_ids: int = 0
+    # Dead conclusion ids removed from entries that still cite a live one.
+    ids_stripped: int = 0
 
     @property
     def pending(self) -> int:
@@ -493,10 +509,12 @@ _KIND_ORDER = {kind: index for index, kind in enumerate(NOTE_KINDS)}
 async def load_notes_for_pass(
     workspace_name: str, *, observer: str, observed: str, dream_number: int
 ) -> LoadedNotes:
-    """Read the notes, drop stale entries, and store the pruned list back.
+    """Read the notes, prune them, and store the pruned list back.
 
-    An entry is stale when it has expired or cites a conclusion that no longer
-    exists (deleted or superseded). Pruning is written back so stale entries
+    Expired entries are dropped. Ids of conclusions that no longer exist
+    (deleted or superseded) are stripped, and an entry is dropped only when
+    every conclusion it cited is gone: one outdated premise shouldn't erase a
+    note that still rests on others. Pruning is written back so stale entries
     stop counting against the cap.
     """
     async with tracked_db("dream.notes_load", read_only=True) as db:
@@ -515,27 +533,37 @@ async def load_notes_for_pass(
     kept: list[NoteEntry] = []
     pending_expired = 0
     dropped_for_missing_ids = 0
+    ids_stripped = 0
     for entry in entries:
         if entry_expired(entry, dream_number):
             if entry.kind == "pending":
                 pending_expired += 1
             continue
-        if any(cited_id not in live_ids for cited_id in entry.ids):
+        live = [cited_id for cited_id in entry.ids if cited_id in live_ids]
+        if entry.ids and not live:
             dropped_for_missing_ids += 1
             continue
+        if len(live) != len(entry.ids):
+            ids_stripped += len(entry.ids) - len(live)
+            entry = entry.model_copy(update={"ids": live})
         kept.append(entry)
 
-    if len(kept) != len(entries):
+    if len(kept) != len(entries) or ids_stripped:
         await _store_entries(workspace_name, observer, observed, kept)
     return LoadedNotes(
         entries=kept,
         pending_expired=pending_expired,
         dropped_for_missing_ids=dropped_for_missing_ids,
+        ids_stripped=ids_stripped,
     )
 
 
-def format_notes(entries: list[NoteEntry]) -> str:
-    """User-prompt section with the agent's own notes, pending entries first."""
+def format_notes(entries: list[NoteEntry], *, specialist: str) -> str:
+    """User-prompt section with the dreamer's notes, pending entries first.
+
+    Every specialist's entries are shown, but `specialist` is asked to resolve
+    only its own pending entries, since it can't edit the others.
+    """
     if not entries:
         return (
             "## YOUR NOTES FROM EARLIER DREAMS\n\n"
@@ -543,14 +571,17 @@ def format_notes(entries: list[NoteEntry]) -> str:
         )
     ordered = sorted(entries, key=lambda entry: _KIND_ORDER[entry.kind])
     resume = ""
-    if any(entry.kind == "pending" for entry in entries):
+    if any(
+        entry.kind == "pending" and entry.specialist == specialist for entry in entries
+    ):
         resume = (
-            " Resolve every pending entry before new work: make the write if it "
-            + "still holds, then remove the entry; otherwise just remove it."
+            f" Resolve every pending entry marked ({specialist}) before new work: "
+            + "make the write if it still holds, then remove the entry; otherwise "
+            + "just remove it."
         )
     return (
         "## YOUR NOTES FROM EARLIER DREAMS\n\n"
-        + "These are your own notes from earlier dreams: hints to check, not "
+        + "These are the dreamer's notes from earlier dreams: hints to check, not "
         + f"facts.{resume}\n\n"
         + "\n".join(entry.render() for entry in ordered)
     )

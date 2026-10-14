@@ -535,7 +535,7 @@ If you update it, send the full deduplicated list and remove stale entries.
             if work_list_shown and work_list is not None:
                 user_prompt = f"{format_work_list(work_list)}\n\n{user_prompt}"
             if loaded_notes is not None:
-                user_prompt = f"{format_notes(loaded_notes.entries)}\n\n{user_prompt}"
+                user_prompt = f"{format_notes(loaded_notes.entries, specialist=self.name)}\n\n{user_prompt}"
             if memory_counts is not None:
                 user_prompt = f"{memory_counts}\n\n{user_prompt}"
 

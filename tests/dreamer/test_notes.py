@@ -39,11 +39,11 @@ def _entry(entry_id: str, kind: str, created_dream: int = 1) -> NoteEntry:
     )
 
 
-def _apply(entries: list[NoteEntry], operations: Any):
+def _apply(entries: list[NoteEntry], operations: Any, *, specialist: str = "deduction"):
     return apply_note_operations(
         entries,
         operations,
-        specialist="induction",
+        specialist=specialist,
         run_id="r9",
         dream_number=4,
         now=NOW,
@@ -66,7 +66,7 @@ def test_operations_add_replace_remove_one_entry_each():
         "pending",
         ["a1", "b2"],
         4,
-        "induction",
+        "deduction",
     )
     assert updated[0].text == "still open"
     assert (edit.added, edit.replaced, edit.removed) == (["n3"], ["n1"], ["n2"])
@@ -320,11 +320,16 @@ async def test_loading_prunes_expired_and_dangling_entries(
 def test_notes_section_puts_pending_first_and_asks_to_resolve():
     from src.dreamer.working_memory import format_notes
 
-    text = format_notes([_entry("n1", "map"), _entry("n2", "pending")])
-    assert text.index("[n2] pending") < text.index("[n1] map")
+    entries = [_entry("n1", "map"), _entry("n2", "pending")]
+    text = format_notes(entries, specialist="deduction")
+    assert text.index("[n2] pending (deduction)") < text.index("[n1] map (deduction)")
     assert "hints to check, not facts" in text
-    assert "Resolve every pending entry" in text
-    assert "Resolve every pending" not in format_notes([_entry("n1", "map")])
+    assert "Resolve every pending entry marked (deduction)" in text
+    # Another specialist's pending entries are shown but not its to resolve.
+    assert "Resolve every pending" not in format_notes(entries, specialist="induction")
+    assert "Resolve every pending" not in format_notes(
+        [_entry("n1", "map")], specialist="deduction"
+    )
 
 
 @pytest.mark.asyncio
@@ -385,3 +390,57 @@ def test_replace_updates_ids_only_when_given():
         entries, [{"op": "replace", "entry_id": "n1", "text": "t", "ids": ["id:b2"]}]
     )
     assert swapped[0].ids == ["b2"]
+
+
+@pytest.mark.parametrize(
+    "operation",
+    [
+        {"op": "replace", "entry_id": "n1", "text": "mine now"},
+        {"op": "remove", "entry_id": "n1"},
+    ],
+)
+def test_specialists_cannot_edit_each_others_entries(operation: dict[str, Any]):
+    with pytest.raises(ValueError, match="belongs to deduction"):
+        _apply([_entry("n1", "covered")], [operation], specialist="induction")
+
+
+@pytest.mark.asyncio
+async def test_loading_strips_dead_ids_but_keeps_the_entry(
+    db_session: AsyncSession,
+    sample_data: tuple[models.Workspace, models.Peer],
+):
+    from src.dreamer.working_memory import load_notes_for_pass
+
+    workspace, peer = sample_data
+    live_id, gone_id = "live".ljust(21, "0"), "gone".ljust(21, "0")
+    ctx = await _seed_collection(
+        db_session,
+        sample_data,
+        {
+            "entries": [
+                {
+                    **_entry("n1", "map").model_dump(mode="json"),
+                    "ids": [live_id, gone_id],
+                }
+            ]
+        },
+    )
+    db_session.add(
+        models.Document(
+            id=live_id,
+            workspace_name=workspace.name,
+            observer=peer.name,
+            observed=peer.name,
+            content="works in robotics",
+            level="explicit",
+            embedding=[0.1] * 1536,
+        )
+    )
+    await db_session.commit()
+
+    loaded = await load_notes_for_pass(
+        ctx.workspace_name, observer=peer.name, observed=peer.name, dream_number=2
+    )
+    assert [(e.id, e.ids) for e in loaded.entries] == [("n1", [live_id])]
+    assert (loaded.ids_stripped, loaded.dropped_for_missing_ids) == (1, 0)
+    assert parse_entries(await _stored(db_session, ctx))[0].ids == [live_id]
