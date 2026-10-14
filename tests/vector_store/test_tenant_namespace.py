@@ -7,7 +7,9 @@ process-wide `namespace_prefix` the vector store used to read once at constructi
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import AsyncGenerator, Iterator
+from contextlib import asynccontextmanager
+from typing import Any
 
 import pytest
 from nanoid import generate as generate_nanoid
@@ -18,7 +20,6 @@ from src.config import settings
 from src.db import tenant_context
 from src.exceptions import VectorNamespaceUnresolved
 from src.vector_store import _hash_namespace_components
-from src.vector_store import tenant_namespace as tenant_namespace_module
 from src.vector_store.tenant_namespace import (
     prefix_for_tenant,
     reset_prefix_cache,
@@ -243,19 +244,24 @@ async def test_prefix_for_tenant_reads_the_database_only_once_per_tenant(
     monkeypatch: pytest.MonkeyPatch, db_session: AsyncSession
 ) -> None:
     """A second resolution for the same tenant is served from the process cache --
-    the loader is consulted exactly once."""
+    the database is read exactly once."""
+    import src.dependencies as dependencies_module
+
     monkeypatch.setattr(settings, "MULTI_TENANT", True)
     tenant_id = await _create_tenant(db_session, vector_correlation_id="cached-app")
 
-    real_load_prefix = tenant_namespace_module._load_prefix  # pyright: ignore[reportPrivateUsage]
+    # prefix_for_tenant imports service_db at call time, so the wrapper is seen.
+    real_service_db = dependencies_module.service_db
     load_count = 0
 
-    async def counting_load_prefix(tid: str) -> str:
+    @asynccontextmanager
+    async def counting_service_db(*args: Any, **kwargs: Any) -> AsyncGenerator[Any]:
         nonlocal load_count
         load_count += 1
-        return await real_load_prefix(tid)
+        async with real_service_db(*args, **kwargs) as db:
+            yield db
 
-    monkeypatch.setattr(tenant_namespace_module, "_load_prefix", counting_load_prefix)
+    monkeypatch.setattr(dependencies_module, "service_db", counting_service_db)
 
     first = await prefix_for_tenant(tenant_id)
     second = await prefix_for_tenant(tenant_id)

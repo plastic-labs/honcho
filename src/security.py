@@ -210,7 +210,10 @@ def require_auth(
         # out inside it, where the checkout hook reads it and binds `app.tenant`.
         # There is no get_db/auth ordering to get wrong: the checkout is lazy (it
         # happens in the handler, after this set), so we don't depend on which
-        # dependency FastAPI resolves first. Reset on the way out — a leaked
+        # dependency FastAPI resolves first. Background tasks are the exception:
+        # whether they run before or after this teardown has changed across
+        # FastAPI releases, so a task takes tenant_context.get() as an argument
+        # when it is scheduled and never reads it. Reset on the way out — a leaked
         # `app.tenant` is a data breach. Gated on MULTI_TENANT, not just tn presence:
         # flag-off rows must keep the default tenant even when a still-valid token
         # carries `tn`, or `_default_tenant_id()` would stamp new rows with it. A
