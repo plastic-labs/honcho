@@ -588,11 +588,15 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("tenant_id", name="pk_tenants"),
         schema=schema,
     )
+    # ai: the key names the tenant's vector-store namespaces, so two tenants
+    # holding one would share them; NULL (not yet set) is exempt.
     op.create_index(
-        "ix_tenants_vector_correlation_id",
+        "uq_tenants_vector_correlation_id",
         "tenants",
         ["vector_correlation_id"],
+        unique=True,
         schema=schema,
+        postgresql_where=sa.text("vector_correlation_id IS NOT NULL"),
     )
     op.execute(
         sa.text(

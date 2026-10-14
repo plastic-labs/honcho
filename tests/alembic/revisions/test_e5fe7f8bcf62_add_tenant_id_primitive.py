@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import pytest
 from nanoid import generate as generate_nanoid
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 
 from tests.alembic.registry import register_after_upgrade, register_before_upgrade
 from tests.alembic.verifier import MigrationVerifier
@@ -87,6 +89,21 @@ def verify_add_tenant_id_primitive(verifier: MigrationVerifier) -> None:
         text(f'SELECT COUNT(*) FROM "{schema}"."tenants" WHERE tenant_id = \'default\'')
     ).scalar()
     assert default_count == 1, f"expected the default tenant, found {default_count}"
+
+    # vector_correlation_id is unique over set keys; NULLs may repeat.
+    verifier.assert_indexes_exist([("tenants", "uq_tenants_vector_correlation_id")])
+    verifier.assert_indexes_not_exist([("tenants", "ix_tenants_vector_correlation_id")])
+    insert_tenant = text(
+        f'INSERT INTO "{schema}"."tenants" ("tenant_id", "tier", "vector_correlation_id") '
+        + "VALUES (:tid, 'shared', :key)"
+    )
+    with verifier.conn.begin_nested():
+        conn.execute(insert_tenant, {"tid": "t-vcid-a", "key": "vec-a"})
+        conn.execute(insert_tenant, {"tid": "t-vcid-null-1", "key": None})
+        conn.execute(insert_tenant, {"tid": "t-vcid-null-2", "key": None})
+    with pytest.raises(IntegrityError) as rejection, verifier.conn.begin_nested():
+        conn.execute(insert_tenant, {"tid": "t-vcid-dup", "key": "vec-a"})
+    assert "uq_tenants_vector_correlation_id" in str(rejection.value)
 
     # tenant_id is NOT NULL on every tenant-scoped table, and existing rows backfilled.
     for table in _TENANT_SCOPED:
