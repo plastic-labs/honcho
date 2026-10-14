@@ -249,33 +249,33 @@ async def advance_cursor(
     observed: str,
     state: DreamState | None,
     run_id: str,
+    all_specialists_succeeded: bool,
 ) -> None:
     """Record a completed dream: bump the dream count and move past what it was shown.
 
     The position moves only through the conclusions the dream was shown, so a
-    backlog larger than the cap is worked through over consecutive dreams.
+    backlog larger than the cap is worked through over consecutive dreams. It
+    holds when a specialist failed, so that specialist is shown them again.
     """
+    position: dict[str, Any] = {}
     if state is None:
-        # The state failed to load before the dream; re-read so the count
-        # stays accurate.
+        # The state failed to load before the dream, so what it was shown is
+        # unknown: hold the position, and re-read so the count stays accurate.
         state = await load_dream_state(
             workspace_name,
             observer=observer,
             observed=observed,
             include_work_list=False,
         )
+    elif state.work_list is None:
+        # The brief is off. Clear the position so that turning it back on
+        # starts from the scheduler's last dream, not a stale position.
+        position = {"through_created_at": None, "through_id": None}
+    elif all_specialists_succeeded and (through := state.work_list.through()):
+        position = {"through_created_at": through[0], "through_id": through[1]}
     cursor = state.cursor
-    through = state.work_list.through() if state.work_list is not None else None
     updated = cursor.model_copy(
-        update={
-            "dreams": cursor.dreams + 1,
-            "last_run_id": run_id,
-            **(
-                {"through_created_at": through[0], "through_id": through[1]}
-                if through is not None
-                else {}
-            ),
-        }
+        update={"dreams": cursor.dreams + 1, "last_run_id": run_id, **position}
     )
     async with tracked_db("dream.cursor_write") as db:
         await crud.merge_collection_internal_metadata_value(

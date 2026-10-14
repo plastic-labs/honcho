@@ -102,7 +102,12 @@ async def test_backlog_is_worked_through_over_consecutive_dreams(
     assert [i.id for i in first.items] == [_id("a"), _id("b")]
     assert first.remaining == 1
     await advance_cursor(
-        workspace, observer=peer, observed=peer, state=first_state, run_id="r1"
+        workspace,
+        observer=peer,
+        observed=peer,
+        state=first_state,
+        run_id="r1",
+        all_specialists_succeeded=True,
     )
 
     second_state = await load_work_list(workspace, observer=peer, observed=peer)
@@ -111,7 +116,12 @@ async def test_backlog_is_worked_through_over_consecutive_dreams(
     assert [i.id for i in second.items] == [_id("c")]
     assert second.remaining == 0
     await advance_cursor(
-        workspace, observer=peer, observed=peer, state=second_state, run_id="r2"
+        workspace,
+        observer=peer,
+        observed=peer,
+        state=second_state,
+        run_id="r2",
+        all_specialists_succeeded=True,
     )
 
     metadata = await _stored_notes(db_session, workspace, peer)
@@ -122,6 +132,78 @@ async def test_backlog_is_worked_through_over_consecutive_dreams(
 
     third = (await load_work_list(workspace, observer=peer, observed=peer)).work_list
     assert third is not None and third.items == [] and third.remaining == 0
+
+
+@pytest.mark.asyncio
+async def test_failed_specialist_is_shown_the_same_list_again(
+    db_session: AsyncSession,
+    sample_data: tuple[models.Workspace, models.Peer],
+):
+    workspace, peer = await _seed(
+        db_session,
+        sample_data,
+        [("a", "explicit", T0), ("b", "explicit", T0 + datetime.timedelta(minutes=1))],
+        internal_metadata={"dream": {"last_dream_at": "2026-09-01T00:00:00+00:00"}},
+    )
+    state = await load_work_list(workspace, observer=peer, observed=peer)
+    await advance_cursor(
+        workspace,
+        observer=peer,
+        observed=peer,
+        state=state,
+        run_id="r1",
+        all_specialists_succeeded=False,
+    )
+
+    again = await load_work_list(workspace, observer=peer, observed=peer)
+    assert again.work_list is not None
+    assert [i.id for i in again.work_list.items] == [_id("a"), _id("b")]
+    # The dream still counts, so note expiry keeps moving.
+    assert again.cursor.dreams == 1
+
+
+@pytest.mark.asyncio
+async def test_brief_off_clears_a_stale_position(
+    db_session: AsyncSession,
+    sample_data: tuple[models.Workspace, models.Peer],
+):
+    last_dream_at = T0 - datetime.timedelta(days=1)
+    workspace, peer = await _seed(
+        db_session,
+        sample_data,
+        [
+            ("old", "explicit", T0 - datetime.timedelta(days=2)),
+            ("new", "explicit", T0),
+        ],
+        internal_metadata={
+            "dream": {"last_dream_at": last_dream_at.isoformat()},
+            NOTES_KEY: {
+                "cursor": {
+                    "through_created_at": (T0 - datetime.timedelta(days=3)).isoformat(),
+                    "through_id": _id("older"),
+                    "dreams": 4,
+                }
+            },
+        },
+    )
+    state = await load_dream_state(
+        workspace, observer=peer, observed=peer, include_work_list=False
+    )
+    await advance_cursor(
+        workspace,
+        observer=peer,
+        observed=peer,
+        state=state,
+        run_id="r1",
+        all_specialists_succeeded=True,
+    )
+
+    # Turning the brief back on starts from the last dream, not the old position.
+    back_on = await load_work_list(workspace, observer=peer, observed=peer)
+    assert back_on.cursor.position() is None
+    assert back_on.cursor.dreams == 5
+    assert back_on.work_list is not None
+    assert [i.id for i in back_on.work_list.items] == [_id("new")]
 
 
 @pytest.mark.asyncio
@@ -159,7 +241,12 @@ async def test_cursor_merge_keeps_other_note_keys(
         internal_metadata={NOTES_KEY: {"entries": [{"id": "n1"}]}},
     )
     await advance_cursor(
-        workspace, observer=peer, observed=peer, state=None, run_id="r1"
+        workspace,
+        observer=peer,
+        observed=peer,
+        state=None,
+        run_id="r1",
+        all_specialists_succeeded=True,
     )
     notes = (await _stored_notes(db_session, workspace, peer))[NOTES_KEY]
     assert notes["entries"] == [{"id": "n1"}]

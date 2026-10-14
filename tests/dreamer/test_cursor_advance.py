@@ -25,16 +25,20 @@ def _result(deduction: bool, induction: bool) -> DreamResult:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("deduction", "induction", "advanced"),
+    ("deduction", "induction", "recorded", "moves_position"),
     [
-        (True, True, True),
-        (True, False, True),
-        (False, True, True),
-        (False, False, False),
+        (True, True, True, True),
+        (True, False, True, False),
+        (False, True, True, False),
+        (False, False, False, False),
     ],
 )
-async def test_cursor_advances_only_when_a_specialist_succeeded(
-    deduction: bool, induction: bool, advanced: bool, monkeypatch: pytest.MonkeyPatch
+async def test_cursor_moves_only_when_both_specialists_succeeded(
+    deduction: bool,
+    induction: bool,
+    recorded: bool,
+    moves_position: bool,
+    monkeypatch: pytest.MonkeyPatch,
 ):
     monkeypatch.setattr(settings.DREAM, "BRIEF_ENABLED", True)
     advance = AsyncMock()
@@ -62,4 +66,8 @@ async def test_cursor_advances_only_when_a_specialist_succeeded(
             DreamPayload(dream_type=DreamType.OMNI, observer="a", observed="a"),
             "w",
         )
-    assert advance.await_count == (1 if advanced else 0)
+    assert advance.await_count == (1 if recorded else 0)
+    if recorded:
+        assert advance.await_args is not None
+        kwargs = advance.await_args.kwargs
+        assert kwargs["all_specialists_succeeded"] is moves_position

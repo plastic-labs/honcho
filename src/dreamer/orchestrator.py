@@ -660,8 +660,9 @@ DREAM: {payload.dream_type} documents for {workspace_name}/{payload.observer}/{p
                             update_data={"dream": dream_meta},
                         )
 
-                    # Advance only if a specialist actually worked the list;
-                    # otherwise the next dream gets the same conclusions again.
+                    # Record the dream only if a specialist actually ran. The
+                    # position also needs both, so a failed specialist is
+                    # shown the same conclusions again next dream.
                     if working_memory_enabled() and (
                         result.deduction_success or result.induction_success
                     ):
@@ -671,6 +672,9 @@ DREAM: {payload.dream_type} documents for {workspace_name}/{payload.observer}/{p
                             observed=payload.observed,
                             state=result.state,
                             run_id=result.run_id,
+                            all_specialists_succeeded=(
+                                result.deduction_success and result.induction_success
+                            ),
                         )
 
             case DreamType.CARD_REFRESH:
