@@ -9,7 +9,6 @@ from typing import Any, cast
 from openai import BadRequestError, LengthFinishReasonError
 from pydantic import BaseModel, ValidationError
 
-from src.exceptions import ValidationException
 from src.llm.backend import CompletionResult, StreamChunk, ToolCallResult
 from src.llm.request_builder import (
     apply_sdk_passthroughs,
@@ -186,6 +185,8 @@ class OpenAIBackend:
             if self._structured_output_mode(extra_params) == "json_object":
                 self._apply_json_object_mode(params, response_format)
                 response = await self._client.chat.completions.create(**params)
+                if getattr(response.choices[0].message, "tool_calls", None):
+                    return self._normalize_response(response)
                 # A loose provider that returns nothing shouldn't crash the call.
                 content = self._parse_or_repair_structured_content(
                     response, response_format, model, empty_on_missing=True
@@ -561,7 +562,7 @@ class OpenAIBackend:
         if refusal:
             return refusal
         if not empty_on_missing:
-            raise ValidationException("No parsed content in structured response")
+            raise StructuredOutputError("No parsed content in structured response")
         # empty_structured_output() validates {} against the model, which itself
         # raises if the model has required fields. Fall back to empty string
         # content rather than letting that escape the handler.

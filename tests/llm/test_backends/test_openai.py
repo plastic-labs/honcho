@@ -737,7 +737,7 @@ async def test_structured_output_parsed_none_returns_refusal() -> None:
 async def test_structured_output_parsed_none_no_content_raises() -> None:
     """json_schema with no parsed model, content, or refusal raises so the
     retry/fallback chain engages — it must NOT silently empty like json_object."""
-    from src.exceptions import ValidationException
+    from src.llm.structured_output import StructuredOutputError
 
     client = Mock()
     client.chat.completions.parse = AsyncMock(
@@ -745,7 +745,7 @@ async def test_structured_output_parsed_none_no_content_raises() -> None:
     )
 
     backend = OpenAIBackend(client)
-    with pytest.raises(ValidationException):
+    with pytest.raises(StructuredOutputError):
         await backend.complete(
             model="gpt-4.1",
             messages=[{"role": "user", "content": "Hello"}],
@@ -1273,11 +1273,13 @@ def test_openai_normalize_content_override_is_authoritative() -> None:
 
 
 @pytest.mark.asyncio
-async def test_openai_backend_structured_with_tools_skips_parsing_tool_call_turn() -> (
-    None
-):
+@pytest.mark.parametrize("structured_output_mode", [None, "json_object"])
+@pytest.mark.parametrize("content", [None, "Let me search for that."])
+async def test_openai_backend_structured_with_tools_skips_parsing_tool_call_turn(
+    structured_output_mode: str | None, content: str | None
+) -> None:
     """A tool-call turn under tools + response_format must not attempt JSON
-    parsing (provider content is null and _parse_or_repair raises on that)."""
+    parsing, in either structured output mode."""
     client = Mock()
     client.chat.completions.create = AsyncMock(
         return_value=SimpleNamespace(
@@ -1285,7 +1287,7 @@ async def test_openai_backend_structured_with_tools_skips_parsing_tool_call_turn
                 SimpleNamespace(
                     finish_reason="tool_calls",
                     message=SimpleNamespace(
-                        content=None,
+                        content=content,
                         tool_calls=[
                             SimpleNamespace(
                                 id="tool_1",
@@ -1315,9 +1317,10 @@ async def test_openai_backend_structured_with_tools_skips_parsing_tool_call_turn
         max_tokens=100,
         tools=[AGENT_TOOL],
         response_format=_StructuredResponse,
+        extra_params={"structured_output_mode": structured_output_mode},
     )
 
-    assert result.content is None  # provider null, not a parsed model
+    assert result.content == content  # provider content, not a parsed model
     assert result.tool_calls[0].name == "search"
     assert result.tool_calls[0].input == {"query": "honcho"}
 

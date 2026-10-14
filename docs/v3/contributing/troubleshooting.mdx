@@ -155,6 +155,16 @@ DERIVER_MODEL_CONFIG__STRUCTURED_OUTPUT_MODE=json_object
 
 This is a per-model-config setting on the OpenAI transport; set it on whichever features use the affected provider (e.g. `DREAM_DEDUCTION_MODEL_CONFIG__STRUCTURED_OUTPUT_MODE`).
 
+### Chat with `response_format` returns 422
+
+A chat request with a `response_format` returns `422` with `The model's answer did not match the requested response_format` when the final answer still isn't JSON matching the schema after retries. The usual cause is the same as above: a provider or proxy that accepts `json_schema` without enforcing it. For example, LiteLLM in front of Anthropic models emulates `json_schema` with a tool the model may decline to call, especially on the final answer of a tool loop.
+
+**Fix:** set `STRUCTURED_OUTPUT_MODE=json_object` on the affected dialectic levels:
+
+```bash
+DIALECTIC_LEVELS__medium__MODEL_CONFIG__STRUCTURED_OUTPUT_MODE=json_object
+```
+
 ### Thinking budget errors with non-Anthropic providers
 
 If you see errors like `thinking budget not supported`, `invalid parameter`, or silent failures where agents produce no output, one of your per-component `*_MODEL_CONFIG__THINKING_BUDGET_TOKENS` overrides is likely set to a value > 0 with a provider that doesn't support Anthropic-style extended thinking. The built-in defaults do not set thinking budgets, so this only applies if you added those overrides yourself.

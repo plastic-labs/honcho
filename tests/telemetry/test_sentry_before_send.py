@@ -19,6 +19,7 @@ from src.exceptions import (
     HonchoException,
     ResourceNotFoundException,
     SentryPolicy,
+    StructuredResponseError,
     UpstreamLLMError,
 )
 from src.telemetry.sentry import default_before_send, initialize_sentry
@@ -50,19 +51,27 @@ def test_unrelated_operational_error_passes_through() -> None:
     assert default_before_send(event, _hint(exc)) == {"level": "error"}
 
 
-def test_upstream_llm_error_is_consolidated_at_error_level() -> None:
-    """The one HonchoException that survives the drop.
-
-    Provider outages are the deriver's only signal that the upstream is down --
-    it has no status-code metric -- so they stay in Sentry. They stay at error
-    level too: the retry budget and fallback chain are spent by the time one
-    escapes. The fingerprint, not the level, is what keeps the volume down.
-    """
-    out = default_before_send({}, _hint(UpstreamLLMError("the provider is down")))
-    assert out == {
-        "fingerprint": ["honcho-upstream-llm-unavailable"],
-        "level": "error",
-    }
+@pytest.mark.parametrize(
+    ("exc", "fingerprint", "level"),
+    [
+        (
+            UpstreamLLMError("the provider is down"),
+            "honcho-upstream-llm-unavailable",
+            "error",
+        ),
+        (
+            StructuredResponseError(),
+            "honcho-dialectic-structured-response-invalid",
+            "warning",
+        ),
+    ],
+)
+def test_kept_honcho_exceptions_are_consolidated(
+    exc: HonchoException, fingerprint: str, level: str
+) -> None:
+    """The HonchoExceptions that survive the drop, each under one fingerprint."""
+    out = default_before_send({}, _hint(exc))
+    assert out == {"fingerprint": [fingerprint], "level": level}
 
 
 def test_policy_is_read_from_the_exception_not_matched_on_by_type() -> None:

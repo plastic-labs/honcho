@@ -185,9 +185,9 @@ class UpstreamLLMError(HonchoException):
     status_code = 503
     detail = "Upstream language model provider is unavailable"
 
-    # The one HonchoException Sentry keeps. Every other Honcho error is the
-    # caller's to see in the response; an outage is ours to notice, and the
-    # deriver has no status-code metric to notice it in the way the API does.
+    # Kept by Sentry, unlike most Honcho errors: an outage is ours to notice,
+    # and the deriver has no status-code metric to notice it in the way the
+    # API does.
     # Reported at error level because the retry budget and the fallback chain
     # have both been spent by the time this escapes, so it is a sustained
     # outage rather than a blip -- and the fingerprint already keeps that to a
@@ -195,6 +195,20 @@ class UpstreamLLMError(HonchoException):
     sentry_policy: ClassVar[SentryPolicy | None] = SentryPolicy(
         level="error",
         fingerprint="honcho-upstream-llm-unavailable",
+    )
+
+
+@final
+class StructuredResponseError(HonchoException):
+    """Raised when a chat answer still fails its ``response_format`` schema after
+    the retry budget and the fallback chain are spent."""
+
+    status_code = 422
+    detail = "The model's answer did not match the requested response_format"
+
+    sentry_policy: ClassVar[SentryPolicy | None] = SentryPolicy(
+        level="warning",
+        fingerprint="honcho-dialectic-structured-response-invalid",
     )
 
 
