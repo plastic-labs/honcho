@@ -28,6 +28,8 @@ Event Categories:
     - MessageCreatedEvent: Message batch created
     - FileUploadedEvent: File converted into messages
     - GetContextEvent: Context retrieved for a session or peer
+    - WorkspaceCreatedEvent / PeerCreatedEvent / SessionCreatedEvent /
+      ScopeCreatedEvent: Resource created (explicitly or as a side effect)
 
     deletion: Resource removal
     - DeletionCompletedEvent: Resource deletion completed (with cascade counts)
@@ -91,6 +93,12 @@ from src.telemetry.events.reconciliation import (
     SyncVectorsCompletedEvent,
 )
 from src.telemetry.events.representation import RepresentationCompletedEvent
+from src.telemetry.events.resource import (
+    PeerCreatedEvent,
+    ScopeCreatedEvent,
+    SessionCreatedEvent,
+    WorkspaceCreatedEvent,
+)
 from src.telemetry.events.trace import (
     EmbeddingCallTracedEvent,
     LLMCallTracedEvent,
@@ -122,6 +130,10 @@ __all__ = [
     "MessageCreatedEvent",
     "FileUploadedEvent",
     "GetContextEvent",
+    "WorkspaceCreatedEvent",
+    "PeerCreatedEvent",
+    "SessionCreatedEvent",
+    "ScopeCreatedEvent",
     # LLM events
     "LLMCallCompletedEvent",
     "CallPurpose",
@@ -166,6 +178,10 @@ ALL_EVENT_TYPES: tuple[str, ...] = (
     "message.created",
     "file.uploaded",
     "context.retrieved",
+    "workspace.created",
+    "peer.created",
+    "session.created",
+    "scope.created",
     # agent
     "agent.iteration",
     "agent.tool.conclusions.created",

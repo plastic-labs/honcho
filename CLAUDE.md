@@ -132,6 +132,8 @@ Tables written concurrently by more than one worker — `documents` (deriver, dr
 
 #### Auth scoping
 
+- **Named-scope keys (`sc` plus `w`) require explicit `allow_scope=True` on supported routes.** This grants both recall and ingestion within that scope, not peer-member write access. Recall handlers must bind their projection to the token; session routes check active scope membership. Keep the named-scope route allowlist in `tests/routes/test_auth_route_policy.py` synchronized. Never allow restricted keys to enroll unrelated existing sessions or fall back to global recall.
+
 - **`allow_member_read=True` (in `require_auth(...)`) is read-only — NEVER set it on a route that mutates state.** It lets a peer-scoped key reach a session route when its peer is an active member of the session, so on a mutating route it would hand any session member write access (message injection, config mutation, deletion). HTTP method is not a reliable read/write signal here (some read routes use POST for a richer body), so this is enforced by an explicit allowlist in `tests/routes/test_auth_route_policy.py` — adding the flag to a new route fails that test until you consciously add the route to `EXPECTED_MEMBER_READ_ROUTES`, and you must never add a mutating method there.
 - **When a member-read route is keyed by another sub-resource** (e.g. `peers/{peer_id}/config`), the handler must additionally confirm a peer-scoped caller only reads its OWN resource (`jwt_params.p == peer_id`, else raise `AuthenticationException`). Membership grants session access, not access to a co-member's data. See `get_peer_config` in `src/routers/sessions.py`.
 

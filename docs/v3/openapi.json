@@ -4238,6 +4238,24 @@
               ],
               "title": "Expires At"
             }
+          },
+          {
+            "name": "scope_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Named scope for recall and ingestion; requires workspace_id",
+              "title": "Scope Id"
+            },
+            "description": "Named scope for recall and ingestion; requires workspace_id"
           }
         ],
         "responses": {

@@ -35,6 +35,7 @@ from src.utils.pagination import (
 )
 from src.utils.schema_conversion import json_response_schema_to_pydantic
 from src.utils.scopes import (
+    bind_scope_key,
     is_scope_peer,
     is_scope_peer_name,
     validate_no_scope_peer_names,
@@ -259,13 +260,16 @@ async def chat(
     peer_id: str = Path(...),
     options: schemas.DialecticOptions = Body(...),
     jwt_params: JWTParams = Depends(
-        require_auth(workspace_name="workspace_id", peer_name="peer_id")
+        require_auth(
+            workspace_name="workspace_id", peer_name="peer_id", allow_scope=True
+        )
     ),
 ):
     """
     Query a Peer's representation using natural language. Performs agentic search and reasoning to comprehensively
     answer the query based on all latent knowledge gathered about the peer from their messages and conclusions.
     """
+    options.scope = bind_scope_key(options.scope, jwt_params)
     # Scope peers are never observed, so no representation of them exists to
     # query. Covers the path-level observer too: a scope `peer_id` no longer
     # errors out downstream now that crud.get_peer takes a plain name, and
@@ -440,7 +444,9 @@ async def get_representation(
         ..., description="Options for getting the peer representation"
     ),
     jwt_params: JWTParams = Depends(
-        require_auth(workspace_name="workspace_id", peer_name="peer_id")
+        require_auth(
+            workspace_name="workspace_id", peer_name="peer_id", allow_scope=True
+        )
     ),
 ):
     """Get a curated subset of a Peer's Representation. A Representation is always a subset of the total
@@ -451,6 +457,7 @@ async def get_representation(
     If a target is provided, we get the Representation of the target from the perspective of the Peer.
     If no target is provided, we get the omniscient Honcho Representation of the Peer.
     """
+    options.scope = bind_scope_key(options.scope, jwt_params)
     # Fast-fail before any embedding work. Same guard as the authoritative one
     # below, so a reserved name is refused here rather than after paying for an
     # embedding; the check is repeated at the read because this session closes and

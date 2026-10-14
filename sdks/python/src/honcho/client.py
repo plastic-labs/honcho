@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
+import weakref
 from collections.abc import Generator, Mapping, Sequence
 from typing import Any, Literal
 
@@ -76,7 +78,21 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
     _metadata: dict[str, object] | None = PrivateAttr(default=None)
     _configuration: WorkspaceConfiguration | None = PrivateAttr(default=None)
     _http: HonchoHTTPClient = PrivateAttr()
+    # An async client injected directly (the test fixtures do this); there is no
+    # public parameter for it. Used as is, never replaced.
     _async_http: AsyncHonchoHTTPClient | None = PrivateAttr(default=None)
+    # The async client the SDK built and a weak reference to the event loop it was
+    # built on (None outside asyncio). One attribute, so a thread never pairs one
+    # loop's client with another thread's loop. A single slot rather than a
+    # WeakKeyDictionary keyed by loop: pooled connections hold their loop strongly,
+    # so each value would keep its own key alive and no entry would ever be freed.
+    _async_http_built: (
+        tuple[
+            weakref.ReferenceType[asyncio.AbstractEventLoop] | None,
+            AsyncHonchoHTTPClient,
+        ]
+        | None
+    ) = PrivateAttr(default=None)
     _http_config: dict[str, Any] = PrivateAttr()
     _base_url: str = PrivateAttr()
     _workspace_ensured: bool = PrivateAttr(default=False)
@@ -159,10 +175,32 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
 
     @property
     def _async_http_client(self) -> AsyncHonchoHTTPClient:
-        """Lazily create and return the async HTTP client."""
-        if self._async_http is None:
-            self._async_http = AsyncHonchoHTTPClient(**self._http_config)
-        return self._async_http
+        """Lazily create and return the async HTTP client for the running loop.
+
+        Pooled connections belong to the event loop that opened them, so a client
+        reused under a later loop fails on its pooled connections, e.g. on the
+        second asyncio.run(). Build a new client whenever the running loop changes.
+
+        Only one SDK-built client is kept, so threads that each run their own loop
+        on one shared Honcho rebuild the client (and its connections) whenever
+        another thread's call came in between. Give each such thread its own Honcho.
+        """
+        if self._async_http is not None:
+            return self._async_http
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:  # not running under asyncio: keep one client
+            loop = None
+        built = self._async_http_built
+        if built is not None and (
+            built[0] is None
+            if loop is None
+            else built[0] is not None and built[0]() is loop
+        ):
+            return built[1]
+        client = AsyncHonchoHTTPClient(**self._http_config)
+        self._async_http_built = (None if loop is None else weakref.ref(loop), client)
+        return client
 
     @property
     def aio(self) -> HonchoAio:

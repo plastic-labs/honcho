@@ -15,6 +15,7 @@ from src.embedding_client import embedding_client
 from src.telemetry.events import EmbeddingCallPurpose
 from src.utils.filter import apply_filter
 from src.utils.formatting import ILIKE_ESCAPE_CHAR, escape_ilike_pattern
+from src.utils.scopes import is_scope_peer_name
 from src.utils.types import embedding_call_purpose
 from src.vector_store import get_external_vector_store
 
@@ -139,7 +140,8 @@ async def resolve_session_scope(
         # dialectic tools) don't, so enforce it at the boundary.
         if session_allowlist is not None and session_name not in session_allowlist:
             return None, True
-        return None, False
+        if observer is None or not is_scope_peer_name(observer):
+            return None, False
 
     if observer is None:
         if session_allowlist is None:
@@ -148,10 +150,20 @@ async def resolve_session_scope(
         return (allowed, False) if allowed else (None, True)
 
     if db is not None:
-        allowed = await get_peer_session_names(db, workspace_name, observer)
+        allowed = await get_peer_session_names(
+            db, workspace_name, observer, active_only=is_scope_peer_name(observer)
+        )
     else:
         async with tracked_db(f"{operation_name}.peer_scope", read_only=True) as own_db:
-            allowed = await get_peer_session_names(own_db, workspace_name, observer)
+            allowed = await get_peer_session_names(
+                own_db,
+                workspace_name,
+                observer,
+                active_only=is_scope_peer_name(observer),
+            )
+
+    if session_name:
+        return None, session_name not in allowed
 
     if session_allowlist is not None:
         scope = set(session_allowlist)
@@ -175,18 +187,20 @@ def observer_scope_clause(
     driver cannot serialize at all — and the resulting error carries every
     parameter in its text.
 
-    Matches the loose membership definition ``get_peer_session_names`` uses by
-    default: any membership record grants visibility, whether or not the peer
-    has since left the session.
+    Ordinary peers retain historical membership visibility. The reserved scope
+    namespace requires active membership, including for message tools invoked
+    during scoped recall. A removed session must stop granting message access.
     """
     session_peers = models.session_peers_table
-    return (
+    stmt = (
         select(1)
         .where(session_peers.c.workspace_name == workspace_name)
         .where(session_peers.c.peer_name == observer)
         .where(session_peers.c.session_name == session_column)
-        .exists()
     )
+    if is_scope_peer_name(observer):
+        stmt = stmt.where(session_peers.c.left_at.is_(None))
+    return stmt.exists()
 
 
 def resolve_session_scope_clauses(
@@ -230,7 +244,8 @@ def resolve_session_scope_clauses(
         # tools reach CRUD directly, so enforce it at the boundary.
         if session_allowlist is not None and session_name not in session_allowlist:
             return [], True
-        return [], False
+        if observer is None or not is_scope_peer_name(observer):
+            return [], False
 
     clauses: list[ColumnElement[bool]] = []
 
