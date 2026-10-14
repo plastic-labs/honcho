@@ -8,14 +8,26 @@ attempt into a hard failure; individually marked tests may opt out with
 @pytest.mark.allow_network.
 """
 
+import atexit
 import importlib.util
 import os
+import shutil
 import socket
 import sys
+import tempfile
 import threading
 from pathlib import Path
 
 import pytest
+
+# Importing the plugin pulls in Hermes core, which at import time reads $HERMES_HOME/.env and
+# config.yaml, creates directories there, and can write config backups. Fixtures run only after
+# collection, so point HERMES_HOME at a session tempdir before anything is imported. The marker
+# arms Hermes' own guard against opening the production state.db.
+_SESSION_HERMES_HOME = tempfile.mkdtemp(prefix="hermes-plugin-honcho-test-home-")
+atexit.register(shutil.rmtree, _SESSION_HERMES_HOME, True)
+os.environ["HERMES_HOME"] = _SESSION_HERMES_HOME
+os.environ["HERMES_TEST_ISOLATION"] = _SESSION_HERMES_HOME
 
 # Hermes imports an installed plugin under a synthetic package name; the tests import this
 # checkout the same way, under one fixed name, so `mock.patch("hermes_plugin_honcho.client.X")`
