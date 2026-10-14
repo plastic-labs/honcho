@@ -1394,8 +1394,11 @@ class DreamSettings(HonchoSettings):
     MAX_ENQUEUED_PER_POLL: Annotated[int, Field(default=100, gt=0, le=10_000)] = 100
     ENABLED_TYPES: list[str] = ["omni"]
 
-    # Agent iteration limit - increased for extended reasoning workflow
+    # Card-refresh dreams only; capped further by the specialist's own ceiling.
+    # Deduction and induction use the per-specialist limits below.
     MAX_TOOL_ITERATIONS: Annotated[int, Field(default=20, gt=0, le=50)] = 20
+    DEDUCTION_MAX_TOOL_ITERATIONS: Annotated[int, Field(default=12, ge=1, le=50)] = 12
+    INDUCTION_MAX_TOOL_ITERATIONS: Annotated[int, Field(default=10, ge=1, le=50)] = 10
 
     @staticmethod
     def _DEDUCTION_MODEL_CONFIG_DEFAULT() -> ConfiguredModelSettings:
