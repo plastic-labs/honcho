@@ -225,6 +225,22 @@ class DreamSpecialistEvent(BaseEvent, CustomInstructionsFields):
     notes_removed: int = Field(
         default=0, description="Note entries removed by update_notes."
     )
+    notes_entries_loaded: int = Field(
+        default=0, description="Note entries loaded into the prompt after pruning."
+    )
+    notes_tokens_loaded: int = Field(
+        default=0, description="Estimated tokens of the note entries loaded."
+    )
+    pending_loaded: int = Field(
+        default=0, description="Pending entries loaded for this pass to resolve."
+    )
+    pending_resolved: int = Field(
+        default=0, description="Pending entries this pass removed (made or discarded)."
+    )
+    pending_expired: int = Field(
+        default=0,
+        description="Pending entries dropped unresolved at load because they expired.",
+    )
 
     # Since-last-dream work list (dream.specialist only)
     new_conclusions_shown: int = Field(

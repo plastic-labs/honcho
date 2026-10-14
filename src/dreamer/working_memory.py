@@ -375,6 +375,7 @@ class _NotesEdit:
     added: list[str] = field(default_factory=list)
     replaced: list[str] = field(default_factory=list)
     removed: list[str] = field(default_factory=list)
+    pending_removed: int = 0
 
 
 def apply_note_operations(
@@ -440,8 +441,11 @@ def apply_note_operations(
         elif op == "remove":
             if not isinstance(entry_id, str) or entry_id not in by_id:
                 raise ValueError(f"operation {index}: no entry {entry_id!r}")
-            updated.remove(by_id.pop(entry_id))
+            removed_entry = by_id.pop(entry_id)
+            updated.remove(removed_entry)
             edit.removed.append(entry_id)
+            if removed_entry.kind == "pending":
+                edit.pending_removed += 1
         else:
             raise ValueError(f"operation {index}: op must be add, replace or remove")
     return updated, edit
@@ -462,6 +466,107 @@ async def _store_entries(
                 "entries": [entry.model_dump(mode="json") for entry in entries],
             },
         )
+
+
+@dataclass(frozen=True)
+class LoadedNotes:
+    """Notes as loaded for one pass, after pruning."""
+
+    entries: list[NoteEntry]
+    pending_expired: int = 0
+    dropped_for_missing_ids: int = 0
+
+    @property
+    def pending(self) -> int:
+        return sum(1 for entry in self.entries if entry.kind == "pending")
+
+    @property
+    def tokens(self) -> int:
+        return notes_tokens(self.entries)
+
+
+_KIND_ORDER = {kind: index for index, kind in enumerate(NOTE_KINDS)}
+
+
+async def load_notes_for_pass(
+    workspace_name: str, *, observer: str, observed: str, dream_number: int
+) -> LoadedNotes:
+    """Read the notes, drop stale entries, and store the pruned list back.
+
+    An entry is stale when it has expired or cites a conclusion that no longer
+    exists (deleted or superseded). Pruning is written back so stale entries
+    stop counting against the cap.
+    """
+    async with tracked_db("dream.notes_load", read_only=True) as db:
+        stored = await crud.get_collection_internal_metadata_value(
+            db, workspace_name, observer, observed, NOTES_KEY
+        )
+        entries = parse_entries(stored)
+        cited = sorted({cited_id for entry in entries for cited_id in entry.ids})
+        live_ids = {
+            doc.id
+            for doc in await crud.fetch_documents_by_ids(
+                db, workspace_name, observer, observed, cited
+            )
+        }
+
+    kept: list[NoteEntry] = []
+    pending_expired = 0
+    dropped_for_missing_ids = 0
+    for entry in entries:
+        if entry_expired(entry, dream_number):
+            if entry.kind == "pending":
+                pending_expired += 1
+            continue
+        if any(cited_id not in live_ids for cited_id in entry.ids):
+            dropped_for_missing_ids += 1
+            continue
+        kept.append(entry)
+
+    if len(kept) != len(entries):
+        await _store_entries(workspace_name, observer, observed, kept)
+    return LoadedNotes(
+        entries=kept,
+        pending_expired=pending_expired,
+        dropped_for_missing_ids=dropped_for_missing_ids,
+    )
+
+
+def format_notes(entries: list[NoteEntry]) -> str:
+    """User-prompt section with the agent's own notes, pending entries first."""
+    if not entries:
+        return (
+            "## YOUR NOTES FROM EARLIER DREAMS\n\n"
+            + "You have no notes yet. Add them with `update_notes` as you work."
+        )
+    ordered = sorted(entries, key=lambda entry: _KIND_ORDER[entry.kind])
+    resume = ""
+    if any(entry.kind == "pending" for entry in entries):
+        resume = (
+            " Resolve every pending entry before new work: make the write if it "
+            + "still holds, then remove the entry; otherwise just remove it."
+        )
+    return (
+        "## YOUR NOTES FROM EARLIER DREAMS\n\n"
+        + "These are your own notes from earlier dreams: hints to check, not "
+        + f"facts.{resume}\n\n"
+        + "\n".join(entry.render() for entry in ordered)
+    )
+
+
+async def load_map_entries(
+    workspace_name: str, *, observer: str, observed: str
+) -> list[NoteEntry]:
+    """The `map` entries for a pair, for the dialectic.
+
+    Other kinds are unverified working hypotheses an answering agent could
+    repeat as facts, so they are never returned.
+    """
+    async with tracked_db("dialectic.dream_map", read_only=True) as db:
+        stored = await crud.get_collection_internal_metadata_value(
+            db, workspace_name, observer, observed, NOTES_KEY
+        )
+    return [entry for entry in parse_entries(stored) if entry.kind == "map"]
 
 
 NotesHandler = Callable[[Any, dict[str, Any]], Coroutine[Any, Any, ToolResult | str]]
@@ -527,6 +632,7 @@ def make_update_notes_handler(
                 "notes_added": len(edit.added),
                 "notes_replaced": len(edit.replaced),
                 "notes_removed": len(edit.removed),
+                "pending_resolved": edit.pending_removed,
             },
         )
 

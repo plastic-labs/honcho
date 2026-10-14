@@ -167,6 +167,7 @@ async def test_handler_persists_drops_expired_and_keeps_the_cursor(
         "notes_added": 1,
         "notes_replaced": 0,
         "notes_removed": 0,
+        "pending_resolved": 0,
     }
 
     stored = await _stored(db_session, ctx)
@@ -264,3 +265,113 @@ async def test_notes_off_by_default():
     kwargs, _ = await _run(DreamState(cursor=NotesCursor()))
     assert "update_notes" not in [t["name"] for t in kwargs["tools"]]
     assert "WORKING NOTES" not in kwargs["messages"][0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_loading_prunes_expired_and_dangling_entries(
+    db_session: AsyncSession,
+    sample_data: tuple[models.Workspace, models.Peer],
+):
+    from src.dreamer.working_memory import load_notes_for_pass
+
+    workspace, peer = sample_data
+    live_id = "live".ljust(21, "0")
+    ctx = await _seed_collection(
+        db_session,
+        sample_data,
+        {
+            "entries": [
+                _entry("n1", "pending", created_dream=1).model_dump(mode="json"),
+                {
+                    **_entry("n2", "open").model_dump(mode="json"),
+                    "ids": ["gone".ljust(21, "0")],
+                },
+                {**_entry("n3", "map").model_dump(mode="json"), "ids": [live_id]},
+                _entry("n4", "pending", created_dream=3).model_dump(mode="json"),
+            ]
+        },
+    )
+    db_session.add(
+        models.Document(
+            id=live_id,
+            workspace_name=workspace.name,
+            observer=peer.name,
+            observed=peer.name,
+            content="lives in Lisbon",
+            level="explicit",
+            embedding=[0.1] * 1536,
+        )
+    )
+    await db_session.commit()
+
+    loaded = await load_notes_for_pass(
+        ctx.workspace_name, observer=peer.name, observed=peer.name, dream_number=4
+    )
+    assert [e.id for e in loaded.entries] == ["n3", "n4"]
+    assert (loaded.pending_expired, loaded.dropped_for_missing_ids) == (1, 1)
+    assert loaded.pending == 1 and loaded.tokens > 0
+    # The pruned list is written back.
+    assert [e.id for e in parse_entries(await _stored(db_session, ctx))] == [
+        "n3",
+        "n4",
+    ]
+
+
+def test_notes_section_puts_pending_first_and_asks_to_resolve():
+    from src.dreamer.working_memory import format_notes
+
+    text = format_notes([_entry("n1", "map"), _entry("n2", "pending")])
+    assert text.index("[n2] pending") < text.index("[n1] map")
+    assert "hints to check, not facts" in text
+    assert "Resolve every pending entry" in text
+    assert "Resolve every pending" not in format_notes([_entry("n1", "map")])
+
+
+@pytest.mark.asyncio
+async def test_dialectic_reads_only_map_entries(
+    db_session: AsyncSession,
+    sample_data: tuple[models.Workspace, models.Peer],
+):
+    from src.dreamer.working_memory import load_map_entries
+
+    _, peer = sample_data
+    ctx = await _seed_collection(
+        db_session,
+        sample_data,
+        {
+            "entries": [
+                _entry(f"n{i}", kind).model_dump(mode="json")
+                for i, kind in enumerate(["pending", "open", "covered", "map"])
+            ]
+        },
+    )
+    entries = await load_map_entries(
+        ctx.workspace_name, observer=peer.name, observed=peer.name
+    )
+    assert [e.kind for e in entries] == ["map"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("mode", "loaded"), [("on", True), ("shadow", False)])
+async def test_notes_are_loaded_only_when_on(
+    mode: str, loaded: bool, monkeypatch: pytest.MonkeyPatch
+):
+    from src.dreamer.working_memory import LoadedNotes
+
+    monkeypatch.setattr(settings.DREAM, "NOTES_MODE", mode)
+    load = AsyncMock(
+        return_value=LoadedNotes(entries=[_entry("n1", "pending")], pending_expired=2)
+    )
+    with (
+        patch("src.dreamer.specialists.load_notes_for_pass", new=load),
+        patch("src.dreamer.specialists.emit") as emit,
+    ):
+        kwargs, _ = await _run(DreamState(cursor=NotesCursor(dreams=6)))
+    user = kwargs["messages"][1]["content"]
+    assert ("## YOUR NOTES FROM EARLIER DREAMS" in user) is loaded
+    assert load.await_count == (1 if loaded else 0)
+    if loaded:
+        assert load.await_args is not None
+        assert load.await_args.kwargs["dream_number"] == 7
+        event = emit.call_args.args[0]
+        assert (event.pending_loaded, event.pending_expired) == (1, 2)

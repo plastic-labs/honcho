@@ -26,7 +26,10 @@ from src.dependencies import tracked_db
 from src.dreamer.working_memory import (
     UPDATE_NOTES_TOOL,
     DreamState,
+    LoadedNotes,
+    format_notes,
     format_work_list,
+    load_notes_for_pass,
     make_update_notes_handler,
     notes_system_section,
 )
@@ -415,6 +418,8 @@ If you update it, send the full deduplicated list and remove stale entries.
         notes_added = 0
         notes_replaced = 0
         notes_removed = 0
+        pending_resolved = 0
+        loaded_notes: LoadedNotes | None = None
         duration_ms = 0.0
         # Per-level rollups — accumulated from each create/delete_observations
         # tool call's metadata.levels list. Counter rather than list[str] so
@@ -477,6 +482,20 @@ If you update it, send the full deduplicated list and remove stale entries.
                     )
             # DB session closed — LLM calls happen without holding a connection
 
+            # In shadow mode notes are written but never loaded, so a sample can
+            # be judged before they shape any dream.
+            if (
+                notes_enabled
+                and state is not None
+                and settings.DREAM.NOTES_MODE == "on"
+            ):
+                loaded_notes = await load_notes_for_pass(
+                    workspace_name,
+                    observer=observer,
+                    observed=observed,
+                    dream_number=state.dream_number,
+                )
+
             tools = self.get_tools(peer_card_enabled=peer_card_enabled)
             if notes_enabled:
                 tools = [*tools, UPDATE_NOTES_TOOL]
@@ -500,6 +519,8 @@ If you update it, send the full deduplicated list and remove stale entries.
             )
             if brief_enabled and work_list is not None:
                 user_prompt = f"{format_work_list(work_list)}\n\n{user_prompt}"
+            if loaded_notes is not None:
+                user_prompt = f"{format_notes(loaded_notes.entries)}\n\n{user_prompt}"
             if memory_counts is not None:
                 user_prompt = f"{memory_counts}\n\n{user_prompt}"
 
@@ -661,6 +682,7 @@ If you update it, send the full deduplicated list and remove stale entries.
                     notes_added += int(meta_dict.get("notes_added") or 0)
                     notes_replaced += int(meta_dict.get("notes_replaced") or 0)
                     notes_removed += int(meta_dict.get("notes_removed") or 0)
+                    pending_resolved += int(meta_dict.get("pending_resolved") or 0)
                     # Accumulate per-level counts from create/delete observations.
                     # Both handlers stash `{"levels": ["explicit", "deductive", ...]}`
                     # in metadata (agent_tools.py:1373 + agent_tools.py:2011).
@@ -739,6 +761,15 @@ If you update it, send the full deduplicated list and remove stale entries.
                         notes_added=notes_added,
                         notes_replaced=notes_replaced,
                         notes_removed=notes_removed,
+                        notes_entries_loaded=(
+                            len(loaded_notes.entries) if loaded_notes else 0
+                        ),
+                        notes_tokens_loaded=loaded_notes.tokens if loaded_notes else 0,
+                        pending_loaded=loaded_notes.pending if loaded_notes else 0,
+                        pending_resolved=pending_resolved,
+                        pending_expired=(
+                            loaded_notes.pending_expired if loaded_notes else 0
+                        ),
                         new_conclusions_shown=(
                             len(work_list.items)
                             if brief_enabled and work_list is not None
