@@ -108,6 +108,10 @@ CONFIG_SCHEMA = ProviderConfigSchema(
                default="false", group="Recall"),
         _field("contextTokens", "Context token cap", KIND_NUMBER, "Cap on auto-injected context tokens. Blank leaves it uncapped.",
                placeholder="(uncapped)", group="Recall"),
+        _field("recallMaxQueryChars", "Recall query chars", KIND_NUMBER,
+               "Max chars of the auto-recall search query sent to the embedder. Longer turns are cut at a "
+               "word boundary and the cut is logged. 0 leaves the query uncapped.",
+               placeholder="1000", group="Recall"),
         # The plugin reads `injection` as one object, so the panel edits the whole block rather than a nested key.
         _field("injection", "Session-start injection", KIND_JSON,
                "Pin which base-context sections the first turn injects: summary, peerRepresentation, peerCard, "

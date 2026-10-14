@@ -94,6 +94,7 @@ class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMi
         for name, default in (
             ("write_frequency", "async"), ("dialectic_reasoning_level", "low"), ("dialectic_dynamic", True),
             ("dialectic_max_chars", 600), ("dialectic_max_input_chars", 10000),
+            ("recall_max_query_chars", 1000),
             ("user_observe_me", True), ("user_observe_others", True),
             ("ai_observe_me", True), ("ai_observe_others", True),
         ):
