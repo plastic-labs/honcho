@@ -322,7 +322,7 @@ UPDATE_NOTES_TOOL: dict[str, Any] = {
                         "ids": {
                             "type": "array",
                             "items": {"type": "string"},
-                            "description": "Conclusion ids the entry refers to (optional, add only).",
+                            "description": "Conclusion ids the entry refers to (optional; on replace, given ids replace the old ones).",
                         },
                         "entry_id": {
                             "type": "string",
@@ -434,6 +434,8 @@ def apply_note_operations(
                 raise ValueError(f"operation {index}: replace needs text")
             target = by_id[entry_id]
             target.text = text.strip()
+            if "ids" in op_input:
+                target.ids = _clean_ids(op_input.get("ids"))
             target.specialist = specialist
             target.updated_at = now
             target.run_id = run_id

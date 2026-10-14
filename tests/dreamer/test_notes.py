@@ -375,3 +375,13 @@ async def test_notes_are_loaded_only_when_on(
         assert load.await_args.kwargs["dream_number"] == 7
         event = emit.call_args.args[0]
         assert (event.pending_loaded, event.pending_expired) == (1, 2)
+
+
+def test_replace_updates_ids_only_when_given():
+    entries = [_entry("n1", "open").model_copy(update={"ids": ["a1"]})]
+    kept, _ = _apply(entries, [{"op": "replace", "entry_id": "n1", "text": "t"}])
+    assert kept[0].ids == ["a1"]
+    swapped, _ = _apply(
+        entries, [{"op": "replace", "entry_id": "n1", "text": "t", "ids": ["id:b2"]}]
+    )
+    assert swapped[0].ids == ["b2"]
