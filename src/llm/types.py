@@ -133,6 +133,11 @@ class LLMTelemetryContext:
 
 IterationCallback = Callable[[IterationData], None]
 
+# Called after each round of tool results with (rounds used, round limit). A
+# returned string is appended to the end of the conversation as a user turn so
+# the model can see how much of its budget is left; None appends nothing.
+BudgetLine = Callable[[int, int], str | None]
+
 
 class HonchoLLMCallResponse(BaseModel, Generic[T]):
     """Response object for LLM calls.
@@ -276,6 +281,7 @@ class StreamingResponseWithMetadata:
 __all__ = [
     "HonchoLLMCallResponse",
     "HonchoLLMCallStreamChunk",
+    "BudgetLine",
     "IterationCallback",
     "IterationData",
     "LLMTelemetryContext",

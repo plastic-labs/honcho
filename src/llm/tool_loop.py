@@ -48,6 +48,7 @@ from .runtime import (
     start_captured_span,
 )
 from .types import (
+    BudgetLine,
     HonchoLLMCallResponse,
     HonchoLLMCallStreamChunk,
     IterationCallback,
@@ -289,6 +290,24 @@ async def stream_final_response(
             await stream.aclose()
 
 
+def _append_budget_line(
+    conversation_messages: list[dict[str, Any]],
+    budget_line: BudgetLine | None,
+    rounds_used: int,
+    round_limit: int,
+) -> None:
+    """Append the caller's budget line, if any, as the newest user turn.
+
+    It goes after the tool results rather than into the system prompt, so the
+    cached prefix of the conversation stays stable.
+    """
+    if budget_line is None:
+        return
+    line = budget_line(rounds_used, round_limit)
+    if line:
+        conversation_messages.append({"role": "user", "content": line})
+
+
 @_with_iteration_scope
 async def execute_tool_loop(
     *,
@@ -315,6 +334,7 @@ async def execute_tool_loop(
     run_span: CapturedAgentSpan | None = None,
     force_tools_until: Collection[str] | None = None,
     max_forced_iterations: int = 3,
+    budget_line: BudgetLine | None = None,
 ) -> HonchoLLMCallResponse[Any] | StreamingResponseWithMetadata:
     """Run the iterative tool calling loop for agentic LLM interactions.
 
@@ -322,7 +342,8 @@ async def execute_tool_loop(
       1. Make an LLM call with tools available
       2. Execute any tool calls the LLM requests
       3. Append tool results to the conversation
-      4. Repeat until the LLM stops calling tools or max iterations reached
+      4. Optionally append a budget line (see `budget_line`)
+      5. Repeat until the LLM stops calling tools or max iterations reached
 
     Returns:
         Final HonchoLLMCallResponse with accumulated token counts and tool call
@@ -615,6 +636,10 @@ async def execute_tool_loop(
                     )
 
             append_tool_results(current_provider, tool_results, conversation_messages)
+
+            _append_budget_line(
+                conversation_messages, budget_line, iteration + 1, max_tool_iterations
+            )
         finally:
             if step is not None:
                 step.end()
