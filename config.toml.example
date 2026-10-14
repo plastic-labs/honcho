@@ -156,6 +156,8 @@ ENABLED = true
 MAX_OUTPUT_TOKENS = 8192
 MAX_INPUT_TOKENS = 100000
 SESSION_HISTORY_MAX_TOKENS = 4096
+BUDGET_ENABLED = false
+BRIEF_ENABLED = false
 
 # Per-level settings for reasoning levels
 # MAX_OUTPUT_TOKENS is optional per level; if not set, uses global MAX_OUTPUT_TOKENS
