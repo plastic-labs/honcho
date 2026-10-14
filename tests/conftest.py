@@ -384,9 +384,14 @@ async def _clear_all_tables(engine: AsyncEngine) -> None:
     if tenants_name is not None:
         # region ai
         # The preserved tenants rows still carry per-test mutable state: a pause
-        # one test set must not exclude that tenant from another test's claim.
+        # one test set must not exclude that tenant from another test's claim,
+        # and a vector_correlation_id one test set must not collide, under the
+        # key's unique index, with the same literal key in a later test.
         # endregion
-        statement += f"; UPDATE {tenants_name} SET derivation_paused = false"
+        statement += (
+            f"; UPDATE {tenants_name} "
+            + "SET derivation_paused = false, vector_correlation_id = NULL"
+        )
     async with engine.begin() as conn:
         await conn.exec_driver_sql(statement)
 

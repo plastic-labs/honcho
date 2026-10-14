@@ -148,9 +148,7 @@ class Tenant(Base):
     # endregion
     __tablename__: str = "tenants"
     tenant_id: Mapped[str] = mapped_column(TEXT, primary_key=True)
-    vector_correlation_id: Mapped[str | None] = mapped_column(
-        TEXT, nullable=True, index=True
-    )
+    vector_correlation_id: Mapped[str | None] = mapped_column(TEXT, nullable=True)
     tier: Mapped[str] = mapped_column(TEXT, nullable=False, server_default="dedicated")
     # region ai
     # The effect, not the reason: "do not claim this tenant's work". The control
@@ -174,6 +172,14 @@ class Tenant(Base):
             "ix_tenants_derivation_paused",
             "tenant_id",
             postgresql_where=text("derivation_paused"),
+        ),
+        # ai: the key names the tenant's vector-store namespaces, so two tenants
+        # holding one would share them; NULL (not yet set) is exempt.
+        Index(
+            "uq_tenants_vector_correlation_id",
+            "vector_correlation_id",
+            unique=True,
+            postgresql_where=text("vector_correlation_id IS NOT NULL"),
         ),
     )
 
