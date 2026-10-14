@@ -85,7 +85,7 @@ async def _run(model: _ScriptedModel, *, max_tool_iterations: int = 5, **kw: Any
             max_input_tokens=None,
             get_attempt_plan=_make_plan,
             before_retry_callback=lambda _r: None,
-            stream_final=False,
+            stream_final=kw.pop("stream_final", False),
             telemetry=None,
             **kw,
         )
@@ -136,3 +136,85 @@ async def test_hit_iteration_limit_only_when_the_loop_runs_out() -> None:
         _ScriptedModel([["look"], ["look"], []]), max_tool_iterations=2
     )
     assert exhausted.hit_iteration_limit is True
+
+
+class _RecordingModel(_ScriptedModel):
+    """Also records the tools offered on each call."""
+
+    def __init__(self, turns: list[list[str]]) -> None:
+        super().__init__(turns)
+        self.tools_offered: list[list[str] | None] = []
+
+    async def __call__(self, *args: Any, **kwargs: Any) -> HonchoLLMCallResponse[Any]:
+        tools = kwargs.get("tools")
+        self.tools_offered.append([t["name"] for t in tools] if tools else None)
+        return await super().__call__(*args, **kwargs)
+
+
+_WRITE_TOOL = {
+    "name": "write",
+    "description": "write",
+    "input_schema": {"type": "object"},
+}
+
+
+@pytest.mark.asyncio
+async def test_final_call_offers_only_the_final_call_tools_and_runs_them() -> None:
+    executed: list[str] = []
+
+    async def executor(name: str, _input: dict[str, Any]) -> str:
+        executed.append(name)
+        return "ok"
+
+    # Two looking rounds hit the limit; the final call writes and also names
+    # a tool it was not offered.
+    model = _RecordingModel([["look"], ["look"], ["write", "look"]])
+    with patch.object(tool_loop, "honcho_llm_call_inner", new=model):
+        response = await execute_tool_loop(
+            prompt="hi",
+            max_tokens=64,
+            messages=[{"role": "user", "content": "q"}],
+            tools=[*_TOOLS, _WRITE_TOOL],
+            tool_choice=None,
+            tool_executor=executor,
+            max_tool_iterations=2,
+            response_model=None,
+            json_mode=False,
+            temperature=None,
+            stop_seqs=None,
+            verbosity=None,
+            enable_retry=False,
+            retry_attempts=1,
+            max_input_tokens=None,
+            get_attempt_plan=_make_plan,
+            before_retry_callback=lambda _r: None,
+            final_call_tools=[_WRITE_TOOL],
+        )
+
+    assert model.tools_offered[-1] == ["write"]
+    assert "`write`" in _user_texts(model.seen[-1])[-1]
+    assert executed == ["look", "look", "write"]
+    assert [tc["tool_name"] for tc in response.tool_calls_made] == [
+        "look",
+        "look",
+        "write",
+    ]
+    assert len(model.seen) == 3  # no call after the final one
+    assert response.hit_iteration_limit is True
+
+
+@pytest.mark.asyncio
+async def test_final_call_has_no_tools_by_default() -> None:
+    model = _RecordingModel([["look"], ["look"]])
+    await _run(model, max_tool_iterations=1)
+    assert model.tools_offered[-1] is None
+
+
+@pytest.mark.asyncio
+async def test_final_call_tools_cannot_stream() -> None:
+    from src.exceptions import ValidationException
+
+    with pytest.raises(ValidationException):
+        await _run(
+            _ScriptedModel([]), stream_final=True, final_call_tools=[_WRITE_TOOL]
+        )

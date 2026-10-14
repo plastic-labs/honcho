@@ -35,11 +35,14 @@ from src.utils.agent_tools import (
     CARD_REFRESH_SPECIALIST_TOOLS,
     DEDUCTION_SPECIALIST_TOOLS,
     INDUCTION_SPECIALIST_TOOLS,
+    ToolContext,
     create_tool_executor,
+    get_tool_handler,
 )
 from src.utils.formatting import custom_instructions_section
 from src.utils.memory_brief import format_memory_counts, memory_layout_section
 from src.utils.tokens import estimate_tokens
+from src.utils.types import ToolResult, get_current_iteration
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +76,87 @@ class SpecialistResult:
 
 # Tool names to exclude when peer card creation is disabled
 PEER_CARD_TOOL_NAMES = {"update_peer_card"}
+
+# Tools that only read memory. They are refused during the write window and
+# left out of the final call at the limit.
+SEARCH_TOOL_NAMES = frozenset(
+    {"get_recent_observations", "search_memory", "search_messages"}
+)
+
+
+def write_window_size(limit: int) -> int:
+    """Iterations reserved for writes at the end of a pass of `limit` rounds."""
+    override = settings.DREAM.WRITE_WINDOW_ITERATIONS
+    # 15% rounded half up: 2 for both deduction (12) and induction (10).
+    size = override if override is not None else int(limit * 0.15 + 0.5)
+    return min(limit, max(1, size))
+
+
+def _reserved_calls_phrase(first: int, limit: int) -> str:
+    if first == limit:
+        return f"Call {limit} is"
+    if first + 1 == limit:
+        return f"Calls {first} and {limit} are"
+    return f"Calls {first} to {limit} are"
+
+
+def dream_budget_line(window: int) -> Callable[[int, int], str | None]:
+    """Budget line for a dreamer pass whose last `window` rounds are writes only."""
+
+    def line(used: int, limit: int) -> str | None:
+        if used >= limit:
+            # The loop is about to make its final call, which says so itself.
+            return None
+        first_write_round = limit - window + 1
+        if used + 1 >= first_write_round:
+            return (
+                f"Tool calls used: {used} of {limit}. Searches are now refused: "
+                + "write what you have decided on, or finish with DONE."
+            )
+        reserved = _reserved_calls_phrase(first_write_round, limit)
+        return (
+            f"Tool calls used: {used} of {limit}. {reserved} for writing; "
+            + "searches will be refused."
+        )
+
+    return line
+
+
+def budget_system_section(limit: int, window: int) -> str:
+    """System-prompt section explaining the budget and the write window."""
+    reserved = "is" if window == 1 else "are"
+    last = "last call" if window == 1 else f"last {window} calls"
+    return f"""## BUDGET
+
+You have {limit} tool calls. The {last} {reserved} reserved for writing: searches made then are refused. After each round of results, a line tells you how many calls you have used. If you reach the limit, you get one final call that can only write.
+
+Ending without writing anything is a valid outcome when nothing new is worth writing. Finish with DONE."""
+
+
+def _write_window_resolver(
+    first_write_round: int,
+) -> Callable[[str], Callable[[ToolContext, dict[str, Any]], Any] | None]:
+    """Handler lookup that refuses search tools from `first_write_round` on."""
+
+    async def refuse(_ctx: ToolContext, _tool_input: dict[str, Any]) -> ToolResult:
+        return ToolResult(
+            content=(
+                "Searches are refused for the rest of this pass. Write what you "
+                + "have decided on now, or finish with DONE."
+            ),
+            metadata={"refused": True},
+        )
+
+    def resolve(tool_name: str) -> Callable[[ToolContext, dict[str, Any]], Any] | None:
+        if (
+            tool_name in SEARCH_TOOL_NAMES
+            and get_current_iteration() >= first_write_round
+        ):
+            return refuse
+        return get_tool_handler(tool_name)
+
+    return resolve
+
 
 # Shared PEER CARD system-prompt section (identity-store taxonomy + rules).
 # Used verbatim by DeductionSpecialist and CardRefreshSpecialist.
@@ -192,9 +276,9 @@ class BaseSpecialist(ABC):
     peer_card_update_instruction: str = (
         "Only update this with durable identity markers via `update_peer_card`."
     )
-    # Whether DREAM.BRIEF_ENABLED applies: the memory-layout section in the
-    # system prompt and conclusion counts in the user prompt.
-    uses_brief: bool = True
+    # Whether the working-memory settings apply: DREAM.BRIEF_ENABLED (memory
+    # layout and counts) and DREAM.BUDGET_ENABLED (budget line, write window).
+    uses_working_memory: bool = True
 
     @abstractmethod
     def get_tools(self, *, peer_card_enabled: bool = True) -> list[dict[str, Any]]:
@@ -308,6 +392,7 @@ If you update it, send the full deduplicated list and remove stale entries.
         deleted_observation_count = 0
         peer_card_updated = False
         search_tool_calls_count = 0
+        refused_search_count = 0
         duration_ms = 0.0
         # Per-level rollups — accumulated from each create/delete_observations
         # tool call's metadata.levels list. Counter rather than list[str] so
@@ -325,9 +410,10 @@ If you update it, send the full deduplicated list and remove stale entries.
         injected_instructions = custom_instructions_prompt(
             configuration, peer_card_enabled=peer_card_enabled
         )
-        brief_enabled = self.uses_brief and settings.DREAM.BRIEF_ENABLED
-        # Wired up with the write window; nothing shows a budget line yet.
-        budget_enabled = False
+        brief_enabled = self.uses_working_memory and settings.DREAM.BRIEF_ENABLED
+        budget_enabled = self.uses_working_memory and settings.DREAM.BUDGET_ENABLED
+        max_iterations = self.get_max_iterations()
+        window = write_window_size(max_iterations)
 
         try:
             # Short-lived DB session for preflight operations
@@ -370,6 +456,8 @@ If you update it, send the full deduplicated list and remove stale entries.
                 system_prompt += "\n\n" + memory_layout_section(
                     available_tools=(tool["name"] for tool in tools), cite_ids=True
                 )
+            if budget_enabled:
+                system_prompt += "\n\n" + budget_system_section(max_iterations, window)
             user_prompt = self.build_user_prompt(
                 observed=observed,
                 hints=hints,
@@ -397,6 +485,11 @@ If you update it, send the full deduplicated list and remove stale entries.
                 run_id=run_id,
                 agent_type=self.name,
                 parent_category="dream",
+                handler_resolver=(
+                    _write_window_resolver(max_iterations - window + 1)
+                    if budget_enabled
+                    else None
+                ),
             )
 
             model_config = self.get_model_config()
@@ -424,7 +517,13 @@ If you update it, send the full deduplicated list and remove stale entries.
                 tools=tools,
                 tool_choice=None,
                 tool_executor=tool_executor,
-                max_tool_iterations=self.get_max_iterations(),
+                max_tool_iterations=max_iterations,
+                budget_line=dream_budget_line(window) if budget_enabled else None,
+                final_call_tools=(
+                    [t for t in tools if t["name"] not in SEARCH_TOOL_NAMES]
+                    if budget_enabled
+                    else None
+                ),
                 messages=messages,
                 telemetry=LLMTelemetryContext(
                     workspace_name=workspace_name,
@@ -492,6 +591,11 @@ If you update it, send the full deduplicated list and remove stale entries.
             for tc in response.tool_calls_made:
                 tool_name_any: Any = tc.get("tool_name") or tc.get("name")
                 meta_any: Any = tc.get("tool_result_metadata") or {}
+                if isinstance(meta_any, dict) and cast(dict[str, Any], meta_any).get(
+                    "refused"
+                ):
+                    refused_search_count += 1
+                    continue
                 if tool_name_any in _search_tools:
                     search_tool_calls_count += 1
                 if isinstance(meta_any, dict):
@@ -576,8 +680,11 @@ If you update it, send the full deduplicated list and remove stale entries.
                         success=specialist_success,
                         error_class=specialist_error_class,
                         hit_iteration_limit=hit_iteration_limit,
-                        iteration_limit=self.get_max_iterations(),
+                        iteration_limit=max_iterations,
                         budget_line_enabled=budget_enabled,
+                        write_window_used=budget_enabled
+                        and iterations >= max_iterations - window + 1,
+                        refused_search_count=refused_search_count,
                         # denormalized rollups (all 0 on the failure path)
                         created_observation_count=created_observation_count,
                         deleted_observation_count=deleted_observation_count,
@@ -883,7 +990,7 @@ class CardRefreshSpecialist(BaseSpecialist):
     """
 
     name: str = "card_refresh"
-    uses_brief: bool = False
+    uses_working_memory: bool = False
     peer_card_update_instruction: str = "Update this with `update_peer_card`. See the PEER CARD section in the system prompt for the allowed entry kinds and rules."
 
     # Low iteration ceiling for this lightweight, single-purpose run.

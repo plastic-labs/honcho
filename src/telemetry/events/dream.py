@@ -205,6 +205,16 @@ class DreamSpecialistEvent(BaseEvent, CustomInstructionsFields):
         description="True when the model was shown how many tool calls it had left.",
     )
 
+    # Write window (dream.specialist only)
+    write_window_used: bool = Field(
+        default=False,
+        description="True when the pass reached the iterations reserved for writes.",
+    )
+    refused_search_count: int = Field(
+        default=0,
+        description="Search calls refused because they came during the write window.",
+    )
+
     # Peer card custom instructions (dream's own pair comes from the mixin)
     peer_card_custom_instructions_tokens: int = Field(
         default=0,

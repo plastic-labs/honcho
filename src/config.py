@@ -1402,6 +1402,14 @@ class DreamSettings(HonchoSettings):
     # Deduction and induction start with a description of how memory is
     # organized and conclusion counts by level.
     BRIEF_ENABLED: bool = False
+    # Deduction and induction see a tool-call budget line, the last iterations
+    # are reserved for writes, and the final call at the limit can still write.
+    BUDGET_ENABLED: bool = False
+    # Iterations reserved for writes at the end of a pass. Unset means 15% of
+    # the specialist's limit, rounded, with a minimum of one.
+    WRITE_WINDOW_ITERATIONS: Annotated[int | None, Field(default=None, ge=1, le=50)] = (
+        None
+    )
 
     @staticmethod
     def _DEDUCTION_MODEL_CONFIG_DEFAULT() -> ConfiguredModelSettings:

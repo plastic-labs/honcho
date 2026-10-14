@@ -231,6 +231,8 @@ MAX_TOOL_ITERATIONS = 20
 DEDUCTION_MAX_TOOL_ITERATIONS = 12
 INDUCTION_MAX_TOOL_ITERATIONS = 10
 BRIEF_ENABLED = false
+BUDGET_ENABLED = false
+# WRITE_WINDOW_ITERATIONS = 2  # default: 15% of each specialist's limit
 
 [dream.deduction_model_config]
 transport = "openai"
