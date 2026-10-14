@@ -87,6 +87,13 @@ class SpecialistResult:
 # Tool names to exclude when peer card creation is disabled
 PEER_CARD_TOOL_NAMES = {"update_peer_card"}
 
+# Opening instruction when the since-last-dream list is in the prompt; it
+# replaces "start with get_recent_observations", which would re-fetch it.
+WORK_LIST_START = (
+    "Start from the conclusions under NEW SINCE THE LAST DREAM, and search "
+    + "older memory only where they bear on it."
+)
+
 # Tools that only read memory. They are refused during the write window and
 # left out of the final call at the limit.
 SEARCH_TOOL_NAMES = frozenset(
@@ -330,8 +337,14 @@ class BaseSpecialist(ABC):
         observed: str,
         hints: list[str] | None,
         peer_card: list[str] | None = None,
+        *,
+        work_list_shown: bool = False,
     ) -> str:
-        """Build the user prompt with optional exploration hints and current peer card."""
+        """Build the user prompt with optional exploration hints and current peer card.
+
+        `work_list_shown` means the since-last-dream list precedes this prompt,
+        so the agent starts from it instead of re-fetching recent conclusions.
+        """
         ...
 
     def _build_target_observee_context(self, observed: str) -> str:
@@ -512,12 +525,14 @@ If you update it, send the full deduplicated list and remove stale entries.
                 system_prompt += "\n\n" + notes_system_section(
                     settings.DREAM.NOTES_MAX_TOKENS
                 )
+            work_list_shown = brief_enabled and work_list is not None
             user_prompt = self.build_user_prompt(
                 observed=observed,
                 hints=hints,
                 peer_card=current_peer_card,
+                work_list_shown=work_list_shown,
             )
-            if brief_enabled and work_list is not None:
+            if work_list_shown and work_list is not None:
                 user_prompt = f"{format_work_list(work_list)}\n\n{user_prompt}"
             if loaded_notes is not None:
                 user_prompt = f"{format_notes(loaded_notes.entries)}\n\n{user_prompt}"
@@ -908,23 +923,35 @@ Use `create_observations_deductive`.
         observed: str,
         hints: list[str] | None,
         peer_card: list[str] | None = None,
+        *,
+        work_list_shown: bool = False,
     ) -> str:
         target_observee_context = self._build_target_observee_context(observed)
         peer_card_context = self._build_peer_card_context(peer_card)
 
         if hints:
             hints_str = "\n".join(f"- {q}" for q in hints[:5])
+            begin = (
+                WORK_LIST_START
+                if work_list_shown
+                else "Begin with `get_recent_observations` to see what's there."
+            )
             return f"""{target_observee_context}{peer_card_context}Start by exploring recent observations and messages. These topics may be worth investigating:
 
 {hints_str}
 
 But follow the evidence - if you find something more interesting, pursue that instead.
 
-Begin with `get_recent_observations` to see what's there."""
+{begin}"""
 
+        start = (
+            WORK_LIST_START
+            if work_list_shown
+            else "Start with `get_recent_observations` to see what's been learned recently, then investigate whatever seems most promising."
+        )
         return f"""{target_observee_context}{peer_card_context}Explore the observation space and create deductive observations.
 
-Start with `get_recent_observations` to see what's been learned recently, then investigate whatever seems most promising.
+{start}
 
 Look for:
 1. Knowledge updates (same fact, different values over time)
@@ -1041,6 +1068,8 @@ Use `create_observations_inductive`.
         observed: str,
         hints: list[str] | None,
         peer_card: list[str] | None = None,
+        *,
+        work_list_shown: bool = False,
     ) -> str:
         target_observee_context = self._build_target_observee_context(observed)
         # Induction does not consume peer card context — it produces inductive
@@ -1055,11 +1084,12 @@ Use `create_observations_inductive`.
 
 But follow the evidence - if you find patterns elsewhere, pursue those.
 
-Start with `get_recent_observations`."""
+{WORK_LIST_START if work_list_shown else "Start with `get_recent_observations`."}"""
 
+        start = f"{WORK_LIST_START}\n\n" if work_list_shown else ""
         return f"""{target_observee_context}Explore the observation space and identify patterns.
 
-Remember: patterns need 2+ sources. Look for tendencies, preferences, and behavioral regularities.
+{start}Remember: patterns need 2+ sources. Look for tendencies, preferences, and behavioral regularities.
 
 Go."""
 
@@ -1153,8 +1183,11 @@ Keep it short — a handful of tool calls at most.{rebuild_section}
         observed: str,
         hints: list[str] | None,
         peer_card: list[str] | None = None,
+        *,
+        work_list_shown: bool = False,
     ) -> str:
         _ = hints
+        _ = work_list_shown
         target_observee_context = self._build_target_observee_context(observed)
         peer_card_context = self._build_peer_card_context(peer_card)
 

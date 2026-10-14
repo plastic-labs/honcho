@@ -118,5 +118,23 @@ async def test_brief_includes_the_work_list(monkeypatch: pytest.MonkeyPatch):
     with patch("src.dreamer.specialists.emit") as emit:
         _, user = await _run(InductionSpecialist(), state=state)
     assert "## NEW SINCE THE LAST DREAM" in user["content"]
+    # The list replaces "start with get_recent_observations", which would
+    # re-fetch it.
+    assert (
+        "Start from the conclusions under NEW SINCE THE LAST DREAM" in user["content"]
+    )
+    assert "Start with `get_recent_observations`" not in user["content"]
     assert "[id:n1] [2026-10-01] moved to Lisbon" in user["content"]
     assert emit.call_args.args[0].new_conclusions_shown == 1
+
+
+@pytest.mark.parametrize("specialist", [DeductionSpecialist(), InductionSpecialist()])
+@pytest.mark.parametrize("hints", [None, ["coffee"]])
+def test_start_instruction_follows_the_work_list(
+    specialist: BaseSpecialist, hints: list[str] | None
+):
+    plain = specialist.build_user_prompt("alice", hints)
+    listed = specialist.build_user_prompt("alice", hints, work_list_shown=True)
+    assert "Start from the conclusions under NEW SINCE THE LAST DREAM" in listed
+    assert "get_recent_observations" not in listed
+    assert "NEW SINCE THE LAST DREAM" not in plain
