@@ -23,6 +23,7 @@ from nanoid import generate as generate_nanoid
 from src import crud
 from src.config import ConfiguredModelSettings, settings
 from src.dependencies import tracked_db
+from src.dreamer.working_memory import WorkList, format_work_list
 from src.exceptions import ValidationException
 from src.llm import HonchoLLMCallResponse, honcho_llm_call
 from src.llm.types import LLMTelemetryContext
@@ -350,6 +351,7 @@ If you update it, send the full deduplicated list and remove stale entries.
         *,
         session_id: str | None = None,
         queue_item_id: int | None = None,
+        work_list: WorkList | None = None,
     ) -> SpecialistResult:
         """
         Run the specialist agent.
@@ -364,6 +366,8 @@ If you update it, send the full deduplicated list and remove stale entries.
             hints: Optional hints to guide exploration (specialists explore freely if None)
             configuration: Resolved configuration for checking feature flags (optional)
             parent_run_id: Optional run_id from orchestrator for correlation
+            work_list: Explicit conclusions created since the last dream,
+                shown when the brief is enabled
 
         Returns:
             SpecialistResult with metrics and content
@@ -463,6 +467,8 @@ If you update it, send the full deduplicated list and remove stale entries.
                 hints=hints,
                 peer_card=current_peer_card,
             )
+            if brief_enabled and work_list is not None:
+                user_prompt = f"{format_work_list(work_list)}\n\n{user_prompt}"
             if memory_counts is not None:
                 user_prompt = f"{memory_counts}\n\n{user_prompt}"
 
@@ -685,6 +691,16 @@ If you update it, send the full deduplicated list and remove stale entries.
                         write_window_used=budget_enabled
                         and iterations >= max_iterations - window + 1,
                         refused_search_count=refused_search_count,
+                        new_conclusions_shown=(
+                            len(work_list.items)
+                            if brief_enabled and work_list is not None
+                            else 0
+                        ),
+                        new_conclusions_remaining=(
+                            work_list.remaining
+                            if brief_enabled and work_list is not None
+                            else 0
+                        ),
                         # denormalized rollups (all 0 on the failure path)
                         created_observation_count=created_observation_count,
                         deleted_observation_count=deleted_observation_count,

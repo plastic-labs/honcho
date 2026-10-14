@@ -18,7 +18,7 @@ _SUMMARY = DocumentLevelSummary(
 )
 
 
-async def _run(specialist: BaseSpecialist) -> list[dict[str, Any]]:
+async def _run(specialist: BaseSpecialist, **run_kwargs: Any) -> list[dict[str, Any]]:
     """Run the specialist with the LLM and DB mocked; return the messages sent."""
     llm_call = AsyncMock(
         return_value=HonchoLLMCallResponse(
@@ -41,7 +41,11 @@ async def _run(specialist: BaseSpecialist) -> list[dict[str, Any]]:
     ):
         tracked_db.return_value.__aenter__.return_value = AsyncMock()
         await specialist.run(
-            workspace_name="w", observer="alice", observed="alice", session_name=None
+            workspace_name="w",
+            observer="alice",
+            observed="alice",
+            session_name=None,
+            **run_kwargs,
         )
     return llm_call.call_args.kwargs["messages"]
 
@@ -91,3 +95,28 @@ async def test_specialist_event_reports_its_iteration_limit(
     assert event.iteration_limit == 9
     assert event.hit_iteration_limit is False
     assert event.budget_line_enabled is False
+
+
+@pytest.mark.asyncio
+async def test_brief_includes_the_work_list(monkeypatch: pytest.MonkeyPatch):
+    import datetime
+
+    from src.dreamer.working_memory import NotesCursor, WorkItem, WorkList
+
+    monkeypatch.setattr(settings.DREAM, "BRIEF_ENABLED", True)
+    work_list = WorkList(
+        items=[
+            WorkItem(
+                id="n1",
+                content="moved to Lisbon",
+                created_at=datetime.datetime(2026, 10, 1, tzinfo=datetime.UTC),
+            )
+        ],
+        remaining=0,
+        cursor=NotesCursor(),
+    )
+    with patch("src.dreamer.specialists.emit") as emit:
+        _, user = await _run(InductionSpecialist(), work_list=work_list)
+    assert "## NEW SINCE THE LAST DREAM" in user["content"]
+    assert "[id:n1] [2026-10-01] moved to Lisbon" in user["content"]
+    assert emit.call_args.args[0].new_conclusions_shown == 1

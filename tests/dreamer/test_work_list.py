@@ -1,0 +1,198 @@
+import datetime
+from typing import Any
+
+import pytest
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from src import crud, models
+from src.config import settings
+from src.dreamer.working_memory import (
+    NOTES_KEY,
+    NotesCursor,
+    WorkItem,
+    WorkList,
+    advance_cursor,
+    format_work_list,
+    load_work_list,
+)
+
+T0 = datetime.datetime(2026, 10, 1, 12, tzinfo=datetime.UTC)
+
+
+def _id(name: str) -> str:
+    """Document ids must be 21 characters; padding keeps names sortable."""
+    return name.ljust(21, "0")
+
+
+async def _seed(
+    db_session: AsyncSession,
+    sample_data: tuple[models.Workspace, models.Peer],
+    rows: list[tuple[str, str, datetime.datetime]],
+    internal_metadata: dict[str, Any] | None = None,
+) -> tuple[str, str]:
+    workspace, peer = sample_data
+    db_session.add(
+        models.Collection(
+            workspace_name=workspace.name,
+            observer=peer.name,
+            observed=peer.name,
+            internal_metadata=internal_metadata or {},
+        )
+    )
+    await db_session.flush()
+    for doc_id, level, created_at in rows:
+        db_session.add(
+            models.Document(
+                id=_id(doc_id),
+                workspace_name=workspace.name,
+                observer=peer.name,
+                observed=peer.name,
+                content=f"content {doc_id}",
+                level=level,
+                embedding=[0.1] * 1536,
+                created_at=created_at,
+            )
+        )
+    await db_session.commit()
+    return workspace.name, peer.name
+
+
+async def _stored_notes(db_session: AsyncSession, workspace: str, peer: str) -> Any:
+    db_session.expire_all()
+    return await db_session.scalar(
+        select(models.Collection.internal_metadata).where(
+            models.Collection.workspace_name == workspace,
+            models.Collection.observer == peer,
+            models.Collection.observed == peer,
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_backlog_is_worked_through_over_consecutive_dreams(
+    db_session: AsyncSession,
+    sample_data: tuple[models.Workspace, models.Peer],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(settings.DREAM, "BRIEF_MAX_NEW_CONCLUSIONS", 2)
+    # b and c share a timestamp: paging must neither skip nor repeat either.
+    workspace, peer = await _seed(
+        db_session,
+        sample_data,
+        [
+            ("a", "explicit", T0),
+            ("b", "explicit", T0 + datetime.timedelta(minutes=1)),
+            ("c", "explicit", T0 + datetime.timedelta(minutes=1)),
+            ("d", "deductive", T0 + datetime.timedelta(minutes=2)),
+        ],
+        internal_metadata={"dream": {"last_dream_at": "2026-09-01T00:00:00+00:00"}},
+    )
+
+    first = await load_work_list(workspace, observer=peer, observed=peer)
+    assert [i.id for i in first.items] == [_id("a"), _id("b")]
+    assert first.remaining == 1
+    await advance_cursor(
+        workspace, observer=peer, observed=peer, work_list=first, run_id="r1"
+    )
+
+    second = await load_work_list(workspace, observer=peer, observed=peer)
+    assert [i.id for i in second.items] == [_id("c")]
+    assert second.remaining == 0
+    await advance_cursor(
+        workspace, observer=peer, observed=peer, work_list=second, run_id="r2"
+    )
+
+    metadata = await _stored_notes(db_session, workspace, peer)
+    cursor = NotesCursor.model_validate(metadata[NOTES_KEY]["cursor"])
+    assert (cursor.through_id, cursor.dreams, cursor.last_run_id) == (_id("c"), 2, "r2")
+    # The scheduler's key is untouched.
+    assert metadata["dream"] == {"last_dream_at": "2026-09-01T00:00:00+00:00"}
+
+    third = await load_work_list(workspace, observer=peer, observed=peer)
+    assert third.items == [] and third.remaining == 0
+
+
+@pytest.mark.asyncio
+async def test_first_list_starts_at_the_last_dream(
+    db_session: AsyncSession,
+    sample_data: tuple[models.Workspace, models.Peer],
+):
+    workspace, peer = await _seed(
+        db_session,
+        sample_data,
+        [
+            ("old", "explicit", T0 - datetime.timedelta(days=2)),
+            ("new", "explicit", T0),
+        ],
+        internal_metadata={
+            "dream": {"last_dream_at": (T0 - datetime.timedelta(days=1)).isoformat()}
+        },
+    )
+    work_list = await load_work_list(workspace, observer=peer, observed=peer)
+    assert [i.id for i in work_list.items] == [_id("new")]
+
+
+@pytest.mark.asyncio
+async def test_cursor_merge_keeps_other_note_keys(
+    db_session: AsyncSession,
+    sample_data: tuple[models.Workspace, models.Peer],
+):
+    workspace, peer = await _seed(
+        db_session,
+        sample_data,
+        [],
+        internal_metadata={NOTES_KEY: {"entries": [{"id": "n1"}]}},
+    )
+    await advance_cursor(
+        workspace, observer=peer, observed=peer, work_list=None, run_id="r1"
+    )
+    notes = (await _stored_notes(db_session, workspace, peer))[NOTES_KEY]
+    assert notes["entries"] == [{"id": "n1"}]
+    assert notes["cursor"]["dreams"] == 1
+    assert notes["cursor"]["through_id"] is None
+
+
+def test_format_lists_items_and_the_remainder():
+    text = format_work_list(
+        WorkList(
+            items=[WorkItem(id="a1", content="likes tea", created_at=T0)],
+            remaining=3,
+            cursor=NotesCursor(),
+        )
+    )
+    assert "- [id:a1] [2026-10-01] likes tea" in text
+    assert "3 more are not shown" in text
+
+
+def test_format_empty_list():
+    text = format_work_list(WorkList(items=[], remaining=0, cursor=NotesCursor()))
+    assert "No explicit conclusions have been created" in text
+
+
+@pytest.mark.asyncio
+async def test_query_ignores_deleted_and_other_levels(
+    db_session: AsyncSession,
+    sample_data: tuple[models.Workspace, models.Peer],
+):
+    workspace, peer = await _seed(
+        db_session,
+        sample_data,
+        [("x", "explicit", T0), ("y", "inductive", T0)],
+    )
+    await db_session.execute(
+        models.Document.__table__.update()
+        .where(models.Document.id == _id("x"))
+        .values(deleted_at=T0)
+    )
+    await db_session.commit()
+    docs, total = await crud.query_explicit_documents_after(
+        db_session,
+        workspace,
+        observer=peer,
+        observed=peer,
+        after=None,
+        since=None,
+        limit=10,
+    )
+    assert list(docs) == [] and total == 0

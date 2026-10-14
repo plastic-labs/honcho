@@ -215,6 +215,16 @@ class DreamSpecialistEvent(BaseEvent, CustomInstructionsFields):
         description="Search calls refused because they came during the write window.",
     )
 
+    # Since-last-dream work list (dream.specialist only)
+    new_conclusions_shown: int = Field(
+        default=0,
+        description="Explicit conclusions listed as new since the last dream.",
+    )
+    new_conclusions_remaining: int = Field(
+        default=0,
+        description="New explicit conclusions left for later dreams by the list cap.",
+    )
+
     # Peer card custom instructions (dream's own pair comes from the mixin)
     peer_card_custom_instructions_tokens: int = Field(
         default=0,

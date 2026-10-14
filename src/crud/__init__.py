@@ -1,6 +1,8 @@
 from .collection import (
     get_collection,
+    get_collection_internal_metadata_value,
     get_or_create_collection,
+    merge_collection_internal_metadata_value,
     update_collection_internal_metadata,
 )
 from .deriver import (
@@ -25,6 +27,7 @@ from .document import (
     query_documents,
     query_documents_most_derived,
     query_documents_recent,
+    query_explicit_documents_after,
     query_external_vector_document_ids,
     summarize_documents_by_level,
 )
@@ -111,6 +114,8 @@ __all__ = [
     "get_collection",
     "get_or_create_collection",
     "update_collection_internal_metadata",
+    "get_collection_internal_metadata_value",
+    "merge_collection_internal_metadata_value",
     # Deriver
     "cleanup_stale_work_units",
     "get_deriver_metrics",
@@ -128,6 +133,7 @@ __all__ = [
     "query_documents",
     "query_documents_most_derived",
     "query_documents_recent",
+    "query_explicit_documents_after",
     "summarize_documents_by_level",
     "DocumentLevelSummary",
     "query_external_vector_document_ids",

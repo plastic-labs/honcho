@@ -2,7 +2,8 @@ from logging import getLogger
 from typing import Any
 
 from cashews import NOT_NONE
-from sqlalchemy import select, update
+from sqlalchemy import func, literal, select, update
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import make_transient_to_detached
@@ -197,6 +198,65 @@ async def update_collection_internal_metadata(
         )
         .values(
             internal_metadata=models.Collection.internal_metadata.op("||")(update_data)
+        )
+    )
+    await db.execute(stmt)
+    await db.commit()
+
+    await safe_cache_delete(collection_cache_key(workspace_name, observer, observed))
+
+
+async def get_collection_internal_metadata_value(
+    db: AsyncSession,
+    workspace_name: str,
+    observer: str,
+    observed: str,
+    key: str,
+) -> Any | None:
+    """Read one top-level internal_metadata value straight from the database.
+
+    Skips the collection cache, which can lag writes made by
+    `merge_collection_internal_metadata_value`. Returns None when the
+    collection or the key is missing.
+    """
+    return await db.scalar(
+        select(models.Collection.internal_metadata[key]).where(
+            models.Collection.workspace_name == workspace_name,
+            models.Collection.observer == observer,
+            models.Collection.observed == observed,
+        )
+    )
+
+
+async def merge_collection_internal_metadata_value(
+    db: AsyncSession,
+    workspace_name: str,
+    observer: str,
+    observed: str,
+    key: str,
+    patch: dict[str, Any],
+) -> None:
+    """Merge `patch` into the object stored under one top-level key, server-side.
+
+    `update_collection_internal_metadata` replaces a top-level value whole, so
+    two writers of different sub-keys under the same key would overwrite each
+    other. This merges one level deeper (`value || patch`) in a single UPDATE,
+    so it needs no row lock: writers of different sub-keys never collide.
+    """
+    current = func.coalesce(
+        models.Collection.internal_metadata[key], func.jsonb_build_object()
+    )
+    stmt = (
+        update(models.Collection)
+        .where(
+            models.Collection.workspace_name == workspace_name,
+            models.Collection.observer == observer,
+            models.Collection.observed == observed,
+        )
+        .values(
+            internal_metadata=models.Collection.internal_metadata.op("||")(
+                func.jsonb_build_object(key, current.op("||")(literal(patch, JSONB)))
+            )
         )
     )
     await db.execute(stmt)

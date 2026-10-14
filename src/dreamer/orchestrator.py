@@ -32,6 +32,7 @@ from src.dreamer.specialists import (
     SpecialistResult,
 )
 from src.dreamer.surprisal import SurprisalScore  # type: ignore
+from src.dreamer.working_memory import WorkList, advance_cursor, load_work_list
 from src.exceptions import SurprisalError
 from src.llm.runtime import CapturedAgentSpan, start_captured_span
 from src.llm.types import LLMTelemetryContext
@@ -68,6 +69,9 @@ class DreamResult:
     total_duration_ms: float
     input_tokens: int
     output_tokens: int
+
+    # Since-last-dream list shown to the specialists, when the brief is on
+    work_list: WorkList | None = None
 
 
 def _start_dream_trace(
@@ -224,6 +228,17 @@ async def run_dream(
             accumulate_metric(task_name, "surprisal_error", str(e), "blob")
             # Specialists will explore freely without hints
 
+    # One list for both specialists, so deduction's writes don't change what
+    # induction is shown and the cursor advances once per dream.
+    work_list: WorkList | None = None
+    if settings.DREAM.BRIEF_ENABLED:
+        try:
+            work_list = await load_work_list(
+                workspace_name, observer=observer, observed=observed
+            )
+        except Exception as e:
+            logger.error(f"[{run_id}] Loading the work list failed: {e}", exc_info=True)
+
     # Specialist phase wrapped in try/finally so DreamRunEvent ALWAYS emits —
     # both for graceful failures (specialist raises Exception) AND unexpected
     # exceptions including CancelledError. The orphaned-child-event problem
@@ -255,6 +270,7 @@ async def run_dream(
                 parent_run_id=run_id,
                 session_id=resolved_session_id,
                 queue_item_id=queue_item_id,
+                work_list=work_list,
             )
             logger.info(
                 f"[{run_id}] Deduction completed: {deduction_result.content[:200]}..."
@@ -285,6 +301,7 @@ async def run_dream(
                 parent_run_id=run_id,
                 session_id=resolved_session_id,
                 queue_item_id=queue_item_id,
+                work_list=work_list,
             )
             logger.info(
                 f"[{run_id}] Induction completed: {induction_result.content[:200]}..."
@@ -369,6 +386,7 @@ async def run_dream(
         total_duration_ms=duration_ms,
         input_tokens=total_input_tokens,
         output_tokens=total_output_tokens,
+        work_list=work_list,
     )
 
 
@@ -630,6 +648,15 @@ DREAM: {payload.dream_type} documents for {workspace_name}/{payload.observer}/{p
                             payload.observer,
                             payload.observed,
                             update_data={"dream": dream_meta},
+                        )
+
+                    if settings.DREAM.BRIEF_ENABLED:
+                        await advance_cursor(
+                            workspace_name,
+                            observer=payload.observer,
+                            observed=payload.observed,
+                            work_list=result.work_list,
+                            run_id=result.run_id,
                         )
 
             case DreamType.CARD_REFRESH:

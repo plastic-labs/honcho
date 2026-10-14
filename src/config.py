@@ -1402,6 +1402,9 @@ class DreamSettings(HonchoSettings):
     # Deduction and induction start with a description of how memory is
     # organized and conclusion counts by level.
     BRIEF_ENABLED: bool = False
+    # Cap on the since-last-dream work list in the brief. A larger backlog is
+    # worked through over consecutive dreams.
+    BRIEF_MAX_NEW_CONCLUSIONS: Annotated[int, Field(default=50, ge=1, le=500)] = 50
     # Deduction and induction see a tool-call budget line, the last iterations
     # are reserved for writes, and the final call at the limit can still write.
     BUDGET_ENABLED: bool = False

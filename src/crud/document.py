@@ -6,7 +6,7 @@ from enum import Enum
 from logging import getLogger
 from typing import Any, Literal, cast
 
-from sqlalchemy import delete, literal, or_, select, union_all, update
+from sqlalchemy import delete, literal, or_, select, tuple_, union_all, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import DBAPIError, IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -226,6 +226,52 @@ async def summarize_documents_by_level(
     return DocumentLevelSummary(
         counts_by_level=counts, earliest=earliest, latest=latest
     )
+
+
+async def query_explicit_documents_after(
+    db: AsyncSession,
+    workspace_name: str,
+    *,
+    observer: str,
+    observed: str,
+    after: tuple[datetime.datetime, str] | None,
+    since: datetime.datetime | None,
+    limit: int,
+) -> tuple[Sequence[models.Document], int]:
+    """Live explicit documents past a position, oldest first, plus their total.
+
+    `after` is a `(created_at, id)` keyset position; documents strictly past it
+    are returned. Without it, `since` (if given) bounds `created_at` instead.
+    Ordering ends in `id`, so documents sharing a timestamp are neither skipped
+    nor repeated when the caller pages forward from the last one returned.
+    """
+    conditions = [
+        models.Document.workspace_name == workspace_name,
+        models.Document.observer == observer,
+        models.Document.observed == observed,
+        models.Document.level == "explicit",
+        models.Document.deleted_at.is_(None),
+    ]
+    if after is not None:
+        conditions.append(
+            tuple_(models.Document.created_at, models.Document.id)
+            > tuple_(literal(after[0]), literal(after[1]))
+        )
+    elif since is not None:
+        conditions.append(models.Document.created_at > since)
+
+    total = int(
+        await db.scalar(select(func.count(models.Document.id)).where(*conditions)) or 0
+    )
+    if total == 0:
+        return [], 0
+    stmt = (
+        select(models.Document)
+        .where(*conditions)
+        .order_by(models.Document.created_at, models.Document.id)
+        .limit(limit)
+    )
+    return (await db.execute(stmt)).scalars().all(), total
 
 
 async def query_documents_most_derived(
