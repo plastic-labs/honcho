@@ -55,6 +55,34 @@ test("established sessions require the initialize bearer", async () => {
   expect(ok.status).toBe(200);
 });
 
+test("unknown or expired session ID returns 404 so clients can reinitialize", async () => {
+  // POST carrying a stale session ID with a non-initialize body must be 404,
+  // not 400: the Streamable HTTP spec says a terminated session MUST answer
+  // requests containing its ID with 404, which tells the client to
+  // reinitialize (modelcontextprotocol.io/specification/2025-03-26/basic/transports).
+  const stalePost = await mcpPost(
+    { "mcp-session-id": "00000000-0000-0000-0000-000000000000" },
+    pingBody,
+  );
+  expect(stalePost.status).toBe(404);
+
+  // GET carrying a stale session ID must also be 404.
+  const staleGet = await fetch(
+    new Request(`${origin}/mcp`, {
+      method: "GET",
+      headers: {
+        Accept: "text/event-stream",
+        "mcp-session-id": "00000000-0000-0000-0000-000000000000",
+      },
+    }),
+  );
+  expect(staleGet.status).toBe(404);
+
+  // POST with no session ID at all and a non-initialize body stays 400.
+  const noSession = await mcpPost({}, pingBody);
+  expect(noSession.status).toBe(400);
+});
+
 test("MCP requests disable the idle timeout", async () => {
   const disabled: string[] = [];
   const server = {
