@@ -2,6 +2,7 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import * as Sentry from "@sentry/bun";
 import {
+  HEADER_PLUGIN,
   honchoClients,
   identityHeaders,
   parseConfig,
@@ -29,7 +30,7 @@ declare const Bun: {
 const CORS_ORIGIN = "*";
 const CORS_METHODS = "GET, POST, DELETE, OPTIONS";
 const CORS_ALLOWED_HEADERS =
-  "Content-Type, Authorization, X-Honcho-Workspace-ID, mcp-session-id, mcp-protocol-version, last-event-id";
+  "Content-Type, Authorization, X-Honcho-Workspace-ID, X-Honcho-Plugin, mcp-session-id, mcp-protocol-version, last-event-id";
 
 const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Origin": CORS_ORIGIN,
@@ -204,7 +205,10 @@ async function handleMcp(request: Request): Promise<Response> {
     config,
     ...honchoClients(
       config,
-      identityHeaders(request.headers.get("User-Agent")),
+      identityHeaders(
+        request.headers.get("User-Agent"),
+        request.headers.get(HEADER_PLUGIN),
+      ),
     ),
   });
 
