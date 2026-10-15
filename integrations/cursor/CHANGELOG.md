@@ -14,8 +14,11 @@ First version in the Honcho monorepo, rewritten for the Cursor Marketplace.
   (`honcho-grok-bot`) and first-run setup (`honcho-setup`). Skills and the MCP
   server are the only components Grok Bot loads, so the plugin depends on
   nothing else.
-- Cursor-only extras: an always-on rule and the `/recall` and `/remember`
-  commands.
+- Cursor-only extras: an always-on rule, the `/recall` and `/remember`
+  commands, and three lifecycle hooks (`sessionStart`, `beforeSubmitPrompt`,
+  `afterAgentResponse`) bundled into a committed `dist/hook.js`. The hooks
+  read `~/.honcho/config.json` and exit silently without it, so an OAuth-only
+  install keeps the skill-driven loop.
 - Removed from the previous standalone repo: the stdio `mcp-server.ts`, the
-  nine `bun` lifecycle hooks and the `honcho-dev` plugin. Marketplace installs
-  run no install step, so none of those could run from a clone.
+  other six hooks (`stop`, `sessionEnd`, `postToolUse`, `preCompact`,
+  `subagentStop`, `afterAgentThought`) and the `honcho-dev` plugin.

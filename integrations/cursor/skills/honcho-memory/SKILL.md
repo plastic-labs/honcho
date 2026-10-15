@@ -24,14 +24,19 @@ peer and session names for Bots.
    ("how does this user like tests written?"), ask `chat`.
 3. **Record after every exchange.** Append the user's message and your reply
    with `add_messages_to_session`. This is the only non-optional step: Honcho
-   learns from nothing else.
+   learns from nothing else. **Exception:** if the context injected at session
+   start says automatic capture is on, the plugin's hooks are already recording
+   prompts and replies for this conversation; skip this step and only store
+   conclusions.
 
 Reasoning happens asynchronously. Never wait or poll after recording.
 
 ## Where memory lives
 
 Workspace, peers and sessions are explicit arguments on every tool call, so
-resolve them once at the start of a conversation and reuse them.
+resolve them once at the start of a conversation and reuse them. Every id may
+contain only letters, digits, `_` and `-`; lowercase everything else and
+replace other characters with `-`.
 
 **Workspace.** Call `get_metadata` with `workspace_id: "cursor"` and no other
 scope. If the result has a `default_workspace` key, that is the workspace to
@@ -40,16 +45,23 @@ the user chooses to share memory with another tool.
 
 **User peer.** Call `get_metadata` on the chosen workspace. Use its `user_peer`
 value. If there is none, ask the user once what Honcho should call them (a
-short handle, no spaces), then store it with `set_metadata` on the workspace
-as `{"user_peer": "<handle>"}` so every future conversation, and every other
-Bot or editor on this account, finds the same answer. One stable peer id per
+short handle, no spaces), then store it on the workspace so every future
+conversation, and every other Bot or editor on this account, finds the same
+answer. `set_metadata` replaces the whole metadata object, so read the current
+metadata first and write it back with `user_peer` added, never just the one
+key. One stable peer id per
 person: never invent a new one per conversation.
 
 **Your peer.** In Cursor, `cursor`. In Grok Bot, your Bot's name in kebab-case
 (the `honcho-grok-bot` skill has the details).
 
-**Session.** In Cursor, one session per project: `cursor:<folder-name>` where
-the folder is the workspace root. Keep using it across days; a project is one
+**Session.** In Cursor, one session per project. If the context injected at
+session start names a session, use that name. Otherwise derive it: when the
+project has a git `origin` remote, `cursor-<owner>-<repo>` from that URL (so
+two clones of one repo share a session and two projects that happen to share
+a folder name do not); when it has no remote, `cursor-<folder-name>` from the
+workspace root. Lowercase and replace other characters with `-` (`My Project`
+gives `cursor-my-project`). Keep using it across days; a project is one
 coherent context. In Grok Bot, follow the `honcho-grok-bot` skill.
 
 **First use of a session.** `create_session`, then `add_peers_to_session` with

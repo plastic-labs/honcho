@@ -191,7 +191,7 @@ gives them one shared memory.
 | Hermes           | `hermes memory setup`                                   | built in upstream                                                  |
 | Any MCP client   | `claude mcp add honcho --transport http ...`            | [MCP guide](https://honcho.dev/docs/v3/guides/integrations/mcp)    |
 
-Get a key at [app.honcho.dev](https://app.honcho.dev), then `honcho init` (or `uv tool install honcho-cli && honcho init`) writes it to `~/.honcho/config.json` once for every integration.
+Get a key at [app.honcho.dev](https://app.honcho.dev), then `honcho init` (or `uv tool install honcho-cli && honcho init`) writes it to `~/.honcho/config.json` once for every integration. Cursor and Grok Bot are the exception: the marketplace plugin signs in with OAuth, and `honcho init` is optional there (in Cursor it turns on automatic capture).
 
 ### Claude Code
 
@@ -227,7 +227,7 @@ Restart Codex to load the hooks. Details: [Codex guide](https://honcho.dev/docs/
 
 ### Cursor and Grok Bot
 
-One Cursor Marketplace listing serves both. In Cursor, open **Customize**, install **Honcho**, authenticate the `honcho` MCP server, then run `/honcho-setup` once. In Grok Bot, add **Honcho** under **Connect apps** (or **Add to Grok Bot** from the plugin page) and tell a Bot to set up Honcho. The plugin connects to the hosted MCP server over OAuth and ships the skills that drive the memory loop, so nothing runs locally.
+One Cursor Marketplace listing serves both. In Cursor, open **Customize**, install **Honcho**, authenticate the `honcho` MCP server, then run `/honcho-setup` once. In Grok Bot, add **Honcho** under **Connect apps** (or **Add to Grok Bot** from the plugin page) and ask a Bot to set up Honcho. The plugin connects to the hosted MCP server over OAuth and ships the skills that drive the memory loop, so nothing runs locally.
 Details: [Cursor guide](https://honcho.dev/docs/v3/guides/integrations/cursor) · [Grok Bot guide](https://honcho.dev/docs/v3/guides/integrations/grok-bot) · [source](integrations/cursor/).
 
 ### DeepSeek Harness

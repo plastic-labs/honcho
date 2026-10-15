@@ -26,15 +26,19 @@ so that every Bot on the account writes to Honcho the same way.
 
 Pick the first that applies:
 
-1. **A conversation with a stable id you can read**: `<bot>:conv:<id>`.
-2. **A direct chat without an id**: one session per Bot per day,
-   `<bot>:chat:<YYYY-MM-DD>` in the user's time zone.
-3. **A group chat**: `group:<group-name>:<YYYY-MM-DD>`, with the user and
-   every participating Bot added as peers. Record each Bot's messages under
-   that Bot's own peer.
+1. **A group chat** (more than one Bot, or several people): `group-<group-name>-<id>`
+   when the chat has a stable id you can read, otherwise
+   `group-<group-name>-<YYYY-MM-DD>`. Add the user and every participating Bot
+   as peers, and record each Bot's messages under that Bot's own peer.
+2. **A direct conversation with a stable id you can read**: `<bot>-conv-<id>`.
+3. **A direct chat without an id**: one session per Bot per day,
+   `<bot>-chat-<YYYY-MM-DD>` in the user's time zone.
 4. **A routine run** (scheduled or event-triggered work with no user in the
-   loop): `<bot>:routine:<routine-name>:<YYYY-MM-DD>`. Record what you did as
+   loop): `<bot>-routine-<routine-name>-<YYYY-MM-DD>`. Record what you did as
    your own messages. Do not record user messages you did not receive.
+
+Ids may contain only letters, digits, `_` and `-`, so lowercase names and
+replace anything else with `-`.
 
 Keep a context's turns in one session. Do not start a new session mid-day
 because the topic changed; Honcho reasons over a session as a whole and

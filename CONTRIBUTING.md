@@ -205,7 +205,7 @@ public and internal vocabularies are being reconciled deliberately.
 | The CLI | `honcho-cli/` |
 | The MCP server | `mcp/` |
 | The Hermes plugin | `hermes-plugin-honcho/` — its `README.md` documents intended behavior |
-| The Cursor and Grok Bot plugin | `integrations/cursor/` — manifest, MCP config and skills; `scripts/validate.py` is the check |
+| The Cursor and Grok Bot plugin | `integrations/cursor/` — manifest, MCP config and skills |
 | Code shared by integrations | `harness-plugin-core/` |
 | Public documentation | `docs/v3/` — Mintlify; nav lives in `docs/docs.json` |
 

@@ -36,14 +36,14 @@ Grok Bot installs plugins from the Cursor Marketplace, so this is the same plugi
 | Workspace | `cursor`, or the shared workspace you picked during setup |
 | User peer | one handle for you, shared by every Bot |
 | Agent peer | one per Bot, the Bot's name in kebab-case |
-| Session | `<bot>:conv:<id>` when a conversation id is available, otherwise `<bot>:chat:<date>` |
-| Group chat | `group:<name>:<date>`, with you and every participating Bot as peers |
-| Routine run | `<bot>:routine:<name>:<date>` |
+| Session | `<bot>-conv-<id>` when a conversation id is available, otherwise `<bot>-chat-<date>` |
+| Group chat | `group-<name>-<date>`, with you and every participating Bot as peers |
+| Routine run | `<bot>-routine-<name>-<date>` |
 
 You are one peer everywhere, so what one Bot learns about you is available to all of them. Each Bot is its own peer, so Honcho can also tell you what a particular Bot has been doing.
 
 <Note>
-The plugin's skills and the MCP server are the only parts that run in Grok Bot. The always-on rule and the `/recall` and `/remember` commands in the same plugin are for the Cursor IDE and are ignored by Bots.
+The plugin's skills and the MCP server are the only parts that run in Grok Bot. The always-on rule, the `/recall` and `/remember` commands and the lifecycle hooks in the same plugin are for the Cursor IDE and are ignored by Bots.
 </Note>
 
 ## Connecting Without the Plugin

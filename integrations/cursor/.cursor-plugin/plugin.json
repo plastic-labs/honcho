@@ -10,11 +10,24 @@
   "homepage": "https://honcho.dev/docs/v3/guides/integrations/cursor",
   "repository": "https://github.com/plastic-labs/honcho",
   "license": "MIT",
-  "keywords": ["honcho", "memory", "persistent-memory", "context", "personalization", "grok-bot", "mcp"],
+  "keywords": [
+    "honcho",
+    "memory",
+    "persistent-memory",
+    "context",
+    "personalization",
+    "grok-bot",
+    "mcp"
+  ],
   "category": "productivity",
-  "tags": ["memory", "context", "personalization"],
+  "tags": [
+    "memory",
+    "context",
+    "personalization"
+  ],
   "logo": "assets/logo.svg",
   "mcpServers": "./mcp.json",
+  "hooks": "./hooks/hooks.json",
   "skills": "./skills/",
   "rules": "./rules/",
   "commands": "./commands/"

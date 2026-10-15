@@ -14,7 +14,9 @@ the `honcho-memory` skill:
 - When past context would help, use `search` or `chat` instead of asking the
   user to repeat themselves.
 - After every exchange, record the user's message and your reply with
-  `add_messages_to_session`. Replace secrets with `[redacted]`.
+  `add_messages_to_session`, unless the session-start context says automatic
+  capture is on, in which case the hooks already did. Replace secrets with
+  `[redacted]`.
 - When the user states a durable preference, store it with
   `create_conclusions`.
 
