@@ -2724,5 +2724,5 @@ async def test_executor_bounds_exception_text_returned_to_model(
     result = await executor("flaky", {})
 
     assert result.startswith(prefix + head)
-    assert len(result) < 1_200
+    assert len(result) < settings.LLM.MAX_TOOL_OUTPUT_CHARS + 200
     assert result.endswith("chars]")

@@ -266,20 +266,19 @@ def _truncate_tool_output(
     return truncated, original_chars, True
 
 
-# Exception text is unbounded and not written for the model: SQLAlchemy appends
-# the full statement and its bound parameters, which for a query with tens of
-# thousands of parameters runs to millions of characters. The head names the
-# failure; past this cap it is noise that can overflow the model's context.
-_MAX_TOOL_ERROR_CHARS = 1000
-
-
 def _describe_tool_error(error: Exception) -> str:
-    """Bounded description of `error`, safe to hand back to the model."""
+    """Bounded description of `error`, safe to hand back to the model.
+
+    Exception text is unbounded and not written for the model: SQLAlchemy
+    appends the full statement and its bound parameters, which for a query with
+    tens of thousands of parameters runs to millions of characters. It gets the
+    same budget as successful tool output.
+    """
     message = str(error).strip()
-    if len(message) > _MAX_TOOL_ERROR_CHARS:
+    max_chars = settings.LLM.MAX_TOOL_OUTPUT_CHARS
+    if len(message) > max_chars:
         message = (
-            message[:_MAX_TOOL_ERROR_CHARS]
-            + f"… [truncated {len(message) - _MAX_TOOL_ERROR_CHARS:,} chars]"
+            message[:max_chars] + f"… [truncated {len(message) - max_chars:,} chars]"
         )
     return f"{type(error).__name__}: {message}" if message else type(error).__name__
 
