@@ -11,16 +11,10 @@ This package versions independently of the Honcho API, `@honcho-ai/sdk`, and hos
 
 ### Fixed
 
-- An expired or revoked OAuth access token is answered with HTTP 401 and
-  `WWW-Authenticate: Bearer error="invalid_token"` instead of a tool error
-  inside a 200. MCP clients refresh their token on a 401, so a one-hour
-  Groudon access token no longer strands a connection after sixty minutes
-  (Cursor reported Honcho as signed out while holding a valid refresh
-  token). Tool responses to POST are now one JSON body rather than an SSE
-  stream, which is what lets the status be decided after the tool ran. On the
-  Bun server a rejected session is dropped so the client re-initializes with
-  its refreshed token. API keys are unchanged: a 401 on a key is still a tool
-  error, and the admin-key hint is kept only for that case.
+- An expired or revoked OAuth token now returns HTTP 401 (`invalid_token`)
+  instead of a tool error, so clients refresh it rather than showing Honcho as
+  signed out after an hour. Tool calls now respond with a single JSON body
+  instead of an SSE stream. API key errors are unchanged.
 
 ### Added
 
