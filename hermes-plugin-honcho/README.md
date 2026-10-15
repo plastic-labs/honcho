@@ -573,3 +573,16 @@ unresolved work. Check the final summary before resuming live writes.
   }
 }
 ```
+
+## Development
+
+The unit tests run against a pinned Hermes install (the plugin imports Hermes core
+modules) and make no network calls:
+
+```bash
+cd hermes-plugin-honcho
+uv run --group test pytest tests
+```
+
+The Hermes pin is the `hermes-agent` entry in the `test` dependency group of
+`pyproject.toml`; bump it together with `uv lock`.

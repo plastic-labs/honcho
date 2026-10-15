@@ -1,4 +1,5 @@
 import signal
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
@@ -9,7 +10,7 @@ from src import crud, models
 from src.config import settings
 from src.crud.representation import RepresentationManager
 from src.deriver.deriver import process_representation_tasks_batch
-from src.exceptions import RepresentationSaveError
+from src.exceptions import EmptyRepresentationError, RepresentationSaveError
 from src.llm import HonchoLLMCallResponse
 from src.utils.representation import (
     ExplicitObservationBase,
@@ -74,6 +75,117 @@ class TestDeriverProcessing:
         )
         assert kwargs["model_config"].stop_sequences == expected_config.stop_sequences
         assert "llm_settings" not in kwargs
+
+    @staticmethod
+    async def _deriver_response_hook(
+        peer_name: str = "alice",
+        content: str = "hello",
+    ) -> Callable[[HonchoLLMCallResponse[Any]], None]:
+        """Run one batch and return the validate_response hook it passed."""
+        message = Mock(
+            id=1,
+            public_id="msg_1",
+            session_name="session-1",
+            workspace_name="workspace-1",
+            peer_name=peer_name,
+            content=content,
+            token_count=5,
+            created_at=datetime.now(UTC),
+        )
+        configuration = Mock()
+        configuration.reasoning.enabled = True
+        configuration.reasoning.custom_instructions = None
+        configuration.reasoning.custom_instructions_source = None
+
+        with patch(
+            "src.deriver.deriver.honcho_llm_call",
+            new_callable=AsyncMock,
+            return_value=HonchoLLMCallResponse(
+                content=PromptRepresentation(explicit=[]),
+                output_tokens=5,
+                finish_reasons=["stop"],
+            ),
+        ) as mock_llm_call:
+            await process_representation_tasks_batch(
+                messages=[message],
+                message_level_configuration=configuration,
+                observers=["bob"],
+                observed="alice",
+                queue_item_message_ids=[1],
+                session_id="canonical-session-1",
+            )
+
+        await_args = mock_llm_call.await_args
+        assert await_args is not None
+        return await_args.kwargs["validate_response"]
+
+    @pytest.mark.parametrize(
+        ("content", "finish_reason", "parse_class"),
+        [
+            (PromptRepresentation(explicit=[]), "length", "truncated"),
+            (PromptRepresentation(explicit=[]), "max_tokens", "truncated"),
+            (PromptRepresentation(explicit=[]), "content_filter", "content_filtered"),
+            # An OpenAI refusal arrives as its text instead of the model.
+            ("I can't help with that.", "stop", "content_filtered"),
+        ],
+    )
+    async def test_degraded_empty_representation_is_refused(
+        self, content: object, finish_reason: str, parse_class: str
+    ):
+        """The deriver's hook refuses a truncated, filtered, or refused empty,
+        carrying the prompt's digest but none of its text."""
+        secret = "my-sentinel-secret-4417"
+        validate = await self._deriver_response_hook(content=f"my password is {secret}")
+
+        with pytest.raises(EmptyRepresentationError) as exc_info:
+            validate(
+                HonchoLLMCallResponse(
+                    content=content, output_tokens=4096, finish_reasons=[finish_reason]
+                )
+            )
+
+        exc = exc_info.value
+        assert exc.parse_class == parse_class
+        assert exc.prompt_digest in str(exc)
+        assert secret not in str(exc)
+
+    @pytest.mark.parametrize(
+        "response",
+        [
+            # Zero output tokens is not a degradation signal: backends report 0
+            # when the provider omits usage.
+            HonchoLLMCallResponse(
+                content=PromptRepresentation(explicit=[]),
+                output_tokens=0,
+                finish_reasons=["stop"],
+            ),
+            HonchoLLMCallResponse(
+                content=PromptRepresentation(
+                    explicit=[ExplicitObservationBase(content="Has a dog")]
+                ),
+                output_tokens=4096,
+                finish_reasons=["length"],
+            ),
+        ],
+    )
+    async def test_clean_or_salvaged_representation_is_accepted(
+        self, response: HonchoLLMCallResponse[Any]
+    ):
+        """A clean-stop empty is an honest "nothing to record", and a
+        truncated response that still yielded observations keeps them."""
+        validate = await self._deriver_response_hook()
+        validate(response)
+
+    async def test_hook_accepts_anything_with_no_observed_messages(self):
+        """With no messages from the observed peer there is nothing to lose."""
+        validate = await self._deriver_response_hook(peer_name="bob")
+        validate(
+            HonchoLLMCallResponse(
+                content=PromptRepresentation(explicit=[]),
+                output_tokens=4096,
+                finish_reasons=["length"],
+            )
+        )
 
     async def test_all_observer_saves_failing_surfaces_failure(self):
         """When every observer's save_representation fails, the batch must raise."""
