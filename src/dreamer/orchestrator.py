@@ -32,7 +32,14 @@ from src.dreamer.specialists import (
     SpecialistResult,
 )
 from src.dreamer.surprisal import SurprisalScore  # type: ignore
-from src.dreamer.working_memory import DreamState, advance_cursor, load_dream_state
+from src.dreamer.working_memory import (
+    NOTES_KEY,
+    DreamState,
+    advance_cursor,
+    clear_position,
+    load_dream_state,
+    plan_cursor_move,
+)
 from src.exceptions import SurprisalError
 from src.llm.runtime import CapturedAgentSpan, start_captured_span
 from src.llm.types import LLMTelemetryContext
@@ -632,6 +639,21 @@ DREAM: {payload.dream_type} documents for {workspace_name}/{payload.observer}/{p
                         + f"duration={result.total_duration_ms:.0f}ms"
                     )
 
+                    any_succeeded = result.deduction_success or result.induction_success
+                    all_succeeded = (
+                        result.deduction_success and result.induction_success
+                    )
+                    # Work-list conclusions this dream left for the next one.
+                    # They are kept out of the recorded count, so the scheduler
+                    # still sees them as new and schedules the next dream.
+                    backlog = 0
+                    if working_memory_enabled() and result.state is not None:
+                        _, backlog = plan_cursor_move(
+                            result.state,
+                            any_specialist_succeeded=any_succeeded,
+                            all_specialists_succeeded=all_succeeded,
+                        )
+
                     # Both guard fields advance together only on successful consolidation.
                     now_iso = datetime.now(UTC).isoformat()
                     async with tracked_db("dream.guard_pair_write") as db:
@@ -651,20 +673,29 @@ DREAM: {payload.dream_type} documents for {workspace_name}/{payload.observer}/{p
                         current_explicit_count = int(await db.scalar(count_stmt) or 0)
                         dream_meta = dict(collection.internal_metadata.get("dream", {}))
                         dream_meta["last_dream_at"] = now_iso
-                        dream_meta["last_dream_document_count"] = current_explicit_count
+                        dream_meta["last_dream_document_count"] = max(
+                            0, current_explicit_count - backlog
+                        )
+                        update_data: dict[str, Any] = {"dream": dream_meta}
+                        if not working_memory_enabled():
+                            # This dream won't move the cursor, so a stored
+                            # position would be stale when it is turned back on.
+                            cleared = clear_position(
+                                collection.internal_metadata.get(NOTES_KEY)
+                            )
+                            if cleared is not None:
+                                update_data[NOTES_KEY] = cleared
                         await crud.update_collection_internal_metadata(
                             db,
                             workspace_name,
                             payload.observer,
                             payload.observed,
-                            update_data={"dream": dream_meta},
+                            update_data=update_data,
                         )
 
-                    # Record the dream only if a specialist actually ran. The
-                    # position also needs both, so a failed specialist is
-                    # shown the same conclusions again next dream.
+                    # Skipped only when nothing ran and nothing was shown.
                     if working_memory_enabled() and (
-                        result.deduction_success or result.induction_success
+                        any_succeeded or result.state is not None
                     ):
                         await advance_cursor(
                             workspace_name,
@@ -672,9 +703,8 @@ DREAM: {payload.dream_type} documents for {workspace_name}/{payload.observer}/{p
                             observed=payload.observed,
                             state=result.state,
                             run_id=result.run_id,
-                            all_specialists_succeeded=(
-                                result.deduction_success and result.induction_success
-                            ),
+                            any_specialist_succeeded=any_succeeded,
+                            all_specialists_succeeded=all_succeeded,
                         )
 
             case DreamType.CARD_REFRESH:

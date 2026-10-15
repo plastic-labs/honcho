@@ -37,16 +37,23 @@ NOTE_KINDS: tuple[str, ...] = get_args(NoteKind)
 PENDING_TTL_DREAMS = 3
 COVERED_TTL_DREAMS = 5
 
+# Dreams in a row the position may hold for a failed specialist before it moves
+# anyway, so a specialist that always fails for a pair can't pin the work list.
+MAX_CURSOR_HOLDS = 3
+
 
 class NotesCursor(BaseModel):
     """How far the since-last-dream work list has been worked through."""
 
-    # Keyset position of the last explicit conclusion shown to a dream.
+    # Keyset position of the last explicit conclusion shown to a dream. An
+    # empty `through_id` marks a start pinned before the first conclusion shown.
     through_created_at: datetime.datetime | None = None
     through_id: str | None = None
     last_run_id: str | None = None
     # Omni dreams completed for this pair since the cursor was introduced.
     dreams: int = 0
+    # Dreams in a row the position held because a specialist failed.
+    holds: int = 0
 
     def position(self) -> tuple[datetime.datetime, str] | None:
         if self.through_created_at is None or self.through_id is None:
@@ -242,6 +249,88 @@ def format_work_list(work_list: WorkList) -> str:
     )
 
 
+_CLEARED_POSITION: dict[str, Any] = {
+    "through_created_at": None,
+    "through_id": None,
+    "holds": 0,
+}
+
+
+def plan_cursor_move(
+    state: DreamState,
+    *,
+    any_specialist_succeeded: bool,
+    all_specialists_succeeded: bool,
+) -> tuple[NotesCursor, int]:
+    """Where a dream leaves the cursor, and how much of the work list is still due.
+
+    The position moves only through the conclusions the dream was shown, so a
+    backlog larger than the cap is worked through over consecutive dreams. It
+    holds when a specialist failed, so that specialist is shown them again, but
+    only for `MAX_CURSOR_HOLDS` dreams in a row. The dream count moves only when
+    a specialist ran.
+
+    Returns:
+        The updated cursor, and the work-list conclusions still due after this
+        dream: the ones not shown, plus the shown ones when the position held.
+    """
+    cursor = state.cursor
+    update: dict[str, Any] = (
+        {"dreams": cursor.dreams + 1} if any_specialist_succeeded else {}
+    )
+    work_list = state.work_list
+    if work_list is None:
+        # The brief is off. Clear the position so that turning it back on
+        # starts from the scheduler's last dream, not a stale position.
+        return cursor.model_copy(update={**update, **_CLEARED_POSITION}), 0
+    through = work_list.through()
+    if through is None:
+        return cursor.model_copy(update=update), work_list.remaining
+
+    held_too_long = any_specialist_succeeded and cursor.holds + 1 >= MAX_CURSOR_HOLDS
+    if all_specialists_succeeded or held_too_long:
+        if not all_specialists_succeeded:
+            logger.warning(
+                "Moving the dream cursor past %d conclusions after %d failed dreams",
+                len(work_list.items),
+                MAX_CURSOR_HOLDS,
+            )
+        update |= {"through_created_at": through[0], "through_id": through[1]}
+        update["holds"] = 0
+        return cursor.model_copy(update=update), work_list.remaining
+
+    if any_specialist_succeeded:
+        update["holds"] = cursor.holds + 1
+    if cursor.position() is None:
+        # Without a position the list starts from the scheduler's
+        # `last_dream_at`, which this dream is about to move past what it was
+        # shown. Pin the start of the list instead, so it is shown again.
+        update |= {
+            "through_created_at": work_list.items[0].created_at,
+            "through_id": "",
+        }
+    return (
+        cursor.model_copy(update=update),
+        work_list.remaining + len(work_list.items),
+    )
+
+
+def clear_position(stored: Any) -> dict[str, Any] | None:
+    """The stored `dream_notes` value with its position cleared.
+
+    For dreams that run with working memory off and so never call
+    `advance_cursor`: turning it back on must not resume from a position those
+    dreams have moved past. Returns None when there is no position to clear.
+    """
+    if not isinstance(stored, dict):
+        return None
+    cursor = parse_cursor(stored)
+    if cursor.position() is None:
+        return None
+    cleared = cursor.model_copy(update=_CLEARED_POSITION)
+    return {**cast(dict[str, Any], stored), "cursor": cleared.model_dump(mode="json")}
+
+
 async def advance_cursor(
     workspace_name: str,
     *,
@@ -249,15 +338,10 @@ async def advance_cursor(
     observed: str,
     state: DreamState | None,
     run_id: str,
+    any_specialist_succeeded: bool,
     all_specialists_succeeded: bool,
 ) -> None:
-    """Record a completed dream: bump the dream count and move past what it was shown.
-
-    The position moves only through the conclusions the dream was shown, so a
-    backlog larger than the cap is worked through over consecutive dreams. It
-    holds when a specialist failed, so that specialist is shown them again.
-    """
-    position: dict[str, Any] = {}
+    """Record a dream's effect on the cursor; see `plan_cursor_move`."""
     if state is None:
         # The state failed to load before the dream, so what it was shown is
         # unknown: hold the position, and re-read so the count stays accurate.
@@ -267,16 +351,15 @@ async def advance_cursor(
             observed=observed,
             include_work_list=False,
         )
-    elif state.work_list is None:
-        # The brief is off. Clear the position so that turning it back on
-        # starts from the scheduler's last dream, not a stale position.
-        position = {"through_created_at": None, "through_id": None}
-    elif all_specialists_succeeded and (through := state.work_list.through()):
-        position = {"through_created_at": through[0], "through_id": through[1]}
-    cursor = state.cursor
-    updated = cursor.model_copy(
-        update={"dreams": cursor.dreams + 1, "last_run_id": run_id, **position}
-    )
+        dreams = state.cursor.dreams + (1 if any_specialist_succeeded else 0)
+        updated = state.cursor.model_copy(update={"dreams": dreams})
+    else:
+        updated, _ = plan_cursor_move(
+            state,
+            any_specialist_succeeded=any_specialist_succeeded,
+            all_specialists_succeeded=all_specialists_succeeded,
+        )
+    updated = updated.model_copy(update={"last_run_id": run_id})
     async with tracked_db("dream.cursor_write") as db:
         await crud.merge_collection_internal_metadata_value(
             db,

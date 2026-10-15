@@ -8,13 +8,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import crud, models
 from src.config import settings
 from src.dreamer.working_memory import (
+    MAX_CURSOR_HOLDS,
     NOTES_KEY,
+    DreamState,
     NotesCursor,
     WorkItem,
     WorkList,
     advance_cursor,
+    clear_position,
     format_work_list,
     load_dream_state,
+    plan_cursor_move,
 )
 
 
@@ -107,6 +111,7 @@ async def test_backlog_is_worked_through_over_consecutive_dreams(
         observed=peer,
         state=first_state,
         run_id="r1",
+        any_specialist_succeeded=True,
         all_specialists_succeeded=True,
     )
 
@@ -121,6 +126,7 @@ async def test_backlog_is_worked_through_over_consecutive_dreams(
         observed=peer,
         state=second_state,
         run_id="r2",
+        any_specialist_succeeded=True,
         all_specialists_succeeded=True,
     )
 
@@ -134,10 +140,25 @@ async def test_backlog_is_worked_through_over_consecutive_dreams(
     assert third is not None and third.items == [] and third.remaining == 0
 
 
+async def _set_last_dream_at(
+    db_session: AsyncSession, workspace: str, peer: str, when: datetime.datetime
+) -> None:
+    """What `process_dream` does to the scheduler's key at the end of every dream."""
+    await crud.update_collection_internal_metadata(
+        db_session,
+        workspace,
+        peer,
+        peer,
+        update_data={"dream": {"last_dream_at": when.isoformat()}},
+    )
+
+
 @pytest.mark.asyncio
+@pytest.mark.parametrize("any_succeeded", [True, False])
 async def test_failed_specialist_is_shown_the_same_list_again(
     db_session: AsyncSession,
     sample_data: tuple[models.Workspace, models.Peer],
+    any_succeeded: bool,
 ):
     workspace, peer = await _seed(
         db_session,
@@ -152,14 +173,95 @@ async def test_failed_specialist_is_shown_the_same_list_again(
         observed=peer,
         state=state,
         run_id="r1",
+        any_specialist_succeeded=any_succeeded,
         all_specialists_succeeded=False,
+    )
+    # The first dream had no position to hold; the scheduler's bound moving
+    # past the list must not lose it.
+    await _set_last_dream_at(
+        db_session, workspace, peer, T0 + datetime.timedelta(hours=1)
     )
 
     again = await load_work_list(workspace, observer=peer, observed=peer)
     assert again.work_list is not None
     assert [i.id for i in again.work_list.items] == [_id("a"), _id("b")]
-    # The dream still counts, so note expiry keeps moving.
-    assert again.cursor.dreams == 1
+    # A dream where a specialist ran still counts, so note expiry keeps moving.
+    assert again.cursor.dreams == (1 if any_succeeded else 0)
+    assert again.cursor.holds == (1 if any_succeeded else 0)
+
+
+@pytest.mark.asyncio
+async def test_position_moves_after_repeated_holds(
+    db_session: AsyncSession,
+    sample_data: tuple[models.Workspace, models.Peer],
+):
+    workspace, peer = await _seed(
+        db_session,
+        sample_data,
+        [("a", "explicit", T0), ("b", "explicit", T0 + datetime.timedelta(minutes=1))],
+    )
+    for dream in range(1, MAX_CURSOR_HOLDS + 1):
+        state = await load_work_list(workspace, observer=peer, observed=peer)
+        assert state.work_list is not None
+        assert [i.id for i in state.work_list.items] == [_id("a"), _id("b")]
+        await advance_cursor(
+            workspace,
+            observer=peer,
+            observed=peer,
+            state=state,
+            run_id=f"r{dream}",
+            any_specialist_succeeded=True,
+            all_specialists_succeeded=False,
+        )
+
+    after = await load_work_list(workspace, observer=peer, observed=peer)
+    assert after.work_list is not None and after.work_list.items == []
+    assert (after.cursor.through_id, after.cursor.holds) == (_id("b"), 0)
+
+
+def _state(items: int, remaining: int, *, holds: int = 0) -> DreamState:
+    return DreamState(
+        cursor=NotesCursor(holds=holds),
+        work_list=WorkList(
+            items=[
+                WorkItem(id=f"x{i}", content="c", created_at=T0) for i in range(items)
+            ],
+            remaining=remaining,
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    ("all_succeeded", "holds", "backlog"),
+    [(True, 0, 5), (False, 0, 7), (False, MAX_CURSOR_HOLDS - 1, 5)],
+)
+def test_backlog_counts_what_the_next_dream_must_show(
+    all_succeeded: bool, holds: int, backlog: int
+):
+    _, due = plan_cursor_move(
+        _state(2, 5, holds=holds),
+        any_specialist_succeeded=True,
+        all_specialists_succeeded=all_succeeded,
+    )
+    assert due == backlog
+
+
+def test_clear_position_keeps_entries_and_count():
+    stored = {
+        "entries": [{"id": "n1"}],
+        "cursor": {
+            "through_created_at": T0.isoformat(),
+            "through_id": "x",
+            "dreams": 3,
+        },
+    }
+    cleared = clear_position(stored)
+    assert cleared is not None
+    assert cleared["entries"] == [{"id": "n1"}]
+    cursor = NotesCursor.model_validate(cleared["cursor"])
+    assert (cursor.position(), cursor.dreams) == (None, 3)
+    assert clear_position(cleared) is None
+    assert clear_position(None) is None
 
 
 @pytest.mark.asyncio
@@ -195,6 +297,7 @@ async def test_brief_off_clears_a_stale_position(
         observed=peer,
         state=state,
         run_id="r1",
+        any_specialist_succeeded=True,
         all_specialists_succeeded=True,
     )
 
@@ -246,6 +349,7 @@ async def test_cursor_merge_keeps_other_note_keys(
         observed=peer,
         state=None,
         run_id="r1",
+        any_specialist_succeeded=True,
         all_specialists_succeeded=True,
     )
     notes = (await _stored_notes(db_session, workspace, peer))[NOTES_KEY]
