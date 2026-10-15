@@ -1,11 +1,12 @@
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import replace
 from enum import Enum
 from functools import cache
 from inspect import cleandoc as c
-from typing import TypedDict
+from typing import Any, TypedDict
 
 from nanoid import generate as generate_nanoid
 from sqlalchemy import update
@@ -16,9 +17,13 @@ from src.cache.client import cache as cache_client
 from src.config import ConfiguredModelSettings, settings
 from src.crud.session import session_cache_key
 from src.dependencies import tracked_db
-from src.exceptions import ResourceNotFoundException
+from src.exceptions import EmptySummaryError, ResourceNotFoundException
 from src.llm import HonchoLLMCallResponse, honcho_llm_call
-from src.llm.types import LLMTelemetryContext
+from src.llm.types import (
+    LLMTelemetryContext,
+    degraded_response_parse_class,
+    hit_output_cap,
+)
 from src.models import Message
 from src.telemetry import prometheus_metrics
 from src.telemetry.events import AgentToolSummaryCreatedEvent, emit
@@ -114,8 +119,6 @@ class SummaryType(Enum):
 # so 0.35 leaves the clean case a 1.33x margin and the degenerate case two orders below.
 _DEGENERATE_NGRAM_N = 4
 _DEGENERATE_DISTINCT_RATIO = 0.35
-# Provider-native cap-hit spellings; never normalized by completion_result_to_response.
-_CAP_FINISH_REASONS = frozenset({"max_tokens", "length"})
 
 
 def _distinct_ngram_ratio(text: str, n: int = _DEGENERATE_NGRAM_N) -> float:
@@ -125,11 +128,6 @@ def _distinct_ngram_ratio(text: str, n: int = _DEGENERATE_NGRAM_N) -> float:
         return 1.0
     grams = [tuple(words[i : i + n]) for i in range(len(words) - n + 1)]
     return len(set(grams)) / len(grams)
-
-
-def _hit_output_cap(finish_reasons: list[str]) -> bool:
-    """True when any provider reported stopping at the output-token cap."""
-    return any(r.lower() in _CAP_FINISH_REASONS for r in finish_reasons)
 
 
 def _basic_fallback_summary(
@@ -250,6 +248,28 @@ def estimate_long_summary_prompt_tokens() -> int:
         return 200
 
 
+def _refuse_degraded_empty_summary(
+    prompt: str,
+) -> Callable[[HonchoLLMCallResponse[Any]], None]:
+    """Build a ``validate_response`` hook that refuses a truncated or filtered
+    empty summary inside the retried call. The fallback text for an empty
+    summary is never saved, so accepting it would consume the boundary."""
+
+    def validate(response: HonchoLLMCallResponse[Any]) -> None:
+        if str(response.content).strip():
+            return
+        parse_class = degraded_response_parse_class(response)
+        if parse_class is not None:
+            raise EmptySummaryError.for_prompt(
+                prompt,
+                parse_class=parse_class,
+                finish_reasons=response.finish_reasons,
+                output_tokens=response.output_tokens,
+            )
+
+    return validate
+
+
 async def create_short_summary(
     formatted_messages: str,
     input_tokens: int,
@@ -280,6 +300,7 @@ async def create_short_summary(
         model_config=_get_summary_model_config(),
         prompt=prompt,
         max_tokens=settings.SUMMARY.MAX_TOKENS_SHORT,
+        validate_response=_refuse_degraded_empty_summary(prompt),
         telemetry=replace(
             telemetry or LLMTelemetryContext(),
             call_purpose=CallPurpose.SUMMARY_SHORT.value,
@@ -316,6 +337,7 @@ async def create_long_summary(
         model_config=_get_summary_model_config(),
         prompt=prompt,
         max_tokens=settings.SUMMARY.MAX_TOKENS_LONG,
+        validate_response=_refuse_degraded_empty_summary(prompt),
         telemetry=replace(
             telemetry or LLMTelemetryContext(),
             call_purpose=CallPurpose.SUMMARY_LONG.value,
@@ -405,11 +427,16 @@ async def summarize_if_needed(
                 "count",
             )
 
-        await asyncio.gather(
+        results = await asyncio.gather(
             create_long_summary_task(),
             create_short_summary_task(),
             return_exceptions=True,
         )
+        # Every long boundary is also a short one under the default cadence,
+        # so a refused summary must escape here or it is silently dropped.
+        for result in results:
+            if isinstance(result, EmptySummaryError):
+                raise result
     else:
         # If only one summary needs to be created, run individually
         if should_create_long:
@@ -706,7 +733,7 @@ async def _create_summary(
             summary_tokens = estimate_tokens(summary_text) if summary_text else 0
             llm_input_tokens = 0
             llm_output_tokens = 0
-        elif _hit_output_cap(response.finish_reasons):
+        elif hit_output_cap(response.finish_reasons):
             repetition_ratio = _distinct_ngram_ratio(summary_text)
             if repetition_ratio < _DEGENERATE_DISTINCT_RATIO:
                 logger.error(
@@ -733,6 +760,10 @@ async def _create_summary(
                         summary_type=summary_type.name.lower(),
                         reason=SUMMARY_REJECTION_DEGENERATE,
                     )
+    except EmptySummaryError:
+        # Not a generation failure to paper over: the fallback below is never
+        # saved, so it must reach the queue as an error.
+        raise
     except Exception:
         logger.exception("Error generating summary!")
         # Fallback to a basic summary in case of error
