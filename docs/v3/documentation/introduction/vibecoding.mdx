@@ -30,11 +30,10 @@ See the [full MCP documentation](/v3/guides/integrations/mcp) for all available 
         "--header",
         "Authorization:${AUTH_HEADER}",
         "--header",
-        "X-Honcho-User-Name:${USER_NAME}"
+        "X-Honcho-Plugin:claude-desktop"
       ],
       "env": {
-        "AUTH_HEADER": "Bearer hch-your-key-here",
-        "USER_NAME": "YourName"
+        "AUTH_HEADER": "Bearer hch-your-key-here"
       }
     }
   }
@@ -48,7 +47,7 @@ See the [full MCP documentation](/v3/guides/integrations/mcp) for all available 
       "url": "https://mcp.honcho.dev",
       "headers": {
         "Authorization": "Bearer hch-your-key-here",
-        "X-Honcho-User-Name": "YourName"
+        "X-Honcho-Plugin": "cursor"
       }
     }
   }
@@ -60,7 +59,7 @@ claude mcp add honcho \
   --transport http \
   --url "https://mcp.honcho.dev" \
   --header "Authorization: Bearer hch-your-key-here" \
-  --header "X-Honcho-User-Name: YourName"
+  --header "X-Honcho-Plugin: claude-code"
 ```
 </CodeGroup>
 

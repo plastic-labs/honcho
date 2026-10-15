@@ -16,6 +16,8 @@ from pydantic import ValidationError
 from sqlalchemy.exc import OperationalError
 
 from src.exceptions import (
+    EmptyRepresentationError,
+    EmptySummaryError,
     HonchoException,
     ResourceNotFoundException,
     SentryPolicy,
@@ -43,16 +45,6 @@ def test_connection_timeout_is_consolidated_and_downgraded() -> None:
     assert out == {
         "fingerprint": ["honcho-db-connection-timeout"],
         "level": "warning",
-    }
-
-
-def test_structured_output_error_is_consolidated() -> None:
-    """Raised from every caller with a response model, so it groups as one
-    issue rather than splitting by call site."""
-    out = default_before_send({}, _hint(StructuredOutputError("no content")))
-    assert out == {
-        "fingerprint": ["honcho-llm-structured-output-invalid"],
-        "level": "error",
     }
 
 
@@ -124,6 +116,39 @@ def test_a_new_exception_defaults_to_being_dropped() -> None:
 
     assert PlainException.sentry_policy is None
     assert default_before_send({}, _hint(PlainException("plain"))) is None
+
+
+def _degraded(cls: type[EmptyRepresentationError | EmptySummaryError]) -> Exception:
+    return cls.for_prompt(
+        "prompt", parse_class="truncated", finish_reasons=["length"], output_tokens=9
+    )
+
+
+@pytest.mark.parametrize(
+    ("exc", "fingerprint"),
+    [
+        (
+            _degraded(EmptyRepresentationError),
+            "honcho-deriver-degraded-empty-representation",
+        ),
+        (_degraded(EmptySummaryError), "honcho-summary-degraded-empty-summary"),
+        (
+            StructuredOutputError("PromptRepresentation structured output failed"),
+            "honcho-llm-invalid-structured-output",
+        ),
+    ],
+    ids=["representation", "summary", "structured-output"],
+)
+def test_llm_output_failures_are_kept_as_one_issue_each(
+    exc: Exception, fingerprint: str
+) -> None:
+    """These escape only after the retry budget and fallback are spent, so they
+    are memory or summaries that were not written. Each collapses into a single
+    error-level issue so the per-issue spike alert counts its real rate."""
+    assert default_before_send({}, _hint(exc)) == {
+        "fingerprint": [fingerprint],
+        "level": "error",
+    }
 
 
 def test_honcho_and_validation_errors_are_dropped() -> None:

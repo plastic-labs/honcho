@@ -73,3 +73,43 @@ test("MCP requests disable the idle timeout", async () => {
   );
   expect(disabled).toEqual(["/mcp"]);
 });
+
+test("a session's tool calls carry the caller's plugin header", async () => {
+  const identity = {
+    Authorization: "Bearer key-c",
+    "User-Agent": "Cursor/1.0.0",
+    "X-Honcho-Plugin": "cursor-honcho/0.2.0",
+  };
+  const init = await mcpPost(identity, initializeBody);
+  expect(init.status).toBe(200);
+  const sessionId = init.headers.get("mcp-session-id")!;
+
+  const seen: Headers[] = [];
+  const original = globalThis.fetch;
+  globalThis.fetch = async (_input, reqInit) => {
+    seen.push(new Headers(reqInit?.headers as HeadersInit));
+    return new Response(
+      JSON.stringify({ items: [], page: 1, size: 10, total: 0, pages: 0 }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  };
+  try {
+    const call = await mcpPost(
+      { ...identity, "mcp-session-id": sessionId },
+      {
+        jsonrpc: "2.0",
+        id: 3,
+        method: "tools/call",
+        params: { name: "list_workspaces", arguments: {} },
+      },
+    );
+    expect(call.status).toBe(200);
+    await call.text();
+  } finally {
+    globalThis.fetch = original;
+  }
+
+  expect(seen.length).toBeGreaterThan(0);
+  expect(seen[0].get("X-Honcho-Plugin")).toBe("cursor-honcho/0.2.0 (Cursor/1.0.0)");
+  expect(seen[0].get("X-Honcho-Host")).toMatch(/^honcho-mcp\//);
+});

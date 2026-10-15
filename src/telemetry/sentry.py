@@ -37,15 +37,6 @@ _DB_CONNECTION_TIMEOUT_POLICY = SentryPolicy(
     fingerprint="honcho-db-connection-timeout",
 )
 
-# A structured LLM answer that still won't validate after retries and the
-# fallback chain. Raised from every caller with a response model (deriver,
-# dreamer, summarizer), so collapse it into one issue rather than one per call
-# site. The dialectic converts it to StructuredResponseError, which has its own.
-_STRUCTURED_OUTPUT_POLICY = SentryPolicy(
-    level="error",
-    fingerprint="honcho-llm-structured-output-invalid",
-)
-
 
 def _apply_policy(event: Event, policy: SentryPolicy | None) -> Event | None:
     """Regroup and re-level `event` per `policy`, or drop it when there is none."""
@@ -56,6 +47,16 @@ def _apply_policy(event: Event, policy: SentryPolicy | None) -> Event | None:
         event["fingerprint"] = [policy.fingerprint]
     event["level"] = policy.level
     return event
+
+
+# Model output that fails structured-output parsing or validation, after the
+# retry budget and fallback are spent. Collapsed into one issue so the per-issue
+# spike alert sees the real failure rate rather than one issue per backend and
+# call site.
+_STRUCTURED_OUTPUT_POLICY = SentryPolicy(
+    level="error",
+    fingerprint="honcho-llm-invalid-structured-output",
+)
 
 
 _LLM_SDK_INTEGRATION_MECHANISMS = frozenset({"google_genai", "openai", "anthropic"})
@@ -99,13 +100,13 @@ def default_before_send(event: Event, hint: Hint | None) -> Event | None:
     if isinstance(exc_value, HonchoException):
         return _apply_policy(event, type(exc_value).sentry_policy)
 
+    if isinstance(exc_value, StructuredOutputError):
+        return _apply_policy(event, _STRUCTURED_OUTPUT_POLICY)
+
     # Filters out ValidationErrors and RequestValidationErrors (typically from Pydantic)
     if isinstance(exc_value, ValidationError | RequestValidationError):
         logger.info(f"Filtering out validation error from Sentry: {exc_value}")
         return None
-
-    if isinstance(exc_value, StructuredOutputError):
-        return _apply_policy(event, _STRUCTURED_OUTPUT_POLICY)
 
     if isinstance(exc_value, OperationalError) and "connection timeout expired" in str(
         exc_value
