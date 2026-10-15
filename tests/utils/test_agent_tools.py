@@ -2693,3 +2693,36 @@ class TestEvidenceCoverage:
             f"{tool_name} returns rows to the model but never records them, so "
             "they will be missing from evidence"
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("raised", "prefix"),
+    [
+        (RuntimeError, "Tool flaky failed unexpectedly: RuntimeError: "),
+        (ValueError, "Tool flaky failed with invalid input: ValueError: "),
+    ],
+    ids=["unexpected", "invalid-input"],
+)
+async def test_executor_bounds_exception_text_returned_to_model(
+    raised: type[Exception], prefix: str
+):
+    """A driver error can embed its whole statement; the model gets the head only."""
+    head = "(psycopg.OperationalError) number of parameters must be between 0 and 65535"
+    huge = head + "\n[SQL: SELECT " + "%(session_name_1)s, " * 200_000 + "]"
+
+    async def flaky(_ctx: Any, _input: dict[str, Any]) -> str:
+        raise raised(huge)
+
+    executor = await create_tool_executor(
+        workspace_name="w",
+        observer="a",
+        observed="a",
+        handler_resolver=lambda name: flaky if name == "flaky" else None,
+    )
+
+    result = await executor("flaky", {})
+
+    assert result.startswith(prefix + head)
+    assert len(result) < settings.LLM.MAX_TOOL_OUTPUT_CHARS + 200
+    assert result.endswith("chars]")
