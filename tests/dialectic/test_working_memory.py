@@ -2,6 +2,8 @@
 
 import datetime
 import time
+from types import SimpleNamespace
+from typing import final
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -75,6 +77,55 @@ async def test_answer_passes_the_budget_line(monkeypatch: pytest.MonkeyPatch):
         await _agent("high").answer("q")
     assert llm_call.call_args.kwargs["budget_line"] is dialectic_budget_line
     assert log_metrics.call_args.kwargs["budget_line_enabled"] is True
+
+
+@final
+class _Stream:
+    """Stands in for the streamed response: two chunks, then metadata."""
+
+    tool_calls_made: list[dict[str, str]] = []
+    input_tokens = 1
+    output_tokens = 1
+    cache_read_input_tokens = 0
+    cache_creation_input_tokens = 0
+    thinking_content = None
+    iterations = 4
+    hit_input_token_cap = False
+    hit_iteration_limit = True
+
+    async def __aiter__(self):
+        for text in ("ans", "wer"):
+            yield SimpleNamespace(content=text)
+
+
+@pytest.mark.asyncio
+async def test_answer_stream_passes_the_budget_line(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(settings.DIALECTIC, "BUDGET_ENABLED", True)
+    level_settings = settings.DIALECTIC.LEVELS["high"].model_copy(
+        update={"MAX_TOOL_ITERATIONS": 4}
+    )
+    monkeypatch.setitem(settings.DIALECTIC.LEVELS, "high", level_settings)
+    llm_call = AsyncMock(return_value=_Stream())
+    with (
+        patch.object(
+            DialecticAgent,
+            "_prepare_query",
+            new=AsyncMock(
+                return_value=(AsyncMock(), "task", "run", time.perf_counter(), None)
+            ),
+        ),
+        patch.object(DialecticAgent, "_log_response_metrics") as log_metrics,
+        patch("src.dialectic.core.honcho_llm_call", new=llm_call),
+    ):
+        chunks = [chunk async for chunk in _agent("high").answer_stream("q")]
+    assert chunks == ["ans", "wer"]
+    kwargs = llm_call.call_args.kwargs
+    assert kwargs["budget_line"] is dialectic_budget_line
+    assert kwargs["max_tool_iterations"] == 4
+    metrics = log_metrics.call_args.kwargs
+    assert metrics["hit_iteration_limit"] is True
+    assert metrics["iteration_limit"] == 4
+    assert metrics["budget_line_enabled"] is True
 
 
 def test_layout_section_follows_the_flag(monkeypatch: pytest.MonkeyPatch):
