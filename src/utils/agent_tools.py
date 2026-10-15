@@ -266,6 +266,23 @@ def _truncate_tool_output(
     return truncated, original_chars, True
 
 
+def _describe_tool_error(error: Exception) -> str:
+    """Bounded description of `error`, safe to hand back to the model.
+
+    Exception text is unbounded and not written for the model: SQLAlchemy
+    appends the full statement and its bound parameters, which for a query with
+    tens of thousands of parameters runs to millions of characters. It gets the
+    same budget as successful tool output.
+    """
+    message = str(error).strip()
+    max_chars = settings.LLM.MAX_TOOL_OUTPUT_CHARS
+    if len(message) > max_chars:
+        message = (
+            message[:max_chars] + f"… [truncated {len(message) - max_chars:,} chars]"
+        )
+    return f"{type(error).__name__}: {message}" if message else type(error).__name__
+
+
 def _truncation_metadata(was_truncated: bool, original_chars: int) -> dict[str, Any]:
     """`ToolResult.metadata` fields that `AgentToolCallCompletedEvent` reads
     to report truncation; empty when the output was not clamped."""
@@ -2506,7 +2523,9 @@ async def create_tool_executor(
             raise
         except ValueError as e:
             # Recoverable errors (bad input, validation failures) - return to LLM
-            result_str = f"Tool {tool_name} failed with invalid input: {e}"
+            result_str = (
+                f"Tool {tool_name} failed with invalid input: {_describe_tool_error(e)}"
+            )
             is_error = True
             logger.warning(result_str)
         except KeyError as e:
@@ -2518,7 +2537,7 @@ async def create_tool_executor(
             # Unexpected errors - log with full traceback but still return to LLM
             # We don't re-raise because the LLM should be able to continue with other tools
             result_str = (
-                f"Tool {tool_name} failed unexpectedly: {type(e).__name__}: {e}"
+                f"Tool {tool_name} failed unexpectedly: {_describe_tool_error(e)}"
             )
             is_error = True
             logger.error(result_str, exc_info=True)

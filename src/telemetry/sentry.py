@@ -16,6 +16,7 @@ from sqlalchemy.exc import OperationalError
 from src.config import settings
 from src.exceptions import HonchoException, SentryPolicy
 from src.llm import errors as llm_errors
+from src.llm.structured_output import StructuredOutputError
 
 P = ParamSpec("P")
 T = TypeVar("T")
@@ -46,6 +47,16 @@ def _apply_policy(event: Event, policy: SentryPolicy | None) -> Event | None:
         event["fingerprint"] = [policy.fingerprint]
     event["level"] = policy.level
     return event
+
+
+# Model output that fails structured-output parsing or validation, after the
+# retry budget and fallback are spent. Collapsed into one issue so the per-issue
+# spike alert sees the real failure rate rather than one issue per backend and
+# call site.
+_STRUCTURED_OUTPUT_POLICY = SentryPolicy(
+    level="error",
+    fingerprint="honcho-llm-invalid-structured-output",
+)
 
 
 _LLM_SDK_INTEGRATION_MECHANISMS = frozenset({"google_genai", "openai", "anthropic"})
@@ -88,6 +99,9 @@ def default_before_send(event: Event, hint: Hint | None) -> Event | None:
 
     if isinstance(exc_value, HonchoException):
         return _apply_policy(event, type(exc_value).sentry_policy)
+
+    if isinstance(exc_value, StructuredOutputError):
+        return _apply_policy(event, _STRUCTURED_OUTPUT_POLICY)
 
     # Filters out ValidationErrors and RequestValidationErrors (typically from Pydantic)
     if isinstance(exc_value, ValidationError | RequestValidationError):

@@ -2,6 +2,7 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import * as Sentry from "@sentry/bun";
 import {
+  HEADER_PLUGIN,
   honchoClients,
   identityHeaders,
   parseConfig,
@@ -29,7 +30,7 @@ declare const Bun: {
 const CORS_ORIGIN = "*";
 const CORS_METHODS = "GET, POST, DELETE, OPTIONS";
 const CORS_ALLOWED_HEADERS =
-  "Content-Type, Authorization, X-Honcho-Workspace-ID, mcp-session-id, mcp-protocol-version, last-event-id";
+  "Content-Type, Authorization, X-Honcho-Workspace-ID, X-Honcho-Plugin, mcp-session-id, mcp-protocol-version, last-event-id";
 
 const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Origin": CORS_ORIGIN,
@@ -154,6 +155,25 @@ async function handleMcp(request: Request): Promise<Response> {
     }
   }
 
+  // A Mcp-Session-Id header was sent but no matching session exists, so it was
+  // terminated (idle sweep, container restart). The Streamable HTTP spec
+  // requires the server to answer requests carrying a terminated session ID
+  // with HTTP 404 so the client starts a new session by reinitializing; a
+  // request with no session header at all falls through to the 400 path below.
+  if (sessionId) {
+    return jsonResponse(
+      {
+        jsonrpc: "2.0",
+        error: {
+          code: -32000,
+          message: "Session not found",
+        },
+        id: null,
+      },
+      404,
+    );
+  }
+
   if (request.method !== "POST") {
     return jsonResponse(
       {
@@ -204,7 +224,10 @@ async function handleMcp(request: Request): Promise<Response> {
     config,
     ...honchoClients(
       config,
-      identityHeaders(request.headers.get("User-Agent")),
+      identityHeaders(
+        request.headers.get("User-Agent"),
+        request.headers.get(HEADER_PLUGIN),
+      ),
     ),
   });
 
