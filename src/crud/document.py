@@ -244,6 +244,11 @@ async def query_explicit_documents_after(
     are returned. Without it, `since` (if given) bounds `created_at` instead.
     Ordering ends in `id`, so documents sharing a timestamp are neither skipped
     nor repeated when the caller pages forward from the last one returned.
+
+    `created_at` is the start of the inserting transaction (`now()`), not its
+    commit, so a slow writer can commit a document behind a position a caller
+    has already paged past, and it is never returned. The document is still in
+    memory; it just never appears in a page.
     """
     conditions = [
         models.Document.workspace_name == workspace_name,
