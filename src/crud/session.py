@@ -43,6 +43,7 @@ from src.exceptions import (
     ResourceNotFoundException,
     ValidationException,
 )
+from src.telemetry.events import SessionCreatedEvent, emit
 from src.utils.filter import apply_filter
 from src.utils.scopes import is_scope_peer, scope_peer_name
 from src.utils.types import GetOrCreateResult
@@ -201,6 +202,7 @@ async def get_or_create_session(
     workspace_name: str,
     *,
     acting_peer: str | None = None,
+    acting_scope: str | None = None,
     _retry: bool = False,
 ) -> GetOrCreateResult[models.Session]:
     """
@@ -220,6 +222,9 @@ async def get_or_create_session(
         acting_peer: Peer a peer-scoped caller acts as. An existing session is
             then only returned to an active member, and its metadata and
             configuration are left untouched.
+        acting_scope: Scope a restricted caller acts within. Only fresh sessions
+            may be enrolled; existing sessions must already be active members,
+            and their metadata, configuration, and peers are left untouched.
         _retry: Whether to retry after a concurrent create conflict
 
     Returns:
@@ -228,8 +233,9 @@ async def get_or_create_session(
     Raises:
         ValueError: If session.name is empty
         ResourceNotFoundException: If the named session exists but is inactive
-        AuthenticationException: If ``acting_peer`` is not a member of the
-            existing session, or tries to change its metadata or configuration
+        AuthenticationException: If ``acting_peer`` or ``acting_scope`` is not
+            a member of the existing session, or tries to change its metadata
+            or configuration (or, for ``acting_scope``, its peers)
         ObserverException: If adding peers would exceed the observer limit
         ConflictException: If concurrent creation prevents fetching or creating
             the session
@@ -297,9 +303,32 @@ async def get_or_create_session(
                     f"Unable to create or get session: {session.name}"
                 ) from None
             return await get_or_create_session(
-                db, session, workspace_name, acting_peer=acting_peer, _retry=True
+                db,
+                session,
+                workspace_name,
+                acting_peer=acting_peer,
+                acting_scope=acting_scope,
+                _retry=True,
             )
     else:
+        if acting_scope is not None:
+            if not await is_peer_in_session(
+                db, workspace_name, session.name, scope_peer_name(acting_scope)
+            ):
+                raise AuthenticationException("JWT not permissioned for this resource")
+            # Edits go through the dedicated session routes, which scope keys
+            # cannot reach; adding peers would also grant them member read.
+            if (
+                session.metadata is not None
+                or session.configuration is not None
+                or session.peer_names
+            ):
+                raise AuthenticationException(
+                    "Scope-scoped keys cannot modify an existing session"
+                )
+            # Never upsert this membership: a removal after the check must not
+            # be undone by create-or-get, nor trigger a new backfill.
+            session.scopes = None
         # Checked here rather than in the handler so a session created between
         # the handler's check and this read cannot be joined or modified.
         if acting_peer is not None:
@@ -383,6 +412,12 @@ async def get_or_create_session(
         await peers_result.post_commit()
     if scopes_result is not None:
         await scopes_result.post_commit()
+    if created:
+        emit(
+            SessionCreatedEvent(
+                workspace_name=workspace_name, session_name=session.name
+            )
+        )
 
     # Backfill (DEV-1999): a pre-existing session added to scopes at
     # create-or-get time may already have messages; those need a
@@ -821,6 +856,7 @@ async def clone_session(
     cutoff_message = None
     if cutoff_message_id is not None:
         stmt = select(models.Message).where(
+            models.Message.workspace_name == workspace_name,
             models.Message.public_id == cutoff_message_id,
             models.Message.session_name == original_session_name,
         )
@@ -840,9 +876,11 @@ async def clone_session(
     db.add(new_session)
     await db.flush()  # Flush to get the new session ID
 
-    # Build query for messages to clone
+    # Build query for messages to clone. Session names are only unique within a
+    # workspace, so every lookup by session name must also filter on workspace.
     stmt = select(models.Message).where(
-        models.Message.session_name == original_session_name
+        models.Message.workspace_name == workspace_name,
+        models.Message.session_name == original_session_name,
     )
     if cutoff_message_id is not None and cutoff_message is not None:
         stmt = stmt.where(models.Message.id <= cast(cutoff_message.id, BigInteger))
@@ -852,28 +890,28 @@ async def clone_session(
     messages_to_clone_scalars = await db.scalars(stmt)
     messages_to_clone = messages_to_clone_scalars.all()
 
-    if not messages_to_clone:
-        return new_session
+    if messages_to_clone:
+        # Prepare bulk insert data
+        new_messages = [
+            {
+                "session_name": new_session.name,
+                "content": message.content,
+                "h_metadata": message.h_metadata,
+                "workspace_name": workspace_name,
+                "peer_name": message.peer_name,
+                "token_count": message.token_count,
+                "seq_in_session": message.seq_in_session,
+            }
+            for message in messages_to_clone
+        ]
 
-    # Prepare bulk insert data
-    new_messages = [
-        {
-            "session_name": new_session.name,
-            "content": message.content,
-            "h_metadata": message.h_metadata,
-            "workspace_name": workspace_name,
-            "peer_name": message.peer_name,
-            "seq_in_session": message.seq_in_session,
-        }
-        for message in messages_to_clone
-    ]
-
-    insert_stmt = insert(models.Message).returning(models.Message)
-    result = await db.execute(insert_stmt, new_messages)
+        insert_stmt = insert(models.Message).returning(models.Message)
+        await db.execute(insert_stmt, new_messages)
 
     # Clone peers from original session to new session (including their configurations)
     stmt = select(models.SessionPeer).where(
-        models.SessionPeer.session_name == original_session_name
+        models.SessionPeer.workspace_name == workspace_name,
+        models.SessionPeer.session_name == original_session_name,
     )
     result = await db.execute(stmt)
     session_peers = result.scalars().all()
@@ -887,6 +925,11 @@ async def clone_session(
         db.add(new_session_peer)
 
     await db.commit()
+    emit(
+        SessionCreatedEvent(
+            workspace_name=workspace_name, session_name=new_session.name
+        )
+    )
     logger.debug("Session %s cloned successfully", original_session_name)
 
     # Cache will be populated on next read - read-through pattern
@@ -1005,6 +1048,8 @@ async def get_peers_from_session(
         # composes directly — no correlated exists() as in the SessionPeer-only
         # UPDATE statements elsewhere in this module.
         .where(~scope_peer_clause())
+        # ai: pagination needs a total order; the unique id breaks joined_at ties
+        .order_by(models.SessionPeer.joined_at.asc(), models.Peer.id.asc())
     )
 
 

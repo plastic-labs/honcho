@@ -1,11 +1,12 @@
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import replace
 from enum import Enum
 from functools import cache
 from inspect import cleandoc as c
-from typing import TypedDict
+from typing import Any, TypedDict
 
 from nanoid import generate as generate_nanoid
 from sqlalchemy import update
@@ -16,20 +17,25 @@ from src.cache.client import cache as cache_client
 from src.config import ConfiguredModelSettings, settings
 from src.crud.session import session_cache_key
 from src.dependencies import tracked_db
-from src.exceptions import ResourceNotFoundException
+from src.exceptions import EmptySummaryError, ResourceNotFoundException
 from src.llm import HonchoLLMCallResponse, honcho_llm_call
-from src.llm.types import LLMTelemetryContext
+from src.llm.types import (
+    LLMTelemetryContext,
+    degraded_response_parse_class,
+    hit_output_cap,
+)
 from src.models import Message
 from src.telemetry import prometheus_metrics
 from src.telemetry.events import AgentToolSummaryCreatedEvent, emit
 from src.telemetry.events.llm import CallPurpose
 from src.telemetry.logging import accumulate_metric
 from src.telemetry.prometheus.metrics import (
+    SUMMARY_REJECTION_DEGENERATE,
     DeriverComponents,
     DeriverTaskTypes,
     TokenTypes,
 )
-from src.utils.formatting import utc_now_iso
+from src.utils.formatting import custom_instructions_section, utc_now_iso
 from src.utils.tokens import estimate_tokens, track_deriver_input_tokens
 
 from .. import crud, models
@@ -93,18 +99,57 @@ MESSAGES_PER_LONG_SUMMARY = settings.SUMMARY.MESSAGES_PER_LONG_SUMMARY
 SUMMARIES_KEY = "summaries"
 
 
+# The prompt asks for this fraction of the per-call cap as a soft target. The rest
+# is headroom: a cap equal to the target truncates summaries mid-sentence (#1204).
+SUMMARY_TARGET_RATIO = 0.6
+
+
 # The types of summary to store in the session metadata
 class SummaryType(Enum):
     SHORT = "honcho_chat_summary_short"
     LONG = "honcho_chat_summary_long"
 
 
+# Degeneration guard (#899). A model that loops until the output cap emits non-empty
+# text, so the empty-check in _create_summary can't catch it. distinct-4 is chosen over
+# zlib compression ratio because it is length-stable: measured 1.00 on clean prose from
+# 3.7k-30k chars, while zlib drifts 2.17 -> 2.50 and would cross Whisper's 2.4 threshold
+# on perfectly good long text. Against this PR's fixtures the #899 degenerate loop scores
+# 0.003 while heavily templated but legitimate prose that also hits the cap scores 0.467,
+# so 0.35 leaves the clean case a 1.33x margin and the degenerate case two orders below.
+_DEGENERATE_NGRAM_N = 4
+_DEGENERATE_DISTINCT_RATIO = 0.35
+
+
+def _distinct_ngram_ratio(text: str, n: int = _DEGENERATE_NGRAM_N) -> float:
+    """Fraction of n-grams in `text` that are unique. 1.0 = no repetition."""
+    words = text.split()
+    if len(words) < n:
+        return 1.0
+    grams = [tuple(words[i : i + n]) for i in range(len(words) - n + 1)]
+    return len(set(grams)) / len(grams)
+
+
+def _basic_fallback_summary(
+    message_count: int, last_message_content_preview: str
+) -> str:
+    """Deterministic one-liner used when the LLM summary is unusable."""
+    if message_count <= 0:
+        return ""
+    return (
+        f"Conversation with {message_count} messages about "
+        f"{last_message_content_preview}..."
+    )
+
+
 def short_summary_prompt(
     formatted_messages: str,
-    output_words: int,
+    target_tokens: int,
     previous_summary_text: str,
+    custom_instructions: str | None = None,
 ) -> str:
     """Generate the short summary prompt."""
+    instructions_section = custom_instructions_section(custom_instructions)
     return c(f"""
 You are a system that summarizes parts of a conversation to create a concise and accurate summary. Focus on capturing:
 
@@ -119,6 +164,8 @@ Provide a concise, factual summary that captures the essence of the conversation
 
 Return only the summary without any explanation or meta-commentary.
 
+{instructions_section}
+
 <previous_summary>
 {previous_summary_text}
 </previous_summary>
@@ -127,16 +174,18 @@ Return only the summary without any explanation or meta-commentary.
 {formatted_messages}
 </conversation>
 
-Hard limit: {output_words} words maximum. If needed, drop lower-priority detail to stay within the limit.
+Aim for about {target_tokens} tokens. If needed, drop lower-priority detail to stay near that length.
 """)
 
 
 def long_summary_prompt(
     formatted_messages: str,
-    output_words: int,
+    target_tokens: int,
     previous_summary_text: str,
+    custom_instructions: str | None = None,
 ) -> str:
     """Generate the long summary prompt."""
+    instructions_section = custom_instructions_section(custom_instructions)
     return c(f"""
 You are a system that creates thorough, comprehensive summaries of conversations. Focus on capturing:
 
@@ -153,6 +202,8 @@ Provide a thorough and detailed summary that captures the essence of the convers
 
 Return only the summary without any explanation or meta-commentary.
 
+{instructions_section}
+
 <previous_summary>
 {previous_summary_text}
 </previous_summary>
@@ -161,7 +212,7 @@ Return only the summary without any explanation or meta-commentary.
 {formatted_messages}
 </conversation>
 
-Hard limit: {output_words} words maximum. If needed, drop lower-priority detail to stay within the limit.
+Aim for about {target_tokens} tokens. If needed, drop lower-priority detail to stay near that length.
 """)
 
 
@@ -172,7 +223,7 @@ def estimate_short_summary_prompt_tokens() -> int:
         return estimate_tokens(
             short_summary_prompt(
                 formatted_messages="",
-                output_words=0,
+                target_tokens=0,
                 previous_summary_text="",
             )
         )
@@ -188,7 +239,7 @@ def estimate_long_summary_prompt_tokens() -> int:
         return estimate_tokens(
             long_summary_prompt(
                 formatted_messages="",
-                output_words=0,
+                target_tokens=0,
                 previous_summary_text="",
             )
         )
@@ -197,19 +248,42 @@ def estimate_long_summary_prompt_tokens() -> int:
         return 200
 
 
+def _refuse_degraded_empty_summary(
+    prompt: str,
+) -> Callable[[HonchoLLMCallResponse[Any]], None]:
+    """Build a ``validate_response`` hook that refuses a truncated or filtered
+    empty summary inside the retried call. The fallback text for an empty
+    summary is never saved, so accepting it would consume the boundary."""
+
+    def validate(response: HonchoLLMCallResponse[Any]) -> None:
+        if str(response.content).strip():
+            return
+        parse_class = degraded_response_parse_class(response)
+        if parse_class is not None:
+            raise EmptySummaryError.for_prompt(
+                prompt,
+                parse_class=parse_class,
+                finish_reasons=response.finish_reasons,
+                output_tokens=response.output_tokens,
+            )
+
+    return validate
+
+
 async def create_short_summary(
     formatted_messages: str,
     input_tokens: int,
     previous_summary: str | None = None,
+    custom_instructions: str | None = None,
     *,
     telemetry: LLMTelemetryContext | None = None,
 ) -> HonchoLLMCallResponse[str]:
-    # input_tokens indicates how many tokens the message list + previous summary take up
-    # we want to optimize short summaries to be smaller than the actual content being summarized
-    # so we ask the agent to produce a word count roughly equal to either the input, or the max
-    # size if the input is larger. the word/token ratio is roughly 4:3 so we multiply by 0.75.
-    # LLMs *seem* to respond better to getting asked for a word count but should workshop this.
-    output_words = int(min(input_tokens, settings.SUMMARY.MAX_TOKENS_SHORT) * 0.75)
+    # input_tokens indicates how many tokens the message list + previous summary take up.
+    # Short summaries should be smaller than the content being summarized, so the target
+    # scales with the input up to the cap.
+    target_tokens = int(
+        min(input_tokens, settings.SUMMARY.MAX_TOKENS_SHORT) * SUMMARY_TARGET_RATIO
+    )
 
     if previous_summary:
         previous_summary_text = previous_summary
@@ -217,7 +291,7 @@ async def create_short_summary(
         previous_summary_text = "There is no previous summary -- the messages are the beginning of the conversation."
 
     prompt = short_summary_prompt(
-        formatted_messages, output_words, previous_summary_text
+        formatted_messages, target_tokens, previous_summary_text, custom_instructions
     )
 
     # Mint a root span id.
@@ -226,6 +300,7 @@ async def create_short_summary(
         model_config=_get_summary_model_config(),
         prompt=prompt,
         max_tokens=settings.SUMMARY.MAX_TOKENS_SHORT,
+        validate_response=_refuse_degraded_empty_summary(prompt),
         telemetry=replace(
             telemetry or LLMTelemetryContext(),
             call_purpose=CallPurpose.SUMMARY_SHORT.value,
@@ -241,12 +316,11 @@ async def create_short_summary(
 async def create_long_summary(
     formatted_messages: str,
     previous_summary: str | None = None,
+    custom_instructions: str | None = None,
     *,
     telemetry: LLMTelemetryContext | None = None,
 ) -> HonchoLLMCallResponse[str]:
-    # the word/token ratio is roughly 4:3 so we multiply by 0.75.
-    # LLMs *seem* to respond better to getting asked for a word count but should workshop this.
-    output_words = int(settings.SUMMARY.MAX_TOKENS_LONG * 0.75)
+    target_tokens = int(settings.SUMMARY.MAX_TOKENS_LONG * SUMMARY_TARGET_RATIO)
 
     if previous_summary:
         previous_summary_text = previous_summary
@@ -254,7 +328,7 @@ async def create_long_summary(
         previous_summary_text = "There is no previous summary -- the messages are the beginning of the conversation."
 
     prompt = long_summary_prompt(
-        formatted_messages, output_words, previous_summary_text
+        formatted_messages, target_tokens, previous_summary_text, custom_instructions
     )
 
     # Mint a root span id.
@@ -263,6 +337,7 @@ async def create_long_summary(
         model_config=_get_summary_model_config(),
         prompt=prompt,
         max_tokens=settings.SUMMARY.MAX_TOKENS_LONG,
+        validate_response=_refuse_degraded_empty_summary(prompt),
         telemetry=replace(
             telemetry or LLMTelemetryContext(),
             call_purpose=CallPurpose.SUMMARY_LONG.value,
@@ -352,11 +427,16 @@ async def summarize_if_needed(
                 "count",
             )
 
-        await asyncio.gather(
+        results = await asyncio.gather(
             create_long_summary_task(),
             create_short_summary_task(),
             return_exceptions=True,
         )
+        # Every long boundary is also a short one under the default cadence,
+        # so a refused summary must escape here or it is silently dropped.
+        for result in results:
+            if isinstance(result, EmptySummaryError):
+                raise result
     else:
         # If only one summary needs to be created, run individually
         if should_create_long:
@@ -478,11 +558,13 @@ async def _create_and_save_summary(
         last_message_id=last_message_id,
         last_message_content_preview=last_message_content_preview,
         message_count=message_count,
+        custom_instructions=configuration.summary.custom_instructions,
         telemetry=LLMTelemetryContext(
             workspace_name=workspace_name,
             session_id=session_id,
             source_message_ids=source_message_ids,
             queue_item_ids=[queue_item_id] if queue_item_id is not None else [],
+            custom_instructions=configuration.summary.custom_instructions,
         ),
     )
 
@@ -493,6 +575,10 @@ async def _create_and_save_summary(
         prompt_tokens = estimate_short_summary_prompt_tokens()
     else:
         prompt_tokens = estimate_long_summary_prompt_tokens()
+    if configuration.summary.custom_instructions:
+        prompt_tokens += estimate_tokens(
+            custom_instructions_section(configuration.summary.custom_instructions)
+        )
 
     # Step 3: Save to database with new transaction
     if not is_fallback:
@@ -565,6 +651,10 @@ async def _create_and_save_summary(
                 previous_summary_tokens=previous_summary_tokens,
                 message_tokens=messages_tokens,
                 prompt_scaffold_tokens=prompt_tokens,
+                custom_instructions_tokens=estimate_tokens(
+                    configuration.summary.custom_instructions
+                ),
+                custom_instructions_source=configuration.summary.custom_instructions_source,
             )
         )
 
@@ -578,6 +668,7 @@ async def _create_summary(
     last_message_id: int,
     last_message_content_preview: str,
     message_count: int,
+    custom_instructions: str | None = None,
     *,
     telemetry: LLMTelemetryContext | None = None,
 ) -> tuple[Summary, bool, int, int]:
@@ -593,6 +684,7 @@ async def _create_summary(
         last_message_id: ID of the last message
         last_message_content_preview: Preview of last message content for fallback
         message_count: Number of messages for fallback
+        custom_instructions: Resolved summary custom instructions, if any
         telemetry: Source identity carried through summary generation.
 
     Returns:
@@ -612,12 +704,14 @@ async def _create_summary(
                 formatted_messages,
                 input_tokens,
                 previous_summary_text,
+                custom_instructions,
                 telemetry=telemetry,
             )
         else:
             response = await create_long_summary(
                 formatted_messages,
                 previous_summary_text,
+                custom_instructions,
                 telemetry=telemetry,
             )
 
@@ -633,21 +727,48 @@ async def _create_summary(
                 response.finish_reasons,
             )
             is_fallback = True
-            summary_text = (
-                f"Conversation with {message_count} messages about {last_message_content_preview}..."
-                if message_count > 0
-                else ""
+            summary_text = _basic_fallback_summary(
+                message_count, last_message_content_preview
             )
             summary_tokens = estimate_tokens(summary_text) if summary_text else 0
             llm_input_tokens = 0
             llm_output_tokens = 0
+        elif hit_output_cap(response.finish_reasons):
+            repetition_ratio = _distinct_ngram_ratio(summary_text)
+            if repetition_ratio < _DEGENERATE_DISTINCT_RATIO:
+                logger.error(
+                    (
+                        "Generated %s summary is degenerate: hit the output cap "
+                        "(finish_reasons=%s) with a distinct-%d ratio of %.3f < %.2f. "
+                        "Discarding; the previous summary is retained."
+                    ),
+                    summary_type.name,
+                    response.finish_reasons,
+                    _DEGENERATE_NGRAM_N,
+                    repetition_ratio,
+                    _DEGENERATE_DISTINCT_RATIO,
+                )
+                is_fallback = True
+                summary_text = _basic_fallback_summary(
+                    message_count, last_message_content_preview
+                )
+                summary_tokens = estimate_tokens(summary_text) if summary_text else 0
+                llm_input_tokens = 0  # match the documented fallback contract
+                llm_output_tokens = 0
+                if settings.METRICS.ENABLED:
+                    prometheus_metrics.record_summary_rejection(
+                        summary_type=summary_type.name.lower(),
+                        reason=SUMMARY_REJECTION_DEGENERATE,
+                    )
+    except EmptySummaryError:
+        # Not a generation failure to paper over: the fallback below is never
+        # saved, so it must reach the queue as an error.
+        raise
     except Exception:
         logger.exception("Error generating summary!")
         # Fallback to a basic summary in case of error
-        summary_text = (
-            f"Conversation with {message_count} messages about {last_message_content_preview}..."
-            if message_count > 0
-            else ""
+        summary_text = _basic_fallback_summary(
+            message_count, last_message_content_preview
         )
         summary_tokens = 0
         is_fallback = True

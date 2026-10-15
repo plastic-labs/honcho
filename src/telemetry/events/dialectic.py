@@ -10,10 +10,10 @@ from typing import ClassVar
 
 from pydantic import Field
 
-from src.telemetry.events.base import BaseEvent
+from src.telemetry.events.base import BaseEvent, CustomInstructionsFields
 
 
-class DialecticCompletedEvent(BaseEvent):
+class DialecticCompletedEvent(BaseEvent, CustomInstructionsFields):
     """Emitted when a dialectic (chat) query completes.
 
     Dialectic queries answer questions about peers by gathering context

@@ -5,8 +5,8 @@ within a peer. Internally a scope is a peer named ``scope.<name>`` that
 observes its member sessions and never speaks; these routes are the facade
 that keeps the observer/observed mechanics hidden.
 
-All scopes routes require a workspace-level (or admin) key: scopes are an
-app-level admin surface, so peer- and session-scoped keys are rejected.
+Scope management requires a workspace-level (or admin) key. Named-scope keys
+can read their own scope, membership, and status; peer/session keys are rejected.
 
 Retroactive membership changes are handled asynchronously: adding a session
 that already has messages enqueues a backfill-by-copy job, removing a session
@@ -17,13 +17,18 @@ enqueues a removal-reconciliation job. Track backfill progress via
 import logging
 
 from fastapi import APIRouter, Body, Depends, Path, Query, Response
-from fastapi_pagination import Page
-from fastapi_pagination.ext.sqlalchemy import apaginate
+from fastapi_pagination.bases import AbstractParams
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, schemas
 from src.dependencies import db, read_db
 from src.security import require_auth
+from src.utils.pagination import (
+    CursorPage,
+    Page,
+    paginate_offset_or_cursor,
+    pagination_params,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -67,25 +72,33 @@ async def get_or_create_scope(
 
 @router.post(
     "/list",
-    response_model=Page[schemas.Scope],
+    response_model=Page[schemas.Scope] | CursorPage[schemas.Scope],
     dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
 )
 async def get_scopes(
     workspace_id: str = Path(...),
     reverse: bool = Query(False, description="Whether to reverse the order of results"),
+    params: AbstractParams = Depends(pagination_params),
     db: AsyncSession = read_db,
 ):
     """Get all Scopes for a Workspace. Results are paginated."""
-    return await apaginate(
+    return await paginate_offset_or_cursor(
         db,
         await crud.get_scopes(workspace_name=workspace_id, reverse=reverse),
+        params,
     )
 
 
 @router.get(
     "/{scope_id}",
     response_model=schemas.Scope,
-    dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
+    dependencies=[
+        Depends(
+            require_auth(
+                workspace_name="workspace_id", scope_name="scope_id", allow_scope=True
+            )
+        )
+    ],
 )
 async def get_scope(
     workspace_id: str = Path(...),
@@ -159,13 +172,20 @@ async def remove_session_from_scope(
 
 @router.post(
     "/{scope_id}/sessions/list",
-    response_model=Page[schemas.Session],
-    dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
+    response_model=Page[schemas.Session] | CursorPage[schemas.Session],
+    dependencies=[
+        Depends(
+            require_auth(
+                workspace_name="workspace_id", scope_name="scope_id", allow_scope=True
+            )
+        )
+    ],
 )
 async def get_scope_sessions(
     workspace_id: str = Path(...),
     scope_id: str = Path(...),
     reverse: bool = Query(False, description="Whether to reverse the order of results"),
+    params: AbstractParams = Depends(pagination_params),
     db: AsyncSession = read_db,
 ):
     """Get the Sessions that are members of a Scope, paginated.
@@ -176,18 +196,25 @@ async def get_scope_sessions(
     # Distinguishes an empty scope from one that does not exist; the query itself
     # returns an empty page either way.
     await crud.get_scope_or_raise(db, workspace_id, scope_id)
-    return await apaginate(
+    return await paginate_offset_or_cursor(
         db,
         await crud.get_scope_sessions(
             workspace_name=workspace_id, scope_name=scope_id, reverse=reverse
         ),
+        params,
     )
 
 
 @router.get(
     "/{scope_id}/status",
     response_model=schemas.ScopeStatus,
-    dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
+    dependencies=[
+        Depends(
+            require_auth(
+                workspace_name="workspace_id", scope_name="scope_id", allow_scope=True
+            )
+        )
+    ],
     responses={
         404: {"model": schemas.ErrorResponse, "description": "Scope does not exist"},
     },

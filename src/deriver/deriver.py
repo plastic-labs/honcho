@@ -1,5 +1,6 @@
 import logging
 import time
+from typing import Any
 
 from nanoid import generate as generate_nanoid
 
@@ -7,9 +8,9 @@ from src import crud
 from src.config import ConfiguredModelSettings, settings
 from src.crud.representation import RepresentationManager
 from src.dependencies import tracked_db
-from src.exceptions import RepresentationSaveError
-from src.llm import honcho_llm_call
-from src.llm.types import LLMTelemetryContext
+from src.exceptions import EmptyRepresentationError, RepresentationSaveError
+from src.llm import HonchoLLMCallResponse, honcho_llm_call
+from src.llm.types import LLMTelemetryContext, degraded_response_parse_class
 from src.models import Message
 from src.schemas import ResolvedConfiguration
 from src.telemetry import prometheus_metrics
@@ -25,7 +26,7 @@ from src.telemetry.sentry import with_sentry_transaction
 from src.utils.config_helpers import get_configuration
 from src.utils.representation import PromptRepresentation, Representation
 from src.utils.retryable_errors import is_retryable_error
-from src.utils.tokens import track_deriver_input_tokens
+from src.utils.tokens import estimate_tokens, track_deriver_input_tokens
 
 from .prompts import (
     estimate_deriver_prompt_tokens,
@@ -156,6 +157,30 @@ async def process_representation_tasks_batch(
     max_tokens = base_model_config.max_output_tokens or settings.LLM.DEFAULT_MAX_TOKENS
     model_config = base_model_config
 
+    message_ids = [m.id for m in messages if m.peer_name == observed]
+
+    def refuse_degraded_empty(response: HonchoLLMCallResponse[Any]) -> None:
+        """Raise inside the retried call so a truncated or filtered empty
+        consumes an attempt and reaches the fallback model."""
+        if not message_ids:
+            return
+        content = response.content
+        if not isinstance(content, PromptRepresentation):
+            # A provider refusal comes back as its text, not the model.
+            parse_class = "content_filtered"
+        elif content.explicit:
+            return
+        else:
+            parse_class = degraded_response_parse_class(response)
+            if parse_class is None:
+                return
+        raise EmptyRepresentationError.for_prompt(
+            prompt,
+            parse_class=parse_class,
+            finish_reasons=response.finish_reasons,
+            output_tokens=response.output_tokens,
+        )
+
     # Single LLM call
     trace_id = generate_nanoid()
     llm_start = time.perf_counter()
@@ -168,6 +193,7 @@ async def process_representation_tasks_batch(
         max_input_tokens=settings.DERIVER.MAX_INPUT_TOKENS,
         enable_retry=True,
         retry_attempts=3,
+        validate_response=refuse_degraded_empty,
         trace_name="minimal_deriver",
         telemetry=LLMTelemetryContext(
             workspace_name=latest_message.workspace_name,
@@ -184,6 +210,7 @@ async def process_representation_tasks_batch(
             track_name="Minimal Deriver",
             trace_id=trace_id,
             span_id=trace_id,
+            custom_instructions=custom_instructions,
         ),
     )
     llm_duration = (time.perf_counter() - llm_start) * 1000
@@ -204,8 +231,6 @@ async def process_representation_tasks_batch(
             component=DeriverComponents.OUTPUT_TOTAL.value,
         )
 
-    message_ids = [m.id for m in messages if m.peer_name == observed]
-
     # Convert to Representation and save
     observations = Representation.from_prompt_representation(
         response.content,
@@ -219,11 +244,14 @@ async def process_representation_tasks_batch(
     save_errors: list[tuple[str, Exception]] = []
     if observations.is_empty() or not message_ids:
         logger.warning(
-            "Deriver generated zero observations for messages %s:%s in %s/%s!",
+            "Deriver generated zero observations for messages %s:%s in %s/%s! "
+            + "(finish_reasons=%s, output_tokens=%d)",
             earliest_message.id,
             latest_message.id,
             latest_message.workspace_name,
             latest_message.session_name,
+            response.finish_reasons,
+            response.output_tokens,
         )
     else:
         # Save to all observer collections
@@ -349,6 +377,8 @@ async def process_representation_tasks_batch(
             extra_context_message_count=extra_context_message_count,
             extra_context_tokens=extra_context_tokens,
             prompt_scaffold_tokens=prompt_tokens,
+            custom_instructions_tokens=estimate_tokens(custom_instructions),
+            custom_instructions_source=message_level_configuration.reasoning.custom_instructions_source,
             batch_max_tokens=batch_max_tokens,
             max_input_tokens=settings.DERIVER.MAX_INPUT_TOKENS,
             was_flush_enabled=was_flush_enabled,

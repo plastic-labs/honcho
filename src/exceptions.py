@@ -2,9 +2,10 @@
 Custom exceptions for the Honcho application.
 """
 
+import hashlib
 import json
 from dataclasses import dataclass
-from typing import Any, ClassVar, Literal, final
+from typing import Any, ClassVar, Literal, Self, final
 
 from src.config import settings
 
@@ -186,6 +187,84 @@ class RepresentationSaveError(HonchoException):
 
     status_code: int = 500
     detail: str = "Representation save failed for all observers"
+
+
+class DegradedLLMResponseError(HonchoException):
+    """Raised when a structured response came back empty in a way that looks
+    degraded -- truncated or withheld by the provider -- rather than a model
+    that read the input and had nothing to say.
+
+    Raised from a ``validate_response`` hook inside the retried LLM call, so it
+    is retried and reaches the fallback model like a provider error. The message
+    carries the prompt's length and digest, never its text, so a repeat can be
+    correlated across workers without logging user content.
+    """
+
+    status_code: int = 500
+    detail: str = "Structured LLM response was empty and degraded"
+
+    # Raised only after the retry budget and the fallback are spent, so it is
+    # memory or a summary that did not get written: an error, not a client
+    # response. Each subclass gets its own fingerprint so the per-issue spike
+    # alert counts that failure's real rate instead of splitting it by stack.
+    sentry_policy: ClassVar[SentryPolicy | None] = SentryPolicy(
+        level="error", fingerprint="honcho-llm-degraded-empty-response"
+    )
+
+    def __init__(
+        self,
+        detail: str,
+        *,
+        parse_class: str,
+        prompt_bytes: int,
+        prompt_digest: str,
+    ) -> None:
+        super().__init__(detail)
+        self.parse_class: str = parse_class
+        self.prompt_bytes: int = prompt_bytes
+        self.prompt_digest: str = prompt_digest
+
+    @classmethod
+    def for_prompt(
+        cls,
+        prompt: str,
+        *,
+        parse_class: str,
+        finish_reasons: list[str],
+        output_tokens: int,
+    ) -> Self:
+        """Build the error from the prompt that was sent, keeping only its
+        length and a digest."""
+        encoded = prompt.encode("utf-8")
+        prompt_digest = hashlib.sha256(encoded).hexdigest()[:16]
+        return cls(
+            f"{cls.detail} (parse_class={parse_class}, "
+            + f"finish_reasons={finish_reasons}, output_tokens={output_tokens}, "
+            + f"prompt_bytes={len(encoded)}, prompt_sha256={prompt_digest})",
+            parse_class=parse_class,
+            prompt_bytes=len(encoded),
+            prompt_digest=prompt_digest,
+        )
+
+
+@final
+class EmptyRepresentationError(DegradedLLMResponseError):
+    """The deriver's structured response for a batch was empty and degraded."""
+
+    detail: str = "Deriver generated an empty representation"
+    sentry_policy: ClassVar[SentryPolicy | None] = SentryPolicy(
+        level="error", fingerprint="honcho-deriver-degraded-empty-representation"
+    )
+
+
+@final
+class EmptySummaryError(DegradedLLMResponseError):
+    """The summarizer's response was empty and degraded."""
+
+    detail: str = "Summarizer generated an empty summary"
+    sentry_policy: ClassVar[SentryPolicy | None] = SentryPolicy(
+        level="error", fingerprint="honcho-summary-degraded-empty-summary"
+    )
 
 
 @final

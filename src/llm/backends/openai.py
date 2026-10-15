@@ -21,6 +21,7 @@ from src.llm.structured_output import (
     repair_response_model_json,
     validate_structured_output,
 )
+from src.utils.representation import PromptRepresentation
 
 logger = logging.getLogger(__name__)
 
@@ -57,16 +58,19 @@ def _json_object_instruction(response_format: type[BaseModel]) -> str:
 
 
 def _uses_max_completion_tokens(model: str) -> bool:
-    """OpenAI reasoning models (gpt-5 family + o-series) require
+    """OpenAI reasoning models (gpt-5+ family + o-series) require
     ``max_completion_tokens`` instead of the classic ``max_tokens`` parameter.
 
-    Matches: gpt-5, gpt-5-anything, gpt-5.anything (incl. gpt-5.4, gpt-5.4-mini),
-    o1*, o3*, o4*. Anything else (gpt-4.x, gpt-4o, chat models on proxies)
-    stays on ``max_tokens``.
+    Matches: gpt-5, gpt-5-anything, gpt-5.anything (incl. gpt-5.4, gpt-5.4-mini,
+    gpt-5.6-sol), gpt-6, gpt-6-anything and gpt-6.anything (gpt-6-astra,
+    gpt-6-sol, gpt-6-luna), o1*, o3*, o4*.
+    Anything else (gpt-4.x, gpt-4o, chat models on proxies) stays on
+    ``max_tokens``.
     """
     m = model.lower()
-    if m == "gpt-5" or m.startswith("gpt-5-") or m.startswith("gpt-5."):
-        return True
+    for base in ("gpt-5", "gpt-6"):
+        if m == base or m.startswith(base + "-") or m.startswith(base + "."):
+            return True
     for prefix in ("o1", "o3", "o4"):
         if m == prefix or m.startswith(prefix + "-"):
             return True
@@ -210,10 +214,8 @@ class OpenAIBackend:
             try:
                 response = await self._client.chat.completions.parse(**params)
             except LengthFinishReasonError as exc:
-                # Truncated output: repair the partial content directly. repair
-                # handles empty/unrepairable JSON with its own model-aware fallback
-                # (PromptRepresentation -> empty, others -> raise), which differs
-                # from the parse-fallback terminal below, so it stays a direct call.
+                # Truncated output: repair the partial content directly. Invalid
+                # PromptRepresentation payloads raise a safe, digest-bearing error.
                 truncated = exc.completion
                 raw_content = truncated.choices[0].message.content or ""
                 content = repair_response_model_json(
@@ -225,6 +227,17 @@ class OpenAIBackend:
                     truncated,
                     content_override=content,
                 )
+            except ValidationError as exc:
+                # parse() validates the body itself, so a malformed one never
+                # reaches the repair path. Pydantic's message echoes the model
+                # output as input_value, so re-raise without it.
+                if response_format is not PromptRepresentation:
+                    raise
+                raise StructuredOutputError(
+                    "PromptRepresentation structured output failed "
+                    + f"failure_class=ValidationError model={model} "
+                    + f"error_count={exc.error_count()}"
+                ) from None
             except BadRequestError:
                 # A 400 means the provider rejected the request shape — most
                 # often it doesn't support OpenAI Structured Outputs (json_schema).
@@ -249,12 +262,14 @@ class OpenAIBackend:
                 return CompletionResult(content=fallback_content)
             parsed = response.choices[0].message.parsed
             if parsed is not None:
-                return self._normalize_response(
-                    response,
-                    content_override=validate_structured_output(
-                        parsed, response_format
-                    ),
-                )
+                raw_content = response.choices[0].message.content
+                if raw_content and response_format is PromptRepresentation:
+                    content = self._parse_or_repair_structured_content(
+                        response, response_format, model, empty_on_missing=False
+                    )
+                else:
+                    content = validate_structured_output(parsed, response_format)
+                return self._normalize_response(response, content_override=content)
             # parse() returned no model: repair raw content, surface a refusal,
             # or raise so the retry/fallback chain engages on a junk response.
             content = self._parse_or_repair_structured_content(
@@ -547,12 +562,11 @@ class OpenAIBackend:
         message = response.choices[0].message
         raw_content = message.content or ""
         if raw_content:
-            # Fast path: clean JSON validates directly. Only fall back to the
-            # repair pipeline when validation fails — repair is comparatively
-            # expensive and silently degrades malformed input to an empty model.
+            # Fast path: clean, schema-relevant JSON validates directly. Route
+            # invalid or irrelevant payloads through the safe repair error path.
             try:
                 return validate_structured_output(raw_content, response_format)
-            except (StructuredOutputError, ValidationError):
+            except (json.JSONDecodeError, StructuredOutputError, ValidationError):
                 return repair_response_model_json(raw_content, response_format, model)
         refusal = getattr(message, "refusal", None)
         if refusal:

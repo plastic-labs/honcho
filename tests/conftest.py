@@ -110,6 +110,8 @@ _RUNTIME_MOCK_TEST_BLOCKLIST_PREFIXES = (
     "tests/live_llm/",
     # Pure llm unit tests should stay isolated from the broader app/runtime fixtures.
     "tests/llm/",
+    # Settings validation only; no database or provider calls.
+    "tests/test_config.py",
     # LLM transport tests mock providers directly and don't need database/runtime setup.
     "tests/utils/test_length_finish_reason.py",
     "tests/utils/test_clients.py",
@@ -117,6 +119,7 @@ _RUNTIME_MOCK_TEST_BLOCKLIST_PREFIXES = (
     "tests/crud/test_session_scope_clauses.py",
     # Pure prompt-rendering tests — string assembly only, no DB needed.
     "tests/deriver/test_prompts.py",
+    "tests/utils/test_custom_instructions_prompts.py",
     # Pure JWT scope tests — operate on src.security directly, no DB needed.
     "tests/test_security.py",
     "tests/test_generate_jwt_script.py",
@@ -328,17 +331,18 @@ async def setup_test_database(db_url: URL):
     Returns:
         engine: SQLAlchemy engine
     """
-    engine = create_async_engine(str(db_url), echo=False)
+    engine = create_async_engine(db_url, echo=False)
     async with engine.connect() as conn:
         try:
-            logger.info("Attempting to create pgvector extension...")
+            logger.info("Attempting to create pgvector and pg_trgm extensions...")
             await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
             await conn.commit()
-            logger.info("pgvector extension created successfully.")
+            logger.info("pgvector and pg_trgm extensions created successfully.")
         except ProgrammingError as e:
             logger.error(f"ProgrammingError: {e}")
             raise RuntimeError(
-                "Failed to create pgvector extension. Make sure it's installed on the PostgreSQL server."
+                "Failed to create pgvector/pg_trgm extensions. Make sure they're installed on the PostgreSQL server."
             ) from e
         except OperationalError as e:
             logger.error(f"OperationalError: {e}")
@@ -1100,6 +1104,7 @@ def mock_tracked_db(request: pytest.FixtureRequest):
         "src.crud.document.tracked_db",
         "src.crud.message.tracked_db",
         "src.reconciler.sync_vectors.service_db",
+        "src.reconciler.backfill.service_db",
         "src.reconciler.embed_now.tracked_db",
         "src.routers.tenants.service_db",
         "src.dialectic.core.tracked_db",

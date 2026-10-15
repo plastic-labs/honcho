@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [2.6.0] - 2026-10-07
+
+### Added
+
+- `custom_instructions` on `WorkspaceConfiguration` and `SessionConfiguration` (the shared fallback) and on `SummaryConfiguration`, `DreamConfiguration`, and `PeerCardConfiguration`, plus a new `DialecticConfiguration` type under the `dialectic` key. Requires Honcho v3.3.0+ (#1303)
+
 ## [2.5.1] - 2026-09-22
 
 ### Added

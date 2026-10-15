@@ -7,7 +7,17 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 This package versions independently of the Honcho API, `@honcho-ai/sdk`, and host plugins.
 
-## [Unreleased]
+## [3.1.0] - 2026-10-07
+
+### Added
+
+- Optional Sentry error reporting for the Worker, HTTP, and stdio hosts, enabled by
+  setting `SENTRY_DSN`. Unset, it is a no-op.
+
+### Fixed
+
+- Every tool that writes sets `readOnlyHint: false` explicitly. Leaving it unset let
+  clients that default a missing hint to read-only treat write tools as reads (#1262)
 
 ## [3.0.2] - 2026-09-29
 

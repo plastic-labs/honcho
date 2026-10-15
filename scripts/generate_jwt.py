@@ -20,6 +20,9 @@ Examples:
 
     # Session-scoped JWT
     uv run python scripts/generate_jwt.py --workspace my-workspace --session my-session --expires 8h
+
+    # Named-scope JWT (recall and ingestion)
+    uv run python scripts/generate_jwt.py --workspace my-workspace --scope support --expires 8h
 """
 
 import argparse
@@ -93,6 +96,11 @@ def main():
         + "ignored by the server when it is not",
     )
     parser.add_argument(
+        "--scope",
+        metavar="NAME",
+        help="Bind the JWT to a named scope for recall and ingestion (requires --workspace)",
+    )
+    parser.add_argument(
         "--expires",
         "-e",
         metavar="DURATION",
@@ -106,14 +114,16 @@ def main():
     )
     args = parser.parse_args()
 
-    if not args.admin and not any([args.workspace, args.peer, args.session]):
+    if not args.admin and not any(
+        [args.workspace, args.peer, args.session, args.scope]
+    ):
         parser.error(
-            "Specify --admin or at least one of --workspace, --peer, --session"
+            "Specify --admin or at least one of --workspace, --peer, --session, --scope"
         )
 
-    if args.admin and any([args.workspace, args.peer, args.session]):
+    if args.admin and any([args.workspace, args.peer, args.session, args.scope]):
         parser.error(
-            "--admin cannot be combined with --workspace, --peer, or --session"
+            "--admin cannot be combined with --workspace, --peer, --session, or --scope"
         )
 
     if (args.peer or args.session) and not args.workspace:
@@ -124,10 +134,9 @@ def main():
     if settings.MULTI_TENANT and not args.tenant:
         parser.error("--tenant is required when MULTI_TENANT is enabled")
 
-    exp_str: str | None = None
-    if args.expires:
+    expiry: datetime.datetime | None = None
+    if args.expires is not None:
         expiry = datetime.datetime.now(datetime.UTC) + args.expires
-        exp_str = format_datetime_utc(expiry)
 
     params = JWTParams(
         ad=True if args.admin else None,
@@ -135,10 +144,14 @@ def main():
         w=args.workspace,
         p=args.peer,
         s=args.session,
-        exp=exp_str,
+        sc=args.scope,
+        exp=expiry,
     )
 
-    token = create_jwt(params)
+    try:
+        token = create_jwt(params)
+    except ValueError as exc:
+        parser.error(str(exc))
 
     if args.print_only:
         print(token)
@@ -154,10 +167,12 @@ def main():
             scope_parts.append(f"peer={args.peer}")
         if args.session:
             scope_parts.append(f"session={args.session}")
+        if args.scope:
+            scope_parts.append(f"scope={args.scope}")
 
         print(f"Scope:   {', '.join(scope_parts)}")
-        if exp_str:
-            print(f"Expires: {exp_str}")
+        if expiry:
+            print(f"Expires: {format_datetime_utc(expiry)}")
         else:
             print("Expires: never")
         print(f"Token:   {token}")

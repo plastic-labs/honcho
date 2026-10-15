@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [3.3.0] - 2026-10-09
+
+### Added
+
+- ChromaDB vector store backend: set `VECTOR_STORE_TYPE=chromadb` and pick a client with `VECTOR_STORE_CHROMA_CLIENT_MODE`: `http` (self-hosted Chroma server, the default) or `cloud` (Chroma Cloud, needs `VECTOR_STORE_CHROMA_API_KEY`). Embedded `persistent` mode is rejected at startup, since it isn't safe across Honcho's API and deriver processes. Each Honcho namespace gets its own Chroma collection and index. Ships as an optional extra (`uv sync --extra chromadb`), so default installs and the Docker image don't include it (#868)
+- Custom instructions reach every agent, not just the deriver. A new top-level `custom_instructions` in workspace and session configuration is the shared fallback, and `summary`, `dialectic` (new section), `dream`, and `peer_card` each take their own `custom_instructions` override. Message, session, and workspace levels are checked in that order and the first that sets a value wins; within a level the module's value beats the shared one, and `""` means no instructions. `reasoning.custom_instructions` stays deriver-only, and `peer_card` instructions add to the dream instructions without falling back to the shared value. No migration: configuration is JSONB (#1303)
+- Telemetry records custom instructions. `representation.completed`, the summary event, `dialectic.completed`, and `dream.specialist` carry `custom_instructions_tokens` and `custom_instructions_source` (e.g. `session.shared`, `workspace.summary`); `llm.call.traced` links the injected text through `custom_instructions_ref`; Langfuse generations carry it under the `custom_instructions` metadata key. Additive fields, so `_schema_version` is unchanged (#1309)
+- `python -m src.migrate [revision]` runs migrations under a Postgres advisory lock, so replicas that start together no longer race on `alembic upgrade` (`tuple concurrently updated`). A waiter polls for up to `DB_MIGRATION_LOCK_WAIT_SECONDS` (default 300), then fails naming the holder's pid. `scripts/migrate_db.py` and `scripts/provision_db.py` wrap it (#1268)
+- List endpoints take an opt-in `cursor` query parameter: send it empty for the first page, then pass each response's `next_page`. Cursor mode returns a keyset-paginated page with no `COUNT` and one index seek per page, so deep walks stay cheap. Without `cursor` the response is the unchanged `Page`, and a server that predates this ignores the parameter, so clients can detect support from the response shape. A malformed cursor returns a 400 (#1326)
+
+### Changed
+
+- The deriver prompt states the target peer's id as the subject of every conclusion about that peer, instead of "the target peer" or "the user" (#1273)
+- `search_messages` (and the `search_memory` fallback and `search_messages_temporal`) drops whole trailing snippets when its output exceeds the tool budget and appends `[N of M snippets shown - K omitted to fit output budget]`, instead of cutting the text mid-snippet with no notice. Tool-call telemetry reports `was_truncated` and the pre-truncation size (#1265)
+- Reconciler backfills are registered through a generic `Backfill` definition, each scheduled as `reconciler:backfill.<name>` only while it has pending rows. The existing document-sources backfill keeps its queue shape, so pre-3.3 workers sharing the queue still run it during a rolling deploy (#1275)
+- `/openapi.json` no longer hardcodes `https://api.honcho.dev` as its first server. Self-hosted `/docs` "Try it out" and generated clients target the origin they were served from; behind a prefix-stripping proxy, set `--root-path` (#1103)
+- Gemini `gemini-embedding-2` models embed up to 8192 input tokens instead of being capped at 2048. Other Gemini models keep the 2048 cap (#925)
+- `uv.lock` bumps `starlette` (1.0.0 → 1.6.0, CVE-2026-48710), `python-multipart`, `anyio`, and `idna` to patched versions, which the Docker image picks up through `uv sync --frozen` (#1266)
+- Session summaries ask for about 60% of their token cap instead of a hard word limit, leaving headroom so dense content finishes instead of being cut off mid-summary. The default caps rise from 1000/4000 to 1500/6000 (`SUMMARY_MAX_TOKENS_SHORT` / `SUMMARY_MAX_TOKENS_LONG`), so default summaries stay about the same length. When `SUMMARY_MODEL_CONFIG__MAX_OUTPUT_TOKENS` is set it is a ceiling: settings fail to load if either cap exceeds it, so a deployment that sets it below 6000 must lower the caps to match or raise it (#1318)
+- The deriver's semantic deduplication looks up candidates for the whole batch in one query instead of one query per conclusion (#1202)
+- With the cache enabled, offset-paginated list requests (`?page=N`) seek from where the previous page ended instead of scanning past every earlier row, so installed SDKs walking long lists get faster without an upgrade. Responses are unchanged, except that `total` on pages after the first may be up to `CACHE_PAGINATION_COUNT_TTL_SECONDS` (default 60) old. `CACHE_PAGINATION_OFFSET_SHIM` (default `true`) turns it off, `CACHE_PAGINATION_POSITION_TTL_SECONDS` (default 600) sets how long a page position lives, and `pagination_offset_shim{outcome}` counts first, hit, and miss pages. Adds the `sqlakeyset` dependency (#1326)
+- Message search's `content ILIKE` fallback is backed by a new `pg_trgm` GIN index, `ix_messages_content_trgm`, instead of scanning every message in the workspace (scans held connections for 10s+ on large deployments). This release includes a migration. The index is roughly 1.5× the size of `messages`, so plan disk headroom before upgrading. It is built `CONCURRENTLY`, so writes continue, but the build waits for open transactions that touched `messages` and for any older snapshot in the database, such as a long-running query on any table. After 60 minutes the migration fails and leaves an invalid index, which the next run drops and rebuilds; on large or busy databases, build the index ahead of the upgrade with the statement in the troubleshooting guide, and the migration then has nothing to do. If `pg_trgm` can't be created (no privilege, or not available on the server), the migration skips the index and logs the statement to create it later (#1335)
+
+### Removed
+
+- `DIALECTIC_HISTORY_TOKEN_LIMIT` and `DREAM_HISTORY_TOKEN_LIMIT`, along with the unused `get_recent_history` agent tool they fed. A leftover value is ignored (#1308)
+
+### Fixed
+
+- Cloning a session matched the source's messages, peers, and cutoff message by session name alone, so it could copy a same-named session's data from another workspace or fail with a 500. Lookups are scoped to the workspace. Cloned messages also keep `token_count`, and cloning a session with no messages copies its peers and commits instead of returning a 201 for a session that was rolled back (#1284)
+- JWTs with an expiry (`--expires` on `scripts/generate_jwt.py`, `expires_at` on `POST /v3/keys`) failed every request with a 401, because `exp` was written as an ISO string instead of a NumericDate. Expiring keys now authenticate until they expire, and an expired key returns `JWT expired` (#1025)
+- OpenAI `gpt-6` models failed with a 400 `unsupported_parameter` because Honcho sent `max_tokens`; they now get `max_completion_tokens` like `gpt-5` and the o-series (#1233)
+- A summary that hits its cap while repeating itself (fewer than 35% distinct 4-word sequences) is discarded and the previous summary kept, instead of overwriting it. Rejections are counted in `summary_rejections{summary_type,reason}` (#1318)
+- Session peer and webhook list endpoints had no `ORDER BY`, so their pages could skip or repeat rows. They order by `(joined_at, id)` and `(created_at, id)` (#1326)
+- A connection dropped by the pooler during the representation's semantic conclusion lookup no longer fails the request with `PendingRollbackError`. On read-only sessions the connection is rolled back and the lookup degrades to no semantic conclusions (#1335)
+
 ## [3.2.2] - 2026-09-29
 
 ### Added
@@ -16,6 +52,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Listing a peer's sessions uses a new `session_peers (workspace_name, peer_name, session_name)` index and starts from that peer's rows instead of walking every session in the workspace (28.9ms to 0.15ms on a 326k-row test table). This release includes a migration. The index is not built `CONCURRENTLY`, so writes to `session_peers` wait while it builds (#1237)
 - LLM provider 5xx and connection errors are no longer sent to Sentry on every attempt by the Anthropic, OpenAI, and Google GenAI SDK integrations. Honcho reports the final error once its retries are exhausted, so an outage that recovers on retry no longer alerts. Client errors (400, 401, 404, 429) are still reported (#1242)
 - Dialectic and dreamer runs are typed `agent` in Langfuse, so they appear in the Agent Graph. Generation output with tool calls is an OpenAI-style assistant message carrying the tool arguments and any thinking, instead of just the tool names. The `langfuse` floor rises to `>=4.6.1` (#1258)
+- The deriver prompt and output schema no longer carry example facts. New rules resolve relative dates against each message's `time`, treat details in a question or proposal the target peer accepts as stated by them, skip conversational mechanics (greetings, thanks, acknowledgements), and keep one fact per conclusion with its qualifiers attached and no reworded duplicates (#1263)
 
 ### Removed
 

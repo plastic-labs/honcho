@@ -764,6 +764,9 @@ class DBSettings(HonchoSettings):
     # deriver backs off and retries on a later poll).
     CONNECT_TIMEOUT_SECONDS: Annotated[int, Field(default=2, gt=0, le=60)] = 2
 
+    # Seconds a migrator waits for another migrator's advisory lock before failing
+    MIGRATION_LOCK_WAIT_SECONDS: Annotated[int, Field(default=300, gt=0, le=3600)] = 300
+
 
 class AuthSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="AUTH_", extra="ignore")  # pyright: ignore
@@ -1157,9 +1160,6 @@ class DialecticSettings(HonchoSettings):
     MAX_OUTPUT_TOKENS: Annotated[int, Field(default=8192, gt=0, le=100_000)] = 8192
     MAX_INPUT_TOKENS: Annotated[int, Field(default=100_000, gt=0, le=200_000)] = 100_000
 
-    # Token limit for get_recent_history tool within the agent
-    HISTORY_TOKEN_LIMIT: Annotated[int, Field(default=8192, gt=0, le=100_000)] = 8192
-
     # Extra tool rounds workspace chat gets on top of its level's limit. A
     # workspace query fans out over peers where a pair query reads one
     # representation, so it needs room to route and then recall. Not applied at
@@ -1281,8 +1281,25 @@ class SummarySettings(HonchoSettings):
             )
         return data  # pyright: ignore[reportUnknownVariableType]
 
-    MAX_TOKENS_SHORT: Annotated[int, Field(default=1000, gt=0, le=10_000)] = 1000
-    MAX_TOKENS_LONG: Annotated[int, Field(default=4000, gt=0, le=20_000)] = 4000
+    # Per-call output caps. The prompt asks for a fraction of these as a soft
+    # target (SUMMARY_TARGET_RATIO in src/utils/summarizer.py), leaving the rest
+    # as headroom so a summary can finish instead of truncating.
+    MAX_TOKENS_SHORT: Annotated[int, Field(default=1500, gt=0, le=10_000)] = 1500
+    MAX_TOKENS_LONG: Annotated[int, Field(default=6000, gt=0, le=20_000)] = 6000
+
+    @model_validator(mode="after")
+    def _validate_caps_within_model_ceiling(self) -> "SummarySettings":
+        """Keep MODEL_CONFIG.max_output_tokens a ceiling over both summary caps."""
+        ceiling = self.MODEL_CONFIG.max_output_tokens
+        if ceiling is None:
+            return self
+        for name in ("MAX_TOKENS_SHORT", "MAX_TOKENS_LONG"):
+            if getattr(self, name) > ceiling:
+                raise ValueError(
+                    f"summary.{name} must not exceed "
+                    + "summary.MODEL_CONFIG.max_output_tokens"
+                )
+        return self
 
 
 class WebhookSettings(HonchoSettings):
@@ -1379,6 +1396,16 @@ class CacheSettings(HonchoSettings):
         5  # how long to hold a lock on a resource when fetching DB after cache miss
     )
 
+    # Serve offset-paginated list requests (`?page=N`) with a keyset seek from
+    # a cached position where possible; see src/utils/pagination.py.
+    PAGINATION_OFFSET_SHIM: bool = True
+    # ai: long enough to span a pause in a client's walk, short enough that abandoned walks expire
+    PAGINATION_POSITION_TTL_SECONDS: Annotated[
+        int, Field(default=600, ge=1, le=86_400)
+    ] = 600
+    # How stale `total` may be on pages after the first.
+    PAGINATION_COUNT_TTL_SECONDS: Annotated[int, Field(default=60, ge=1, le=3_600)] = 60
+
     # Polling interval while waiting for another worker's fetch lock. cashews
     # defaults to 0, which busy-spins the event loop for the whole wait.
     LOCK_WAIT_CHECK_INTERVAL_SECONDS: Annotated[
@@ -1427,11 +1454,6 @@ class DreamSettings(HonchoSettings):
 
     # Agent iteration limit - increased for extended reasoning workflow
     MAX_TOOL_ITERATIONS: Annotated[int, Field(default=20, gt=0, le=50)] = 20
-
-    # Token limit for get_recent_history tool within the agent
-    HISTORY_TOKEN_LIMIT: Annotated[int, Field(default=16_384, gt=0, le=200_000)] = (
-        16_384
-    )
 
     @staticmethod
     def _DEDUCTION_MODEL_CONFIG_DEFAULT() -> ConfiguredModelSettings:
@@ -1711,6 +1733,35 @@ class AppSettings(HonchoSettings):
         if "NAMESPACE" not in self.METRICS.model_fields_set:
             self.METRICS.NAMESPACE = self.NAMESPACE
 
+        return self
+
+    @model_validator(mode="after")
+    def warn_unused_provider_keys(self) -> "AppSettings":
+        """Flag credentials whose transport is absent from configured workloads."""
+        model_configs = [
+            self.DERIVER.MODEL_CONFIG,
+            self.SUMMARY.MODEL_CONFIG,
+            self.DREAM.DEDUCTION_MODEL_CONFIG,
+            self.DREAM.INDUCTION_MODEL_CONFIG,
+            *(level.MODEL_CONFIG for level in self.DIALECTIC.LEVELS.values()),
+        ]
+        transports = {config.transport for config in model_configs}
+        transports.update(
+            config.fallback.transport
+            for config in model_configs
+            if config.fallback is not None
+        )
+        transports.add(self.EMBEDDING.MODEL_CONFIG.transport)
+
+        for transport in get_args(ModelTransport):
+            key_name = f"{transport.upper()}_API_KEY"
+            if getattr(self.LLM, key_name) and transport not in transports:
+                logger.warning(
+                    "LLM_%s is set but no configured workload uses transport=%s. "
+                    + "Remove it from your configuration if it is no longer needed.",
+                    key_name,
+                    transport,
+                )
         return self
 
 

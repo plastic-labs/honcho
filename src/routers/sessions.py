@@ -5,8 +5,7 @@ from contextlib import suppress
 from time import perf_counter
 
 from fastapi import APIRouter, Body, Depends, Path, Query, Response
-from fastapi_pagination import Page
-from fastapi_pagination.ext.sqlalchemy import apaginate
+from fastapi_pagination.bases import AbstractParams
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import config, crud, schemas
@@ -25,6 +24,12 @@ from src.security import JWTParams, require_auth
 from src.telemetry.events import EmbeddingCallPurpose, GetContextEvent, emit
 from src.utils import summarizer
 from src.utils.filter import normalize_session_allowlist
+from src.utils.pagination import (
+    CursorPage,
+    Page,
+    paginate_offset_or_cursor,
+    pagination_params,
+)
 from src.utils.representation import Representation
 from src.utils.search import search
 from src.utils.tokens import estimate_tokens
@@ -266,7 +271,7 @@ def _select_summary_for_context(
 
 @router.post(
     "/list",
-    response_model=Page[schemas.Session],
+    response_model=Page[schemas.Session] | CursorPage[schemas.Session],
     dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
 )
 async def get_sessions(
@@ -275,6 +280,7 @@ async def get_sessions(
         None, description="Filtering and pagination options for the sessions list"
     ),
     reverse: bool = Query(False, description="Whether to reverse the order of results"),
+    params: AbstractParams = Depends(pagination_params),
     db: AsyncSession = read_db,
 ):
     """Get all Sessions for a Workspace, paginated with optional filters."""
@@ -285,13 +291,14 @@ async def get_sessions(
         if filter_param == {}:  # Explicitly check for empty dict
             filter_param = None
 
-    return await apaginate(
+    return await paginate_offset_or_cursor(
         db,
         await crud.get_sessions(
             workspace_name=workspace_id,
             filters=filter_param,
             reverse=reverse,
         ),
+        params,
     )
 
 
@@ -305,7 +312,11 @@ async def get_or_create_session(
     session: schemas.SessionCreate = Body(
         ..., description="Session creation parameters"
     ),
-    jwt_params: JWTParams = Depends(require_auth()),
+    jwt_params: JWTParams = Depends(
+        require_auth(
+            workspace_name="workspace_id", allow_scope=True, authorize_body=True
+        )
+    ),
     db: AsyncSession = db,
 ):
     """
@@ -338,7 +349,11 @@ async def get_or_create_session(
     # admin only. Checked here rather than through `require_auth(...)` because
     # that closure only resolves path and query params, never the body, so a
     # declarative gate cannot see this field.
-    if session.scopes and not (
+    if jwt_params.sc is not None:
+        if session.scopes is not None and session.scopes != [jwt_params.sc]:
+            raise AuthenticationException("JWT not permissioned for these scopes")
+        session.scopes = [jwt_params.sc]
+    elif session.scopes and not (
         jwt_params.ad or (jwt_params.p is None and jwt_params.s is None)
     ):
         raise AuthenticationException("Scope membership requires a workspace-level key")
@@ -365,6 +380,7 @@ async def get_or_create_session(
             workspace_name=workspace_id,
             session=session,
             acting_peer=acting_peer,
+            acting_scope=jwt_params.sc,
         )
         response.status_code = 201 if result.created else 200
         return result.resource
@@ -671,7 +687,7 @@ async def set_peer_config(
 
 @router.get(
     "/{session_id}/peers",
-    response_model=Page[schemas.Peer],
+    response_model=Page[schemas.Peer] | CursorPage[schemas.Peer],
     dependencies=[
         Depends(
             require_auth(
@@ -685,6 +701,7 @@ async def set_peer_config(
 async def get_session_peers(
     workspace_id: str = Path(...),
     session_id: str = Path(...),
+    params: AbstractParams = Depends(pagination_params),
     db: AsyncSession = read_db,
 ):
     """Get all Peers in a Session. Results are paginated."""
@@ -692,7 +709,7 @@ async def get_session_peers(
         peers_query = await crud.get_peers_from_session(
             workspace_name=workspace_id, session_name=session_id
         )
-        return await apaginate(db, peers_query)
+        return await paginate_offset_or_cursor(db, peers_query, params)
     except ValueError as e:
         logger.warning(f"Failed to get peers from session {session_id}: {str(e)}")
         raise ResourceNotFoundException("Session not found") from e
@@ -710,6 +727,7 @@ async def get_session_context(
             workspace_name="workspace_id",
             session_name="session_id",
             allow_member_read=True,
+            allow_scope=True,
         )
     ),
     db: AsyncSession = read_db,
@@ -791,6 +809,17 @@ async def get_session_context(
     to the summary, and 60% to recent messages -- as many as can fit. Note that the summary will usually take up less space than
     this. If the caller does not want a summary, we allocate all the tokens to recent messages.
     """
+    if jwt_params.sc is not None:
+        if (
+            (scope is not None and scope != jwt_params.sc)
+            or peer_perspective
+            or sessions is not None
+            or limit_to_session
+        ):
+            raise AuthenticationException("JWT not permissioned for this perspective")
+        # A message-only context needs no perspective. When a target is requested,
+        # both its representation and card must come from the token's scope.
+        scope = jwt_params.sc if peer_target else None
     token_limit = (
         tokens if tokens is not None else config.settings.GET_CONTEXT_MAX_TOKENS
     )
@@ -1067,6 +1096,7 @@ async def get_session_context(
                 workspace_name="workspace_id",
                 session_name="session_id",
                 allow_member_read=True,
+                allow_scope=True,
             )
         )
     ],
@@ -1114,6 +1144,7 @@ async def get_session_summaries(
                 workspace_name="workspace_id",
                 session_name="session_id",
                 allow_member_read=True,
+                allow_scope=True,
             )
         )
     ],

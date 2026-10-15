@@ -79,6 +79,9 @@ class LLMCallTracedEvent(BaseEvent):
     system_prompt_refs: list[str] = Field(default_factory=list)
     tool_schema_refs: list[str] = Field(default_factory=list)
     tool_choice: Any = None
+    # Operator-written custom instructions included in the context window.
+    # Tenant-visible, unlike the Honcho-authored system prompt that embeds them.
+    custom_instructions_ref: str | None = None
 
     # --- Output (replay-grade) ---
     output_content_ref: str | None = None

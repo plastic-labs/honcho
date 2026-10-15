@@ -1,5 +1,4 @@
 # honcho/scripts/provision_db.py
-import asyncio
 import os
 import sys
 
@@ -8,9 +7,9 @@ import sys
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, project_root)
 
-from src.db import init_db  # noqa: E402
+from src.migrate import main  # noqa: E402
 
 if __name__ == "__main__":
     print("Initializing database using Alembic migrations...")
-    asyncio.run(init_db())
+    main()
     print("Database initialized successfully")

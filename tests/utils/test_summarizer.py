@@ -6,18 +6,23 @@ normal LLM responses, ensuring fallback logic prevents empty summaries
 from being persisted.
 """
 
-from unittest.mock import AsyncMock, patch
+import hashlib
+from typing import Any
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
 from src.config import settings
+from src.exceptions import EmptySummaryError
 from src.llm import HonchoLLMCallResponse
 from src.utils.summarizer import (
+    SUMMARY_TARGET_RATIO,
     Summary,
     SummaryType,
     _create_summary,  # pyright: ignore[reportPrivateUsage]
     create_long_summary,
     create_short_summary,
+    summarize_if_needed,
 )
 
 # Common test arguments for _create_summary
@@ -27,6 +32,49 @@ _MESSAGE_PUBLIC_ID = "msg_abc123"
 _LAST_MESSAGE_ID = 42
 _LAST_MESSAGE_CONTENT_PREVIEW = "hello there how are you"
 _MESSAGE_COUNT = 5
+# Degenerate long-summary loop from #899 — non-empty, highly repetitive.
+_DEGENERATE_TEXT = "Human. Forever. Human. Always. Human value. Always. " * 300
+# Clean prose that can still hit the output cap (must not be rejected).
+# Distinct-4 ratio must stay well above 0.35 — do not build this by repeating
+# a single paragraph (that scores ~0.05 and would false-trigger the guard).
+_CLEAN_CAP_HIT_TOPICS = [
+    "project planning",
+    "deadline prioritization",
+    "communication preferences",
+    "quarterly goals",
+    "beta launch readiness",
+    "analytics rewrite deferral",
+    "stakeholder alignment",
+    "risk mitigation",
+    "capacity planning",
+    "design review feedback",
+    "API contract changes",
+    "migration sequencing",
+    "observability gaps",
+    "incident response drills",
+    "onboarding materials",
+    "vendor evaluation",
+    "budget reforecast",
+    "security audit findings",
+    "customer interviews",
+    "feature flag rollout",
+    "performance baselines",
+    "dependency upgrades",
+    "test coverage targets",
+    "release checklist",
+    "team rituals",
+    "documentation debt",
+    "support handoff notes",
+    "partner integrations",
+    "data retention policy",
+    "accessibility fixes",
+]
+_CLEAN_CAP_HIT_TEXT = " ".join(
+    f"In discussion segment {i + 1}, the participants covered {topic}. "
+    + "They agreed on concrete next steps, owners, and a follow-up date. "
+    + f"Open questions around {topic} were parked for the next working session."
+    for i, topic in enumerate(_CLEAN_CAP_HIT_TOPICS)
+)
 
 
 async def _call_create_summary(
@@ -221,6 +269,107 @@ class TestCreateSummary:
         assert summary["content"] == ""
         assert summary["token_count"] == 0
 
+    @pytest.mark.parametrize("finish_reason", ["max_tokens", "length", "MAX_TOKENS"])
+    async def test_degenerate_cap_hit_response_uses_fallback(self, finish_reason: str):
+        """A summary that loops until the output cap is discarded, not persisted (#899)."""
+        mock_response = HonchoLLMCallResponse(
+            content=_DEGENERATE_TEXT,
+            input_tokens=20000,
+            output_tokens=settings.SUMMARY.MAX_TOKENS_LONG,
+            finish_reasons=[finish_reason],
+        )
+        with patch(
+            "src.utils.summarizer.create_long_summary",
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ):
+            summary, is_fallback, in_tok, out_tok = await _call_create_summary(
+                SummaryType.LONG
+            )
+
+        assert is_fallback is True
+        assert "Human. Forever." not in summary["content"]
+        assert (in_tok, out_tok) == (0, 0)
+
+    async def test_degenerate_cap_hit_short_summary_uses_fallback(self):
+        """Shared guard covers SHORT as well as LONG (#899)."""
+        mock_response = HonchoLLMCallResponse(
+            content=_DEGENERATE_TEXT,
+            input_tokens=5000,
+            output_tokens=settings.SUMMARY.MAX_TOKENS_SHORT,
+            finish_reasons=["max_tokens"],
+        )
+        with patch(
+            "src.utils.summarizer.create_short_summary",
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ):
+            summary, is_fallback, in_tok, out_tok = await _call_create_summary(
+                SummaryType.SHORT
+            )
+
+        assert is_fallback is True
+        assert "Human. Forever." not in summary["content"]
+        assert (in_tok, out_tok) == (0, 0)
+
+    async def test_degenerate_stop_finish_keeps_content(self):
+        """Cap-hit conjunct is required — stop + degenerate text is not rejected (#899)."""
+        mock_response = HonchoLLMCallResponse(
+            content=_DEGENERATE_TEXT,
+            input_tokens=20000,
+            output_tokens=500,
+            finish_reasons=["stop"],
+        )
+        with patch(
+            "src.utils.summarizer.create_long_summary",
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ):
+            summary, is_fallback, _, _ = await _call_create_summary(SummaryType.LONG)
+
+        assert is_fallback is False
+        assert "Human. Forever." in summary["content"]
+
+    async def test_degenerate_empty_finish_reasons_keeps_content(self):
+        """Empty finish_reasons must not reject (#899)."""
+        mock_response = HonchoLLMCallResponse(
+            content=_DEGENERATE_TEXT,
+            input_tokens=20000,
+            output_tokens=500,
+            finish_reasons=[],
+        )
+        with patch(
+            "src.utils.summarizer.create_long_summary",
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ):
+            summary, is_fallback, _, _ = await _call_create_summary(SummaryType.LONG)
+
+        assert is_fallback is False
+        assert "Human. Forever." in summary["content"]
+
+    async def test_clean_prose_cap_hit_keeps_content(self):
+        """Dense valid summary that hits the cap is still valid (#899)."""
+        mock_response = HonchoLLMCallResponse(
+            content=_CLEAN_CAP_HIT_TEXT,
+            input_tokens=20000,
+            output_tokens=settings.SUMMARY.MAX_TOKENS_LONG,
+            finish_reasons=["max_tokens"],
+        )
+        with patch(
+            "src.utils.summarizer.create_long_summary",
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ):
+            summary, is_fallback, in_tok, out_tok = await _call_create_summary(
+                SummaryType.LONG
+            )
+
+        assert is_fallback is False
+        assert "project planning" in summary["content"]
+        assert in_tok == 20000
+        assert out_tok == settings.SUMMARY.MAX_TOKENS_LONG
+
 
 @pytest.mark.asyncio
 class TestSummaryCallerMigration:
@@ -278,3 +427,145 @@ class TestSummaryCallerMigration:
         assert "model_config" in kwargs
         assert kwargs["model_config"].model == expected_config.model
         assert "llm_settings" not in kwargs
+
+
+@pytest.mark.asyncio
+class TestSummaryTokenHeadroom:
+    """The prompt's length target sits below the per-call cap (#1204)."""
+
+    @staticmethod
+    def _response() -> HonchoLLMCallResponse[str]:
+        return HonchoLLMCallResponse(
+            content="summary", input_tokens=10, output_tokens=5, finish_reasons=["STOP"]
+        )
+
+    async def test_long_summary_targets_a_fraction_of_its_cap(self):
+        with patch(
+            "src.utils.summarizer.honcho_llm_call",
+            new_callable=AsyncMock,
+            return_value=self._response(),
+        ) as mock_llm_call:
+            await create_long_summary(
+                formatted_messages=_FORMATTED_MESSAGES, previous_summary=None
+            )
+
+        kwargs = mock_llm_call.await_args.kwargs  # pyright: ignore[reportOptionalMemberAccess]
+        cap = settings.SUMMARY.MAX_TOKENS_LONG
+        target = int(cap * SUMMARY_TARGET_RATIO)
+        assert kwargs["max_tokens"] == cap
+        assert target < cap
+        assert f"Aim for about {target} tokens" in kwargs["prompt"]
+
+    async def test_short_summary_target_scales_with_small_input(self):
+        with patch(
+            "src.utils.summarizer.honcho_llm_call",
+            new_callable=AsyncMock,
+            return_value=self._response(),
+        ) as mock_llm_call:
+            await create_short_summary(
+                formatted_messages=_FORMATTED_MESSAGES,
+                input_tokens=_INPUT_TOKENS,
+                previous_summary=None,
+            )
+
+        kwargs = mock_llm_call.await_args.kwargs  # pyright: ignore[reportOptionalMemberAccess]
+        target = int(_INPUT_TOKENS * SUMMARY_TARGET_RATIO)
+        assert kwargs["max_tokens"] == settings.SUMMARY.MAX_TOKENS_SHORT
+        assert f"Aim for about {target} tokens" in kwargs["prompt"]
+
+
+def _refusal() -> EmptySummaryError:
+    return EmptySummaryError.for_prompt(
+        "prompt", parse_class="truncated", finish_reasons=["length"], output_tokens=9
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("summary_type", [SummaryType.SHORT, SummaryType.LONG])
+async def test_summary_hook_refuses_degraded_empty(summary_type: SummaryType):
+    """The hook passed to honcho_llm_call refuses a truncated or filtered empty
+    summary, identifying the prompt actually sent by digest only."""
+    with patch(
+        "src.utils.summarizer.honcho_llm_call", new_callable=AsyncMock
+    ) as mock_call:
+        if summary_type is SummaryType.SHORT:
+            await create_short_summary(_FORMATTED_MESSAGES, _INPUT_TOKENS)
+        else:
+            await create_long_summary(_FORMATTED_MESSAGES)
+
+    await_args = mock_call.await_args
+    assert await_args is not None
+    kwargs = await_args.kwargs
+    validate = kwargs["validate_response"]
+    sent_prompt = kwargs["prompt"].encode("utf-8")
+
+    for reason in ("length", "max_tokens", "SAFETY"):
+        with pytest.raises(EmptySummaryError) as exc_info:
+            validate(
+                HonchoLLMCallResponse(
+                    content="  ", output_tokens=0, finish_reasons=[reason]
+                )
+            )
+        assert exc_info.value.prompt_bytes == len(sent_prompt)
+        assert (
+            exc_info.value.prompt_digest == hashlib.sha256(sent_prompt).hexdigest()[:16]
+        )
+        assert _FORMATTED_MESSAGES not in str(exc_info.value)
+
+    # A clean-stop empty keeps the existing placeholder fallback, and a
+    # truncated summary with text is left to the degenerate-output check.
+    validate(
+        HonchoLLMCallResponse(content="", output_tokens=0, finish_reasons=["stop"])
+    )
+    validate(
+        HonchoLLMCallResponse(
+            content="partial", output_tokens=9, finish_reasons=["length"]
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_refused_summary_is_not_papered_over():
+    """_create_summary turns other failures into the (never-saved) placeholder;
+    a refusal must escape instead so the queue records it."""
+    with (
+        patch(
+            "src.utils.summarizer.create_short_summary",
+            new_callable=AsyncMock,
+            side_effect=_refusal(),
+        ),
+        pytest.raises(EmptySummaryError),
+    ):
+        await _call_create_summary(SummaryType.SHORT)
+
+
+@pytest.mark.asyncio
+async def test_refused_summary_escapes_parallel_long_and_short():
+    """When a message is both a long and a short boundary, the two summaries
+    run concurrently; a refusal from either must still reach the queue."""
+    configuration = Mock()
+    configuration.summary.enabled = True
+    configuration.summary.messages_per_long_summary = 60
+    configuration.summary.messages_per_short_summary = 20
+
+    async def create_and_save(*_args: Any, **kwargs: Any) -> None:
+        if kwargs["summary_type"] is SummaryType.LONG:
+            raise _refusal()
+
+    with (
+        patch(
+            "src.utils.summarizer._create_and_save_summary",
+            side_effect=create_and_save,
+        ) as mock_create,
+        pytest.raises(EmptySummaryError),
+    ):
+        await summarize_if_needed(
+            "workspace",
+            "session",
+            message_id=1,
+            message_seq_in_session=60,
+            message_public_id="msg_1",
+            configuration=configuration,
+        )
+
+    assert mock_create.await_count == 2

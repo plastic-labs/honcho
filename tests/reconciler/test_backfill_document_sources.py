@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
 from src.reconciler.backfill_document_sources import (
+    count_pending_document_sources,
     drain_document_sources_batch,
     has_pending_document_sources,
 )
@@ -79,6 +80,7 @@ async def test_drain_covers_every_legacy_location(db_session: AsyncSession) -> N
     ids = [column.id, meta.id, premise.id, garbage.id]
 
     assert await has_pending_document_sources(db_session)
+    assert await count_pending_document_sources(db_session) == 4
 
     drained = await drain_document_sources_batch(db_session)
     await db_session.commit()
@@ -97,6 +99,7 @@ async def test_drain_covers_every_legacy_location(db_session: AsyncSession) -> N
     assert (await _reload(db_session, ids[1])).internal_metadata == {"keep": True}
 
     assert not await has_pending_document_sources(db_session)
+    assert await count_pending_document_sources(db_session) == 0
 
 
 @pytest.mark.asyncio

@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+**Before opening a PR or filing an issue**, read [If you're an agent](CONTRIBUTING.md#if-youre-an-agent) in `CONTRIBUTING.md`. Every PR needs a linked issue labelled `maintainer-approved`, and issues follow [Filing an issue](CONTRIBUTING.md#filing-an-issue). Run the `pre-pr` skill (`skills/pre-pr/`) before opening a PR.
+
 # Honcho Overview
 
 ## What is Honcho?
@@ -133,6 +135,8 @@ Tables written concurrently by more than one worker — `documents` (deriver, dr
 - `FOR UPDATE SKIP LOCKED` (the reconciler's claim pattern, and the deriver's own work-unit claim over `queue_item_batches` — `claim_rows_query` in `src/crud/deriver.py`) never waits, so it cannot be a deadlock partner for other SKIP LOCKED lockers — but it still locks in output order, its held locks can be the partner a blocking locker deadlocks against (the backlog triggers retry for exactly this), and holding those locks across an external call still stalls other writers. See the "never hold a DB session during external calls" rule above.
 
 #### Auth scoping
+
+- **Named-scope keys (`sc` plus `w`) require explicit `allow_scope=True` on supported routes.** This grants both recall and ingestion within that scope, not peer-member write access. Recall handlers must bind their projection to the token; session routes check active scope membership. Keep the named-scope route allowlist in `tests/routes/test_auth_route_policy.py` synchronized. Never allow restricted keys to enroll unrelated existing sessions or fall back to global recall.
 
 - **`allow_member_read=True` (in `require_auth(...)`) is read-only — NEVER set it on a route that mutates state.** It lets a peer-scoped key reach a session route when its peer is an active member of the session, so on a mutating route it would hand any session member write access (message injection, config mutation, deletion). HTTP method is not a reliable read/write signal here (some read routes use POST for a richer body), so this is enforced by an explicit allowlist in `tests/routes/test_auth_route_policy.py` — adding the flag to a new route fails that test until you consciously add the route to `EXPECTED_MEMBER_READ_ROUTES`, and you must never add a mutating method there.
 - **Under `MULTI_TENANT`, the tenant-claim check in `auth()` must run before the admin short-circuit.** An admin JWT (`ad: true`) is admin only within its own tenant; if the tenant gate moved after the admin check, a tenant-less admin token would bypass tenant scoping entirely.
@@ -284,6 +288,7 @@ src/
 │   ├── representation.py # Representation formatting (distinct from crud/representation.py)
 │   ├── search.py, filter.py, formatting.py
 │   ├── tokens.py         # tiktoken-based counting
+│   ├── pagination.py     # List pagination: opt-in cursor mode + the cached offset shim
 │   ├── work_unit.py, queue_payload.py
 │   ├── config_helpers.py, json_parser.py, files.py
 │   └── types.py
@@ -303,6 +308,7 @@ src/
 - Token counting on messages for usage tracking
 - JSONB metadata fields for extensibility
 - HNSW indexes for vector similarity search
+- **A `Select` that feeds a list endpoint MUST have a total ORDER BY ending in a unique column** (e.g. `created_at, id`). `paginate_offset_or_cursor` (`src/utils/pagination.py`) seeks by the sort key in both cursor mode and the offset shim; without a unique tail, rows that share a sort key are skipped or repeated across pages.
 
 ### Key Architectural Decisions
 
@@ -312,7 +318,7 @@ src/
 4. **"Minimal" deriver**: memory formation is a single structured-output LLM call per batch, not an agentic tool loop. Predictable cost, lower latency. The Dialectic is the one true tool-using agent.
 5. **Provider-agnostic LLM layer** (`src/llm/`): all model calls go through `honcho_llm_call()`. Backends (`anthropic`, `gemini`, `openai`) sit behind a registry; per-agent `MODEL_CONFIG` with fallback chains is resolved at call time.
 6. **Dialectic reasoning tiers**: 5 levels (`minimal` → `max`); each level has its own model config and tool set (`minimal` uses a reduced toolset).
-7. **Hybrid search**: Postgres FTS (GIN index on `to_tsvector('english', content)`) + vector similarity (HNSW on `MessageEmbedding.embedding`). `MessageEmbedding` is a separate table from `Message` with its own `sync_state` so embedding is decoupled from message creation.
+7. **Hybrid search**: Postgres FTS (GIN index on `to_tsvector('english', content)`, OR'd with a `content ILIKE` fallback backed by a `pg_trgm` GIN index; without pg_trgm the index is skipped and the ILIKE scans) + vector similarity (HNSW on `MessageEmbedding.embedding`). `MessageEmbedding` is a separate table from `Message` with its own `sync_state` so embedding is decoupled from message creation.
 8. **Pluggable external vector stores**: defaults to pgvector inline; can swap to turbopuffer or lancedb (`VECTOR_STORE_*` config; `src/vector_store/`).
 9. **Composite-FK multi-tenancy**: `workspace_name` participates in nearly every composite FK. Cross-workspace data leakage is structurally impossible at the schema level.
 10. **Scoped Authentication**: JWTs can be scoped to tenant, workspace, peer, or session level. Under `MULTI_TENANT`, every JWT must carry a tenant claim (`tn`), checked before any admin/workspace/peer/session scope logic — an admin token is admin only within its own tenant. The tenant registry itself (creating/updating/deleting tenants) sits above this scoping and is authenticated separately by a service secret rather than a JWT, since a JWT cannot carry a claim for a tenant that does not exist yet.

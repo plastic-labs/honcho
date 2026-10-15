@@ -1,5 +1,5 @@
 name: Bug report
-description: Something is broken or incorrect in Honcho (API, deriver, SDK, managed offering, etc.).
+description: Something you hit while using Honcho is broken or incorrect (API, deriver, SDK, managed offering, etc.).
 title: "[Bug] "
 labels: ["bug"]
 body:
@@ -8,9 +8,13 @@ body:
       value: |
         Thanks for filing a bug. Please search [existing issues](https://github.com/plastic-labs/honcho/issues) first.
 
+        **File only bugs you hit while using Honcho**, directly or through an integration. Something found only by reading the code or in a synthetic test, or a fix carried over from another repo, needs to show up in real use before it's filed here.
+
         **Security vulnerability?** Do not use this form — report privately via [SECURITY.md](https://github.com/plastic-labs/honcho/blob/main/SECURITY.md).
 
         **Memory / recall quality** (wrong or noisy conclusions, weak dialectic answers) with no crash? Prefer the **Memory / recall quality** template.
+
+        **Bug in the Hermes plugin** (`hermes-plugin-honcho`) that you can't reproduce against the Honcho API or SDK directly? Use the **Hermes plugin** template.
 
   - type: dropdown
     id: deploy_mode
@@ -30,6 +34,22 @@ body:
       label: Honcho version
       description: Server image tag or release, and SDK version if you use one. Write "managed" if you are not self-hosting.
       placeholder: e.g. server v2.4.1, honcho-ai 2.1.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: found_by
+    attributes:
+      label: How were you using Honcho when you hit it?
+      description: |
+        - **Directly**: you were calling the Honcho API, an SDK, or the CLI yourself.
+        - **Through an integration**: you were using Honcho through Hermes, OpenClaw, Claude Code, or another integration, and the problem is in Honcho, not in the integration. Pick the integration. If the integration itself is at fault, file it there instead: the **Hermes plugin** template here, or the integration's own repo, linked from its page in the [integrations catalog](https://honcho.dev/docs/v3/guides/overview).
+      options:
+        - Directly, through the API, an SDK, or the CLI
+        - Through the Hermes integration
+        - Through the OpenClaw integration
+        - Through the Claude Code integration
+        - Through another integration (name it in Additional context)
     validations:
       required: true
 

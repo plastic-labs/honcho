@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from src.schemas import DreamType, ReconcilerType, ResolvedConfiguration
 
@@ -114,6 +114,15 @@ class ReconcilerPayload(BasePayload):
 
     task_type: Literal["reconciler"] = "reconciler"
     reconciler_type: ReconcilerType
+    backfill_name: str | None = None
+
+    @model_validator(mode="after")
+    def _backfill_name_matches_type(self) -> "ReconcilerPayload":
+        if (self.reconciler_type == ReconcilerType.BACKFILL) != (
+            self.backfill_name is not None
+        ):
+            raise ValueError("backfill_name is required exactly for backfill tasks")
+        return self
 
 
 def create_webhook_payload(

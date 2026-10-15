@@ -1,5 +1,3 @@
-> **Handoff repository.** This is the standalone copy of the `honcho` memory provider formerly bundled with Hermes Agent, published so its upstream maintainers can take it over. Not an official Nous Research plugin. See [HANDOFF.md](HANDOFF.md).
-
 # Honcho Memory Provider
 
 AI-native cross-session user modeling with multi-pass dialectic reasoning, session summaries, bidirectional peer tools, and persistent conclusions.
@@ -473,3 +471,16 @@ Presets:
   }
 }
 ```
+
+## Development
+
+The unit tests run against a pinned Hermes install (the plugin imports Hermes core
+modules) and make no network calls:
+
+```bash
+cd hermes-plugin-honcho
+uv run --group test pytest tests
+```
+
+The Hermes pin is the `hermes-agent` entry in the `test` dependency group of
+`pyproject.toml`; bump it together with `uv lock`.
