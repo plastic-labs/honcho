@@ -31,6 +31,7 @@ from src.dreamer.working_memory import (
     format_work_list,
     load_notes_for_pass,
     make_update_notes_handler,
+    notes_share_tokens,
     notes_system_section,
 )
 from src.exceptions import ValidationException
@@ -522,9 +523,7 @@ If you update it, send the full deduplicated list and remove stale entries.
             if budget_enabled:
                 system_prompt += "\n\n" + budget_system_section(max_iterations, window)
             if notes_enabled:
-                system_prompt += "\n\n" + notes_system_section(
-                    settings.DREAM.NOTES_MAX_TOKENS
-                )
+                system_prompt += "\n\n" + notes_system_section(notes_share_tokens())
             work_list_shown = brief_enabled and work_list is not None
             user_prompt = self.build_user_prompt(
                 observed=observed,

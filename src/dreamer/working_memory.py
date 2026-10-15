@@ -96,6 +96,20 @@ def notes_tokens(entries: list[NoteEntry]) -> int:
     return estimate_tokens([entry.render() for entry in entries])
 
 
+def notes_share_tokens() -> int:
+    """Cap on one specialist's own entries.
+
+    Deduction and induction each get half of `NOTES_MAX_TOKENS`. Each can
+    remove only its own entries, so with one shared cap the first to fill it
+    would lock the other out.
+    """
+    return settings.DREAM.NOTES_MAX_TOKENS // 2
+
+
+def _own(entries: list[NoteEntry], specialist: str) -> list[NoteEntry]:
+    return [entry for entry in entries if entry.specialist == specialist]
+
+
 def parse_entries(stored: Any) -> list[NoteEntry]:
     """Entries from the stored `dream_notes` value, skipping any that don't parse."""
     if not isinstance(stored, dict):
@@ -380,9 +394,9 @@ UPDATE_NOTES_TOOL: dict[str, Any] = {
     "description": (
         "Edit your working notes for this peer, which carry over to your next "
         "dream. Apply a list of operations, each changing one entry: `add` a new "
-        "entry, `replace` an entry's text, or `remove` an entry. Notes are capped; "
-        "a call that would exceed the cap is rejected, so remove or shorten "
-        "entries first."
+        "entry, `replace` an entry's text, or `remove` an entry. Your entries are "
+        "capped; a call that would grow them past the cap is rejected, so remove "
+        "or shorten entries first."
     ),
     "input_schema": {
         "type": "object",
@@ -431,7 +445,7 @@ You keep short notes for this peer that carry over to your next dream. Edit them
 - `covered`: ground you reviewed and found nothing to update, so the next dream can skip it. Expires after {COVERED_TTL_DREAMS} dreams.
 - `map`: how this peer's memory is organized, such as its main topics.
 
-Keep each entry to a sentence or two and cite conclusion ids where they apply. Notes are capped at {max_tokens} tokens. Facts about the peer belong in conclusions, never only in notes."""
+Keep each entry to a sentence or two and cite conclusion ids where they apply. Your own entries are capped at {max_tokens} tokens. Facts about the peer belong in conclusions, never only in notes."""
 
 
 def _next_entry_id(entries: list[NoteEntry]) -> int:
@@ -699,6 +713,22 @@ async def load_map_entries(
     ]
 
 
+def _evict_oldest(
+    entries: list[NoteEntry], specialist: str, cap: int
+) -> tuple[list[NoteEntry], int]:
+    """Drop the specialist's least recently updated entries until its own fit.
+
+    Returns the remaining entries and the size of the specialist's own.
+    """
+    kept = list(entries)
+    own = sorted(_own(kept, specialist), key=lambda entry: entry.updated_at)
+    size = notes_tokens(own)
+    while own and size > cap:
+        kept.remove(own.pop(0))
+        size = notes_tokens(own)
+    return kept, size
+
+
 NotesHandler = Callable[[Any, dict[str, Any]], Coroutine[Any, Any, ToolResult | str]]
 
 
@@ -709,8 +739,10 @@ def make_update_notes_handler(
 
     Each call reads the stored notes, drops expired entries, applies the
     operations and writes the result back, so the notes survive a pass that
-    fails later. A call that is malformed or would exceed the cap changes
-    nothing.
+    fails later. A call that is malformed, or that grows the specialist's own
+    entries past its share of the cap, changes nothing. In shadow mode the
+    model never sees entry ids and so can't remove anything: the specialist's
+    oldest entries are evicted to fit instead.
     """
 
     async def handle(ctx: Any, tool_input: dict[str, Any]) -> ToolResult | str:
@@ -735,12 +767,16 @@ def make_update_notes_handler(
         except ValueError as e:
             return f"ERROR: {e}. No notes were changed."
 
-        cap = settings.DREAM.NOTES_MAX_TOKENS
-        size = notes_tokens(updated)
-        if size > cap:
+        cap = notes_share_tokens()
+        size = notes_tokens(_own(updated, specialist))
+        if size > cap and settings.DREAM.NOTES_MODE == "shadow":
+            updated, size = _evict_oldest(updated, specialist, cap)
+        # An edit that shrinks the entries is let through even over the cap,
+        # so they can still be trimmed after the cap is lowered.
+        if size > cap and size > notes_tokens(_own(current, specialist)):
             return (
-                f"ERROR: the notes would be {size} tokens, over the cap of {cap}. "
-                + "Remove or shorten entries first. No notes were changed."
+                f"ERROR: your entries would be {size} tokens, over the cap of "
+                + f"{cap}. Remove or shorten entries first. No notes were changed."
             )
 
         await _store_entries(ctx.workspace_name, ctx.observer, ctx.observed, updated)
@@ -756,7 +792,7 @@ def make_update_notes_handler(
         return ToolResult(
             content=(
                 f"Notes updated ({'; '.join(changes)}). "
-                + f"They now use {size} of {cap} tokens."
+                + f"Your entries now use {size} of {cap} tokens."
             ),
             metadata={
                 "notes_added": len(edit.added),

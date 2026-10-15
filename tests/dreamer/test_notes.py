@@ -192,8 +192,99 @@ async def test_handler_rejects_writes_over_the_cap(
         {"operations": [{"op": "add", "kind": "map", "text": "word " * 200}]},
     )
     assert isinstance(result, str) and result.startswith("ERROR:")
-    assert "over the cap of 100" in result
+    assert "over the cap of 50" in result
     assert parse_entries(await _stored(db_session, ctx)) == []
+
+
+def _sized(entry_id: str, specialist: str, words: int, minute: int) -> dict[str, Any]:
+    return NoteEntry(
+        id=entry_id,
+        kind="open",
+        specialist=specialist,
+        text="word " * words,
+        created_dream=1,
+        updated_at=NOW + datetime.timedelta(minutes=minute),
+    ).model_dump(mode="json")
+
+
+@pytest.mark.asyncio
+async def test_cap_is_shared_per_specialist_and_lets_edits_shrink(
+    db_session: AsyncSession,
+    sample_data: tuple[models.Workspace, models.Peer],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(settings.DREAM, "NOTES_MAX_TOKENS", 100)
+    # Deduction is over its share, as after the cap is lowered.
+    ctx = await _seed_collection(
+        db_session,
+        sample_data,
+        {
+            "entries": [
+                _sized("n1", "deduction", 40, 0),
+                _sized("n2", "deduction", 40, 1),
+            ]
+        },
+    )
+    deduction = make_update_notes_handler(
+        specialist="deduction", run_id="r1", dream_number=1
+    )
+    induction = make_update_notes_handler(
+        specialist="induction", run_id="r1", dream_number=1
+    )
+
+    grow = await deduction(
+        ctx, {"operations": [{"op": "add", "kind": "open", "text": "one more"}]}
+    )
+    assert isinstance(grow, str) and grow.startswith("ERROR:")
+    # Induction still has its own share.
+    added = await induction(
+        ctx, {"operations": [{"op": "add", "kind": "open", "text": "a pattern"}]}
+    )
+    assert isinstance(added, ToolResult)
+    # Shrinking is allowed even while still over the share.
+    shrink = await deduction(
+        ctx, {"operations": [{"op": "replace", "entry_id": "n1", "text": "short"}]}
+    )
+    assert isinstance(shrink, ToolResult)
+    assert [e.id for e in parse_entries(await _stored(db_session, ctx))] == [
+        "n1",
+        "n2",
+        "n3",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_shadow_mode_evicts_the_oldest_own_entries(
+    db_session: AsyncSession,
+    sample_data: tuple[models.Workspace, models.Peer],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(settings.DREAM, "NOTES_MAX_TOKENS", 100)
+    monkeypatch.setattr(settings.DREAM, "NOTES_MODE", "shadow")
+    ctx = await _seed_collection(
+        db_session,
+        sample_data,
+        {
+            "entries": [
+                _sized("n1", "deduction", 12, 0),
+                _sized("n2", "induction", 40, 1),
+                _sized("n3", "deduction", 12, 2),
+            ]
+        },
+    )
+    handle = make_update_notes_handler(
+        specialist="deduction", run_id="r1", dream_number=1
+    )
+    result = await handle(
+        ctx, {"operations": [{"op": "add", "kind": "open", "text": "word " * 12}]}
+    )
+    assert isinstance(result, ToolResult)
+    # n1 is deduction's oldest; induction's entry is never evicted.
+    assert [e.id for e in parse_entries(await _stored(db_session, ctx))] == [
+        "n2",
+        "n3",
+        "n4",
+    ]
 
 
 @pytest.mark.asyncio
