@@ -479,6 +479,12 @@ class TestSessionCRUD:
 
         assert await _cloned_message_authors(db_session, cloned.name) == [peer_a.name]
         assert await _cloned_session_peers(db_session, cloned.name) == [peer_a.name]
+        assert cloned.last_message_at == await db_session.scalar(
+            select(func.max(models.Message.created_at)).where(
+                models.Message.workspace_name == workspace_a.name,
+                models.Message.session_name == cloned.name,
+            )
+        )
 
     @pytest.mark.asyncio
     async def test_clone_session_does_not_leak_messages_between_workspaces(
@@ -506,6 +512,7 @@ class TestSessionCRUD:
 
         assert await _cloned_message_authors(db_session, cloned.name) == []
         assert await _cloned_session_peers(db_session, cloned.name) == []
+        assert cloned.last_message_at is None
 
     @pytest.mark.asyncio
     async def test_clone_session_without_messages_commits_clone_and_peers(

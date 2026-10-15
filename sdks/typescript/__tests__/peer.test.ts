@@ -214,12 +214,15 @@ describe('Peer', () => {
       const session = await client.session('peer-sessions-test', { metadata: {} })
 
       await session.addPeers([peer.id])
+      await session.addMessages(peer.message('peer session activity'))
 
       const sessions = await peer.sessions()
 
       expect(sessions.items.length).toBeGreaterThanOrEqual(1)
       const sessionIds = sessions.items.map((s) => s.id)
       expect(sessionIds).toContain('peer-sessions-test')
+      const returned = sessions.items.find((item) => item.id === session.id)
+      expect(typeof returned?.lastMessageAt).toBe('string')
     })
 
     test('sessions returns empty for peer in no sessions', async () => {
