@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Callable, Iterator
 from dataclasses import dataclass
-from typing import Generic, Self, TypeVar
+from typing import Generic, TypeVar
+
+from typing_extensions import Self
 
 from honcho.api_types import Evidence
 

@@ -1,0 +1,70 @@
+name: Python clean installs
+
+on:
+  pull_request:
+    # Include stacked PR bases so subsequent pushes keep their evidence current.
+    paths:
+      - 'honcho-cli/**'
+      - 'sdks/python/**'
+      - 'scripts/check_clean_install.py'
+      - 'scripts/smoke_installed_package.py'
+      - '.github/workflows/clean-install.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'honcho-cli/**'
+      - 'sdks/python/**'
+      - 'scripts/check_clean_install.py'
+      - 'scripts/smoke_installed_package.py'
+      - '.github/workflows/clean-install.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    name: ${{ matrix.package }} / Python ${{ matrix.python }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {package: sdk, python: '3.8', os: ubuntu-latest}
+          - {package: sdk, python: '3.9', os: ubuntu-latest}
+          - {package: sdk, python: '3.10', os: ubuntu-latest}
+          - {package: sdk, python: '3.11', os: ubuntu-latest}
+          - {package: sdk, python: '3.12', os: ubuntu-latest}
+          - {package: sdk, python: '3.13', os: ubuntu-latest}
+          - {package: sdk, python: '3.14', os: ubuntu-latest}
+          - {package: cli, python: '3.11', os: ubuntu-latest}
+          - {package: cli, python: '3.12', os: ubuntu-latest}
+          - {package: cli, python: '3.13', os: ubuntu-latest}
+          - {package: cli, python: '3.14', os: ubuntu-latest}
+          - {package: sdk-cli, python: '3.11', os: ubuntu-latest}
+          - {package: sdk-cli, python: '3.14', os: ubuntu-latest}
+          - {package: cli, python: '3.11', os: macos-latest}
+          - {package: sdk, python: '3.11', os: macos-latest}
+          - {package: sdk, python: '3.11', os: windows-latest}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: astral-sh/setup-uv@v6
+      - name: Build and test isolated installations
+        env:
+          INSTALL_PACKAGE: ${{ matrix.package }}
+          INSTALL_PYTHON: ${{ matrix.python }}
+        shell: bash
+        run: >-
+          python scripts/check_clean_install.py
+          --package "$INSTALL_PACKAGE" --python "$INSTALL_PYTHON"
+          --artifacts clean-install-artifacts
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: clean-install-${{ matrix.package }}-${{ matrix.python }}-${{ matrix.os }}
+          path: clean-install-artifacts/
+          if-no-files-found: warn
