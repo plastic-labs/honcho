@@ -59,14 +59,14 @@ issue linkage.
 Roughly, work on Honcho falls along these axes. Knowing which one your idea sits on tells
 you a lot about how likely it is to get approved.
 
-| Axis | What it covers |
-| --- | --- |
-| **Observability** | Understanding how Honcho behaves in production — telemetry, tracing, CloudEvents, metrics. |
-| **Memory quality** | Better conclusions from the same input — the deriver, dreamer, and dialectic; eval results. |
-| **Developer experience** | Fitting cleanly into more application architectures — SDKs, scopes, composable peers, the CLI. |
-| **Breadth of input** | Widening what Honcho can ingest and represent — multimodal and non-conversational data. |
-| **Ubiquity** | Reachable wherever a developer already works — integrations, self-hosting, alternate vector-store and inference backends, local-first defaults. |
-| **Reliability and cost** | Trustworthy in production — connection and concurrency hardening, queue throughput, cost per token. |
+| Axis                     | What it covers                                                                                                                                  |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Observability**        | Understanding how Honcho behaves in production — telemetry, tracing, CloudEvents, metrics.                                                      |
+| **Memory quality**       | Better conclusions from the same input — the deriver, dreamer, and dialectic; eval results.                                                     |
+| **Developer experience** | Fitting cleanly into more application architectures — SDKs, scopes, composable peers, the CLI.                                                  |
+| **Breadth of input**     | Widening what Honcho can ingest and represent — multimodal and non-conversational data.                                                         |
+| **Ubiquity**             | Reachable wherever a developer already works — integrations, self-hosting, alternate vector-store and inference backends, local-first defaults. |
+| **Reliability and cost** | Trustworthy in production — connection and concurrency hardening, queue throughput, cost per token.                                             |
 
 In practice, **Ubiquity** and **Developer experience** are where outside contributions land
 most easily. A new integration, a self-hosting rough edge, a vector-store or inference
@@ -127,12 +127,12 @@ Enough architecture to find your way around. For the user-facing model — what 
 
 Honcho runs as two cooperating processes over a shared Postgres database and Redis cache.
 
-| | API server | Deriver worker |
-| --- | --- | --- |
-| Start | `uv run fastapi dev src/main.py` | `uv run python -m src.deriver` |
-| Entry | `src/main.py` | `src/deriver/__main__.py` |
-| Does | Serves HTTP, enqueues background work, returns immediately | Consumes the queue: Deriver, Summarizer, Dreamer, Reconciler |
-| Hosts | The Dialectic agent, inline on the request path | Everything else |
+|       | API server                                                 | Deriver worker                                               |
+| ----- | ---------------------------------------------------------- | ------------------------------------------------------------ |
+| Start | `uv run fastapi dev src/main.py`                           | `uv run python -m src.deriver`                               |
+| Entry | `src/main.py`                                              | `src/deriver/__main__.py`                                    |
+| Does  | Serves HTTP, enqueues background work, returns immediately | Consumes the queue: Deriver, Summarizer, Dreamer, Reconciler |
+| Hosts | The Dialectic agent, inline on the request path            | Everything else                                              |
 
 The split is the load-bearing design decision: **an HTTP request never blocks on LLM work**,
 with the single exception of the Dialectic chat endpoint, which is synchronous by nature.
@@ -159,7 +159,7 @@ Worth tracing once, because it crosses most of the codebase:
 6. Later, `src/dialectic/` reads those conclusions back at recall time to answer a chat
    request.
 
-Embedding is deliberately *not* on this path. `MessageEmbedding` rows are written with
+Embedding is deliberately _not_ on this path. `MessageEmbedding` rows are written with
 `sync_state='pending'` and embedded asynchronously by the Reconciler
 (`src/reconciler/sync_vectors.py`), which runs on a scheduler inside the deriver process.
 
@@ -169,12 +169,12 @@ They share tool definitions in `src/utils/agent_tools.py` and the provider-agnos
 client in `src/llm/`. Each has its own `MODEL_CONFIG` with a fallback chain in
 `src/config.py`.
 
-| Agent | Where | Shape |
-| --- | --- | --- |
-| **Deriver** | `src/deriver/` | A single structured-output call per message batch. Not a tool loop — this is a deliberate cost and latency tradeoff. |
-| **Dialectic** | `src/dialectic/` | The one tool-using agent on the request path. Loops over tools until it can answer. Five reasoning tiers from `minimal` to `max`, each with its own model and tool set. |
-| **Dreamer** | `src/dreamer/` | Off-queue consolidation. Two specialist phases (deduction, then induction) that build reasoning trees over existing conclusions. |
-| **Summarizer** | `src/utils/summarizer.py` | Direct LLM call, no tools. Two tiers — short and long summaries at different message counts. |
+| Agent          | Where                     | Shape                                                                                                                                                                   |
+| -------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Deriver**    | `src/deriver/`            | A single structured-output call per message batch. Not a tool loop — this is a deliberate cost and latency tradeoff.                                                    |
+| **Dialectic**  | `src/dialectic/`          | The one tool-using agent on the request path. Loops over tools until it can answer. Five reasoning tiers from `minimal` to `max`, each with its own model and tool set. |
+| **Dreamer**    | `src/dreamer/`            | Off-queue consolidation. Two specialist phases (deduction, then induction) that build reasoning trees over existing conclusions.                                        |
+| **Summarizer** | `src/utils/summarizer.py` | Direct LLM call, no tools. Two tiers — short and long summaries at different message counts.                                                                            |
 
 Prompts live in `src/deriver/prompts.py`, `src/dialectic/prompts.py`, and
 `src/dreamer/specialists.py`.
@@ -189,24 +189,24 @@ public and internal vocabularies are being reconciled deliberately.
 
 ## Where to change what
 
-| I want to change... | Start here |
-| --- | --- |
-| An HTTP endpoint | `src/routers/` — one module per resource |
-| A database query | `src/crud/` — mirrors the router layout |
-| The database schema | `src/models.py`, plus a migration in `migrations/versions/` |
-| A configuration value | `src/config.py`, and add it to `config.toml.example` and `.env.template` |
-| A tool an agent can call | `src/utils/agent_tools.py` — definitions plus the per-agent tool lists |
-| A prompt | `src/deriver/prompts.py`, `src/dialectic/prompts.py`, `src/dreamer/specialists.py` |
-| LLM provider behavior | `src/llm/backends/` — `anthropic.py`, `gemini.py`, `openai.py` |
-| Embeddings or vector storage | `src/embedding_client.py`, `src/vector_store/` |
-| Telemetry or metrics | `src/telemetry/` — see the notes in `CLAUDE.md` before adding an event type |
-| Authentication and scoping | `src/security.py`, `src/dependencies.py` |
-| The Python or TypeScript SDK | `sdks/python/`, `sdks/typescript/` |
-| The CLI | `honcho-cli/` |
-| The MCP server | `mcp/` |
-| The Hermes plugin | `hermes-plugin-honcho/` — its `README.md` documents intended behavior |
-| Code shared by integrations | `harness-plugin-core/` |
-| Public documentation | `docs/v3/` — Mintlify; nav lives in `docs/docs.json` |
+| I want to change...          | Start here                                                                         |
+| ---------------------------- | ---------------------------------------------------------------------------------- |
+| An HTTP endpoint             | `src/routers/` — one module per resource                                           |
+| A database query             | `src/crud/` — mirrors the router layout                                            |
+| The database schema          | `src/models.py`, plus a migration in `migrations/versions/`                        |
+| A configuration value        | `src/config.py`, and add it to `config.toml.example` and `.env.template`           |
+| A tool an agent can call     | `src/utils/agent_tools.py` — definitions plus the per-agent tool lists             |
+| A prompt                     | `src/deriver/prompts.py`, `src/dialectic/prompts.py`, `src/dreamer/specialists.py` |
+| LLM provider behavior        | `src/llm/backends/` — `anthropic.py`, `gemini.py`, `openai.py`                     |
+| Embeddings or vector storage | `src/embedding_client.py`, `src/vector_store/`                                     |
+| Telemetry or metrics         | `src/telemetry/` — see the notes in `CLAUDE.md` before adding an event type        |
+| Authentication and scoping   | `src/security.py`, `src/dependencies.py`                                           |
+| The Python or TypeScript SDK | `sdks/python/`, `sdks/typescript/`                                                 |
+| The CLI                      | `honcho-cli/`                                                                      |
+| The MCP server               | `mcp/`                                                                             |
+| The Hermes plugin            | `hermes-plugin-honcho/` — its `README.md` documents intended behavior              |
+| Code shared by integrations  | `harness-plugin-core/`                                                             |
+| Public documentation         | `docs/v3/` — Mintlify; nav lives in `docs/docs.json`                               |
 
 Tests in `tests/` mirror `src/`. `CLAUDE.md` at the repo root has more detail on house
 conventions, and is worth skimming even if you are not using an agent.
@@ -251,7 +251,7 @@ export LLM_OPENAI_BASE_URL=http://localhost:8106/v1
 export EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL=http://localhost:8106/v1
 ```
 
-The key's *value* is never checked — the mock reads no Authorization header, and Honcho only
+The key's _value_ is never checked — the mock reads no Authorization header, and Honcho only
 tests it for truthiness before building the client (`src/llm/registry.py`). Set the base URL
 without it and the client is never constructed, so the base URL is silently ignored. Keep the
 value obviously fake, so a module that ever escapes the override 401s rather than spends.
@@ -330,13 +330,13 @@ uv run basedpyright
 Write tests for new functionality, in the directory under `tests/` that mirrors the code you
 changed. Which layer you need depends on what you touched:
 
-| What you changed | What to run |
-| --- | --- |
-| Anything in `src/` | Unit tests in the matching `tests/` tree — `uv run pytest tests/...` |
-| Deriver, dialectic, dreamer, or the LLM path | Unit tests, and consider `tests/live_llm/` (gated behind `--live-llm`) |
-| Queue behavior, config hierarchy, multi-turn flows, SDK contracts | `uv run python -m tests.unified.run` |
-| A `/v3` endpoint or deriver queue behavior | Actually run the stack and exercise it — not just pytest |
-| A migration | `uv run python scripts/run_alembic_tests.py`; every revision needs a test file |
+| What you changed                                                  | What to run                                                                    |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| Anything in `src/`                                                | Unit tests in the matching `tests/` tree — `uv run pytest tests/...`           |
+| Deriver, dialectic, dreamer, or the LLM path                      | Unit tests, and consider `tests/live_llm/` (gated behind `--live-llm`)         |
+| Queue behavior, config hierarchy, multi-turn flows, SDK contracts | `uv run python -m tests.unified.run`                                           |
+| A `/v3` endpoint or deriver queue behavior                        | Actually run the stack and exercise it — not just pytest                       |
+| A migration                                                       | `uv run python scripts/run_alembic_tests.py`; every revision needs a test file |
 
 The TypeScript SDK tests need a running server with a database and Redis, which pytest
 orchestrates. Run them with `uv run pytest tests/ -k typescript` from the repo root —
@@ -345,9 +345,9 @@ orchestrates. Run them with `uv run pytest tests/ -k typescript` from the repo r
 
 ### Migrations
 
-On every managed Honcho instance, migrations run when the api pod starts, with no other
-coordination. Rollback means swapping back to the previous image, and it never runs a
-downgrade. Any migration has to keep both of those working, which means:
+Honcho is under active development and changing at a rapid pace. In order to introduce the minimum amount of
+friction for updating self-hosted instances or managed cloud instanes migrations need to be designed with the following
+principals in mind:
 
 - **Expand, then contract.** A release can add schema or remove it, never both. Code
   that ships with a new column, table or index reads from and writes to both the old
@@ -435,7 +435,7 @@ happened. Either of these stops it: a push to the branch, or a comment saying yo
 time — we would much rather hold a PR open than lose the work. Closing is reversible too;
 reopen and it goes straight back into the review queue.
 
-A PR that is waiting on *us* is never closed for inactivity. If yours has gone quiet on our
+A PR that is waiting on _us_ is never closed for inactivity. If yours has gone quiet on our
 side, that is our backlog and not your problem — nudge us in
 [Discord](https://discord.gg/honcho).
 
@@ -472,15 +472,15 @@ reviewed in another repo is not approval here.
 File the issue where the fix goes, not where you noticed the problem. A symptom in an
 integration often has its cause in Honcho, and the reverse.
 
-| Layer | Code | It's this layer if… | Where to file |
-| --- | --- | --- | --- |
-| Server / API | `src/` | A direct API call reproduces it, or the change needs a new field or endpoint | Bug report or Feature request |
-| SDK | `sdks/` | The API returns the right data, and the SDK drops or reshapes it | Bug report or Feature request |
-| CLI | `honcho-cli/` | It happens in a `honcho` command | Bug report or Feature request |
-| MCP | `mcp/` | It happens in an MCP tool, or only with a specific MCP client | Bug report or Feature request |
-| Hermes plugin | `hermes-plugin-honcho/` | The plugin sends the wrong request, or mishandles a correct response | Hermes plugin |
-| Other integrations (OpenClaw, Claude Code, …) | Their own repos, linked from the [integrations catalog](https://honcho.dev/docs/v3/guides/overview) | Same test, for that integration | That repo's issue tracker |
-| The host app | not ours | It still happens with Honcho turned off | The host app's repo |
+| Layer                                         | Code                                                                                                | It's this layer if…                                                          | Where to file                 |
+| --------------------------------------------- | --------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- | ----------------------------- |
+| Server / API                                  | `src/`                                                                                              | A direct API call reproduces it, or the change needs a new field or endpoint | Bug report or Feature request |
+| SDK                                           | `sdks/`                                                                                             | The API returns the right data, and the SDK drops or reshapes it             | Bug report or Feature request |
+| CLI                                           | `honcho-cli/`                                                                                       | It happens in a `honcho` command                                             | Bug report or Feature request |
+| MCP                                           | `mcp/`                                                                                              | It happens in an MCP tool, or only with a specific MCP client                | Bug report or Feature request |
+| Hermes plugin                                 | `hermes-plugin-honcho/`                                                                             | The plugin sends the wrong request, or mishandles a correct response         | Hermes plugin                 |
+| Other integrations (OpenClaw, Claude Code, …) | Their own repos, linked from the [integrations catalog](https://honcho.dev/docs/v3/guides/overview) | Same test, for that integration                                              | That repo's issue tracker     |
+| The host app                                  | not ours                                                                                            | It still happens with Honcho turned off                                      | The host app's repo           |
 
 If more than one layer has to change, file it against the one that changes first. A plugin
 feature that needs a new API field is a server feature request.
@@ -527,14 +527,14 @@ Each new issue gets a first pass, from an agent or a maintainer, before review. 
 If something is missing or wrong, one of these labels is applied with a comment saying what
 to fix. Any reply from you resets the clock.
 
-| Label | Applied when | Closed after |
-| --- | --- | --- |
-| `needs-repro` | No steps or version to reproduce, or the problem was found by reading the code, in a synthetic test, or carried over from another repo without being run against Honcho | 7 days without a reply |
-| `needs-info` | A required field is missing, the issue is not in English, or the prose runs over 600 words | 7 days without a reply |
-| `invalid` | Illegible, spam, a security finding filed publicly, or belongs in another repo | 3 days |
-| `question` | A support question rather than a defect. Ask in [Discord](https://discord.gg/honcho), or email <support@honcho.dev> about the managed service | 3 days |
-| `duplicate` | Same root cause as an existing issue, linked in the comment | 3 days, unless you explain why it is different |
-| `wontfix` | Documented behavior, or an unsupported build or platform: a forked or patched build, an unsupported operating system, third-party packaging | Closed by a maintainer |
+| Label         | Applied when                                                                                                                                                            | Closed after                                   |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| `needs-repro` | No steps or version to reproduce, or the problem was found by reading the code, in a synthetic test, or carried over from another repo without being run against Honcho | 7 days without a reply                         |
+| `needs-info`  | A required field is missing, the issue is not in English, or the prose runs over 600 words                                                                              | 7 days without a reply                         |
+| `invalid`     | Illegible, spam, a security finding filed publicly, or belongs in another repo                                                                                          | 3 days                                         |
+| `question`    | A support question rather than a defect. Ask in [Discord](https://discord.gg/honcho), or email <support@honcho.dev> about the managed service                           | 3 days                                         |
+| `duplicate`   | Same root cause as an existing issue, linked in the comment                                                                                                             | 3 days, unless you explain why it is different |
+| `wontfix`     | Documented behavior, or an unsupported build or platform: a forked or patched build, an unsupported operating system, third-party packaging                             | Closed by a maintainer                         |
 
 If we got it wrong, say so on the issue and it will be reopened.
 
