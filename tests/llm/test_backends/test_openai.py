@@ -898,6 +898,36 @@ async def test_structured_output_json_object_mode_request_shape() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("with_tools", [False, True])
+async def test_structured_output_json_object_mode_instruction_is_tool_aware(
+    with_tools: bool,
+) -> None:
+    """With tools in play, the json_object instruction must leave room for a
+    tool call instead of demanding a JSON answer on every tool-loop turn."""
+    client = Mock()
+    client.chat.completions.create = AsyncMock(
+        return_value=_structured_create_return('{"answer": "ok"}')
+    )
+
+    backend = OpenAIBackend(client)
+    await backend.complete(
+        model="glm-4.6",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        tools=[AGENT_TOOL] if with_tools else None,
+        response_format=_StructuredResponse,
+        extra_params={"structured_output_mode": "json_object"},
+    )
+
+    call = _await_kwargs(client.chat.completions.create)
+    system_content = call["messages"][0]["content"]
+    assert system_content.startswith(
+        "If you are not calling a tool" if with_tools else "You must respond"
+    )
+    assert "json" in system_content
+
+
+@pytest.mark.asyncio
 async def test_structured_output_json_object_mode_repairs_markdown() -> None:
     """A provider that ignores json_object and returns prose must not crash —
     PromptRepresentation repairs to an empty representation, not an exception."""
@@ -1004,8 +1034,9 @@ def test_json_object_instruction_does_not_pin_dynamic_models() -> None:
     model = json_response_schema_to_pydantic(
         {"type": "object", "properties": {"answer": {"type": "string"}}}
     )
-    first = _json_object_instruction(model)
-    assert _json_object_instruction(model) is first  # cached while alive
+    first = _json_object_instruction(model, tools_present=False)
+    # cached while alive
+    assert _json_object_instruction(model, tools_present=False) is first
 
     ref = weakref.ref(model)
     del model

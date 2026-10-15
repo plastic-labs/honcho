@@ -22,6 +22,7 @@ from src.exceptions import (
     StructuredResponseError,
     UpstreamLLMError,
 )
+from src.llm.structured_output import StructuredOutputError
 from src.telemetry.sentry import default_before_send, initialize_sentry
 
 if TYPE_CHECKING:
@@ -42,6 +43,16 @@ def test_connection_timeout_is_consolidated_and_downgraded() -> None:
     assert out == {
         "fingerprint": ["honcho-db-connection-timeout"],
         "level": "warning",
+    }
+
+
+def test_structured_output_error_is_consolidated() -> None:
+    """Raised from every caller with a response model, so it groups as one
+    issue rather than splitting by call site."""
+    out = default_before_send({}, _hint(StructuredOutputError("no content")))
+    assert out == {
+        "fingerprint": ["honcho-llm-structured-output-invalid"],
+        "level": "error",
     }
 
 

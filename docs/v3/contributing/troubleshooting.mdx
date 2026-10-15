@@ -165,6 +165,10 @@ A chat request with a `response_format` returns `422` with `The model's answer d
 DIALECTIC_LEVELS__medium__MODEL_CONFIG__STRUCTURED_OUTPUT_MODE=json_object
 ```
 
+This sets the level's primary model only. If its fallback model also goes through the same proxy, set `STRUCTURED_OUTPUT_MODE` on the fallback config too.
+
+Streaming chat requests (`stream=true`) don't validate the answer, so they never return this `422`: a non-JSON answer streams through with a `200`.
+
 ### Thinking budget errors with non-Anthropic providers
 
 If you see errors like `thinking budget not supported`, `invalid parameter`, or silent failures where agents produce no output, one of your per-component `*_MODEL_CONFIG__THINKING_BUDGET_TOKENS` overrides is likely set to a value > 0 with a provider that doesn't support Anthropic-style extended thinking. The built-in defaults do not set thinking budgets, so this only applies if you added those overrides yourself.

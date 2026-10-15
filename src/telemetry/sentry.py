@@ -16,6 +16,7 @@ from sqlalchemy.exc import OperationalError
 from src.config import settings
 from src.exceptions import HonchoException, SentryPolicy
 from src.llm import errors as llm_errors
+from src.llm.structured_output import StructuredOutputError
 
 P = ParamSpec("P")
 T = TypeVar("T")
@@ -34,6 +35,15 @@ logger = logging.getLogger(__name__)
 _DB_CONNECTION_TIMEOUT_POLICY = SentryPolicy(
     level="warning",
     fingerprint="honcho-db-connection-timeout",
+)
+
+# A structured LLM answer that still won't validate after retries and the
+# fallback chain. Raised from every caller with a response model (deriver,
+# dreamer, summarizer), so collapse it into one issue rather than one per call
+# site. The dialectic converts it to StructuredResponseError, which has its own.
+_STRUCTURED_OUTPUT_POLICY = SentryPolicy(
+    level="error",
+    fingerprint="honcho-llm-structured-output-invalid",
 )
 
 
@@ -93,6 +103,9 @@ def default_before_send(event: Event, hint: Hint | None) -> Event | None:
     if isinstance(exc_value, ValidationError | RequestValidationError):
         logger.info(f"Filtering out validation error from Sentry: {exc_value}")
         return None
+
+    if isinstance(exc_value, StructuredOutputError):
+        return _apply_policy(event, _STRUCTURED_OUTPUT_POLICY)
 
     if isinstance(exc_value, OperationalError) and "connection timeout expired" in str(
         exc_value

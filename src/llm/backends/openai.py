@@ -28,30 +28,41 @@ logger = logging.getLogger(__name__)
 # does not hold a reference to the keyed BaseModel so that when a dynamically created
 # type is no longer referenced it becomes eligible for garbage collection. This avoids a
 # memory leak.
-_json_object_instruction_cache: weakref.WeakKeyDictionary[type[BaseModel], str] = (
-    weakref.WeakKeyDictionary()
-)
+_json_object_instruction_cache: weakref.WeakKeyDictionary[
+    type[BaseModel], dict[bool, str]
+] = weakref.WeakKeyDictionary()
 
 
-def _json_object_instruction(response_format: type[BaseModel]) -> str:
+def _json_object_instruction(
+    response_format: type[BaseModel], *, tools_present: bool
+) -> str:
     """Schema-injection instruction for json_object mode.
 
     The JSON schema is static per response_format class, so cache the serialized
     instruction — the deriver would otherwise re-walk the schema + re-serialize
     it every call.
+
+    With tools in play the wording is conditional, so the instruction doesn't
+    push the model to answer before it has used them.
     """
-    cached = _json_object_instruction_cache.get(response_format)
+    by_tools = _json_object_instruction_cache.setdefault(response_format, {})
+    cached = by_tools.get(tools_present)
     if cached is not None:
         return cached
     # Some OpenAI-compatible providers enforce this JSON-object precondition with
     # a case-sensitive substring check, so include lowercase "json" explicitly.
+    lead = (
+        "If you are not calling a tool, respond with"
+        if tools_present
+        else "You must respond with"
+    )
     instruction = (
-        "You must respond with a single JSON object (json) that conforms "
+        f"{lead} a single JSON object (json) that conforms "
         "exactly to the following JSON schema. Do not include any text, "
         "markdown, or code fences outside the JSON object.\n\nJSON schema:\n"
         f"{json.dumps(response_format.model_json_schema())}"
     )
-    _json_object_instruction_cache[response_format] = instruction
+    by_tools[tools_present] = instruction
     return instruction
 
 
@@ -501,7 +512,7 @@ class OpenAIBackend:
         without OpenAI Structured Outputs (json_schema) support still return JSON.
         """
         params["messages"] = self._with_json_schema_instructions(
-            params["messages"], response_format
+            params["messages"], response_format, tools_present=bool(params.get("tools"))
         )
         params["response_format"] = {"type": "json_object"}
 
@@ -509,6 +520,8 @@ class OpenAIBackend:
     def _with_json_schema_instructions(
         messages: list[dict[str, Any]],
         response_format: type[BaseModel],
+        *,
+        tools_present: bool,
     ) -> list[dict[str, Any]]:
         """Add JSON-schema instructions to a copy of messages for json_object mode.
 
@@ -516,7 +529,9 @@ class OpenAIBackend:
         (``_append_text_to_last_message``); the two are intentionally kept
         separate since the providers want different placement and wording.
         """
-        instruction = _json_object_instruction(response_format)
+        instruction = _json_object_instruction(
+            response_format, tools_present=tools_present
+        )
         new_messages = [dict(message) for message in messages]
         first = new_messages[0] if new_messages else None
         # Only merge into a leading system message when its content is a plain

@@ -118,6 +118,26 @@ async def test_answer_maps_structured_output_failure(failure: Exception) -> None
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("content", ["", "I can't help with that."])
+async def test_answer_rejects_unparsed_content(content: str) -> None:
+    """A backend that degrades to a plain string instead of raising (json_object
+    mode's empty answer or a refusal) must still surface as a 422."""
+    agent = _make_agent()
+    mock_llm_call = AsyncMock(
+        return_value=HonchoLLMCallResponse(
+            content=content,
+            input_tokens=10,
+            output_tokens=5,
+            finish_reasons=["stop"],
+        )
+    )
+
+    p1, p2, p3 = _patches(mock_llm_call)
+    with p1, p2, p3, pytest.raises(StructuredResponseError):
+        await agent.answer("query", response_model=FoodPreferences)
+
+
+@pytest.mark.asyncio
 async def test_answer_without_response_model_does_not_map_validation_errors() -> None:
     agent = _make_agent()
     failure = _schema_failure()

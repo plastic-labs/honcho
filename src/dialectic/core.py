@@ -621,6 +621,12 @@ class DialecticAgent:
         content = response.content
         if isinstance(content, BaseModel):
             content = content.model_dump_json(by_alias=True)
+        elif response_model is not None:
+            # A backend that degrades instead of raising (json_object mode's
+            # empty answer or a refusal) hands back a plain string.
+            if run is not None:
+                run.end(is_error=True)
+            raise StructuredResponseError()
         if run is not None:
             run.end(output=content)
 
