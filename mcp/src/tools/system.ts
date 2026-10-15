@@ -1,7 +1,9 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ToolContext } from "../types.js";
-import { textResult, errorResult, workspaceIdSchema } from "../types.js";
+import { textResult, errorResult, workspaceIdSchema,
+  failedResult,
+} from "../types.js";
 
 export function register(server: McpServer, ctx: ToolContext) {
   // ── schedule_dream ──────────────────────────────────────────────────
@@ -42,9 +44,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         });
         return textResult("Dream scheduled successfully");
       } catch (e) {
-        return errorResult(
-          `Failed to schedule dream: ${e instanceof Error ? e.message : String(e)}`,
-        );
+        return failedResult(ctx, `Failed to schedule dream`, e);
       }
     },
   );
@@ -71,9 +71,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         const status = await ctx.clientFor(workspace_id).queueStatus();
         return textResult(status);
       } catch (e) {
-        return errorResult(
-          `Failed to get queue status: ${e instanceof Error ? e.message : String(e)}`,
-        );
+        return failedResult(ctx, `Failed to get queue status`, e);
       }
     },
   );

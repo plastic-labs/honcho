@@ -113,3 +113,64 @@ test("a session's tool calls carry the caller's plugin header", async () => {
   expect(seen[0].get("X-Honcho-Plugin")).toBe("cursor-honcho/0.2.0 (Cursor/1.0.0)");
   expect(seen[0].get("X-Honcho-Host")).toMatch(/^honcho-mcp\//);
 });
+
+const listWorkspacesBody = {
+  jsonrpc: "2.0",
+  id: 4,
+  method: "tools/call",
+  params: { name: "list_workspaces", arguments: {} },
+};
+
+function upstream(status: number, body: unknown) {
+  return async () =>
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { "Content-Type": "application/json" },
+    });
+}
+
+test("a rejected OAuth token is answered with HTTP 401 invalid_token and the session is dropped", async () => {
+  const headers = { Authorization: "Bearer hch-at-expired" };
+  const init = await mcpPost(headers, initializeBody);
+  expect(init.status).toBe(200);
+  const sessionId = init.headers.get("mcp-session-id")!;
+  const inSession = { ...headers, "mcp-session-id": sessionId };
+
+  const original = globalThis.fetch;
+  globalThis.fetch = upstream(401, { detail: "Invalid or expired access token" });
+  try {
+    const call = await mcpPost(inSession, listWorkspacesBody);
+    expect(call.status).toBe(401);
+    const challenge = call.headers.get("WWW-Authenticate") ?? "";
+    expect(challenge).toContain('error="invalid_token"');
+    expect(challenge).toContain("resource_metadata=");
+  } finally {
+    globalThis.fetch = original;
+  }
+
+  // The session is gone, so the client's retry cannot reuse it and must
+  // re-initialize with its refreshed token. (#1375 makes this a 404.)
+  const stale = await mcpPost(inSession, pingBody);
+  expect([400, 404]).toContain(stale.status);
+});
+
+test("a 401 on an API key stays a tool error and keeps the session", async () => {
+  const headers = { Authorization: "Bearer hch-plain-api-key" };
+  const init = await mcpPost(headers, initializeBody);
+  const sessionId = init.headers.get("mcp-session-id")!;
+  const inSession = { ...headers, "mcp-session-id": sessionId };
+
+  const original = globalThis.fetch;
+  globalThis.fetch = upstream(401, { detail: "Invalid JWT" });
+  try {
+    const call = await mcpPost(inSession, listWorkspacesBody);
+    expect(call.status).toBe(200);
+    const body = (await call.json()) as { result: { isError?: boolean } };
+    expect(body.result.isError).toBe(true);
+  } finally {
+    globalThis.fetch = original;
+  }
+
+  const ping = await mcpPost(inSession, pingBody);
+  expect(ping.status).toBe(200);
+});

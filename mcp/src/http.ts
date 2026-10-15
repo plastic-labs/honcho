@@ -11,6 +11,7 @@ import {
   sentryOptions,
 } from "./config.js";
 import { createServer } from "./server.js";
+import { invalidTokenResponse, type ToolContext } from "./types.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 declare const process: {
@@ -47,6 +48,8 @@ type Session = {
   server: McpServer;
   lastSeen: number;
   apiKey: string;
+  /** Set by a tool when the Honcho API rejected this session's access token. */
+  auth: { rejected: boolean };
 };
 
 const sessions = new Map<string, Session>();
@@ -125,6 +128,11 @@ function configOrUnauthorized(request: Request): HonchoConfig | Response {
   }
 }
 
+function rejectedToken(request: Request): Response {
+  const resourceMetadata = `${new URL(request.url).origin}${PROTECTED_RESOURCE_PATH}`;
+  return invalidTokenResponse(resourceMetadata, CORS_HEADERS);
+}
+
 function unauthorized(request: Request, message: string): Response {
   const resourceMetadata = `${new URL(request.url).origin}${PROTECTED_RESOURCE_PATH}`;
   return jsonResponse(
@@ -151,7 +159,16 @@ async function handleMcp(request: Request): Promise<Response> {
         );
       }
       existing.lastSeen = Date.now();
-      return withCors(await existing.transport.handleRequest(request));
+      existing.auth.rejected = false;
+      const response = await existing.transport.handleRequest(request);
+      if (existing.auth.rejected) {
+        // The Honcho API refused this session's OAuth access token. Drop the
+        // session and answer 401: the client refreshes its token and retries;
+        // the dead session id then makes it re-initialize with the new token.
+        dropSession(sessionId);
+        return rejectedToken(request);
+      }
+      return withCors(response);
     }
   }
 
@@ -201,7 +218,8 @@ async function handleMcp(request: Request): Promise<Response> {
   const config = configOrUnauthorized(request);
   if (config instanceof Response) return config;
 
-  const server = createServer({
+  const auth = { rejected: false };
+  const ctx: ToolContext = {
     config,
     ...honchoClients(
       config,
@@ -210,7 +228,11 @@ async function handleMcp(request: Request): Promise<Response> {
         request.headers.get(HEADER_PLUGIN),
       ),
     ),
-  });
+    onUnauthorized: () => {
+      auth.rejected = true;
+    },
+  };
+  const server = createServer(ctx);
 
   const maxSessions = envInt("MCP_SESSION_MAX", DEFAULT_SESSION_MAX);
   if (sessions.size >= maxSessions) {
@@ -229,12 +251,16 @@ async function handleMcp(request: Request): Promise<Response> {
 
   const transport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: () => crypto.randomUUID(),
+    // Tool results come back as one JSON body, so the status line is decided
+    // after the tool ran and a rejected token can be a real 401.
+    enableJsonResponse: true,
     onsessioninitialized: (id) => {
       sessions.set(id, {
         transport,
         server,
         lastSeen: Date.now(),
         apiKey: config.apiKey,
+        auth,
       });
     },
   });

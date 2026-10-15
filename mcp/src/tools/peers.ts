@@ -1,7 +1,9 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ToolContext } from "../types.js";
-import { textResult, errorResult, workspaceIdSchema } from "../types.js";
+import { textResult, errorResult, workspaceIdSchema,
+  failedResult,
+} from "../types.js";
 
 export function register(server: McpServer, ctx: ToolContext) {
   // ── create_peer ─────────────────────────────────────────────────────
@@ -38,9 +40,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         });
         return textResult({ peer_id: peer.id, configuration: peer.configuration });
       } catch (e) {
-        return errorResult(
-          `Failed to create peer: ${e instanceof Error ? e.message : String(e)}`,
-        );
+        return failedResult(ctx, `Failed to create peer`, e);
       }
     },
   );
@@ -77,9 +77,7 @@ export function register(server: McpServer, ctx: ToolContext) {
           pages: page.pages,
         });
       } catch (e) {
-        return errorResult(
-          `Failed to list peers: ${e instanceof Error ? e.message : String(e)}`,
-        );
+        return failedResult(ctx, `Failed to list peers`, e);
       }
     },
   );
@@ -168,9 +166,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         });
         return textResult({ content: content ?? "None", evidence });
       } catch (e) {
-        return errorResult(
-          `Chat failed: ${e instanceof Error ? e.message : String(e)}`,
-        );
+        return failedResult(ctx, `Chat failed`, e);
       }
     },
   );
@@ -205,9 +201,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         const card = await peer.getCard(target_peer_id);
         return textResult(card ?? "No peer card found.");
       } catch (e) {
-        return errorResult(
-          `Failed to get peer card: ${e instanceof Error ? e.message : String(e)}`,
-        );
+        return failedResult(ctx, `Failed to get peer card`, e);
       }
     },
   );
@@ -246,9 +240,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         const result = await peer.setCard(peer_card, target_peer_id);
         return textResult(result ?? "Peer card set successfully");
       } catch (e) {
-        return errorResult(
-          `Failed to set peer card: ${e instanceof Error ? e.message : String(e)}`,
-        );
+        return failedResult(ctx, `Failed to set peer card`, e);
       }
     },
   );
@@ -304,9 +296,7 @@ export function register(server: McpServer, ctx: ToolContext) {
           peer_card: context.peerCard,
         });
       } catch (e) {
-        return errorResult(
-          `Failed to get peer context: ${e instanceof Error ? e.message : String(e)}`,
-        );
+        return failedResult(ctx, `Failed to get peer context`, e);
       }
     },
   );
@@ -380,9 +370,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         });
         return textResult(rep);
       } catch (e) {
-        return errorResult(
-          `Failed to get representation: ${e instanceof Error ? e.message : String(e)}`,
-        );
+        return failedResult(ctx, `Failed to get representation`, e);
       }
     },
   );
