@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "honcho": {
+      "type": "http",
+      "url": "https://mcp.honcho.dev",
+      "headers": {
+        "X-Honcho-Plugin": "cursor-honcho/0.2.0"
+      }
+    }
+  }
+}

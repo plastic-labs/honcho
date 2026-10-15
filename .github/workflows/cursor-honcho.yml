@@ -1,0 +1,29 @@
+name: cursor-honcho
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'cursor-honcho/**'
+      - '.cursor-plugin/marketplace.json'
+      - '.github/workflows/cursor-honcho.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'cursor-honcho/**'
+      - '.cursor-plugin/marketplace.json'
+      - '.github/workflows/cursor-honcho.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Validate plugin manifests, MCP config and skills
+        run: python3 cursor-honcho/scripts/validate.py
