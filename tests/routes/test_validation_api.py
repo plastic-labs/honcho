@@ -35,6 +35,19 @@ def test_workspace_validations_api(client: TestClient):
     assert error["type"] == "dict_type"
 
 
+def test_lone_surrogate_input_returns_422(client: TestClient):
+    # Valid JSON, invalid Unicode: the echoed `input` must not break rendering
+    response = client.post(
+        "/v3/workspaces",
+        content=b'{"name": "emoji \\ud83d cut", "metadata": {}}',
+        headers={"Content-Type": "application/json"},
+    )
+    assert response.status_code == 422
+    error = response.json()["detail"][0]
+    assert error["loc"] == ["body", "name"]
+    assert error["type"] == "string_unicode"
+
+
 def test_peer_validations_api(client: TestClient, sample_data: tuple[Workspace, Peer]):
     test_workspace, _ = sample_data
 
