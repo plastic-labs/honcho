@@ -101,3 +101,29 @@ def test_truncate_messages_to_fit_preserves_gemini_tool_pair() -> None:
     # The oldest (bulk-text) message should be dropped; the function_call +
     # function_response pair stays intact together.
     assert truncated == messages[1:]
+
+
+def test_truncate_keeps_a_budget_line_with_its_tool_round() -> None:
+    """A plain user turn after the tool results (the tool loop's budget line)
+    stays in the round's unit. As its own unit it would be the only one kept,
+    and every tool result would be dropped."""
+    messages: list[dict[str, Any]] = [
+        {"role": "user", "content": "question"},
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "lookup", "arguments": "{}"},
+                }
+            ],
+        },
+        {"role": "tool", "tool_call_id": "call_1", "content": "result " * 1000},
+        {"role": "user", "content": "Tool calls used: 1 of 10."},
+    ]
+
+    truncated = truncate_messages_to_fit(messages, max_tokens=5)
+
+    assert truncated == messages[1:]
