@@ -165,6 +165,7 @@ class TestConcludeToolDispatch:
             "telegram:123",
             "User prefers dark mode",
             peer="user",
+            raise_on_error=True,
         )
 
 
