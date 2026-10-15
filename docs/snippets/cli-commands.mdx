@@ -122,12 +122,26 @@ honcho conclusion search <query>
 
 ## honcho config
 
-Inspect CLI configuration.
+Show resolved config, integrations and local stacks, with secrets redacted.
+
+Flags override environment variables, which override ~/.honcho/config.json; built-in defaults apply last. One exception: a valid OAuth login is used before HONCHO_API_KEY.
 
 ```bash
 honcho config
 ```
 
+<ParamField path="--all" type="boolean">
+  Expand every section, with the fix for each problem.
+</ParamField>
+<ParamField path="--deep" type="boolean">
+  Also probe the API and read server versions over the network.
+</ParamField>
+<ParamField path="--no-network" type="boolean">
+  Skip Docker and all HTTP checks.
+</ParamField>
+<ParamField path="--profile" type="string">
+  Only include this local stack.
+</ParamField>
 
 ## honcho doctor
 

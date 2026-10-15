@@ -141,7 +141,7 @@ honcho stop --wipe     # also delete volumes
 
 | Command | Description |
 |---------|-------------|
-| `honcho config` | Show current config (API key redacted) |
+| `honcho config` | Resolved config, integrations and local stacks, secrets redacted (`--all`, `--deep`, `--json`) |
 
 ## Agent Usage
 
@@ -237,6 +237,25 @@ is left untouched.
 
 `workspace_id` / `peer_id` / `session_id` are per-command only — never
 persisted to the config file.
+
+### Inspecting config
+
+`honcho config` fits on one screen: the values the CLI resolved and where each
+came from, the integrations wired up on this machine (Claude Code, Codex,
+OpenCode, OpenClaw, Hermes, …) with their versions, local stacks started with
+`honcho start` and the build each one runs, and anything that needs attention.
+Every key and token is shown as its prefix and last four characters
+(`hch-v3-…l0bo`); passwords show only as set.
+
+```bash
+honcho config                   # one-screen summary (no network calls)
+honcho config --all             # every section, with the fix for each problem
+honcho config --deep            # also probe the API and read server versions
+honcho config --json --deep     # the full report, to attach to a bug report
+```
+
+`--profile` limits the local-stack section to one stack, and `--no-network`
+skips Docker and all HTTP checks.
 
 ## Development
 

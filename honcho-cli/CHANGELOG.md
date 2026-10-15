@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking (JSON):** `honcho config` is now a diagnostic report instead of two redacted fields. The default view fits on one screen: resolved values with the source of each, the integrations wired up on the machine (Claude Code, Codex, Cursor, OpenCode, OpenClaw, Hermes, pi, SillyTavern, nanobot, and MCP clients) with versions, local `honcho start` stacks with the build each runs, other Honcho containers on the host, and anything that needs attention. Keys and tokens are shown as prefix plus last four (`hch-v3-…l0bo`); passwords only as set; URL and Redis passwords are masked in place. `--json` keeps the old fields under `resolved`: `api_key` → `resolved.credential.masked`, `base_url` → `resolved.base_url.value`, `oauth` → `resolved.oauth` (state only, no token), `workspace_id`/`peer_id`/`session_id` → `resolved.workspace|peer|session.value`
+- `honcho doctor` ends with a hint to attach `honcho config --json --deep` to bug reports
+
+### Added
+
+- `honcho config --all` expands every section and gives a fix for each problem; `--deep` adds the network checks (API reachability, server version, authenticated call); `--no-network` skips Docker and HTTP; `--profile` (or `HONCHO_PROFILE`) limits the local-stack section to one stack
+- Findings carry a stable id (`integration/key-mismatch`, `stack/stale-url`, …), the integration or stack they concern, and the command that fixes them — e.g. (with `--deep`) an integration whose own key the API refuses, a plugin pinned to a localhost port no running stack uses, or an env var the CLI does not read. An integration using a different key from `config.json` is reported, not flagged
+
 ## [0.2.0] - 2026-09-21
 
 ### Added
