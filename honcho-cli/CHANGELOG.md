@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `honcho install` finds the AI agents on this machine (Claude Code, Codex, OpenCode, Pi, Kilo Code, DeepSeek Harness, Hermes Agent, OpenClaw, and the MCP clients Cursor, Claude Desktop, Windsurf, Cline, VS Code, Zed and Goose), shows which already have Honcho, and offers a checkbox picker that runs each plugin's install command or opens the MCP setup guide. `honcho install all` or `honcho install <id>...` skips the picker; `--list` and `--json` only report
+
 ## [0.2.0] - 2026-09-21
 
 ### Added

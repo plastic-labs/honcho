@@ -166,6 +166,22 @@ honcho init
   Honcho API URL (e.g. https://api.honcho.dev, http://localhost:8000).
 </ParamField>
 
+## honcho install
+
+Find the AI agents on this machine and add Honcho to them.
+
+With no arguments on a terminal, shows a checkbox picker. Plugin agents run
+their install command; MCP clients open their setup guide.
+
+```bash
+honcho install [<targets>]
+```
+
+<ParamField path="targets" type="string" />
+<ParamField path="--list" type="boolean">
+  Only show what was found; install nothing.
+</ParamField>
+
 ## honcho message
 
 List, create, and get messages within a session.

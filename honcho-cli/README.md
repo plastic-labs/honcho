@@ -25,6 +25,7 @@ uv tool install honcho-cli
 honcho init                 # confirm/set apiKey + Honcho URL in ~/.honcho/config.json
 honcho start --setup basic  # local stack: LLM provider key + Docker
 honcho doctor               # verify config + connectivity
+honcho install              # find your AI agents and add Honcho to them
 honcho                      # show banner + command list
 ```
 
@@ -67,6 +68,7 @@ honcho stop --wipe     # also delete volumes
 | `honcho stop` | Stop the local stack. `--wipe` also deletes volumes. |
 | `honcho status` | Show every local stack (or `--profile` for one). |
 | `honcho doctor` | Health check: config, connectivity, workspace, peer, queue |
+| `honcho install` | Find the AI agents on this machine, show which already have Honcho, and pick which to add it to. Plugin agents run their install command; MCP clients open their setup guide. `honcho install all` or `honcho install <id>...` skips the picker; `--list` only reports. |
 
 ### Workspaces
 
