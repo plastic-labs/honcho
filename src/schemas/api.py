@@ -746,8 +746,8 @@ class MessageSearchOptions(BaseModel):
         description=(
             "Optional maximum cosine distance for semantic matches. Semantic hits "
             "farther than this are dropped, so fewer than `limit` results (or "
-            "none) are returned when nothing is close enough. Full-text matches "
-            "are not affected."
+            "none) are returned when nothing is close enough. Applies only to "
+            "semantic candidates: full-text matches remain eligible independently."
         ),
     )
 

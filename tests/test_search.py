@@ -916,3 +916,58 @@ async def test_max_distance_is_forwarded_to_the_external_vector_store(
 
     assert ids == ["m1"]
     assert received["max_distance"] == 0.4
+
+
+class _DistanceStore:
+    """External vector store stand-in that ranks fixed per-message distances."""
+
+    def __init__(self, distances: dict[str, float]) -> None:
+        self.distances: dict[str, float] = distances
+
+    def get_vector_namespace(self, kind: str, workspace_name: str) -> str:
+        return f"{kind}:{workspace_name}"
+
+    async def query(
+        self, _namespace: str, _embedding: list[float], **kwargs: Any
+    ) -> list[Any]:
+        from src.vector_store import VectorQueryResult
+
+        max_distance: float | None = kwargs.get("max_distance")
+        return [
+            VectorQueryResult(
+                id=f"chunk-{message_id}",
+                score=distance,
+                metadata={"message_id": message_id},
+            )
+            for message_id, distance in sorted(
+                self.distances.items(), key=lambda item: item[1]
+            )
+            if max_distance is None or distance <= max_distance
+        ]
+
+
+@pytest.mark.asyncio
+async def test_max_distance_on_the_external_vector_store_path(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+):
+    """Omitted, a relevant hit kept, an unrelated query empty: the external-store path (#1177)."""
+    from src.utils import search as search_module
+
+    workspace_name, (near, far) = await _messages_with_embeddings(
+        db_session,
+        [("lunch plans", _axis_vector(0)), ("tax forms", _axis_vector(1))],
+    )
+    monkeypatch.setattr(search_module, "_uses_pgvector_message_search", lambda: False)
+    filters = {"workspace_id": workspace_name}
+
+    store = _DistanceStore({near.public_id: 0.2, far.public_id: 0.9})
+    monkeypatch.setattr(search_module, "get_external_vector_store", lambda: store)
+    omitted = await search("zzqx", filters=filters, limit=10)
+    bounded = await search("zzqx", filters=filters, limit=10, max_distance=0.5)
+
+    store.distances = {near.public_id: 0.95, far.public_id: 0.9}
+    unrelated = await search("zzqx", filters=filters, limit=10, max_distance=0.5)
+
+    assert {m.public_id for m in omitted} == {near.public_id, far.public_id}
+    assert [m.public_id for m in bounded] == [near.public_id]
+    assert unrelated == []
