@@ -86,7 +86,7 @@ handle. See [Unified Memory Setup](https://honcho.dev/docs/v3/guides/recipes/uni
 ## Development
 
 ```bash
-python3 cursor-honcho/scripts/validate.py
+python3 integrations/cursor/scripts/validate.py
 ```
 
 The validator mirrors the Cursor Marketplace submission checklist: manifest

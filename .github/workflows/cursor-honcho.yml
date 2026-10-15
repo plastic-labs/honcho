@@ -4,13 +4,13 @@ on:
   push:
     branches: [main]
     paths:
-      - 'cursor-honcho/**'
+      - 'integrations/cursor/**'
       - '.cursor-plugin/marketplace.json'
       - '.github/workflows/cursor-honcho.yml'
   pull_request:
     branches: [main]
     paths:
-      - 'cursor-honcho/**'
+      - 'integrations/cursor/**'
       - '.cursor-plugin/marketplace.json'
       - '.github/workflows/cursor-honcho.yml'
 
@@ -26,4 +26,4 @@ jobs:
           persist-credentials: false
 
       - name: Validate plugin manifests, MCP config and skills
-        run: python3 cursor-honcho/scripts/validate.py
+        run: python3 integrations/cursor/scripts/validate.py

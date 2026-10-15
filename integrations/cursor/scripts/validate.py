@@ -3,7 +3,7 @@
 
 Runs with the standard library only, from any directory:
 
-    python3 cursor-honcho/scripts/validate.py
+    python3 integrations/cursor/scripts/validate.py
 
 Checks the per-plugin manifest, the MCP config, every skill, rule and command
 file, the logo, and the root marketplace manifest. Exits non-zero on the first
@@ -18,7 +18,16 @@ import sys
 from pathlib import Path
 
 PLUGIN_DIR = Path(__file__).resolve().parent.parent
-REPO_ROOT = PLUGIN_DIR.parent
+def find_repo_root(start: Path) -> Path:
+    """Walk up from the plugin until the directory holding the root marketplace manifest."""
+    for candidate in (start, *start.parents):
+        if (candidate / ".cursor-plugin" / "marketplace.json").exists() or (candidate / ".git").exists():
+            return candidate
+    raise SystemExit("validate.py: no .cursor-plugin/marketplace.json or .git found above the plugin directory")
+
+
+REPO_ROOT = find_repo_root(PLUGIN_DIR.parent)
+PLUGIN_REL = PLUGIN_DIR.relative_to(REPO_ROOT).as_posix()
 KEBAB = re.compile(r"^[a-z0-9]+(?:[-.][a-z0-9]+)*$")
 FRONTMATTER = re.compile(r"\A---\n(.*?)\n---\n", re.S)
 
@@ -60,7 +69,7 @@ def check_relative(path_value: str, where: str) -> None:
 
 def check_manifest() -> dict:
     manifest = load_json(PLUGIN_DIR / ".cursor-plugin" / "plugin.json") or {}
-    where = "cursor-honcho/.cursor-plugin/plugin.json"
+    where = f"{PLUGIN_REL}/.cursor-plugin/plugin.json"
     for key in ("name", "version", "description", "author", "license", "logo"):
         if not manifest.get(key):
             fail(f"{where}: missing {key!r}")
@@ -84,7 +93,7 @@ def check_mcp(manifest: dict) -> None:
     rel = manifest.get("mcpServers", "./mcp.json")
     path = PLUGIN_DIR / rel
     config = load_json(path) or {}
-    where = f"cursor-honcho/{rel.lstrip('./')}"
+    where = f"{PLUGIN_REL}/{rel.lstrip('./')}"
     servers = config.get("mcpServers") or {}
     if not servers:
         fail(f"{where}: no mcpServers declared")
@@ -107,7 +116,7 @@ def check_components(manifest: dict) -> None:
     skills_dir = PLUGIN_DIR / manifest.get("skills", "./skills/")
     skill_files = sorted(skills_dir.glob("*/SKILL.md")) if skills_dir.is_dir() else []
     if not skill_files:
-        fail("cursor-honcho/skills: no SKILL.md files found")
+        fail(f"{PLUGIN_REL}/skills: no SKILL.md files found")
     for path in skill_files:
         fm = frontmatter(path)
         rel = path.relative_to(REPO_ROOT)
@@ -127,10 +136,10 @@ def check_components(manifest: dict) -> None:
                 fail(f"{path.relative_to(REPO_ROOT)}: frontmatter name must equal {path.stem!r}")
     logo = PLUGIN_DIR / manifest.get("logo", "")
     if logo.suffix.lower() not in {".svg", ".png"}:
-        fail("cursor-honcho: logo must be an .svg or .png committed in the repo")
+        fail(f"{PLUGIN_REL}: logo must be an .svg or .png committed in the repo")
     for required in ("README.md", "LICENSE", "CHANGELOG.md"):
         if not (PLUGIN_DIR / required).exists():
-            fail(f"cursor-honcho/{required}: missing")
+            fail(f"{PLUGIN_REL}/{required}: missing")
 
 
 def check_marketplace(manifest: dict) -> None:
@@ -161,11 +170,11 @@ def main() -> int:
     check_components(manifest)
     check_marketplace(manifest)
     if errors:
-        print("cursor-honcho validation failed:")
+        print(f"{PLUGIN_REL} validation failed:")
         for e in errors:
             print(f"  - {e}")
         return 1
-    print("cursor-honcho validation passed")
+    print(f"{PLUGIN_REL} validation passed")
     return 0
 
 

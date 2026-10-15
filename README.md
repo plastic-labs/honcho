@@ -182,8 +182,8 @@ gives them one shared memory.
 | ---------------- | ------------------------------------------------------- | ------------------------------------------------------------------ |
 | Claude Code      | `/plugin marketplace add plastic-labs/claude-honcho`    | [claude-honcho](https://github.com/plastic-labs/claude-honcho)     |
 | Codex            | `npm install -g @honcho-ai/codex-honcho`                | [codex-honcho](https://github.com/plastic-labs/codex-honcho)       |
-| Cursor           | Install **Honcho** from the Cursor Marketplace          | [cursor-honcho](cursor-honcho/)                                    |
-| Grok Bot         | **Add to Grok Bot** from the Honcho plugin page         | [cursor-honcho](cursor-honcho/)                                    |
+| Cursor           | Install **Honcho** from the Cursor Marketplace          | [integrations/cursor](integrations/cursor/)                        |
+| Grok Bot         | **Add to Grok Bot** from the Honcho plugin page         | [integrations/cursor](integrations/cursor/)                        |
 | DeepSeek Harness | `dsh plugin --profile <name> add @honcho-ai/dsh-honcho` | [dsh-honcho](https://github.com/plastic-labs/dsh-honcho)           |
 | OpenCode         | `opencode plugin "@honcho-ai/opencode-honcho" --global` | [opencode-honcho](https://github.com/plastic-labs/opencode-honcho) |
 | Kilo Code        | `kilo plugin @honcho-ai/kilo-honcho --global`           | [kilo-honcho](kilo-honcho/)                                        |
@@ -228,7 +228,7 @@ Restart Codex to load the hooks. Details: [Codex guide](https://honcho.dev/docs/
 ### Cursor and Grok Bot
 
 One Cursor Marketplace listing serves both. In Cursor, open **Customize**, install **Honcho**, authenticate the `honcho` MCP server, then run `/honcho-setup` once. In Grok Bot, add **Honcho** under **Connect apps** (or **Add to Grok Bot** from the plugin page) and tell a Bot to set up Honcho. The plugin connects to the hosted MCP server over OAuth and ships the skills that drive the memory loop, so nothing runs locally.
-Details: [Cursor guide](https://honcho.dev/docs/v3/guides/integrations/cursor) · [Grok Bot guide](https://honcho.dev/docs/v3/guides/integrations/grok-bot) · [source](cursor-honcho/).
+Details: [Cursor guide](https://honcho.dev/docs/v3/guides/integrations/cursor) · [Grok Bot guide](https://honcho.dev/docs/v3/guides/integrations/grok-bot) · [source](integrations/cursor/).
 
 ### DeepSeek Harness
 
