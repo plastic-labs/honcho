@@ -422,6 +422,14 @@ class QueueManager:
             claimed_mapping = await self.claim_work_units(db, available_units)
             await db.commit()
 
+            # ai: only the units claim_work_units took; a candidate another claimer won is not a claim
+            if settings.METRICS.ENABLED and settings.DERIVER.TENANT_FAIRNESS_METRICS:
+                oldest_by_key = {row[0]: row[3] for row in available_rows}
+                prometheus_metrics.record_deriver_claims(
+                    (tenant_id_for_work_unit_key(key), oldest_by_key[key])
+                    for key in claimed_mapping
+                )
+
             return claimed_mapping
 
     async def claim_work_units(

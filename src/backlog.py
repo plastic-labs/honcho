@@ -153,6 +153,7 @@ class DeriverMetricsPoller:
             excluded_work_units=stats.excluded_work_units,
             excluded_work_units_by_tenant=stats.excluded_work_units_by_tenant,
             claimed_work_units=stats.claimed_work_units,
+            inflight_units_by_tenant=stats.inflight_units_by_tenant,
             pending_items=stats.pending_items,
             oldest_pending_age_seconds=stats.oldest_pending_age_seconds,
             embeddings_pending=stats.embeddings_pending,

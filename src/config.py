@@ -1027,6 +1027,11 @@ class DeriverSettings(HonchoSettings):
 
     BACKLOG_METRICS_POLL_INTERVAL_SECONDS: Annotated[int, Field(default=30, ge=1)] = 30
 
+    # Per-tenant claim metrics (claims, claim wait, in-flight units), for
+    # measuring how fairly a shared deriver serves its tenants. Off by default:
+    # each adds a series set per tenant. Needs METRICS_ENABLED too.
+    TENANT_FAIRNESS_METRICS: bool = False
+
     SCHEDULER: Literal["api", "deriver"] = "deriver"
 
     @model_validator(mode="before")
