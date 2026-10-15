@@ -155,6 +155,25 @@ async function handleMcp(request: Request): Promise<Response> {
     }
   }
 
+  // A Mcp-Session-Id header was sent but no matching session exists, so it was
+  // terminated (idle sweep, container restart). The Streamable HTTP spec
+  // requires the server to answer requests carrying a terminated session ID
+  // with HTTP 404 so the client starts a new session by reinitializing; a
+  // request with no session header at all falls through to the 400 path below.
+  if (sessionId) {
+    return jsonResponse(
+      {
+        jsonrpc: "2.0",
+        error: {
+          code: -32000,
+          message: "Session not found",
+        },
+        id: null,
+      },
+      404,
+    );
+  }
+
   if (request.method !== "POST") {
     return jsonResponse(
       {
