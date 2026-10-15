@@ -1,6 +1,6 @@
 """Provider initialization contracts for memory-file migration."""
 
-from hermes_honcho import HonchoMemoryProvider
+from hermes_plugin_honcho import HonchoMemoryProvider
 
 
 class TestPerSessionMigrateGuard:
@@ -21,7 +21,7 @@ class TestPerSessionMigrateGuard:
         """Create a HonchoMemoryProvider and track migrate_memory_files calls."""
         from unittest.mock import MagicMock, patch
 
-        from hermes_honcho.client import HonchoClientConfig
+        from hermes_plugin_honcho.client import HonchoClientConfig
 
         cfg = HonchoClientConfig(
             api_key="test-key",
@@ -40,12 +40,12 @@ class TestPerSessionMigrateGuard:
 
         with (
             patch(
-                "hermes_honcho.client.HonchoClientConfig.from_global_config",
+                "hermes_plugin_honcho.client.HonchoClientConfig.from_global_config",
                 return_value=cfg,
             ),
-            patch("hermes_honcho.client.get_honcho_client", return_value=MagicMock()),
+            patch("hermes_plugin_honcho.client.get_honcho_client", return_value=MagicMock()),
             patch(
-                "hermes_honcho.session.HonchoSessionManager", return_value=mock_manager
+                "hermes_plugin_honcho.session.HonchoSessionManager", return_value=mock_manager
             ),
             patch("hermes_constants.get_hermes_home", return_value=MagicMock()),
         ):

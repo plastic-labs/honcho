@@ -1,7 +1,7 @@
 """Contracts for reusable portable file-lock ownership."""
 
 import pytest
-from hermes_honcho.file_lock import file_lock
+from hermes_plugin_honcho.file_lock import file_lock
 
 
 def test_file_lock_releases_after_normal_exit(tmp_path):

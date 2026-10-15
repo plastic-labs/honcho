@@ -10,13 +10,13 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
-from hermes_honcho import session_migration
-from hermes_honcho.client import HonchoClientConfig
-from hermes_honcho.session import (
+from hermes_plugin_honcho import session_migration
+from hermes_plugin_honcho.client import HonchoClientConfig
+from hermes_plugin_honcho.session import (
     HonchoSession,
     HonchoSessionManager,
 )
-from hermes_honcho.session_auth import HonchoAuthError
+from hermes_plugin_honcho.session_auth import HonchoAuthError
 from honcho.session import Session
 
 
@@ -42,7 +42,7 @@ def _manager(
     )
     honcho = MagicMock()
     monkeypatch.setattr(
-        "hermes_honcho.session.get_honcho_client",
+        "hermes_plugin_honcho.session.get_honcho_client",
         lambda *args, **kwargs: honcho,
     )
     manager = HonchoSessionManager(honcho=honcho, config=config)
@@ -335,7 +335,7 @@ def test_thread_lock_timeout_skips_migration(tmp_path, monkeypatch, caplog):
     session_migration._MIGRATION_THREAD_LOCK.acquire()
     try:
         with patch(
-            "hermes_honcho.session_migration._MIGRATION_LOCK_TIMEOUT_SECONDS",
+            "hermes_plugin_honcho.session_migration._MIGRATION_LOCK_TIMEOUT_SECONDS",
             0.01,
         ):
             assert manager.migrate_memory_files("cli:test", str(memory_dir)) is False
@@ -391,7 +391,7 @@ def test_state_write_failure_reconciles_remote_upload_after_session_changes(
     )
 
     with patch(
-        "hermes_honcho.session_migration.atomic_json_write",
+        "hermes_plugin_honcho.session_migration.atomic_json_write",
         side_effect=OSError("disk full"),
     ):
         assert first.migrate_memory_files("cli:test", str(memory_dir)) is True
@@ -441,7 +441,7 @@ def test_remote_reconciliation_continues_with_remaining_files(tmp_path, monkeypa
     )
 
     with patch(
-        "hermes_honcho.session_migration.atomic_json_write",
+        "hermes_plugin_honcho.session_migration.atomic_json_write",
         side_effect=OSError("disk full"),
     ):
         assert first.migrate_memory_files("cli:test", str(memory_dir)) is True
@@ -514,7 +514,7 @@ def test_another_process_lock_prevents_upload(tmp_path, monkeypatch):
             "-c",
             "import runpy, sys; from pathlib import Path; "
             "runpy.run_path(sys.argv[1]); "
-            "from hermes_honcho.file_lock import acquire_file_lock; "
+            "from hermes_plugin_honcho.file_lock import acquire_file_lock; "
             "lock = acquire_file_lock(Path(sys.argv[2])); "
             "assert lock is not None; print('locked', flush=True); sys.stdin.readline()",
             str(Path(__file__).with_name("conftest.py")),
@@ -527,7 +527,7 @@ def test_another_process_lock_prevents_upload(tmp_path, monkeypatch):
     try:
         assert child.stdout.readline().strip() == "locked"
         with patch(
-            "hermes_honcho.session_migration._MIGRATION_LOCK_TIMEOUT_SECONDS", 0.01
+            "hermes_plugin_honcho.session_migration._MIGRATION_LOCK_TIMEOUT_SECONDS", 0.01
         ):
             assert manager.migrate_memory_files("cli:test", str(memory_dir)) is False
         remote.upload_file.assert_not_called()
