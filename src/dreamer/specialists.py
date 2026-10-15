@@ -107,7 +107,8 @@ def write_window_size(limit: int) -> int:
     override = settings.DREAM.WRITE_WINDOW_ITERATIONS
     # 15% rounded half up: 2 for both deduction (12) and induction (10).
     size = override if override is not None else int(limit * 0.15 + 0.5)
-    return min(limit, max(1, size))
+    # Leave at least one round for searching, unless the limit is one round.
+    return min(max(1, limit - 1), max(1, size))
 
 
 def _reserved_calls_phrase(first: int, limit: int) -> str:

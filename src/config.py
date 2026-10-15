@@ -1416,12 +1416,14 @@ class DreamSettings(HonchoSettings):
     # Deduction and induction see a tool-call budget line, the last iterations
     # are reserved for writes, and the final call at the limit can still write.
     BUDGET_ENABLED: bool = False
-    # Iterations reserved for writes at the end of a pass. Unset means 15% of
-    # the specialist's limit, rounded, with a minimum of one.
     # Working notes carried between dreams: "off", "shadow" (written but never
     # loaded, so a sample can be judged) or "on".
     NOTES_MODE: Literal["off", "shadow", "on"] = "off"
+    # Split evenly between deduction's and induction's own entries.
     NOTES_MAX_TOKENS: Annotated[int, Field(default=3000, ge=100, le=20_000)] = 3000
+    # Iterations reserved for writes at the end of a pass. Unset means 15% of
+    # the specialist's limit, rounded, with a minimum of one, and at most one
+    # less than the limit.
     WRITE_WINDOW_ITERATIONS: Annotated[int | None, Field(default=None, ge=1, le=50)] = (
         None
     )

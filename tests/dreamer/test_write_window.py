@@ -23,10 +23,11 @@ def test_default_window_is_15_percent_rounded_min_one(limit: int, window: int):
     assert write_window_size(limit) == window
 
 
-def test_window_override_is_capped_at_the_limit(monkeypatch: pytest.MonkeyPatch):
+def test_window_override_leaves_a_search_round(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(settings.DREAM, "WRITE_WINDOW_ITERATIONS", 4)
     assert write_window_size(12) == 4
-    assert write_window_size(3) == 3
+    assert write_window_size(3) == 2
+    assert write_window_size(1) == 1
 
 
 def test_budget_line_wording():
