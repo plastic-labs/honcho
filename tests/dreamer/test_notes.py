@@ -481,6 +481,20 @@ async def test_notes_are_loaded_only_when_on(
         assert (event.pending_loaded, event.pending_expired) == (1, 2)
 
 
+@pytest.mark.asyncio
+async def test_a_failed_notes_load_runs_the_pass_without_them(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(settings.DREAM, "NOTES_MODE", "on")
+    load = AsyncMock(side_effect=RuntimeError("db down"))
+    with patch("src.dreamer.specialists.load_notes_for_pass", new=load):
+        kwargs, _ = await _run(DreamState(cursor=NotesCursor(dreams=1)))
+    assert load.await_count == 1
+    assert "## YOUR NOTES FROM EARLIER DREAMS" not in kwargs["messages"][1]["content"]
+    # The tool is still offered, so the pass can write notes.
+    assert "update_notes" in [t["name"] for t in kwargs["tools"]]
+
+
 def test_replace_updates_ids_only_when_given():
     entries = [_entry("n1", "open").model_copy(update={"ids": ["a1"]})]
     kept, _ = _apply(entries, [{"op": "replace", "entry_id": "n1", "text": "t"}])

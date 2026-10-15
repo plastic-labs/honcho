@@ -504,12 +504,20 @@ If you update it, send the full deduplicated list and remove stale entries.
                 and state is not None
                 and settings.DREAM.NOTES_MODE == "on"
             ):
-                loaded_notes = await load_notes_for_pass(
-                    workspace_name,
-                    observer=observer,
-                    observed=observed,
-                    dream_number=state.dream_number,
-                )
+                # Like the dream state, the notes are optional: a failure here
+                # runs the pass without them rather than failing it.
+                try:
+                    loaded_notes = await load_notes_for_pass(
+                        workspace_name,
+                        observer=observer,
+                        observed=observed,
+                        dream_number=state.dream_number,
+                    )
+                except Exception:
+                    logger.warning(
+                        "Loading dream notes failed; running without them",
+                        exc_info=True,
+                    )
 
             tools = self.get_tools(peer_card_enabled=peer_card_enabled)
             if notes_enabled:
