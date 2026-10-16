@@ -114,8 +114,9 @@ class DeductionExpect:
     workspace: str
     observer: str
     observed: str
-    # Filled on first check by the image that ran the dream's worker; every
-    # later read through any image must agree with it.
+    # Filled by the first read that shows two premises; every later read
+    # through any image must agree with it. A read missing its premises
+    # never pins, so it is reported as the broken one.
     pinned: dict[str, Any] | None = None
 
     def check(self, api: HonchoAPI, cache: ReadCache) -> list[str]:
@@ -131,16 +132,14 @@ class DeductionExpect:
         if not rows:
             return [f"{what}: no deductive conclusion"]
         row = rows[0]
-        problems: list[str] = []
         if len(row["source_ids"]) != 2:
-            problems.append(
+            return [
                 f"{what}: source_ids = {row['source_ids']!r}, expected two premises"
-            )
+            ]
         if self.pinned is None:
             self.pinned = {"id": row["id"], "source_ids": row["source_ids"]}
-        else:
-            problems += _diff(what, self.pinned, row)
-        return problems
+            return []
+        return _diff(what, self.pinned, row)
 
 
 @dataclass
