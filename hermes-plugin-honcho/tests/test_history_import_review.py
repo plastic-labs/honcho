@@ -13,10 +13,12 @@ from test_history_import import run_cli
 
 
 def uploaded(source):
+    """Flatten accepted fixture batches for assertions on actual wire content."""
     return [message for batch in source.api.writes for message in batch]
 
 
 def test_redaction_precedes_chunks_and_hashes(history_source, monkeypatch, capsys):
+    """Redact secrets before small chunks can split their recognizable pattern."""
     source = history_source
     source.session()
     token = "ghp_" + "Q" * 36
@@ -43,11 +45,13 @@ def test_redaction_precedes_chunks_and_hashes(history_source, monkeypatch, capsy
 def test_redaction_failure_stops_before_client_or_ledger(
     history_source, monkeypatch, capsys
 ):
+    """Abort a failed redaction before creating clients or durable progress."""
     source = history_source
     source.session()
     source.message(content="Private source text")
 
     def fail(*args, **kwargs):
+        """Simulate redactor failure with private exception details."""
         raise RuntimeError("secret failure details")
 
     monkeypatch.setattr("agent.redact.redact_sensitive_text", fail)
@@ -58,6 +62,7 @@ def test_redaction_failure_stops_before_client_or_ledger(
 
 
 def test_in_place_compaction_preserves_originals_and_excludes_rewind(history_source):
+    """Recover compacted originals while excluding inactive rewound rows."""
     source = history_source
     source.session()
     source.message(content="Original user", timestamp=source.now - 100)
@@ -85,6 +90,7 @@ def test_in_place_compaction_preserves_originals_and_excludes_rewind(history_sou
 
 
 def test_compacted_rows_cross_source_pages_without_loss(history_source):
+    """Preserve compacted originals across bounded physical-row pages."""
     source = history_source
     source.session()
     for index in range(205):
@@ -102,6 +108,7 @@ def test_compacted_rows_cross_source_pages_without_loss(history_source):
 
 
 def test_target_order_merges_interleaved_sources(history_source):
+    """Order interleaved source sessions globally when they share a destination."""
     source = history_source
     source.session("a")
     source.session("b")
@@ -119,6 +126,7 @@ def test_target_order_merges_interleaved_sources(history_source):
 
 
 def test_timestamp_order_handles_regressing_source_clock(history_source):
+    """Sort by recorded timestamps even when source row times regress."""
     source = history_source
     source.session()
     source.message(content="Inserted first, later time", timestamp=source.now - 10)
@@ -131,6 +139,7 @@ def test_timestamp_order_handles_regressing_source_clock(history_source):
 
 
 def test_expanded_window_cannot_append_older_history(history_source, capsys):
+    """Reject newly selected history that would follow newer remote messages."""
     source = history_source
     source.session()
     source.message(content="Old", timestamp=source.now - 40 * 86400)
@@ -151,6 +160,7 @@ def test_expanded_window_cannot_append_older_history(history_source, capsys):
 
 @pytest.mark.parametrize("failure", [None, "timeout_after"])
 def test_nul_is_normalized_before_response_and_recovery(history_source, failure):
+    """Match server NUL normalization during initial confirmation and recovery."""
     source = history_source
     source.session()
     source.message(content="Before\x00After")
@@ -162,6 +172,7 @@ def test_nul_is_normalized_before_response_and_recovery(history_source, failure)
 
 
 def test_sorted_batch_recovery_keeps_cross_session_order(history_source):
+    """Recover uncertain sorted batches without changing cross-session order."""
     source = history_source
     source.session("a")
     source.session("b")
@@ -183,12 +194,14 @@ def test_sorted_batch_recovery_keeps_cross_session_order(history_source):
 
 
 def test_local_import_does_not_require_gateway_package(history_source, monkeypatch):
+    """Keep local sources usable without the optional gateway package."""
     source = history_source
     source.session()
     source.message()
     original = builtins.__import__
 
     def without_gateway(name, *args, **kwargs):
+        """Hide only gateway configuration to emulate a minimal Hermes install."""
         if name == "gateway.config":
             raise ImportError("gateway package unavailable")
         return original(name, *args, **kwargs)
@@ -202,6 +215,7 @@ def test_local_import_does_not_require_gateway_package(history_source, monkeypat
 def test_exception_after_upload_reports_partial_summary(
     history_source, monkeypatch, capsys, error
 ):
+    """Report confirmed earlier work when a later destination fails."""
     source = history_source
     source.configure(sessionStrategy="per-session")
     source.session("a")
@@ -211,6 +225,7 @@ def test_exception_after_upload_reports_partial_summary(
     original = importer._prepare_session
 
     def fail_second(client, target_id, *args):
+        """Fail the second destination after preserving the first destination's writes."""
         if target_id == "b":
             raise error("private failure body")
         return original(client, target_id, *args)
@@ -233,6 +248,7 @@ def test_exception_after_upload_reports_partial_summary(
 def test_normalized_wire_content_matches_hash_and_does_not_modify_source(
     history_source, text
 ):
+    """Hash the normalized wire text while preserving original source rows."""
     source = history_source
     source.session()
     row_id = source.message(content=text)
@@ -253,6 +269,7 @@ def test_normalized_wire_content_matches_hash_and_does_not_modify_source(
 
 @pytest.mark.parametrize("text", ["\x00", " \x00\n\x00 "])
 def test_nul_only_text_does_not_create_remote_objects(history_source, text):
+    """Skip content that becomes empty after server-compatible normalization."""
     source = history_source
     source.session()
     source.message(content=text)
@@ -262,6 +279,7 @@ def test_nul_only_text_does_not_create_remote_objects(history_source, text):
 
 
 def test_user_role_compression_summary_is_not_uploaded(history_source):
+    """Exclude generated summaries even when persisted with a user role."""
     source = history_source
     source.session()
     source.message(content="Original retained", timestamp=source.now - 100)
@@ -289,6 +307,7 @@ def test_user_role_compression_summary_is_not_uploaded(history_source):
 
 
 def test_compaction_cloned_tail_does_not_duplicate_original(history_source):
+    """Avoid replaying a compression child's copied tail after the original."""
     source = history_source
     source.session()
     watermark = source.message(
@@ -310,6 +329,7 @@ def test_compaction_cloned_tail_does_not_duplicate_original(history_source):
 
 
 def test_older_and_newer_candidates_block_only_affected_target(history_source):
+    """Block unsafe mixed-age history without preventing independent targets."""
     source = history_source
     source.configure(sessionStrategy="per-session")
     source.session("a")
@@ -327,6 +347,7 @@ def test_older_and_newer_candidates_block_only_affected_target(history_source):
 
 
 def test_known_boundary_can_append_after_older_unmarked_remote_history(history_source):
+    """Allow safe appends after older live history under an explicit cutoff."""
     source = history_source
     source.session()
     source.message(content="Earlier existing", timestamp=source.now - 10 * 86400)
@@ -347,6 +368,7 @@ def test_known_boundary_can_append_after_older_unmarked_remote_history(history_s
 def test_legacy_unredacted_progress_is_not_reset_or_resent(
     history_source, monkeypatch, capsys
 ):
+    """Preserve incompatible legacy checkpoints and refuse to resend their rows."""
     source = history_source
     source.session()
     source.message(content="ghp_" + "L" * 36)
@@ -366,6 +388,7 @@ def test_legacy_unredacted_progress_is_not_reset_or_resent(
 def test_partial_remote_confirmation_save_failure_is_reported(
     history_source, monkeypatch, capsys
 ):
+    """Report partial progress if saving recovered remote confirmation fails."""
     source = history_source
     source.session()
     source.message()
@@ -374,6 +397,7 @@ def test_partial_remote_confirmation_save_failure_is_reported(
     source.factory.reset_mock()
 
     def fail_save(*args, **kwargs):
+        """Simulate a private filesystem failure while persisting recovered progress."""
         raise OSError("private filesystem path")
 
     monkeypatch.setattr(importer, "write_state", fail_save)

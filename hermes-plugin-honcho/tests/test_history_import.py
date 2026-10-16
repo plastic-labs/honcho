@@ -22,6 +22,7 @@ from honcho import Honcho
 
 
 def test_import_command_is_registered():
+    """Expose the import command and its dry-run option through the CLI parser."""
     parser = argparse.ArgumentParser()
     cli.register_cli(parser)
     args = parser.parse_args(["import", "--dry-run"])
@@ -33,6 +34,7 @@ def test_import_command_is_registered():
 
 
 def run_cli(arguments):
+    """Parse and invoke the real import CLI against isolated fixture resources."""
     parser = argparse.ArgumentParser()
     cli.register_cli(parser)
     args = parser.parse_args(arguments)
@@ -47,6 +49,7 @@ class FakeHonchoAPI:
     """Real SDK HTTP boundary with in-memory storage and scripted write failures."""
 
     def __init__(self):
+        """Initialize in-memory remote history and request instrumentation."""
         self.sessions = {}
         self.requests = []
         self.writes = []
@@ -56,6 +59,7 @@ class FakeHonchoAPI:
 
     @staticmethod
     def session_response(workspace, session):
+        """Build a minimal SDK-compatible session response for the fake server."""
         return {
             "id": session,
             "workspace_id": workspace,
@@ -66,6 +70,7 @@ class FakeHonchoAPI:
         }
 
     def handle(self, request):
+        """Emulate Honcho HTTP routes and record requests without opening sockets."""
         parts = request.url.path.strip("/").split("/")
         body = json.loads(request.content) if request.content else None
         self.requests.append(
@@ -186,6 +191,7 @@ class FakeHonchoAPI:
         )
 
     def client(self, config):
+        """Build the actual SDK over the fake server's in-memory HTTP transport."""
         http_client = httpx.Client(transport=httpx.MockTransport(self.handle))
         client = Honcho(
             api_key=config.api_key,
@@ -197,6 +203,7 @@ class FakeHonchoAPI:
         original_close = client._http.close
 
         def close():
+            """Release both the SDK and its HTTP transport and record cleanup."""
             original_close()
             http_client.close()
             self.closed_clients.append(client)
@@ -209,6 +216,7 @@ class FakeHonchoAPI:
 def history_source(monkeypatch):
     # Keep the source outside HOME/.hermes, which the live-DB guard protects on POSIX.
     # HOME still points to the isolated test home; the guard remains enabled.
+    """Provide a real temporary Hermes database with mocked remote transport."""
     home = Path(os.environ["HERMES_HOME"]).with_name("import-fixture")
     home.mkdir()
     monkeypatch.setenv("HERMES_HOME", str(home))
@@ -238,6 +246,7 @@ def history_source(monkeypatch):
     now = time.time()
 
     def session(session_id="source-one", source="cli", **kwargs):
+        """Create one fixture session using Hermes' persisted session schema."""
         db.create_session(
             session_id,
             source,
@@ -253,6 +262,7 @@ def history_source(monkeypatch):
         timestamp=None,
         **kwargs,
     ):
+        """Append a timestamped fixture row through the real Hermes session store."""
         return db.append_message(
             session_id,
             role,
@@ -262,6 +272,7 @@ def history_source(monkeypatch):
         )
 
     def configure(**changes):
+        """Change only the fixture's active Honcho configuration."""
         raw.update(changes)
         config_path.write_text(json.dumps(raw), encoding="utf-8")
 
@@ -285,6 +296,7 @@ def history_source(monkeypatch):
 def test_dry_run_is_read_only_and_prints_no_content_or_credentials(
     history_source, monkeypatch, capsys
 ):
+    """Preview counts without SDK access, transcript output, or persistent changes."""
     source = history_source
     source.session()
     source.message(content="PRIVATE-CONVERSATION-TEXT")
@@ -326,6 +338,7 @@ def test_dry_run_is_read_only_and_prints_no_content_or_credentials(
 
 
 def test_fixture_cli_import_then_noop_then_append(history_source, capsys):
+    """Import a fixture once, skip it on repeat, and later append only new rows."""
     source = history_source
     source.session()
     user_id = source.message(content="Original user text")
@@ -373,12 +386,14 @@ def test_fixture_cli_import_then_noop_then_append(history_source, capsys):
     ],
 )
 def test_invalid_parameters_do_not_call_sdk(history_source, args):
+    """Reject invalid CLI arguments before creating progress or contacting Honcho."""
     assert run_cli(["import", *args, "--yes"]) == 2
     history_source.factory.assert_not_called()
     assert not history_source.ledger.exists()
 
 
 def test_non_tty_requires_yes_without_side_effects(history_source, monkeypatch):
+    """Require explicit confirmation for noninteractive imports."""
     source = history_source
     source.session()
     source.message()
@@ -389,6 +404,7 @@ def test_non_tty_requires_yes_without_side_effects(history_source, monkeypatch):
 
 
 def test_cancel_does_not_create_progress_or_remote_objects(history_source, monkeypatch):
+    """Leave both local progress and remote history untouched after cancellation."""
     source = history_source
     source.session()
     source.message()
@@ -400,6 +416,7 @@ def test_cancel_does_not_create_progress_or_remote_objects(history_source, monke
 
 
 def test_workspace_override_does_not_write_configuration(history_source):
+    """Apply the destination override only to the current import."""
     source = history_source
     source.session()
     source.message()
@@ -413,6 +430,7 @@ def test_workspace_override_does_not_write_configuration(history_source):
 def test_invalid_config_does_not_fall_back_to_environment(
     history_source, monkeypatch, bad_config
 ):
+    """Reject broken active configuration instead of using ambient credentials."""
     source = history_source
     source.config_path.write_text(bad_config, encoding="utf-8")
     monkeypatch.setenv("HONCHO_API_KEY", "fake-environment-key")
@@ -421,6 +439,7 @@ def test_invalid_config_does_not_fall_back_to_environment(
 
 
 def test_invalid_yaml_and_foreign_target_profile_fail_closed(history_source):
+    """Reject malformed YAML and configuration targeting another profile."""
     source = history_source
     (source.home / "config.yaml").write_text("honcho: [unterminated", encoding="utf-8")
     assert run_cli(["import", "--yes"]) == 2
@@ -433,6 +452,7 @@ def test_invalid_yaml_and_foreign_target_profile_fail_closed(history_source):
     "failure", ["timeout_after", "server_after", "partial_response"]
 )
 def test_unknown_outcome_is_reconciled_without_resending(history_source, failure):
+    """Recover an accepted batch after response loss by reading remote metadata."""
     source = history_source
     source.session()
     source.message(content="One")
@@ -464,6 +484,7 @@ def test_unknown_outcome_is_reconciled_without_resending(history_source, failure
 def test_missing_or_partial_pending_batch_is_not_resent(
     history_source, failure, capsys
 ):
+    """Stop when an uncertain batch cannot be fully confirmed remotely."""
     source = history_source
     source.session()
     source.message(content="One")
@@ -480,6 +501,7 @@ def test_missing_or_partial_pending_batch_is_not_resent(
 
 
 def test_definite_rejection_keeps_cursors_and_allows_retry(history_source, capsys):
+    """Keep rows retryable after a definite remote rejection."""
     source = history_source
     source.session()
     source.message()
@@ -496,6 +518,7 @@ def test_definite_rejection_keeps_cursors_and_allows_retry(history_source, capsy
 def test_long_source_message_crosses_batches_without_early_cursor(
     history_source, monkeypatch
 ):
+    """Keep a split row incomplete until all of its chunks are confirmed."""
     source = history_source
     source.configure(messageMaxChars=20)
     source.session()
@@ -504,6 +527,7 @@ def test_long_source_message_crosses_batches_without_early_cursor(
     original_write = importer.write_state
 
     def capture_write(path, state):
+        """Record each ledger state before writing it through the real state writer."""
         snapshots.append(copy.deepcopy(state))
         original_write(path, state)
 
@@ -530,6 +554,7 @@ def test_long_source_message_crosses_batches_without_early_cursor(
 
 
 def test_originally_repeated_text_is_not_deduplicated_by_content(history_source):
+    """Preserve distinct source rows that contain the same original text."""
     source = history_source
     source.session()
     source.message(content="A real repeated statement")
@@ -544,6 +569,7 @@ def test_originally_repeated_text_is_not_deduplicated_by_content(history_source)
 
 
 def test_response_order_does_not_determine_confirmation(history_source):
+    """Match accepted chunks by identity rather than SDK response order."""
     source = history_source
     source.session()
     source.message(content="One")
@@ -555,6 +581,7 @@ def test_response_order_does_not_determine_confirmation(history_source):
 
 
 def test_older_session_recent_messages_and_expanded_window(history_source):
+    """Select recent rows from older sessions and block unsafe earlier backfill."""
     source = history_source
     result = source.db.import_sessions(
         [
@@ -593,6 +620,7 @@ def test_older_session_recent_messages_and_expanded_window(history_source):
 
 
 def test_content_filters_match_live_without_tool_traces(history_source):
+    """Import visible conversation text while excluding tool and internal traces."""
     source = history_source
     source.session()
     source.message(role="system", content="System instructions")
@@ -644,6 +672,7 @@ def test_content_filters_match_live_without_tool_traces(history_source):
 
 
 def test_hidden_subagent_delegated_and_inactive_data_are_excluded(history_source):
+    """Exclude hidden, delegated, and inactive non-compacted source history."""
     source = history_source
     source.session()
     source.message(content="Visible history")
@@ -665,6 +694,7 @@ def test_hidden_subagent_delegated_and_inactive_data_are_excluded(history_source
 def test_invalid_timestamp_is_partial_and_never_uses_upload_time(
     history_source, capsys
 ):
+    """Report invalid source times without substituting the current upload time."""
     source = history_source
     source.session()
     bad_id = source.message(content="Invalid timestamp row")
@@ -689,6 +719,7 @@ def test_invalid_timestamp_is_partial_and_never_uses_upload_time(
     ],
 )
 def test_mapping_reuses_live_resolver(history_source, strategy, expected, tmp_path):
+    """Keep historical destination mapping aligned with live session resolution."""
     source = history_source
     cwd = tmp_path / "project-dir"
     cwd.mkdir()
@@ -703,6 +734,7 @@ def test_mapping_reuses_live_resolver(history_source, strategy, expected, tmp_pa
 def test_missing_historical_cwd_uses_global_fallback_without_changing_live_default(
     history_source, monkeypatch, strategy, tmp_path
 ):
+    """Use the documented global fallback only for history missing its cwd."""
     source = history_source
     cwd = tmp_path / "current-folder"
     cwd.mkdir()
@@ -724,6 +756,7 @@ def test_missing_historical_cwd_uses_global_fallback_without_changing_live_defau
 def test_manual_title_provenance_and_map_override(
     history_source, title_source, expected, tmp_path
 ):
+    """Use persisted title provenance and explicit session-map overrides."""
     source = history_source
     cwd = tmp_path / "project-dir"
     cwd.mkdir()
@@ -739,6 +772,7 @@ def test_manual_title_provenance_and_map_override(
 
 
 def test_manual_session_map_and_ai_prefix(history_source, tmp_path):
+    """Preserve manual mapping and agent peer prefixes during import."""
     source = history_source
     cwd = tmp_path / "project-dir"
     cwd.mkdir()
@@ -756,6 +790,7 @@ def test_manual_session_map_and_ai_prefix(history_source, tmp_path):
 def gateway_session(
     source, session_id, user_id="42", chat_type="dm", platform="telegram"
 ):
+    """Persist fixture gateway identity using the real source schema."""
     from gateway.config import Platform
     from gateway.session import SessionSource
 
@@ -778,6 +813,7 @@ def gateway_session(
 
 
 def test_gateway_is_opt_in_and_owner_alias_is_resolved(history_source):
+    """Require gateway selection and resolve the stored owner's configured alias."""
     source = history_source
     source.configure(userPeerAliases={"42": "owner"})
     gateway_session(source, "owner-dm")
@@ -790,6 +826,7 @@ def test_gateway_is_opt_in_and_owner_alias_is_resolved(history_source):
 
 
 def test_pin_is_not_proof_that_another_gateway_user_is_owner(history_source):
+    """Reject foreign gateway history even when the live peer is pinned."""
     source = history_source
     source.configure(pinUserPeer=True)
     gateway_session(source, "other-user-dm", user_id="not-owner")
@@ -799,6 +836,7 @@ def test_pin_is_not_proof_that_another_gateway_user_is_owner(history_source):
 
 
 def test_group_history_and_missing_origin_are_not_assigned_to_owner(history_source):
+    """Exclude groups and gateway history without verifiable owner provenance."""
     source = history_source
     source.configure(userPeerAliases={"42": "owner"})
     gateway_session(source, "group", chat_type="group")
@@ -813,6 +851,7 @@ def test_group_history_and_missing_origin_are_not_assigned_to_owner(history_sour
 
 @pytest.mark.parametrize("enabled", [True, False])
 def test_persisted_bot_dm_uses_live_a2a_rule_or_is_skipped(history_source, enabled):
+    """Route recognized bot DMs through live a2a rules or skip disabled bot imports."""
     from hermes_plugin_honcho import HonchoMemoryProvider
 
     source = history_source
@@ -837,6 +876,7 @@ def test_persisted_bot_dm_uses_live_a2a_rule_or_is_skipped(history_source, enabl
 def test_compression_lineage_is_scanned_once_without_absorbing_fork(
     history_source, capsys
 ):
+    """Scan compression descendants once while keeping independent forks separate."""
     source = history_source
     source.configure(sessionStrategy="per-session")
     source.session("root")
@@ -866,6 +906,7 @@ def test_compression_lineage_is_scanned_once_without_absorbing_fork(
 
 
 def test_known_cutoff_does_not_override_existing_sequence_order(history_source):
+    """Keep append-only ordering checks active even with an explicit live cutoff."""
     source = history_source
     source.session()
     source.message(
@@ -904,6 +945,7 @@ def test_known_cutoff_does_not_override_existing_sequence_order(history_source):
 
 
 def test_ledger_loss_reconciles_remote_metadata_without_upload(history_source):
+    """Rebuild lost local confirmation from matching remote import metadata."""
     source = history_source
     source.session()
     source.message()
@@ -914,6 +956,7 @@ def test_ledger_loss_reconciles_remote_metadata_without_upload(history_source):
 
 
 def test_existing_observation_configuration_is_not_overwritten(history_source):
+    """Preserve destination observation settings when preparing imported peers."""
     source = history_source
     source.session()
     source.message()
@@ -935,6 +978,7 @@ def test_existing_observation_configuration_is_not_overwritten(history_source):
 
 
 def test_prepare_save_failure_makes_zero_message_requests(history_source, monkeypatch):
+    """Stop before upload when the pending batch cannot be saved locally."""
     source = history_source
     source.session()
     source.message()
@@ -946,6 +990,7 @@ def test_prepare_save_failure_makes_zero_message_requests(history_source, monkey
 
 
 def test_save_failure_after_remote_acceptance_is_recovered(history_source, monkeypatch):
+    """Recover remote acceptance after the local confirmation write fails."""
     source = history_source
     source.session()
     source.message()
@@ -953,6 +998,7 @@ def test_save_failure_after_remote_acceptance_is_recovered(history_source, monke
     count = 0
 
     def fail_second(path, state):
+        """Fail the confirmation write after allowing the pending checkpoint."""
         nonlocal count
         count += 1
         if count == 2:
@@ -972,6 +1018,7 @@ def test_save_failure_after_remote_acceptance_is_recovered(history_source, monke
 
 @pytest.mark.parametrize("change", ["content", "mapping", "chunk_size"])
 def test_changed_payload_or_mapping_is_not_silently_reimported(history_source, change):
+    """Reject changed source content or routing instead of duplicating old history."""
     source = history_source
     source.session()
     row_id = source.message()
@@ -990,6 +1037,7 @@ def test_changed_payload_or_mapping_is_not_silently_reimported(history_source, c
 
 
 def test_deleted_ledger_with_partial_remote_batch_never_resends(history_source):
+    """Block replay when remote metadata proves only part of a lost batch."""
     source = history_source
     source.session()
     source.message(content="First row")
@@ -1002,6 +1050,7 @@ def test_deleted_ledger_with_partial_remote_batch_never_resends(history_source):
 
 
 def test_remote_overlap_is_checked_on_all_pages(history_source):
+    """Inspect every remote page before accepting a destination for import."""
     source = history_source
     source.session()
     source.message()
@@ -1052,6 +1101,7 @@ def test_remote_overlap_is_checked_on_all_pages(history_source):
 
 
 def test_message_source_paging_and_batches_are_bounded(history_source, monkeypatch):
+    """Bound source pages and remote batches without dropping source rows."""
     source = history_source
     source.session()
     for index in range(205):
@@ -1061,6 +1111,7 @@ def test_message_source_paging_and_batches_are_bounded(history_source, monkeypat
 
     @wraps(original)
     def capture(self, *args, **kwargs):
+        """Record source paging options before delegating to Hermes' real reader."""
         calls.append(kwargs)
         return original(self, *args, **kwargs)
 
@@ -1077,6 +1128,7 @@ def test_message_source_paging_and_batches_are_bounded(history_source, monkeypat
 
 
 def test_before_boundary_is_strict_and_normalized_to_utc(history_source):
+    """Exclude rows at the explicit upper boundary after timezone normalization."""
     source = history_source
     source.session()
     boundary = datetime.fromtimestamp(source.now - 3 * 86400, UTC).replace(
@@ -1098,6 +1150,7 @@ def test_before_boundary_is_strict_and_normalized_to_utc(history_source):
 
 
 def test_missing_database_is_not_created(history_source):
+    """Fail cleanly when the active profile has no existing session database."""
     source = history_source
     source.db.close()
     (source.home / "state.db").unlink()
@@ -1107,6 +1160,7 @@ def test_missing_database_is_not_created(history_source):
 
 
 def test_replaced_source_database_cannot_reuse_old_progress(history_source, tmp_path):
+    """Reject progress from a different database installed at the same path."""
     source = history_source
     source.session()
     source.message()
@@ -1124,6 +1178,7 @@ def test_replaced_source_database_cannot_reuse_old_progress(history_source, tmp_
 
 
 def test_different_server_uses_a_different_ledger_scope(history_source):
+    """Keep progress separate when the configured Honcho server changes."""
     source = history_source
     source.session()
     source.message()
@@ -1144,6 +1199,7 @@ def test_different_server_uses_a_different_ledger_scope(history_source):
 def test_profiles_use_their_own_database_config_credentials_and_progress(
     history_source, monkeypatch
 ):
+    """Isolate source history, credentials, and checkpoints by active profile."""
     source = history_source
     source.session()
     source.message(content="Default profile history")
@@ -1186,6 +1242,7 @@ def test_profiles_use_their_own_database_config_credentials_and_progress(
 def test_credential_bearing_or_invalid_destination_is_not_previewed(
     history_source, url, capsys
 ):
+    """Reject unsafe destination URLs before displaying or using them."""
     source = history_source
     source.configure(baseUrl=url)
     assert run_cli(["import", "--dry-run"]) == 2
@@ -1196,6 +1253,7 @@ def test_credential_bearing_or_invalid_destination_is_not_previewed(
 def test_actual_private_client_disables_retries_and_does_not_join_shared_cache(
     history_source, monkeypatch
 ):
+    """Keep import clients isolated from shared live clients and disable retries."""
     source = history_source
     from hermes_plugin_honcho.client_cache import _client_slots
 
@@ -1219,10 +1277,12 @@ def test_actual_private_client_disables_retries_and_does_not_join_shared_cache(
 def test_private_client_verifies_actual_url_and_retry_settings(
     history_source, monkeypatch, mismatch
 ):
+    """Validate effective transport settings rather than trusting requested values."""
     source = history_source
     config, _, _ = importer.load_import_config(SimpleNamespace())
 
     def mismatched_build(private_config, **kwargs):
+        """Return a client whose effective destination or retries violate the request."""
         client = source.api.client(private_config)
         if mismatch == "url":
             client._http.base_url += "/v3"
@@ -1240,6 +1300,7 @@ def test_private_client_verifies_actual_url_and_retry_settings(
 def test_configuration_change_after_preview_stops_before_oauth_or_sdk(
     history_source, monkeypatch
 ):
+    """Invalidate confirmation if configuration changes between preview and upload."""
     source = history_source
     config, _, _ = importer.load_import_config(SimpleNamespace())
     source.configure(workspace="changed-after-preview")
@@ -1255,6 +1316,7 @@ def test_configuration_change_after_preview_stops_before_oauth_or_sdk(
 def test_malformed_managed_configuration_is_not_ignored(
     history_source, monkeypatch, tmp_path
 ):
+    """Reject malformed managed profile configuration without fallback."""
     managed = tmp_path / "managed"
     managed.mkdir()
     (managed / "config.yaml").write_text("honcho: [unterminated", encoding="utf-8")

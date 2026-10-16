@@ -31,10 +31,12 @@ def fingerprint(value: Any) -> str:
 
 
 def _integer(value: Any, minimum: int = 0) -> bool:
+    """Accept bounded integers while rejecting booleans and other numeric types."""
     return type(value) is int and value >= minimum
 
 
 def _hash(value: Any) -> bool:
+    """Recognize a lowercase SHA-256 fingerprint stored in the ledger."""
     return (
         isinstance(value, str)
         and len(value) == 64
@@ -43,6 +45,7 @@ def _hash(value: Any) -> bool:
 
 
 def _validate_pending(pending: Any) -> None:
+    """Reject malformed batch descriptors and inconsistent cursor checkpoints."""
     if pending is None:
         return
     if not isinstance(pending, dict) or not _hash(pending.get("batch_id")):
@@ -81,6 +84,7 @@ def _validate_pending(pending: Any) -> None:
 
 
 def _validate(state: Any) -> None:
+    """Validate the ledger schema before trusting saved sources or progress."""
     if (
         not isinstance(state, dict)
         or type(state.get("schema_version")) is not int
@@ -157,6 +161,7 @@ def read_state(path: Path) -> dict:
 
 @lru_cache(maxsize=1)
 def _windows_user_sid() -> str:
+    """Resolve the current Windows account for private file access rules."""
     import csv
 
     result = subprocess.run(
@@ -269,6 +274,7 @@ def get_scope(
     *,
     create: bool = False,
 ) -> dict | None:
+    """Resolve progress by destination and reject a replaced source database."""
     known_anchor = state["sources"].get(source_path_key)
     if known_anchor is not None and known_anchor != anchor:
         raise ImportStateError(
@@ -290,6 +296,7 @@ def get_scope(
 def get_segment(
     scope: dict | None, segment_id: str, mapping: str, *, create: bool = False
 ) -> dict | None:
+    """Reuse segment progress only when its historical destination mapping agrees."""
     segment = scope["segments"].get(segment_id) if scope else None
     if segment is not None and segment["mapping"] != mapping:
         raise ImportStateError(

@@ -1092,6 +1092,7 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
         return json.dumps({"result": "\n\n".join(parts) or "No context available."})
 
     def _tool_conclude(self, args: dict) -> str:
+        """Create, list, or delete conclusions and sanitize explicit write failures."""
         delete_id = (args.get("delete_id") or "").strip()
         conclusion = args.get("conclusion", "").strip()
         list_mode = bool(args.get("list"))

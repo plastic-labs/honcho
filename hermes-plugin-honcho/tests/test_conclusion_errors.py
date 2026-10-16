@@ -18,6 +18,7 @@ from honcho.http.exceptions import (
 
 @pytest.fixture
 def conclusion_writer(monkeypatch):
+    """Provide an isolated conclusion tool with mocked SDK peers and OAuth refresh."""
     client = MagicMock()
     monkeypatch.setattr(
         "hermes_plugin_honcho.session.get_honcho_client", lambda config: client
@@ -51,6 +52,7 @@ def conclusion_writer(monkeypatch):
     ],
 )
 def test_api_error_reaches_tool_response(conclusion_writer, detail):
+    """Preserve useful API failure details in the tool response without retrying."""
     provider, _, _, observer, scope, refresh = conclusion_writer
     scope.create.side_effect = NotFoundError(detail)
 
@@ -88,6 +90,7 @@ def test_api_error_reaches_tool_response(conclusion_writer, detail):
     ],
 )
 def test_failure_categories_do_not_retry(conclusion_writer, exc, expected):
+    """Distinguish transport and API failures while attempting each write once."""
     provider, _, _, _, scope, refresh = conclusion_writer
     scope.create.side_effect = exc
     response = json.loads(
@@ -113,6 +116,7 @@ def test_failure_categories_do_not_retry(conclusion_writer, exc, expected):
 def test_success_preserves_alias_observer_and_payload(
     conclusion_writer, peer, target, observes_others
 ):
+    """Keep existing observer, target, and conclusion payload behavior on success."""
     provider, manager, session, observer, scope, refresh = conclusion_writer
     manager._ai_observe_others = observes_others
     if not observes_others:
@@ -133,6 +137,7 @@ def test_success_preserves_alias_observer_and_payload(
 
 
 def test_default_failure_and_strict_exception_identity(conclusion_writer):
+    """Retain default suppression while strict writes raise the original exception."""
     _, manager, session, _, scope, _ = conclusion_writer
     exc = NotFoundError("Peer is not a participant.")
     scope.create.side_effect = exc
@@ -144,6 +149,7 @@ def test_default_failure_and_strict_exception_identity(conclusion_writer):
 
 
 def test_background_memory_write_keeps_default_mode(conclusion_writer, monkeypatch):
+    """Keep background memory writes on the existing non-strict failure path."""
     provider, manager, _, _, scope, _ = conclusion_writer
     scope.create.side_effect = NotFoundError("Background save failed.")
     monkeypatch.setattr(provider, "_writes_enabled", lambda: True)
@@ -166,6 +172,7 @@ def test_background_memory_write_keeps_default_mode(conclusion_writer, monkeypat
     ],
 )
 def test_local_preconditions(conclusion_writer, monkeypatch, condition, reason):
+    """Report local session and peer preconditions through typed write errors."""
     from hermes_plugin_honcho.session_context import ConclusionWriteError
 
     provider, manager, session, _, scope, _ = conclusion_writer
@@ -187,6 +194,7 @@ def test_local_preconditions(conclusion_writer, monkeypatch, condition, reason):
 
 @pytest.mark.parametrize("outcome", ["recovered", "refresh_failed", "retry_rejected"])
 def test_auth_recovery_keeps_existing_contract(conclusion_writer, outcome):
+    """Preserve refresh and retry behavior for authentication failures."""
     provider, _, _, _, scope, refresh = conclusion_writer
     refresh.return_value = outcome != "refresh_failed"
     scope.create.side_effect = (
@@ -208,6 +216,7 @@ def test_auth_recovery_keeps_existing_contract(conclusion_writer, outcome):
 
 
 def test_api_detail_and_new_log_are_redacted(conclusion_writer, caplog):
+    """Mask credential-bearing API details in both the tool output and logs."""
     provider, _, _, _, scope, _ = conclusion_writer
     secrets = [
         "sk-" + "f" * 48,
@@ -232,6 +241,7 @@ def test_api_detail_and_new_log_are_redacted(conclusion_writer, caplog):
 
 
 def test_unknown_error_does_not_expose_raw_text(conclusion_writer, caplog):
+    """Hide an unexpected exception's private message from the tool response."""
     provider, _, _, _, scope, _ = conclusion_writer
     scope.create.side_effect = ValueError("unknown-private-response-body")
     response = json.loads(
@@ -245,6 +255,7 @@ def test_unknown_error_does_not_expose_raw_text(conclusion_writer, caplog):
 def test_redaction_precedes_control_cleanup_and_truncation(
     conclusion_writer, monkeypatch, caplog
 ):
+    """Redact the original diagnostic before removing controls or limiting length."""
     from agent import redact
 
     provider, _, _, _, scope, _ = conclusion_writer
@@ -253,6 +264,7 @@ def test_redaction_precedes_control_cleanup_and_truncation(
     seen = []
 
     def redactor(text, **kwargs):
+        """Capture the unmodified diagnostic and replace the synthetic secret."""
         seen.append((text, kwargs))
         return text.replace(secret, "[REDACTED]")
 
@@ -276,6 +288,7 @@ def test_redaction_precedes_control_cleanup_and_truncation(
 
 
 def test_redactor_failure_uses_safe_fallback(conclusion_writer, monkeypatch, caplog):
+    """Return the fixed safe diagnostic when the redactor itself fails."""
     provider, _, _, _, scope, _ = conclusion_writer
     scope.create.side_effect = NotFoundError("private-error-detail")
     monkeypatch.setattr(
@@ -291,6 +304,7 @@ def test_redactor_failure_uses_safe_fallback(conclusion_writer, monkeypatch, cap
 
 @pytest.mark.parametrize("status", [0, True, "404", 999])
 def test_invalid_status_is_not_rendered(status):
+    """Exclude values outside valid integer HTTP status codes from diagnostics."""
     from hermes_plugin_honcho import _conclusion_error_message
 
     assert (

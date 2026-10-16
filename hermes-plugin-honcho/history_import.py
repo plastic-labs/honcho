@@ -67,10 +67,12 @@ class ImportOptions:
 
     @property
     def cutoff(self) -> datetime:
+        """Return the inclusive lower timestamp for this import window."""
         return self.now - timedelta(days=self.days)
 
     @property
     def selection(self) -> str:
+        """Fingerprint the selected time window and sources for cursor reuse."""
         return fingerprint(
             {
                 "version": IMPORT_VERSION,
@@ -82,6 +84,7 @@ class ImportOptions:
 
 
 def parse_options(args: Any) -> ImportOptions:
+    """Validate CLI options and normalize the import time window to UTC."""
     days = getattr(args, "days", 30)
     if type(days) is not int or days <= 0:
         raise ImportInputError("--days must be a positive integer.")
@@ -213,6 +216,7 @@ def _yaml_connection_fields() -> dict:
 
 
 def _path_signatures(paths: tuple[Path, ...]) -> tuple:
+    """Record source file identities so configuration changes invalidate a preview."""
     result = []
     for path in paths:
         try:
@@ -344,6 +348,7 @@ class SourceSnapshot:
 
 
 def _require_state_interfaces(session_db: type) -> None:
+    """Reject Hermes versions that cannot expose the required history provenance."""
     required = {
         "list_sessions_rich": {
             "include_children",
@@ -396,6 +401,7 @@ def snapshot_source(path: Path, profile: str) -> Iterator[SourceSnapshot]:
         deadline = time.monotonic() + 30.0
 
         def progress(status, remaining, total):
+            """Abort snapshot backup when continuous writes exhaust its time budget."""
             if time.monotonic() > deadline:
                 raise ImportInputError(
                     "Could not obtain a stable database snapshot. Pause live writes and retry."
@@ -466,12 +472,14 @@ class _PeerResolver(SessionPeersMixin):
     """Use the live resolver without constructing a manager, client, or writer."""
 
     def __init__(self, config, runtime_id=None, runtime_alt=None):
+        """Expose historical runtime identity to the live peer-resolution helpers."""
         self._config = config
         self._runtime_user_peer_name = runtime_id
         self._runtime_user_peer_name_alt = runtime_alt
 
 
 def _object(value: Any) -> dict:
+    """Decode a persisted JSON object without accepting other JSON types."""
     if isinstance(value, dict):
         return value
     try:
@@ -484,6 +492,7 @@ def _object(value: Any) -> dict:
 def _map_segment(
     record: dict, root_id: str, config: HonchoClientConfig, profile: str
 ) -> tuple[ImportTarget | None, str | None]:
+    """Resolve one eligible historical segment using live peer and session rules."""
     if (
         record.get("hidden")
         or record.get("source") == "subagent"
@@ -596,6 +605,7 @@ def _targets(
     options: ImportOptions,
     skipped: Counter,
 ) -> list[ImportTarget]:
+    """Group eligible physical segments under their compression lineage roots."""
     records, offset = {}, 0
     while True:
         rows = snapshot.db.list_sessions_rich(
@@ -660,6 +670,7 @@ class PlannedChunk:
     row_hash: str
 
     def checkpoint(self) -> dict:
+        """Describe this chunk for content-free durable confirmation."""
         return {
             "segment_id": self.target.segment_id,
             "root_id": self.target.root_id,
@@ -674,6 +685,7 @@ class PlannedChunk:
         }
 
     def metadata(self, source_id: str) -> dict:
+        """Attach source identity and fingerprints for remote batch reconciliation."""
         return {
             "backfill": True,
             "honcho_import_version": IMPORT_VERSION,
@@ -697,6 +709,7 @@ class PlannedRow:
 
 
 def _text(content: Any) -> str | None:
+    """Extract user-visible text from string or structured message content."""
     if isinstance(content, str):
         return content
     if isinstance(content, list):
@@ -713,6 +726,7 @@ def _text(content: Any) -> str | None:
 def payload_hash(
     content: str, peer_id: str, created_at: datetime, session_id: str
 ) -> str:
+    """Hash the exact normalized text, peer, and timestamp sent to Honcho."""
     return fingerprint(
         {
             "content": content,
@@ -745,6 +759,7 @@ def _normalize_import_text(text: str) -> str:
 def planned_rows(
     snapshot: SourceSnapshot, target: ImportTarget, options: ImportOptions, limit: int
 ) -> Iterator[PlannedRow]:
+    """Page physical source rows and yield filtered, normalized import chunks."""
     from . import HonchoMemoryProvider, _is_internal_gateway_turn
 
     cursor, suppress_turn = 0, False
@@ -900,6 +915,7 @@ def _ordered_target_rows(
             connection.commit()
 
             def ordered() -> Iterator[tuple[ImportTarget, PlannedRow]]:
+                """Yield spool rows in timestamp order with stable row and segment ties."""
                 for segment_id, row_id, serialized in connection.execute(
                     "SELECT segment, row_id, chunks FROM rows ORDER BY time_us, row_id, segment"
                 ):
@@ -958,6 +974,7 @@ class ImportPlan:
 
 
 def _row_progress(segment: dict | None, row: PlannedRow) -> int:
+    """Validate a row against saved chunk hashes and return confirmed parts."""
     record = segment["rows"].get(str(row.row_id)) if segment else None
     if record and not row.chunks and row.skipped != "messages_outside_time_window":
         raise ImportStateError(
@@ -980,6 +997,7 @@ def build_plan(
     options: ImportOptions,
     state: dict,
 ) -> ImportPlan:
+    """Count candidate history and bind its routing to a durable import scope."""
     summary = ImportSummary()
     identity = {
         "server": config.base_url,
@@ -1019,6 +1037,7 @@ def build_plan(
 
 
 def _safe_label(value: Any) -> str:
+    """Redact credentials and control characters from a displayed identifier."""
     from agent.redact import redact_sensitive_text
 
     try:
@@ -1037,6 +1056,7 @@ def print_preview(
     config: HonchoClientConfig,
     options: ImportOptions,
 ) -> None:
+    """Show destination, selection, and counts without displaying transcript content."""
     summary = plan.summary
     print("Honcho history import preview")
     print(f"  Profile: {_safe_label(snapshot.profile)}")
@@ -1066,6 +1086,7 @@ def print_preview(
 
 
 def _private_client(config: HonchoClientConfig):
+    """Build an isolated zero-retry client and verify its destination settings."""
     from .client import _build_client, _refresh_oauth
 
     # This config and client belong to one confirmed import, never to the shared cache.
@@ -1146,6 +1167,7 @@ def _remote_messages(session, *, filters: dict | None = None) -> list:
 
 
 def _import_marker(message) -> tuple[str, str] | None:
+    """Read a supported import source and chunk key from remote metadata."""
     metadata = message.metadata
     if (
         not isinstance(metadata, dict)
@@ -1201,6 +1223,7 @@ def _import_marker(message) -> tuple[str, str] | None:
 def _matches_checkpoint(
     message, descriptor: dict, source_id: str, target_id: str
 ) -> bool:
+    """Verify remote content and routing against a saved chunk descriptor."""
     metadata = message.metadata
     if _import_marker(message) != (source_id, descriptor["key"]):
         return False
@@ -1233,6 +1256,7 @@ def _matches_checkpoint(
 
 
 def _indexed_remote(messages: list) -> tuple[dict, bool]:
+    """Index imported remote chunks while recording any unmarked history."""
     indexed, unmarked = {}, False
     for message in messages:
         marker = _import_marker(message)
@@ -1248,6 +1272,7 @@ def _indexed_remote(messages: list) -> tuple[dict, bool]:
 
 
 def _pending_batch(target_id: str, chunks: list[PlannedChunk], cursors: dict) -> dict:
+    """Describe an upcoming batch before attempting its remote write."""
     descriptors = [chunk.checkpoint() for chunk in chunks]
     return {
         "batch_id": fingerprint({"target": target_id, "chunks": descriptors}),
@@ -1265,6 +1290,7 @@ def _recover_pending(
     source_id: str,
     summary: ImportSummary,
 ) -> bool:
+    """Confirm an uncertain batch only when every remote chunk matches."""
     from honcho.http.exceptions import NotFoundError
     from honcho.session import Session
 
@@ -1317,6 +1343,7 @@ def _recover_pending(
 def _prepare_session(
     client, target_id: str, targets: list[ImportTarget], config: HonchoClientConfig
 ):
+    """Resolve destination peers without overwriting existing observation settings."""
     from honcho.session import SessionPeerConfig
 
     session = client.session(target_id)
@@ -1351,6 +1378,7 @@ def _send_batch(
     source_id: str,
     summary: ImportSummary,
 ) -> int:
+    """Send once and checkpoint only a fully verified response or definite rejection."""
     from honcho.http.exceptions import APIError
     from honcho.peer import Peer
 
@@ -1445,9 +1473,11 @@ def _upload_target(
     remote: dict,
     summary: ImportSummary,
 ) -> int:
+    """Append ordered new chunks and advance source cursors after target completion."""
     session, batch = None, []
 
     def flush() -> int:
+        """Prepare the destination lazily and send the accumulated bounded batch."""
         nonlocal session
         if not batch:
             return 0
@@ -1511,6 +1541,7 @@ def upload_plan(
     options: ImportOptions,
     state_path: Path,
 ) -> tuple[ImportSummary, int]:
+    """Reconcile saved progress, reject unsafe ordering, and upload confirmed targets."""
     from honcho.http.exceptions import NotFoundError
     from honcho.session import Session
 
@@ -1699,6 +1730,7 @@ def upload_plan(
 
 
 def print_summary(summary: ImportSummary, code: int) -> None:
+    """Report confirmed progress, skips, and partial outcomes without raw errors."""
     status = (
         "complete" if code == 0 else "partial or unresolved" if code == 3 else "failed"
     )

@@ -294,6 +294,7 @@ class SessionContextMixin:
             return False
 
         def _create() -> bool:
+            """Resolve the target and perform the conclusion write through OAuth recovery."""
             target_peer_id = self._resolve_peer_id(session, peer)
             if target_peer_id is None:
                 if raise_on_error:
