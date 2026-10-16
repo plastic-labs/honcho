@@ -363,6 +363,13 @@ class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMi
 
     # ----- Writes -----
 
+    @staticmethod
+    def _message_configuration_for(msg: dict[str, Any]) -> dict[str, Any] | None:
+        """Disable Honcho reasoning for this message without dropping its stored content."""
+        if not msg.get("no_observe"):
+            return None
+        return {"reasoning": {"enabled": False}}
+
     def _join_observation_flags(self, honcho_session_id: str) -> tuple[bool, bool]:
         """(observe_me, observe_others) for an author peer joining ``honcho_session_id``: the session's
         server-synced values once setup ran, else the manager's config snapshot."""
@@ -441,12 +448,17 @@ class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMi
             honcho_messages = []
             for m in new_messages:
                 if m["role"] != "user":
-                    honcho_messages.append(assistant_peer.message(m["content"]))
-                    continue
-                author_peer_id = m.get("author_peer_id")
-                peer = (self._author_peer_for_session(honcho_session, session.honcho_session_id, author_peer_id)
-                        if author_peer_id else user_peer)
-                honcho_messages.append(peer.message(m["content"]))
+                    peer = assistant_peer
+                else:
+                    author_peer_id = m.get("author_peer_id")
+                    peer = (self._author_peer_for_session(honcho_session, session.honcho_session_id, author_peer_id)
+                            if author_peer_id else user_peer)
+                configuration = self._message_configuration_for(m)
+                if configuration is not None:
+                    honcho_messages.append(peer.message(m["content"], configuration=configuration))
+                else:
+                    # Preserve the old call shape for ordinary messages.
+                    honcho_messages.append(peer.message(m["content"]))
             honcho_session.add_messages(honcho_messages)
             return len(honcho_messages)
 
