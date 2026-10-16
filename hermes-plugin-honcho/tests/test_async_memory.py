@@ -603,10 +603,14 @@ class TestMemoryFileMigrationTargets:
         uploaded = mgr.migrate_memory_files(session.key, str(tmp_path))
 
         assert uploaded is True
-        assert honcho_session.upload_file.call_count == 3
+        # Uploads go through the deterministic migration marker session, never the
+        # chat session, so a crash between upload and ledger write stays reconcilable.
+        marker_session = make_manager.client.session.return_value
+        assert honcho_session.upload_file.call_count == 0
+        assert marker_session.upload_file.call_count == 3
 
         peer_by_upload_name = {}
-        for call_args in honcho_session.upload_file.call_args_list:
+        for call_args in marker_session.upload_file.call_args_list:
             payload = call_args.kwargs["file"]
             peer_by_upload_name[payload[0]] = call_args.kwargs["peer"]
 
@@ -689,7 +693,9 @@ class TestMemoryFileMigrationOwnerGate:
         uploaded = mgr.migrate_memory_files(session.key, str(tmp_path))
 
         assert uploaded is True
-        assert honcho_session.upload_file.call_count == 1
+        # The upload lands on the migration marker session, not the chat session.
+        assert honcho_session.upload_file.call_count == 0
+        assert make_manager.client.session.return_value.upload_file.call_count == 1
 
     def test_pinned_peer_name_migrates(self, tmp_path, make_manager):
         """pinPeerName collapses every identity onto the owner peer by
@@ -712,7 +718,9 @@ class TestMemoryFileMigrationOwnerGate:
         uploaded = mgr.migrate_memory_files(session.key, str(tmp_path))
 
         assert uploaded is True
-        assert honcho_session.upload_file.call_count == 1
+        # The upload lands on the migration marker session, not the chat session.
+        assert honcho_session.upload_file.call_count == 0
+        assert make_manager.client.session.return_value.upload_file.call_count == 1
 
 
 # ---------------------------------------------------------------------------
