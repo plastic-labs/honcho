@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.config import settings
+from src.dreamer.dream_scheduler import schedule_backlog_dream
 from src.dreamer.orchestrator import DreamResult, process_dream
 from src.dreamer.working_memory import (
     NOTES_KEY,
@@ -147,8 +148,54 @@ async def test_unshown_backlog_stays_counted_as_new(monkeypatch: pytest.MonkeyPa
             remaining=30,
         ),
     )
-    _, update = await _run_process_dream(result, {}, explicit_count=100)
+    schedule = AsyncMock()
+    with patch("src.dreamer.orchestrator.schedule_backlog_dream", new=schedule):
+        _, update = await _run_process_dream(result, {}, explicit_count=100)
     assert update.await_args is not None
     written = update.await_args.kwargs["update_data"]
     assert written["dream"]["last_dream_document_count"] == 70
+    assert written["dream"]["work_list_backlog"] == 30
     assert NOTES_KEY not in written
+    # Nothing else checks the pair until new conclusions arrive.
+    schedule.assert_awaited_once_with("w", observer="a", observed="a")
+
+
+@pytest.mark.asyncio
+async def test_failed_dream_schedules_no_follow_up(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(settings.DREAM, "BRIEF_ENABLED", True)
+    result = _result(False, False)
+    result.state = DreamState(
+        cursor=NotesCursor(),
+        work_list=WorkList(
+            items=[WorkItem(id="x", content="c", created_at=datetime.now(UTC))],
+            remaining=30,
+        ),
+    )
+    schedule = AsyncMock()
+    with patch("src.dreamer.orchestrator.schedule_backlog_dream", new=schedule):
+        _, update = await _run_process_dream(result, {}, explicit_count=100)
+    assert update.await_args is not None
+    assert update.await_args.kwargs["update_data"]["dream"]["work_list_backlog"] == 0
+    schedule.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scheduler_mode", ["deriver", "api"])
+async def test_backlog_timer_waits_out_the_min_hours_gate(
+    scheduler_mode: str, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr(settings.DERIVER, "SCHEDULER", scheduler_mode)
+    monkeypatch.setattr(settings.DREAM, "MIN_HOURS_BETWEEN_DREAMS", 8)
+    scheduler = MagicMock(schedule_dream=AsyncMock())
+    with patch(
+        "src.dreamer.dream_scheduler.get_dream_scheduler", return_value=scheduler
+    ):
+        await schedule_backlog_dream("w", observer="a", observed="b")
+    if scheduler_mode == "api":
+        # The API scheduler reads the recorded backlog instead.
+        scheduler.schedule_dream.assert_not_awaited()
+        return
+    args = scheduler.schedule_dream.await_args
+    assert args is not None
+    assert args.args[2] == 8 * 60
+    assert args.kwargs["trigger_reason"] == "work_list_backlog"

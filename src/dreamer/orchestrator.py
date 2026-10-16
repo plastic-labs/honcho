@@ -26,6 +26,10 @@ from sqlalchemy import func, select
 from src import crud, models
 from src.config import settings
 from src.dependencies import tracked_db
+from src.dreamer.dream_scheduler import (
+    WORK_LIST_BACKLOG_KEY,
+    schedule_backlog_dream,
+)
 from src.dreamer.specialists import (
     SPECIALISTS,
     CardRefreshSpecialist,
@@ -645,7 +649,8 @@ DREAM: {payload.dream_type} documents for {workspace_name}/{payload.observer}/{p
                     )
                     # Work-list conclusions this dream left for the next one.
                     # They are kept out of the recorded count, so the scheduler
-                    # still sees them as new and schedules the next dream.
+                    # still sees them as new, and a follow-up dream is
+                    # scheduled for them below.
                     backlog = 0
                     if working_memory_enabled() and result.state is not None:
                         _, backlog = plan_cursor_move(
@@ -653,6 +658,9 @@ DREAM: {payload.dream_type} documents for {workspace_name}/{payload.observer}/{p
                             any_specialist_succeeded=any_succeeded,
                             all_specialists_succeeded=all_succeeded,
                         )
+                    # When nothing ran, the next dream waits for new
+                    # conclusions rather than retrying on a timer.
+                    follow_up = backlog if any_succeeded else 0
 
                     # Both guard fields advance together only on successful consolidation.
                     now_iso = datetime.now(UTC).isoformat()
@@ -676,6 +684,7 @@ DREAM: {payload.dream_type} documents for {workspace_name}/{payload.observer}/{p
                         dream_meta["last_dream_document_count"] = max(
                             0, current_explicit_count - backlog
                         )
+                        dream_meta[WORK_LIST_BACKLOG_KEY] = follow_up
                         update_data: dict[str, Any] = {"dream": dream_meta}
                         if not working_memory_enabled():
                             # This dream won't move the cursor, so a stored
@@ -705,6 +714,12 @@ DREAM: {payload.dream_type} documents for {workspace_name}/{payload.observer}/{p
                             run_id=result.run_id,
                             any_specialist_succeeded=any_succeeded,
                             all_specialists_succeeded=all_succeeded,
+                        )
+                    if follow_up:
+                        await schedule_backlog_dream(
+                            workspace_name,
+                            observer=payload.observer,
+                            observed=payload.observed,
                         )
 
             case DreamType.CARD_REFRESH:
