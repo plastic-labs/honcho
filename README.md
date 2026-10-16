@@ -356,7 +356,7 @@ Honcho is open source under AGPL-3.0. To **run** a personal instance, install th
 git clone https://github.com/plastic-labs/honcho.git
 cd honcho
 cp docker-compose.yml.example docker-compose.yml
-cp .env.template .env       # fill in LLM_GEMINI_API_KEY / LLM_ANTHROPIC_API_KEY / LLM_OPENAI_API_KEY
+cp .env.template .env       # set LLM_OPENAI_API_KEY (see "LLM provider" below for OpenRouter etc.)
 docker compose up
 ```
 
@@ -369,93 +369,72 @@ honcho = Honcho(workspace_id="my-app-testing", base_url="http://localhost:8000")
 
 <!-- markdownlint-disable MD033 -->
 <details>
-<summary>Local development without Docker</summary>
+<summary>Without Docker (manual setup)</summary>
 
-Below is a guide on setting up a local environment for running the Honcho Server without Docker.
+Everything below runs directly on the host — no Docker required. You need:
 
-#### Prerequisites and Dependencies
+- [uv](https://docs.astral.sh/uv/) (it installs the required Python, 3.13+, for you)
+- PostgreSQL with the [pgvector](https://github.com/pgvector/pgvector) extension, local or managed
+- An API key for one LLM provider
 
-Honcho is developed using [python](https://www.python.org/) and [uv](https://docs.astral.sh/uv/).
+Redis is optional; caching is off by default (`CACHE_ENABLED=false`).
 
-The minimum python version is `3.10`
-The minimum uv version is `0.5.0`
-
-#### Setup
-
-Once the dependencies are installed on the system run the following steps to get
-the local project setup.
-
-1. **Clone the repository**
+1. **Clone and install**
 
 ```bash
 git clone https://github.com/plastic-labs/honcho.git
-```
-
-2. **Enter the repository and install the python dependencies**
-
-We recommend using a virtual environment to isolate the dependencies for Honcho
-from other projects on the same system. `uv` will create a virtual environment
-when you sync your dependencies in the project.
-
-```bash
 cd honcho
 uv sync
 ```
 
-This will create a virtual environment and install the dependencies for Honcho.
-The default virtual environment will be located at `honcho/.venv`. Activate the
-virtual environment via:
+2. **Set up PostgreSQL with pgvector**
+
+Install Postgres and pgvector natively, for example:
 
 ```bash
-source honcho/.venv/bin/activate
+# Ubuntu/Debian: match the pgvector package to your Postgres major version
+sudo apt install postgresql postgresql-16-pgvector
+
+# macOS
+brew install postgresql pgvector
 ```
 
-3. **Set up a database**
+A managed Postgres that offers pgvector (Supabase, Neon, RDS, and so on) works too.
 
-Honcho utilizes [Postgres](https://www.postgresql.org/) for its database with
-pgvector. An easy way to get started with a postgres database is to create a project
-with [Supabase](https://supabase.com/)
-
-Alternatively, a `docker-compose` template is available with a sample database configuration.
-To use Docker:
+Then, as a superuser, enable the extensions on the database Honcho will use:
 
 ```bash
-cp docker-compose.yml.example docker-compose.yml
-docker compose up -d database
+sudo -u postgres psql -c "CREATE EXTENSION IF NOT EXISTS vector;"
+sudo -u postgres psql -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;"  # optional, speeds up message search
 ```
 
-4. **Edit the environment variables**
+3. **Configure `.env`**
 
-Honcho uses a `.env` file for managing runtime environment variables. A
-`.env.template` file is included for convenience. Several of the configurations
-are not required and are only necessary for additional logging, monitoring, and
-security.
+```bash
+cp .env.template .env
+```
 
-Below are the required configurations:
+Only two settings are required:
 
 ```env
-DB_CONNECTION_URI= # Connection uri for a postgres database (with postgresql+psycopg prefix)
-
-# LLM Provider API Keys
-LLM_GEMINI_API_KEY= # API Key for Google Gemini (used for deriver, summary, and dialectic minimal/low by default)
-LLM_ANTHROPIC_API_KEY= # API Key for Anthropic (used for dialectic medium/high/max and dream by default)
-LLM_OPENAI_API_KEY= # API Key for OpenAI (used for embeddings when EMBED_MESSAGES=true)
+DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@localhost:5432/postgres
+LLM_OPENAI_API_KEY=sk-...
 ```
 
-> Note that the `DB_CONNECTION_URI` must have the prefix `postgresql+psycopg` to
-> function properly. This is a requirement brought by `sqlalchemy`
+`DB_CONNECTION_URI` must use the `postgresql+psycopg` prefix (a SQLAlchemy requirement).
 
-The template has the additional functionality disabled by default. To ensure
-that they are disabled you can verify the following environment variables are
-set to false:
+**LLM provider.** You need one key, not one per vendor. Every feature defaults to `openai / gpt-5.4-mini`, and embeddings default to `openai / text-embedding-3-small`. To use OpenRouter or another OpenAI-compatible endpoint (Together, Fireworks, vLLM, Ollama, LiteLLM), put that provider's key in `LLM_OPENAI_API_KEY` and set the model and base URL on each feature in `.env`:
 
 ```env
-AUTH_USE_AUTH=false
-SENTRY_ENABLED=false
+LLM_OPENAI_API_KEY=sk-or-v1-...
+DERIVER_MODEL_CONFIG__MODEL=google/gemini-2.5-flash
+DERIVER_MODEL_CONFIG__OVERRIDES__BASE_URL=https://openrouter.ai/api/v1
+# ...repeat for DIALECTIC_LEVELS__*, SUMMARY_*, DREAM_*
 ```
 
-If you set `AUTH_USE_AUTH` to true you will need to generate a JWT secret. You can
-do this with the following command:
+Models must support tool calling. If your provider doesn't serve embeddings, point `EMBEDDING_MODEL_CONFIG__*` at one that does. See [`.env.template`](./.env.template) for every per-feature line, and the [configuration guide](https://honcho.dev/docs/v3/contributing/configuration#llm-configuration) for direct Anthropic/Gemini keys and mixing providers.
+
+**Auth.** Auth is off by default (`AUTH_USE_AUTH=false`). Turn it on before exposing the server to a network. Enabling it requires a JWT secret, which you can generate with:
 
 ```bash
 python scripts/generate_jwt_secret.py
@@ -488,32 +467,24 @@ curl -H "Authorization: Bearer $TOKEN" http://localhost:8000/v3/workspaces
 
 Duration units: `s` (seconds), `m` (minutes), `h` (hours), `d` (days), `w` (weeks), `y` (years).
 
-5. **Run database migrations**
-
-With the database set up and environment variables configured, run the migrations
-to create the necessary tables:
+4. **Run database migrations**
 
 ```bash
 uv run alembic upgrade head
 ```
 
-This will create all tables for Honcho including workspaces, peers, sessions,
-messages, and the queue system.
-
 Migrations hold a session-level advisory lock, so they need a session-mode connection (direct Postgres or a session pooler), not a transaction-mode pooler. A Supabase-style `:6543` port is rewritten to `:5432` automatically.
 
-6. **Launch Honcho**
+5. **Launch Honcho**
 
-With everything set up, you can now launch a local instance of Honcho. In addition to the database, two
-components need to be running:
+Two processes need to run alongside the database.
 
 **Start the API server:**
 
 ```bash
-uv run fastapi dev src/main.py
+uv run fastapi dev src/main.py                  # local development, reloads on code changes
+uv run fastapi run --host 0.0.0.0 src/main.py   # on a server
 ```
-
-This is a development server that will reload whenever code is changed.
 
 **Start a background worker (deriver):**
 
@@ -524,6 +495,8 @@ uv run python -m src.deriver
 ```
 
 The deriver generates representations, summaries, peer cards, and manages dreaming tasks. You can increase the number of derivers to improve runtime efficiency.
+
+For verification steps and production notes, see [Self-hosting docs → Manual Setup](https://honcho.dev/docs/v3/contributing/self-hosting#manual-setup).
 
 </details>
 <!-- markdownlint-enable MD033 -->

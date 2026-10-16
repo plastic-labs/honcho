@@ -17,13 +17,13 @@ ValueError: Missing client for Deriver: google
 
 **Cause:** The server validates at startup that all configured LLM providers have API keys. If a provider is referenced in your configuration but the corresponding API key isn't set, the server refuses to start.
 
-**Fix:** Set the API keys for your configured providers. With default configuration, you need:
+**Fix:** Set the API keys for your configured providers. With the default configuration every feature, embeddings included, uses the `openai` transport, so one key is enough:
 
 ```bash
-LLM_GEMINI_API_KEY=...    # Used by deriver, summary, dialectic minimal/low
-LLM_ANTHROPIC_API_KEY=... # Used by dialectic medium/high/max, dream
-LLM_OPENAI_API_KEY=...    # Used by embeddings (when EMBED_MESSAGES=true)
+LLM_OPENAI_API_KEY=...    # Or an OpenRouter/other OpenAI-compatible key with per-feature BASE_URL overrides
 ```
+
+You only need `LLM_ANTHROPIC_API_KEY` or `LLM_GEMINI_API_KEY` if you switch a feature's `MODEL_CONFIG__TRANSPORT` to `anthropic` or `gemini`.
 
 See the [LLM Setup](/v3/contributing/self-hosting#llm-setup) section for provider configuration. You can change which providers are used in your `.env` or `config.toml` (see [Configuration Guide](./configuration#llm-configuration)).
 
@@ -103,7 +103,7 @@ Messages are stored but no observations, summaries, or representations are being
 
 2. **Deriver can't reach the database** — Check deriver logs for connection errors. The deriver uses the same `DB_CONNECTION_URI` as the API server.
 
-3. **Missing LLM API key for deriver provider** — By default the deriver uses Google Gemini (`LLM_GEMINI_API_KEY`). Check deriver logs for API errors.
+3. **Missing LLM API key for deriver provider** — By default the deriver uses the `openai` transport (`LLM_OPENAI_API_KEY`). Check deriver logs for API errors.
 
 4. **Processing backlog** — With `DERIVER_WORKERS=1` (default), high message volume can cause a backlog. Increase workers:
    ```bash

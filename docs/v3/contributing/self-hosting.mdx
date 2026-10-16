@@ -140,7 +140,7 @@ For a full end-to-end test, see [Verify Your Setup](#verify-your-setup) below.
 
 ## Manual Setup
 
-For more control over your environment, you can set up everything manually.
+For more control over your environment, or on a host without Docker, you can set up everything manually. You need Postgres with pgvector and an LLM provider key. Redis is optional: caching is off by default (`CACHE_ENABLED=false`).
 
 ### 1. Clone and Install Dependencies
 
@@ -170,14 +170,14 @@ brew install pgvector
 **Ubuntu/Debian:**
 ```bash
 sudo apt update
-sudo apt install postgresql postgresql-contrib
-# Install pgvector extension (see pgvector docs for your version)
+# Match the pgvector package to your Postgres major version
+sudo apt install postgresql postgresql-contrib postgresql-16-pgvector
 ```
 
 **Windows:**
 Download from [postgresql.org](https://www.postgresql.org/download/windows/)
 
-#### Option B: Docker PostgreSQL
+#### Option B: Docker PostgreSQL (if Docker is available)
 
 ```bash
 docker run --name honcho-db \
