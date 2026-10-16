@@ -18,6 +18,7 @@ from .api_types import (
     PeerConfig,
     PeerResponse,
     QueueStatusResponse,
+    QueueWorkUnit,
     ScopeResponse,
     SessionConfiguration,
     SessionPeerConfig,
@@ -30,7 +31,7 @@ from .conclusions import WorkspaceConclusions
 from .http import AsyncHonchoHTTPClient, HonchoHTTPClient, routes
 from .message import Message
 from .mixins import MetadataConfigMixin
-from .pagination import SyncPage
+from .pagination import SyncCursorPage, SyncPage
 from .peer import Peer, parse_chat_response, serialize_response_format
 from .scope import Scope
 from .session import Session
@@ -940,6 +941,43 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
             Message.from_api_response(MessageResponse.model_validate(item))
             for item in data
         ]
+
+    @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
+    def queue_work_units(
+        self,
+        *,
+        task_type: Literal["representation", "summary", "dream"] | None = None,
+        observer: str | PeerBase | None = None,
+        sender: str | PeerBase | None = None,
+        session: str | SessionBase | None = None,
+        size: int = Field(default=50, ge=1, le=100),
+        cursor: str = "",
+    ) -> SyncCursorPage[QueueWorkUnit]:
+        """List active memory attempts. Scope filters intersect; pages are live views.
+
+        Requires a workspace/admin key. Iterate to fetch subsequent pages, or
+        inspect ``items`` for only this page. Claims disappear after completion.
+        ``last_activity_at`` reports observed stages, never a heartbeat.
+        """
+        self._ensure_workspace()
+        query: dict[str, Any] = {"size": size}
+        for key, value in (
+            ("task_type", task_type),
+            ("observer_id", resolve_id(observer)),
+            ("sender_id", resolve_id(sender)),
+            ("session_id", resolve_id(session)),
+        ):
+            if value is not None:
+                query[key] = value
+
+        def fetch(cursor: str) -> SyncCursorPage[QueueWorkUnit]:
+            data = self._http.get(
+                routes.workspace_queue_work_units(self.workspace_id),
+                query={**query, "cursor": cursor},
+            )
+            return SyncCursorPage(data, QueueWorkUnit, fetch)
+
+        return fetch(cursor)
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     def queue_status(

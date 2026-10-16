@@ -982,6 +982,7 @@ def mock_tracked_db(request: pytest.FixtureRequest):
         "src.dreamer.dream_scheduler.tracked_db",
         "src.dialectic.chat.tracked_db",
         "src.utils.summarizer.tracked_db",
+        "src.utils.work_unit_progress.tracked_db",
         "src.webhooks.events.tracked_db",
         "src.webhooks.webhook_delivery.tracked_db",
         "src.utils.agent_tools.tracked_db",

@@ -11,7 +11,7 @@ from typing_extensions import TypeVar
 T = TypeVar("T", bound=BaseModel)
 U = TypeVar("U", default=T)
 
-__all__ = ["SyncPage", "AsyncPage"]
+__all__ = ["SyncPage", "AsyncPage", "SyncCursorPage", "AsyncCursorPage"]
 
 
 class SyncPage(Generic[T, U]):
@@ -248,3 +248,64 @@ class AsyncPage(Generic[T, U]):
             return None
 
         return await self._fetch_next(current_page + 1)
+
+
+class SyncCursorPage(Generic[T]):
+    """A live cursor page. Iteration fetches all subsequent pages automatically."""
+
+    def __init__(
+        self,
+        data: dict[str, Any],
+        item_type: type[T],
+        fetch_next: Callable[[str], SyncCursorPage[T]],
+    ) -> None:
+        self.items: list[T] = [item_type.model_validate(item) for item in data["items"]]
+        self.next_page: str | None = data["next_page"]
+        self._fetch_next: Callable[[str], SyncCursorPage[T]] = fetch_next
+
+    def has_next_page(self) -> bool:
+        """Whether the server returned a continuation cursor."""
+        return self.next_page is not None
+
+    def get_next_page(self) -> SyncCursorPage[T] | None:
+        """Fetch the next page, which can be empty if work has completed."""
+        return self._fetch_next(self.next_page) if self.next_page is not None else None
+
+    def __iter__(self) -> Iterator[T]:
+        page: SyncCursorPage[T] | None = self
+        while page is not None:
+            yield from page.items
+            page = page.get_next_page()
+
+
+class AsyncCursorPage(Generic[T]):
+    """An async live cursor page; use items to read only the current page."""
+
+    def __init__(
+        self,
+        data: dict[str, Any],
+        item_type: type[T],
+        fetch_next: Callable[[str], Awaitable[AsyncCursorPage[T]]],
+    ) -> None:
+        self.items: list[T] = [item_type.model_validate(item) for item in data["items"]]
+        self.next_page: str | None = data["next_page"]
+        self._fetch_next: Callable[[str], Awaitable[AsyncCursorPage[T]]] = fetch_next
+
+    def has_next_page(self) -> bool:
+        """Whether the server returned a continuation cursor."""
+        return self.next_page is not None
+
+    async def get_next_page(self) -> AsyncCursorPage[T] | None:
+        """Fetch the next page, which can be empty if work has completed."""
+        return (
+            await self._fetch_next(self.next_page)
+            if self.next_page is not None
+            else None
+        )
+
+    async def __aiter__(self) -> AsyncIterator[T]:
+        page: AsyncCursorPage[T] | None = self
+        while page is not None:
+            for item in page.items:
+                yield item
+            page = await page.get_next_page()

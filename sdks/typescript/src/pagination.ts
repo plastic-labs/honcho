@@ -1,4 +1,4 @@
-import type { PageResponse } from './types/api'
+import type { CursorPageResponse, PageResponse } from './types/api'
 
 /**
  * Function type for fetching the next page of results.
@@ -179,5 +179,37 @@ export class Page<T, TOriginal = T> implements AsyncIterable<T> {
       allItems.push(item)
     }
     return allItems
+  }
+}
+
+/** A cursor page. Iteration fetches subsequent pages; items reads only this page. */
+export class CursorPage<T> implements AsyncIterable<T> {
+  readonly items: T[]
+  readonly nextPage: string | null
+  private readonly fetchNext: (cursor: string) => Promise<CursorPage<T>>
+
+  constructor(
+    data: CursorPageResponse<T>,
+    fetchNext: (cursor: string) => Promise<CursorPage<T>>
+  ) {
+    this.items = data.items
+    this.nextPage = data.next_page
+    this.fetchNext = fetchNext
+  }
+
+  get hasNextPage(): boolean {
+    return this.nextPage !== null
+  }
+
+  async getNextPage(): Promise<CursorPage<T> | null> {
+    return this.nextPage !== null ? this.fetchNext(this.nextPage) : null
+  }
+
+  async *[Symbol.asyncIterator](): AsyncIterator<T> {
+    let page: CursorPage<T> | null = this
+    while (page !== null) {
+      yield* page.items
+      page = await page.getNextPage()
+    }
   }
 }

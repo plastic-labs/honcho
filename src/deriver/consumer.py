@@ -38,13 +38,16 @@ from src.utils.queue_payload import (
     SummaryPayload,
     WebhookPayload,
 )
+from src.utils.work_unit_progress import ProgressCallback
 from src.webhooks import webhook_delivery
 
 logger = logging.getLogger(__name__)
 logging.getLogger("sqlalchemy.engine.Engine").disabled = True
 
 
-async def process_item(queue_item: models.QueueItem) -> None:
+async def process_item(
+    queue_item: models.QueueItem, *, progress: ProgressCallback | None = None
+) -> None:
     """Process a single item from the queue."""
     task_type = queue_item.task_type
     # Drop the work-unit retry counter before payload validation: every payload
@@ -149,7 +152,17 @@ async def process_item(queue_item: models.QueueItem) -> None:
                     queue_payload,
                 )
                 raise ValueError(f"Invalid payload structure: {str(e)}") from e
-            await process_dream(validated, workspace_name, queue_item_id=queue_item.id)
+            if progress is None:
+                await process_dream(
+                    validated, workspace_name, queue_item_id=queue_item.id
+                )
+            else:
+                await process_dream(
+                    validated,
+                    workspace_name,
+                    queue_item_id=queue_item.id,
+                    progress=progress,
+                )
 
     elif task_type == "deletion":
         with sentry_sdk.start_transaction(name="process_deletion_task", op="deriver"):

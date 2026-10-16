@@ -6,18 +6,21 @@ import {
   type DialecticStreamResponse,
 } from './http/streaming'
 import { Message } from './message'
-import { Page } from './pagination'
+import { CursorPage, Page } from './pagination'
 import { Peer } from './peer'
 import { Scope } from './scope'
 import { Session } from './session'
 import type {
   ChatResponse,
+  CursorPageResponse,
   MessageResponse,
   PageResponse,
   PeerResponse,
   QueueStatus,
   QueueStatusParams,
   QueueStatusResponse,
+  QueueWorkUnit,
+  QueueWorkUnitResponse,
   ScopeResponse,
   SessionResponse,
   WorkspaceChatParams,
@@ -1192,6 +1195,57 @@ export class Honcho {
     })
 
     return createDialecticStream(response)
+  }
+
+  /** List active memory attempts. Filters intersect; pages are live views. */
+  async queueWorkUnits(options?: {
+    taskType?: 'representation' | 'summary' | 'dream'
+    observer?: string | Peer
+    sender?: string | Peer
+    session?: string | Session
+    size?: number
+    cursor?: string
+  }): Promise<CursorPage<QueueWorkUnit>> {
+    const size = options?.size ?? 50
+    if (!Number.isInteger(size) || size < 1 || size > 100) {
+      throw new RangeError('size must be an integer between 1 and 100')
+    }
+    await this._ensureWorkspace()
+    const query = {
+      size,
+      task_type: options?.taskType,
+      observer_id: options?.observer ? resolveId(options.observer) : undefined,
+      sender_id: options?.sender ? resolveId(options.sender) : undefined,
+      session_id: options?.session ? resolveId(options.session) : undefined,
+    }
+    const fetch = async (
+      cursor: string
+    ): Promise<CursorPage<QueueWorkUnit>> => {
+      const data = await this._http.get<
+        CursorPageResponse<QueueWorkUnitResponse>
+      >(`/${API_VERSION}/workspaces/${this.workspaceId}/queue/work-units`, {
+        query: { ...query, cursor },
+      })
+      return new CursorPage(
+        {
+          next_page: data.next_page,
+          items: data.items.map((item) => ({
+            id: item.id,
+            taskType: item.task_type,
+            workspaceId: item.workspace_id,
+            sessionId: item.session_id,
+            observer: item.observer,
+            observers: item.observers,
+            observed: item.observed,
+            startedAt: item.started_at,
+            stage: item.stage,
+            lastActivityAt: item.last_activity_at,
+          })),
+        },
+        fetch
+      )
+    }
+    return fetch(options?.cursor ?? '')
   }
 
   /**

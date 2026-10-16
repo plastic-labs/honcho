@@ -35,7 +35,7 @@ export {
   DialecticStreamResponse,
 } from './http/streaming'
 export { Message, type MessageInput } from './message'
-export { Page } from './pagination'
+export { CursorPage, Page } from './pagination'
 export { Peer, PeerContext } from './peer'
 export {
   Scope,
@@ -56,6 +56,7 @@ export type {
   ConclusionLevel,
   ConclusionQueryParams,
   ConclusionResponse,
+  CursorPageResponse,
   Evidence,
   EvidenceMessageRef,
   EvidenceObservation,
@@ -66,6 +67,8 @@ export type {
   PeerResponse,
   QueueStatus,
   QueueStatusResponse,
+  QueueWorkUnit,
+  QueueWorkUnitResponse,
   RepresentationOptions,
   ScopeBackfillJob,
   ScopeResponse,

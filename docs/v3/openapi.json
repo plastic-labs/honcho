@@ -460,6 +460,155 @@
         }
       }
     },
+    "/v3/workspaces/{workspace_id}/queue/work-units": {
+      "get": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "List Queue Work Units",
+        "description": "List active memory work attempts, with intersecting scope filters.\n\nRequires a workspace or admin key, like queue/status. Rows disappear when\nclaims finish or are cleaned up; pages are live views, not a snapshot.",
+        "operationId": "list_queue_work_units_v3_workspaces__workspace_id__queue_work_units_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "task_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "representation",
+                    "summary",
+                    "dream"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Task Type"
+            }
+          },
+          {
+            "name": "observer_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Observer Id"
+            }
+          },
+          {
+            "name": "sender_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sender Id"
+            }
+          },
+          {
+            "name": "session_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session Id"
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 0,
+              "description": "Page size",
+              "default": 50,
+              "title": "Size"
+            },
+            "description": "Page size"
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Cursor for the next page",
+              "title": "Cursor"
+            },
+            "description": "Cursor for the next page"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CursorPage_QueueWorkUnit_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v3/workspaces/{workspace_id}/schedule_dream": {
       "post": {
         "tags": [
@@ -5043,6 +5192,81 @@
         ],
         "title": "CursorPage[Peer]"
       },
+      "CursorPage_QueueWorkUnit_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/QueueWorkUnit"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total"
+          },
+          "current_page": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Page",
+            "description": "Cursor to refetch the current page"
+          },
+          "current_page_backwards": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Page Backwards",
+            "description": "Cursor to refetch the current page starting from the last item"
+          },
+          "previous_page": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Page",
+            "description": "Cursor for the previous page"
+          },
+          "next_page": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Page",
+            "description": "Cursor for the next page"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "CursorPage[QueueWorkUnit]"
+      },
       "CursorPage_Scope_": {
         "properties": {
           "items": {
@@ -6478,6 +6702,114 @@
         ],
         "title": "QueueStatus",
         "description": "Aggregated processing queue status.\n\nTracks user-facing task types only: representation, summary, and dream.\nInternal infrastructure tasks (reconciler, webhook, deletion) are excluded.\n\nNote: completed_work_units reflects items since the last periodic queue\ncleanup, not lifetime totals."
+      },
+      "QueueWorkUnit": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "Claim attempt ID; changes when work is reclaimed"
+          },
+          "task_type": {
+            "type": "string",
+            "enum": [
+              "representation",
+              "summary",
+              "dream"
+            ],
+            "title": "Task Type"
+          },
+          "workspace_id": {
+            "type": "string",
+            "title": "Workspace Id"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id"
+          },
+          "observer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observer"
+          },
+          "observers": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Observers"
+          },
+          "observed": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observed"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At",
+            "description": "Immutable claim start; null for pre-upgrade claims"
+          },
+          "stage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage",
+            "description": "Last observed processing stage"
+          },
+          "last_activity_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Activity At",
+            "description": "Last observed stage/batch transition, not a heartbeat or lease"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "task_type",
+          "workspace_id"
+        ],
+        "title": "QueueWorkUnit",
+        "description": "One active claim attempt. Progress is observed, not a completion estimate."
       },
       "ReasoningConfiguration": {
         "properties": {
