@@ -623,7 +623,9 @@ class DialecticAgent:
             content = content.model_dump_json(by_alias=True)
         elif response_model is not None:
             # A backend that degrades instead of raising (json_object mode's
-            # empty answer or a refusal) hands back a plain string.
+            # empty answer or a refusal) hands back a plain string. The tool
+            # loop already retries those; this backstops any path that skips
+            # its check.
             if run is not None:
                 run.end(is_error=True)
             raise StructuredResponseError()
