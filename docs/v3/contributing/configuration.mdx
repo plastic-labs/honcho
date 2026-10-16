@@ -559,12 +559,20 @@ NAMESPACE=honcho
 
 **Optional Integrations:**
 ```bash
+TELEMETRY_ENABLED=true  # required for Langfuse
 LANGFUSE_HOST=https://cloud.langfuse.com
 LANGFUSE_PUBLIC_KEY=your-langfuse-public-key
+LANGFUSE_SECRET_KEY=your-langfuse-secret-key
 COLLECT_METRICS_LOCAL=false
 LOCAL_METRICS_FILE=metrics.jsonl
 REASONING_TRACES_FILE=traces.jsonl
 ```
+
+Langfuse traces are exported from the same LLM call stream as
+[CloudEvents telemetry](#cloudevents-telemetry), so the exporter only starts
+when `TELEMETRY_ENABLED=true`. With telemetry off, Langfuse keys are ignored.
+`TELEMETRY_ENDPOINT` is not required: without it, Langfuse still gets traces
+and no CloudEvents are sent.
 
 ### Database
 

@@ -35,6 +35,8 @@ class DialecticMixin:
     _BACKOFF_MAX = 8  # ceiling for the empty-streak backoff (× base cadence)
     # Turn-1 budgets: session init + base retrieval share the first; dialectic gets the second.
     _FIRST_TURN_BASE_TIMEOUT, _FIRST_TURN_DIALECTIC_CAP = 3.0, 2.0
+    # Identifies the newest dialectic thread; only it may publish a result.
+    _dialectic_token: object | None = None
 
     def _thread_is_live(self) -> bool:
         """Thread-alive guard that treats threads past the stale threshold as dead."""
@@ -65,24 +67,39 @@ class DialecticMixin:
     def _spawn_dialectic(
         self, query: str, *, thread_name: str, fired_at: int, log_label: str, use_query_rewrite: bool = True,
     ) -> threading.Thread:
-        """Start a background dialectic run that publishes into the pending-result slot. Only a
-        non-empty result advances ``_last_dialectic_turn`` (so empty returns retry next turn) and
-        resets the empty streak; failures widen the backoff."""
+        """Start a background dialectic run that publishes into the pending-result slot, unless a
+        newer run has started since. Only a non-empty result advances ``_last_dialectic_turn`` (so
+        empty returns retry next turn) and resets the empty streak; failures widen the backoff."""
+        token = object()
+        with self._prefetch_lock:
+            self._dialectic_token = token
+
+        def _superseded() -> bool:
+            if token is self._dialectic_token:
+                return False
+            logger.debug("Honcho %s superseded by a newer dialectic; result dropped", log_label)
+            return True
+
         def _run() -> None:
             try:
                 r = self._run_dialectic_depth(query, use_query_rewrite=use_query_rewrite)
             except Exception as exc:
                 logger.debug("Honcho %s failed: %s", log_label, exc)
+                with self._prefetch_lock:
+                    if _superseded():
+                        return
                 self._note_dialectic_failure(exc)
                 return
-            if r and r.strip():
-                with self._prefetch_lock:
+            with self._prefetch_lock:
+                if _superseded():
+                    return
+                if r and r.strip():
                     self._prefetch_result = r
                     self._prefetch_result_fired_at = fired_at
-                self._last_dialectic_turn = fired_at
-                self._dialectic_empty_streak = 0
-            else:
-                self._dialectic_empty_streak += 1
+                    self._last_dialectic_turn = fired_at
+                    self._dialectic_empty_streak = 0
+                else:
+                    self._dialectic_empty_streak += 1
 
         self._prefetch_thread_started_at = time.monotonic()
         thread = spawn_context_thread(_run, name=thread_name, owner=self)

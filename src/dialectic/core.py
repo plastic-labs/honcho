@@ -11,7 +11,7 @@ from collections.abc import AsyncIterator, Callable
 from typing import Any, cast
 
 from nanoid import generate as generate_nanoid
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from src import crud, models
 from src.config import (
@@ -24,12 +24,14 @@ from src.dependencies import tracked_db
 from src.dialectic import prompts
 from src.dreamer.working_memory import load_map_entries
 from src.embedding_client import embedding_client
+from src.exceptions import StructuredResponseError
 from src.llm import (
     HonchoLLMCallResponse,
     StreamingResponseWithMetadata,
     honcho_llm_call,
 )
 from src.llm.runtime import CapturedAgentSpan, start_captured_span
+from src.llm.structured_output import StructuredOutputError
 from src.llm.types import BudgetLine, LLMTelemetryContext
 from src.schemas import ResolvedDialecticConfiguration
 from src.telemetry import prometheus_metrics
@@ -693,9 +695,13 @@ class DialecticAgent:
                     run=run,
                 ),
             )
-        except BaseException:
+        except BaseException as exc:
             if run is not None:
                 run.end(is_error=True)
+            if response_model is not None and isinstance(
+                exc, ValidationError | StructuredOutputError
+            ):
+                raise StructuredResponseError() from exc
             raise
 
         # With response_model, the backend parses content into a model
@@ -703,6 +709,12 @@ class DialecticAgent:
         content = response.content
         if isinstance(content, BaseModel):
             content = content.model_dump_json(by_alias=True)
+        elif response_model is not None:
+            # A backend that degrades instead of raising (json_object mode's
+            # empty answer or a refusal) hands back a plain string.
+            if run is not None:
+                run.end(is_error=True)
+            raise StructuredResponseError()
         if run is not None:
             run.end(output=content)
 
