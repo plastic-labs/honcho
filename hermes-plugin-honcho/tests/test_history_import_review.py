@@ -3,9 +3,10 @@
 import builtins
 from datetime import UTC, datetime
 
+import httpx
 import pytest
 from agent.redact import redact_sensitive_text
-from hermes_plugin_honcho import HonchoMemoryProvider
+from hermes_plugin_honcho import HonchoMemoryProvider, import_state
 from hermes_plugin_honcho import history_import as importer
 from hermes_plugin_honcho.import_state import ImportStateError
 from test_history_import import history_source as history_source
@@ -405,4 +406,91 @@ def test_partial_remote_confirmation_save_failure_is_reported(
     output = capsys.readouterr().out
     assert "1 already remote" in output
     assert "private filesystem path" not in output
+    assert len(source.api.writes) == 1
+
+
+def test_connect_failure_can_be_resumed(history_source, capsys):
+    """Clear only a definite pre-connect failure and allow an explicit later retry."""
+    source = history_source
+    source.session()
+    source.message(content="Safe to resume")
+    source.api.failure = "connection_before"
+    assert run_cli(["import", "--yes"]) == 1
+    scope = next(iter(import_state.read_state(source.ledger)["scopes"].values()))
+    assert scope["pending"] is None
+    assert scope["segments"]["source-one"]["last_scanned_message_id"] == 0
+    assert len(source.api.writes) == 1
+    assert source.api.sessions[("history-test", "history-test")]["messages"] == []
+    output = capsys.readouterr().out
+    assert "batch was not sent" in output
+    assert "private-transport-details" not in output
+    assert run_cli(["import", "--yes"]) == 0
+    assert run_cli(["import", "--yes"]) == 0
+    assert len(source.api.writes) == 2
+    assert [
+        m["content"]
+        for m in source.api.sessions[("history-test", "history-test")]["messages"]
+    ] == ["Safe to resume"]
+
+
+def test_connect_failure_after_confirmed_batch(history_source, monkeypatch, capsys):
+    """Resume after a later connect failure without replaying an accepted batch."""
+    source = history_source
+    source.session()
+    for index in range(101):
+        source.message(content=f"History {index}", timestamp=source.now - 101 + index)
+    original = source.api.handle
+    attempts = 0
+
+    def fail_second_request(request):
+        """Fail before sending the second message request through the SDK transport."""
+        nonlocal attempts
+        if request.method == "POST" and request.url.path.endswith("/messages"):
+            attempts += 1
+            if attempts == 2:
+                raise httpx.ConnectError("private-connect-details", request=request)
+        return original(request)
+
+    monkeypatch.setattr(source.api, "handle", fail_second_request)
+    assert run_cli(["import", "--yes"]) == 3
+    scope = next(iter(import_state.read_state(source.ledger)["scopes"].values()))
+    assert scope["pending"] is None
+    assert scope["segments"]["source-one"]["last_scanned_message_id"] == 0
+    assert attempts == 2
+    assert len(source.api.sessions[("history-test", "history-test")]["messages"]) == 100
+    assert run_cli(["import", "--yes"]) == 0
+    assert attempts == 3
+    assert [len(batch) for batch in source.api.writes] == [100, 1]
+    assert [
+        m["content"]
+        for m in source.api.sessions[("history-test", "history-test")]["messages"]
+    ] == [f"History {index}" for index in range(101)]
+    assert "private-connect-details" not in capsys.readouterr().out
+
+
+def test_connect_failure_checkpoint_error(history_source, monkeypatch, capsys):
+    """Keep unresolved progress if a definite connection failure cannot be saved."""
+    source = history_source
+    source.session()
+    source.message()
+    source.api.failure = "connection_before"
+    original = importer.write_state
+
+    def fail_clear(path, state):
+        """Fail only the write that clears a previously recorded pending request."""
+        scope = next(iter(state["scopes"].values()))
+        if source.api.writes and scope["pending"] is None:
+            raise OSError("private-ledger-path")
+        original(path, state)
+
+    monkeypatch.setattr(importer, "write_state", fail_clear)
+    assert run_cli(["import", "--yes"]) == 3
+    scope = next(iter(import_state.read_state(source.ledger)["scopes"].values()))
+    assert scope["pending"] is not None
+    assert scope["segments"]["source-one"]["last_scanned_message_id"] == 0
+    output = capsys.readouterr().out
+    assert "pending batch could not be cleared" in output
+    assert "private-ledger-path" not in output
+    monkeypatch.setattr(importer, "write_state", original)
+    assert run_cli(["import", "--yes"]) == 3
     assert len(source.api.writes) == 1

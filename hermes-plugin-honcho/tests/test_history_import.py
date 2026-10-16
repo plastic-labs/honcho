@@ -157,6 +157,16 @@ class FakeHonchoAPI:
                 raise httpx.ReadTimeout("private-transport-details", request=request)
             if failure == "connection_before":
                 raise httpx.ConnectError("private-transport-details", request=request)
+            if failure == "protocol_before":
+                raise httpx.RemoteProtocolError(
+                    "private-transport-details", request=request
+                )
+            if failure == "unclassified_connection_before":
+                from honcho.http.exceptions import (
+                    ConnectionError as HonchoConnectionError,
+                )
+
+                raise HonchoConnectionError("private-transport-details")
             if failure == "server_before":
                 return httpx.Response(500, json={"detail": "private-response-details"})
             accepted = (
@@ -179,6 +189,12 @@ class FakeHonchoAPI:
                 response.append(stored)
             if failure == "timeout_after":
                 raise httpx.ReadTimeout("private-transport-details", request=request)
+            if failure == "protocol_after":
+                raise httpx.RemoteProtocolError(
+                    "private-transport-details", request=request
+                )
+            if failure == "read_after":
+                raise httpx.ReadError("private-transport-details", request=request)
             if failure == "server_after":
                 return httpx.Response(500, json={"detail": "private-response-details"})
             if failure == "partial_response":
@@ -449,7 +465,14 @@ def test_invalid_yaml_and_foreign_target_profile_fail_closed(history_source):
 
 
 @pytest.mark.parametrize(
-    "failure", ["timeout_after", "server_after", "partial_response"]
+    "failure",
+    [
+        "timeout_after",
+        "protocol_after",
+        "read_after",
+        "server_after",
+        "partial_response",
+    ],
 )
 def test_unknown_outcome_is_reconciled_without_resending(history_source, failure):
     """Recover an accepted batch after response loss by reading remote metadata."""
@@ -479,7 +502,13 @@ def test_unknown_outcome_is_reconciled_without_resending(history_source, failure
 
 @pytest.mark.parametrize(
     "failure",
-    ["timeout_before", "connection_before", "server_before", "partial_accept"],
+    [
+        "timeout_before",
+        "protocol_before",
+        "unclassified_connection_before",
+        "server_before",
+        "partial_accept",
+    ],
 )
 def test_missing_or_partial_pending_batch_is_not_resent(
     history_source, failure, capsys

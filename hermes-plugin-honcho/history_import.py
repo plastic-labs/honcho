@@ -1379,7 +1379,9 @@ def _send_batch(
     summary: ImportSummary,
 ) -> int:
     """Send once and checkpoint only a fully verified response or definite rejection."""
+    import httpx
     from honcho.http.exceptions import APIError
+    from honcho.http.exceptions import ConnectionError as HonchoConnectionError
     from honcho.peer import Peer
 
     messages = [
@@ -1420,6 +1422,27 @@ def _send_batch(
             "The batch outcome is unknown after a server error. Re-run to reconcile it; nothing will be automatically resent."
         )
         return 3
+    except HonchoConnectionError as exc:
+        if not isinstance(exc.__cause__, httpx.ConnectError):
+            summary.pending_batches = 1
+            summary.errors.append(
+                "The batch outcome is unknown after a transport failure. Re-run to reconcile it; nothing will be automatically resent."
+            )
+            return 3
+        scope["pending"] = None
+        try:
+            write_state(state_path, state)
+        except Exception:
+            scope["pending"] = pending
+            summary.pending_batches = 1
+            summary.errors.append(
+                "Could not connect to Honcho, and the pending batch could not be cleared locally. Re-run to reconcile it."
+            )
+            return 3
+        summary.errors.append(
+            "Could not connect to Honcho; the batch was not sent. Check the server and resume."
+        )
+        return 1
     except Exception:
         summary.pending_batches = 1
         summary.errors.append(

@@ -526,6 +526,10 @@ It commits progress only when all chunks match. Missing or partial results remai
 pending and are never automatically resent. Restore the original ledger if a
 partially imported source has lost its local progress.
 
+Definite failures while establishing a connection clear the saved pending marker;
+fix connectivity and run the command again. Other transport failures remain pending.
+If clearing the marker cannot be saved, the command reports unresolved work.
+
 Exit codes are `0` for success, no-op, dry-run, or cancellation; `2` for invalid
 input/configuration; `1` for a definite execution failure; and `3` for partial or
 unresolved work. Check the final summary before resuming live writes.
