@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -55,8 +56,13 @@ class Repo:
 
 
 @pytest.fixture
-def repo(tmp_path: Path) -> Repo:
+def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Repo:
     """A repo with v1.0.0 (one migration) and v1.1.0 (a second migration)."""
+    # Git hooks export GIT_DIR and friends, which would point every git call here at
+    # the real repository instead of tmp_path.
+    for name in list(os.environ):
+        if name.startswith("GIT_"):
+            monkeypatch.delenv(name)
     repo = Repo(tmp_path)
     repo.revision("base0001", None)
     repo.compat("base0001", "1.0.0")
