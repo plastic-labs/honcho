@@ -98,10 +98,14 @@ class Stack:
 
     def backfill(self, service: str, mode: str) -> dict[str, int]:
         output = self.run(service, "python", "-c", BACKFILL_SCRIPT, mode)
+        prefix = "CMX_BACKFILL "
         line = next(
-            row for row in reversed(output.splitlines()) if row.startswith("CMX_")
+            (row for row in reversed(output.splitlines()) if row.startswith(prefix)),
+            None,
         )
-        return json.loads(line.removeprefix("CMX_BACKFILL "))
+        if line is None:
+            raise RuntimeError(f"backfill {mode} printed no result:\n{output[-2000:]}")
+        return json.loads(line.removeprefix(prefix))
 
     # Direct SQL, for seeding legacy rows and reading queue state.
 
