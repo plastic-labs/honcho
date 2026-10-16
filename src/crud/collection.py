@@ -235,6 +235,8 @@ async def merge_collection_internal_metadata_value(
     observed: str,
     key: str,
     patch: dict[str, Any],
+    *,
+    commit: bool = True,
 ) -> None:
     """Merge `patch` into the object stored under one top-level key, server-side.
 
@@ -242,6 +244,9 @@ async def merge_collection_internal_metadata_value(
     two writers of different sub-keys under the same key would overwrite each
     other. This merges one level deeper (`value || patch`) in a single UPDATE,
     so it needs no row lock: writers of different sub-keys never collide.
+
+    With `commit=False` the update joins the caller's transaction, and the
+    caller calls `invalidate_collection_cache` once that commits.
     """
     current = func.coalesce(
         models.Collection.internal_metadata[key], func.jsonb_build_object()
@@ -260,6 +265,13 @@ async def merge_collection_internal_metadata_value(
         )
     )
     await db.execute(stmt)
-    await db.commit()
+    if commit:
+        await db.commit()
+        await invalidate_collection_cache(workspace_name, observer, observed)
 
+
+async def invalidate_collection_cache(
+    workspace_name: str, observer: str, observed: str
+) -> None:
+    """Drop a collection's cached row after a write to it commits."""
     await safe_cache_delete(collection_cache_key(workspace_name, observer, observed))

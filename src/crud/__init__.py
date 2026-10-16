@@ -2,6 +2,7 @@ from .collection import (
     get_collection,
     get_collection_internal_metadata_value,
     get_or_create_collection,
+    invalidate_collection_cache,
     merge_collection_internal_metadata_value,
     update_collection_internal_metadata,
 )
@@ -115,6 +116,7 @@ __all__ = [
     "get_or_create_collection",
     "update_collection_internal_metadata",
     "get_collection_internal_metadata_value",
+    "invalidate_collection_cache",
     "merge_collection_internal_metadata_value",
     # Deriver
     "cleanup_stale_work_units",
