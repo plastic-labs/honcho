@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 This package versions independently of the Honcho API, `@honcho-ai/sdk`, and host plugins.
 
+## [Unreleased]
+
+### Added
+
+- A caller-set `X-Honcho-Plugin` header is forwarded to the Honcho API as the
+  plugin identity, with the host appended in parentheses
+  (`cursor-honcho/0.2.0 (Cursor/1.0.0)`). Integrations that configure a
+  connection, and the per-client configs in the docs, can now name themselves;
+  before, the Worker discarded the header and recorded only the `User-Agent`.
+- `X-Honcho-Plugin` is allowed through CORS on the Worker and the HTTP server.
+
+Nothing is required: a connection that sends neither header is recorded exactly
+as before.
+
 ## [3.1.0] - 2026-10-07
 
 ### Added
