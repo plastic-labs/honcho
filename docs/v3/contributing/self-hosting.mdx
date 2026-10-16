@@ -163,15 +163,16 @@ Install PostgreSQL and pgvector on your system:
 
 **macOS (using Homebrew):**
 ```bash
-brew install postgresql
-brew install pgvector
+brew install postgresql@17 pgvector
+brew services start postgresql@17
 ```
 
 **Ubuntu/Debian:**
 ```bash
 sudo apt update
-# Match the pgvector package to your Postgres major version
-sudo apt install postgresql postgresql-contrib postgresql-16-pgvector
+# Postgres and pgvector majors must match: 16 on Ubuntu 24.04, 15 on Debian 12.
+# If your distro lacks the package, add the PostgreSQL APT repo (apt.postgresql.org).
+sudo apt install postgresql-16 postgresql-16-pgvector
 ```
 
 **Windows:**

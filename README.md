@@ -389,24 +389,34 @@ uv sync
 
 2. **Set up PostgreSQL with pgvector**
 
-Install Postgres and pgvector natively, for example:
+Install Postgres and pgvector natively, then create a `honcho` role and database and enable the extensions in it as a superuser.
+
+On Ubuntu/Debian:
 
 ```bash
-# Ubuntu/Debian: match the pgvector package to your Postgres major version
-sudo apt install postgresql postgresql-16-pgvector
+# Postgres and pgvector majors must match: 16 on Ubuntu 24.04, 15 on Debian 12.
+# If your distro lacks the package, add the PostgreSQL APT repo (apt.postgresql.org).
+sudo apt install postgresql-16 postgresql-16-pgvector
 
-# macOS
-brew install postgresql pgvector
+sudo -u postgres psql -c "CREATE ROLE honcho LOGIN PASSWORD 'honcho';"
+sudo -u postgres createdb -O honcho honcho
+sudo -u postgres psql -d honcho -c "CREATE EXTENSION IF NOT EXISTS vector;"
+sudo -u postgres psql -d honcho -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;"  # optional, speeds up message search
 ```
 
-A managed Postgres that offers pgvector (Supabase, Neon, RDS, and so on) works too.
-
-Then, as a superuser, enable the extensions on the database Honcho will use:
+On macOS, Homebrew makes your login user the superuser, so drop the `sudo -u postgres`:
 
 ```bash
-sudo -u postgres psql -c "CREATE EXTENSION IF NOT EXISTS vector;"
-sudo -u postgres psql -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;"  # optional, speeds up message search
+brew install postgresql@17 pgvector
+brew services start postgresql@17
+
+psql -d postgres -c "CREATE ROLE honcho LOGIN PASSWORD 'honcho';"
+createdb -O honcho honcho
+psql -d honcho -c "CREATE EXTENSION IF NOT EXISTS vector;"
+psql -d honcho -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;"
 ```
+
+A managed Postgres that offers pgvector (Supabase, Neon, RDS, and so on) works too. Enable the same extensions in its database.
 
 3. **Configure `.env`**
 
@@ -417,7 +427,7 @@ cp .env.template .env
 Only two settings are required:
 
 ```env
-DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@localhost:5432/postgres
+DB_CONNECTION_URI=postgresql+psycopg://honcho:honcho@localhost:5432/honcho
 LLM_OPENAI_API_KEY=sk-...
 ```
 
