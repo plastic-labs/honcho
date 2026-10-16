@@ -56,6 +56,36 @@ honcho stop            # keep data
 honcho stop --wipe     # also delete volumes
 ```
 
+Run the current checkout natively on macOS or Linux with Python 3.13+:
+
+```bash
+uv sync --all-packages
+uv run --all-packages honcho start --backend native --profile development \
+  --dependencies docker
+uv run --all-packages honcho status --profile development --json
+uv run --all-packages honcho stop --profile development
+```
+
+This runs the checkout's API and deriver through `python -m src.runtime`, using
+the same interpreter as the CLI. `--source /path/to/honcho` selects a checkout;
+the default searches the current directory and its parents. Docker supplies only
+PostgreSQL/pgvector and Redis, and migrations run once before services start.
+With `--dependencies external` (the initial default), set `DB_CONNECTION_URI` and
+any cache settings yourself. External databases are migrated only with `--migrate`.
+Provider settings come from the environment, profile `.env`, checkout `.env`,
+profile `config.toml`, and checkout `config.toml`, in that order. Native startup
+does not rewrite checkout configuration. `--setup basic` also works for native profiles.
+
+Each profile keeps its backend, logs, process ownership, and launch identity.
+`status --json` reports the source path, version, commit, dirty state at launch,
+Python executable, dependency endpoints, and API/deriver process state. Start is
+detached; a failed child stops its siblings, and failed startup cleans up owned
+processes and containers. Stop preserves Docker volumes and leaves external
+dependencies running. Use separate profiles for Compose and native stacks.
+Native `--mode processes` is the supported topology; `--api-workers` controls API
+workers. Embedded mode and installed server wheels follow the lifecycle and
+packaging work. The base CLI still supports Python 3.11+ for remote/Compose use.
+
 ## Commands
 
 ### Onboarding
