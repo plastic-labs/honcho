@@ -48,8 +48,15 @@ export function errorResult(msg: string): CallToolResult {
   return { content: [{ type: "text", text: msg }], isError: true };
 }
 
-/** Groudon OAuth access tokens carry this prefix; API keys do not. */
+/** Hosted Honcho OAuth access tokens carry this prefix; API keys do not. */
 export const OAUTH_ACCESS_TOKEN_PREFIX = "hch-at-";
+
+/**
+ * The hosted gateway's 401 detail for an expired or revoked access token.
+ * Honcho itself also answers 401 when a live token may not use a route, and
+ * refreshing would not fix that, so the detail is what tells them apart.
+ */
+const GATEWAY_TOKEN_REJECTED_DETAIL = "Invalid or expired access token";
 
 export const TOKEN_REJECTED_MESSAGE =
   "Honcho rejected the access token (expired or revoked). Re-authenticate this MCP server.";
@@ -64,6 +71,7 @@ export function isTokenRejected(e: unknown, apiKey: string): boolean {
   return (
     e instanceof HonchoError &&
     e.status === 401 &&
+    e.message === GATEWAY_TOKEN_REJECTED_DETAIL &&
     apiKey.startsWith(OAUTH_ACCESS_TOKEN_PREFIX)
   );
 }

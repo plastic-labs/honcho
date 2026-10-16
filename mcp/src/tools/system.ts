@@ -1,9 +1,7 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ToolContext } from "../types.js";
-import { textResult, errorResult, workspaceIdSchema,
-  failedResult,
-} from "../types.js";
+import { textResult, workspaceIdSchema, failedResult } from "../types.js";
 
 export function register(server: McpServer, ctx: ToolContext) {
   // ── schedule_dream ──────────────────────────────────────────────────

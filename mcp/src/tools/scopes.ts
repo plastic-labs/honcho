@@ -3,9 +3,7 @@ import { Scope } from "@honcho-ai/sdk";
 import type { Honcho } from "@honcho-ai/sdk";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ToolContext } from "../types.js";
-import { textResult, errorResult, workspaceIdSchema,
-  failedResult,
-} from "../types.js";
+import { textResult, workspaceIdSchema, failedResult } from "../types.js";
 
 // Match the SDK's scope ID rules; the constructor bypasses honcho.scope() validation.
 const scopeIdSchema = z

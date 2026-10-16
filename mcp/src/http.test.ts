@@ -150,11 +150,14 @@ const listWorkspacesBody = {
 };
 
 function upstream(status: number, body: unknown) {
-  return async () =>
-    new Response(JSON.stringify(body), {
+  return async () => {
+    // Long enough that calls sent together are all in flight at once.
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    return new Response(JSON.stringify(body), {
       status,
       headers: { "Content-Type": "application/json" },
     });
+  };
 }
 
 test("a rejected OAuth token is answered with HTTP 401 invalid_token and the session is dropped", async () => {
@@ -167,38 +170,53 @@ test("a rejected OAuth token is answered with HTTP 401 invalid_token and the ses
   const original = globalThis.fetch;
   globalThis.fetch = upstream(401, { detail: "Invalid or expired access token" });
   try {
-    const call = await mcpPost(inSession, listWorkspacesBody);
-    expect(call.status).toBe(401);
-    const challenge = call.headers.get("WWW-Authenticate") ?? "";
-    expect(challenge).toContain('error="invalid_token"');
-    expect(challenge).toContain("resource_metadata=");
+    // Two overlapping calls, as when an agent runs tools in parallel: both
+    // get the 401, and closing the session must not strand the second one.
+    const calls = await Promise.all([
+      mcpPost(inSession, listWorkspacesBody),
+      mcpPost(inSession, { ...listWorkspacesBody, id: 5 }),
+    ]);
+    for (const call of calls) {
+      expect(call.status).toBe(401);
+      const challenge = call.headers.get("WWW-Authenticate") ?? "";
+      expect(challenge).toContain('error="invalid_token"');
+      expect(challenge).toContain("resource_metadata=");
+    }
   } finally {
     globalThis.fetch = original;
   }
 
-  // The session is gone, so the client's retry cannot reuse it and must
-  // re-initialize with its refreshed token. (#1375 makes this a 404.)
+  // The session is gone, so its id now gets 404 and the client has to start
+  // a new session with its refreshed token.
   const stale = await mcpPost(inSession, pingBody);
-  expect([400, 404]).toContain(stale.status);
+  expect(stale.status).toBe(404);
 });
 
-test("a 401 on an API key stays a tool error and keeps the session", async () => {
-  const headers = { Authorization: "Bearer hch-plain-api-key" };
-  const init = await mcpPost(headers, initializeBody);
-  const sessionId = init.headers.get("mcp-session-id")!;
-  const inSession = { ...headers, "mcp-session-id": sessionId };
+test("a 401 that is not a dead OAuth token stays a tool error and keeps the session", async () => {
+  const cases = [
+    // A bad API key: the client has nothing to refresh.
+    { token: "hch-plain-api-key", detail: "Invalid JWT" },
+    // A live OAuth token on a route it may not use: refreshing won't help.
+    { token: "hch-at-live", detail: "Resource requires admin privileges" },
+  ];
+  for (const { token, detail } of cases) {
+    const headers = { Authorization: `Bearer ${token}` };
+    const init = await mcpPost(headers, initializeBody);
+    const sessionId = init.headers.get("mcp-session-id")!;
+    const inSession = { ...headers, "mcp-session-id": sessionId };
 
-  const original = globalThis.fetch;
-  globalThis.fetch = upstream(401, { detail: "Invalid JWT" });
-  try {
-    const call = await mcpPost(inSession, listWorkspacesBody);
-    expect(call.status).toBe(200);
-    const body = (await call.json()) as { result: { isError?: boolean } };
-    expect(body.result.isError).toBe(true);
-  } finally {
-    globalThis.fetch = original;
+    const original = globalThis.fetch;
+    globalThis.fetch = upstream(401, { detail });
+    try {
+      const call = await mcpPost(inSession, listWorkspacesBody);
+      expect(call.status).toBe(200);
+      const body = (await call.json()) as { result: { isError?: boolean } };
+      expect(body.result.isError).toBe(true);
+    } finally {
+      globalThis.fetch = original;
+    }
+
+    const ping = await mcpPost(inSession, pingBody);
+    expect(ping.status).toBe(200);
   }
-
-  const ping = await mcpPost(inSession, pingBody);
-  expect(ping.status).toBe(200);
 });

@@ -48,8 +48,13 @@ type Session = {
   server: McpServer;
   lastSeen: number;
   apiKey: string;
-  /** Set by a tool when the Honcho API rejected this session's access token. */
+  /**
+   * Set by a tool once the Honcho API rejects this session's access token.
+   * A session is bound to one token, so it stays set.
+   */
   auth: { rejected: boolean };
+  /** Requests on this session that are still being handled. */
+  inFlight: number;
 };
 
 const sessions = new Map<string, Session>();
@@ -61,12 +66,16 @@ function envInt(name: string, fallback: number): number {
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
+function closeSession(session: Session): void {
+  void session.transport.close();
+  void session.server.close();
+}
+
 function dropSession(id: string): void {
   const session = sessions.get(id);
   if (!session) return;
   sessions.delete(id);
-  void session.transport.close();
-  void session.server.close();
+  closeSession(session);
 }
 
 function sweepSessions(): void {
@@ -159,13 +168,21 @@ async function handleMcp(request: Request): Promise<Response> {
         );
       }
       existing.lastSeen = Date.now();
-      existing.auth.rejected = false;
-      const response = await existing.transport.handleRequest(request);
+      existing.inFlight++;
+      let response: Response;
+      try {
+        response = await existing.transport.handleRequest(request);
+      } finally {
+        existing.inFlight--;
+      }
       if (existing.auth.rejected) {
-        // The Honcho API refused this session's OAuth access token. Drop the
-        // session and answer 401: the client refreshes its token and retries;
-        // the dead session id then makes it re-initialize with the new token.
-        dropSession(sessionId);
+        // The Honcho API refused this session's OAuth access token. Answer
+        // 401 so the client refreshes, and retire the session id so its next
+        // request starts a new session with the new token. Close the session
+        // only after its last running call: closing it earlier drops their
+        // pending replies and leaves those requests hanging.
+        sessions.delete(sessionId);
+        if (existing.inFlight === 0) closeSession(existing);
         return rejectedToken(request);
       }
       return withCors(response);
@@ -280,6 +297,7 @@ async function handleMcp(request: Request): Promise<Response> {
         lastSeen: Date.now(),
         apiKey: config.apiKey,
         auth,
+        inFlight: 0,
       });
     },
   });

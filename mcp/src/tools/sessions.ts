@@ -3,7 +3,6 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ToolContext } from "../types.js";
 import {
   textResult,
-  errorResult,
   formatMessage,
   formatMessages,
   formatSessionSummaries,
