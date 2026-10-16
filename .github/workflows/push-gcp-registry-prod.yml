@@ -20,11 +20,14 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+      migration: ${{ steps.manifest.outputs.migration }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           persist-credentials: false
+          # Tags and history for the previous release and compat_floor lookups.
+          fetch-depth: 0
 
       - name: Resolve and verify version
         id: version
@@ -38,6 +41,15 @@ jobs:
             exit 1
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      # Fails on a stale migrations/compat.toml before anything is built or pushed.
+      - name: Compute release manifest
+        id: manifest
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          MIGRATION="$(python3 scripts/release_manifest.py --ref "$GITHUB_REF_NAME" --version "$VERSION")"
+          echo "migration=$MIGRATION" >> "$GITHUB_OUTPUT"
 
       - name: Authenticate to GCP
         uses: google-github-actions/auth@v2
@@ -67,12 +79,18 @@ jobs:
       - name: Send POST request
         env:
           VERSION: ${{ needs.build-and-push.outputs.version }}
+          MIGRATION: ${{ needs.build-and-push.outputs.migration }}
         run: |
           # Name and tag only; the registry path is supplied downstream.
           IMAGE_LABEL="${{ env.IMAGE_NAME }}:deployment-v${VERSION}"
+          PAYLOAD="$(jq -cn \
+            --arg version "$VERSION" \
+            --arg image_label "$IMAGE_LABEL" \
+            --argjson migration "$MIGRATION" \
+            '{version: $version, image_label: $image_label, migration: $migration}')"
 
           curl --fail --connect-timeout 10 --max-time 60 -X POST \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer ${{ secrets.PROD_ENV_WEBHOOK_SECRET }}" \
-            -d "{\"version\":\"$VERSION\",\"image_label\":\"$IMAGE_LABEL\"}" \
+            -d "$PAYLOAD" \
             "${{ secrets.PROD_ENV_URL }}/webhooks/v1/add_honcho_version"
