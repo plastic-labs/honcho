@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import re
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -23,6 +24,8 @@ from src.llm.structured_output import (
 )
 
 logger = logging.getLogger(__name__)
+
+_CLAUDE_MODERN_MODEL = re.compile(r"claude-[a-z]+-(\d+)")
 
 THINKING_TOOL_CHOICE_CONFLICT_MODES = frozenset(
     {"throw", "override_thinking", "override_tool"}
@@ -341,15 +344,11 @@ class AnthropicBackend:
 
     @staticmethod
     def _supports_assistant_prefill(model: str) -> bool:
-        # Claude 4-class models reject assistant-prefill and require the
-        # conversation to end with a user message.
-        return not model.startswith(
-            (
-                "claude-opus-4",
-                "claude-sonnet-4",
-                "claude-haiku-4",
-            )
-        )
+        # Claude 4-class and newer models (claude-<family>-<major>, major >= 4)
+        # reject assistant-prefill and require the conversation to end with a
+        # user message. Claude 3 names (claude-3-...) don't match and keep it.
+        match = _CLAUDE_MODERN_MODEL.match(model)
+        return not (match and int(match.group(1)) >= 4)
 
     @staticmethod
     def _extract_system(
