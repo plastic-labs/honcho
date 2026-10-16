@@ -377,9 +377,11 @@ principals in mind:
   the PR's merge ref. That ref is only as fresh as the last CI run, so rebase onto
   current `main` and let the check pass again before a migration PR merges.
 - **The previous release has to run on the new schema.** Every revision needs a test in
-  `tests/alembic/` (`uv run python scripts/run_alembic_tests.py`). CI does not yet run
-  the previous release's code against a candidate schema, so call out in the PR anything
-  that the previous image would read or write differently.
+  `tests/alembic/` (`uv run python scripts/run_alembic_tests.py`). The Compatibility
+  Matrix workflow then runs the previous release image and the candidate side by side on
+  the candidate's schema, with its backfills both half done and finished, and fails if
+  either image cannot read what the other wrote. When you add a write path or a
+  backfill, add a scenario for it in `tests/compat_matrix/` (see its README).
 
 Maintainers take care of batching migrations into releases, declaring the compatibility
 floor, and applying the revision graph to the shared and dedicated databases. Expect a
