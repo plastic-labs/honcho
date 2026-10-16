@@ -2373,6 +2373,13 @@ _TOOL_HANDLERS: dict[str, Callable[[ToolContext, dict[str, Any]], Any]] = {
 }
 
 
+def get_tool_handler(
+    tool_name: str,
+) -> Callable[[ToolContext, dict[str, Any]], Any] | None:
+    """Default handler lookup, for `handler_resolver`s that wrap it."""
+    return _TOOL_HANDLERS.get(tool_name)
+
+
 async def create_tool_executor(
     workspace_name: str,
     observer: str,

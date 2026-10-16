@@ -245,6 +245,48 @@ class DreamScheduler:
             self.pending_dreams.clear()
 
 
+# Recorded in the scheduler's `dream` metadata: work-list conclusions the last
+# dream left for the next one. The API scheduler treats a pair with a backlog as
+# due even when no new conclusions have arrived since.
+WORK_LIST_BACKLOG_KEY = "work_list_backlog"
+
+
+async def schedule_backlog_dream(
+    workspace_name: str, *, observer: str, observed: str
+) -> None:
+    """Schedule the next dream for a pair whose work list is still behind.
+
+    The timer scheduler only checks a pair when new conclusions are saved, so a
+    backlog left after ingestion stops would wait for the next message. The
+    timer waits out `MIN_HOURS_BETWEEN_DREAMS`, the same gate a threshold dream
+    passes. The API scheduler needs no timer: it reads the recorded backlog.
+    """
+    if settings.DERIVER.SCHEDULER == "api":
+        return
+    dream_scheduler = get_dream_scheduler()
+    if dream_scheduler is None:
+        return
+    work_unit_key = construct_work_unit_key(
+        workspace_name,
+        {
+            "task_type": "dream",
+            "observer": observer,
+            "observed": observed,
+            "dream_type": DreamType.OMNI.value,
+        },
+    )
+    await dream_scheduler.schedule_dream(
+        work_unit_key,
+        workspace_name,
+        settings.DREAM.MIN_HOURS_BETWEEN_DREAMS * 60,
+        DreamType.OMNI,
+        observer=observer,
+        observed=observed,
+        trigger_reason="work_list_backlog",
+        delay_reason="min_hours_gate",
+    )
+
+
 async def check_and_schedule_dream(
     db: AsyncSession,
     collection: models.Collection,

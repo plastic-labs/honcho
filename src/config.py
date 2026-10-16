@@ -1108,6 +1108,14 @@ class DialecticSettings(HonchoSettings):
     # "minimal", whose single round is the point of the level.
     WORKSPACE_EXTRA_TOOL_ITERATIONS: Annotated[int, Field(default=3, ge=0, le=20)] = 3
 
+    # Show a tool-call budget line after each round, at levels allowing three
+    # or more tool iterations.
+    BUDGET_ENABLED: bool = False
+    # Add the memory-layout section to the system prompt and, for unrestricted
+    # pair queries, conclusion counts and the dreamer's `map` notes (when
+    # DREAM_NOTES_MODE=on) to the first message.
+    BRIEF_ENABLED: bool = False
+
     # Session history injection: max tokens of recent messages to include when session_id is specified.
     # Set to 0 to disable automatic session history injection.
     SESSION_HISTORY_MAX_TOKENS: Annotated[
@@ -1394,8 +1402,31 @@ class DreamSettings(HonchoSettings):
     MAX_ENQUEUED_PER_POLL: Annotated[int, Field(default=100, gt=0, le=10_000)] = 100
     ENABLED_TYPES: list[str] = ["omni"]
 
-    # Agent iteration limit - increased for extended reasoning workflow
+    # Card-refresh dreams only; capped further by the specialist's own ceiling.
+    # Deduction and induction use the per-specialist limits below.
     MAX_TOOL_ITERATIONS: Annotated[int, Field(default=20, gt=0, le=50)] = 20
+    DEDUCTION_MAX_TOOL_ITERATIONS: Annotated[int, Field(default=12, ge=1, le=50)] = 12
+    INDUCTION_MAX_TOOL_ITERATIONS: Annotated[int, Field(default=10, ge=1, le=50)] = 10
+    # Deduction and induction start with a description of how memory is
+    # organized and conclusion counts by level.
+    BRIEF_ENABLED: bool = False
+    # Cap on the since-last-dream work list in the brief. A larger backlog is
+    # worked through over consecutive dreams.
+    BRIEF_MAX_NEW_CONCLUSIONS: Annotated[int, Field(default=50, ge=1, le=500)] = 50
+    # Deduction and induction see a tool-call budget line, the last iterations
+    # are reserved for writes, and the final call at the limit can still write.
+    BUDGET_ENABLED: bool = False
+    # Working notes carried between dreams: "off", "shadow" (written but never
+    # loaded, so a sample can be judged) or "on".
+    NOTES_MODE: Literal["off", "shadow", "on"] = "off"
+    # Split evenly between deduction's and induction's own entries.
+    NOTES_MAX_TOKENS: Annotated[int, Field(default=3000, ge=100, le=20_000)] = 3000
+    # Iterations reserved for writes at the end of a pass. Unset means 15% of
+    # the specialist's limit, rounded, with a minimum of one, and at most one
+    # less than the limit.
+    WRITE_WINDOW_ITERATIONS: Annotated[int | None, Field(default=None, ge=1, le=50)] = (
+        None
+    )
 
     @staticmethod
     def _DEDUCTION_MODEL_CONFIG_DEFAULT() -> ConfiguredModelSettings:

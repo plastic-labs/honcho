@@ -48,6 +48,7 @@ from .runtime import (
     start_captured_span,
 )
 from .types import (
+    BudgetLine,
     HonchoLLMCallResponse,
     HonchoLLMCallStreamChunk,
     IterationCallback,
@@ -289,6 +290,90 @@ async def stream_final_response(
             await stream.aclose()
 
 
+async def _execute_tool_calls(
+    tool_calls: list[dict[str, Any]],
+    tool_executor: Callable[[str, dict[str, Any]], Any],
+    all_tool_calls: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], set[str]]:
+    """Run one response's tool calls in order.
+
+    Successful calls are appended to `all_tool_calls`. Returns the results to
+    send back to the model and the names of the tools that succeeded.
+    """
+    tool_results: list[dict[str, Any]] = []
+    succeeded_tools: set[str] = set()
+    for seq, tool_call in enumerate(tool_calls):
+        tool_name = tool_call["name"]
+        tool_input = tool_call["input"]
+        tool_id = tool_call.get("id", "")
+
+        logger.debug(f"Executing tool: {tool_name}")
+
+        # the executor closure reads these from
+        # ContextVars to populate AgentToolCallCompletedEvent. Set BEFORE
+        # the executor call so two calls to the same tool in one iteration
+        # get distinct seq values. Reset last-tool metadata so we never
+        # observe stale state from a prior call.
+        set_current_tool_call_seq(seq, tool_id or None)
+        set_last_tool_metadata({})
+        set_last_tool_error(False)
+
+        try:
+            tool_result = await tool_executor(tool_name, tool_input)
+            # Stash ToolResult.metadata on all_tool_calls so
+            # specialist rollups can read created/deleted observation
+            # counts without round-tripping through the event store.
+            tool_result_metadata = get_last_tool_metadata()
+            # The executor reports handler failures as returned
+            # strings, so a normal return is not proof of success.
+            if not get_last_tool_error():
+                succeeded_tools.add(tool_name)
+            tool_results.append(
+                {
+                    "tool_id": tool_id,
+                    "tool_name": tool_name,
+                    "result": tool_result,
+                }
+            )
+            all_tool_calls.append(
+                {
+                    "tool_name": tool_name,
+                    "tool_input": tool_input,
+                    "tool_result": tool_result,
+                    "tool_result_metadata": tool_result_metadata,
+                }
+            )
+        except Exception as e:
+            logger.error(f"Tool execution failed for {tool_name}: {e}")
+            tool_results.append(
+                {
+                    "tool_id": tool_id,
+                    "tool_name": tool_name,
+                    "result": f"Error: {str(e)}",
+                    "is_error": True,
+                }
+            )
+    return tool_results, succeeded_tools
+
+
+def _append_budget_line(
+    conversation_messages: list[dict[str, Any]],
+    budget_line: BudgetLine | None,
+    rounds_used: int,
+    round_limit: int,
+) -> None:
+    """Append the caller's budget line, if any, as the newest user turn.
+
+    It goes after the tool results rather than into the system prompt, so the
+    cached prefix of the conversation stays stable.
+    """
+    if budget_line is None:
+        return
+    line = budget_line(rounds_used, round_limit)
+    if line:
+        conversation_messages.append({"role": "user", "content": line})
+
+
 @_with_iteration_scope
 async def execute_tool_loop(
     *,
@@ -315,6 +400,8 @@ async def execute_tool_loop(
     run_span: CapturedAgentSpan | None = None,
     force_tools_until: Collection[str] | None = None,
     max_forced_iterations: int = 3,
+    budget_line: BudgetLine | None = None,
+    final_call_tools: list[dict[str, Any]] | None = None,
 ) -> HonchoLLMCallResponse[Any] | StreamingResponseWithMetadata:
     """Run the iterative tool calling loop for agentic LLM interactions.
 
@@ -322,7 +409,13 @@ async def execute_tool_loop(
       1. Make an LLM call with tools available
       2. Execute any tool calls the LLM requests
       3. Append tool results to the conversation
-      4. Repeat until the LLM stops calling tools or max iterations reached
+      4. Optionally append a budget line (see `budget_line`)
+      5. Repeat until the LLM stops calling tools or max iterations reached
+
+    When the iteration limit is reached, one final call is made. By default
+    it offers no tools, so the model must answer. With `final_call_tools`, it
+    offers those tools instead (for an agent whose output is its writes), and
+    any calls it makes are executed; no further call follows them.
 
     Returns:
         Final HonchoLLMCallResponse with accumulated token counts and tool call
@@ -335,6 +428,11 @@ async def execute_tool_loop(
             "max_tool_iterations must be in "
             + f"[{MIN_TOOL_ITERATIONS}, {MAX_TOOL_ITERATIONS}]; "
             + f"got {max_tool_iterations}"
+        )
+    if final_call_tools and stream_final:
+        raise ValidationException(
+            "final_call_tools cannot be combined with stream_final: the final "
+            + "call would have to both stream an answer and run tools"
         )
 
     conversation_messages: list[dict[str, Any]] = (
@@ -560,61 +658,15 @@ async def execute_tool_loop(
             # Telemetry context — 1-indexed iteration.
             set_current_iteration(iteration + 1)
 
-            tool_results: list[dict[str, Any]] = []
-            succeeded_tools: set[str] = set()
-            for seq, tool_call in enumerate(response.tool_calls_made):
-                tool_name = tool_call["name"]
-                tool_input = tool_call["input"]
-                tool_id = tool_call.get("id", "")
-
-                logger.debug(f"Executing tool: {tool_name}")
-
-                # the executor closure reads these from
-                # ContextVars to populate AgentToolCallCompletedEvent. Set BEFORE
-                # the executor call so two calls to the same tool in one iteration
-                # get distinct seq values. Reset last-tool metadata so we never
-                # observe stale state from a prior call.
-                set_current_tool_call_seq(seq, tool_id or None)
-                set_last_tool_metadata({})
-                set_last_tool_error(False)
-
-                try:
-                    tool_result = await tool_executor(tool_name, tool_input)
-                    # Stash ToolResult.metadata on all_tool_calls so
-                    # specialist rollups can read created/deleted observation
-                    # counts without round-tripping through the event store.
-                    tool_result_metadata = get_last_tool_metadata()
-                    # The executor reports handler failures as returned
-                    # strings, so a normal return is not proof of success.
-                    if not get_last_tool_error():
-                        succeeded_tools.add(tool_name)
-                    tool_results.append(
-                        {
-                            "tool_id": tool_id,
-                            "tool_name": tool_name,
-                            "result": tool_result,
-                        }
-                    )
-                    all_tool_calls.append(
-                        {
-                            "tool_name": tool_name,
-                            "tool_input": tool_input,
-                            "tool_result": tool_result,
-                            "tool_result_metadata": tool_result_metadata,
-                        }
-                    )
-                except Exception as e:
-                    logger.error(f"Tool execution failed for {tool_name}: {e}")
-                    tool_results.append(
-                        {
-                            "tool_id": tool_id,
-                            "tool_name": tool_name,
-                            "result": f"Error: {str(e)}",
-                            "is_error": True,
-                        }
-                    )
+            tool_results, succeeded_tools = await _execute_tool_calls(
+                response.tool_calls_made, tool_executor, all_tool_calls
+            )
 
             append_tool_results(current_provider, tool_results, conversation_messages)
+
+            _append_budget_line(
+                conversation_messages, budget_line, iteration + 1, max_tool_iterations
+            )
         finally:
             if step is not None:
                 step.end()
@@ -656,11 +708,20 @@ async def execute_tool_loop(
     # AgentIterationEvent and this LLMCallCompletedEvent line up sequentially.
     synthesis_iteration = iteration + 1
 
-    synthesis_prompt = (
-        "You have reached the maximum number of tool calls. "
-        "Based on all the information you have gathered, provide your final response now. "
-        "Do not attempt to call any more tools."
-    )
+    if final_call_tools:
+        final_tool_names = ", ".join(f"`{t['name']}`" for t in final_call_tools)
+        synthesis_prompt = (
+            "You have reached the maximum number of tool calls. "
+            f"You may make one final call to {final_tool_names} to save what you "
+            "have decided on; no other tools are available. If there is nothing "
+            "to save, respond without calling a tool."
+        )
+    else:
+        synthesis_prompt = (
+            "You have reached the maximum number of tool calls. "
+            "Based on all the information you have gathered, provide your final response now. "
+            "Do not attempt to call any more tools."
+        )
     conversation_messages.append({"role": "user", "content": synthesis_prompt})
 
     # Truncate again — the per-iteration truncate ran before the last tool
@@ -705,6 +766,7 @@ async def execute_tool_loop(
             iterations=iteration + 1,
             hit_input_token_cap=hit_input_token_cap,
             run_span=run_span,
+            hit_iteration_limit=True,
         )
 
     current_attempt.set(1)
@@ -725,7 +787,7 @@ async def execute_tool_loop(
             plan.thinking_budget_tokens,
             stream=False,
             client_override=plan.client,
-            tools=None,
+            tools=final_call_tools or None,
             tool_choice=None,
             messages=conversation_messages,
             selected_config=plan.selected_config,
@@ -757,6 +819,16 @@ async def execute_tool_loop(
     )
     try:
         final_response = await final_call_func()
+        if final_call_tools and final_response.tool_calls_made:
+            # Only the offered tools may run; anything else the model names is
+            # dropped rather than executed past the limit.
+            allowed = {t["name"] for t in final_call_tools}
+            set_current_iteration(synthesis_iteration)
+            await _execute_tool_calls(
+                [tc for tc in final_response.tool_calls_made if tc["name"] in allowed],
+                tool_executor,
+                all_tool_calls,
+            )
     finally:
         if synthesis_step is not None:
             synthesis_step.end()
@@ -785,6 +857,7 @@ async def execute_tool_loop(
     final_response.hit_input_token_cap = (
         final_response.hit_input_token_cap or hit_input_token_cap
     )
+    final_response.hit_iteration_limit = True
     return final_response
 
 

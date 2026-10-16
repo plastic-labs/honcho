@@ -6,7 +6,7 @@ from enum import Enum
 from logging import getLogger
 from typing import Any, Literal, cast
 
-from sqlalchemy import delete, literal, or_, select, union_all, update
+from sqlalchemy import delete, literal, or_, select, tuple_, union_all, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import DBAPIError, IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -179,6 +179,104 @@ async def query_documents_recent(
 
     result = await db.execute(stmt)
     return result.scalars().all()
+
+
+@dataclass(frozen=True)
+class DocumentLevelSummary:
+    """Live conclusion counts for one observer/observed pair."""
+
+    counts_by_level: dict[str, int]
+    earliest: datetime.datetime | None
+    latest: datetime.datetime | None
+
+
+async def summarize_documents_by_level(
+    db: AsyncSession,
+    workspace_name: str,
+    *,
+    observer: str,
+    observed: str,
+) -> DocumentLevelSummary:
+    """Count live documents per level and the span of their creation times."""
+    stmt = (
+        select(
+            models.Document.level,
+            func.count(models.Document.id),
+            func.min(models.Document.created_at),
+            func.max(models.Document.created_at),
+        )
+        .where(
+            models.Document.workspace_name == workspace_name,
+            models.Document.observer == observer,
+            models.Document.observed == observed,
+            models.Document.deleted_at.is_(None),
+        )
+        .group_by(models.Document.level)
+    )
+    rows = (await db.execute(stmt)).all()
+    counts: dict[str, int] = {}
+    earliest: datetime.datetime | None = None
+    latest: datetime.datetime | None = None
+    for level, count, level_min, level_max in rows:
+        counts[str(level)] = int(count)
+        if level_min is not None and (earliest is None or level_min < earliest):
+            earliest = level_min
+        if level_max is not None and (latest is None or level_max > latest):
+            latest = level_max
+    return DocumentLevelSummary(
+        counts_by_level=counts, earliest=earliest, latest=latest
+    )
+
+
+async def query_explicit_documents_after(
+    db: AsyncSession,
+    workspace_name: str,
+    *,
+    observer: str,
+    observed: str,
+    after: tuple[datetime.datetime, str] | None,
+    since: datetime.datetime | None,
+    limit: int,
+) -> tuple[Sequence[models.Document], int]:
+    """Live explicit documents past a position, oldest first, plus their total.
+
+    `after` is a `(created_at, id)` keyset position; documents strictly past it
+    are returned. Without it, `since` (if given) bounds `created_at` instead.
+    Ordering ends in `id`, so documents sharing a timestamp are neither skipped
+    nor repeated when the caller pages forward from the last one returned.
+
+    `created_at` is the start of the inserting transaction (`now()`), not its
+    commit, so a slow writer can commit a document behind a position a caller
+    has already paged past, and it is never returned. The document is still in
+    memory; it just never appears in a page.
+    """
+    conditions = [
+        models.Document.workspace_name == workspace_name,
+        models.Document.observer == observer,
+        models.Document.observed == observed,
+        models.Document.level == "explicit",
+        models.Document.deleted_at.is_(None),
+    ]
+    if after is not None:
+        conditions.append(
+            tuple_(models.Document.created_at, models.Document.id)
+            > tuple_(literal(after[0]), literal(after[1]))
+        )
+    elif since is not None:
+        conditions.append(models.Document.created_at > since)
+
+    total = int(
+        await db.scalar(select(func.count(models.Document.id)).where(*conditions)) or 0
+    )
+    if total == 0:
+        return [], 0
+    stmt = (
+        select(models.Document)
+        .where(*conditions)
+        .order_by(models.Document.created_at, models.Document.id)
+        .limit(limit)
+    )
+    return (await db.execute(stmt)).scalars().all(), total
 
 
 async def query_documents_most_derived(

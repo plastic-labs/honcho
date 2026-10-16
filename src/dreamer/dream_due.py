@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
 from src.config import settings
+from src.dreamer.dream_scheduler import WORK_LIST_BACKLOG_KEY
 from src.schemas import DreamType
 from src.utils.config_helpers import get_configuration
 from src.utils.work_unit import construct_work_unit_key, parse_work_unit_key
@@ -85,6 +86,9 @@ async def list_due_dreams(db: AsyncSession) -> list[DueDream]:
 
     now = datetime.now(UTC)
     idle_cutoff = now - timedelta(minutes=settings.DREAM.IDLE_TIMEOUT_MINUTES)
+    # A candidate's newest explicit conclusion, or, for a pair whose work list
+    # is still behind, its last completed dream: an attempt after that time
+    # means the dream is already queued or was tried.
     candidates: dict[str, tuple[DueDream, datetime]] = {}
 
     for row in rows:
@@ -100,7 +104,17 @@ async def list_due_dreams(db: AsyncSession) -> list[DueDream]:
         since_last_dream = explicit_count - int(
             dream_metadata.get("last_dream_document_count", 0)
         )
-        if since_last_dream < settings.DREAM.DOCUMENT_THRESHOLD:
+        # The work list's backlog is due even without new conclusions: without
+        # them, the attempt check below would never let the pair through again.
+        backlog_since = (
+            _parse_last_dream_at(dream_metadata.get("last_dream_at"))
+            if int(dream_metadata.get(WORK_LIST_BACKLOG_KEY, 0) or 0) > 0
+            else None
+        )
+        if (
+            since_last_dream < settings.DREAM.DOCUMENT_THRESHOLD
+            and backlog_since is None
+        ):
             continue
 
         if newest_created_at is None or newest_created_at > idle_cutoff:
@@ -131,7 +145,9 @@ async def list_due_dreams(db: AsyncSession) -> list[DueDream]:
                     dream_type=dream_type,
                     session_name=newest_session_name,
                 ),
-                newest_created_at,
+                max(newest_created_at, backlog_since)
+                if backlog_since is not None
+                else newest_created_at,
             )
 
     if not candidates:
@@ -242,15 +258,22 @@ async def _filter_dreams_enabled(
     return enabled
 
 
-def _within_min_hours_gate(last_dream_at: str, now: datetime) -> bool:
-    """True when the last dream is too recent for another one."""
+def _parse_last_dream_at(last_dream_at: Any) -> datetime | None:
+    """The stored `last_dream_at` as an aware datetime, or None if unusable."""
     try:
         last_dream_time = datetime.fromisoformat(last_dream_at)
     except (ValueError, TypeError):
-        return False
-
+        return None
     if last_dream_time.tzinfo is None:
         last_dream_time = last_dream_time.replace(tzinfo=UTC)
+    return last_dream_time
+
+
+def _within_min_hours_gate(last_dream_at: str, now: datetime) -> bool:
+    """True when the last dream is too recent for another one."""
+    last_dream_time = _parse_last_dream_at(last_dream_at)
+    if last_dream_time is None:
+        return False
 
     hours_since = (now - last_dream_time).total_seconds() / 3600
     return hours_since < settings.DREAM.MIN_HOURS_BETWEEN_DREAMS

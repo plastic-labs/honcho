@@ -23,6 +23,17 @@ from nanoid import generate as generate_nanoid
 from src import crud
 from src.config import ConfiguredModelSettings, settings
 from src.dependencies import tracked_db
+from src.dreamer.working_memory import (
+    UPDATE_NOTES_TOOL,
+    DreamState,
+    LoadedNotes,
+    format_notes,
+    format_work_list,
+    load_notes_for_pass,
+    make_update_notes_handler,
+    notes_share_tokens,
+    notes_system_section,
+)
 from src.exceptions import ValidationException
 from src.llm import HonchoLLMCallResponse, honcho_llm_call
 from src.llm.types import LLMTelemetryContext
@@ -35,10 +46,14 @@ from src.utils.agent_tools import (
     CARD_REFRESH_SPECIALIST_TOOLS,
     DEDUCTION_SPECIALIST_TOOLS,
     INDUCTION_SPECIALIST_TOOLS,
+    ToolContext,
     create_tool_executor,
+    get_tool_handler,
 )
 from src.utils.formatting import custom_instructions_section
+from src.utils.memory_brief import format_memory_counts, memory_layout_section
 from src.utils.tokens import estimate_tokens
+from src.utils.types import ToolResult, get_current_iteration
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +87,103 @@ class SpecialistResult:
 
 # Tool names to exclude when peer card creation is disabled
 PEER_CARD_TOOL_NAMES = {"update_peer_card"}
+
+# Opening instruction when the since-last-dream list is in the prompt; it
+# replaces "start with get_recent_observations", which would re-fetch it.
+WORK_LIST_START = (
+    "Start from the conclusions under NEW SINCE THE LAST DREAM, and search "
+    + "older memory only where they bear on it."
+)
+
+# Tools that only read memory. They are refused during the write window and
+# left out of the final call at the limit.
+SEARCH_TOOL_NAMES = frozenset(
+    {"get_recent_observations", "search_memory", "search_messages"}
+)
+
+
+def write_window_size(limit: int) -> int:
+    """Iterations reserved for writes at the end of a pass of `limit` rounds."""
+    override = settings.DREAM.WRITE_WINDOW_ITERATIONS
+    # 15% rounded half up: 2 for both deduction (12) and induction (10).
+    size = override if override is not None else int(limit * 0.15 + 0.5)
+    # Leave at least one round for searching, unless the limit is one round.
+    return min(max(1, limit - 1), max(1, size))
+
+
+def _reserved_calls_phrase(first: int, limit: int) -> str:
+    if first == limit:
+        return f"Call {limit} is"
+    if first + 1 == limit:
+        return f"Calls {first} and {limit} are"
+    return f"Calls {first} to {limit} are"
+
+
+def dream_budget_line(window: int) -> Callable[[int, int], str | None]:
+    """Budget line for a dreamer pass whose last `window` rounds are writes only."""
+
+    def line(used: int, limit: int) -> str | None:
+        if used >= limit:
+            # The loop is about to make its final call, which says so itself.
+            return None
+        first_write_round = limit - window + 1
+        if used + 1 >= first_write_round:
+            return (
+                f"Tool calls used: {used} of {limit}. Searches are now refused: "
+                + "write what you have decided on, or finish with DONE."
+            )
+        reserved = _reserved_calls_phrase(first_write_round, limit)
+        return (
+            f"Tool calls used: {used} of {limit}. {reserved} for writing; "
+            + "searches will be refused."
+        )
+
+    return line
+
+
+def budget_system_section(limit: int, window: int) -> str:
+    """System-prompt section explaining the budget and the write window."""
+    reserved = "is" if window == 1 else "are"
+    last = "last call" if window == 1 else f"last {window} calls"
+    return f"""## BUDGET
+
+You have {limit} tool calls. The {last} {reserved} reserved for writing: searches made then are refused. After each round of results, a line tells you how many calls you have used. If you reach the limit, you get one final call that can only write.
+
+Ending without writing anything is a valid outcome when nothing new is worth writing. Finish with DONE."""
+
+
+def _handler_resolver(
+    first_write_round: int | None,
+    extra_handlers: dict[str, Callable[[ToolContext, dict[str, Any]], Any]],
+) -> Callable[[str], Callable[[ToolContext, dict[str, Any]], Any] | None]:
+    """Handler lookup for a dreamer pass.
+
+    Refuses search tools from `first_write_round` on (None means never), and
+    serves `extra_handlers` for tools outside the shared handler table.
+    """
+
+    async def refuse(_ctx: ToolContext, _tool_input: dict[str, Any]) -> ToolResult:
+        return ToolResult(
+            content=(
+                "Searches are refused for the rest of this pass. Write what you "
+                + "have decided on now, or finish with DONE."
+            ),
+            metadata={"refused": True},
+        )
+
+    def resolve(tool_name: str) -> Callable[[ToolContext, dict[str, Any]], Any] | None:
+        if (
+            first_write_round is not None
+            and tool_name in SEARCH_TOOL_NAMES
+            and get_current_iteration() >= first_write_round
+        ):
+            return refuse
+        if tool_name in extra_handlers:
+            return extra_handlers[tool_name]
+        return get_tool_handler(tool_name)
+
+    return resolve
+
 
 # Shared PEER CARD system-prompt section (identity-store taxonomy + rules).
 # Used verbatim by DeductionSpecialist and CardRefreshSpecialist.
@@ -191,6 +303,10 @@ class BaseSpecialist(ABC):
     peer_card_update_instruction: str = (
         "Only update this with durable identity markers via `update_peer_card`."
     )
+    # Whether the working-memory settings apply: DREAM.BRIEF_ENABLED (memory
+    # layout, counts, work list), DREAM.BUDGET_ENABLED (budget line, write
+    # window) and DREAM.NOTES_MODE (working notes).
+    uses_working_memory: bool = True
 
     @abstractmethod
     def get_tools(self, *, peer_card_enabled: bool = True) -> list[dict[str, Any]]:
@@ -223,8 +339,14 @@ class BaseSpecialist(ABC):
         observed: str,
         hints: list[str] | None,
         peer_card: list[str] | None = None,
+        *,
+        work_list_shown: bool = False,
     ) -> str:
-        """Build the user prompt with optional exploration hints and current peer card."""
+        """Build the user prompt with optional exploration hints and current peer card.
+
+        `work_list_shown` means the since-last-dream list precedes this prompt,
+        so the agent starts from it instead of re-fetching recent conclusions.
+        """
         ...
 
     def _build_target_observee_context(self, observed: str) -> str:
@@ -262,6 +384,7 @@ If you update it, send the full deduplicated list and remove stale entries.
         *,
         session_id: str | None = None,
         queue_item_id: int | None = None,
+        state: DreamState | None = None,
     ) -> SpecialistResult:
         """
         Run the specialist agent.
@@ -276,6 +399,8 @@ If you update it, send the full deduplicated list and remove stale entries.
             hints: Optional hints to guide exploration (specialists explore freely if None)
             configuration: Resolved configuration for checking feature flags (optional)
             parent_run_id: Optional run_id from orchestrator for correlation
+            state: Working state loaded by the orchestrator (cursor, notes and
+                the since-last-dream work list), when any of it is enabled
 
         Returns:
             SpecialistResult with metrics and content
@@ -304,6 +429,12 @@ If you update it, send the full deduplicated list and remove stale entries.
         deleted_observation_count = 0
         peer_card_updated = False
         search_tool_calls_count = 0
+        refused_search_count = 0
+        notes_added = 0
+        notes_replaced = 0
+        notes_removed = 0
+        pending_resolved = 0
+        loaded_notes: LoadedNotes | None = None
         duration_ms = 0.0
         # Per-level rollups — accumulated from each create/delete_observations
         # tool call's metadata.levels list. Counter rather than list[str] so
@@ -321,6 +452,17 @@ If you update it, send the full deduplicated list and remove stale entries.
         injected_instructions = custom_instructions_prompt(
             configuration, peer_card_enabled=peer_card_enabled
         )
+        brief_enabled = self.uses_working_memory and settings.DREAM.BRIEF_ENABLED
+        budget_enabled = self.uses_working_memory and settings.DREAM.BUDGET_ENABLED
+        max_iterations = self.get_max_iterations()
+        window = write_window_size(max_iterations)
+        # Notes need the dream number from the loaded state.
+        notes_enabled = (
+            self.uses_working_memory
+            and settings.DREAM.NOTES_MODE != "off"
+            and state is not None
+        )
+        work_list = state.work_list if state is not None else None
 
         try:
             # Short-lived DB session for preflight operations
@@ -345,25 +487,70 @@ If you update it, send the full deduplicated list and remove stale entries.
                         observer=observer,
                         observed=observed,
                     )
+
+                memory_counts: str | None = None
+                if brief_enabled:
+                    memory_counts = format_memory_counts(
+                        await crud.summarize_documents_by_level(
+                            db, workspace_name, observer=observer, observed=observed
+                        )
+                    )
             # DB session closed — LLM calls happen without holding a connection
+
+            # In shadow mode notes are written but never loaded, so a sample can
+            # be judged before they shape any dream.
+            if (
+                notes_enabled
+                and state is not None
+                and settings.DREAM.NOTES_MODE == "on"
+            ):
+                # Like the dream state, the notes are optional: a failure here
+                # runs the pass without them rather than failing it.
+                try:
+                    loaded_notes = await load_notes_for_pass(
+                        workspace_name,
+                        observer=observer,
+                        observed=observed,
+                        dream_number=state.dream_number,
+                    )
+                except Exception:
+                    logger.warning(
+                        "Loading dream notes failed; running without them",
+                        exc_info=True,
+                    )
+
+            tools = self.get_tools(peer_card_enabled=peer_card_enabled)
+            if notes_enabled:
+                tools = [*tools, UPDATE_NOTES_TOOL]
+            system_prompt = self.build_system_prompt(
+                observed, peer_card_enabled=peer_card_enabled
+            )
+            if brief_enabled:
+                system_prompt += "\n\n" + memory_layout_section(
+                    available_tools=(tool["name"] for tool in tools), cite_ids=True
+                )
+            if budget_enabled:
+                system_prompt += "\n\n" + budget_system_section(max_iterations, window)
+            if notes_enabled:
+                system_prompt += "\n\n" + notes_system_section(notes_share_tokens())
+            work_list_shown = brief_enabled and work_list is not None
+            user_prompt = self.build_user_prompt(
+                observed=observed,
+                hints=hints,
+                peer_card=current_peer_card,
+                work_list_shown=work_list_shown,
+            )
+            if work_list_shown and work_list is not None:
+                user_prompt = f"{format_work_list(work_list)}\n\n{user_prompt}"
+            if loaded_notes is not None:
+                user_prompt = f"{format_notes(loaded_notes.entries, specialist=self.name)}\n\n{user_prompt}"
+            if memory_counts is not None:
+                user_prompt = f"{memory_counts}\n\n{user_prompt}"
 
             # Build messages
             messages: list[dict[str, str]] = [
-                {
-                    "role": "system",
-                    "content": self.build_system_prompt(
-                        observed, peer_card_enabled=peer_card_enabled
-                    )
-                    + injected_instructions,
-                },
-                {
-                    "role": "user",
-                    "content": self.build_user_prompt(
-                        observed=observed,
-                        hints=hints,
-                        peer_card=current_peer_card,
-                    ),
-                },
+                {"role": "system", "content": system_prompt + injected_instructions},
+                {"role": "user", "content": user_prompt},
             ]
 
             # Create tool executor with telemetry context
@@ -379,6 +566,22 @@ If you update it, send the full deduplicated list and remove stale entries.
                 run_id=run_id,
                 agent_type=self.name,
                 parent_category="dream",
+                handler_resolver=(
+                    _handler_resolver(
+                        max_iterations - window + 1 if budget_enabled else None,
+                        {
+                            "update_notes": make_update_notes_handler(
+                                specialist=self.name,
+                                run_id=run_id,
+                                dream_number=state.dream_number,
+                            )
+                        }
+                        if notes_enabled and state is not None
+                        else {},
+                    )
+                    if budget_enabled or notes_enabled
+                    else None
+                ),
             )
 
             model_config = self.get_model_config()
@@ -403,10 +606,16 @@ If you update it, send the full deduplicated list and remove stale entries.
                 model_config=model_config,
                 prompt="",  # Ignored since we pass messages
                 max_tokens=effective_max_tokens,
-                tools=self.get_tools(peer_card_enabled=peer_card_enabled),
+                tools=tools,
                 tool_choice=None,
                 tool_executor=tool_executor,
-                max_tool_iterations=self.get_max_iterations(),
+                max_tool_iterations=max_iterations,
+                budget_line=dream_budget_line(window) if budget_enabled else None,
+                final_call_tools=(
+                    [t for t in tools if t["name"] not in SEARCH_TOOL_NAMES]
+                    if budget_enabled
+                    else None
+                ),
                 messages=messages,
                 telemetry=LLMTelemetryContext(
                     workspace_name=workspace_name,
@@ -474,6 +683,11 @@ If you update it, send the full deduplicated list and remove stale entries.
             for tc in response.tool_calls_made:
                 tool_name_any: Any = tc.get("tool_name") or tc.get("name")
                 meta_any: Any = tc.get("tool_result_metadata") or {}
+                if isinstance(meta_any, dict) and cast(dict[str, Any], meta_any).get(
+                    "refused"
+                ):
+                    refused_search_count += 1
+                    continue
                 if tool_name_any in _search_tools:
                     search_tool_calls_count += 1
                 if isinstance(meta_any, dict):
@@ -488,6 +702,10 @@ If you update it, send the full deduplicated list and remove stale entries.
                     deleted_observation_count += int(deleted_val)
                     if meta_dict.get("peer_card_updated"):
                         peer_card_updated = True
+                    notes_added += int(meta_dict.get("notes_added") or 0)
+                    notes_replaced += int(meta_dict.get("notes_replaced") or 0)
+                    notes_removed += int(meta_dict.get("notes_removed") or 0)
+                    pending_resolved += int(meta_dict.get("pending_resolved") or 0)
                     # Accumulate per-level counts from create/delete observations.
                     # Both handlers stash `{"levels": ["explicit", "deductive", ...]}`
                     # in metadata (agent_tools.py:1373 + agent_tools.py:2011).
@@ -540,6 +758,9 @@ If you update it, send the full deduplicated list and remove stale entries.
                 input_tokens = response.input_tokens if response is not None else 0
                 output_tokens = response.output_tokens if response is not None else 0
                 iterations = response.iterations if response is not None else 0
+                hit_iteration_limit = (
+                    response.hit_iteration_limit if response is not None else False
+                )
                 emit(
                     DreamSpecialistEvent(
                         run_id=run_id,
@@ -554,6 +775,34 @@ If you update it, send the full deduplicated list and remove stale entries.
                         duration_ms=duration_ms,
                         success=specialist_success,
                         error_class=specialist_error_class,
+                        hit_iteration_limit=hit_iteration_limit,
+                        iteration_limit=max_iterations,
+                        budget_line_enabled=budget_enabled,
+                        write_window_used=budget_enabled
+                        and iterations >= max_iterations - window + 1,
+                        refused_search_count=refused_search_count,
+                        notes_added=notes_added,
+                        notes_replaced=notes_replaced,
+                        notes_removed=notes_removed,
+                        notes_entries_loaded=(
+                            len(loaded_notes.entries) if loaded_notes else 0
+                        ),
+                        notes_tokens_loaded=loaded_notes.tokens if loaded_notes else 0,
+                        pending_loaded=loaded_notes.pending if loaded_notes else 0,
+                        pending_resolved=pending_resolved,
+                        pending_expired=(
+                            loaded_notes.pending_expired if loaded_notes else 0
+                        ),
+                        new_conclusions_shown=(
+                            len(work_list.items)
+                            if brief_enabled and work_list is not None
+                            else 0
+                        ),
+                        new_conclusions_remaining=(
+                            work_list.remaining
+                            if brief_enabled and work_list is not None
+                            else 0
+                        ),
                         # denormalized rollups (all 0 on the failure path)
                         created_observation_count=created_observation_count,
                         deleted_observation_count=deleted_observation_count,
@@ -607,7 +856,7 @@ class DeductionSpecialist(BaseSpecialist):
         return 8192
 
     def get_max_iterations(self) -> int:
-        return 12
+        return settings.DREAM.DEDUCTION_MAX_TOOL_ITERATIONS
 
     def build_system_prompt(
         self, observed: str, *, peer_card_enabled: bool = True
@@ -682,23 +931,35 @@ Use `create_observations_deductive`.
         observed: str,
         hints: list[str] | None,
         peer_card: list[str] | None = None,
+        *,
+        work_list_shown: bool = False,
     ) -> str:
         target_observee_context = self._build_target_observee_context(observed)
         peer_card_context = self._build_peer_card_context(peer_card)
 
         if hints:
             hints_str = "\n".join(f"- {q}" for q in hints[:5])
+            begin = (
+                WORK_LIST_START
+                if work_list_shown
+                else "Begin with `get_recent_observations` to see what's there."
+            )
             return f"""{target_observee_context}{peer_card_context}Start by exploring recent observations and messages. These topics may be worth investigating:
 
 {hints_str}
 
 But follow the evidence - if you find something more interesting, pursue that instead.
 
-Begin with `get_recent_observations` to see what's there."""
+{begin}"""
 
+        start = (
+            WORK_LIST_START
+            if work_list_shown
+            else "Start with `get_recent_observations` to see what's been learned recently, then investigate whatever seems most promising."
+        )
         return f"""{target_observee_context}{peer_card_context}Explore the observation space and create deductive observations.
 
-Start with `get_recent_observations` to see what's been learned recently, then investigate whatever seems most promising.
+{start}
 
 Look for:
 1. Knowledge updates (same fact, different values over time)
@@ -740,7 +1001,7 @@ class InductionSpecialist(BaseSpecialist):
         return 8192
 
     def get_max_iterations(self) -> int:
-        return 10
+        return settings.DREAM.INDUCTION_MAX_TOOL_ITERATIONS
 
     def build_system_prompt(
         self, observed: str, *, peer_card_enabled: bool = True
@@ -815,6 +1076,8 @@ Use `create_observations_inductive`.
         observed: str,
         hints: list[str] | None,
         peer_card: list[str] | None = None,
+        *,
+        work_list_shown: bool = False,
     ) -> str:
         target_observee_context = self._build_target_observee_context(observed)
         # Induction does not consume peer card context — it produces inductive
@@ -829,11 +1092,12 @@ Use `create_observations_inductive`.
 
 But follow the evidence - if you find patterns elsewhere, pursue those.
 
-Start with `get_recent_observations`."""
+{WORK_LIST_START if work_list_shown else "Start with `get_recent_observations`."}"""
 
+        start = f"{WORK_LIST_START}\n\n" if work_list_shown else ""
         return f"""{target_observee_context}Explore the observation space and identify patterns.
 
-Remember: patterns need 2+ sources. Look for tendencies, preferences, and behavioral regularities.
+{start}Remember: patterns need 2+ sources. Look for tendencies, preferences, and behavioral regularities.
 
 Go."""
 
@@ -859,6 +1123,7 @@ class CardRefreshSpecialist(BaseSpecialist):
     """
 
     name: str = "card_refresh"
+    uses_working_memory: bool = False
     peer_card_update_instruction: str = "Update this with `update_peer_card`. See the PEER CARD section in the system prompt for the allowed entry kinds and rules."
 
     # Low iteration ceiling for this lightweight, single-purpose run.
@@ -926,8 +1191,11 @@ Keep it short — a handful of tool calls at most.{rebuild_section}
         observed: str,
         hints: list[str] | None,
         peer_card: list[str] | None = None,
+        *,
+        work_list_shown: bool = False,
     ) -> str:
         _ = hints
+        _ = work_list_shown
         target_observee_context = self._build_target_observee_context(observed)
         peer_card_context = self._build_peer_card_context(peer_card)
 
