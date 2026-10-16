@@ -307,6 +307,30 @@ describe('Honcho Client', () => {
 
       expect(results.length).toBeLessThanOrEqual(5)
     })
+
+    test('search with maxDistance keeps keyword matches', async () => {
+      const session = await client.session('search-max-distance-session', {
+        metadata: {},
+      })
+      const peer = await client.peer('search-max-distance-peer')
+
+      await session.addPeers([peer.id])
+      await session.addMessages([peer.message('Distinctive keyword qwv7731')])
+
+      // The floor only drops semantic hits, so a keyword match survives even at 0
+      const results = await client.search('qwv7731', {
+        filters: { session_id: session.id },
+        maxDistance: 0,
+      })
+
+      expect(results.map((msg) => msg.content)).toEqual([
+        'Distinctive keyword qwv7731',
+      ])
+    })
+
+    test('search rejects maxDistance outside the cosine range', async () => {
+      await expect(client.search('test', { maxDistance: 2.5 })).rejects.toThrow()
+    })
   })
 
   // ===========================================================================
