@@ -382,8 +382,9 @@ principals in mind:
   that the previous image would read or write differently.
 
 Maintainers take care of batching migrations into releases, declaring the compatibility
-floor, and applying the revision graph to the shared and dedicated databases. Expect a
-migration PR to wait for the next migration release.
+floor in `migrations/compat.toml`, and applying the revision graph to the shared and
+dedicated databases. Don't edit `compat.toml` in a migration PR. Expect a migration PR to
+wait for the next migration release.
 
 ### Documentation
 
