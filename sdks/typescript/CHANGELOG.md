@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- `semanticQuery` and `reasoningContext` on `Peer.chat()` and `Peer.chatStream()`. Retrieval uses `semanticQuery` when supplied, otherwise `query`; reasoning receives the full query plus optional additional instructions. Both options accept 1–10000 characters and require a server supporting these fields (#754).
+
 ## [2.6.0] - 2026-10-07
 
 ### Added

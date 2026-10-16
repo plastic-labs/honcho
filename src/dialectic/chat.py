@@ -57,6 +57,8 @@ async def agentic_chat(
     session_allowlist: list[str] | None = None,
     response_model: type[BaseModel] | None = None,
     evidence: EvidenceAccumulator | None = None,
+    semantic_query: str | None = None,
+    reasoning_context: str | None = None,
 ) -> str:
     """
     Answer a query about a peer using the agentic dialectic.
@@ -71,6 +73,9 @@ async def agentic_chat(
         session_allowlist: Optional session allowlist restricting all recall
         response_model: Optional Pydantic model the answer must conform to.
             When set, the returned string is JSON matching the model's schema.
+        semantic_query: Optional text used only to prefetch conclusions.
+            Defaults to ``query``.
+        reasoning_context: Additional instructions, excluded from prefetch.
 
     Returns:
         The synthesized answer string
@@ -127,7 +132,12 @@ async def agentic_chat(
         instructions=configuration.dialectic,
     )
 
-    return await agent.answer(query, response_model=response_model)
+    return await agent.answer(
+        query,
+        response_model=response_model,
+        semantic_query=semantic_query,
+        reasoning_context=reasoning_context,
+    )
 
 
 async def agentic_chat_stream(
@@ -140,6 +150,8 @@ async def agentic_chat_stream(
     session_allowlist: list[str] | None = None,
     response_model: type[BaseModel] | None = None,
     evidence: EvidenceAccumulator | None = None,
+    semantic_query: str | None = None,
+    reasoning_context: str | None = None,
 ) -> AsyncIterator[str]:
     """
     Stream an answer to a query about a peer using the agentic dialectic.
@@ -155,6 +167,9 @@ async def agentic_chat_stream(
         response_model: Optional Pydantic model the answer must conform to.
             When set, the streamed text accumulates to JSON matching the
             model's schema.
+        semantic_query: Optional text used only to prefetch conclusions.
+            Defaults to ``query``.
+        reasoning_context: Additional instructions, excluded from prefetch.
 
     Yields:
         Chunks of the response text as they are generated
@@ -211,7 +226,12 @@ async def agentic_chat_stream(
         instructions=configuration.dialectic,
     )
 
-    async for chunk in agent.answer_stream(query, response_model=response_model):
+    async for chunk in agent.answer_stream(
+        query,
+        response_model=response_model,
+        semantic_query=semantic_query,
+        reasoning_context=reasoning_context,
+    ):
         yield chunk
 
 

@@ -253,6 +253,8 @@ export class Peer {
 
   private async _chat(params: {
     query: string
+    semantic_query?: string
+    reasoning_context?: string
     stream?: boolean
     target?: string
     session_id?: string
@@ -271,6 +273,8 @@ export class Peer {
 
   private async _chatStream(params: {
     query: string
+    semantic_query?: string
+    reasoning_context?: string
     target?: string
     session_id?: string
     scope?: string | string[]
@@ -392,6 +396,10 @@ export class Peer {
    *                           allowlist. Reach for a named `scope` when you need that depth.
    * @param options.reasoningLevel - Optional reasoning level for the query: "minimal", "low", "medium",
    *                                 "high", or "max". Defaults to "low" if not provided.
+   * @param options.semanticQuery - Optional prefetch retrieval text (1–10000 characters).
+   *                                Defaults to query; does not replace the full question.
+   * @param options.reasoningContext - Optional additional user instructions (1–10000 characters).
+   *                                   Omitted by default and never embedded for prefetch.
    * @returns Promise resolving to the response string, or null if no relevant information
    *
    * @example
@@ -424,6 +432,8 @@ export class Peer {
       scope?: string | Scope | (string | Scope)[]
       sessions?: (string | Session)[]
       reasoningLevel?: string
+      semanticQuery?: string
+      reasoningContext?: string
       responseFormat: ZodType<T>
       includeEvidence: true
     }
@@ -436,6 +446,8 @@ export class Peer {
       scope?: string | Scope | (string | Scope)[]
       sessions?: (string | Session)[]
       reasoningLevel?: string
+      semanticQuery?: string
+      reasoningContext?: string
       responseFormat: ZodType<T>
       includeEvidence?: false
     }
@@ -448,6 +460,8 @@ export class Peer {
       scope?: string | Scope | (string | Scope)[]
       sessions?: (string | Session)[]
       reasoningLevel?: string
+      semanticQuery?: string
+      reasoningContext?: string
       responseFormat?: Record<string, unknown>
       includeEvidence: true
     }
@@ -460,6 +474,8 @@ export class Peer {
       scope?: string | Scope | (string | Scope)[]
       sessions?: (string | Session)[]
       reasoningLevel?: string
+      semanticQuery?: string
+      reasoningContext?: string
       responseFormat?: Record<string, unknown>
       includeEvidence?: false
     }
@@ -472,6 +488,8 @@ export class Peer {
       scope?: string | Scope | (string | Scope)[]
       sessions?: (string | Session)[]
       reasoningLevel?: string
+      semanticQuery?: string
+      reasoningContext?: string
       responseFormat?: ZodType<T> | Record<string, unknown>
       includeEvidence?: boolean
     }
@@ -489,6 +507,8 @@ export class Peer {
 
     const chatParams = ChatQuerySchema.parse({
       query,
+      semanticQuery: options?.semanticQuery,
+      reasoningContext: options?.reasoningContext,
       target: targetId,
       session: resolvedSessionId,
       scope: options?.scope,
@@ -505,6 +525,8 @@ export class Peer {
 
     const response = await this._chat({
       query: chatParams.query,
+      semantic_query: chatParams.semanticQuery,
+      reasoning_context: chatParams.reasoningContext,
       stream: false,
       target: chatParams.target,
       session_id: chatParams.session,
@@ -548,6 +570,10 @@ export class Peer {
    *                           See {@link Peer.chat} for the depth caveat.
    * @param options.reasoningLevel - Optional reasoning level for the query: "minimal", "low", "medium",
    *                                 "high", or "max". Defaults to "low" if not provided.
+   * @param options.semanticQuery - Optional prefetch retrieval text (1–10000 characters).
+   *                                Defaults to query; does not replace the full question.
+   * @param options.reasoningContext - Optional additional user instructions (1–10000 characters).
+   *                                   Omitted by default and never embedded for prefetch.
    * @param options.includeEvidence - When true, the returned stream's `evidence` is
    *                                 populated once it has been fully consumed. Evidence
    *                                 cannot be known before the answer is complete, so the
@@ -577,6 +603,8 @@ export class Peer {
       scope?: string | Scope | (string | Scope)[]
       sessions?: (string | Session)[]
       reasoningLevel?: string
+      semanticQuery?: string
+      reasoningContext?: string
       responseFormat?: ZodType | Record<string, unknown>
       includeEvidence?: boolean
     }
@@ -594,6 +622,8 @@ export class Peer {
 
     const chatParams = ChatQuerySchema.parse({
       query,
+      semanticQuery: options?.semanticQuery,
+      reasoningContext: options?.reasoningContext,
       target: targetId,
       session: resolvedSessionId,
       scope: options?.scope,
@@ -605,6 +635,8 @@ export class Peer {
 
     const response = await this._chatStream({
       query: chatParams.query,
+      semantic_query: chatParams.semanticQuery,
+      reasoning_context: chatParams.reasoningContext,
       target: chatParams.target,
       session_id: chatParams.session,
       ...scopeRecallFields(chatParams),
