@@ -17,6 +17,7 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from src import crud, schemas
 from src.config import settings
+from src.db import tenant_context
 from src.dependencies import db, read_db
 from src.deriver import enqueue
 from src.exceptions import FileTooLargeError, ResourceNotFoundException
@@ -165,7 +166,8 @@ async def create_messages_for_session(
         ]
 
         # Enqueue all messages in one call
-        background_tasks.add_task(enqueue, payloads)
+        # ai: tenant read now, in the request, for the reason EmbedTaskGate.try_schedule gives
+        background_tasks.add_task(enqueue, payloads, tenant_id=tenant_context.get())
 
         # Embed immediately so messages are searchable within seconds; the
         # reconciler is the fallback for anything left pending. Scheduling is
@@ -250,7 +252,8 @@ async def create_messages_with_file(
         for message in created_messages
     ]
 
-    background_tasks.add_task(enqueue, payloads)
+    # ai: tenant read now, in the request, for the reason EmbedTaskGate.try_schedule gives
+    background_tasks.add_task(enqueue, payloads, tenant_id=tenant_context.get())
 
     # Embed immediately so messages are searchable within seconds; the
     # reconciler is the fallback for anything left pending. Scheduling is

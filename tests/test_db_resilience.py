@@ -60,12 +60,15 @@ class _FakeDBAPIConn:
         return self._cursor
 
 
-def test_checkout_hook_sets_application_name_from_request_context() -> None:
+def test_checkout_hook_sets_application_name_from_request_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings.DB, "TRACING", True)
     recorder: list[Any] = []
     conn = _FakeDBAPIConn(recorder)
     token = db_module.request_context.set("request:trace-ctx")
     try:
-        db_module._set_application_name_on_checkout(conn, None, None)  # pyright: ignore[reportPrivateUsage]
+        db_module._set_session_gucs_on_checkout(conn, None, None)  # pyright: ignore[reportPrivateUsage]
     finally:
         db_module.request_context.reset(token)
 
@@ -78,23 +81,27 @@ def test_checkout_hook_sets_application_name_from_request_context() -> None:
     assert conn.autocommit is False
 
 
-def test_checkout_hook_defaults_to_unknown_without_context() -> None:
+def test_checkout_hook_defaults_to_unknown_without_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings.DB, "TRACING", True)
     recorder: list[Any] = []
     conn = _FakeDBAPIConn(recorder)
     token = db_module.request_context.set(None)
     try:
-        db_module._set_application_name_on_checkout(conn, None, None)  # pyright: ignore[reportPrivateUsage]
+        db_module._set_session_gucs_on_checkout(conn, None, None)  # pyright: ignore[reportPrivateUsage]
     finally:
         db_module.request_context.reset(token)
 
     assert recorder[0][1] == ("unknown",)
 
 
-def test_checkout_hook_swallows_errors() -> None:
+def test_checkout_hook_swallows_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     """A failure tagging the connection must never break the checkout."""
+    monkeypatch.setattr(settings.DB, "TRACING", True)
     conn = _FakeDBAPIConn([], raise_exc=RuntimeError("boom"))
     # Must not raise.
-    db_module._set_application_name_on_checkout(conn, None, None)  # pyright: ignore[reportPrivateUsage]
+    db_module._set_session_gucs_on_checkout(conn, None, None)  # pyright: ignore[reportPrivateUsage]
 
 
 # --- deriver polling backoff math --------------------------------------------

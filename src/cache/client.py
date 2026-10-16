@@ -10,6 +10,7 @@ from urllib.parse import urlparse, urlunparse
 import sentry_sdk
 from cashews import cache
 from cashews.backends.redis.client import SafeRedisCluster
+from cashews.commands import PATTERN_CMDS, Command
 from cashews.picklers import PicklerType
 from redis import exceptions as redis_exc
 from redis.asyncio import RedisCluster
@@ -254,6 +255,77 @@ def cache_key_namespace() -> str:
 def cache_prefix_namespace() -> str:
     """Tagged namespace for cashews `prefix=`, which format-substitutes."""
     return "{{" + get_cache_namespace() + "}}"
+
+
+def _tenant_scope_middleware() -> Any:
+    """Prefix every cache key with the current tenant when MULTI_TENANT is on."""
+
+    # region ai
+    # honcho's cache keys are workspace_name-scoped, and workspace_name is not unique
+    # across tenants (every tenant has a "default" workspace), so without this a
+    # cross-tenant cache hit would return another tenant's row and bypass row-level
+    # security — the cache is read before the DB. Prefixing every key with the
+    # request's tenant keeps entries (and the per-key locks) isolated across
+    # get/set/delete. No-op when MULTI_TENANT is off, so self-host keys are
+    # byte-for-byte unchanged. Modeled on cashews' own add_prefix helper.
+    # endregion
+
+    async def _middleware(
+        call: Any, cmd: Command, _backend: Any, *args: Any, **kwargs: Any
+    ) -> Any:
+        if not settings.MULTI_TENANT:
+            return await call(*args, **kwargs)
+        # ai: deferred import keeps cache.client free of a load-time dependency on db.
+        from src.db import tenant_context
+
+        tenant = tenant_context.get()
+
+        def _scope(key: str) -> str:
+            # region ai
+            # Fail closed instead of falling back to a shared 'default' bucket:
+            # 'default' is the real id of the bootstrap tenant (see the tenants
+            # seed migration), so a tenant-less caller reading/writing
+            # t:default:* would silently share that tenant's cache -- and since
+            # the cache is read before the DB, a cross-tenant hit here bypasses
+            # RLS entirely, the same class of bug tracked_db() and
+            # construct_work_unit_key() already fail closed on. Every reachable
+            # caller is tenant-bound before it can reach a cache command: those
+            # two raise first for every path that reaches this middleware
+            # (tracked_db() for every tracked_db-scoped call, and
+            # construct_work_unit_key() for the one service_db()-scoped cache
+            # write, the scope-task enqueue's cache invalidation). If this
+            # raises, some new caller reached the cache without going through
+            # either, and belongs on tracked_db(tenant_id=...) instead.
+            # endregion
+            if not tenant:
+                raise ValueError(
+                    f"cache {cmd.value} on key {key!r} requires a tenant when "
+                    + "MULTI_TENANT is on, but tenant_context is unset -- bind a "
+                    + "tenant (tracked_db(tenant_id=...), or an ambient "
+                    + "tenant_context set by the caller) before touching the "
+                    + "cache; cross-tenant cache access is not supported"
+                )
+            return f"t:{tenant}:" + key
+
+        if cmd in (Command.GET_MANY, Command.DELETE_MANY):
+            return await call(*[_scope(key) for key in args])
+        if cmd == Command.SET_MANY:
+            kwargs["pairs"] = {_scope(k): v for k, v in kwargs["pairs"].items()}
+            return await call(**kwargs)
+        as_key = "pattern" if cmd in PATTERN_CMDS else "key"
+        key = kwargs.get(as_key)
+        if key:
+            kwargs[as_key] = _scope(key)
+            return await call(**kwargs)
+        if args:
+            return await call(_scope(args[0]), *args[1:], **kwargs)
+        return await call(*args, **kwargs)
+
+    return _middleware
+
+
+# ai: registered once at import; applies to every backend cache.setup() installs.
+cache.add_middleware(_tenant_scope_middleware())
 
 
 async def _release_default_node_connection() -> None:

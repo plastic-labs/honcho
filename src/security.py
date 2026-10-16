@@ -3,11 +3,13 @@ import logging
 from typing import Annotated
 
 import jwt
+import sentry_sdk
 from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
 from src.config import settings
+from src.db import tenant_context
 from src.utils.formatting import utc_now_iso
 
 from .exceptions import AuthenticationException
@@ -55,8 +57,9 @@ class JWTParams(BaseModel):
     Fields (all optional other than `t`):
 
     `t`: a string timestamp of when the JWT was created
+    `tn`: (string) tenant id the token is scoped to; required under MULTI_TENANT
     `exp`: when the JWT expires (optional) — a standard NumericDate claim
-    `ad`: a boolean flag indicating if the JWT is an admin JWT
+    `ad`: a boolean flag indicating if the JWT is an admin JWT (within its tenant)
     `w`: (string) workspace name
     `p`: (string) peer name
     `s`: (string) session name
@@ -64,6 +67,14 @@ class JWTParams(BaseModel):
     """
 
     t: str = Field(default_factory=utc_now_iso)
+    # region ai
+    # Tenant id. Optional on the model so flag-off (single-tenant) tokens are
+    # unchanged; REQUIRED by auth() when MULTI_TENANT is on — a tenant-less
+    # token is rejected there. `t` was already taken (the created-at timestamp), hence
+    # the two-letter `tn`. This claim schema is a contract: any service that mints
+    # tokens for a MULTI_TENANT deployment must keep its claim fields in lockstep.
+    # endregion
+    tn: str | None = None
     exp: datetime.datetime | None = None
     ad: bool | None = None
     w: str | None = None
@@ -73,7 +84,13 @@ class JWTParams(BaseModel):
 
 
 def create_admin_jwt() -> str:
-    """Create a JWT for admin operations."""
+    """Create a tenant-less JWT for admin operations.
+
+    Carries no ``tn`` claim, so under ``MULTI_TENANT`` ``auth()`` rejects it -- the
+    tenant gate runs before the admin short-circuit, and admin is admin only within
+    a tenant. Test-only today; a tenanted caller must mint via ``POST /v3/keys`` or
+    ``scripts/generate_jwt.py --tenant``.
+    """
     params = JWTParams(t="", ad=True)
     key = create_jwt(params)
     return key
@@ -158,8 +175,10 @@ def verify_jwt(token: str) -> JWTParams:
             params.t = decoded["t"]
         if "ad" in decoded:
             params.ad = decoded["ad"]
-        # Normalize empty-string scope claims to None so a blank `w`/`p`/`s`
+        # Normalize empty-string scope claims to None so a blank `tn`/`w`/`p`/`s`
         # cannot masquerade as a present claim in the checks below.
+        if "tn" in decoded:
+            params.tn = decoded["tn"] or None
         if "w" in decoded:
             params.w = decoded["w"] or None
         if "p" in decoded:
@@ -236,7 +255,7 @@ def require_auth(
             else None
         )
 
-        return await auth(
+        jwt_params = await auth(
             credentials=credentials,
             admin=admin,
             workspace_name=workspace_name_param,
@@ -247,6 +266,43 @@ def require_auth(
             scope_name=request.path_params.get(scope_name) if scope_name else None,
             authorize_body=authorize_body,
         )
+        # region ai
+        # Bind the resolved tenant for the whole request. This is a
+        # yield-dependency, so FastAPI runs the teardown AFTER the response — meaning
+        # tenant_context stays set across the handler and every session lazily checked
+        # out inside it, where the checkout hook reads it and binds `app.tenant`.
+        # There is no get_db/auth ordering to get wrong: the checkout is lazy (it
+        # happens in the handler, after this set), so we don't depend on which
+        # dependency FastAPI resolves first. Background tasks are the exception:
+        # whether they run before or after this teardown has changed across
+        # FastAPI releases, so a task takes tenant_context.get() as an argument
+        # when it is scheduled and never reads it. Reset on the way out — a leaked
+        # `app.tenant` is a data breach. Gated on MULTI_TENANT, not just tn presence:
+        # flag-off rows must keep the default tenant even when a still-valid token
+        # carries `tn`, or `_default_tenant_id()` would stamp new rows with it. A
+        # tenant-less token under MULTI_TENANT never reaches here (auth() rejects it).
+        # endregion
+        tenant_token = (
+            tenant_context.set(jwt_params.tn)
+            if settings.MULTI_TENANT and jwt_params.tn
+            else None
+        )
+        try:
+            if tenant_token is not None:
+                # region ai
+                # Errors from this request are filterable by tenant; the global
+                # `namespace` tag keeps naming the instance. Deliberately NOT removed
+                # in the finally: this dependency's teardown runs before the app's
+                # exception handlers, so removing it here would strip the tag from
+                # exactly the unhandled errors global_exception_handler reports. The
+                # tag dies with the request instead: sentry's ASGI middleware opens a
+                # fresh isolation scope per request, so it never reaches the next one.
+                # endregion
+                sentry_sdk.set_tag("tenant_id", jwt_params.tn)
+            yield jwt_params
+        finally:
+            if tenant_token is not None:
+                tenant_context.reset(tenant_token)
 
     # Tag the closure so route-policy tests can introspect which routes opt into
     # member read without re-deriving it from HTTP method (an unreliable
@@ -277,6 +333,16 @@ async def auth(
 
     jwt_params = verify_jwt(credentials.credentials)
 
+    # region ai
+    # Under MULTI_TENANT every token must carry a tenant. Enforced before
+    # the admin short-circuit below, so `ad` is admin *within* its tenant, never
+    # cross-tenant — the resolved tenant is bound to app.tenant downstream and RLS
+    # confines the request to it. A tenant-less token is rejected outright.
+    # Flag off: unchanged.
+    # endregion
+    if settings.MULTI_TENANT and not jwt_params.tn:
+        raise AuthenticationException("JWT missing required tenant claim")
+
     # Authorize by the token's narrowest scope, not by the route's. A
     # narrower-than-workspace token must NOT fall back to workspace access:
     # `{w: ws, p: alice}` may only act on `alice`, never on a sibling peer.
@@ -299,7 +365,11 @@ async def auth(
         from src.crud.session import is_peer_in_session
         from src.dependencies import tracked_db
 
-        async with tracked_db("auth.named_scope", read_only=True) as scope_db:
+        # ai: tenant passed explicitly for the same reason as the member read
+        # below — tenant_context is not bound until require_auth's yield.
+        async with tracked_db(
+            "auth.named_scope", read_only=True, tenant_id=jwt_params.tn
+        ) as scope_db:
             scope = await get_scope_or_raise(scope_db, workspace_name, jwt_params.sc)
             if session_name and not await is_peer_in_session(
                 scope_db, workspace_name, session_name, scope.name
@@ -345,8 +415,14 @@ async def auth(
             # connection, so a peer added to the session in a not-yet-committed
             # transaction reads as a non-member: writes must commit before a
             # member-scoped read. Fails closed.
+            # ai: tenant is passed explicitly — auth() runs before require_auth
+            # binds tenant_context, so the ambient var is unset here and the
+            # fail-closed guard would 500 every member read under MULTI_TENANT.
+            # Do NOT switch this to service_db: the (workspace, session, peer)
+            # triple is unique only per tenant, so an unscoped read could
+            # authorize a cross-tenant name collision.
             async with tracked_db(
-                "auth.is_peer_in_session", read_only=True
+                "auth.is_peer_in_session", read_only=True, tenant_id=jwt_params.tn
             ) as member_db:
                 is_member = await is_peer_in_session(
                     member_db, workspace_name, session_name, jwt_params.p

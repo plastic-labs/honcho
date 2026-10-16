@@ -9,6 +9,9 @@ Examples:
     # Admin JWT expiring in 24 hours
     uv run python scripts/generate_jwt.py --admin --expires 24h
 
+    # Admin JWT for a tenant (--tenant is required when MULTI_TENANT is on)
+    uv run python scripts/generate_jwt.py --admin --tenant acme
+
     # Workspace-scoped JWT expiring in 30 days
     uv run python scripts/generate_jwt.py --workspace my-workspace --expires 30d
 
@@ -31,6 +34,7 @@ import sys
 # Allow running from repo root without installing
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from src.config import settings
 from src.security import JWTParams, create_jwt
 from src.utils.formatting import format_datetime_utc
 
@@ -85,6 +89,13 @@ def main():
         help="Scope the JWT to a session (requires --workspace)",
     )
     parser.add_argument(
+        "--tenant",
+        "-t",
+        metavar="ID",
+        help="Scope the JWT to a tenant. Required when MULTI_TENANT is enabled; "
+        + "ignored by the server when it is not",
+    )
+    parser.add_argument(
         "--scope",
         metavar="NAME",
         help="Bind the JWT to a named scope for recall and ingestion (requires --workspace)",
@@ -118,12 +129,18 @@ def main():
     if (args.peer or args.session) and not args.workspace:
         parser.error("--peer and --session require --workspace")
 
+    # A tenant-less token is rejected by auth() under MULTI_TENANT, admin included
+    # -- minting one would hand back a token that cannot authenticate anywhere.
+    if settings.MULTI_TENANT and not args.tenant:
+        parser.error("--tenant is required when MULTI_TENANT is enabled")
+
     expiry: datetime.datetime | None = None
     if args.expires is not None:
         expiry = datetime.datetime.now(datetime.UTC) + args.expires
 
     params = JWTParams(
         ad=True if args.admin else None,
+        tn=args.tenant,
         w=args.workspace,
         p=args.peer,
         s=args.session,
@@ -140,6 +157,8 @@ def main():
         print(token)
     else:
         scope_parts: list[str] = []
+        if args.tenant:
+            scope_parts.append(f"tenant={args.tenant}")
         if args.admin:
             scope_parts.append("admin")
         if args.workspace:

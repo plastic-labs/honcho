@@ -2189,6 +2189,63 @@ class TestQueueRetry:
         assert "ValueError" in items[0].error
         assert await self._retry_attempts_on_items(db_session, work_unit_key) is None
 
+    async def test_webhook_missing_tenant_under_multi_tenant_burns_to_errored(
+        self,
+        db_session: AsyncSession,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A webhook item with no `tenant_id` under `MULTI_TENANT` burns to
+        `errored` on the first attempt."""
+        monkeypatch.setattr(settings, "MULTI_TENANT", True)
+        workspace_name = f"webhook-orphan-{generate_nanoid()}"
+        work_unit_key = f"webhook:{workspace_name}"
+
+        # region ai
+        # Built by hand rather than via publish_webhook_event /
+        # construct_work_unit_key: both refuse to construct an un-namespaced
+        # webhook work_unit_key under MULTI_TENANT (the same invariant that
+        # should make this state unreachable in production), so reaching it
+        # here means bypassing them -- this is the forgot-to-stamp bug
+        # scenario, matching the "future writer forgets the stamp" case the
+        # fail-closed check in deliver_webhook guards against.
+        #
+        # WebhookTenantUnresolved is neither a DBAPIError nor a transport
+        # error, so it is non-retryable and must burn to errored on the first
+        # attempt like any other terminal error -- not crash the worker loop,
+        # not leave the item claimed forever.
+        # endregion
+        queue_item = models.QueueItem(
+            task_type="webhook",
+            work_unit_key=work_unit_key,
+            payload={
+                "task_type": "webhook",
+                "event_type": "message.created",
+                "data": {"id": "m_1"},
+            },
+            processed=False,
+            workspace_name=workspace_name,
+            tenant_id=None,
+        )
+        db_session.add(queue_item)
+        await db_session.commit()
+
+        qm = QueueManager()
+        worker_id = "test_worker"
+        claimed_units = await qm.claim_work_units(db_session, [work_unit_key])
+        qm.worker_ownership[worker_id] = WorkerOwnership(
+            work_unit_key=work_unit_key, aqs_id=claimed_units[work_unit_key]
+        )
+        await db_session.commit()
+
+        await qm.process_work_unit(work_unit_key, worker_id)
+
+        items = await self._fetch_items(db_session, work_unit_key)
+        assert len(items) == 1
+        assert items[0].processed
+        assert items[0].error is not None
+        assert "WebhookTenantUnresolved" in items[0].error
+        assert await self._aqs_rows(db_session, work_unit_key) == 0
+
     async def test_counter_cleared_after_success(
         self,
         db_session: AsyncSession,

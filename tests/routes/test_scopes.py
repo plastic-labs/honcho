@@ -579,7 +579,8 @@ async def test_scope_peer_observes_ingested_messages(
                 "message_public_id": message.public_id,
                 "seq_in_session": message.seq_in_session,
             }
-        ]
+        ],
+        tenant_id=None,
     )
 
     result = await db_session.execute(
