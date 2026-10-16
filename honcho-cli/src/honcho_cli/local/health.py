@@ -25,7 +25,7 @@ def stack_healthy(profile: LocalProfile) -> bool:
     if not profile.compose_file().exists():
         return False
     ps = compose_ps(profile)
-    if not stack_containers_up(ps):
+    if not stack_containers_up(ps, mock=profile.providers == "mock"):
         return False
     return api_healthy(profile.base_url)
 
@@ -45,9 +45,15 @@ def wait_for_health(
         ps = compose_ps(profile)
         states = services_running(ps)
         for _name, state in states.items():
+            if _name == "mock-config":
+                continue
             if "exit" in state or state in {"dead"}:
                 return False
-        if api_healthy(profile.base_url) and stack_containers_up(ps):
+        if api_healthy(profile.base_url) and stack_containers_up(
+            ps, mock=profile.providers == "mock"
+        ):
             return True
         time.sleep(interval)
-    return api_healthy(profile.base_url)
+    return api_healthy(profile.base_url) and stack_containers_up(
+        compose_ps(profile), mock=profile.providers == "mock"
+    )

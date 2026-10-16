@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import contextlib
+import importlib.util
 import json
 import os
+import socket
 import subprocess
 import sys
 import time
@@ -225,6 +227,7 @@ def payload(profile: LocalProfile) -> dict[str, Any]:
     return {
         "profile": profile.name,
         "backend": "native",
+        "providers": state.get("providers", "live"),
         "status": "running"
         if healthy
         else "unhealthy"
@@ -296,6 +299,7 @@ def start(
     timeout: float,
     migrate: bool,
     api_workers: int,
+    providers: str = "live",
     pinned: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
     with lifecycle_lock(profile):
@@ -310,12 +314,18 @@ def start(
                 or profile.base_url != old["endpoints"]["api"]
                 or api_workers != old["runtime"].get("apiWorkers", 1)
                 or migrate
+                or providers != old.get("providers", "live")
             ):
                 raise NativeError(
                     "STACK_RUNNING",
                     "This profile is already running. Stop it before changing its launch options.",
                 )
             return payload(profile)
+        if old.get("status") in {"running", "starting"}:
+            raise NativeError(
+                "OWNERSHIP_UNVERIFIED",
+                f"The previous supervisor is unreachable. Inspect {profile.dir()} before starting another instance.",
+            )
         root = checkout(source)
         identity = runtime_identity(root)
         identity["apiWorkers"] = api_workers
@@ -327,6 +337,15 @@ def start(
                 f"API port {profile.api_port} is in use. Pass --api-port with a free port.",
             )
         env = environment(profile, root)
+        if dependencies == "docker" and any(
+            key.upper() in {"DB", "CACHE"}
+            or key.upper().startswith(("DB__", "CACHE__"))
+            for key in env
+        ):
+            raise NativeError(
+                "CONFLICTING_DEPENDENCIES",
+                "--dependencies docker owns the database/cache endpoints. Use flat DB_* and CACHE_* settings instead of DB/CACHE JSON or double-underscore overrides.",
+            )
         if dependencies == "external" and not env.get("DB_CONNECTION_URI"):
             raise NativeError(
                 "MISSING_DATABASE",
@@ -339,7 +358,34 @@ def start(
                 CACHE_ENABLED="true",
             )
         env["API_WORKERS"] = str(api_workers)
-        profile = profile.overlay(backend="native")
+        mock_port = None
+        if providers == "mock":
+            if importlib.util.find_spec("honcho_mock_provider") is None:
+                raise NativeError(
+                    "MOCK_NOT_INSTALLED",
+                    "Install the optional mock provider with `uv sync --all-packages` in the checkout, or install `honcho-cli[mock]` in your server environment.",
+                )
+            from honcho_cli.local.mock import VALIDATE
+            from honcho_cli.local.mock import environment as mock_environment
+
+            with socket.socket() as probe:
+                probe.bind(("127.0.0.1", 0))
+                mock_port = probe.getsockname()[1]
+            env = mock_environment(env, f"http://127.0.0.1:{mock_port}/v1")
+            validation = subprocess.run(
+                [sys.executable, "-c", VALIDATE],
+                cwd=root,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if validation.returncode:
+                raise NativeError(
+                    "INVALID_MOCK_CONFIG",
+                    "The server rejected the mock provider configuration. Check your non-model settings and the checkout's supported configuration.",
+                )
+        profile = profile.overlay(backend="native", providers=providers)
         save_profile(profile)
         instance = uuid.uuid4().hex
         commands = {
@@ -355,13 +401,25 @@ def start(
             ],
             "deriver": [sys.executable, "-m", "src.runtime", "deriver"],
         }
-        state = {
+        if mock_port:
+            commands = {
+                "mock-provider": [
+                    sys.executable,
+                    "-m",
+                    "honcho_mock_provider",
+                    "--port",
+                    str(mock_port),
+                ],
+                **commands,
+            }
+        state: dict[str, Any] = {
             "instance": instance,
             "socket": f"/tmp/honcho-{os.getuid()}-{instance}.sock",
             "runtime": identity,
             "commands": commands,
             "status": "starting",
             "dependencies": dependencies,
+            "providers": providers,
             "services": {},
             "endpoints": {
                 "api": profile.base_url,
@@ -372,6 +430,9 @@ def start(
                 else "disabled",
             },
         }
+        if mock_port:
+            state["endpoints"]["mock-provider"] = f"http://127.0.0.1:{mock_port}"
+            state["healthChecks"] = {"mock-provider": f"http://127.0.0.1:{mock_port}"}
         write_state(profile.dir(), state)
         supervisor = None
         try:

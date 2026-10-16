@@ -46,6 +46,7 @@ packages = ["src/honcho_cli"]
 testpaths = ["tests"]
 
 [project.optional-dependencies]
+mock = ["honcho-mock-provider>=0.1.0"]
 dev = [
     "pytest>=8.0.0",
     "pytest-mock>=3.14.0",

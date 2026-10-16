@@ -12,3 +12,4 @@ docker-compose.yml.example
 .vscode/**
 data/**
 .venv
+!packages/mock-provider/README.md
