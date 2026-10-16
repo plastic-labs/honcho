@@ -5,8 +5,8 @@ release has to keep working on the schema a candidate migrates to. That has to
 hold for data the candidate wrote, and while the candidate's backfills are still
 running. This harness checks it. CI runs it from
 `.github/workflows/compat-matrix.yml` on pull requests that touch `migrations/`,
-`src/models.py`, `src/crud/` or `src/reconciler/`, on the same paths on `main`,
-and on demand.
+`src/models.py`, `src/crud/`, `src/reconciler/`, `src/deriver/` or the queue
+payload schemas, on the same paths on `main`, and on demand.
 
 ## What it does
 

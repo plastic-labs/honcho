@@ -12,6 +12,11 @@ on:
       - 'src/models.py'
       - 'src/crud/**'
       - 'src/reconciler/**'
+      # Queue payloads cross images: the new API enqueues, the old worker runs.
+      - 'src/deriver/**'
+      - 'src/schemas/internal.py'
+      - 'src/utils/queue_payload.py'
+      - 'src/utils/work_unit.py'
       - 'tests/compat_matrix/**'
       - '.github/workflows/compat-matrix.yml'
   push:
@@ -21,6 +26,11 @@ on:
       - 'src/models.py'
       - 'src/crud/**'
       - 'src/reconciler/**'
+      # Queue payloads cross images: the new API enqueues, the old worker runs.
+      - 'src/deriver/**'
+      - 'src/schemas/internal.py'
+      - 'src/utils/queue_payload.py'
+      - 'src/utils/work_unit.py'
       - 'tests/compat_matrix/**'
       - '.github/workflows/compat-matrix.yml'
   workflow_dispatch:
