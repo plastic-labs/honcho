@@ -435,7 +435,9 @@ class HonchoClientConfig:
         )
 
     @classmethod
-    def from_global_config(cls, host: str | None = None, config_path: Path | None = None) -> HonchoClientConfig:
+    def from_global_config(
+        cls, host: str | None = None, config_path: Path | None = None, *, strict: bool = False,
+    ) -> HonchoClientConfig:
         """Config from the resolved Honcho config path, falling back to env. ``host=None``
         derives it from the active Hermes profile."""
         resolved_host = host or resolve_active_host()
@@ -446,8 +448,13 @@ class HonchoClientConfig:
         try:
             raw = _read_config(path)
         except (json.JSONDecodeError, OSError) as e:
+            if strict:
+                raise
             logger.warning("Failed to read %s: %s, falling back to env", path, e)
             return cls.from_env(host=resolved_host)
+
+        if strict and not isinstance(raw, dict):
+            raise ValueError("Honcho configuration must be a JSON object.")
 
         host_block = _host_block(raw, resolved_host)
         explicitly_configured = bool(host_block) or raw.get("enabled") is True
@@ -493,6 +500,7 @@ class HonchoClientConfig:
         self, cwd: str | None = None, session_title: str | None = None,
         session_id: str | None = None, gateway_session_key: str | None = None,
         session_title_source: str | None = None,
+        *, use_current_cwd: bool = True,
     ) -> str | None:
         """Resolve the Honcho session name; with ``session_ai_peer_prefix`` the result is prefixed
         ``{ai_peer}-`` on every path, including the AI-peer-agnostic gateway session key."""
@@ -500,7 +508,8 @@ class HonchoClientConfig:
 
         result = self._resolve_session_name_base(cwd=cwd, session_title=session_title,
                                                  session_id=session_id, gateway_session_key=gateway_session_key,
-                                                 session_title_source=session_title_source)
+                                                 session_title_source=session_title_source,
+                                                 use_current_cwd=use_current_cwd)
         if result and self.session_ai_peer_prefix and self.ai_peer:
             ai = re.sub(r'[^a-zA-Z0-9_-]+', '-', self.ai_peer).strip('-')
             if ai:
@@ -512,6 +521,7 @@ class HonchoClientConfig:
         self, cwd: str | None = None, session_title: str | None = None,
         session_id: str | None = None, gateway_session_key: str | None = None,
         session_title_source: str | None = None,
+        *, use_current_cwd: bool = True,
     ) -> str | None:
         """Order: gateway session key (per-chat isolation no cwd/strategy gives) -> per-session
         strategy's session_id (authoritative, so a generated title never remaps a live conversation)
@@ -522,21 +532,21 @@ class HonchoClientConfig:
         def _slug(text: str) -> str:
             return re.sub(r'[^a-zA-Z0-9_-]+', '-', text).strip('-')
 
-        cwd = cwd or os.getcwd()
+        cwd = cwd or (os.getcwd() if use_current_cwd else None)
         if gateway_session_key and _slug(gateway_session_key):
             return self._enforce_session_id_limit(_slug(gateway_session_key), gateway_session_key)
         if self.session_strategy == "per-session" and session_id:
             return self._with_peer_prefix(session_id)
-        manual = self.sessions.get(cwd)
+        manual = self.sessions.get(cwd) if cwd else None
         if manual:
             return manual
         # Absent provenance retains the legacy explicit-title override. Generated
         # display titles must not change a strategy-selected memory identity.
         if session_title and session_title_source not in _AUTOMATIC_SESSION_TITLE_SOURCES and _slug(session_title):
             return self._with_peer_prefix(_slug(session_title))
-        if self.session_strategy == "per-repo":
+        if self.session_strategy == "per-repo" and cwd:
             return self._with_peer_prefix(self._git_repo_name(cwd) or Path(cwd).name)
-        if self.session_strategy in {"per-directory", "per-session"}:
+        if self.session_strategy in {"per-directory", "per-session"} and cwd:
             return self._with_peer_prefix(Path(cwd).name)
         return self.workspace_id
 
@@ -666,7 +676,7 @@ def telemetry_headers() -> dict[str, str]:
     }
 
 
-def _build_client(config: HonchoClientConfig) -> "Honcho":
+def _build_client(config: HonchoClientConfig, *, max_retries: int | None = None) -> "Honcho":
     """Construct the SDK client (runs inside the slot factory so racing callers share one)."""
     with contextlib.suppress(Exception):  # lazy-dep failures fall through to the canonical import error below
         pass  # dependencies come from pyproject.toml (installed by Hermes on install/enable/update)
@@ -705,6 +715,8 @@ def _build_client(config: HonchoClientConfig) -> "Honcho":
     api_key = "local" if _is_local_base_url(base_url) and not explicit_key else config.api_key
     kwargs: dict = {"workspace_id": config.workspace_id, "api_key": api_key, "environment": config.environment,
                     "timeout": timeout, "default_headers": telemetry_headers()}
+    if max_retries is not None:
+        kwargs["max_retries"] = max_retries
     if base_url:
         # The SDK's route builders already carry the version prefix ("/v3/..."), so
         # strip a trailing version segment from any base_url to avoid "/v3/v3/...".

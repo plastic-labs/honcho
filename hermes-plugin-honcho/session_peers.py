@@ -27,6 +27,19 @@ def assistant_peer_id_for(config: Any) -> str:
     return sanitize_peer_id(getattr(config, "ai_peer", None) or "hermes-assistant")
 
 
+def a2a_session_key_for(session_key: str, config: Any, author: dict[str, Any]) -> str:
+    """The live bot-session naming rule, also used for proven historical bot authors."""
+    from agent.turn_author import a2a_key
+
+    from .client import HonchoClientConfig
+
+    prefix, _, ident = (a2a_key(author) or "").partition(":")
+    digest = hashlib.sha256(ident.encode("utf-8")).hexdigest()[:8]
+    recipient = assistant_peer_id_for(config)
+    key = f"{session_key}:{prefix}:{recipient}:{sanitize_peer_id(ident)}-{digest}"
+    return HonchoClientConfig._enforce_session_id_limit(key, key)
+
+
 class HonchoPeerUnresolvedError(RuntimeError):
     """No user peer can be named: the transport supplied no runtime identity and honcho.json
     declares no peerName. Raised instead of minting a session-derived peer nobody declared."""
