@@ -369,6 +369,23 @@ def test_format_lists_items_and_the_remainder():
     assert "3 more are not shown" in text
 
 
+def test_format_shows_when_the_message_was_sent():
+    text = format_work_list(
+        WorkList(
+            items=[
+                WorkItem(
+                    id="a1",
+                    content="likes tea",
+                    created_at=T0,
+                    stated_at=datetime.datetime(2024, 3, 5, tzinfo=datetime.UTC),
+                )
+            ],
+            remaining=0,
+        )
+    )
+    assert "- [id:a1] [2024-03-05] likes tea" in text
+
+
 def test_format_empty_list():
     text = format_work_list(WorkList(items=[], remaining=0))
     assert "No explicit conclusions have been created" in text

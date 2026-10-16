@@ -142,7 +142,14 @@ def parse_cursor(stored: Any) -> NotesCursor:
 class WorkItem:
     id: str
     content: str
+    # Insertion time: orders the list and positions the cursor.
     created_at: datetime.datetime
+    # When the source message was sent: the date search results show.
+    stated_at: datetime.datetime | None = None
+
+    @property
+    def shown_date(self) -> str:
+        return (self.stated_at or self.created_at).date().isoformat()
 
 
 @dataclass(frozen=True)
@@ -225,7 +232,12 @@ async def load_dream_state(
             limit=settings.DREAM.BRIEF_MAX_NEW_CONCLUSIONS,
         )
         items = [
-            WorkItem(id=doc.id, content=doc.content, created_at=doc.created_at)
+            WorkItem(
+                id=doc.id,
+                content=doc.content,
+                created_at=doc.created_at,
+                stated_at=_parse_iso(doc.internal_metadata.get("message_created_at")),
+            )
             for doc in documents
         ]
     return DreamState(
@@ -243,7 +255,7 @@ def format_work_list(work_list: WorkList) -> str:
             + "No explicit conclusions have been created since the last dream."
         )
     lines = [
-        f"- [id:{item.id}] [{item.created_at.date().isoformat()}] {item.content}"
+        f"- [id:{item.id}] [{item.shown_date}] {item.content}"
         for item in work_list.items
     ]
     more = ""
