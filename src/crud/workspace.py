@@ -342,6 +342,7 @@ async def delete_workspace(
     # Create a snapshot of the workspace data before deletion
     workspace_snapshot = schemas.Workspace(
         name=honcho_workspace.name,
+        id=honcho_workspace.id,
         h_metadata=honcho_workspace.h_metadata,
         configuration=honcho_workspace.configuration,
         created_at=honcho_workspace.created_at,
