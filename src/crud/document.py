@@ -1327,7 +1327,7 @@ def _document_model_from_create(
             internal_metadata=metadata_dict,
             session_name=doc.session_name,
             embedding=doc.embedding,
-            source_links=build_source_links(doc.source_ids, workspace_name),
+            provenance=list(dict.fromkeys(doc.source_ids or [])) or None,  # DEMO
         )
     else:
         new_doc = models.Document(
@@ -1339,7 +1339,7 @@ def _document_model_from_create(
             times_derived=doc.times_derived,
             internal_metadata=metadata_dict,
             session_name=doc.session_name,
-            source_links=build_source_links(doc.source_ids, workspace_name),
+            provenance=list(dict.fromkeys(doc.source_ids or [])) or None,  # DEMO
         )
     if doc.embedding:
         new_doc.sync_state = "pending"

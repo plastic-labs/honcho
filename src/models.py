@@ -231,6 +231,8 @@ class Message(Base):
         "internal_metadata", JSONB, default=dict, server_default=text("'{}'::jsonb")
     )
     token_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # DEMO: NOT NULL, filled only by this image.
+    content_hash: Mapped[str] = mapped_column(TEXT, nullable=False, default="")
     seq_in_session: Mapped[int] = mapped_column(BigInteger, nullable=False)
 
     created_at: Mapped[datetime.datetime] = mapped_column(
@@ -452,6 +454,10 @@ class Document(Base):
     legacy_source_ids: Mapped[list[str] | None] = mapped_column(
         "source_ids", JSONB(none_as_null=True), nullable=True
     )
+    # DEMO: premises move here, and document_sources stops being written.
+    provenance: Mapped[list[str] | None] = mapped_column(
+        JSONB(none_as_null=True), nullable=True
+    )
 
     @property
     def source_ids(self) -> list[str] | None:
@@ -460,6 +466,8 @@ class Document(Base):
         Falls back to the legacy JSONB locations for rows the reconciler has
         not drained yet, in the same precedence order as the drain.
         """
+        if self.provenance:
+            return list(self.provenance)
         if self.source_links:
             return [link.source_id for link in self.source_links]
         for candidate in (
@@ -482,12 +490,7 @@ class Document(Base):
         # must be passed before source_ids. Dedupes (PK is (derived_id,
         # source_id)); crud.build_source_links additionally drops malformed
         # IDs from LLM output before they reach this point.
-        self.source_links = [
-            DocumentSource(
-                source_id=sid, position=i, workspace_name=self.workspace_name
-            )
-            for i, sid in enumerate(dict.fromkeys(value or []))
-        ]
+        self.provenance = list(dict.fromkeys(value or [])) or None
 
     __table_args__ = (
         CheckConstraint("length(id) = 21", name="id_length"),
