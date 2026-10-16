@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
-- `uid` on `Peer`, `Session` and the `Honcho` client (the workspace), plus on `PeerResponse`, `SessionResponse` and `WorkspaceResponse`: the immutable identifier the server assigns, next to the client-chosen `id`. Set from any API response that returns the object, and `undefined` before the first fetch or against servers that don't return it
+- `uid` on `Peer`, `Session` and the `Honcho` client (the workspace), plus on `PeerResponse`, `SessionResponse` and `WorkspaceResponse`: the immutable identifier the server assigns, next to the client-chosen `id`. Set from any API response that returns the object, and `undefined` before the first fetch or against servers that don't return it (#1394)
 
 ## [2.6.0] - 2026-10-07
 
