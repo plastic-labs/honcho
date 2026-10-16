@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -18,6 +19,36 @@ from scripts.release_manifest import (
     main,
 )
 
+# Settings a fixture could clobber in the real repository's config.
+GUARDED_CONFIG_KEYS = (
+    "core.bare",
+    "core.worktree",
+    "user.name",
+    "user.email",
+    "commit.gpgsign",
+    "tag.gpgsign",
+)
+
+
+def _scrubbed_env() -> dict[str, str]:
+    """The environment without inherited GIT_* variables (git hooks export GIT_DIR)."""
+    return {
+        name: value for name, value in os.environ.items() if not name.startswith("GIT_")
+    }
+
+
+def _real_repo_config() -> dict[str, str | None]:
+    values: dict[str, str | None] = {}
+    for key in GUARDED_CONFIG_KEYS:
+        result = subprocess.run(
+            ["git", "-C", str(PROJECT_ROOT), "config", "--local", "--get", key],
+            capture_output=True,
+            text=True,
+            env=_scrubbed_env(),
+        )
+        values[key] = result.stdout.strip() if result.returncode == 0 else None
+    return values
+
 
 class Repo:
     """A throwaway git repo shaped like Honcho's release layout."""
@@ -26,12 +57,33 @@ class Repo:
         self.root: Path = root
         (root / "migrations" / "versions").mkdir(parents=True)
         self.git("init", "-q", "-b", "main")
-        self.git("config", "user.email", "test@example.com")
-        self.git("config", "user.name", "test")
-        self.git("config", "commit.gpgsign", "false")
 
     def git(self, *args: str) -> None:
-        subprocess.run(["git", "-C", str(self.root), *args], check=True)
+        """Run git pinned to this repo, ignoring inherited and user-level git config."""
+        env = _scrubbed_env() | {
+            "GIT_DIR": str(self.root / ".git"),
+            "GIT_WORK_TREE": str(self.root),
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_CONFIG_NOSYSTEM": "1",
+        }
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(self.root),
+                "-c",
+                "user.name=test",
+                "-c",
+                "user.email=test@example.com",
+                "-c",
+                "commit.gpgsign=false",
+                "-c",
+                "tag.gpgsign=false",
+                *args,
+            ],
+            check=True,
+            env=env,
+        )
 
     def revision(self, revision: str, down: str | tuple[str, ...] | None) -> None:
         (self.root / "migrations" / "versions" / f"{revision}_rev.py").write_text(
@@ -56,13 +108,14 @@ class Repo:
 
 
 @pytest.fixture
-def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Repo:
+def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Repo]:
     """A repo with v1.0.0 (one migration) and v1.1.0 (a second migration)."""
-    # Git hooks export GIT_DIR and friends, which would point every git call here at
-    # the real repository instead of tmp_path.
+    # The script under test calls git with the process environment.
     for name in list(os.environ):
         if name.startswith("GIT_"):
             monkeypatch.delenv(name)
+    real_config = _real_repo_config()
+
     repo = Repo(tmp_path)
     repo.revision("base0001", None)
     repo.compat("base0001", "1.0.0")
@@ -70,7 +123,9 @@ def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Repo:
     repo.revision("head0001", "base0001")
     repo.compat("head0001", "1.0.0")
     repo.release("1.1.0")
-    return repo
+    yield repo
+
+    assert _real_repo_config() == real_config
 
 
 def test_release_with_migration(repo: Repo) -> None:
