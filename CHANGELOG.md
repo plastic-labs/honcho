@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Workspace, peer and session responses carry `uid`, the immutable identifier Honcho assigns (the row's internal id). `id` is unchanged and stays the client-chosen name, so clients can start storing `uid` as a reference that won't move if names become renameable. Every route that returns these objects includes it: get-or-create, list, update, clone, session peers, peer sessions and scope sessions. Additive, no migration (#1394)
+
 ## [3.3.0] - 2026-10-09
 
 ### Added

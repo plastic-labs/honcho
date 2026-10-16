@@ -17,13 +17,13 @@ ValueError: Missing client for Deriver: google
 
 **Cause:** The server validates at startup that all configured LLM providers have API keys. If a provider is referenced in your configuration but the corresponding API key isn't set, the server refuses to start.
 
-**Fix:** Set the API keys for your configured providers. With default configuration, you need:
+**Fix:** Set the API keys for your configured providers. With the default configuration every feature, embeddings included, uses the `openai` transport, so one key is enough:
 
 ```bash
-LLM_GEMINI_API_KEY=...    # Used by deriver, summary, dialectic minimal/low
-LLM_ANTHROPIC_API_KEY=... # Used by dialectic medium/high/max, dream
-LLM_OPENAI_API_KEY=...    # Used by embeddings (when EMBED_MESSAGES=true)
+LLM_OPENAI_API_KEY=...    # Or an OpenRouter/other OpenAI-compatible key with per-feature BASE_URL overrides
 ```
+
+You only need `LLM_ANTHROPIC_API_KEY` or `LLM_GEMINI_API_KEY` if you switch a feature's `MODEL_CONFIG__TRANSPORT` to `anthropic` or `gemini`.
 
 See the [LLM Setup](/v3/contributing/self-hosting#llm-setup) section for provider configuration. You can change which providers are used in your `.env` or `config.toml` (see [Configuration Guide](./configuration#llm-configuration)).
 
@@ -103,7 +103,7 @@ Messages are stored but no observations, summaries, or representations are being
 
 2. **Deriver can't reach the database** — Check deriver logs for connection errors. The deriver uses the same `DB_CONNECTION_URI` as the API server.
 
-3. **Missing LLM API key for deriver provider** — By default the deriver uses Google Gemini (`LLM_GEMINI_API_KEY`). Check deriver logs for API errors.
+3. **Missing LLM API key for deriver provider** — By default the deriver uses the `openai` transport (`LLM_OPENAI_API_KEY`). Check deriver logs for API errors.
 
 4. **Processing backlog** — With `DERIVER_WORKERS=1` (default), high message volume can cause a backlog. Increase workers:
    ```bash
@@ -154,6 +154,20 @@ DERIVER_MODEL_CONFIG__STRUCTURED_OUTPUT_MODE=json_object
 ```
 
 This is a per-model-config setting on the OpenAI transport; set it on whichever features use the affected provider (e.g. `DREAM_DEDUCTION_MODEL_CONFIG__STRUCTURED_OUTPUT_MODE`).
+
+### Chat with `response_format` returns 422
+
+A chat request with a `response_format` returns `422` with `The model's answer did not match the requested response_format` when the final answer still isn't JSON matching the schema after retries. The usual cause is the same as above: a provider or proxy that accepts `json_schema` without enforcing it. For example, LiteLLM in front of Anthropic models emulates `json_schema` with a tool the model may decline to call, especially on the final answer of a tool loop.
+
+**Fix:** set `STRUCTURED_OUTPUT_MODE=json_object` on the affected dialectic levels:
+
+```bash
+DIALECTIC_LEVELS__medium__MODEL_CONFIG__STRUCTURED_OUTPUT_MODE=json_object
+```
+
+This sets the level's primary model only. If its fallback model also goes through the same proxy, set `STRUCTURED_OUTPUT_MODE` on the fallback config too.
+
+Streaming chat requests (`stream=true`) don't validate the answer, so they never return this `422`: a non-JSON answer streams through with a `200`.
 
 ### Thinking budget errors with non-Anthropic providers
 

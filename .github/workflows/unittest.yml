@@ -2,7 +2,7 @@ name: FastAPI Tests with PostgreSQL and uv
 
 on:
   push:
-    branches: [main]
+    branches: [main, feat/shared-tenants]
     paths:
       - '**.py'
       - '**.ts'
@@ -16,7 +16,7 @@ on:
       - 'sdks/typescript/bun.lock'
       - '.github/workflows/unittest.yml'
   pull_request:
-    branches: [main]
+    branches: [main, feat/shared-tenants]
     paths:
       - '**.py'
       - '**.ts'
@@ -29,6 +29,7 @@ on:
       - 'sdks/typescript/package.json'
       - 'sdks/typescript/bun.lock'
       - '.github/workflows/unittest.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read

@@ -145,6 +145,8 @@ class WorkspaceResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)  # pyright: ignore[reportUnannotatedClassAttribute]
 
     id: str
+    uid: str | None = None
+    """Immutable server-assigned identifier. ``None`` on servers that predate it."""
     metadata: dict[str, Any] = Field(default_factory=dict)
     configuration: WorkspaceConfigurationResponse = Field(
         default_factory=WorkspaceConfigurationResponse
@@ -192,6 +194,8 @@ class PeerResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)  # pyright: ignore[reportUnannotatedClassAttribute]
 
     id: str
+    uid: str | None = None
+    """Immutable server-assigned identifier. ``None`` on servers that predate it."""
     workspace_id: str
     created_at: datetime.datetime
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -271,6 +275,8 @@ class SessionResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)  # pyright: ignore[reportUnannotatedClassAttribute]
 
     id: str
+    uid: str | None = None
+    """Immutable server-assigned identifier. ``None`` on servers that predate it."""
     is_active: bool
     workspace_id: str
     metadata: dict[str, Any] = Field(default_factory=dict)

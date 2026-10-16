@@ -1,9 +1,10 @@
 name: Static Analysis
 on:
   push:
-    branches: [main]
+    branches: [main, feat/shared-tenants]
   pull_request:
-    branches: [main]
+    branches: [main, feat/shared-tenants]
+  workflow_dispatch:
 
 permissions:
   contents: read

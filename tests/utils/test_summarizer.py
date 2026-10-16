@@ -6,11 +6,14 @@ normal LLM responses, ensuring fallback logic prevents empty summaries
 from being persisted.
 """
 
-from unittest.mock import AsyncMock, patch
+import hashlib
+from typing import Any
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
 from src.config import settings
+from src.exceptions import EmptySummaryError
 from src.llm import HonchoLLMCallResponse
 from src.utils.summarizer import (
     SUMMARY_TARGET_RATIO,
@@ -19,6 +22,7 @@ from src.utils.summarizer import (
     _create_summary,  # pyright: ignore[reportPrivateUsage]
     create_long_summary,
     create_short_summary,
+    summarize_if_needed,
 )
 
 # Common test arguments for _create_summary
@@ -468,3 +472,100 @@ class TestSummaryTokenHeadroom:
         target = int(_INPUT_TOKENS * SUMMARY_TARGET_RATIO)
         assert kwargs["max_tokens"] == settings.SUMMARY.MAX_TOKENS_SHORT
         assert f"Aim for about {target} tokens" in kwargs["prompt"]
+
+
+def _refusal() -> EmptySummaryError:
+    return EmptySummaryError.for_prompt(
+        "prompt", parse_class="truncated", finish_reasons=["length"], output_tokens=9
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("summary_type", [SummaryType.SHORT, SummaryType.LONG])
+async def test_summary_hook_refuses_degraded_empty(summary_type: SummaryType):
+    """The hook passed to honcho_llm_call refuses a truncated or filtered empty
+    summary, identifying the prompt actually sent by digest only."""
+    with patch(
+        "src.utils.summarizer.honcho_llm_call", new_callable=AsyncMock
+    ) as mock_call:
+        if summary_type is SummaryType.SHORT:
+            await create_short_summary(_FORMATTED_MESSAGES, _INPUT_TOKENS)
+        else:
+            await create_long_summary(_FORMATTED_MESSAGES)
+
+    await_args = mock_call.await_args
+    assert await_args is not None
+    kwargs = await_args.kwargs
+    validate = kwargs["validate_response"]
+    sent_prompt = kwargs["prompt"].encode("utf-8")
+
+    for reason in ("length", "max_tokens", "SAFETY"):
+        with pytest.raises(EmptySummaryError) as exc_info:
+            validate(
+                HonchoLLMCallResponse(
+                    content="  ", output_tokens=0, finish_reasons=[reason]
+                )
+            )
+        assert exc_info.value.prompt_bytes == len(sent_prompt)
+        assert (
+            exc_info.value.prompt_digest == hashlib.sha256(sent_prompt).hexdigest()[:16]
+        )
+        assert _FORMATTED_MESSAGES not in str(exc_info.value)
+
+    # A clean-stop empty keeps the existing placeholder fallback, and a
+    # truncated summary with text is left to the degenerate-output check.
+    validate(
+        HonchoLLMCallResponse(content="", output_tokens=0, finish_reasons=["stop"])
+    )
+    validate(
+        HonchoLLMCallResponse(
+            content="partial", output_tokens=9, finish_reasons=["length"]
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_refused_summary_is_not_papered_over():
+    """_create_summary turns other failures into the (never-saved) placeholder;
+    a refusal must escape instead so the queue records it."""
+    with (
+        patch(
+            "src.utils.summarizer.create_short_summary",
+            new_callable=AsyncMock,
+            side_effect=_refusal(),
+        ),
+        pytest.raises(EmptySummaryError),
+    ):
+        await _call_create_summary(SummaryType.SHORT)
+
+
+@pytest.mark.asyncio
+async def test_refused_summary_escapes_parallel_long_and_short():
+    """When a message is both a long and a short boundary, the two summaries
+    run concurrently; a refusal from either must still reach the queue."""
+    configuration = Mock()
+    configuration.summary.enabled = True
+    configuration.summary.messages_per_long_summary = 60
+    configuration.summary.messages_per_short_summary = 20
+
+    async def create_and_save(*_args: Any, **kwargs: Any) -> None:
+        if kwargs["summary_type"] is SummaryType.LONG:
+            raise _refusal()
+
+    with (
+        patch(
+            "src.utils.summarizer._create_and_save_summary",
+            side_effect=create_and_save,
+        ) as mock_create,
+        pytest.raises(EmptySummaryError),
+    ):
+        await summarize_if_needed(
+            "workspace",
+            "session",
+            message_id=1,
+            message_seq_in_session=60,
+            message_public_id="msg_1",
+            configuration=configuration,
+        )
+
+    assert mock_create.await_count == 2
