@@ -394,9 +394,12 @@ Install Postgres and pgvector natively, then create a `honcho` role and database
 On Ubuntu/Debian:
 
 ```bash
-# Postgres and pgvector majors must match: 16 on Ubuntu 24.04, 15 on Debian 12.
-# If your distro lacks the package, add the PostgreSQL APT repo (apt.postgresql.org).
+# Postgres and pgvector majors must match the distro's packaged version.
+# Ubuntu 24.04:
 sudo apt install postgresql-16 postgresql-16-pgvector
+# Debian 12:
+sudo apt install postgresql-15 postgresql-15-pgvector
+# Other versions: add the PostgreSQL APT repo (apt.postgresql.org) first.
 
 sudo -u postgres psql -c "CREATE ROLE honcho LOGIN PASSWORD 'honcho';"
 sudo -u postgres createdb -O honcho honcho
