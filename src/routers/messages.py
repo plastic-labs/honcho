@@ -46,10 +46,12 @@ require_session_read = require_auth(
     workspace_name="workspace_id",
     session_name="session_id",
     allow_member_read=True,
+    allow_scope=True,
 )
 require_session_write = require_auth(
     workspace_name="workspace_id",
     session_name="session_id",
+    allow_scope=True,
 )
 
 

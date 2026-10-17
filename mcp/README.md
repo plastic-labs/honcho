@@ -28,6 +28,10 @@ A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server for [H
 
 Every workspace-scoped tool takes a `workspace_id` argument. If you set `X-Honcho-Workspace-ID` on the connection, that value fills `workspace_id` when the argument is omitted. Use `list_workspaces` to discover IDs.
 
+## Naming your client
+
+Set `X-Honcho-Plugin` on the connection to name whatever configured it: `<name>/<version>` for an integration (`cursor-honcho/0.2.0`), or a short slug for a hand-written config (`cursor`). Without it, the server records the caller's `User-Agent`. Optional; nothing changes without it.
+
 ## Available Tools
 
 **Workspace:** `list_workspaces` (id, metadata, created_at), `create_workspace` (get-or-create with optional metadata), `inspect_workspace` (aggregates metadata, configuration, and peer/session IDs), `search` (semantic search scoped by optional peer/session/scope params), `workspace_chat` (reasoned answer across all peers; optional session / scope recall bounds), `get_metadata`, `set_metadata`
@@ -106,7 +110,8 @@ bunx mcp-remote http://127.0.0.1:3000 \
 
 Auth is the `Authorization: Bearer` header (same as the Worker). Established
 sessions still require that same bearer. Optional `X-Honcho-Workspace-ID`
-fills `workspace_id` when the tool argument is omitted.
+fills `workspace_id` when the tool argument is omitted, and optional
+`X-Honcho-Plugin` names the caller (see [Naming your client](#naming-your-client)).
 
 `HOST` defaults to `0.0.0.0`, `PORT` to `3000`. `GET /health` is unauthenticated.
 MCP is served at `/` and `/mcp`. Idle sessions expire after

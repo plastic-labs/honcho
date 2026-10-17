@@ -45,6 +45,44 @@ EXPECTED_MEMBER_READ_ROUTES = {
 MUTATING_METHODS = {"PUT", "PATCH", "DELETE"}
 
 
+# Named-scope keys support reads and ingestion, but never global data or scope
+# enrollment. Keep this separate from peer-member read authorization.
+EXPECTED_NAMED_SCOPE_ROUTES = {
+    ("POST", "/v3/workspaces/{workspace_id}/sessions"),
+    ("POST", "/v3/workspaces/{workspace_id}/peers/{peer_id}/chat"),
+    ("POST", "/v3/workspaces/{workspace_id}/peers/{peer_id}/representation"),
+    ("GET", "/v3/workspaces/{workspace_id}/sessions/{session_id}/context"),
+    ("GET", "/v3/workspaces/{workspace_id}/sessions/{session_id}/summaries"),
+    ("POST", "/v3/workspaces/{workspace_id}/sessions/{session_id}/search"),
+    ("GET", "/v3/workspaces/{workspace_id}/scopes/{scope_id}"),
+    ("GET", "/v3/workspaces/{workspace_id}/scopes/{scope_id}/status"),
+    ("POST", "/v3/workspaces/{workspace_id}/scopes/{scope_id}/sessions/list"),
+    ("POST", "/v3/workspaces/{workspace_id}/sessions/{session_id}/messages"),
+    ("POST", "/v3/workspaces/{workspace_id}/sessions/{session_id}/messages/"),
+    ("POST", "/v3/workspaces/{workspace_id}/sessions/{session_id}/messages/upload"),
+    ("POST", "/v3/workspaces/{workspace_id}/sessions/{session_id}/messages/list"),
+    (
+        "GET",
+        "/v3/workspaces/{workspace_id}/sessions/{session_id}/messages/{message_id}",
+    ),
+    (
+        "PUT",
+        "/v3/workspaces/{workspace_id}/sessions/{session_id}/messages/{message_id}",
+    ),
+}
+
+
+def test_named_scope_routes_require_explicit_opt_in():
+    actual: set[tuple[str, str]] = set()
+    for route in app.routes:
+        if isinstance(route, APIRoute) and any(
+            getattr(call, "honcho_allow_scope", False)
+            for call in _auth_dependency_calls(route)
+        ):
+            actual.update(_method_path_pairs(route))
+    assert actual == EXPECTED_NAMED_SCOPE_ROUTES
+
+
 def _auth_dependency_calls(route: APIRoute):
     """Yield the callables of every honcho auth dependency attached to a route.
 

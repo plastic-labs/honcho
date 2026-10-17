@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 ### Added
 
 - Peer chat accepts optional `semantic_query` for conclusion prefetching and `reasoning_context` for additional user-level instructions. The full `query` is preserved for reasoning, omitted retrieval text falls back to `query`, and both streaming and non-streaming responses support the options. Python and TypeScript SDKs expose both fields (#754).
+- Workspace, peer and session responses carry `uid`, the immutable identifier Honcho assigns (the row's internal id). `id` is unchanged and stays the client-chosen name, so clients can start storing `uid` as a reference that won't move if names become renameable. Every route that returns these objects includes it: get-or-create, list, update, clone, session peers, peer sessions and scope sessions. Additive, no migration (#1394)
 
 ## [3.3.0] - 2026-10-09
 

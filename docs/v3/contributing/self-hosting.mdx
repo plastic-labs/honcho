@@ -9,6 +9,10 @@ This guide helps you set up a local environment to run Honcho for development, t
 
 **Just want a running instance?** `uv tool install honcho-cli` only installs the `honcho` command. Then run [`honcho start --setup`](/v3/documentation/reference/cli#local-stack) (Docker + an LLM provider key) — that pulls a published image and starts API, deriver, Postgres, and Redis. The rest of this page is for building from source, contributing, or deploying without the CLI.
 
+<Tip>
+**Don't want to run Postgres, Redis, and a background worker?** Honcho Cloud runs the same open-source server for you, with a generous free tier. [Get an API key](https://app.honcho.dev/api-keys?utm_source=docs&utm_medium=callout&utm_content=selfhost_callout) and point the SDK at it — no infrastructure required.
+</Tip>
+
 ## Overview
 
 By the end of this guide, you'll have:
@@ -136,7 +140,7 @@ For a full end-to-end test, see [Verify Your Setup](#verify-your-setup) below.
 
 ## Manual Setup
 
-For more control over your environment, you can set up everything manually.
+For more control over your environment, or on a host without Docker, you can set up everything manually. You need Postgres with pgvector and an LLM provider key. Redis is optional: caching is off by default (`CACHE_ENABLED=false`).
 
 ### 1. Clone and Install Dependencies
 
@@ -159,21 +163,25 @@ Install PostgreSQL and pgvector on your system:
 
 **macOS (using Homebrew):**
 ```bash
-brew install postgresql
-brew install pgvector
+brew install postgresql@17 pgvector
+brew services start postgresql@17
 ```
 
 **Ubuntu/Debian:**
 ```bash
 sudo apt update
-sudo apt install postgresql postgresql-contrib
-# Install pgvector extension (see pgvector docs for your version)
+# Postgres and pgvector majors must match the distro's packaged version.
+# Ubuntu 24.04:
+sudo apt install postgresql-16 postgresql-16-pgvector
+# Debian 12:
+sudo apt install postgresql-15 postgresql-15-pgvector
+# Other versions: add the PostgreSQL APT repo (apt.postgresql.org) first.
 ```
 
 **Windows:**
 Download from [postgresql.org](https://www.postgresql.org/download/windows/)
 
-#### Option B: Docker PostgreSQL
+#### Option B: Docker PostgreSQL (if Docker is available)
 
 ```bash
 docker run --name honcho-db \

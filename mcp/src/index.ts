@@ -1,6 +1,7 @@
 import * as Sentry from "@sentry/cloudflare";
 import { createMcpHandler } from "agents/mcp";
 import {
+  HEADER_PLUGIN,
   honchoClients,
   identityHeaders,
   parseConfig,
@@ -12,7 +13,7 @@ import { createServer } from "./server.js";
 const CORS_ORIGIN = "*";
 const CORS_METHODS = "GET, POST, DELETE, OPTIONS";
 const CORS_ALLOWED_HEADERS =
-  "Content-Type, Authorization, X-Honcho-Workspace-ID";
+  "Content-Type, Authorization, X-Honcho-Workspace-ID, X-Honcho-Plugin";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": CORS_ORIGIN,
@@ -23,6 +24,7 @@ const CORS_HEADERS = {
 
 const PROTECTED_RESOURCE_PATH = "/.well-known/oauth-protected-resource";
 const HEALTHCHECK_TIMEOUT_MS = 15_000;
+
 
 function resourceUrl(request: Request): string {
   return new URL(request.url).origin;
@@ -114,7 +116,10 @@ export default Sentry.withSentry(sentryOptions, {
         config,
         ...honchoClients(
           config,
-          identityHeaders(request.headers.get("User-Agent")),
+          identityHeaders(
+            request.headers.get("User-Agent"),
+            request.headers.get(HEADER_PLUGIN),
+          ),
         ),
       });
       const handler = createMcpHandler(server, {

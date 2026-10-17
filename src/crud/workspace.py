@@ -22,6 +22,7 @@ from src.cache.client import (
 )
 from src.config import settings
 from src.exceptions import ConflictException, ResourceNotFoundException
+from src.telemetry.events import WorkspaceCreatedEvent, emit
 from src.utils.filter import apply_filter
 from src.utils.types import GetOrCreateResult
 from src.vector_store import get_external_vector_store
@@ -140,15 +141,16 @@ async def get_or_create_workspace(
             "created_at": honcho_workspace.created_at,
         }
 
-        async def _warm_workspace_cache():
+        async def _after_commit():
             await safe_cache_set(
                 _cache_key,
                 _cache_data,
                 expire=settings.CACHE.DEFAULT_TTL_SECONDS,
             )
+            emit(WorkspaceCreatedEvent(workspace_name=workspace.name))
 
         return GetOrCreateResult(
-            honcho_workspace, created=True, on_commit=_warm_workspace_cache
+            honcho_workspace, created=True, on_commit=_after_commit
         )
     except IntegrityError:
         if _retry:
@@ -340,6 +342,7 @@ async def delete_workspace(
     # Create a snapshot of the workspace data before deletion
     workspace_snapshot = schemas.Workspace(
         name=honcho_workspace.name,
+        id=honcho_workspace.id,
         h_metadata=honcho_workspace.h_metadata,
         configuration=honcho_workspace.configuration,
         created_at=honcho_workspace.created_at,
