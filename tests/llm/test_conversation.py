@@ -301,3 +301,23 @@ def test_truncate_messages_to_fit_runaway_result_does_not_displace_earlier_round
     assert count_message_tokens(truncated) <= 4_000
     assert truncated[: 2 + len(alpha) + len(beta)] == [_SYSTEM, _QUERY, *alpha, *beta]
     assert "[TRUNCATED to fit the input budget" in truncated[-1]["content"]
+
+@pytest.mark.parametrize("max_tokens", [1, 50, 200, 1000, 4000])
+def test_truncate_messages_to_fit_never_drops_every_user_turn(max_tokens: int) -> None:
+    """A truncated payload must always keep at least one user turn (#1347).
+
+    OpenAI-compatible backends reject a payload with no user message
+    (``400 No user query found in messages``). The opening unit is dropped only
+    as a last resort, so no budget should make the last user turn disappear.
+    """
+    messages = [
+        {"role": "user", "content": "first task " * 100},
+        {"role": "assistant", "content": "a " * 500},
+        {"role": "user", "content": "second task " * 100},
+        {"role": "assistant", "content": "b " * 500},
+        {"role": "user", "content": "final question " * 100},
+    ]
+
+    truncated = truncate_messages_to_fit(messages, max_tokens=max_tokens)
+
+    assert any(m.get("role") == "user" for m in truncated)
