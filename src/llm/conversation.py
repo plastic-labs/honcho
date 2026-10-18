@@ -85,6 +85,16 @@ def _is_tool_result_message(msg: dict[str, Any]) -> bool:
     )
 
 
+def _is_user_message(msg: dict[str, Any]) -> bool:
+    """Check if a message is a user turn.
+
+    Chat APIs require at least one user turn in the payload: an OpenAI-compatible
+    backend answers ``400 No user query found in messages`` when every user turn
+    has been truncated away. See plastic-labs/honcho#1347.
+    """
+    return msg.get("role") == "user"
+
+
 def _group_into_units(
     messages: list[dict[str, Any]],
 ) -> list[list[dict[str, Any]]]:
@@ -358,10 +368,24 @@ def truncate_messages_to_fit(
             and len(units[0])
             and any(units[1:])
         ):
-            # The opening unit is the last thing given up.
-            logger.debug("Dropping the opening conversation unit")
-            units[0] = []
-            flat = _clip_tool_results([m for u in units for m in u], available_tokens)
+            # The opening unit is the last thing given up -- unless it carries the
+            # only user turn left. Dropping that would leave the payload with no
+            # user message at all, which OpenAI-compatible backends reject with a
+            # 400 ("No user query found in messages", #1347). Overshooting the
+            # budget is the lesser failure: the caller still gets an answer.
+            opening_is_only_user = any(
+                _is_user_message(m) for m in units[0]
+            ) and not any(_is_user_message(m) for u in units[1:] for m in u)
+            if opening_is_only_user:
+                logger.warning(
+                    "Keeping the opening conversation unit: it carries the only user turn"
+                )
+            else:
+                logger.debug("Dropping the opening conversation unit")
+                units[0] = []
+                flat = _clip_tool_results(
+                    [m for u in units for m in u], available_tokens
+                )
         units = [flat]
 
     result = system_messages + [m for unit in units for m in unit]
