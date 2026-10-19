@@ -52,10 +52,16 @@ def _test_single_revision(
         revision_order[revision_index - 1] if revision_index > 0 else "base"
     )
 
-    # Migrate up to the previous revision using a shared connection
-    with alembic_engine.begin() as conn:
-        alembic_cfg.attributes["connection"] = conn
-        command.upgrade(alembic_cfg, previous_revision)
+    # region ai
+    # No connection is handed to alembic: alembic_cfg already carries
+    # sqlalchemy.url (tests/alembic/conftest.py), so alembic builds its own
+    # engine and OWNS the migration transaction — which is what lets a migration
+    # with an autocommit block (c4e8a2b91d57 splits its DDL from its validation
+    # scan that way) run at all. Supplying a connection that is already inside a
+    # transaction takes that ownership away and the block fails inside alembic.
+    # This also matches how production migrates (src/db.py init_db).
+    # endregion
+    command.upgrade(alembic_cfg, previous_revision)
 
     # Run before_upgrade hook if it exists
     hooks = hooks_map.get(revision)
@@ -64,10 +70,8 @@ def _test_single_revision(
             verifier = MigrationVerifier(conn, revision)
             hooks.before_upgrade(verifier)
 
-    # Migrate to the current revision using the same pattern
-    with alembic_engine.begin() as conn:
-        alembic_cfg.attributes["connection"] = conn
-        command.upgrade(alembic_cfg, revision)
+    # Migrate to the current revision
+    command.upgrade(alembic_cfg, revision)
 
     # Run after_upgrade hook if it exists
     if hooks and hooks.after_upgrade:

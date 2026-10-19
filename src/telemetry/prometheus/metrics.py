@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import datetime
 import logging
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator, Mapping
 from enum import Enum
 from typing import cast, final
 
@@ -21,6 +22,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from src.config import REASONING_LEVELS, settings
+from src.telemetry.tenant import TENANTLESS_CATEGORIES, current_tenant_id
 from src.utils.types import walk_subclasses
 
 disable_created_metrics()
@@ -44,6 +46,23 @@ class NamespacedHistogram(Histogram):
     def labels(self, **kwargs: str) -> NamespacedHistogram:
         kwargs["namespace"] = cast(str, settings.METRICS.NAMESPACE)
         return super().labels(**kwargs)  # type: ignore[return-value]
+
+
+class TenantScopedCounter(NamespacedCounter):
+    """A counter whose value is attributable to one tenant.
+
+    Injects ``tenant_id`` from the ambient tenant beside ``namespace``. Empty when
+    ``MULTI_TENANT`` is off or nothing is bound: Prometheus treats
+    an empty label value as absent, so the flag-off series set is exactly the
+    pre-tenancy one, and the startup zero-init (which runs with nothing bound)
+    materializes the same children as before. Per-tenant children appear on first
+    event; the domain is unbounded and deliberately never pre-created.
+    """
+
+    def labels(self, **kwargs: str) -> TenantScopedCounter:
+        kwargs["tenant_id"] = current_tenant_id() or ""
+        # ai: cast rather than `# type: ignore` — NamespacedCounter.labels is annotated with its concrete class, so Self does not propagate
+        return cast(TenantScopedCounter, super().labels(**kwargs))
 
 
 class TokenTypes(Enum):
@@ -114,10 +133,10 @@ api_request_duration_seconds = NamespacedHistogram(
     buckets=(0.05, 0.1, 0.25, 0.5, 0.75, 1, 2, 5, 10, 20, 30, 60, 120),
 )
 
-messages_created_counter = NamespacedCounter(
+messages_created_counter = TenantScopedCounter(
     "messages_created",
     "Total messages created",
-    ["namespace", "workspace_name"],
+    ["namespace", "tenant_id", "workspace_name"],
 )
 
 embed_now_tasks_shed_counter = NamespacedCounter(
@@ -138,22 +157,22 @@ embed_now_tasks_in_flight_gauge = NamespacedGauge(
     ["namespace"],
 )
 
-dialectic_calls_counter = NamespacedCounter(
+dialectic_calls_counter = TenantScopedCounter(
     "dialectic_calls",
     "Total dialectic calls",
-    ["namespace", "workspace_name", "reasoning_level"],
+    ["namespace", "tenant_id", "workspace_name", "reasoning_level"],
 )
 
-deriver_queue_items_processed_counter = NamespacedCounter(
+deriver_queue_items_processed_counter = TenantScopedCounter(
     "deriver_queue_items_processed",
     "Total deriver queue items processed",
-    ["namespace", "workspace_name", "task_type"],
+    ["namespace", "tenant_id", "workspace_name", "task_type"],
 )
 
-deriver_tokens_processed_counter = NamespacedCounter(
+deriver_tokens_processed_counter = TenantScopedCounter(
     "deriver_tokens_processed",
     "Total tokens processed by the deriver",
-    ["namespace", "task_type", "token_type", "component"],
+    ["namespace", "tenant_id", "task_type", "token_type", "component"],
 )
 
 SUMMARY_REJECTION_DEGENERATE = "degenerate_repetition"
@@ -164,16 +183,16 @@ summary_rejections_counter = NamespacedCounter(
     ["namespace", "summary_type", "reason"],
 )
 
-dialectic_tokens_processed_counter = NamespacedCounter(
+dialectic_tokens_processed_counter = TenantScopedCounter(
     "dialectic_tokens_processed",
     "Total tokens processed by the dialectic",
-    ["namespace", "token_type", "component", "reasoning_level"],
+    ["namespace", "tenant_id", "token_type", "component", "reasoning_level"],
 )
 
-dreamer_tokens_processed_counter = NamespacedCounter(
+dreamer_tokens_processed_counter = TenantScopedCounter(
     "dreamer_tokens_processed",
     "Total tokens processed by the dreamer",
-    ["namespace", "specialist_name", "token_type"],
+    ["namespace", "tenant_id", "specialist_name", "token_type"],
 )
 
 # CloudEvents emitter health metrics. Split intentional (sampled out) vs unintentional
@@ -194,6 +213,17 @@ telemetry_events_dropped_counter = NamespacedCounter(
     "telemetry_events_dropped",
     "CloudEvents lost unintentionally (buffer_full or send_failed)",
     ["namespace", "reason"],
+)
+
+# region ai
+# Emitted under MULTI_TENANT with no tenant bound, outside the categories that are
+# tenant-less by construction. Non-zero means an emit site runs outside its bind
+# scope. The event still ships, without a tenant attribute.
+# endregion
+telemetry_events_untenanted_counter = NamespacedCounter(
+    "telemetry_events_untenanted",
+    "CloudEvents emitted under MULTI_TENANT without a bound tenant",
+    ["namespace", "type"],
 )
 
 telemetry_buffer_size_gauge = NamespacedGauge(
@@ -251,12 +281,63 @@ deriver_queue_work_units_eligible_gauge = NamespacedGauge(
     ["namespace"],
 )
 
+deriver_queue_work_units_excluded_gauge = NamespacedGauge(
+    "deriver_queue_work_units_excluded",
+    "Work units a deriver would claim but for their tenant being excluded, so "
+    + "nothing will pick them up. Disjoint from deriver_queue_work_units_eligible. "
+    + "Service-wide DB count, reported independently by every API replica — "
+    + "aggregate with max() or avg(), never sum()",
+    ["namespace"],
+)
+
+deriver_queue_work_units_excluded_by_tenant_gauge = NamespacedGauge(
+    "deriver_queue_work_units_excluded_by_tenant",
+    "Work units no deriver will claim because this tenant's derivation is paused. "
+    + "A series exists only while the tenant is paused and has backlog; it is the "
+    + "per-tenant breakdown of deriver_queue_work_units_excluded. Service-wide DB "
+    + "count, reported independently by every API replica — aggregate with max() "
+    + "or avg(), never sum()",
+    ["namespace", "tenant_id"],
+)
+
+deriver_paused_tenants_gauge = NamespacedGauge(
+    "deriver_paused_tenants",
+    "Tenants whose derivation is paused in the registry, read on the "
+    + "backlog-metrics poll. Every API replica reports the whole set — aggregate "
+    + "with max(), never sum()",
+    ["namespace"],
+)
+
 deriver_queue_work_units_claimed_gauge = NamespacedGauge(
     "deriver_queue_work_units_claimed",
     "Work units held by a claim refreshed inside the stale timeout, so work is "
     + "in flight. Service-wide DB count, reported independently by every API "
     + "replica — aggregate with max() or avg(), never sum()",
     ["namespace"],
+)
+
+# Per-tenant fairness (DERIVER_TENANT_FAIRNESS_METRICS). The claim runs on the
+# service session with no tenant bound, so tenant_id is passed explicitly, never
+# taken from TenantScopedCounter's ambient tenant.
+deriver_claims_counter = NamespacedCounter(
+    "deriver_claims",
+    "Work units claimed, by the tenant they belong to",
+    ["namespace", "tenant_id"],
+)
+
+deriver_claim_wait_seconds = NamespacedHistogram(
+    "deriver_claim_wait_seconds",
+    "Time from a work unit's oldest pending item to its claim, by tenant",
+    ["namespace", "tenant_id"],
+    buckets=(0.5, 1, 2, 5, 10, 30, 60, 120, 300, 600, 1800, 3600),
+)
+
+deriver_inflight_units_gauge = NamespacedGauge(
+    "deriver_inflight_units",
+    "Work units held by a live claim, by tenant. A series exists only while the "
+    + "tenant has work in flight. Service-wide DB count, reported independently by "
+    + "every API replica — aggregate with max() or avg(), never sum()",
+    ["namespace", "tenant_id"],
 )
 
 deriver_queue_items_pending_gauge = NamespacedGauge(
@@ -272,6 +353,16 @@ deriver_queue_oldest_pending_age_seconds_gauge = NamespacedGauge(
     "Age of the oldest unprocessed queue row, 0 when the queue is empty. "
     + "Service-wide DB value, reported independently by every API replica — "
     + "aggregate with max() or avg(), never sum()",
+    ["namespace"],
+)
+
+deriver_effective_worker_cap_gauge = NamespacedGauge(
+    "deriver_effective_worker_cap",
+    "Per-process worker concurrency after the DB-pool headroom derivation — "
+    + "min(DERIVER_WORKERS, max(1, floor(WORKERS_PER_POOL_CONNECTION * pool "
+    + "capacity))). Genuinely per-replica: sum() across deriver replicas is "
+    + "total fleet worker capacity; min() below DERIVER_WORKERS means some "
+    + "replica's pool, not config, is the binding cap",
     ["namespace"],
 )
 
@@ -390,6 +481,12 @@ class PrometheusMetrics:
         except Exception as e:
             self._handle_metric_error("set_embed_now_tasks_in_flight", e)
 
+    def set_deriver_effective_worker_cap(self, count: int) -> None:
+        try:
+            deriver_effective_worker_cap_gauge.labels().set(count)
+        except Exception as e:
+            self._handle_metric_error("set_deriver_effective_worker_cap", e)
+
     def record_dialectic_call(
         self,
         *,
@@ -403,6 +500,21 @@ class PrometheusMetrics:
             ).inc()
         except Exception as e:
             self._handle_metric_error("record_dialectic_call", e)
+
+    def record_deriver_claims(
+        self, claims: Iterable[tuple[str | None, datetime.datetime]]
+    ) -> None:
+        """Count each claimed unit and its wait, from (tenant_id, oldest_created_at)."""
+        try:
+            now = datetime.datetime.now(datetime.UTC)
+            for tenant_id, oldest_created_at in claims:
+                tenant = tenant_id or ""
+                deriver_claims_counter.labels(tenant_id=tenant).inc()
+                deriver_claim_wait_seconds.labels(tenant_id=tenant).observe(
+                    max(0.0, (now - oldest_created_at).total_seconds())
+                )
+        except Exception as e:
+            self._handle_metric_error("record_deriver_claims", e)
 
     def record_deriver_queue_item(
         self,
@@ -494,6 +606,12 @@ class PrometheusMetrics:
             telemetry_events_dropped_counter.labels(reason=reason).inc()
         except Exception as e:
             self._handle_metric_error("record_telemetry_event_dropped", e)
+
+    def record_telemetry_event_untenanted(self, *, event_type: str) -> None:
+        try:
+            telemetry_events_untenanted_counter.labels(type=event_type).inc()
+        except Exception as e:
+            self._handle_metric_error("record_telemetry_event_untenanted", e)
 
     def _touch(self, counter: NamespacedCounter, **labels: str) -> None:
         """Pre-create a counter child series at 0 without incrementing it."""
@@ -597,6 +715,22 @@ class PrometheusMetrics:
             self._touch(telemetry_events_emitted_counter, type=event_type)
         for event_type in HIGH_VOLUME_EVENT_TYPES:
             self._touch(telemetry_events_sampled_out_counter, type=event_type)
+        # region ai
+        # Untenanted: every type that CAN carry a tenant, and only under MULTI_TENANT,
+        # the one mode that can increment it. Flag-off instances and the tenant-less
+        # categories are excluded on purpose: a permanently-0 series for a counter
+        # that never increments would be the fabrication the docstring above rules out.
+        # endregion
+        if settings.MULTI_TENANT:
+            from src.telemetry.events.base import BaseEvent
+
+            for event_cls in walk_subclasses(BaseEvent):
+                event_type_value = getattr(event_cls, "_event_type", None)
+                if event_type_value is None:
+                    continue
+                if event_cls.category() in TENANTLESS_CATEGORIES:
+                    continue
+                self._touch(telemetry_events_untenanted_counter, type=event_type_value)
         self.set_telemetry_buffer_size(size=0)
 
         if instance_type == "api":
@@ -620,6 +754,9 @@ class PrometheusMetrics:
             self.set_deriver_metrics()
             self.set_deriver_outstanding_work(seconds=0)
             self.set_dreams_due(count=0)
+            # ai: flag-off this process never emits it, so no series is fabricated
+            if settings.MULTI_TENANT:
+                self.set_paused_tenants(count=0)
 
             if settings.DERIVER.SCHEDULER == "api":
                 self.set_message_embeddings_pending(count=0)
@@ -691,7 +828,10 @@ class PrometheusMetrics:
         self,
         *,
         eligible_work_units: int = 0,
+        excluded_work_units: int = 0,
+        excluded_work_units_by_tenant: Mapping[str, int] | None = None,
         claimed_work_units: int = 0,
+        inflight_units_by_tenant: Mapping[str, int] | None = None,
         pending_items: int = 0,
         oldest_pending_age_seconds: float = 0.0,
         embeddings_pending: int = 0,
@@ -699,7 +839,27 @@ class PrometheusMetrics:
     ) -> None:
         try:
             deriver_queue_work_units_eligible_gauge.labels().set(eligible_work_units)
+            deriver_queue_work_units_excluded_gauge.labels().set(excluded_work_units)
+            # region ai
+            # Rebuilt from scratch each pass: a tenant that resumed (or drained)
+            # must lose its series, or the dashboard shows a pause that ended.
+            # Gauge.clear() drops every child, so the set is exactly this pass's.
+            # endregion
+            deriver_queue_work_units_excluded_by_tenant_gauge.clear()
+            for tenant_id, count in (excluded_work_units_by_tenant or {}).items():
+                deriver_queue_work_units_excluded_by_tenant_gauge.labels(
+                    tenant_id=tenant_id
+                ).set(count)
             deriver_queue_work_units_claimed_gauge.labels().set(claimed_work_units)
+            # region ai
+            # None means the fairness flag is off, so the gauge keeps no series at
+            # all. Otherwise rebuilt each pass, like the excluded-by-tenant gauge:
+            # a tenant whose work finished must lose its series.
+            # endregion
+            if inflight_units_by_tenant is not None:
+                deriver_inflight_units_gauge.clear()
+                for tenant_id, count in inflight_units_by_tenant.items():
+                    deriver_inflight_units_gauge.labels(tenant_id=tenant_id).set(count)
             deriver_queue_items_pending_gauge.labels().set(pending_items)
             deriver_queue_oldest_pending_age_seconds_gauge.labels().set(
                 oldest_pending_age_seconds
@@ -708,6 +868,12 @@ class PrometheusMetrics:
             message_embeddings_pending_due_gauge.labels().set(embeddings_pending_due)
         except Exception as e:
             self._handle_metric_error("set_deriver_metrics", e)
+
+    def set_paused_tenants(self, *, count: int) -> None:
+        try:
+            deriver_paused_tenants_gauge.labels().set(count)
+        except Exception as e:
+            self._handle_metric_error("set_paused_tenants", e)
 
     def set_deriver_outstanding_work(self, *, seconds: float) -> None:
         try:

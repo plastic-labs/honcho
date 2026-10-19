@@ -17,6 +17,7 @@ from sqlalchemy import (
     func,
     insert,
     select,
+    tuple_,
     update,
 )
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -35,6 +36,7 @@ from src.cache.client import (
     safe_cache_set,
 )
 from src.config import settings
+from src.crud.deriver import active_queue_session_match, queue_item_tenant_match
 from src.exceptions import (
     AuthenticationException,
     ConflictException,
@@ -111,6 +113,11 @@ async def _fetch_session(
     if obj is None:
         return None
     return {
+        # region ai
+        # tenant_id leads the composite PK; without it the reconstructed object
+        # has an incomplete identity and merge/update can't locate its row.
+        # endregion
+        "tenant_id": obj.tenant_id,
         "id": obj.id,
         "name": obj.name,
         "workspace_name": obj.workspace_name,
@@ -443,6 +450,7 @@ async def get_or_create_session(
         await safe_cache_set(
             cache_key,
             {
+                "tenant_id": honcho_session.tenant_id,
                 "id": honcho_session.id,
                 "name": honcho_session.name,
                 "workspace_name": honcho_session.workspace_name,
@@ -594,13 +602,15 @@ async def _batch_delete_matching(
         Total number of records deleted
     """
     total_deleted = 0
-    primary_key_column = model.__table__.primary_key.columns.values()[0]
+    # The full key: tenant_id leads the composite PKs, so its first column
+    # alone matches every row of the tenant.
+    primary_key = model.__table__.primary_key.columns.values()
 
     while True:
         subquery = (
-            select(primary_key_column).where(and_(*filter_conditions)).limit(batch_size)
+            select(*primary_key).where(and_(*filter_conditions)).limit(batch_size)
         )
-        delete_stmt = delete(model).where(primary_key_column.in_(subquery))
+        delete_stmt = delete(model).where(tuple_(*primary_key).in_(subquery))
         delete_result = typing_cast(CursorResult[Any], await db.execute(delete_stmt))
         batch_deleted = delete_result.rowcount or 0
         total_deleted += batch_deleted
@@ -644,25 +654,26 @@ async def delete_session(
     # Perform cascading deletes in order
     # Order is important to avoid foreign key constraint violations
     try:
-        # Delete ActiveQueueSession entries
-        # Work unit keys have format: {task_type}:{workspace_name}:{session_name}:{...}
+        # Delete ActiveQueueSession entries, matching on the work_unit_key
+        # (flag-aware position + tenant pinning; rationale lives on the helper).
         await db.execute(
             delete(models.ActiveQueueSession).where(
-                and_(
-                    func.split_part(models.ActiveQueueSession.work_unit_key, ":", 2)
-                    == workspace_name,
-                    func.split_part(models.ActiveQueueSession.work_unit_key, ":", 3)
-                    == session_name,
-                )
+                active_queue_session_match(workspace_name, session_name)
             )
         )
 
-        # Delete QueueItem entries
-        await db.execute(
-            delete(models.QueueItem).where(
-                models.QueueItem.session_id == honcho_session.id
-            )
+        # Delete QueueItem entries. session_id is globally unique in practice,
+        # but pin to the ambient tenant, flag-aware, for defense in depth
+        # (rationale lives on the helper).
+        queue_item_match = queue_item_tenant_match()
+        session_queue_item_delete = delete(models.QueueItem).where(
+            models.QueueItem.session_id == honcho_session.id
         )
+        if queue_item_match is not None:
+            session_queue_item_delete = session_queue_item_delete.where(
+                queue_item_match
+            )
+        await db.execute(session_queue_item_delete)
 
         # Delete message vectors from vector store before deleting DB records
         # Vector IDs are {message_id}_{chunk_index}, where chunk_index is the 0-based
@@ -692,7 +703,7 @@ async def delete_session(
 
             # Try to delete from external vector store (best effort)
             try:
-                namespace = external_vector_store.get_vector_namespace(
+                namespace = await external_vector_store.get_vector_namespace(
                     "message", workspace_name
                 )
                 await external_vector_store.delete_many(namespace, vector_ids)
@@ -735,7 +746,7 @@ async def delete_session(
             # Group document IDs by namespace (observer/observed)
             docs_by_namespace: dict[str, list[str]] = {}
             for doc in documents:
-                namespace = external_vector_store.get_vector_namespace(
+                namespace = await external_vector_store.get_vector_namespace(
                     "document",
                     workspace_name,
                     doc.observer,
@@ -1326,7 +1337,11 @@ async def _get_or_add_peers_to_session(
     # wins -- otherwise PUT /peers could never change the configuration of a peer
     # already in the session.
     stmt = stmt.on_conflict_do_update(
-        index_elements=["session_name", "peer_name", "workspace_name"],
+        # region ai
+        # tenant_id leads the composite PK, so it must be in the conflict
+        # target — otherwise there is no matching unique constraint.
+        # endregion
+        index_elements=["tenant_id", "session_name", "peer_name", "workspace_name"],
         set_={
             "joined_at": case(
                 (models.SessionPeer.left_at.is_not(None), func.now()),

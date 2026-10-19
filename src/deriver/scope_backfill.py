@@ -435,7 +435,7 @@ async def _sync_copies_to_vector_store(
     synced_ids: list[str] = []
     failed_ids: list[str] = []
     for observed, specs in by_observed.items():
-        namespace = external_vector_store.get_vector_namespace(
+        namespace = await external_vector_store.get_vector_namespace(
             "document", workspace_name, scope_peer, observed
         )
         records = [
@@ -540,6 +540,8 @@ async def process_scope_removal(
                         models.Document.deleted_at.is_(None),
                         or_(
                             exists().where(
+                                models.DocumentSource.tenant_id
+                                == models.Document.tenant_id,
                                 models.DocumentSource.derived_id == models.Document.id,
                                 models.DocumentSource.source_id.in_(frontier),
                                 models.DocumentSource.workspace_name == workspace_name,
@@ -570,7 +572,7 @@ async def process_scope_removal(
     external_vector_store = get_external_vector_store()
     if external_vector_store is not None:
         for observed, removed_ids in removed_by_observed.items():
-            namespace = external_vector_store.get_vector_namespace(
+            namespace = await external_vector_store.get_vector_namespace(
                 "document", workspace_name, scope_peer, observed
             )
             try:

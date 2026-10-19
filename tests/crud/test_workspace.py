@@ -5,6 +5,42 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
 from src.exceptions import ConflictException, ResourceNotFoundException
+from src.vector_store import VectorQueryResult, VectorRecord, VectorStore
+
+
+class _RecordingVectorStore(VectorStore):
+    """A real VectorStore -- get_vector_namespace runs unmodified -- that only
+    records the namespaces passed to delete_namespace, for pinning deletion scope."""
+
+    def __init__(self) -> None:
+        self.deleted_namespaces: list[str] = []
+
+    async def upsert_many(self, namespace: str, vectors: list[VectorRecord]) -> None:
+        return None
+
+    async def query(
+        self,
+        namespace: str,
+        embedding: list[float],
+        *,
+        top_k: int = 10,
+        filters: dict[str, object] | None = None,
+        max_distance: float | None = None,
+        include_attributes: bool | list[str] = True,
+    ) -> list[VectorQueryResult]:
+        return []
+
+    async def delete_many(self, namespace: str, ids: list[str]) -> None:
+        return None
+
+    async def delete_namespace(self, namespace: str) -> None:
+        self.deleted_namespaces.append(namespace)
+
+    async def close(self) -> None:
+        return None
+
+    async def probe_namespace_dim(self, namespace: str) -> int | None:
+        return None
 
 
 class TestWorkspaceCRUD:
@@ -612,3 +648,267 @@ class TestWorkspaceCRUD:
         # And workspace deletion should succeed
         result = await crud.delete_workspace(db_session, test_workspace.name)
         assert result.workspace.name == test_workspace.name
+
+
+class TestDeleteWorkspaceTenantScopedQueueCleanup:
+    """delete_workspace's ActiveQueueSession cleanup must be tenant-aware.
+
+    Under MULTI_TENANT, tenant-scoped work-unit keys are prefixed
+    {tenant_id}:{task_type}:{workspace_name}:... — a tenant-blind position-2
+    match deletes nothing of the tenant's own scoped claims while hitting other
+    tenants' un-prefixed reconciler keys for a same-named workspace.
+    """
+
+    @pytest.mark.asyncio
+    async def test_cleanup_scoped_to_deleting_tenant(
+        self, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+    ):
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+        from src.config import settings
+        from src.db import tenant_context
+
+        workspace_name = str(generate_nanoid())
+        for tenant_id in ("tenant-a", "tenant-b"):
+            await db_session.execute(
+                pg_insert(models.Tenant)
+                .values(tenant_id=tenant_id, tier="shared")
+                .on_conflict_do_nothing()
+            )
+        db_session.add(models.Workspace(name=workspace_name, tenant_id="tenant-a"))
+        db_session.add_all(
+            [
+                models.ActiveQueueSession(
+                    work_unit_key=f"tenant-a:dream:{workspace_name}:alice:alice",
+                    tenant_id="tenant-a",
+                ),
+                models.ActiveQueueSession(
+                    work_unit_key=f"tenant-b:dream:{workspace_name}:alice:alice",
+                    tenant_id="tenant-b",
+                ),
+                # Reconciler claims are never tenant-prefixed; they belong to the
+                # stale-work cleanup, and a workspace delete must not touch them.
+                models.ActiveQueueSession(
+                    work_unit_key=f"reconciler:{workspace_name}",
+                    tenant_id=None,
+                ),
+            ]
+        )
+        await db_session.commit()
+
+        monkeypatch.setattr(settings, "MULTI_TENANT", True)
+        token = tenant_context.set("tenant-a")
+        try:
+            await crud.delete_workspace(db_session, workspace_name)
+        finally:
+            tenant_context.reset(token)
+
+        surviving = (
+            (await db_session.execute(select(models.ActiveQueueSession.work_unit_key)))
+            .scalars()
+            .all()
+        )
+        assert f"tenant-a:dream:{workspace_name}:alice:alice" not in surviving
+        assert f"tenant-b:dream:{workspace_name}:alice:alice" in surviving
+        assert f"reconciler:{workspace_name}" in surviving
+
+    @pytest.mark.asyncio
+    async def test_flag_on_without_tenant_fails_closed(
+        self, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+    ):
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+        from src.config import settings
+
+        workspace_name = str(generate_nanoid())
+        await db_session.execute(
+            pg_insert(models.Tenant)
+            .values(tenant_id="tenant-a", tier="shared")
+            .on_conflict_do_nothing()
+        )
+        db_session.add(models.Workspace(name=workspace_name, tenant_id="tenant-a"))
+        await db_session.commit()
+
+        monkeypatch.setattr(settings, "MULTI_TENANT", True)
+        with pytest.raises(ValueError, match="without a tenant when MULTI_TENANT"):
+            await crud.delete_workspace(db_session, workspace_name)
+
+
+class TestDeleteWorkspaceQueueItemTenantScopedCleanup:
+    """delete_workspace's QueueItem cleanup must be tenant-aware too (B5).
+
+    QueueItem.workspace_name is only unique per tenant (every tenant has a
+    "default" workspace) and queue is deliberately not under RLS (see
+    _RLS_REQUIRED_TABLES), so a tenant-blind match on workspace_name alone
+    deletes another tenant's same-named workspace's queue rows. See
+    queue_item_tenant_match in src/crud/deriver.py.
+    """
+
+    @pytest.mark.asyncio
+    async def test_queue_items_scoped_to_deleting_tenant(
+        self, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+        from src.config import settings
+        from src.db import tenant_context
+
+        workspace_name = str(generate_nanoid())
+        for tenant_id in ("tenant-a", "tenant-b"):
+            await db_session.execute(
+                pg_insert(models.Tenant)
+                .values(tenant_id=tenant_id, tier="shared")
+                .on_conflict_do_nothing()
+            )
+        # Only tenant-a gets an actual Workspace row: workspaces are
+        # partitioned (tenant_id, id) with a (tenant_id, name) unique
+        # constraint, not a global one, so two tenants legitimately have a
+        # workspace named the same; the test db_session connects as the
+        # Postgres superuser, which always bypasses RLS, so a second
+        # same-named Workspace row here would make delete_workspace's own
+        # by-name lookup ambiguous for reasons unrelated to this fix. The
+        # real bug is entirely about the QueueItem.workspace_name string
+        # colliding across tenants, which this reproduces without needing a
+        # second Workspace row: tenant-b's QueueItem carries the identical
+        # workspace_name string a real tenant-b writer would use for its own
+        # "default" workspace.
+        db_session.add(models.Workspace(name=workspace_name, tenant_id="tenant-a"))
+        db_session.add_all(
+            [
+                models.QueueItem(
+                    tenant_id="tenant-a",
+                    workspace_name=workspace_name,
+                    work_unit_key=(
+                        f"tenant-a:representation:{workspace_name}:alice:alice"
+                    ),
+                    task_type="representation",
+                    payload={},
+                ),
+                models.QueueItem(
+                    tenant_id="tenant-b",
+                    workspace_name=workspace_name,
+                    work_unit_key=(
+                        f"tenant-b:representation:{workspace_name}:alice:alice"
+                    ),
+                    task_type="representation",
+                    payload={},
+                ),
+            ]
+        )
+        await db_session.commit()
+
+        monkeypatch.setattr(settings, "MULTI_TENANT", True)
+        token = tenant_context.set("tenant-a")
+        try:
+            await crud.delete_workspace(db_session, workspace_name)
+        finally:
+            tenant_context.reset(token)
+
+        surviving = (
+            (await db_session.execute(select(models.QueueItem.tenant_id)))
+            .scalars()
+            .all()
+        )
+        assert "tenant-a" not in surviving
+        assert surviving.count("tenant-b") == 1
+
+    def test_flag_off_returns_none_and_adds_no_predicate(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Flag-off, queue_item_tenant_match must return None so callers add zero
+        predicate — confirmed at the compiled-SQL level, not just the Python
+        return value, so a caller that drops the `if match is not None` guard
+        can't silently reintroduce a tenant_id clause into the flag-off
+        single-tenant SQL (the OSS byte-identity invariant)."""
+        from sqlalchemy import delete
+        from sqlalchemy.dialects import postgresql
+
+        from src.config import settings
+        from src.crud.deriver import queue_item_tenant_match
+
+        monkeypatch.setattr(settings, "MULTI_TENANT", False)
+        assert queue_item_tenant_match() is None
+
+        stmt = delete(models.QueueItem).where(
+            models.QueueItem.workspace_name == "some-workspace"
+        )
+        compiled = str(stmt.compile(dialect=postgresql.dialect()))
+        assert "tenant_id" not in compiled
+
+    def test_flag_on_without_tenant_fails_closed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from src.config import settings
+        from src.crud.deriver import queue_item_tenant_match
+
+        monkeypatch.setattr(settings, "MULTI_TENANT", True)
+        with pytest.raises(ValueError, match="without a tenant when MULTI_TENANT"):
+            queue_item_tenant_match()
+
+
+class TestDeleteWorkspaceVectorNamespaceScoping:
+    """delete_workspace's vector-store deletion must be scoped to the deleting tenant.
+
+    A namespace collision is a read leak in both directions, but this side is the one
+    that cannot be undone (delete_namespace has no inverse), so it gets its own pin
+    independent of the namespace-resolution tests.
+    """
+
+    @pytest.mark.asyncio
+    async def test_delete_workspace_targets_only_the_deleting_tenants_namespace(
+        self, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+    ):
+        from unittest.mock import patch
+
+        from src.config import settings
+        from src.db import tenant_context
+
+        monkeypatch.setattr(settings, "MULTI_TENANT", True)
+
+        tenant_a = str(generate_nanoid())
+        tenant_b = str(generate_nanoid())
+        db_session.add_all(
+            [
+                models.Tenant(tenant_id=tenant_a, vector_correlation_id="tenant-a-app"),
+                models.Tenant(tenant_id=tenant_b, vector_correlation_id="tenant-b-app"),
+            ]
+        )
+        workspace_name = str(generate_nanoid())
+        db_session.add(models.Workspace(name=workspace_name, tenant_id=tenant_a))
+        await db_session.commit()
+
+        recording_store = _RecordingVectorStore()
+
+        # The namespace each tenant would resolve to for this same workspace name --
+        # computed independently, before the delete, so the assertion below doesn't
+        # just compare the deletion call against itself.
+        token = tenant_context.set(tenant_a)
+        try:
+            namespace_for_tenant_a = await recording_store.get_vector_namespace(
+                "message", workspace_name
+            )
+        finally:
+            tenant_context.reset(token)
+
+        token = tenant_context.set(tenant_b)
+        try:
+            namespace_if_tenant_b = await recording_store.get_vector_namespace(
+                "message", workspace_name
+            )
+        finally:
+            tenant_context.reset(token)
+
+        assert namespace_for_tenant_a != namespace_if_tenant_b
+
+        token = tenant_context.set(tenant_a)
+        try:
+            with patch(
+                "src.crud.workspace.get_external_vector_store",
+                return_value=recording_store,
+            ):
+                await crud.delete_workspace(db_session, workspace_name)
+        finally:
+            tenant_context.reset(token)
+
+        assert namespace_for_tenant_a in recording_store.deleted_namespaces
+        assert namespace_if_tenant_b not in recording_store.deleted_namespaces
