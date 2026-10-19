@@ -21,6 +21,15 @@ This package versions independently of the Honcho API, `@honcho-ai/sdk`, and hos
 Nothing is required: a connection that sends neither header is recorded exactly
 as before.
 
+### Fixed
+
+- `bun run deploy` and `bun run deploy:staging` reinstall from the lockfile and
+  typecheck before deploying. wrangler bundles whatever is in `node_modules`, so a
+  checkout with a stale install shipped the Worker against `@honcho-ai/sdk` 2.2.0.
+  `workspace_chat`, the scope tools, `get_conclusions` and `get_derived_conclusions`
+  failed; `chat` with `include_evidence` returned `{"content":"None"}`; and `scope` /
+  `sessions` recall bounds and conclusion attribution were silently dropped.
+
 ## [3.1.0] - 2026-10-07
 
 ### Added

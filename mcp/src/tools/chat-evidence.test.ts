@@ -91,3 +91,28 @@ test.each([
     evidence: EVIDENCE,
   });
 });
+
+test("workspace_chat asks the workspace route with every recall option", async () => {
+  const result = await client.callTool({
+    name: "workspace_chat",
+    arguments: {
+      workspace_id: "pi",
+      query: "What are the main themes across peers?",
+      session_id: "s1",
+      scope: ["therapy", "work"],
+      reasoning_level: "minimal",
+    },
+  });
+  expect(result.isError).not.toBe(true);
+  expect(text(result)).toBe("She keeps them small.");
+  expect(requests.at(-1)).toEqual({
+    path: "/v3/workspaces/pi/chat",
+    body: {
+      query: "What are the main themes across peers?",
+      stream: false,
+      session_id: "s1",
+      reasoning_level: "minimal",
+      scope: ["therapy", "work"],
+    },
+  });
+});
