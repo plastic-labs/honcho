@@ -162,10 +162,18 @@ export function register(server: McpServer, ctx: ToolContext) {
           const result = await peer.chat(query, options);
           return textResult(result ?? "None");
         }
-        const { content, evidence } = await peer.chat(query, {
+        const response = await peer.chat(query, {
           ...options,
           includeEvidence: true,
         });
+        // An SDK older than 2.5.0 ignores includeEvidence and resolves to the
+        // bare answer string, which destructures to no content and no evidence.
+        if (typeof response === "string" || response === null) {
+          throw new Error(
+            "this server's Honcho SDK does not support include_evidence (needs @honcho-ai/sdk 2.5.0+)",
+          );
+        }
+        const { content, evidence } = response;
         return textResult({ content: content ?? "None", evidence });
       } catch (e) {
         return errorResult(
