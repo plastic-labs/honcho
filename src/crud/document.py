@@ -55,12 +55,12 @@ def build_source_links(
 
 def build_source_message_links(
     message_ids: list[str] | None, workspace_name: str
-) -> list[models.DocumentSourceMessage]:
-    """Convert cited message public ids to DocumentSourceMessage rows, deduped."""
+) -> list[models.ConclusionSourceMessage]:
+    """Convert cited message public ids to ConclusionSourceMessage rows, deduped."""
     if not message_ids:
         return []
     return [
-        models.DocumentSourceMessage(
+        models.ConclusionSourceMessage(
             message_id=mid, position=i, workspace_name=workspace_name
         )
         for i, mid in enumerate(dict.fromkeys(message_ids))

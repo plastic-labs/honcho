@@ -312,7 +312,7 @@ def test_source_ids_null_is_rejected():
 
 def test_source_message_ids_scalar_compiles_to_exists():
     where = _where(Document, {"source_message_ids": "abc"})
-    assert "document_source_messages" in where
+    assert "conclusion_source_messages" in where
     assert "message_id" in where
     # No legacy JSONB fallback: citations never lived in a column.
     assert "@>" not in where

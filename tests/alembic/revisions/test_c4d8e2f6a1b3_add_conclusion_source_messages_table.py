@@ -1,4 +1,4 @@
-"""Hooks for revision c4d8e2f6a1b3 (document_source_messages table, DDL only)."""
+"""Hooks for revision c4d8e2f6a1b3 (conclusion_source_messages table, DDL only)."""
 
 from __future__ import annotations
 
@@ -17,8 +17,8 @@ MESSAGE_ID = generate_nanoid()
 
 
 @register_before_upgrade("c4d8e2f6a1b3")
-def prepare_document_source_messages(verifier: MigrationVerifier) -> None:
-    verifier.assert_table_exists("document_source_messages", exists=False)
+def prepare_conclusion_source_messages(verifier: MigrationVerifier) -> None:
+    verifier.assert_table_exists("conclusion_source_messages", exists=False)
 
     schema = verifier.schema
     connection = verifier.conn
@@ -77,10 +77,10 @@ def prepare_document_source_messages(verifier: MigrationVerifier) -> None:
 
 
 @register_after_upgrade("c4d8e2f6a1b3")
-def verify_document_source_messages(verifier: MigrationVerifier) -> None:
-    verifier.assert_table_exists("document_source_messages")
+def verify_conclusion_source_messages(verifier: MigrationVerifier) -> None:
+    verifier.assert_table_exists("conclusion_source_messages")
     verifier.assert_indexes_exist(
-        [("document_source_messages", "ix_document_source_messages_message_id")]
+        [("conclusion_source_messages", "ix_conclusion_source_messages_message_id")]
     )
 
     schema = verifier.schema
@@ -88,7 +88,7 @@ def verify_document_source_messages(verifier: MigrationVerifier) -> None:
 
     # No backfill: pre-existing explicit rows have no citations to recover.
     edge_count = connection.execute(
-        text(f'SELECT count(*) FROM "{schema}"."document_source_messages"')
+        text(f'SELECT count(*) FROM "{schema}"."conclusion_source_messages"')
     ).scalar_one()
     assert edge_count == 0
     metadata = connection.execute(
@@ -102,8 +102,8 @@ def verify_document_source_messages(verifier: MigrationVerifier) -> None:
     # Edges follow the cited message: deleting it removes the edge, not the document.
     connection.execute(
         text(
-            f"""INSERT INTO "{schema}"."document_source_messages"
-                ("derived_id", "message_id", "position", "workspace_name")
+            f"""INSERT INTO "{schema}"."conclusion_source_messages"
+                ("conclusion_id", "message_id", "position", "workspace_name")
             VALUES (:d, :m, 0, :w)"""
         ),
         {"d": DOC_ID, "m": MESSAGE_ID, "w": WORKSPACE_NAME},
@@ -113,7 +113,7 @@ def verify_document_source_messages(verifier: MigrationVerifier) -> None:
         {"m": MESSAGE_ID},
     )
     edge_count = connection.execute(
-        text(f'SELECT count(*) FROM "{schema}"."document_source_messages"')
+        text(f'SELECT count(*) FROM "{schema}"."conclusion_source_messages"')
     ).scalar_one()
     assert edge_count == 0
     doc_count = connection.execute(

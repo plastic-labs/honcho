@@ -490,9 +490,9 @@ class Document(Base):
         ]
 
     # Messages the deriver cited as evidence for an explicit conclusion.
-    source_message_links: Mapped[list["DocumentSourceMessage"]] = relationship(
-        "DocumentSourceMessage",
-        order_by="DocumentSourceMessage.position",
+    source_message_links: Mapped[list["ConclusionSourceMessage"]] = relationship(
+        "ConclusionSourceMessage",
+        order_by="ConclusionSourceMessage.position",
         cascade="all, delete-orphan",
         passive_deletes=True,
         lazy="selectin",
@@ -509,7 +509,7 @@ class Document(Base):
     def source_message_ids(self, value: list[str] | None) -> None:
         # Same constructor ordering caveat as source_ids: workspace_name first.
         self.source_message_links = [
-            DocumentSourceMessage(
+            ConclusionSourceMessage(
                 message_id=mid, position=i, workspace_name=self.workspace_name
             )
             for i, mid in enumerate(dict.fromkeys(value or []))
@@ -606,12 +606,12 @@ class DocumentSource(Base):
 
 
 @final
-class DocumentSourceMessage(Base):
-    """One evidence edge: derived_id was concluded from message_id."""
+class ConclusionSourceMessage(Base):
+    """One evidence edge: conclusion_id cites message_id as evidence."""
 
-    __tablename__: str = "document_source_messages"
+    __tablename__: str = "conclusion_source_messages"
 
-    derived_id: Mapped[str] = mapped_column(
+    conclusion_id: Mapped[str] = mapped_column(
         ForeignKey("documents.id", ondelete="CASCADE"), primary_key=True
     )
     message_id: Mapped[str] = mapped_column(
@@ -625,7 +625,9 @@ class DocumentSourceMessage(Base):
     )
 
     __table_args__ = (
-        Index("ix_document_source_messages_message_id", "message_id", "workspace_name"),
+        Index(
+            "ix_conclusion_source_messages_message_id", "message_id", "workspace_name"
+        ),
         CheckConstraint("length(message_id) = 21", name="message_id_length"),
         CheckConstraint("message_id ~ '^[A-Za-z0-9_-]+$'", name="message_id_format"),
     )

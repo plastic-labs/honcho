@@ -1,4 +1,4 @@
-"""add document_source_messages table
+"""add conclusion_source_messages table
 
 Edge table linking an explicit conclusion to the messages the deriver cited
 as its evidence. DDL only: citations are model-reported per derivation, so
@@ -32,16 +32,16 @@ def upgrade() -> None:
     connection = op.get_bind()
     inspector = sa.inspect(connection)
 
-    if not table_exists("document_source_messages", inspector):
+    if not table_exists("conclusion_source_messages", inspector):
         op.create_table(
-            "document_source_messages",
-            sa.Column("derived_id", sa.TEXT, nullable=False),
+            "conclusion_source_messages",
+            sa.Column("conclusion_id", sa.TEXT, nullable=False),
             sa.Column("message_id", sa.TEXT, nullable=False),
             sa.Column("position", sa.Integer, nullable=False, server_default="0"),
             sa.Column("workspace_name", sa.TEXT, nullable=False),
-            sa.PrimaryKeyConstraint("derived_id", "message_id"),
+            sa.PrimaryKeyConstraint("conclusion_id", "message_id"),
             sa.ForeignKeyConstraint(
-                ["derived_id"],
+                ["conclusion_id"],
                 [f"{schema}.documents.id"],
                 ondelete="CASCADE",
             ),
@@ -63,8 +63,8 @@ def upgrade() -> None:
         # Reverse traversal ("which conclusions cite this message?"); also
         # serves the ON DELETE CASCADE from messages.
         op.create_index(
-            "ix_document_source_messages_message_id",
-            "document_source_messages",
+            "ix_conclusion_source_messages_message_id",
+            "conclusion_source_messages",
             ["message_id", "workspace_name"],
             schema=schema,
         )
@@ -74,5 +74,5 @@ def downgrade() -> None:
     connection = op.get_bind()
     inspector = sa.inspect(connection)
 
-    if table_exists("document_source_messages", inspector):
-        op.drop_table("document_source_messages", schema=schema)
+    if table_exists("conclusion_source_messages", inspector):
+        op.drop_table("conclusion_source_messages", schema=schema)

@@ -550,15 +550,15 @@ def _build_source_ids_condition(
 def _build_source_message_ids_condition(
     value: Any, model_class: type[Any]
 ) -> ColumnElement[bool] | None:
-    """Filter documents by cited evidence via document_source_messages."""
-    from ..models import DocumentSourceMessage
+    """Filter documents by cited evidence via conclusion_source_messages."""
+    from ..models import ConclusionSourceMessage
 
     def _member(mid: str) -> ColumnElement[bool]:
         return (
             select(literal(1))
             .where(
-                DocumentSourceMessage.derived_id == model_class.id,
-                DocumentSourceMessage.message_id == mid,
+                ConclusionSourceMessage.conclusion_id == model_class.id,
+                ConclusionSourceMessage.message_id == mid,
             )
             .exists()
         )

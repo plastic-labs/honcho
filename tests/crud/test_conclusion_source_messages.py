@@ -1,4 +1,4 @@
-"""document_source_messages: written from DocumentCreate, dropped with either end."""
+"""conclusion_source_messages: written from DocumentCreate, dropped with either end."""
 
 from nanoid import generate as generate_nanoid
 from sqlalchemy import delete, select
@@ -62,11 +62,11 @@ async def _only_document_id(db_session: AsyncSession, workspace_name: str) -> st
     return result.scalar_one()
 
 
-async def _edges(db_session: AsyncSession, derived_id: str) -> list[str]:
+async def _edges(db_session: AsyncSession, conclusion_id: str) -> list[str]:
     result = await db_session.execute(
-        select(models.DocumentSourceMessage.message_id)
-        .where(models.DocumentSourceMessage.derived_id == derived_id)
-        .order_by(models.DocumentSourceMessage.position)
+        select(models.ConclusionSourceMessage.message_id)
+        .where(models.ConclusionSourceMessage.conclusion_id == conclusion_id)
+        .order_by(models.ConclusionSourceMessage.position)
     )
     return list(result.scalars().all())
 
