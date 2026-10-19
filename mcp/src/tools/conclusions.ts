@@ -10,7 +10,7 @@ import {
 
 /** Shared wording: what the attribution fields on a conclusion mean. */
 const ATTRIBUTION_NOTE =
-  "Each conclusion carries `level` (explicit = extracted from messages; deductive/inductive/contradiction = derived while dreaming), `source_ids` (the conclusions it was derived from, null for explicit), `source_message_ids` (the messages an explicit conclusion cites as evidence, null for derived), and `times_derived` (how many times it was independently reached).";
+  "Each conclusion carries `level` (explicit = extracted from messages; deductive/inductive/contradiction = derived while dreaming), `source_ids` (the conclusions it was derived from, empty for explicit), `source_message_ids` (the messages an explicit conclusion cites as evidence, null for derived), and `times_derived` (how many times it was independently reached).";
 
 export function register(server: McpServer, ctx: ToolContext) {
   // ── list_conclusions ────────────────────────────────────────────────

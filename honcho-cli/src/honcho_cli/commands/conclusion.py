@@ -35,12 +35,15 @@ def _format_conclusion(c, workspace_id: str | None) -> dict:
     they can be piped back into ``honcho conclusion get`` or ``message get``.
     """
     source_ids = c.source_ids or []
-    source_message_ids = getattr(c, "source_message_ids", None) or []
+    # JSON keeps None ("no citation record") apart from [] ("cites nothing").
+    source_message_ids = getattr(c, "source_message_ids", None)
     return {
         "id": c.id,
         "level": c.level,
         "source_ids": source_ids if use_json() else len(source_ids),
-        "source_message_ids": source_message_ids if use_json() else len(source_message_ids),
+        "source_message_ids": source_message_ids
+        if use_json()
+        else len(source_message_ids or []),
         "times_derived": c.times_derived,
         "content": c.content if use_json() else c.content[:160],
         "workspace_id": workspace_id,

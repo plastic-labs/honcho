@@ -65,7 +65,7 @@ class TestConclusionAttribution:
         row = json.loads(result.stdout)[0]
         assert row["level"] == "inductive"
         assert row["source_ids"] == ["p1", "p2"]
-        assert row["source_message_ids"] == []
+        assert row["source_message_ids"] is None
         assert row["times_derived"] == 3
         # --level reaches the server as a filter rather than being applied locally
         assert client.peer.return_value.conclusions.list.call_args.kwargs["filters"] == {"level": "inductive"}
@@ -99,7 +99,7 @@ class TestConclusionAttribution:
             result = runner.invoke(app, ["conclusion", "list", "-p", "alice"])
 
         assert result.exit_code == 0
-        assert json.loads(result.stdout)[0]["source_message_ids"] == []
+        assert json.loads(result.stdout)[0]["source_message_ids"] is None
 
     def test_list_rejects_an_unknown_level(self, cfg, runner):
         result = runner.invoke(app, ["conclusion", "list", "--level", "nonsense", "-p", "alice"])

@@ -754,9 +754,8 @@ class Representation(BaseModel):
 
             if invalid_source_indices:
                 logger.warning(
-                    "Dropping out-of-range source_indices %s for observation %r; deriver batch contains %d messages",
+                    "Dropping out-of-range source_indices %s; deriver batch contains %d messages",
                     invalid_source_indices,
-                    explicit.content,
                     len(prompt_message_ids),
                 )
 

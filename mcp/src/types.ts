@@ -57,7 +57,7 @@ export function formatMessage(message: Message) {
  * Serialize a Conclusion to a plain JSON-safe object.
  *
  * `level`, `source_ids` and `times_derived` are the attribution fields the
- * server started returning in Honcho v3.2.0. `source_ids` is null for
+ * server started returning in Honcho v3.2.0. `source_ids` is empty for
  * explicit conclusions, which are extracted from messages rather than
  * derived from other conclusions. `source_message_ids` (v3.4.0) is the
  * reverse: the messages an explicit conclusion cites, null for derived ones.
