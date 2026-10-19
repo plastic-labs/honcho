@@ -220,3 +220,58 @@ test("a 401 that is not a dead OAuth token stays a tool error and keeps the sess
     expect(ping.status).toBe(200);
   }
 });
+
+test("a successful write overlapping a rejected read keeps its 200", async () => {
+  const headers = { Authorization: "Bearer hch-at-expiring" };
+  const init = await mcpPost(headers, initializeBody);
+  const inSession = {
+    ...headers,
+    "mcp-session-id": init.headers.get("mcp-session-id")!,
+  };
+
+  // The insertion is accepted before the token dies. Its 201 is held until
+  // the read has been refused, so the rejection lands while it is in flight.
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  const json = (status: number, body: unknown) =>
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { "Content-Type": "application/json" },
+    });
+  const row = { id: "x", metadata: {}, configuration: {}, created_at: "2026-10-19T00:00:00Z" };
+  const original = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+    if (path.endsWith("/workspaces/list")) {
+      return json(401, { detail: "Invalid or expired access token" });
+    }
+    if (path.endsWith("/messages")) {
+      await held;
+      return json(201, [{ ...row, content: "hi", peer_id: "p", session_id: "s" }]);
+    }
+    return json(200, row); // workspace, session and peer get-or-create
+  };
+  try {
+    const write = mcpPost(inSession, {
+      jsonrpc: "2.0",
+      id: 6,
+      method: "tools/call",
+      params: {
+        name: "add_messages_to_session",
+        arguments: {
+          workspace_id: "w",
+          session_id: "s",
+          messages: [{ peer_id: "p", content: "hi" }],
+        },
+      },
+    });
+    const read = await mcpPost(inSession, listWorkspacesBody);
+    expect(read.status).toBe(401);
+    release();
+    const response = await write;
+    expect(response.status).toBe(200);
+    expect(await response.text()).toContain("Messages added to session successfully");
+  } finally {
+    globalThis.fetch = original;
+  }
+});
