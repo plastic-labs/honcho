@@ -570,6 +570,8 @@ class OpenAIBackend:
             return configured_mode
 
         mode = thinking_tool_choice_conflict_mode(extra_params, None)
+        if mode is None:
+            return configured_mode
 
         conflict = f"model {model}: "
         conflict += (

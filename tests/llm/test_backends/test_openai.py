@@ -1,5 +1,6 @@
 import gc
 import json
+import logging
 import weakref
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
@@ -1653,21 +1654,17 @@ async def test_override_tool_relaxes_forced_tool_choice_and_keeps_thinking() -> 
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("mode", "match"),
-    [("throw", "Cannot send request"), ("bogus", "thinking_tool_choice_conflict")],
-)
-async def test_conflict_policy_raises_before_sending(mode: str, match: str) -> None:
+async def test_throw_raises_before_sending() -> None:
     client = _conflict_client()
 
-    with pytest.raises(ValidationException, match=match):
+    with pytest.raises(ValidationException, match="Cannot send request"):
         await OpenAIBackend(client).complete(
             model=CONFLICT_MODEL,
             messages=[{"role": "user", "content": "Hello"}],
             max_tokens=100,
             response_format=_StructuredResponse,
             thinking_effort="low",
-            extra_params={"thinking_tool_choice_conflict": mode},
+            extra_params={"thinking_tool_choice_conflict": "throw"},
         )
 
     client.chat.completions.parse.assert_not_awaited()
@@ -1787,20 +1784,25 @@ async def test_forced_tool_untouched_without_policy() -> None:
 
 
 @pytest.mark.asyncio
-async def test_invalid_policy_is_only_rejected_on_a_conflict() -> None:
-    """Like the Anthropic backend, a bad mode fails only the requests it would
-    affect."""
+async def test_unknown_policy_logs_an_error_and_applies_no_policy(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Config load rejects unknown modes; one that reaches the backend from a
+    ModelConfig built in code is logged and treated as unset, not raised."""
     client = _conflict_client()
 
-    await OpenAIBackend(client).complete(
-        model=CONFLICT_MODEL,
-        messages=[{"role": "user", "content": "Hello"}],
-        max_tokens=100,
-        thinking_effort="low",
-        extra_params={"thinking_tool_choice_conflict": "bogus"},
-    )
+    with caplog.at_level(logging.ERROR, logger="src.llm.request_builder"):
+        await OpenAIBackend(client).complete(
+            model=CONFLICT_MODEL,
+            messages=[{"role": "user", "content": "Hello"}],
+            max_tokens=100,
+            response_format=_StructuredResponse,
+            thinking_effort="low",
+            extra_params={"thinking_tool_choice_conflict": "bogus"},
+        )
 
     assert _sent_kwargs(client)["reasoning_effort"] == "low"
+    assert "Unknown thinking_tool_choice_conflict mode 'bogus'" in caplog.text
 
 
 @pytest.mark.asyncio

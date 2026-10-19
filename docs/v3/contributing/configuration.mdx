@@ -226,6 +226,8 @@ Anthropic models reject extended thinking alongside a forced tool choice. `think
 DIALECTIC_LEVELS__medium__MODEL_CONFIG__OVERRIDES__PROVIDER_PARAMS__THINKING_TOOL_CHOICE_CONFLICT=override_thinking
 ```
 
+Any other value fails config load at startup, so a typo never reaches a request.
+
 How each transport applies it:
 
 - **Anthropic** checks forced tool choices (`any` or a named tool) when `thinking_budget_tokens` is set. Unset means `throw`. `override_tool` relaxes the tool choice to `auto`.
