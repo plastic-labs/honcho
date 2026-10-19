@@ -62,10 +62,12 @@ async def test_resolver_refuses_searches_only_inside_the_window():
     )
 
 
-async def _run_kwargs(specialist: Any) -> dict[str, Any]:
+async def _run(
+    specialist: Any, content: str | None = "DONE"
+) -> tuple[Any, dict[str, Any]]:
     llm_call = AsyncMock(
         return_value=HonchoLLMCallResponse(
-            content="DONE", input_tokens=1, output_tokens=1, finish_reasons=["stop"]
+            content=content, input_tokens=1, output_tokens=1, finish_reasons=["stop"]
         )
     )
     make_executor = AsyncMock(return_value=AsyncMock())
@@ -77,10 +79,10 @@ async def _run_kwargs(specialist: Any) -> dict[str, Any]:
         patch("src.dreamer.specialists.honcho_llm_call", new=llm_call),
     ):
         tracked_db.return_value.__aenter__.return_value = AsyncMock()
-        await specialist.run(
+        result = await specialist.run(
             workspace_name="w", observer="alice", observed="alice", session_name=None
         )
-    return {
+    return result, {
         **llm_call.call_args.kwargs,
         "handler_resolver": make_executor.call_args.kwargs["handler_resolver"],
     }
@@ -112,7 +114,7 @@ async def test_budget_enabled_wires_the_window(
     specialist: Any, write_tools: list[str], monkeypatch: pytest.MonkeyPatch
 ):
     monkeypatch.setattr(settings.DREAM, "BUDGET_ENABLED", True)
-    kwargs = await _run_kwargs(specialist)
+    _, kwargs = await _run(specialist)
     assert kwargs["budget_line"] is not None
     assert [t["name"] for t in kwargs["final_call_tools"]] == write_tools
     assert kwargs["handler_resolver"] is not None
@@ -121,8 +123,20 @@ async def test_budget_enabled_wires_the_window(
 
 @pytest.mark.asyncio
 async def test_budget_off_by_default():
-    kwargs = await _run_kwargs(DeductionSpecialist())
+    _, kwargs = await _run(DeductionSpecialist())
     assert kwargs["budget_line"] is None
     assert kwargs["final_call_tools"] is None
     assert kwargs["handler_resolver"] is None
     assert "## BUDGET" not in kwargs["messages"][0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_write_only_final_call_reports_empty_content(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    # OpenAI returns content=None when the final call only makes tool calls;
+    # run_dream slices the result's content, so it must stay a string.
+    monkeypatch.setattr(settings.DREAM, "BUDGET_ENABLED", True)
+    result, _ = await _run(DeductionSpecialist(), content=None)
+    assert result.success is True
+    assert result.content == ""

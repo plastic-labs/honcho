@@ -736,7 +736,9 @@ If you update it, send the full deduplicated list and remove stale entries.
                 output_tokens=response.output_tokens,
                 duration_ms=duration_ms,
                 success=True,
-                content=response.content,
+                # A final call that only writes has no text; OpenAI returns
+                # None for it, and callers slice this.
+                content=response.content or "",
             )
         except BaseException as e:
             # BaseException (not Exception) — asyncio.CancelledError doesn't
