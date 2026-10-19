@@ -24,6 +24,25 @@ from .errors import raise_upstream_error
 # Operator escape-hatch keys recognized inside ModelConfig.provider_params.
 PASSTHROUGH_KEYS = ("extra_body", "extra_headers", "extra_query")
 
+# Values of provider_params.thinking_tool_choice_conflict: what a backend does
+# when extended thinking meets a forced tool choice, which Anthropic rejects.
+THINKING_TOOL_CHOICE_CONFLICT_MODES = frozenset(
+    {"throw", "override_thinking", "override_tool"}
+)
+
+
+def thinking_tool_choice_conflict_mode(
+    extra_params: dict[str, Any] | None, default: str | None
+) -> str | None:
+    """Read and validate provider_params.thinking_tool_choice_conflict."""
+    mode = (extra_params or {}).get("thinking_tool_choice_conflict", default)
+    if mode is not None and mode not in THINKING_TOOL_CHOICE_CONFLICT_MODES:
+        expected = sorted(THINKING_TOOL_CHOICE_CONFLICT_MODES)
+        raise ValidationException(
+            f"Unknown thinking_tool_choice_conflict mode {mode!r}; expected one of {expected}"
+        )
+    return mode
+
 
 def coerce_passthrough_mapping(key: str, value: Any) -> dict[str, Any]:
     """Validate an operator-supplied provider_params passthrough is a mapping.

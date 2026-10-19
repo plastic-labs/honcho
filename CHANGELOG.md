@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 - Workspace, peer and session responses carry `uid`, the immutable identifier Honcho assigns (the row's internal id). `id` is unchanged and stays the client-chosen name, so clients can start storing `uid` as a reference that won't move if names become renameable. Every route that returns these objects includes it: get-or-create, list, update, clone, session peers, peer sessions and scope sessions. Additive, no migration (#1394)
 
+### Fixed
+
+- `provider_params.thinking_tool_choice_conflict` now applies on the OpenAI transport, where Anthropic models behind an OpenAI-compatible proxy used to ignore it. With thinking requested, it covers structured-output requests (the proxy turns the schema into a forced tool call) and forced tool choices. `override_thinking` drops thinking for the call; `override_tool` relaxes the tool choice to `auto` and requests the schema as `json_object`; `throw` raises. Unset leaves requests unchanged. Previously LiteLLM left the schema tool optional when thinking was on, so chats with a `response_format` could come back as prose and fail with a 500
+
 ## [3.3.0] - 2026-10-09
 
 ### Added

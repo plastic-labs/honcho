@@ -9,10 +9,12 @@ from typing import Any, cast
 from openai import BadRequestError, LengthFinishReasonError
 from pydantic import BaseModel, ValidationError
 
+from src.exceptions import ValidationException
 from src.llm.backend import CompletionResult, StreamChunk, ToolCallResult
 from src.llm.request_builder import (
     apply_sdk_passthroughs,
     request_timeout_from_extra_params,
+    thinking_tool_choice_conflict_mode,
 )
 from src.llm.structured_output import (
     StructuredOutputError,
@@ -192,9 +194,12 @@ class OpenAIBackend:
             thinking_budget_tokens=thinking_budget_tokens,
             extra_params=extra_params,
         )
+        structured_output_mode = self._resolve_thinking_conflict(
+            params, model, extra_params, response_format
+        )
 
         if isinstance(response_format, type):
-            if self._structured_output_mode(extra_params) == "json_object":
+            if structured_output_mode == "json_object":
                 self._apply_json_object_mode(params, response_format)
                 response = await self._client.chat.completions.create(**params)
                 if getattr(response.choices[0].message, "tool_calls", None):
@@ -325,10 +330,13 @@ class OpenAIBackend:
             thinking_budget_tokens=thinking_budget_tokens,
             extra_params=extra_params,
         )
+        structured_output_mode = self._resolve_thinking_conflict(
+            params, model, extra_params, response_format
+        )
         params["stream"] = True
         params["stream_options"] = {"include_usage": True}
         if isinstance(response_format, type):
-            if self._structured_output_mode(extra_params) == "json_object":
+            if structured_output_mode == "json_object":
                 # Inject the schema into the prompt for providers without
                 # json_schema support; repair happens downstream.
                 self._apply_json_object_mode(params, response_format)
@@ -512,6 +520,98 @@ class OpenAIBackend:
         if not extra_params:
             return None
         return extra_params.get("structured_output_mode")
+
+    @classmethod
+    def _resolve_thinking_conflict(
+        cls,
+        params: dict[str, Any],
+        model: str,
+        extra_params: dict[str, Any] | None,
+        response_format: type[BaseModel] | dict[str, Any] | None,
+    ) -> str | None:
+        """Apply provider_params.thinking_tool_choice_conflict to an OpenAI request.
+
+        Anthropic rejects extended thinking alongside a forced tool choice. On
+        this transport that conflict reaches Anthropic through an
+        OpenAI-compatible proxy, and LiteLLM implements a json_schema
+        response_format as a tool it forces the model to call, so a schema
+        request conflicts with thinking too. LiteLLM resolves that by leaving
+        the schema tool optional, and the model can then answer in prose.
+
+        Only acts when the operator sets the mode: OpenAI's own reasoning
+        models accept reasoning_effort with forced tools and json_schema, so
+        there is no default here, unlike the Anthropic backend's "throw".
+        Strips thinking from ``params`` in place for override_thinking and
+        relaxes a forced tool choice for override_tool.
+
+        Returns:
+            The structured output mode the caller should use: "json_object"
+            when override_tool moves a schema into the prompt so thinking can
+            stay, otherwise the configured mode.
+        """
+        configured_mode = cls._structured_output_mode(extra_params)
+        mode = thinking_tool_choice_conflict_mode(extra_params, None)
+        if mode is None or not cls._thinking_requested(params):
+            return configured_mode
+
+        tool_choice = params.get("tool_choice")
+        forced_tool = tool_choice == "required" or isinstance(tool_choice, dict)
+        schema_requested = (
+            isinstance(response_format, type) and configured_mode != "json_object"
+        )
+        if not (forced_tool or schema_requested):
+            return configured_mode
+
+        conflict = f"model {model}: "
+        conflict += (
+            f"tool_choice {tool_choice} forces tool use"
+            if forced_tool
+            else "a json_schema response_format is a forced tool call behind proxies"
+        )
+        conflict += ", which Anthropic does not allow alongside extended thinking"
+        if mode == "throw":
+            raise ValidationException(f"Cannot send request to {conflict}")
+        if mode == "override_tool":
+            if forced_tool:
+                logger.debug("Relaxing tool_choice to auto for %s", conflict)
+                params["tool_choice"] = "auto"
+            if schema_requested:
+                logger.debug("Requesting the schema as json_object for %s", conflict)
+                return "json_object"
+            return configured_mode
+
+        logger.debug("Dropping extended thinking for %s", conflict)
+        params.pop("reasoning_effort", None)
+        extra_body = params.get("extra_body")
+        if isinstance(extra_body, dict):
+            remaining = {
+                key: value
+                for key, value in cast(dict[str, Any], extra_body).items()
+                if key not in ("reasoning", "thinking")
+            }
+            if remaining:
+                params["extra_body"] = remaining
+            else:
+                params.pop("extra_body")
+        return configured_mode
+
+    @staticmethod
+    def _thinking_requested(params: dict[str, Any]) -> bool:
+        """Whether the request asks for thinking: reasoning_effort, the
+        budget Honcho injects as extra_body.reasoning, or an operator-supplied
+        extra_body.thinking that isn't disabled."""
+        if params.get("reasoning_effort"):
+            return True
+        extra_body = params.get("extra_body")
+        if not isinstance(extra_body, dict):
+            return False
+        body = cast(dict[str, Any], extra_body)
+        if body.get("reasoning"):
+            return True
+        thinking = body.get("thinking")
+        if isinstance(thinking, dict):
+            return cast(dict[str, Any], thinking).get("type") != "disabled"
+        return False
 
     def _apply_json_object_mode(
         self,
