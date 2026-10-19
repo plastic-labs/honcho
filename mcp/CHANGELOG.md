@@ -9,6 +9,13 @@ This package versions independently of the Honcho API, `@honcho-ai/sdk`, and hos
 
 ## [Unreleased]
 
+### Fixed
+
+- An expired or revoked OAuth token now returns HTTP 401 (`invalid_token`)
+  instead of a tool error, so clients refresh it rather than showing Honcho as
+  signed out after an hour. Tool calls now respond with a single JSON body
+  instead of an SSE stream. API key errors are unchanged.
+
 ### Added
 
 - A caller-set `X-Honcho-Plugin` header is forwarded to the Honcho API as the
