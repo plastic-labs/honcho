@@ -1,9 +1,10 @@
 from logging import getLogger
-from typing import Any
+from typing import Any, cast
 
 from cashews import NOT_NONE
 from sqlalchemy import func, literal, select, update
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import make_transient_to_detached
@@ -237,7 +238,8 @@ async def merge_collection_internal_metadata_value(
     patch: dict[str, Any],
     *,
     commit: bool = True,
-) -> None:
+    if_unchanged: tuple[str, str | None] | None = None,
+) -> bool:
     """Merge `patch` into the object stored under one top-level key, server-side.
 
     `update_collection_internal_metadata` replaces a top-level value whole, so
@@ -247,27 +249,41 @@ async def merge_collection_internal_metadata_value(
 
     With `commit=False` the update joins the caller's transaction, and the
     caller calls `invalidate_collection_cache` once that commits.
+
+    With `if_unchanged=(subkey, value)`, the write happens only while the
+    string stored under `subkey` still equals `value` (None: absent), so a
+    writer that read before another reset the value can't write over it.
+
+    Returns:
+        Whether a row was written.
     """
     current = func.coalesce(
         models.Collection.internal_metadata[key], func.jsonb_build_object()
     )
+    conditions = [
+        models.Collection.workspace_name == workspace_name,
+        models.Collection.observer == observer,
+        models.Collection.observed == observed,
+    ]
+    if if_unchanged is not None:
+        subkey, expected = if_unchanged
+        stored = models.Collection.internal_metadata.op("->")(key).op("->>")(subkey)
+        conditions.append(stored.is_(None) if expected is None else stored == expected)
     stmt = (
         update(models.Collection)
-        .where(
-            models.Collection.workspace_name == workspace_name,
-            models.Collection.observer == observer,
-            models.Collection.observed == observed,
-        )
+        .where(*conditions)
         .values(
             internal_metadata=models.Collection.internal_metadata.op("||")(
                 func.jsonb_build_object(key, current.op("||")(literal(patch, JSONB)))
             )
         )
     )
-    await db.execute(stmt)
+    result = cast(CursorResult[Any], await db.execute(stmt))
+    written = result.rowcount > 0
     if commit:
         await db.commit()
         await invalidate_collection_cache(workspace_name, observer, observed)
+    return written
 
 
 async def invalidate_collection_cache(

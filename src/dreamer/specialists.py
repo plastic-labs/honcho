@@ -512,6 +512,7 @@ If you update it, send the full deduplicated list and remove stale entries.
                         observer=observer,
                         observed=observed,
                         dream_number=state.dream_number,
+                        epoch=state.notes_epoch,
                     )
                 except Exception:
                     logger.warning(
@@ -574,6 +575,7 @@ If you update it, send the full deduplicated list and remove stale entries.
                                 specialist=self.name,
                                 run_id=run_id,
                                 dream_number=state.dream_number,
+                                epoch=state.notes_epoch,
                             )
                         }
                         if notes_enabled and state is not None

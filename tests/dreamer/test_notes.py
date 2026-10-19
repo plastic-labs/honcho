@@ -7,7 +7,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src import models
+from src import crud, models
 from src.config import settings
 from src.dreamer.specialists import DeductionSpecialist
 from src.dreamer.working_memory import (
@@ -493,6 +493,72 @@ async def test_a_failed_notes_load_runs_the_pass_without_them(
     assert "## YOUR NOTES FROM EARLIER DREAMS" not in kwargs["messages"][1]["content"]
     # The tool is still offered, so the pass can write notes.
     assert "update_notes" in [t["name"] for t in kwargs["tools"]]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reset_after_read", [False, True])
+async def test_notes_reset_mid_dream_refuses_writes(
+    db_session: AsyncSession,
+    sample_data: tuple[models.Workspace, models.Peer],
+    reset_after_read: bool,
+):
+    """A reset (scope removal) after the dream started, or between the handler's
+    read and its write, must not be written over with the old notes."""
+    from src.dreamer.working_memory import EPOCH_KEY
+
+    ctx = await _seed_collection(
+        db_session,
+        sample_data,
+        {"entries": [_entry("n1", "map").model_dump(mode="json")]},
+    )
+    handle = make_update_notes_handler(
+        specialist="deduction", run_id="r1", dream_number=1, epoch=None
+    )
+    operations = {"operations": [{"op": "add", "kind": "open", "text": "x"}]}
+    if reset_after_read:
+        # The conditional write finds the epoch moved after the read.
+        store = AsyncMock(return_value=False)
+        with patch("src.dreamer.working_memory._store_entries", new=store):
+            result = await handle(ctx, operations)
+        assert store.await_count == 1
+    else:
+        await crud.merge_collection_internal_metadata_value(
+            db_session,
+            ctx.workspace_name,
+            ctx.observer,
+            ctx.observed,
+            NOTES_KEY,
+            {"entries": [], EPOCH_KEY: "e2"},
+        )
+        result = await handle(ctx, operations)
+
+    assert isinstance(result, str) and "were reset during this dream" in result
+    if not reset_after_read:
+        assert parse_entries(await _stored(db_session, ctx)) == []
+
+
+@pytest.mark.asyncio
+async def test_store_is_refused_once_the_epoch_moved(
+    db_session: AsyncSession,
+    sample_data: tuple[models.Workspace, models.Peer],
+):
+    from src.dreamer.working_memory import (
+        EPOCH_KEY,
+        _store_entries,  # pyright: ignore[reportPrivateUsage]
+    )
+
+    ctx = await _seed_collection(
+        db_session, sample_data, {"entries": [], EPOCH_KEY: "e2"}
+    )
+    old = [_entry("n1", "map")]
+    assert not await _store_entries(
+        ctx.workspace_name, ctx.observer, ctx.observed, old, epoch=None
+    )
+    assert parse_entries(await _stored(db_session, ctx)) == []
+    assert await _store_entries(
+        ctx.workspace_name, ctx.observer, ctx.observed, old, epoch="e2"
+    )
+    assert [e.id for e in parse_entries(await _stored(db_session, ctx))] == ["n1"]
 
 
 def test_replace_updates_ids_only_when_given():

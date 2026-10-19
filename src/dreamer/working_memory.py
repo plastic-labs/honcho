@@ -28,6 +28,11 @@ from src.utils.types import ToolResult
 logger = logging.getLogger(__name__)
 
 NOTES_KEY = "dream_notes"
+# Set to a fresh value whenever the notes are reset from outside a dream (scope
+# removal). Note writes made during a dream go through only while it still
+# matches what the dream started with, so a reset can't be written over by an
+# edit read before it, or by a dream whose prompt still holds the old notes.
+EPOCH_KEY = "epoch"
 
 NoteKind = Literal["pending", "open", "covered", "map"]
 NOTE_KINDS: tuple[str, ...] = get_args(NoteKind)
@@ -126,6 +131,14 @@ def parse_entries(stored: Any) -> list[NoteEntry]:
     return entries
 
 
+def parse_epoch(stored: Any) -> str | None:
+    """The stored notes' epoch; None if they were never reset."""
+    if not isinstance(stored, dict):
+        return None
+    epoch = cast(dict[str, Any], stored).get(EPOCH_KEY)
+    return epoch if isinstance(epoch, str) else None
+
+
 def parse_cursor(stored: Any) -> NotesCursor:
     """Cursor from the stored `dream_notes` value; a fresh one if absent or bad."""
     if not isinstance(stored, dict):
@@ -174,6 +187,8 @@ class DreamState:
 
     cursor: NotesCursor
     entries: list[NoteEntry] = field(default_factory=list)
+    # The notes' epoch when the dream started; see `EPOCH_KEY`.
+    notes_epoch: str | None = None
     # Present only when the brief is enabled.
     work_list: WorkList | None = None
 
@@ -210,8 +225,9 @@ async def load_dream_state(
         )
         cursor = parse_cursor(stored_notes)
         entries = parse_entries(stored_notes)
+        epoch = parse_epoch(stored_notes)
         if not include_work_list:
-            return DreamState(cursor=cursor, entries=entries)
+            return DreamState(cursor=cursor, entries=entries, notes_epoch=epoch)
 
         since: datetime.datetime | None = None
         if cursor.position() is None:
@@ -243,6 +259,7 @@ async def load_dream_state(
     return DreamState(
         cursor=cursor,
         entries=entries,
+        notes_epoch=epoch,
         work_list=WorkList(items=items, remaining=total - len(items)),
     )
 
@@ -577,10 +594,21 @@ def apply_note_operations(
 
 
 async def _store_entries(
-    workspace_name: str, observer: str, observed: str, entries: list[NoteEntry]
-) -> None:
+    workspace_name: str,
+    observer: str,
+    observed: str,
+    entries: list[NoteEntry],
+    *,
+    epoch: str | None,
+) -> bool:
+    """Write the entries back, only while the notes' epoch is still `epoch`.
+
+    Returns:
+        False when the notes were reset since `epoch` was read; nothing is
+        written then.
+    """
     async with tracked_db("dream.notes_write") as db:
-        await crud.merge_collection_internal_metadata_value(
+        return await crud.merge_collection_internal_metadata_value(
             db,
             workspace_name,
             observer,
@@ -590,6 +618,7 @@ async def _store_entries(
                 "version": 1,
                 "entries": [entry.model_dump(mode="json") for entry in entries],
             },
+            if_unchanged=(EPOCH_KEY, epoch),
         )
 
 
@@ -616,7 +645,12 @@ _KIND_ORDER = {kind: index for index, kind in enumerate(NOTE_KINDS)}
 
 
 async def load_notes_for_pass(
-    workspace_name: str, *, observer: str, observed: str, dream_number: int
+    workspace_name: str,
+    *,
+    observer: str,
+    observed: str,
+    dream_number: int,
+    epoch: str | None = None,
 ) -> LoadedNotes:
     """Read the notes, prune them, and store the pruned list back.
 
@@ -624,7 +658,8 @@ async def load_notes_for_pass(
     (deleted or superseded) are stripped, and an entry is dropped only when
     every conclusion it cited is gone: one outdated premise shouldn't erase a
     note that still rests on others. Pruning is written back so stale entries
-    stop counting against the cap.
+    stop counting against the cap, unless the notes were reset since the dream
+    started (`epoch`).
     """
     async with tracked_db("dream.notes_load", read_only=True) as db:
         stored = await crud.get_collection_internal_metadata_value(
@@ -658,7 +693,7 @@ async def load_notes_for_pass(
         kept.append(entry)
 
     if len(kept) != len(entries) or ids_stripped:
-        await _store_entries(workspace_name, observer, observed, kept)
+        await _store_entries(workspace_name, observer, observed, kept, epoch=epoch)
     return LoadedNotes(
         entries=kept,
         pending_expired=pending_expired,
@@ -741,11 +776,20 @@ def _evict_oldest(
     return kept, size
 
 
+_NOTES_RESET_ERROR = (
+    "ERROR: your notes were reset during this dream, so they can't be edited "
+    + "until the next one. No notes were changed."
+)
+
 NotesHandler = Callable[[Any, dict[str, Any]], Coroutine[Any, Any, ToolResult | str]]
 
 
 def make_update_notes_handler(
-    *, specialist: str, run_id: str | None, dream_number: int
+    *,
+    specialist: str,
+    run_id: str | None,
+    dream_number: int,
+    epoch: str | None = None,
 ) -> NotesHandler:
     """Tool handler for `update_notes`, bound to one specialist pass.
 
@@ -754,7 +798,9 @@ def make_update_notes_handler(
     fails later. A call that is malformed, or that grows the specialist's own
     entries past its share of the cap, changes nothing. In shadow mode the
     model never sees entry ids and so can't remove anything: the specialist's
-    oldest entries are evicted to fit instead.
+    oldest entries are evicted to fit instead. Once the notes were reset since
+    the dream started (`epoch`), every call is refused: the model may still
+    hold the old notes and would write them back.
     """
 
     async def handle(ctx: Any, tool_input: dict[str, Any]) -> ToolResult | str:
@@ -762,6 +808,8 @@ def make_update_notes_handler(
             stored = await crud.get_collection_internal_metadata_value(
                 db, ctx.workspace_name, ctx.observer, ctx.observed, NOTES_KEY
             )
+        if parse_epoch(stored) != epoch:
+            return _NOTES_RESET_ERROR
         current = [
             entry
             for entry in parse_entries(stored)
@@ -791,7 +839,10 @@ def make_update_notes_handler(
                 + f"{cap}. Remove or shorten entries first. No notes were changed."
             )
 
-        await _store_entries(ctx.workspace_name, ctx.observer, ctx.observed, updated)
+        if not await _store_entries(
+            ctx.workspace_name, ctx.observer, ctx.observed, updated, epoch=epoch
+        ):
+            return _NOTES_RESET_ERROR
         changes = [
             f"{label} {', '.join(ids)}"
             for label, ids in (
