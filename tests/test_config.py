@@ -225,7 +225,7 @@ def test_absent_provider_keys_do_not_warn(
 def _configured_with_conflict_mode(mode: object) -> ConfiguredModelSettings:
     return ConfiguredModelSettings.model_validate(
         {
-            "model": "dialectic-medium",
+            "model": "claude-via-proxy",
             "transport": "openai",
             "overrides": {"provider_params": {"thinking_tool_choice_conflict": mode}},
         }

@@ -536,10 +536,10 @@ class OpenAIBackend:
 
         Anthropic rejects extended thinking alongside a forced tool choice. On
         this transport that conflict reaches Anthropic through an
-        OpenAI-compatible proxy, and LiteLLM implements a json_schema
+        OpenAI-compatible proxy, which may implement a json_schema
         response_format as a tool it forces the model to call, so a schema
-        request conflicts with thinking too. LiteLLM resolves that by leaving
-        the schema tool optional, and the model can then answer in prose.
+        request conflicts with thinking too. A proxy that resolves this by
+        leaving the schema tool optional lets the model answer in prose.
 
         Only acts when the operator sets the mode: OpenAI's own reasoning
         models accept reasoning_effort with forced tools and json_schema, so

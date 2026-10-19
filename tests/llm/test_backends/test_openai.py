@@ -1473,10 +1473,10 @@ async def test_structured_output_parse_validation_error_hides_payload() -> None:
     assert exc_info.value.__cause__ is None
 
 
-# thinking_tool_choice_conflict on the OpenAI transport. Claude behind an
-# OpenAI-compatible proxy (LiteLLM) sees a json_schema response_format as a
-# forced tool call, so the operator's policy has to cover schemas as well as
-# forced tool choices.
+# thinking_tool_choice_conflict on the OpenAI transport. An OpenAI-compatible
+# proxy in front of an Anthropic model may turn a json_schema response_format
+# into a forced tool call, so the operator's policy has to cover schemas as
+# well as forced tool choices.
 
 CONFLICT_MODEL = "claude-via-proxy"
 
@@ -1543,12 +1543,12 @@ async def test_override_thinking_strips_thinking_from_extra_body_only() -> None:
             "thinking_tool_choice_conflict": "override_thinking",
             "extra_body": {
                 "thinking": {"type": "adaptive"},
-                "metadata": {"route": "vertex"},
+                "metadata": {"route": "primary"},
             },
         },
     )
 
-    assert _sent_kwargs(client)["extra_body"] == {"metadata": {"route": "vertex"}}
+    assert _sent_kwargs(client)["extra_body"] == {"metadata": {"route": "primary"}}
 
 
 @pytest.mark.asyncio
