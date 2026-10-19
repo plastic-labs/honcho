@@ -260,6 +260,11 @@ async def schedule_backlog_dream(
     backlog left after ingestion stops would wait for the next message. The
     timer waits out `MIN_HOURS_BETWEEN_DREAMS`, the same gate a threshold dream
     passes. The API scheduler needs no timer: it reads the recorded backlog.
+
+    Like a threshold dream, the follow-up needs a session to resolve the dream
+    configuration from: when the pair's newest explicit conclusion has none
+    (created through the API without a session), both schedulers skip it, and
+    the backlog waits for a manually scheduled dream.
     """
     if settings.DERIVER.SCHEDULER == "api":
         return
