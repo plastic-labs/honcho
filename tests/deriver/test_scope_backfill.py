@@ -30,7 +30,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 from nanoid import generate as generate_nanoid
-from sqlalchemy import func, select, update
+from sqlalchemy import func, insert, select, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from src import crud, models
@@ -406,6 +406,81 @@ async def test_add_remove_readd_converges_on_one_live_copy(
     live_copies = [d for d in all_copies if d.deleted_at is None]
     assert len(all_copies) == 1  # restored, not duplicated
     assert len(live_copies) == 1
+
+
+async def test_readd_refreshes_a_restored_copys_citations(
+    db_session: AsyncSession,
+    sample_data: tuple[models.Workspace, models.Peer],
+):
+    test_workspace, sender = sample_data
+    workspace_name = test_workspace.name
+    scope_peer = await _create_scope_peer(
+        db_session, workspace_name, str(generate_nanoid())
+    )
+    session = await _create_session(db_session, workspace_name)
+    await _join_scope(db_session, workspace_name, session.name, scope_peer.name)
+    messages = [
+        models.Message(
+            session_name=session.name,
+            workspace_name=workspace_name,
+            peer_name=sender.name,
+            content=f"message {seq}",
+            seq_in_session=seq,
+        )
+        for seq in (1, 2)
+    ]
+    db_session.add_all(messages)
+    await db_session.commit()
+    first, second = messages[0].public_id, messages[1].public_id
+
+    await _create_collection(
+        db_session, workspace_name, observer=sender.name, observed=sender.name
+    )
+    source = models.Document(
+        workspace_name=workspace_name,
+        observer=sender.name,
+        observed=sender.name,
+        content="some observation",
+        level="explicit",
+        session_name=session.name,
+        embedding=_embedding(),
+        internal_metadata={},
+        source_message_ids=[first],
+    )
+    db_session.add(source)
+    await db_session.commit()
+    source_id = source.id
+    await _create_collection(
+        db_session, workspace_name, observer=scope_peer.name, observed=sender.name
+    )
+
+    backfill_payload = ScopeBackfillPayload(
+        scope_peer=scope_peer.name, session_name=session.name
+    )
+    await process_scope_backfill(backfill_payload, workspace_name)
+    await process_scope_removal(
+        ScopeRemovalPayload(scope_peer=scope_peer.name, session_name=session.name),
+        workspace_name,
+    )
+
+    # The source is re-derived while its copy sits soft-deleted.
+    await db_session.execute(
+        insert(models.ConclusionSourceMessage).values(
+            conclusion_id=source_id,
+            message_id=second,
+            position=1,
+            workspace_name=workspace_name,
+        )
+    )
+    await db_session.commit()
+
+    await process_scope_backfill(backfill_payload, workspace_name)
+
+    [copy] = await _get_docs(
+        db_session, workspace_name, observer=scope_peer.name, observed=sender.name
+    )
+    assert copy.deleted_at is None
+    assert copy.source_message_ids == [first, second]
 
 
 async def test_backfill_skips_a_session_that_left_the_scope(

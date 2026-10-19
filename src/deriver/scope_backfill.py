@@ -28,13 +28,14 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import exists, or_, select, update
+from sqlalchemy import delete, exists, insert, or_, select, update
 from sqlalchemy.dialects.postgresql import array
 from sqlalchemy.orm import load_only
 from sqlalchemy.sql.functions import func
 
 from src import crud, models
 from src.config import settings
+from src.crud.document import build_source_message_links
 from src.crud.scope import ScopeBackfillState
 from src.dependencies import tracked_db
 from src.embedding_client import embedding_client
@@ -360,9 +361,21 @@ async def _copy_chunk(
             )
 
         restore_ids: list[str] = []
+        restored_citations: list[dict[str, Any]] = []
         for spec in plans:
             if spec.restore_document_id is not None:
                 restore_ids.append(spec.restore_document_id)
+                restored_citations.extend(
+                    {
+                        "conclusion_id": spec.restore_document_id,
+                        "message_id": link.message_id,
+                        "position": link.position,
+                        "workspace_name": workspace_name,
+                    }
+                    for link in build_source_message_links(
+                        spec.source_message_ids, workspace_name
+                    )
+                )
                 continue
             row = models.Document(
                 workspace_name=workspace_name,
@@ -390,6 +403,17 @@ async def _copy_chunk(
                 .where(models.Document.id.in_(restore_ids))
                 .values(deleted_at=None, sync_state="pending")
             )
+            # The source may have gained citations since this copy was
+            # removed; a restored copy takes the source's current set.
+            await db.execute(
+                delete(models.ConclusionSourceMessage).where(
+                    models.ConclusionSourceMessage.conclusion_id.in_(restore_ids)
+                )
+            )
+            if restored_citations:
+                await db.execute(
+                    insert(models.ConclusionSourceMessage), restored_citations
+                )
         await db.commit()
 
         # IDs are generated client-side and remain accessible post-commit
