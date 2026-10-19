@@ -26,6 +26,9 @@ from src.utils.representation import PromptRepresentation
 
 logger = logging.getLogger(__name__)
 
+# extra_body keys that request thinking from an OpenAI-compatible proxy.
+_EXTRA_BODY_THINKING_KEYS = ("reasoning", "reasoning_effort", "thinking")
+
 
 # The point of this being a WeakKeyDictionary, as opposed to a regular dict, is that it
 # does not hold a reference to the keyed BaseModel so that when a dynamically created
@@ -550,17 +553,23 @@ class OpenAIBackend:
             stay, otherwise the configured mode.
         """
         configured_mode = cls._structured_output_mode(extra_params)
-        mode = thinking_tool_choice_conflict_mode(extra_params, None)
-        if mode is None or not cls._thinking_requested(params):
+        if not (extra_params or {}).get(
+            "thinking_tool_choice_conflict"
+        ) or not cls._thinking_requested(params):
             return configured_mode
 
         tool_choice = params.get("tool_choice")
-        forced_tool = tool_choice == "required" or isinstance(tool_choice, dict)
+        forced_tool = tool_choice == "required" or (
+            isinstance(tool_choice, dict)
+            and cast(dict[str, Any], tool_choice).get("type") == "function"
+        )
         schema_requested = (
             isinstance(response_format, type) and configured_mode != "json_object"
         )
         if not (forced_tool or schema_requested):
             return configured_mode
+
+        mode = thinking_tool_choice_conflict_mode(extra_params, None)
 
         conflict = f"model {model}: "
         conflict += (
@@ -587,7 +596,7 @@ class OpenAIBackend:
             remaining = {
                 key: value
                 for key, value in cast(dict[str, Any], extra_body).items()
-                if key not in ("reasoning", "thinking")
+                if key not in _EXTRA_BODY_THINKING_KEYS
             }
             if remaining:
                 params["extra_body"] = remaining
@@ -597,17 +606,25 @@ class OpenAIBackend:
 
     @staticmethod
     def _thinking_requested(params: dict[str, Any]) -> bool:
-        """Whether the request asks for thinking: reasoning_effort, the
-        budget Honcho injects as extra_body.reasoning, or an operator-supplied
-        extra_body.thinking that isn't disabled."""
+        """Whether the request asks for thinking: reasoning_effort (top level
+        or in extra_body, which the SDK merges into the body), the budget
+        Honcho injects as extra_body.reasoning, or an operator-supplied
+        extra_body.thinking. Explicitly disabled shapes don't count."""
         if params.get("reasoning_effort"):
             return True
         extra_body = params.get("extra_body")
         if not isinstance(extra_body, dict):
             return False
         body = cast(dict[str, Any], extra_body)
-        if body.get("reasoning"):
+        if body.get("reasoning_effort") not in (None, "none"):
             return True
+        reasoning = body.get("reasoning")
+        if isinstance(reasoning, dict):
+            reasoning_dict = cast(dict[str, Any], reasoning)
+            if reasoning_dict.get("enabled") is not False and (
+                reasoning_dict.get("effort") != "none"
+            ):
+                return True
         thinking = body.get("thinking")
         if isinstance(thinking, dict):
             return cast(dict[str, Any], thinking).get("type") != "disabled"

@@ -1477,7 +1477,7 @@ async def test_structured_output_parse_validation_error_hides_payload() -> None:
 # forced tool call, so the operator's policy has to cover schemas as well as
 # forced tool choices.
 
-CONFLICT_MODEL = "dialectic-medium"
+CONFLICT_MODEL = "claude-via-proxy"
 
 
 def _conflict_client() -> Mock:
@@ -1710,3 +1710,133 @@ async def test_stream_override_thinking_drops_reasoning_effort_for_schema() -> N
     call = _await_kwargs(client.chat.completions.create)
     assert "reasoning_effort" not in call
     assert call["response_format"]["type"] == "json_schema"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("thinking_kwargs", "extra_body"),
+    [
+        ({"thinking_budget_tokens": 2048}, None),
+        ({}, {"reasoning_effort": "low"}),
+        ({}, {"thinking": {"type": "adaptive"}}),
+    ],
+    ids=["injected_budget", "extra_body_effort", "extra_body_thinking"],
+)
+async def test_override_thinking_removes_thinking_only_extra_body(
+    thinking_kwargs: dict[str, Any], extra_body: dict[str, Any] | None
+) -> None:
+    client = _conflict_client()
+    extra_params: dict[str, Any] = {
+        "thinking_tool_choice_conflict": "override_thinking"
+    }
+    if extra_body is not None:
+        extra_params["extra_body"] = extra_body
+
+    await OpenAIBackend(client).complete(
+        model=CONFLICT_MODEL,
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        response_format=_StructuredResponse,
+        extra_params=extra_params,
+        **thinking_kwargs,
+    )
+
+    assert "extra_body" not in _sent_kwargs(client)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "reasoning",
+    [{"enabled": False}, {"effort": "none"}],
+)
+async def test_disabled_extra_body_reasoning_is_not_a_conflict(
+    reasoning: dict[str, Any],
+) -> None:
+    client = _conflict_client()
+
+    await OpenAIBackend(client).complete(
+        model=CONFLICT_MODEL,
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        response_format=_StructuredResponse,
+        extra_params={
+            "thinking_tool_choice_conflict": "throw",
+            "extra_body": {"reasoning": reasoning},
+        },
+    )
+
+    assert _sent_kwargs(client)["extra_body"] == {"reasoning": reasoning}
+
+
+@pytest.mark.asyncio
+async def test_forced_tool_untouched_without_policy() -> None:
+    client = _conflict_client()
+
+    await OpenAIBackend(client).complete(
+        model=CONFLICT_MODEL,
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        tools=[AGENT_TOOL],
+        tool_choice="any",
+        thinking_effort="low",
+    )
+
+    call = _sent_kwargs(client)
+    assert call["reasoning_effort"] == "low"
+    assert call["tool_choice"] == "required"
+
+
+@pytest.mark.asyncio
+async def test_invalid_policy_is_only_rejected_on_a_conflict() -> None:
+    """Like the Anthropic backend, a bad mode fails only the requests it would
+    affect."""
+    client = _conflict_client()
+
+    await OpenAIBackend(client).complete(
+        model=CONFLICT_MODEL,
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        thinking_effort="low",
+        extra_params={"thinking_tool_choice_conflict": "bogus"},
+    )
+
+    assert _sent_kwargs(client)["reasoning_effort"] == "low"
+
+
+@pytest.mark.asyncio
+async def test_stream_override_tool_requests_json_object() -> None:
+    client = Mock()
+    client.chat.completions.create = AsyncMock(return_value=_empty_stream())
+
+    async for _ in OpenAIBackend(client).stream(
+        model=CONFLICT_MODEL,
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        response_format=_StructuredResponse,
+        thinking_effort="low",
+        extra_params={"thinking_tool_choice_conflict": "override_tool"},
+    ):
+        pass
+
+    call = _await_kwargs(client.chat.completions.create)
+    assert call["reasoning_effort"] == "low"
+    assert call["response_format"] == {"type": "json_object"}
+
+
+@pytest.mark.asyncio
+async def test_stream_throw_raises_before_sending() -> None:
+    client = Mock()
+    client.chat.completions.create = AsyncMock(return_value=_empty_stream())
+
+    with pytest.raises(ValidationException, match="Cannot send request"):
+        async for _ in OpenAIBackend(client).stream(
+            model=CONFLICT_MODEL,
+            messages=[{"role": "user", "content": "Hello"}],
+            max_tokens=100,
+            response_format=_StructuredResponse,
+            thinking_effort="low",
+            extra_params={"thinking_tool_choice_conflict": "throw"},
+        ):
+            pass
+
+    client.chat.completions.create.assert_not_awaited()

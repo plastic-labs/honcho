@@ -34,7 +34,11 @@ THINKING_TOOL_CHOICE_CONFLICT_MODES = frozenset(
 def thinking_tool_choice_conflict_mode(
     extra_params: dict[str, Any] | None, default: str | None
 ) -> str | None:
-    """Read and validate provider_params.thinking_tool_choice_conflict."""
+    """Read and validate provider_params.thinking_tool_choice_conflict.
+
+    Backends call this only once they have found a conflict, so an invalid
+    value fails the requests it would affect rather than every request.
+    """
     mode = (extra_params or {}).get("thinking_tool_choice_conflict", default)
     if mode is not None and mode not in THINKING_TOOL_CHOICE_CONFLICT_MODES:
         expected = sorted(THINKING_TOOL_CHOICE_CONFLICT_MODES)
