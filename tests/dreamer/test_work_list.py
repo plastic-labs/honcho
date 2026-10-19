@@ -1,5 +1,7 @@
 import datetime
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlalchemy import select
@@ -138,6 +140,55 @@ async def test_backlog_is_worked_through_over_consecutive_dreams(
 
     third = (await load_work_list(workspace, observer=peer, observed=peer)).work_list
     assert third is not None and third.items == [] and third.remaining == 0
+
+
+@pytest.mark.asyncio
+async def test_page_stops_at_the_token_cap_but_shows_one(
+    db_session: AsyncSession,
+    sample_data: tuple[models.Workspace, models.Peer],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(settings.DREAM, "BRIEF_MAX_NEW_CONCLUSION_TOKENS", 1)
+    workspace, peer = await _seed(
+        db_session,
+        sample_data,
+        [
+            ("a", "explicit", T0),
+            ("b", "explicit", T0 + datetime.timedelta(minutes=1)),
+            ("c", "explicit", T0 + datetime.timedelta(minutes=2)),
+        ],
+    )
+    work_list = (
+        await load_work_list(workspace, observer=peer, observed=peer)
+    ).work_list
+    assert work_list is not None
+    # The first is over the cap on its own, and is still shown.
+    assert [i.id for i in work_list.items] == [_id("a")]
+    assert work_list.remaining == 2
+
+
+@pytest.mark.asyncio
+async def test_remaining_never_goes_negative():
+    """A commit between the count and the page can make the page the longer."""
+    docs = [
+        SimpleNamespace(id=f"x{i}", content="c", created_at=T0, internal_metadata={})
+        for i in range(2)
+    ]
+    with (
+        patch("src.dreamer.working_memory.tracked_db") as tracked_db,
+        patch(
+            "src.dreamer.working_memory.crud.get_collection_internal_metadata_value",
+            new=AsyncMock(return_value=None),
+        ),
+        patch(
+            "src.dreamer.working_memory.crud.query_explicit_documents_after",
+            new=AsyncMock(return_value=(docs, 1)),
+        ),
+    ):
+        tracked_db.return_value.__aenter__.return_value = AsyncMock()
+        state = await load_work_list("w", observer="p", observed="p")
+    assert state.work_list is not None
+    assert len(state.work_list.items) == 2 and state.work_list.remaining == 0
 
 
 async def _set_last_dream_at(

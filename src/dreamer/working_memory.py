@@ -247,20 +247,30 @@ async def load_dream_state(
             since=since,
             limit=settings.DREAM.BRIEF_MAX_NEW_CONCLUSIONS,
         )
-        items = [
-            WorkItem(
-                id=doc.id,
-                content=doc.content,
-                created_at=doc.created_at,
-                stated_at=_parse_iso(doc.internal_metadata.get("message_created_at")),
+        items: list[WorkItem] = []
+        tokens = 0
+        for doc in documents:
+            # The page stops at the token cap too; the rest count as remaining.
+            tokens += estimate_tokens(doc.content)
+            if items and tokens > settings.DREAM.BRIEF_MAX_NEW_CONCLUSION_TOKENS:
+                break
+            items.append(
+                WorkItem(
+                    id=doc.id,
+                    content=doc.content,
+                    created_at=doc.created_at,
+                    stated_at=_parse_iso(
+                        doc.internal_metadata.get("message_created_at")
+                    ),
+                )
             )
-            for doc in documents
-        ]
     return DreamState(
         cursor=cursor,
         entries=entries,
         notes_epoch=epoch,
-        work_list=WorkList(items=items, remaining=total - len(items)),
+        # The count and the page are separate autocommit reads, so a commit
+        # between them can leave the page longer than the count.
+        work_list=WorkList(items=items, remaining=max(0, total - len(items))),
     )
 
 

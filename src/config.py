@@ -1413,6 +1413,11 @@ class DreamSettings(HonchoSettings):
     # Cap on the since-last-dream work list in the brief. A larger backlog is
     # worked through over consecutive dreams.
     BRIEF_MAX_NEW_CONCLUSIONS: Annotated[int, Field(default=50, ge=1, le=500)] = 50
+    # Token cap on the same list: conclusions created through the API can be
+    # long. At least one is always shown, so one huge conclusion can't stall it.
+    BRIEF_MAX_NEW_CONCLUSION_TOKENS: Annotated[
+        int, Field(default=8000, ge=500, le=100_000)
+    ] = 8000
     # Deduction and induction see a tool-call budget line, the last iterations
     # are reserved for writes, and the final call at the limit can still write.
     BUDGET_ENABLED: bool = False
