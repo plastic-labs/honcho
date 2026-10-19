@@ -717,6 +717,10 @@ async def create_documents(
     # citations fold into the first one, and into its pending row if any.
     first_in_batch: dict[tuple[str, str, str | None], schemas.DocumentCreate] = {}
     pending_by_key: dict[tuple[str, str, str | None], models.Document] = {}
+    # Existing row id -> the incoming document replacing it, by its dedup key.
+    replaced_by: dict[
+        str, tuple[schemas.DocumentCreate, tuple[str, str, str | None]]
+    ] = {}
     row_ops: list[_DocumentRowOp] = []
     pending_times_derived: dict[str, int] = {}
 
@@ -803,6 +807,7 @@ async def create_documents(
                         existing_dup.source_message_ids, doc.source_message_ids
                     )
                     row_ops.append(_DocumentRowOp("replace", existing_dup.id))
+                    replaced_by.setdefault(existing_dup.id, (doc, dedup_key))
                     semantic_dup_replaced_count += 1
                 elif (
                     duplicate_result is SemanticRejectionResult.REJECTED
@@ -849,6 +854,26 @@ async def create_documents(
                 f"Error adding new document to {workspace_name}/{doc.session_name}/{observer}/{observed}: {e}"
             )
             continue
+
+    # A reinforce aimed at a row this batch also replaces would land on the
+    # deleted row, or be skipped, depending on op order. Its citations belong
+    # to the replacement.
+    for op in row_ops:
+        if op.kind != "reinforce" or op.fallback_document is None:
+            continue
+        replacement = replaced_by.get(op.document_id)
+        if replacement is None:
+            continue
+        replacement_doc, replacement_key = replacement
+        replacement_doc.source_message_ids = _merge_citations(
+            replacement_doc.source_message_ids,
+            op.fallback_document.source_message_ids,
+        )
+        replacement_row = pending_by_key.get(replacement_key)
+        if replacement_row is not None:
+            replacement_row.source_message_links = build_source_message_links(
+                replacement_doc.source_message_ids, workspace_name
+            )
 
     try:
         fallback_docs = await _apply_document_row_updates(

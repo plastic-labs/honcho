@@ -1,5 +1,6 @@
 """conclusion_source_messages: written from DocumentCreate, merged on dedup, dropped with either end."""
 
+import pytest
 from nanoid import generate as generate_nanoid
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -314,6 +315,38 @@ async def test_semantic_replacement_inherits_the_replaced_citations(
     )
 
     assert result.semantic_dup_replaced_count == 1
+    [doc] = await _live_documents(db_session, workspace_name)
+    assert doc.content == "Ann likes coffee and tea"
+    assert await _edges(db_session, doc.id) == [ids[0], ids[1]]
+
+
+@pytest.mark.parametrize("replacement_first", [False, True])
+async def test_replacement_keeps_citations_from_a_reinforce_of_the_same_row(
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+    replacement_first: bool,
+):
+    workspace, peer = sample_data
+    workspace_name, peer_name = workspace.name, peer.name
+    session_name, _row_ids, ids = await _seed(db_session, workspace, peer)
+
+    await _create(
+        db_session,
+        workspace_name,
+        peer_name,
+        [_document_create(session_name, [ids[0]], "Ann likes coffee")],
+    )
+    # One batch both reinforces the existing row (exact match) and replaces
+    # it (a richer semantic match), in either order.
+    reinforce = _document_create(session_name, [ids[1]], "Ann likes coffee")
+    replace = _document_create(session_name, [], "Ann likes coffee and tea")
+    batch = [replace, reinforce] if replacement_first else [reinforce, replace]
+    result = await _create(
+        db_session, workspace_name, peer_name, batch, deduplicate=True
+    )
+
+    assert result.semantic_dup_replaced_count == 1
+    assert result.exact_dup_existing_count == 1
     [doc] = await _live_documents(db_session, workspace_name)
     assert doc.content == "Ann likes coffee and tea"
     assert await _edges(db_session, doc.id) == [ids[0], ids[1]]
