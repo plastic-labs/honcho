@@ -1,4 +1,4 @@
-"""conclusion_source_messages: written from DocumentCreate, dropped with either end."""
+"""conclusion_source_messages: written from DocumentCreate, merged on dedup, dropped with either end."""
 
 from nanoid import generate as generate_nanoid
 from sqlalchemy import delete, select
@@ -39,10 +39,12 @@ async def _seed(
 
 
 def _document_create(
-    session_name: str, source_message_ids: list[str]
+    session_name: str,
+    source_message_ids: list[str],
+    content: str = "peer said something",
 ) -> schemas.DocumentCreate:
     return schemas.DocumentCreate(
-        content="peer said something",
+        content=content,
         session_name=session_name,
         level="explicit",
         metadata=schemas.DocumentMetadata(
@@ -129,3 +131,168 @@ async def test_citation_edges_follow_message_and_document_deletion(
     )
     await db_session.commit()
     assert await _edges(db_session, doc_id) == []
+
+
+async def _create(
+    db_session: AsyncSession,
+    workspace_name: str,
+    peer_name: str,
+    documents: list[schemas.DocumentCreate],
+    *,
+    deduplicate: bool = False,
+) -> crud.CreateDocumentsResult:
+    result = await crud.create_documents(
+        db_session,
+        documents,
+        workspace_name,
+        observer=peer_name,
+        observed=peer_name,
+        deduplicate=deduplicate,
+    )
+    await db_session.commit()
+    db_session.expire_all()
+    return result
+
+
+async def _live_documents(
+    db_session: AsyncSession, workspace_name: str
+) -> list[models.Document]:
+    result = await db_session.execute(
+        select(models.Document).where(
+            models.Document.workspace_name == workspace_name,
+            models.Document.deleted_at.is_(None),
+        )
+    )
+    return list(result.scalars().all())
+
+
+async def test_reinforcing_an_existing_conclusion_merges_its_citations(
+    db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    workspace, peer = sample_data
+    workspace_name, peer_name = workspace.name, peer.name
+    session_name, _row_ids, ids = await _seed(db_session, workspace, peer)
+
+    await _create(
+        db_session,
+        workspace_name,
+        peer_name,
+        [_document_create(session_name, [ids[0]])],
+    )
+    result = await _create(
+        db_session,
+        workspace_name,
+        peer_name,
+        [_document_create(session_name, [ids[1], ids[0]])],
+    )
+
+    assert result.exact_dup_existing_count == 1
+    [doc] = await _live_documents(db_session, workspace_name)
+    assert doc.times_derived == 2
+    # Existing citations keep their positions; new ones follow.
+    assert await _edges(db_session, doc.id) == [ids[0], ids[1]]
+
+
+async def test_in_batch_duplicates_merge_their_citations(
+    db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    workspace, peer = sample_data
+    workspace_name, peer_name = workspace.name, peer.name
+    session_name, _row_ids, ids = await _seed(db_session, workspace, peer)
+
+    result = await _create(
+        db_session,
+        workspace_name,
+        peer_name,
+        [
+            _document_create(session_name, [ids[1]]),
+            _document_create(session_name, [ids[0], ids[1]]),
+        ],
+    )
+
+    assert result.exact_dup_in_batch_count == 1
+    [doc] = await _live_documents(db_session, workspace_name)
+    assert await _edges(db_session, doc.id) == [ids[1], ids[0]]
+
+
+async def test_in_batch_duplicates_of_an_existing_conclusion_merge_into_it(
+    db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    workspace, peer = sample_data
+    workspace_name, peer_name = workspace.name, peer.name
+    session_name, _row_ids, ids = await _seed(db_session, workspace, peer)
+
+    await _create(
+        db_session,
+        workspace_name,
+        peer_name,
+        [_document_create(session_name, [ids[0]])],
+    )
+    result = await _create(
+        db_session,
+        workspace_name,
+        peer_name,
+        [
+            _document_create(session_name, [ids[0]]),
+            _document_create(session_name, [ids[1]]),
+        ],
+    )
+
+    assert result.exact_dup_existing_count == 1
+    assert result.exact_dup_in_batch_count == 1
+    [doc] = await _live_documents(db_session, workspace_name)
+    assert await _edges(db_session, doc.id) == [ids[0], ids[1]]
+
+
+async def test_semantic_rejection_merges_citations_into_the_kept_conclusion(
+    db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    workspace, peer = sample_data
+    workspace_name, peer_name = workspace.name, peer.name
+    session_name, _row_ids, ids = await _seed(db_session, workspace, peer)
+
+    await _create(
+        db_session,
+        workspace_name,
+        peer_name,
+        [_document_create(session_name, [ids[0]], "Ann likes coffee and tea")],
+    )
+    result = await _create(
+        db_session,
+        workspace_name,
+        peer_name,
+        [_document_create(session_name, [ids[1]], "Ann likes coffee")],
+        deduplicate=True,
+    )
+
+    assert result.semantic_dup_rejected_count == 1
+    [doc] = await _live_documents(db_session, workspace_name)
+    assert doc.content == "Ann likes coffee and tea"
+    assert await _edges(db_session, doc.id) == [ids[0], ids[1]]
+
+
+async def test_semantic_replacement_inherits_the_replaced_citations(
+    db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    workspace, peer = sample_data
+    workspace_name, peer_name = workspace.name, peer.name
+    session_name, _row_ids, ids = await _seed(db_session, workspace, peer)
+
+    await _create(
+        db_session,
+        workspace_name,
+        peer_name,
+        [_document_create(session_name, [ids[0]], "Ann likes coffee")],
+    )
+    result = await _create(
+        db_session,
+        workspace_name,
+        peer_name,
+        [_document_create(session_name, [ids[1]], "Ann likes coffee and tea")],
+        deduplicate=True,
+    )
+
+    assert result.semantic_dup_replaced_count == 1
+    [doc] = await _live_documents(db_session, workspace_name)
+    assert doc.content == "Ann likes coffee and tea"
+    assert await _edges(db_session, doc.id) == [ids[0], ids[1]]

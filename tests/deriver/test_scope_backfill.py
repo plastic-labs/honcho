@@ -259,6 +259,63 @@ async def test_backfill_copies_only_target_session_explicit_docs(
 # ---------------------------------------------------------------------------
 
 
+async def test_backfill_copies_carry_their_cited_messages(
+    db_session: AsyncSession,
+    sample_data: tuple[models.Workspace, models.Peer],
+):
+    test_workspace, sender = sample_data
+    workspace_name = test_workspace.name
+    scope_peer = await _create_scope_peer(
+        db_session, workspace_name, str(generate_nanoid())
+    )
+    session = await _create_session(db_session, workspace_name)
+    await _join_scope(db_session, workspace_name, session.name, scope_peer.name)
+    messages = [
+        models.Message(
+            session_name=session.name,
+            workspace_name=workspace_name,
+            peer_name=sender.name,
+            content=f"message {seq}",
+            seq_in_session=seq,
+        )
+        for seq in (1, 2)
+    ]
+    db_session.add_all(messages)
+    await db_session.commit()
+    cited = [messages[1].public_id, messages[0].public_id]
+
+    await _create_collection(
+        db_session, workspace_name, observer=sender.name, observed=sender.name
+    )
+    db_session.add(
+        models.Document(
+            workspace_name=workspace_name,
+            observer=sender.name,
+            observed=sender.name,
+            content="some observation",
+            level="explicit",
+            session_name=session.name,
+            embedding=_embedding(),
+            internal_metadata={},
+            source_message_ids=cited,
+        )
+    )
+    await db_session.commit()
+    await _create_collection(
+        db_session, workspace_name, observer=scope_peer.name, observed=sender.name
+    )
+
+    await process_scope_backfill(
+        ScopeBackfillPayload(scope_peer=scope_peer.name, session_name=session.name),
+        workspace_name,
+    )
+
+    [copy] = await _get_docs(
+        db_session, workspace_name, observer=scope_peer.name, observed=sender.name
+    )
+    assert copy.source_message_ids == cited
+
+
 async def test_backfill_processed_twice_is_idempotent(
     db_session: AsyncSession,
     sample_data: tuple[models.Workspace, models.Peer],
@@ -510,6 +567,7 @@ async def test_copy_chunk_membership_lock_blocks_leave_until_write_commits(
                 internal_metadata={},
                 times_derived=1,
                 source_ids=None,
+                source_message_ids=None,
                 session_name=session.name,
             )
         ],

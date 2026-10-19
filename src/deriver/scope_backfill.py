@@ -88,6 +88,7 @@ class _CopySpec:
     internal_metadata: dict[str, Any]
     times_derived: int
     source_ids: list[str] | None
+    source_message_ids: list[str] | None
     session_name: str
     restore_document_id: str | None = None
 
@@ -261,6 +262,7 @@ async def _run_backfill(
                     source_ids=list(source.source_ids)
                     if source.source_ids is not None
                     else None,
+                    source_message_ids=source.source_message_ids,
                     session_name=session_name,
                     restore_document_id=soft_deleted_copies.get(key),
                 )
@@ -375,6 +377,7 @@ async def _copy_chunk(
                 },
                 session_name=spec.session_name,
                 source_ids=spec.source_ids,
+                source_message_ids=spec.source_message_ids,
                 embedding=spec.embedding if store_in_postgres else None,
             )
             row.sync_state = "pending"
