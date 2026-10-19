@@ -48,6 +48,8 @@ class TestDeriverProcessing:
         configuration = Mock()
         configuration.reasoning.enabled = True
         configuration.dream.enabled = False
+        configuration.reasoning.custom_instructions = None
+        configuration.reasoning.custom_instructions_source = None
 
         mock_response = HonchoLLMCallResponse(
             content=PromptRepresentation(

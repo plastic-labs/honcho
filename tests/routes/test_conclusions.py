@@ -1921,7 +1921,7 @@ class TestConclusionRoutes:
         assert response.status_code == 200
         body = response.json()
         assert body["level"] == "explicit"
-        assert body["source_ids"] is None
+        assert body["source_ids"] == []
         assert body["source_message_ids"] == [m.public_id for m in messages]
 
         # Each cited id is a real message id, fetchable through the messages route.
