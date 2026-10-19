@@ -18,6 +18,8 @@ const EVIDENCE: Evidence = {
       content: 'User drinks coffee in the morning',
       created_at: '2026-01-01T00:00:00Z',
       session_id: 'session-1',
+      observer_id: 'alice',
+      observed_id: 'bob',
       source_ids: ['doc-a', 'doc-b'],
     },
   ],
@@ -77,6 +79,11 @@ describe('streamed evidence', () => {
 
     expect(chunks.join('')).toBe('The user drinks coffee.')
     expect(stream.evidence).toEqual(EVIDENCE)
+    // Workspace chat reads across peers, so each conclusion carries its pair.
+    expect(stream.evidence?.conclusions[0]).toMatchObject({
+      observer_id: 'alice',
+      observed_id: 'bob',
+    })
   })
 
   test('survives being split across network chunks', async () => {

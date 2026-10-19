@@ -9,6 +9,7 @@ import pytest
 
 from src.llm.backend import CompletionResult
 from src.llm.capture import (
+    ROLE_CUSTOM_INSTRUCTIONS,
     ROLE_REASONING,
     CapturedLLMCall,
     build_captured_call,
@@ -226,6 +227,34 @@ class TestTraceExporter:
         for ref in traced[0].input_message_refs:
             assert ref in emitted_hashes
         assert traced[0].output_content_ref in emitted_hashes
+
+    def test_custom_instructions_get_tenant_visible_ref(
+        self, trace_on: _FakeTraceEmitter
+    ):
+        from src.telemetry.trace_exporter import TraceExporter
+
+        call = _captured([{"role": "system", "content": "...German."}])
+        call.custom_instructions = "Always answer in German."
+        TraceExporter().export(call)
+
+        (traced,) = [e for e in trace_on.events if isinstance(e, LLMCallTracedEvent)]
+        (content,) = [
+            e
+            for e in trace_on.events
+            if isinstance(e, TraceContentEvent)
+            and e.content_hash == traced.custom_instructions_ref
+        ]
+        assert content.role == ROLE_CUSTOM_INSTRUCTIONS
+        assert content.content == "Always answer in German."
+        assert content.honcho_authored is False
+
+    def test_no_custom_instructions_no_ref(self, trace_on: _FakeTraceEmitter):
+        from src.telemetry.trace_exporter import TraceExporter
+
+        TraceExporter().export(_captured([{"role": "user", "content": "q"}]))
+
+        (traced,) = [e for e in trace_on.events if isinstance(e, LLMCallTracedEvent)]
+        assert traced.custom_instructions_ref is None
 
     def test_dedup_across_iterations(self, trace_on: _FakeTraceEmitter):
         from src.telemetry.trace_exporter import TraceExporter

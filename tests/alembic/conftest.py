@@ -67,11 +67,11 @@ def alembic_database() -> Generator[str]:
         drop_database(ALEMBIC_TEST_DB_URL)  # start fresh
     create_database(ALEMBIC_TEST_DB_URL)
 
-    engine = create_engine(str(ALEMBIC_TEST_DB_URL))
+    engine = create_engine(ALEMBIC_TEST_DB_URL)
     try:
         with engine.begin() as conn:
             conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-        yield str(ALEMBIC_TEST_DB_URL)
+        yield ALEMBIC_TEST_DB_URL.render_as_string(hide_password=False)
     finally:
         engine.dispose()
         if database_exists(ALEMBIC_TEST_DB_URL):

@@ -2,7 +2,7 @@ import contextvars
 import logging
 from typing import Any
 
-from sqlalchemy import MetaData, event, text
+from sqlalchemy import MetaData, event
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -314,20 +314,3 @@ table_schema = settings.DB.SCHEMA
 meta = MetaData(naming_convention=convention)
 meta.schema = table_schema
 Base = declarative_base(metadata=meta)
-
-
-async def init_db():
-    """Initialize the database using Alembic migrations"""
-    from alembic import command
-    from alembic.config import Config
-
-    async with engine.connect() as connection:
-        # Create schema if it doesn't exist
-        await connection.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{table_schema}"'))
-        # Install pgvector extension if it doesn't exist
-        await connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-        await connection.commit()
-
-    # Run Alembic migrations
-    alembic_cfg = Config("alembic.ini")
-    command.upgrade(alembic_cfg, "head")

@@ -232,8 +232,20 @@ class _EmbeddingClient:
                 api_key=config.api_key,
                 http_options=http_options,
             )
-            # Gemini has a 2048 token limit
-            self.max_embedding_tokens: int = min(max_input_tokens, 2048)
+            # Gemini's embedding models have model-specific input token caps
+            # (shared across all modalities):
+            #   - gemini-embedding-001: 2048 tokens
+            #   - gemini-embedding-2 (and its -preview): 8192 tokens
+            # Unknown models default conservatively to 2048.
+            model_id = self.model.removeprefix("models/")
+            gemini_model_token_cap = (
+                8192
+                if model_id in {"gemini-embedding-2", "gemini-embedding-2-preview"}
+                else 2048
+            )
+            self.max_embedding_tokens: int = min(
+                max_input_tokens, gemini_model_token_cap
+            )
             # Gemini batch size is not documented, using conservative estimate
             self.max_batch_size: int = config.max_batch_size or 100
         else:  # openai
@@ -348,7 +360,7 @@ class _EmbeddingClient:
             fn=_call_openai,
         )
 
-    def _truncate_to_token_limit(self, text: str) -> tuple[str, int]:
+    def truncate_to_token_limit(self, text: str) -> tuple[str, int]:
         """Return a prefix of `text` whose re-encoded token count fits the cap.
 
         Decode/re-encode after slicing: BPE boundaries can re-expand past the cap.
@@ -399,7 +411,7 @@ class _EmbeddingClient:
             if len(token_ids) > self.max_embedding_tokens:
                 if on_oversize == "truncate":
                     original_count = len(token_ids)
-                    text, tokens = self._truncate_to_token_limit(text)
+                    text, tokens = self.truncate_to_token_limit(text)
                     logger.warning(
                         "truncated oversize embedding input at idx %d: %d->%d tokens",
                         idx,
@@ -779,6 +791,10 @@ class EmbeddingClient:
     def prepare_chunks(self, id_resource_dict: dict[str, str]) -> dict[str, list[str]]:
         """Chunk texts using the same rules as `batch_embed` (no network)."""
         return self._get_client().prepare_chunks(id_resource_dict)
+
+    def truncate_to_token_limit(self, text: str) -> str:
+        """Truncate text to the embedding token cap (no network)."""
+        return self._get_client().truncate_to_token_limit(text)[0]
 
     async def batch_embed(
         self, id_resource_dict: dict[str, str]

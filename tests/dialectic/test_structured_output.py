@@ -4,14 +4,16 @@ import time
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from src.dialectic.core import DialecticAgent
+from src.exceptions import StructuredResponseError
 from src.llm import (
     HonchoLLMCallResponse,
     HonchoLLMCallStreamChunk,
     StreamingResponseWithMetadata,
 )
+from src.llm.structured_output import StructuredOutputError
 
 
 class FoodPreferences(BaseModel):
@@ -35,7 +37,7 @@ def _patches(mock_llm_call: AsyncMock):
             DialecticAgent,
             "_prepare_query",
             new=AsyncMock(
-                return_value=(AsyncMock(), "task", "run", time.perf_counter())
+                return_value=(AsyncMock(), "task", "run", time.perf_counter(), None)
             ),
         ),
         patch.object(DialecticAgent, "_log_response_metrics"),
@@ -86,6 +88,64 @@ async def test_answer_without_response_model_returns_plain_text() -> None:
 
     assert result == "plain answer"
     assert mock_llm_call.await_args.kwargs["response_model"] is None  # pyright: ignore
+
+
+def _schema_failure() -> ValidationError:
+    try:
+        FoodPreferences.model_validate_json("I found sushi.")
+    except ValidationError as exc:
+        return exc
+    raise AssertionError("expected a ValidationError")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure",
+    [_schema_failure(), StructuredOutputError("No parsed content")],
+    ids=["schema-mismatch", "no-content"],
+)
+async def test_answer_maps_structured_output_failure(failure: Exception) -> None:
+    """A final answer that fails response_format surfaces as a 422, not a 500."""
+    agent = _make_agent()
+    mock_llm_call = AsyncMock(side_effect=failure)
+
+    p1, p2, p3 = _patches(mock_llm_call)
+    with p1, p2, p3, pytest.raises(StructuredResponseError) as caught:
+        await agent.answer("query", response_model=FoodPreferences)
+
+    assert caught.value.status_code == 422
+    assert caught.value.__cause__ is failure
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("content", ["", "I can't help with that."])
+async def test_answer_rejects_unparsed_content(content: str) -> None:
+    """A backend that degrades to a plain string instead of raising (json_object
+    mode's empty answer or a refusal) must still surface as a 422."""
+    agent = _make_agent()
+    mock_llm_call = AsyncMock(
+        return_value=HonchoLLMCallResponse(
+            content=content,
+            input_tokens=10,
+            output_tokens=5,
+            finish_reasons=["stop"],
+        )
+    )
+
+    p1, p2, p3 = _patches(mock_llm_call)
+    with p1, p2, p3, pytest.raises(StructuredResponseError):
+        await agent.answer("query", response_model=FoodPreferences)
+
+
+@pytest.mark.asyncio
+async def test_answer_without_response_model_does_not_map_validation_errors() -> None:
+    agent = _make_agent()
+    failure = _schema_failure()
+    mock_llm_call = AsyncMock(side_effect=failure)
+
+    p1, p2, p3 = _patches(mock_llm_call)
+    with p1, p2, p3, pytest.raises(ValidationError):
+        await agent.answer("query")
 
 
 @pytest.mark.asyncio

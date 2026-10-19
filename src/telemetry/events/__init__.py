@@ -28,6 +28,8 @@ Event Categories:
     - MessageCreatedEvent: Message batch created
     - FileUploadedEvent: File converted into messages
     - GetContextEvent: Context retrieved for a session or peer
+    - WorkspaceCreatedEvent / PeerCreatedEvent / SessionCreatedEvent /
+      ScopeCreatedEvent: Resource created (explicitly or as a side effect)
 
     deletion: Resource removal
     - DeletionCompletedEvent: Resource deletion completed (with cascade counts)
@@ -35,6 +37,7 @@ Event Categories:
     reconciliation: Maintenance operations
     - SyncVectorsCompletedEvent: Vector store sync completed
     - CleanupStaleItemsCompletedEvent: Stale items cleanup completed
+    - BackfillCompletedEvent: Backfill cycle completed
 
 Usage:
     from src.telemetry.events import emit, RepresentationCompletedEvent
@@ -85,10 +88,17 @@ from src.telemetry.events.llm import (
     LLMCallCompletedEvent,
 )
 from src.telemetry.events.reconciliation import (
+    BackfillCompletedEvent,
     CleanupStaleItemsCompletedEvent,
     SyncVectorsCompletedEvent,
 )
 from src.telemetry.events.representation import RepresentationCompletedEvent
+from src.telemetry.events.resource import (
+    PeerCreatedEvent,
+    ScopeCreatedEvent,
+    SessionCreatedEvent,
+    WorkspaceCreatedEvent,
+)
 from src.telemetry.events.trace import (
     EmbeddingCallTracedEvent,
     LLMCallTracedEvent,
@@ -120,6 +130,10 @@ __all__ = [
     "MessageCreatedEvent",
     "FileUploadedEvent",
     "GetContextEvent",
+    "WorkspaceCreatedEvent",
+    "PeerCreatedEvent",
+    "SessionCreatedEvent",
+    "ScopeCreatedEvent",
     # LLM events
     "LLMCallCompletedEvent",
     "CallPurpose",
@@ -133,6 +147,7 @@ __all__ = [
     # Reconciliation events
     "SyncVectorsCompletedEvent",
     "CleanupStaleItemsCompletedEvent",
+    "BackfillCompletedEvent",
     # Deletion events
     "DeletionCompletedEvent",
     # Lifecycle
@@ -163,6 +178,10 @@ ALL_EVENT_TYPES: tuple[str, ...] = (
     "message.created",
     "file.uploaded",
     "context.retrieved",
+    "workspace.created",
+    "peer.created",
+    "session.created",
+    "scope.created",
     # agent
     "agent.iteration",
     "agent.tool.conclusions.created",
@@ -182,6 +201,7 @@ ALL_EVENT_TYPES: tuple[str, ...] = (
     # reconciliation
     "reconciliation.sync_vectors.completed",
     "reconciliation.cleanup_stale_items.completed",
+    "reconciliation.backfill.completed",
     # trace stream
     # region ai
     # Only emitted when TELEMETRY.TRACE_PAYLOADS_ENABLED, but they flow through the
@@ -293,7 +313,7 @@ async def initialize_telemetry_events() -> None:
         from src.telemetry.langfuse_exporter import LangfuseExporter
 
         register_exporter(LangfuseExporter())
-        logger.info("Langfuse exporter registered (LANGFUSE_EXPORTER_MODE=exporter)")
+        logger.info("Langfuse exporter registered")
 
     await initialize_emitter(
         endpoint=settings.TELEMETRY.ENDPOINT,

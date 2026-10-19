@@ -1,8 +1,12 @@
 import { Honcho } from "@honcho-ai/sdk";
+import type { ErrorEvent } from "@sentry/cloudflare";
 import pkg from "../package.json";
 
 export const HEADER_HOST = "X-Honcho-Host";
 export const HEADER_PLUGIN = "X-Honcho-Plugin";
+
+/** Chat runs a tool-using agent that can outlast the SDK's 60s default. */
+const DEFAULT_TIMEOUT_MS = 300_000;
 
 /** Honcho's API caps client header values at 256 chars; match it. */
 const MAX_PLUGIN_LEN = 256;
@@ -11,17 +15,26 @@ const HOST_VALUE = `honcho-mcp/${
   typeof pkg.version === "string" && pkg.version ? pkg.version : "unknown"
 }`;
 
+function clean(value: string | null | undefined): string | undefined {
+  const v = value?.replace(/\s+/g, " ").trim();
+  return v ? v.slice(0, MAX_PLUGIN_LEN) : undefined;
+}
+
 /**
  * Identity headers for every Honcho API request made on behalf of one MCP
- * request. Host names this server; Plugin is the caller's `User-Agent`,
- * verbatim, so the API sees whatever the harness calls itself.
+ * request. Host names this server. Plugin is the caller's `X-Honcho-Plugin`
+ * with its `User-Agent` in parentheses (`cursor-honcho/0.2.0 (Cursor/1.0.0)`),
+ * or the `User-Agent` alone when the caller set no plugin, as before.
  */
 export function identityHeaders(
   userAgent?: string | null,
+  plugin?: string | null,
 ): Record<string, string> {
   const headers: Record<string, string> = { [HEADER_HOST]: HOST_VALUE };
-  const plugin = userAgent?.replace(/\s+/g, " ").trim().slice(0, MAX_PLUGIN_LEN);
-  if (plugin) headers[HEADER_PLUGIN] = plugin;
+  const ua = clean(userAgent);
+  const name = clean(plugin);
+  const value = name ? (ua ? `${name} (${ua})` : name) : ua;
+  if (value) headers[HEADER_PLUGIN] = value.slice(0, MAX_PLUGIN_LEN);
   return headers;
 }
 
@@ -30,17 +43,27 @@ export interface HonchoConfig {
   baseUrl: string;
   /** From X-Honcho-Workspace-ID (HTTP) or HONCHO_WORKSPACE_ID (stdio). */
   workspaceId?: string;
+  /** Honcho API request timeout, from HONCHO_TIMEOUT_MS. */
+  timeoutMs?: number;
 }
 
 export interface Env {
   HONCHO_API_URL?: string;
+  HONCHO_TIMEOUT_MS?: string;
   ALERT_WEBHOOK_URL?: string;
+  SENTRY_DSN?: string;
 }
 
 export interface EnvConfig {
   HONCHO_API_KEY?: string;
   HONCHO_API_URL?: string;
   HONCHO_WORKSPACE_ID?: string;
+  HONCHO_TIMEOUT_MS?: string;
+}
+
+function parseTimeoutMs(value?: string): number | undefined {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
 }
 
 /**
@@ -76,6 +99,7 @@ export function parseConfig(request: Request, env: Env = {}): HonchoConfig {
     apiKey,
     baseUrl: env.HONCHO_API_URL?.trim() || "https://api.honcho.dev",
     workspaceId,
+    timeoutMs: parseTimeoutMs(env.HONCHO_TIMEOUT_MS),
   };
 }
 
@@ -91,6 +115,7 @@ export function parseEnvConfig(env: EnvConfig): HonchoConfig {
     apiKey,
     baseUrl: env.HONCHO_API_URL?.trim() || "https://api.honcho.dev",
     workspaceId: env.HONCHO_WORKSPACE_ID?.trim() || undefined,
+    timeoutMs: parseTimeoutMs(env.HONCHO_TIMEOUT_MS),
   };
 }
 
@@ -117,6 +142,7 @@ export function createClient(
     apiKey: config.apiKey,
     baseURL: config.baseUrl,
     workspaceId,
+    timeout: config.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     defaultHeaders: headers,
   });
 }
@@ -129,6 +155,7 @@ export function createUnscopedClient(
   return new Honcho({
     apiKey: config.apiKey,
     baseURL: config.baseUrl,
+    timeout: config.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     defaultHeaders: headers,
   });
 }
@@ -157,5 +184,23 @@ export function honchoClients(
   return {
     clientFor: createClientFactory(config, headers),
     unscoped: createUnscopedClient(config, headers),
+  };
+}
+
+/**
+ * Sentry options shared by every entry point. Without SENTRY_DSN the SDK stays disabled and
+ * every capture is a no-op. Requests carry the caller's Honcho key
+ * (Authorization) and memory content (body), so events keep only the method
+ * and URL of the request.
+ */
+export function sentryOptions(env: Env) {
+  return {
+    dsn: env.SENTRY_DSN,
+    beforeSend(event: ErrorEvent) {
+      if (event.request) {
+        event.request = { method: event.request.method, url: event.request.url };
+      }
+      return event;
+    },
   };
 }

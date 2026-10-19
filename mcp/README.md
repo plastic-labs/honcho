@@ -28,13 +28,17 @@ A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server for [H
 
 Every workspace-scoped tool takes a `workspace_id` argument. If you set `X-Honcho-Workspace-ID` on the connection, that value fills `workspace_id` when the argument is omitted. Use `list_workspaces` to discover IDs.
 
+## Naming your client
+
+Set `X-Honcho-Plugin` on the connection to name whatever configured it: `<name>/<version>` for an integration (`cursor-honcho/0.2.0`), or a short slug for a hand-written config (`cursor`). Without it, the server records the caller's `User-Agent`. Optional; nothing changes without it.
+
 ## Available Tools
 
-**Workspace:** `list_workspaces` (id, metadata, created_at), `create_workspace` (get-or-create with optional metadata), `inspect_workspace` (aggregates metadata, configuration, and peer/session IDs), `search` (semantic search scoped by optional peer/session params), `workspace_chat` (reasoned answer across all peers; optional session / scope recall bounds), `get_metadata`, `set_metadata`
+**Workspace:** `list_workspaces` (id, metadata, created_at), `create_workspace` (get-or-create with optional metadata), `inspect_workspace` (aggregates metadata, configuration, and peer/session IDs), `search` (semantic search scoped by optional peer/session/scope params), `workspace_chat` (reasoned answer across all peers; optional session / scope recall bounds), `get_metadata`, `set_metadata`
 
-**Peers:** `create_peer`, `list_peers`, `chat` (reasoned answer about one peer; optional session / scope / sessions recall bounds), `get_peer_card`, `set_peer_card`, `get_peer_context`, `get_representation`
+**Peers:** `create_peer`, `list_peers`, `chat` (reasoned answer about one peer; optional session / scope / sessions recall bounds), `get_peer_card`, `set_peer_card`, `get_peer_context`, `get_representation` (optional session / scope / sessions recall bounds)
 
-**Sessions:** `create_session`, `list_sessions`, `delete_session`, `clone_session`, `add_peers_to_session`, `remove_peers_from_session`, `get_session_peers`, `inspect_session`, `add_messages_to_session`, `get_session_messages`, `get_session_message`, `get_session_context`
+**Sessions:** `create_session` (optional `scopes` to join at creation), `list_sessions`, `delete_session`, `clone_session`, `add_peers_to_session`, `remove_peers_from_session`, `get_session_peers`, `inspect_session`, `add_messages_to_session`, `get_session_messages`, `get_session_message`, `get_session_context` (optional `peer_target` with `peer_perspective` / `scope` / `limit_to_session` to include a peer's representation and card)
 
 **Scopes:** `list_scopes`, `get_scope_sessions`, `create_scope` (get-or-create with optional metadata), `add_sessions_to_scope`, `remove_session_from_scope`, `get_scope_status` (backfill progress per session)
 
@@ -72,6 +76,10 @@ Built on:
 If you run Honcho yourself, point this server at it with `HONCHO_API_URL`.
 When unset, requests go to `https://api.honcho.dev`.
 
+`HONCHO_TIMEOUT_MS` caps each Honcho API request (default 300000, 5 minutes).
+Raise it if `chat` runs longer than that on your model. A reverse proxy in
+front of the HTTP host needs a read timeout at least this long.
+
 **Cloudflare Worker (`bun run dev` / `bun run deploy`):** create `mcp/.dev.vars`:
 
 ```
@@ -79,6 +87,10 @@ HONCHO_API_URL=http://127.0.0.1:28000
 ```
 
 For a deployed Worker: `wrangler secret put HONCHO_API_URL`.
+
+To report errors to Sentry, set `SENTRY_DSN` the same way
+(`wrangler secret put SENTRY_DSN`). The HTTP and stdio hosts read `SENTRY_DSN`
+from the environment. Without it, error reporting is a no-op on every host.
 
 ## HTTP host
 
@@ -98,7 +110,8 @@ bunx mcp-remote http://127.0.0.1:3000 \
 
 Auth is the `Authorization: Bearer` header (same as the Worker). Established
 sessions still require that same bearer. Optional `X-Honcho-Workspace-ID`
-fills `workspace_id` when the tool argument is omitted.
+fills `workspace_id` when the tool argument is omitted, and optional
+`X-Honcho-Plugin` names the caller (see [Naming your client](#naming-your-client)).
 
 `HOST` defaults to `0.0.0.0`, `PORT` to `3000`. `GET /health` is unauthenticated.
 MCP is served at `/` and `/mcp`. Idle sessions expire after

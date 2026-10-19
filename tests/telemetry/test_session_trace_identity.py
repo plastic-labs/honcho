@@ -267,7 +267,7 @@ async def test_background_session_identity(
                 "error" if event.finish_reason == "error" else "success"
             )
             assert event.error_class == (
-                "TimeoutError" if event.outcome == "error" else None
+                "UpstreamLLMError" if event.outcome == "error" else None
             )
             if event.call_purpose == "deriver.representation":
                 assert set(event.source_message_ids) == public_ids

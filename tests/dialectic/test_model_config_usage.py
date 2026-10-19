@@ -50,7 +50,7 @@ async def test_dialectic_answer_uses_level_model_config() -> None:
             DialecticAgent,
             "_prepare_query",
             new=AsyncMock(
-                return_value=(AsyncMock(), "task", "run", time.perf_counter())
+                return_value=(AsyncMock(), "task", "run", time.perf_counter(), None)
             ),
         ),
         patch.object(DialecticAgent, "_log_response_metrics"),
@@ -88,7 +88,7 @@ async def test_dialectic_answer_stream_uses_level_model_config() -> None:
             DialecticAgent,
             "_prepare_query",
             new=AsyncMock(
-                return_value=(AsyncMock(), "task", "run", time.perf_counter())
+                return_value=(AsyncMock(), "task", "run", time.perf_counter(), None)
             ),
         ),
         patch.object(DialecticAgent, "_log_response_metrics"),

@@ -15,6 +15,7 @@ from src.embedding_client import embedding_client
 from src.telemetry.events import EmbeddingCallPurpose
 from src.utils.filter import apply_filter
 from src.utils.formatting import ILIKE_ESCAPE_CHAR, escape_ilike_pattern
+from src.utils.scopes import is_scope_peer_name
 from src.utils.types import embedding_call_purpose
 from src.vector_store import get_external_vector_store
 
@@ -139,7 +140,8 @@ async def resolve_session_scope(
         # dialectic tools) don't, so enforce it at the boundary.
         if session_allowlist is not None and session_name not in session_allowlist:
             return None, True
-        return None, False
+        if observer is None or not is_scope_peer_name(observer):
+            return None, False
 
     if observer is None:
         if session_allowlist is None:
@@ -148,10 +150,20 @@ async def resolve_session_scope(
         return (allowed, False) if allowed else (None, True)
 
     if db is not None:
-        allowed = await get_peer_session_names(db, workspace_name, observer)
+        allowed = await get_peer_session_names(
+            db, workspace_name, observer, active_only=is_scope_peer_name(observer)
+        )
     else:
         async with tracked_db(f"{operation_name}.peer_scope", read_only=True) as own_db:
-            allowed = await get_peer_session_names(own_db, workspace_name, observer)
+            allowed = await get_peer_session_names(
+                own_db,
+                workspace_name,
+                observer,
+                active_only=is_scope_peer_name(observer),
+            )
+
+    if session_name:
+        return None, session_name not in allowed
 
     if session_allowlist is not None:
         scope = set(session_allowlist)
@@ -175,18 +187,20 @@ def observer_scope_clause(
     driver cannot serialize at all — and the resulting error carries every
     parameter in its text.
 
-    Matches the loose membership definition ``get_peer_session_names`` uses by
-    default: any membership record grants visibility, whether or not the peer
-    has since left the session.
+    Ordinary peers retain historical membership visibility. The reserved scope
+    namespace requires active membership, including for message tools invoked
+    during scoped recall. A removed session must stop granting message access.
     """
     session_peers = models.session_peers_table
-    return (
+    stmt = (
         select(1)
         .where(session_peers.c.workspace_name == workspace_name)
         .where(session_peers.c.peer_name == observer)
         .where(session_peers.c.session_name == session_column)
-        .exists()
     )
+    if is_scope_peer_name(observer):
+        stmt = stmt.where(session_peers.c.left_at.is_(None))
+    return stmt.exists()
 
 
 def resolve_session_scope_clauses(
@@ -230,7 +244,8 @@ def resolve_session_scope_clauses(
         # tools reach CRUD directly, so enforce it at the boundary.
         if session_allowlist is not None and session_name not in session_allowlist:
             return [], True
-        return [], False
+        if observer is None or not is_scope_peer_name(observer):
+            return [], False
 
     clauses: list[ColumnElement[bool]] = []
 
@@ -823,7 +838,7 @@ async def _search_messages_pgvector(
     session_name: str | None,
     *,
     query_embedding: list[float],
-    allowed_session_names: list[str] | None = None,
+    scope_clauses: Sequence[ColumnElement[bool]] = (),
     after_date: datetime | None = None,
     before_date: datetime | None = None,
     limit: int = 10,
@@ -852,10 +867,7 @@ async def _search_messages_pgvector(
         match_stmt = match_stmt.where(
             models.MessageEmbedding.session_name == session_name
         )
-    elif allowed_session_names is not None:
-        match_stmt = match_stmt.where(
-            models.MessageEmbedding.session_name.in_(allowed_session_names)
-        )
+    match_stmt = match_stmt.where(*scope_clauses)
 
     if after_date:
         match_stmt = match_stmt.where(models.Message.created_at >= after_date)
@@ -891,21 +903,23 @@ async def _semantic_search_messages(
     intersected with the allowlist (fail-closed: empty result on empty
     intersection).
     """
-    # db=None: the helper opens its own short-lived session only if it needs
-    # an observer lookup, so the external-store path below stays the first
-    # thing that happens when no observer scoping applies.
-    allowed_session_names, deny = await resolve_session_scope(
-        None,
-        workspace_name,
-        session_name,
-        session_allowlist,
-        observer,
-        operation_name=operation_name,
-    )
-    if deny:
-        return []
-
     if settings.VECTOR_STORE.TYPE != "pgvector" and settings.VECTOR_STORE.MIGRATED:
+        # External stores filter on attributes, not SQL, so they need the
+        # observer's sessions as a materialized name list. db=None: the helper
+        # opens its own short-lived session only if it needs an observer
+        # lookup, so the vector query stays the first thing that happens when
+        # no observer scoping applies.
+        allowed_session_names, deny = await resolve_session_scope(
+            None,
+            workspace_name,
+            session_name,
+            session_allowlist,
+            observer,
+            operation_name=operation_name,
+        )
+        if deny:
+            return []
+
         message_ids = await _search_messages_external(
             workspace_name,
             query_embedding,
@@ -934,13 +948,23 @@ async def _semantic_search_messages(
             _expunge_snippets(db, snippets)
             return snippets
 
+    scope_clauses, deny = resolve_session_scope_clauses(
+        workspace_name,
+        session_name,
+        session_allowlist,
+        observer,
+        models.MessageEmbedding.session_name,
+    )
+    if deny:
+        return []
+
     async with tracked_db(operation_name, read_only=True) as db:
         snippets = await _search_messages_pgvector(
             db,
             workspace_name,
             session_name,
             query_embedding=query_embedding,
-            allowed_session_names=allowed_session_names,
+            scope_clauses=scope_clauses,
             after_date=after_date,
             before_date=before_date,
             limit=limit,
@@ -1018,7 +1042,7 @@ async def _grep_messages_internal(
     text: str,
     limit: int = 10,
     context_window: int = 2,
-    allowed_session_names: list[str] | None = None,
+    scope_clauses: Sequence[ColumnElement[bool]] = (),
 ) -> list[tuple[list[models.Message], list[models.Message]]]:
     """Internal implementation of exact-text message search."""
     # Build the base query with ILIKE for case-insensitive text search
@@ -1035,10 +1059,7 @@ async def _grep_messages_internal(
 
     if session_name:
         match_stmt = match_stmt.where(models.Message.session_name == session_name)
-    elif allowed_session_names is not None:
-        match_stmt = match_stmt.where(
-            models.Message.session_name.in_(allowed_session_names)
-        )
+    match_stmt = match_stmt.where(*scope_clauses)
 
     result = await db.execute(match_stmt)
     matched_messages = list(result.scalars().all())
@@ -1083,13 +1104,17 @@ async def grep_messages(
         List of tuples: (matched_messages, context_messages)
         Each snippet may contain multiple matches if they were close together.
     """
-    async with tracked_db("message.grep_messages", read_only=True) as db:
-        allowed_session_names, deny = await resolve_session_scope(
-            db, workspace_name, session_name, session_allowlist, observer
-        )
-        if deny:
-            return []
+    scope_clauses, deny = resolve_session_scope_clauses(
+        workspace_name,
+        session_name,
+        session_allowlist,
+        observer,
+        models.Message.session_name,
+    )
+    if deny:
+        return []
 
+    async with tracked_db("message.grep_messages", read_only=True) as db:
         snippets = await _grep_messages_internal(
             db,
             workspace_name,
@@ -1097,7 +1122,7 @@ async def grep_messages(
             text,
             limit,
             context_window,
-            allowed_session_names=allowed_session_names,
+            scope_clauses=scope_clauses,
         )
         _expunge_snippets(db, snippets)
         return snippets
@@ -1138,8 +1163,12 @@ async def get_messages_by_date_range(
     Returns:
         List of messages within the date range
     """
-    allowed_session_names, deny = await resolve_session_scope(
-        db, workspace_name, session_name, session_allowlist, observer
+    scope_clauses, deny = resolve_session_scope_clauses(
+        workspace_name,
+        session_name,
+        session_allowlist,
+        observer,
+        models.Message.session_name,
     )
     if deny:
         return []
@@ -1148,8 +1177,7 @@ async def get_messages_by_date_range(
 
     if session_name:
         stmt = stmt.where(models.Message.session_name == session_name)
-    elif allowed_session_names is not None:
-        stmt = stmt.where(models.Message.session_name.in_(allowed_session_names))
+    stmt = stmt.where(*scope_clauses)
     if after_date:
         stmt = stmt.where(models.Message.created_at >= after_date)
     if before_date:

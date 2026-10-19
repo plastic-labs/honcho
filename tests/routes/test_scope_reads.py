@@ -805,6 +805,43 @@ class TestSessionContextWithScope:
         )
         assert client.get(url, params=params).status_code == 200
 
+    def test_search_query_embeds_without_holding_connection(
+        self,
+        client: TestClient,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
+        mock_openai_embeddings: dict[str, Any],
+    ):
+        """Scope resolution queries the request session before the embedding
+        call; the connection must be released before that external call."""
+        workspace, peer = sample_data
+        scope_name = str(generate_nanoid())
+        _create_scope(client, workspace.name, scope_name)
+        session_name = _create_session(client, workspace.name, peers={peer.name: {}})
+        _add_sessions_to_scope(client, workspace.name, scope_name, [session_name])
+
+        mock_embed = mock_openai_embeddings["embed"]
+        default_embed = mock_embed.side_effect
+        held_during_embed: list[bool] = []
+
+        def recording_embed(query: str) -> list[float]:
+            held_during_embed.append(db_session.in_transaction())
+            return default_embed(query)
+
+        mock_embed.side_effect = recording_embed
+
+        resp = client.get(
+            f"/v3/workspaces/{workspace.name}/sessions/{session_name}/context",
+            params={
+                "peer_target": peer.name,
+                "scope": scope_name,
+                "search_query": "hiking",
+            },
+        )
+
+        assert resp.status_code == 200
+        assert held_during_embed == [False]
+
 
 class TestScopePeerGuardrailClosure:
     """Scope peers are rejected on the generic perspective/context surfaces."""

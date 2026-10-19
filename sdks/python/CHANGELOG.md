@@ -9,7 +9,24 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
-- `Conclusion.source_message_ids`: the messages the deriver cited as evidence for an explicit conclusion (Honcho v3.3.0+). None for derived levels and for conclusions recorded before citations existed. Filter with `{"source_message_ids": {"contains": "<message_id>"}}` to find the conclusions that cite a message as evidence
+- `Conclusion.source_message_ids`: the messages the deriver cited as evidence for an explicit conclusion (Honcho v3.4.0+). None for derived levels and for conclusions recorded before citations existed. Filter with `{"source_message_ids": {"contains": "<message_id>"}}` to find the conclusions that cite a message as evidence
+- `uid` on `Peer`, `Session` and the `Honcho` client (the workspace), plus on `PeerResponse`, `SessionResponse` and `WorkspaceResponse`: the immutable identifier the server assigns, next to the client-chosen `id`. Set from any API response that returns the object, and `None` before the first fetch or against servers that don't return it (#1394)
+
+## [2.6.0] - 2026-10-07
+
+### Added
+
+- `custom_instructions` on `WorkspaceConfiguration` and `SessionConfiguration` (the shared fallback) and on `SummaryConfiguration`, `DreamConfiguration`, and `PeerCardConfiguration`, plus a new `DialecticConfiguration` type under the `dialectic` key. Requires Honcho v3.3.0+ (#1303)
+
+## [2.5.1] - 2026-09-22
+
+### Added
+
+- `observer_id` and `observed_id` on `EvidenceObservation`, so evidence from workspace chat says which peer pair each conclusion belongs to. Previously the SDK dropped these fields. Requires Honcho v3.2.1+ (#1220)
+
+### Changed
+
+- `Conclusion.source_ids` is `[]` rather than `None` for explicit conclusions when talking to Honcho v3.2.1+. The type still admits `None` for older servers (#1193)
 
 ## [2.5.0] - 2026-09-15
 

@@ -51,6 +51,10 @@
       "reasoning_level": "low",
       "assertions": [
         {
+          "assertion_type": "evidence_contains",
+          "messages_match": "novel"
+        },
+        {
           "assertion_type": "llm_judge",
           "prompt": "Does the response reference Carol writing novels or a book? It should mention something about her being a writer/author or her novel. Mentioning 'The Montmartre Cipher' or Paris or mystery is a bonus but not required. The key point is that the system found information about Carol's writing from the message history.",
           "pass_if": true

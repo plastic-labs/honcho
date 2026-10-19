@@ -1,5 +1,6 @@
 import datetime
 import logging
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
 
@@ -11,7 +12,6 @@ from src.security import (
     require_auth,
     scope_requires_workspace,
 )
-from src.utils.formatting import format_datetime_utc
 
 logger = logging.getLogger(__name__)
 
@@ -32,15 +32,21 @@ async def create_key(
         None, description="ID of the session to scope the key to"
     ),
     expires_at: datetime.datetime | None = None,
+    scope_id: Annotated[
+        str | None,
+        Query(
+            description="Named scope for recall and ingestion; requires workspace_id"
+        ),
+    ] = None,
 ):
     """Create a new Key"""
     if not settings.AUTH.USE_AUTH:
         raise DisabledException()
 
     # Validate that at least one parameter is provided for proper scoping
-    if not any([workspace_id, peer_id, session_id]):
+    if not any([workspace_id, peer_id, session_id, scope_id]):
         raise ValidationException(
-            "At least one of workspace_id, peer_id, or session_id must be provided"
+            "At least one of workspace_id, peer_id, session_id, or scope_id must be provided"
         )
 
     # A peer- or session-scoped key must carry its parent workspace, otherwise
@@ -54,14 +60,18 @@ async def create_key(
             "workspace_id is required when scoping a key to a peer or session"
         )
 
-    key_str = create_jwt(
-        JWTParams(
-            exp=format_datetime_utc(expires_at) if expires_at else None,
-            w=workspace_id,
-            p=peer_id,
-            s=session_id,
+    try:
+        key_str = create_jwt(
+            JWTParams(
+                exp=expires_at,
+                w=workspace_id,
+                p=peer_id,
+                s=session_id,
+                sc=scope_id,
+            )
         )
-    )
+    except ValueError as exc:
+        raise ValidationException(str(exc)) from exc
     return {
         "key": key_str,
     }

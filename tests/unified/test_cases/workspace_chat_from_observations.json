@@ -61,6 +61,10 @@
       "reasoning_level": "low",
       "assertions": [
         {
+          "assertion_type": "evidence_contains",
+          "conclusions_match": "violin"
+        },
+        {
           "assertion_type": "llm_judge",
           "prompt": "Does the response mention that Alice is a violinist or plays violin? It should reference her connection to music/violin performance. The specific detail about the Chicago Symphony Orchestra is a bonus but not required.",
           "pass_if": true
@@ -73,6 +77,10 @@
       "input": "What are Bob's hobbies?",
       "reasoning_level": "low",
       "assertions": [
+        {
+          "assertion_type": "evidence_contains",
+          "conclusions_match": "div"
+        },
         {
           "assertion_type": "llm_judge",
           "prompt": "Does the response mention that Bob is into scuba diving or diving? It should reference his diving hobby. The specific detail about Belize or the Great Blue Hole is a bonus but not required.",

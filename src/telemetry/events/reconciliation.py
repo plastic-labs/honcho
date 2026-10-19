@@ -4,6 +4,7 @@ Reconciliation events for Honcho telemetry.
 Reconciliation tasks handle maintenance operations:
 - Sync vectors: Synchronize documents and message embeddings to external vector stores
 - Cleanup stale items: Clean up soft-deleted records and expired queue items
+- Backfill: Copy legacy data into a new shape
 """
 
 from typing import ClassVar
@@ -82,7 +83,31 @@ class CleanupStaleItemsCompletedEvent(BaseEvent):
         return "cleanup_stale_items"
 
 
+class BackfillCompletedEvent(BaseEvent):
+    """Emitted when one backfill cycle completes.
+
+    Note: This event has no workspace context as it operates globally.
+    """
+
+    _event_type: ClassVar[str] = "reconciliation.backfill.completed"
+    _schema_version: ClassVar[int] = 1
+    _category: ClassVar[str] = "reconciliation"
+
+    backfill_name: str = Field(..., description="Registered backfill name")
+    rows_touched: int = Field(default=0, description="Rows moved to the new shape")
+    batches: int = Field(default=0, description="Batches run in this cycle")
+    still_pending: bool = Field(
+        ..., description="Whether rows still match the pending predicate"
+    )
+    total_duration_ms: float = Field(..., description="Total processing time")
+
+    def get_resource_id(self) -> str:
+        """Resource ID is the backfill name."""
+        return f"backfill:{self.backfill_name}"
+
+
 __all__ = [
     "SyncVectorsCompletedEvent",
     "CleanupStaleItemsCompletedEvent",
+    "BackfillCompletedEvent",
 ]

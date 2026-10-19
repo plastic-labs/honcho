@@ -1,7 +1,7 @@
 import logging
 from collections.abc import Sequence
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -159,16 +159,50 @@ class PromptRepresentation(BaseModel):
     """
 
     explicit: list[ExplicitObservationBase] = Field(
-        description="Facts LITERALLY stated by the user - direct quotes or clear paraphrases only, no interpretation or inference. Example: ['The user is 25 years old', 'The user has a dog named Rover']",
+        description="Facts LITERALLY stated by the user - direct quotes or clear paraphrases only, no interpretation or inference.",
         default_factory=list,
     )
 
     @field_validator("explicit", mode="before")
     @classmethod
-    def convert_none_to_empty_list(cls, v: Any) -> Any:
-        """Convert None to empty list - handles LLMs returning null instead of []."""
+    def normalize_explicit(cls, v: Any) -> Any:
+        """Normalize loose shapes emitted by OpenAI-compatible providers.
+
+        Some structured-output backends occasionally emit ``explicit`` as a
+        bare string or a list of strings instead of the declared list of
+        ``{"content": str}`` objects. Without coercion, validation fails and
+        the structured-output repair path rejects the whole batch.
+
+        This validator coerces the following shapes into the declared one:
+
+        - ``None`` -> ``[]`` (preserves prior behavior)
+        - ``"User works remotely"`` -> ``[{"content": "User works remotely"}]``
+        - ``["A", "B"]`` -> ``[{"content": "A"}, {"content": "B"}]``
+        - ``["A", {"content": "B"}]`` -> mixed strings and dicts coexist
+        - blank/whitespace-only strings are dropped
+
+        Anything that is neither ``None``, ``str``, nor ``list`` is passed
+        through unchanged so Pydantic raises its normal validation error.
+        """
         if v is None:
             return []
+        if isinstance(v, str):
+            stripped = v.strip()
+            return [{"content": stripped}] if stripped else []
+        if isinstance(v, list):
+            normalized: list[Any] = []
+            for item in cast(list[Any], v):
+                if item is None:
+                    continue
+                if isinstance(item, str):
+                    stripped = item.strip()
+                    if stripped:
+                        normalized.append({"content": stripped})
+                    continue
+                # dicts, ExplicitObservationBase instances, etc. pass through
+                # to normal Pydantic validation.
+                normalized.append(item)
+            return normalized
         return v
 
 
@@ -342,7 +376,7 @@ class Representation(BaseModel):
     """
 
     explicit: list[ExplicitObservation] = Field(
-        description="Facts LITERALLY stated by the user - direct quotes or clear paraphrases only, no interpretation or inference. Example: ['The user is 25 years old', 'The user has a dog']",
+        description="Facts LITERALLY stated by the user - direct quotes or clear paraphrases only, no interpretation or inference.",
         default_factory=list,
     )
     deductive: list[DeductiveObservation] = Field(

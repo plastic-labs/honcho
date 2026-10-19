@@ -90,6 +90,15 @@ repos:
         stages: [pre-push]
         pass_filenames: false
 
+      # Ensure the alembic migration graph has a single head
+      - id: check-alembic-heads
+        name: check alembic migrations have a single head
+        entry: uv run python scripts/check_alembic_heads.py
+        language: system
+        files: ^migrations/versions/.*\.py$
+        stages: [pre-push]
+        pass_filenames: false
+
       # Run Python SDK tests (if they exist)
       - id: pytest-python-sdk
         name: pytest (Python SDK)

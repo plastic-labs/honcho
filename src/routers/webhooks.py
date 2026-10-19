@@ -1,8 +1,7 @@
 import logging
 
 from fastapi import APIRouter, Body, Depends, Path, Response
-from fastapi_pagination import Page
-from fastapi_pagination.ext.sqlalchemy import apaginate
+from fastapi_pagination.bases import AbstractParams
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import schemas
@@ -11,6 +10,12 @@ from src.crud import webhook as crud
 from src.dependencies import db
 from src.exceptions import AuthenticationException, ConflictException
 from src.security import JWTParams, require_auth
+from src.utils.pagination import (
+    CursorPage,
+    Page,
+    paginate_offset_or_cursor,
+    pagination_params,
+)
 from src.webhooks.events import (
     TestEvent,
     publish_webhook_event,
@@ -52,12 +57,16 @@ async def get_or_create_webhook_endpoint(
         ) from e
 
 
-@router.get("", response_model=Page[schemas.WebhookEndpoint])
+@router.get(
+    "",
+    response_model=Page[schemas.WebhookEndpoint] | CursorPage[schemas.WebhookEndpoint],
+)
 async def list_webhook_endpoints(
     workspace_id: str = Path(..., description="Workspace ID"),
     jwt_params: JWTParams = Depends(require_auth(workspace_name="workspace_id")),
+    params: AbstractParams = Depends(pagination_params),
     db: AsyncSession = db,
-) -> Page[schemas.WebhookEndpoint]:
+) -> Page[schemas.WebhookEndpoint] | CursorPage[schemas.WebhookEndpoint]:
     """
     List all webhook endpoints, optionally filtered by workspace.
     """
@@ -65,7 +74,7 @@ async def list_webhook_endpoints(
         raise AuthenticationException("Unauthorized access to resource")
 
     stmt = await crud.list_webhook_endpoints(workspace_id)
-    return await apaginate(db, stmt)
+    return await paginate_offset_or_cursor(db, stmt, params)
 
 
 @router.delete("/{endpoint_id}", response_model=None, status_code=204)

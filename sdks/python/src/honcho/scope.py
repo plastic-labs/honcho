@@ -202,6 +202,7 @@ class Scope(ScopeBase):
                 metadata=response.metadata,
                 configuration=response.configuration,
                 created_at=response.created_at,
+                uid=response.uid,
                 is_active=response.is_active,
             )
 

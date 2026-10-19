@@ -8,6 +8,7 @@ single issue each, so they stop spawning a fresh one per transaction.
 
 from typing import TYPE_CHECKING, cast, final
 
+import httpx
 import pytest
 import sentry_sdk
 from fastapi.exceptions import RequestValidationError
@@ -15,11 +16,15 @@ from pydantic import ValidationError
 from sqlalchemy.exc import OperationalError
 
 from src.exceptions import (
+    EmptyRepresentationError,
+    EmptySummaryError,
     HonchoException,
     ResourceNotFoundException,
     SentryPolicy,
+    StructuredResponseError,
     UpstreamLLMError,
 )
+from src.llm.structured_output import StructuredOutputError
 from src.telemetry.sentry import default_before_send, initialize_sentry
 
 if TYPE_CHECKING:
@@ -49,19 +54,27 @@ def test_unrelated_operational_error_passes_through() -> None:
     assert default_before_send(event, _hint(exc)) == {"level": "error"}
 
 
-def test_upstream_llm_error_is_consolidated_at_error_level() -> None:
-    """The one HonchoException that survives the drop.
-
-    Provider outages are the deriver's only signal that the upstream is down --
-    it has no status-code metric -- so they stay in Sentry. They stay at error
-    level too: the retry budget and fallback chain are spent by the time one
-    escapes. The fingerprint, not the level, is what keeps the volume down.
-    """
-    out = default_before_send({}, _hint(UpstreamLLMError("the provider is down")))
-    assert out == {
-        "fingerprint": ["honcho-upstream-llm-unavailable"],
-        "level": "error",
-    }
+@pytest.mark.parametrize(
+    ("exc", "fingerprint", "level"),
+    [
+        (
+            UpstreamLLMError("the provider is down"),
+            "honcho-upstream-llm-unavailable",
+            "error",
+        ),
+        (
+            StructuredResponseError(),
+            "honcho-dialectic-structured-response-invalid",
+            "warning",
+        ),
+    ],
+)
+def test_kept_honcho_exceptions_are_consolidated(
+    exc: HonchoException, fingerprint: str, level: str
+) -> None:
+    """The HonchoExceptions that survive the drop, each under one fingerprint."""
+    out = default_before_send({}, _hint(exc))
+    assert out == {"fingerprint": [fingerprint], "level": level}
 
 
 def test_policy_is_read_from_the_exception_not_matched_on_by_type() -> None:
@@ -105,6 +118,39 @@ def test_a_new_exception_defaults_to_being_dropped() -> None:
     assert default_before_send({}, _hint(PlainException("plain"))) is None
 
 
+def _degraded(cls: type[EmptyRepresentationError | EmptySummaryError]) -> Exception:
+    return cls.for_prompt(
+        "prompt", parse_class="truncated", finish_reasons=["length"], output_tokens=9
+    )
+
+
+@pytest.mark.parametrize(
+    ("exc", "fingerprint"),
+    [
+        (
+            _degraded(EmptyRepresentationError),
+            "honcho-deriver-degraded-empty-representation",
+        ),
+        (_degraded(EmptySummaryError), "honcho-summary-degraded-empty-summary"),
+        (
+            StructuredOutputError("PromptRepresentation structured output failed"),
+            "honcho-llm-invalid-structured-output",
+        ),
+    ],
+    ids=["representation", "summary", "structured-output"],
+)
+def test_llm_output_failures_are_kept_as_one_issue_each(
+    exc: Exception, fingerprint: str
+) -> None:
+    """These escape only after the retry budget and fallback are spent, so they
+    are memory or summaries that were not written. Each collapses into a single
+    error-level issue so the per-issue spike alert counts its real rate."""
+    assert default_before_send({}, _hint(exc)) == {
+        "fingerprint": [fingerprint],
+        "level": "error",
+    }
+
+
 def test_honcho_and_validation_errors_are_dropped() -> None:
     assert default_before_send({}, _hint(ResourceNotFoundException("nope"))) is None
     assert (
@@ -141,3 +187,50 @@ def test_initialize_sentry_explicit_none_bypasses_shared_filter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     assert _captured_before_send(monkeypatch, before_send=None) is None
+
+
+def _llm_integration_event(mechanism_type: str) -> "Event":
+    return _event(
+        level="error",
+        exception={
+            "values": [
+                {
+                    "type": "ServerError",
+                    "value": "The service is currently unavailable.",
+                    "mechanism": {"type": mechanism_type, "handled": False},
+                }
+            ]
+        },
+    )
+
+
+class _ProviderError(Exception):
+    def __init__(self, status_code: int) -> None:
+        super().__init__(f"HTTP {status_code}")
+        self.status_code: int = status_code
+
+
+@pytest.mark.parametrize("mechanism_type", ["google_genai", "openai", "anthropic"])
+@pytest.mark.parametrize(
+    "exc",
+    [_ProviderError(503), _ProviderError(500), httpx.ConnectError("refused")],
+)
+def test_llm_sdk_integration_outage_attempts_are_dropped(
+    mechanism_type: str, exc: Exception
+) -> None:
+    event = _llm_integration_event(mechanism_type)
+    assert default_before_send(event, _hint(exc)) is None
+
+
+@pytest.mark.parametrize("mechanism_type", ["google_genai", "openai", "anthropic"])
+@pytest.mark.parametrize("status_code", [400, 401, 404, 429])
+def test_llm_sdk_integration_client_errors_pass_through(
+    mechanism_type: str, status_code: int
+) -> None:
+    event = _llm_integration_event(mechanism_type)
+    assert default_before_send(event, _hint(_ProviderError(status_code))) is event
+
+
+def test_outage_from_other_mechanisms_passes_through() -> None:
+    event = _llm_integration_event("starlette")
+    assert default_before_send(event, _hint(_ProviderError(503))) is event

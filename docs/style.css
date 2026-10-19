@@ -1,0 +1,4 @@
+/* Integration logos are pinned jsDelivr links to monochrome (black) SVGs; flip them for dark mode. */
+.dark img[src^="https://cdn.jsdelivr.net/"] {
+  filter: invert(1);
+}

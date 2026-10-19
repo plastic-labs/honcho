@@ -15,20 +15,14 @@ table, so the check is free once the drain completes. The follow-up migration
 drops the column, the index, and this task.
 """
 
-import logging
-import time
 from typing import Any, cast
 
 from sqlalchemy import CursorResult, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.db import Base
-from src.dependencies import tracked_db
-
-logger = logging.getLogger(__name__)
 
 BACKFILL_BATCH_SIZE = 500
-BACKFILL_TIME_BUDGET_SECONDS = 240
 
 # Any legacy location still populated. Also matches rows whose column holds a
 # non-array JSON value, which the drain clears without emitting edges. Must
@@ -101,6 +95,16 @@ async def has_pending_document_sources(db: AsyncSession) -> bool:
     return row.first() is not None
 
 
+async def count_pending_document_sources(db: AsyncSession) -> int:
+    """Number of documents still carrying legacy JSONB linkage."""
+    count = await db.scalar(
+        text(
+            f"SELECT count(*) FROM {_qualified('documents')} WHERE {_PENDING_PREDICATE}"  # nosec B608
+        )
+    )
+    return count or 0
+
+
 async def drain_document_sources_batch(
     db: AsyncSession, batch_size: int = BACKFILL_BATCH_SIZE
 ) -> int:
@@ -110,23 +114,3 @@ async def drain_document_sources_batch(
         await db.execute(text(_drain_batch_sql()), {"batch_size": batch_size}),
     )
     return result.rowcount
-
-
-async def run_document_sources_backfill_cycle() -> int:
-    """Drain batches until none remain or the time budget is spent.
-
-    Each batch commits in its own short-lived session so deriver work can
-    interleave and lock footprint stays at one batch.
-    """
-    deadline = time.monotonic() + BACKFILL_TIME_BUDGET_SECONDS
-    drained = 0
-    while time.monotonic() < deadline:
-        async with tracked_db("reconciliation_document_sources") as db:
-            count = await drain_document_sources_batch(db)
-            await db.commit()
-        if count == 0:
-            break
-        drained += count
-    if drained:
-        logger.info("Drained legacy source linkage for %d documents", drained)
-    return drained

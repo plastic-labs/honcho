@@ -1,8 +1,7 @@
 import logging
 
 from fastapi import APIRouter, Body, Depends, Path, Query
-from fastapi_pagination import Page
-from fastapi_pagination.ext.sqlalchemy import apaginate
+from fastapi_pagination.bases import AbstractParams
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, schemas
@@ -10,6 +9,12 @@ from src.dependencies import db, read_db
 from src.exceptions import ResourceNotFoundException, ValidationException
 from src.security import require_auth
 from src.telemetry.events import EmbeddingCallPurpose
+from src.utils.pagination import (
+    CursorPage,
+    Page,
+    paginate_offset_or_cursor,
+    pagination_params,
+)
 from src.utils.types import embedding_call_purpose
 
 logger = logging.getLogger(__name__)
@@ -55,7 +60,7 @@ async def create_conclusions(
 
 @router.post(
     "/list",
-    response_model=Page[schemas.Conclusion],
+    response_model=Page[schemas.Conclusion] | CursorPage[schemas.Conclusion],
 )
 async def list_conclusions(
     workspace_id: str = Path(...),
@@ -67,10 +72,14 @@ async def list_conclusions(
         False,
         description="Whether to reverse the order of results",
     ),
+    params: AbstractParams = Depends(pagination_params),
     db: AsyncSession = read_db,
 ):
     """
     List Conclusions using optional filters, ordered by recency unless `reverse` is true. Results are paginated.
+
+    Pass `cursor` (empty for the first page) to use cursor pagination, which
+    skips the total count and stays fast at any depth.
     """
     filters = None
     if options and hasattr(options, "filters"):
@@ -84,7 +93,7 @@ async def list_conclusions(
         reverse=reverse or False,
     )
 
-    return await apaginate(db, stmt)
+    return await paginate_offset_or_cursor(db, stmt, params)
 
 
 @router.post(

@@ -6,11 +6,17 @@ from urllib.parse import urlparse, urlunparse
 
 from alembic import context
 from sqlalchemy import Connection, engine_from_config, text
+from sqlalchemy.exc import DBAPIError
 
 from src.config import settings
 
 # Import your models
 from src.db import Base
+from src.migrate import (
+    acquire_migration_lock,
+    release_migration_lock,
+    run_with_lock_retry,
+)
 
 # Import all models so they register with Base.metadata
 import src.models  # noqa: F401
@@ -43,6 +49,10 @@ target_metadata = Base.metadata
 # can be acquired:
 # my_important_option = config.get_main_option("my_important_option")
 # ... etc.
+
+
+# insufficient_privilege, feature_not_supported ("extension is not available")
+OPTIONAL_EXTENSION_ERRORS = frozenset({"42501", "0A000"})
 
 
 def get_url() -> str:
@@ -124,28 +134,30 @@ def ensure_session_pooler(connection_uri: str) -> str:
     return connection_uri
 
 
-def _run_migrations_with_connection(
-    connection: Connection, *, owns_transaction: bool
-) -> None:
-    """Prepare the schema on an open connection, then run migrations over it.
-
-    When the caller owns the transaction, schema prep is left for them to commit.
-    """
-
-    # Create schema and commit it outside the main migration transaction
-    connection.execute(text(f"CREATE SCHEMA IF NOT EXISTS {target_metadata.schema};"))
-    connection.execute(
-        text(f"GRANT ALL ON SCHEMA {target_metadata.schema} TO current_user")
-    )
-    # Install pgvector extension if it doesn't exist
+def _prepare_schema(connection: Connection) -> None:
+    schema = connection.dialect.identifier_preparer.quote_schema(target_metadata.schema)
+    connection.execute(text(f"CREATE SCHEMA IF NOT EXISTS {schema}"))
+    connection.execute(text(f"GRANT ALL ON SCHEMA {schema} TO current_user"))
     connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-    # Set and verify search_path
-    connection.execute(
-        text(f"SET search_path TO {target_metadata.schema}, public, extensions")
-    )
-    if owns_transaction:
-        connection.commit()
+    # region ai
+    # pg_trgm backs the message-search ILIKE index. Where it can't be created
+    # (no privilege, or not installed on the server) it is skipped; the revision
+    # that builds the index checks for it. Other errors, e.g. a lock timeout
+    # that run_with_lock_retry should retry, propagate.
+    # endregion
+    try:
+        with connection.begin_nested():
+            connection.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+    except DBAPIError as e:
+        if getattr(e.orig, "sqlstate", None) not in OPTIONAL_EXTENSION_ERRORS:
+            raise
+        logging.getLogger("alembic").warning(
+            "Could not create extension pg_trgm; message search will run unindexed"
+        )
+    connection.execute(text(f"SET search_path TO {schema}, public, extensions"))
 
+
+def _run_revisions(connection: Connection) -> None:
     context.configure(
         connection=connection,
         target_metadata=target_metadata,
@@ -161,6 +173,36 @@ def _run_migrations_with_connection(
 
     with context.begin_transaction():
         context.run_migrations()
+
+
+def _run_migrations_with_connection(
+    connection: Connection, *, owns_transaction: bool
+) -> None:
+    """Prepare the schema and run migrations under the migration advisory lock.
+
+    A caller-owned transaction gets a transaction-scoped lock and no retry.
+    """
+    # Revisions that need an autocommit block read this: it can only run when
+    # env.py owns the transaction.
+    config.attributes["owns_transaction"] = owns_transaction
+    if not owns_transaction:
+        acquire_migration_lock(connection, transaction_scoped=True)
+        _prepare_schema(connection)
+        _run_revisions(connection)
+        return
+
+    def attempt() -> None:
+        _prepare_schema(connection)
+        connection.commit()
+        _run_revisions(connection)
+
+    acquire_migration_lock(connection)
+    try:
+        run_with_lock_retry(connection, attempt)
+    finally:
+        if not connection.invalidated:
+            connection.rollback()
+            release_migration_lock(connection)
 
 
 def run_migrations_online() -> None:

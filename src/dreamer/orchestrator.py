@@ -33,6 +33,8 @@ from src.dreamer.specialists import (
 )
 from src.dreamer.surprisal import SurprisalScore  # type: ignore
 from src.exceptions import SurprisalError
+from src.llm.runtime import CapturedAgentSpan, start_captured_span
+from src.llm.types import LLMTelemetryContext
 from src.schemas import DreamType
 from src.telemetry.events import DreamRunEvent, emit
 from src.telemetry.logging import (
@@ -66,6 +68,41 @@ class DreamResult:
     total_duration_ms: float
     input_tokens: int
     output_tokens: int
+
+
+def _start_dream_trace(
+    run_id: str,
+    *,
+    workspace_name: str,
+    observer: str,
+    observed: str,
+    session_name: str | None,
+    session_id: str | None,
+    dream_type: str | None,
+) -> CapturedAgentSpan | None:
+    """Open the dream's trace root for span-tree exporters."""
+    telemetry = LLMTelemetryContext(
+        workspace_name=workspace_name,
+        parent_category="dream",
+        run_id=run_id,
+        trace_id=run_id,
+        span_id=run_id,
+        session_id=session_id,
+        observer=observer,
+        observed=observed,
+        peer_name=observed,
+        track_name="Dream",
+    )
+    return start_captured_span(
+        "trace",
+        telemetry,
+        input={
+            "observer": observer,
+            "observed": observed,
+            "session_name": session_name,
+            "dream_type": dream_type,
+        },
+    )
 
 
 async def run_dream(
@@ -132,6 +169,16 @@ async def run_dream(
     surprisal_observation_count = 0
     deduction_result: SpecialistResult | None = None
     induction_result: SpecialistResult | None = None
+
+    dream_trace = _start_dream_trace(
+        run_id,
+        workspace_name=workspace_name,
+        observer=observer,
+        observed=observed,
+        session_name=session_name,
+        session_id=resolved_session_id,
+        dream_type=dream_type,
+    )
 
     # Surprisal-based sampling (if enabled)
     # Specialists are self-directed by default - hints are optional suggestions
@@ -264,6 +311,14 @@ async def run_dream(
         # schema-validation surprises during partial state.
         if duration_ms == 0.0:
             duration_ms = (time.perf_counter() - start_time) * 1000
+        if dream_trace is not None:
+            dream_trace.end(
+                output={
+                    "deduction": deduction_result.content if deduction_result else None,
+                    "induction": induction_result.content if induction_result else None,
+                },
+                is_error=not (deduction_success and induction_success),
+            )
         try:
             total_iterations = (
                 deduction_result.iterations if deduction_result else 0
@@ -382,6 +437,15 @@ async def run_card_refresh_dream(
     specialist_success = False
     specialist_result: SpecialistResult | None = None
     duration_ms = 0.0
+    dream_trace = _start_dream_trace(
+        run_id,
+        workspace_name=workspace_name,
+        observer=observer,
+        observed=observed,
+        session_name=session_name,
+        session_id=resolved_session_id,
+        dream_type=dream_type,
+    )
     try:
         specialist = CardRefreshSpecialist(rebuild=rebuild)
         try:
@@ -420,6 +484,11 @@ async def run_card_refresh_dream(
         # deduction-family run, so its outcome rides on deduction_success.
         if duration_ms == 0.0:
             duration_ms = (time.perf_counter() - start_time) * 1000
+        if dream_trace is not None:
+            dream_trace.end(
+                output=specialist_result.content if specialist_result else None,
+                is_error=not specialist_success,
+            )
         try:
             emit(
                 DreamRunEvent(

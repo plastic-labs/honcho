@@ -7,21 +7,88 @@ import subprocess
 import sys
 import warnings
 from pathlib import Path
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine
+from turbopuffer import APIConnectionError
 
 from src.config import settings
+from src.exceptions import VectorStoreError
 from src.startup.embedding_validator import (
     StartupValidationError,
     _assert_pgvector_dims_match,  # pyright: ignore[reportPrivateUsage]
     validate_embedding_schema,
 )
+from src.vector_store import VectorStore
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+
+
+@pytest.fixture(params=["chromadb", "turbopuffer", "lancedb", "qdrant"])
+def sampled_store(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> MagicMock:
+    """Exercise the full validator with two namespaces and matching SQL dims."""
+    monkeypatch.setattr(settings.VECTOR_STORE, "TYPE", request.param)
+    monkeypatch.setattr(settings.EMBEDDING, "VECTOR_DIMENSIONS", 4)
+    monkeypatch.setattr(
+        "src.startup.embedding_validator._introspect_pgvector_dims_once",
+        AsyncMock(return_value={"documents": 4, "message_embeddings": 4}),
+    )
+    monkeypatch.setattr(
+        "src.startup.embedding_validator._sample_workspace_names",
+        AsyncMock(return_value=["ws1", "ws2"]),
+    )
+    monkeypatch.setattr(
+        "src.startup.embedding_validator._sample_collection_keys",
+        AsyncMock(return_value=[]),
+    )
+    store = MagicMock(spec=VectorStore)
+    store.get_vector_namespace.side_effect = ["ns1", "ns2"]
+    monkeypatch.setattr("src.vector_store.get_external_vector_store", lambda: store)
+    return store
+
+
+def _wrapped_probe_outage() -> APIConnectionError:
+    error = APIConnectionError(request=httpx.Request("GET", "https://vector.test"))
+    error.__cause__ = httpx.ConnectError("offline")
+    return error
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        httpx.ConnectError("offline"),
+        TimeoutError("timed out"),
+        ConnectionError("connection refused"),
+        _wrapped_probe_outage(),
+        httpx.HTTPStatusError(
+            "busy",
+            request=httpx.Request("GET", "http://chroma.test"),
+            response=httpx.Response(503),
+        ),
+        VectorStoreError("unreadable schema"),
+        ValueError("invalid configuration"),
+        httpx.HTTPStatusError(
+            "denied",
+            request=httpx.Request("GET", "http://chroma.test"),
+            response=httpx.Response(403),
+        ),
+    ],
+)
+async def test_external_sampler_fails_closed_on_probe_errors(
+    sampled_store: MagicMock, error: Exception
+) -> None:
+    """Neither outages nor unreadable schemas may silently pass startup."""
+    sampled_store.probe_namespace_dim.side_effect = error
+    with pytest.raises(type(error)) as raised:
+        await validate_embedding_schema(AsyncMock())
+    assert raised.value is error
+    sampled_store.probe_namespace_dim.assert_awaited_once_with("ns1")
 
 
 # pgvector stores the declared dim directly in atttypmod (no VARHDRSZ offset).

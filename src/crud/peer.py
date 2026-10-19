@@ -27,6 +27,7 @@ from src.exceptions import (
 )
 from src.models import Peer
 from src.schemas.api import RESOURCE_NAME_PATTERN
+from src.telemetry.events import PeerCreatedEvent, emit
 from src.utils import scopes as scopes_util
 from src.utils.filter import apply_filter
 from src.utils.types import GetOrCreateResult
@@ -282,7 +283,9 @@ async def get_or_create_peers(
             reserved-prefix or non-conforming name on the create path
     """
 
-    await get_or_create_workspace(db, schemas.WorkspaceCreate(name=workspace_name))
+    ws_result = await get_or_create_workspace(
+        db, schemas.WorkspaceCreate(name=workspace_name)
+    )
     peer_names = [p.name for p in peers]
     # Before the lookup: these values cannot match a stored row and would fail
     # inside the query itself rather than as a clean 422.
@@ -380,16 +383,21 @@ async def get_or_create_peers(
         )
     ]
 
-    async def _invalidate_peer_cache():
+    new_peer_names = [p.name for p in new_peers]
+
+    async def _after_commit():
+        await ws_result.post_commit()
         for cache_key in _cache_keys_to_invalidate:
             await safe_cache_delete(cache_key)
+        for name in new_peer_names:
+            emit(PeerCreatedEvent(workspace_name=workspace_name, peer_name=name))
 
     # Return combined list of existing and new peers
     # created=True if any new peers were created
     return GetOrCreateResult(
         existing_peers + new_peers,
         created=len(new_peers) > 0,
-        on_commit=_invalidate_peer_cache if _cache_keys_to_invalidate else None,
+        on_commit=_after_commit,
     )
 
 

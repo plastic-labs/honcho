@@ -27,7 +27,87 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 ### Honcho API and SDK Changelogs
 <Tabs>
     <Tab title="Honcho API">
-        <Update label="v3.2.0 (Current)">
+        <Update label="v3.3.0 (Current)">
+        ### Added
+
+        - ChromaDB vector store backend: set `VECTOR_STORE_TYPE=chromadb` and pick a client with `VECTOR_STORE_CHROMA_CLIENT_MODE`: `http` (self-hosted Chroma server, the default) or `cloud` (Chroma Cloud, needs `VECTOR_STORE_CHROMA_API_KEY`). Embedded `persistent` mode is rejected at startup, since it isn't safe across Honcho's API and deriver processes. Each Honcho namespace gets its own Chroma collection and index. Ships as an optional extra (`uv sync --extra chromadb`), so default installs and the Docker image don't include it (#868)
+        - Custom instructions reach every agent, not just the deriver. A new top-level `custom_instructions` in workspace and session configuration is the shared fallback, and `summary`, `dialectic` (new section), `dream`, and `peer_card` each take their own `custom_instructions` override. Message, session, and workspace levels are checked in that order and the first that sets a value wins; within a level the module's value beats the shared one, and `""` means no instructions. `reasoning.custom_instructions` stays deriver-only, and `peer_card` instructions add to the dream instructions without falling back to the shared value. No migration: configuration is JSONB (#1303)
+        - Telemetry records custom instructions. `representation.completed`, the summary event, `dialectic.completed`, and `dream.specialist` carry `custom_instructions_tokens` and `custom_instructions_source` (e.g. `session.shared`, `workspace.summary`); `llm.call.traced` links the injected text through `custom_instructions_ref`; Langfuse generations carry it under the `custom_instructions` metadata key. Additive fields, so `_schema_version` is unchanged (#1309)
+        - `python -m src.migrate [revision]` runs migrations under a Postgres advisory lock, so replicas that start together no longer race on `alembic upgrade` (`tuple concurrently updated`). A waiter polls for up to `DB_MIGRATION_LOCK_WAIT_SECONDS` (default 300), then fails naming the holder's pid. `scripts/migrate_db.py` and `scripts/provision_db.py` wrap it (#1268)
+        - List endpoints take an opt-in `cursor` query parameter: send it empty for the first page, then pass each response's `next_page`. Cursor mode returns a keyset-paginated page with no `COUNT` and one index seek per page, so deep walks stay cheap. Without `cursor` the response is the unchanged `Page`, and a server that predates this ignores the parameter, so clients can detect support from the response shape. A malformed cursor returns a 400 (#1326)
+
+        ### Changed
+
+        - The deriver prompt states the target peer's id as the subject of every conclusion about that peer, instead of "the target peer" or "the user" (#1273)
+        - `search_messages` (and the `search_memory` fallback and `search_messages_temporal`) drops whole trailing snippets when its output exceeds the tool budget and appends `[N of M snippets shown - K omitted to fit output budget]`, instead of cutting the text mid-snippet with no notice. Tool-call telemetry reports `was_truncated` and the pre-truncation size (#1265)
+        - Reconciler backfills are registered through a generic `Backfill` definition, each scheduled as `reconciler:backfill.<name>` only while it has pending rows. The existing document-sources backfill keeps its queue shape, so pre-3.3 workers sharing the queue still run it during a rolling deploy (#1275)
+        - `/openapi.json` no longer hardcodes `https://api.honcho.dev` as its first server. Self-hosted `/docs` "Try it out" and generated clients target the origin they were served from; behind a prefix-stripping proxy, set `--root-path` (#1103)
+        - Gemini `gemini-embedding-2` models embed up to 8192 input tokens instead of being capped at 2048. Other Gemini models keep the 2048 cap (#925)
+        - `uv.lock` bumps `starlette` (1.0.0 → 1.6.0, CVE-2026-48710), `python-multipart`, `anyio`, and `idna` to patched versions, which the Docker image picks up through `uv sync --frozen` (#1266)
+        - Session summaries ask for about 60% of their token cap instead of a hard word limit, leaving headroom so dense content finishes instead of being cut off mid-summary. The default caps rise from 1000/4000 to 1500/6000 (`SUMMARY_MAX_TOKENS_SHORT` / `SUMMARY_MAX_TOKENS_LONG`), so default summaries stay about the same length. When `SUMMARY_MODEL_CONFIG__MAX_OUTPUT_TOKENS` is set it is a ceiling: settings fail to load if either cap exceeds it, so a deployment that sets it below 6000 must lower the caps to match or raise it (#1318)
+        - The deriver's semantic deduplication looks up candidates for the whole batch in one query instead of one query per conclusion (#1202)
+        - With the cache enabled, offset-paginated list requests (`?page=N`) seek from where the previous page ended instead of scanning past every earlier row, so installed SDKs walking long lists get faster without an upgrade. Responses are unchanged, except that `total` on pages after the first may be up to `CACHE_PAGINATION_COUNT_TTL_SECONDS` (default 60) old. `CACHE_PAGINATION_OFFSET_SHIM` (default `true`) turns it off, `CACHE_PAGINATION_POSITION_TTL_SECONDS` (default 600) sets how long a page position lives, and `pagination_offset_shim{outcome}` counts first, hit, and miss pages. Adds the `sqlakeyset` dependency (#1326)
+        - Message search's `content ILIKE` fallback is backed by a new `pg_trgm` GIN index, `ix_messages_content_trgm`, instead of scanning every message in the workspace (scans held connections for 10s+ on large deployments). This release includes a migration. The index is roughly 1.5× the size of `messages`, so plan disk headroom before upgrading. It is built `CONCURRENTLY`, so writes continue, but the build waits for open transactions that touched `messages` and for any older snapshot in the database, such as a long-running query on any table. After 60 minutes the migration fails and leaves an invalid index, which the next run drops and rebuilds. On large or busy databases, build the index ahead of the upgrade with the statement in the troubleshooting guide, and the migration will no-op. If `pg_trgm` can't be created (no privilege, or not available on the server), the migration skips the index and logs the statement to create it later (#1335)
+
+        ### Removed
+
+        - `DIALECTIC_HISTORY_TOKEN_LIMIT` and `DREAM_HISTORY_TOKEN_LIMIT`, along with the unused `get_recent_history` agent tool they fed. A leftover value is ignored (#1308)
+
+        ### Fixed
+
+        - Cloning a session matched the source's messages, peers, and cutoff message by session name alone, so it could copy a same-named session's data from another workspace or fail with a 500. Lookups are scoped to the workspace. Cloned messages also keep `token_count`, and cloning a session with no messages copies its peers and commits instead of returning a 201 for a session that was rolled back (#1284)
+        - JWTs with an expiry (`--expires` on `scripts/generate_jwt.py`, `expires_at` on `POST /v3/keys`) failed every request with a 401, because `exp` was written as an ISO string instead of a NumericDate. Expiring keys now authenticate until they expire, and an expired key returns `JWT expired` (#1025)
+        - OpenAI `gpt-6` models failed with a 400 `unsupported_parameter` because Honcho sent `max_tokens`; they now get `max_completion_tokens` like `gpt-5` and the o-series (#1233)
+        - A summary that hits its cap while repeating itself (fewer than 35% distinct 4-word sequences) is discarded and the previous summary kept, instead of overwriting it. Rejections are counted in `summary_rejections{summary_type,reason}` (#1318)
+        - Session peer and webhook list endpoints had no `ORDER BY`, so their pages could skip or repeat rows. They order by `(joined_at, id)` and `(created_at, id)` (#1326)
+        - A connection dropped by the pooler during the representation's semantic conclusion lookup no longer fails the request with `PendingRollbackError`. On read-only sessions the connection is rolled back and the lookup degrades to no semantic conclusions (#1335)
+        </Update>
+
+        <Update label="v3.2.2">
+        ### Added
+
+        - `CACHE_CONNECT_TIMEOUT_SECONDS` (default 5) and `CACHE_CONNECT_RETRIES` (default 3). The Redis client retries a failed connect with exponential backoff (0.1s base, 0.5s cap), so an instance that boots alongside several others no longer fails on a single `Timeout connecting to server` (#1234)
+
+        ### Changed
+
+        - Listing a peer's sessions uses a new `session_peers (workspace_name, peer_name, session_name)` index and starts from that peer's rows instead of walking every session in the workspace (28.9ms to 0.15ms on a 326k-row test table). This release includes a migration. The index is not built `CONCURRENTLY`, so writes to `session_peers` wait while it builds (#1237)
+        - LLM provider 5xx and connection errors are no longer sent to Sentry on every attempt by the Anthropic, OpenAI, and Google GenAI SDK integrations. Honcho reports the final error once its retries are exhausted, so an outage that recovers on retry no longer alerts. Client errors (400, 401, 404, 429) are still reported (#1242)
+        - Dialectic and dreamer runs are typed `agent` in Langfuse, so they appear in the Agent Graph. Generation output with tool calls is an OpenAI-style assistant message carrying the tool arguments and any thinking, instead of just the tool names. The `langfuse` floor rises to `>=4.6.1` (#1258)
+        - The deriver prompt and output schema no longer carry example facts. New rules resolve relative dates against each message's `time`, treat details in a question or proposal the target peer accepts as stated by them, skip conversational mechanics (greetings, thanks, acknowledgements), and keep one fact per conclusion with its qualifiers attached and no reworded duplicates (#1263)
+
+        ### Removed
+
+        - Inline Langfuse instrumentation and the `LANGFUSE_EXPORTER_MODE` setting. Langfuse traces now come only from the exporter over the captured LLM call stream, which has been the default since 3.0.12. A leftover `LANGFUSE_EXPORTER_MODE=inline` is ignored. The exporter only registers when `TELEMETRY_ENABLED` is true, so deployments that set Langfuse keys with telemetry off no longer get traces (#1253)
+
+        ### Fixed
+
+        - Context routes (`GET /peers/{id}/context`, `POST /peers/{id}/representation`, `GET /sessions/{id}/context`) truncate a `search_query` longer than `EMBEDDING.MAX_INPUT_TOKENS` (8192) before embedding it. Before, the embed failed and the route returned a 200 with semantic results silently dropped. Session context also releases its DB connection before the embedding call (#1255)
+        - Langfuse traces reflect what happened: generations show the call's real latency, every trace has one root observation, `user_id` and the trace name sit on every observation, run and step spans stay open until the run ends, and tool spans carry the result and real duration (#1235)
+        - A Redis connection dropped while idle is reconnected and the command retried, instead of failing the request. uvloop raised a `RuntimeError` on the closed transport, which redis-py did not treat as a connection error (#1245)
+        </Update>
+
+        <Update label="v3.2.1">
+        ### Added
+
+        - Chat evidence conclusions carry `observer_id` and `observed_id`, matching the Conclusions response. Workspace chat reads across every peer into one evidence list, so each row now says which pair it belongs to without re-fetching it (#1193)
+        - `thinking_tool_choice_conflict` provider param for Anthropic model configs, which decides what happens when extended thinking meets a forced tool choice (Anthropic rejects the combination): `throw` (default, raises a validation error before the request is sent), `override_thinking` (drops thinking for that call), or `override_tool` (relaxes the tool choice to `auto`). Set it per model config, e.g. `DIALECTIC_LEVELS__medium__MODEL_CONFIG__OVERRIDES__PROVIDER_PARAMS__THINKING_TOOL_CHOICE_CONFLICT=override_thinking` (#1211)
+
+        ### Changed
+
+        - `source_ids` is `[]` rather than `null` for explicit conclusions on the Conclusions response, matching chat evidence. Clients that checked for `null` should check for an empty list (#1193)
+        - Workspace chat keeps its forced tool choice until a recall tool runs cleanly, capped at 3 forced rounds, so an answer always rests on at least one search instead of the prefetched overview. A tool that returns an error does not count. `get_workspace_stats` is removed from the workspace toolset, since the prefetch already supplies the same overview (#1210)
+        - The deriver wraps each batch message in a tag carrying its peer and whether it is a target, and derives only from target messages, instead of relying on the model to match a name prefix. Message content that imitates the tag is escaped so it cannot claim target attribution (#1192)
+        - Smaller runtime footprint: the Docker image drops from 627MB to 426MB. PDF extraction uses pypdf instead of pdfplumber, provider SDKs import only for the configured backend, and scikit-learn moves behind a new optional `surprisal` extra. Self-hosted deployments that enable `DREAM.SURPRISAL.ENABLED` with an sklearn-backed tree type need the extra; `rptree`, `covertree`, and `lsh` still work without it (#1201)
+
+        ### Fixed
+
+        - Chat with `include_evidence` no longer fails with "Instance is not bound to a Session" when evidence is read after its DB session closes (#1212)
+        - On Redis Cluster, each process releases the idle connection its startup PING leaves on the default node. Every client picks the same slot-0 primary, so these sockets piled up there (92% of that node's connections in one observed cluster) and could hit `maxclients`, which stops every new client from initialising (#1198)
+        - Dreamer tools return an actionable error for malformed arguments (a string instead of a list, non-object items) instead of raising a `TypeError` mid-loop. Valid sibling observations in the same call still land (#1217)
+        - Deleting a session no longer loads the content of every embedding chunk to rebuild vector IDs; chunk counts are aggregated in SQL (#1206)
+        </Update>
+
+        <Update label="v3.2.0">
         ### Added
 
         - Conclusion attribution on the public API: `source_ids` and `times_derived` on the Conclusions response (already stored on documents, previously stripped). `GET /v3/workspaces/{workspace_id}/conclusions/{conclusion_id}` returns a single conclusion with those fields. `source_ids` is filterable via JSONB containment (`{"source_ids": {"contains": "<id>"}}`); `id`, `level`, `source_ids`, and `times_derived` are explicit entries in the documents filter allowlist. The same `contains` fix applies to other JSONB columns, which previously generated invalid ILIKE-on-JSONB SQL. Message attribution (conclusion → source messages) and chain traversal are follow-ups (#952)
@@ -838,7 +918,21 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 
     <Tab title="Python SDK">
         [Python SDK](https://pypi.org/project/honcho-ai/)
-        <Update label="v2.5.0 (Current)">
+        <Update label="v2.6.0 (Current)">
+            ### Added
+
+            - `custom_instructions` on `WorkspaceConfiguration` and `SessionConfiguration` (the shared fallback) and on `SummaryConfiguration`, `DreamConfiguration`, and `PeerCardConfiguration`, plus a new `DialecticConfiguration` type under the `dialectic` key. Requires Honcho v3.3.0+ (#1303)
+        </Update>
+        <Update label="v2.5.1">
+            ### Added
+
+            - `observer_id` and `observed_id` on `EvidenceObservation`, so evidence from workspace chat says which peer pair each conclusion belongs to. Previously the SDK dropped these fields. Requires Honcho v3.2.1+ (#1220)
+
+            ### Changed
+
+            - `Conclusion.source_ids` is `[]` rather than `None` for explicit conclusions when talking to Honcho v3.2.1+. The type still admits `None` for older servers (#1193)
+        </Update>
+        <Update label="v2.5.0">
             ### Added
 
             - `honcho.get_scope(id)` (sync and async) fetches an existing scope by ID and raises `NotFoundError` when it does not exist. Unlike `honcho.scope()`, it never creates the scope, so lookups cannot provision a recall boundary by accident (#1163)
@@ -1026,7 +1120,21 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 
     <Tab title="TypeScript SDK">
         [TypeScript SDK](https://www.npmjs.com/package/@honcho-ai/sdk)
-        <Update label="v2.5.0 (Current)">
+        <Update label="v2.6.0 (Current)">
+            ### Added
+
+            - `customInstructions` on workspace and session configuration (the shared fallback) and on the `summary`, `dream`, and `peerCard` sections, plus a new `dialectic` section (`DialecticConfig`) with its own `customInstructions`. Requires Honcho v3.3.0+ (#1303)
+        </Update>
+        <Update label="v2.5.1">
+            ### Added
+
+            - `observer_id` and `observed_id` on `EvidenceObservation`, so evidence from workspace chat says which peer pair each conclusion belongs to. Requires Honcho v3.2.1+ (#1193)
+
+            ### Changed
+
+            - `Conclusion.sourceIds` is `[]` rather than `null` for explicit conclusions when talking to Honcho v3.2.1+. The type still admits `null` for older servers (#1193)
+        </Update>
+        <Update label="v2.5.0">
             ### Added
 
             - `honcho.getScope(id)` fetches an existing scope by ID and rejects with `NotFoundError` when it does not exist. Unlike `honcho.scope()`, it never creates the scope, so lookups cannot provision a recall boundary by accident (#1163)
@@ -1240,6 +1348,21 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
     </Tab>
     <Tab title="Honcho CLI">
         [Honcho CLI](https://pypi.org/project/honcho-cli/)
+        <Update label="v0.2.0 (Current)">
+        ### Added
+
+        - CLI requests carry `X-Honcho-Host: honcho-cli/<version> (<platform>)` so telemetry counts them as CLI traffic rather than direct SDK use (#1181)
+        - Conclusion attribution on `honcho conclusion list` and `honcho conclusion search` (Honcho v3.2.0+): every row now carries `level`, `source_ids` and `times_derived`, so an extracted fact is distinguishable from a dreamed one. Table output shows a premise count; `--json` keeps the full id list, ready to pipe into `honcho conclusion get` (#952)
+        - `honcho conclusion get <id>...` fetches conclusions by ID from anywhere in the workspace, with no observer/observed pair required. Feed it a conclusion's `source_ids` to walk a reasoning chain down to the explicit facts underneath it; IDs that no longer exist are reported rather than failing the command (#952)
+        - `honcho conclusion derived <id>` lists what was built on top of a conclusion — the same edge walked upward. Worth checking before deleting or correcting a fact (#952)
+        - `--level` on `honcho conclusion list` and `honcho conclusion search`, and `--derived-from` on `honcho conclusion list` (#952)
+        - `--evidence` on `honcho peer chat` and `honcho workspace chat` (Honcho v3.2.0+): reports the conclusions and messages the dialectic read and the tools it called. Evidence is collated from what the agent accessed rather than reported by the model, so it over-reports and costs no extra model tokens. Messages are summarised per session, since evidence carries their identity but not their text (#1129)
+
+        ### Changed
+
+        - Requires `honcho-ai` 2.5.0 (was 2.4.0), which carries the attribution fields and the evidence-bearing chat response
+        </Update>
+
         <Update label="v0.1.5">
         ### Added
 

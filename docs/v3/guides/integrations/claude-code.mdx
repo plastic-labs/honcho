@@ -1,6 +1,6 @@
 ---
 title: "Claude Code"
-icon: 'terminal'
+icon: "https://cdn.jsdelivr.net/npm/simple-icons@16.33.0/icons/claudecode.svg"
 description: "Add AI-native memory to Claude Code"
 sidebarTitle: 'Claude Code'
 ---
@@ -436,18 +436,19 @@ Navigate to Claude Desktop's custom MCP servers settings and add Honcho:
         "--header",
         "Authorization:${AUTH_HEADER}",
         "--header",
-        "X-Honcho-User-Name:${USER_NAME}"
+        "X-Honcho-Plugin:claude-desktop"
       ],
       "env": {
-        "AUTH_HEADER": "Bearer <your-honcho-key>",
-        "USER_NAME": "<your-name>"
+        "AUTH_HEADER": "Bearer <your-honcho-key>"
       }
     }
   }
 }
 ```
 
-**Optional customization** — You can also set a custom assistant name and workspace ID:
+Peers are set per tool call: every memory tool takes a `peer_id`, so tell Claude your name in the project instructions. The `X-Honcho-Plugin` header only labels this connection in usage attribution and is optional.
+
+**Optional customization** — pin a default workspace so tool calls can omit `workspace_id`:
 
 ```json
 {
@@ -460,17 +461,13 @@ Navigate to Claude Desktop's custom MCP servers settings and add Honcho:
         "--header",
         "Authorization:${AUTH_HEADER}",
         "--header",
-        "X-Honcho-User-Name:${USER_NAME}",
-        "--header",
-        "X-Honcho-Assistant-Name:${ASSISTANT_NAME}",
+        "X-Honcho-Plugin:claude-desktop",
         "--header",
         "X-Honcho-Workspace-ID:${WORKSPACE_ID}"
       ],
       "env": {
         "AUTH_HEADER": "Bearer <your-honcho-key>",
-        "USER_NAME": "<your-name>",
-        "ASSISTANT_NAME": "<your-assistant-name>",
-        "WORKSPACE_ID": "<your-custom-workspace-id>"
+        "WORKSPACE_ID": "<your-workspace-id>"
       }
     }
   }

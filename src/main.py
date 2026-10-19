@@ -1,3 +1,4 @@
+import json
 import logging
 import re
 import time
@@ -7,6 +8,8 @@ from contextlib import asynccontextmanager
 
 import sentry_sdk
 from fastapi import FastAPI, Request, Response
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi_pagination import add_pagination
@@ -181,10 +184,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     lifespan=lifespan,
-    servers=[
-        {"url": "https://api.honcho.dev", "description": "Production SaaS Platform"},
-        {"url": "http://localhost:8000", "description": "Local Development Server"},
-    ],
+    servers=[{"url": "/"}],
     title="Honcho API",
     summary="The Identity Layer for the Agentic World",
     description="""Honcho is a platform for giving agents user-centric memory and social cognition.""",
@@ -242,6 +242,29 @@ async def honcho_exception_handler(_request: Request, exc: HonchoException):
     return JSONResponse(
         status_code=exc.status_code,
         content={"detail": exc.detail},
+    )
+
+
+class _AsciiJSONResponse(JSONResponse):
+    """JSONResponse that escapes non-ASCII, so lone surrogates encode cleanly."""
+
+    def render(self, content: object) -> bytes:
+        return json.dumps(
+            content, ensure_ascii=True, allow_nan=False, separators=(",", ":")
+        ).encode("ascii")
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(_request: Request, exc: RequestValidationError):
+    """Same body as FastAPI's default handler, but safe to encode.
+
+    Validation errors echo the rejected `input`. When that input contains a lone
+    surrogate (e.g. an emoji split mid-pair by a client), the default UTF-8
+    render raises and the 422 turns into a 500.
+    """
+    return _AsciiJSONResponse(
+        status_code=422,
+        content={"detail": jsonable_encoder(exc.errors())},
     )
 
 

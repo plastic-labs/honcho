@@ -9,13 +9,14 @@ from unittest.mock import AsyncMock, Mock
 import httpx
 import pytest
 from openai import BadRequestError
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from src.exceptions import ValidationException
 from src.llm.backends.openai import (
     OpenAIBackend,
     _json_object_instruction,  # pyright: ignore[reportPrivateUsage]
 )
+from src.llm.structured_output import StructuredOutputError
 from src.utils.representation import PromptRepresentation
 from src.utils.schema_conversion import json_response_schema_to_pydantic
 
@@ -652,6 +653,10 @@ async def test_openai_backend_passes_timeout_to_structured_parse_request() -> No
         "gpt-5.4",
         "gpt-5.4-mini",
         "gpt-5.5-preview",
+        "gpt-6",
+        "gpt-6-sol",
+        "gpt-6-luna",
+        "gpt-6-astra",
         "o1",
         "o1-mini",
         "o3",
@@ -660,9 +665,9 @@ async def test_openai_backend_passes_timeout_to_structured_parse_request() -> No
     ],
 )
 def test_openai_reasoning_models_use_max_completion_tokens(model: str) -> None:
-    """Reasoning model families (gpt-5 incl. x.y versions, o1/o3/o4) must send
-    max_completion_tokens, not max_tokens — OpenAI rejects max_tokens for them
-    with 400 unsupported_parameter."""
+    """Reasoning model families (gpt-5+ incl. x.y versions, gpt-6, o1/o3/o4)
+    must send max_completion_tokens, not max_tokens — OpenAI rejects
+    max_tokens for them with 400 unsupported_parameter."""
     from src.llm.backends.openai import (
         _uses_max_completion_tokens,  # pyright: ignore[reportPrivateUsage]
     )
@@ -733,7 +738,7 @@ async def test_structured_output_parsed_none_returns_refusal() -> None:
 async def test_structured_output_parsed_none_no_content_raises() -> None:
     """json_schema with no parsed model, content, or refusal raises so the
     retry/fallback chain engages — it must NOT silently empty like json_object."""
-    from src.exceptions import ValidationException
+    from src.llm.structured_output import StructuredOutputError
 
     client = Mock()
     client.chat.completions.parse = AsyncMock(
@@ -741,7 +746,7 @@ async def test_structured_output_parsed_none_no_content_raises() -> None:
     )
 
     backend = OpenAIBackend(client)
-    with pytest.raises(ValidationException):
+    with pytest.raises(StructuredOutputError):
         await backend.complete(
             model="gpt-4.1",
             messages=[{"role": "user", "content": "Hello"}],
@@ -894,14 +899,133 @@ async def test_structured_output_json_object_mode_request_shape() -> None:
 
 
 @pytest.mark.asyncio
-async def test_structured_output_json_object_mode_repairs_markdown() -> None:
-    """A provider that ignores json_object and returns prose must not crash —
-    PromptRepresentation repairs to an empty representation, not an exception."""
+@pytest.mark.parametrize("with_tools", [False, True])
+async def test_structured_output_json_object_mode_instruction_is_tool_aware(
+    with_tools: bool,
+) -> None:
+    """With tools in play, the json_object instruction must leave room for a
+    tool call instead of demanding a JSON answer on every tool-loop turn."""
+    client = Mock()
+    client.chat.completions.create = AsyncMock(
+        return_value=_structured_create_return('{"answer": "ok"}')
+    )
+
+    backend = OpenAIBackend(client)
+    await backend.complete(
+        model="glm-4.6",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        tools=[AGENT_TOOL] if with_tools else None,
+        response_format=_StructuredResponse,
+        extra_params={"structured_output_mode": "json_object"},
+    )
+
+    call = _await_kwargs(client.chat.completions.create)
+    system_content = call["messages"][0]["content"]
+    assert system_content.startswith(
+        "If you are not calling a tool" if with_tools else "You must respond"
+    )
+    assert "json" in system_content
+
+
+@pytest.mark.asyncio
+async def test_structured_output_json_object_mode_rejects_markdown() -> None:
+    """PromptRepresentation prose is rejected so the caller can retry."""
     client = Mock()
     client.chat.completions.parse = AsyncMock()
     client.chat.completions.create = AsyncMock(
         return_value=_structured_create_return(
             "Sure! Here are the facts:\n- the user likes coffee"
+        )
+    )
+
+    backend = OpenAIBackend(client)
+    with pytest.raises(StructuredOutputError):
+        await backend.complete(
+            model="glm-4.6",
+            messages=[{"role": "user", "content": "Hello"}],
+            max_tokens=100,
+            response_format=PromptRepresentation,
+            extra_params={"structured_output_mode": "json_object"},
+        )
+
+
+@pytest.mark.asyncio
+async def test_structured_output_json_object_mode_accepts_fenced_empty_object() -> None:
+    client = Mock()
+    client.chat.completions.parse = AsyncMock()
+    client.chat.completions.create = AsyncMock(
+        return_value=_structured_create_return("```json\n{}\n```")
+    )
+
+    result = await OpenAIBackend(client).complete(
+        model="glm-4.6",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        response_format=PromptRepresentation,
+        extra_params={"structured_output_mode": "json_object"},
+    )
+
+    assert result.content == PromptRepresentation(explicit=[])
+
+
+@pytest.mark.asyncio
+async def test_structured_output_json_object_mode_rejects_wrong_keys() -> None:
+    client = Mock()
+    client.chat.completions.parse = AsyncMock()
+    client.chat.completions.create = AsyncMock(
+        return_value=_structured_create_return('{"wrong": 1}')
+    )
+
+    backend = OpenAIBackend(client)
+    with pytest.raises(StructuredOutputError) as exc_info:
+        await backend.complete(
+            model="glm-4.6",
+            messages=[{"role": "user", "content": "Hello"}],
+            max_tokens=100,
+            response_format=PromptRepresentation,
+            extra_params={"structured_output_mode": "json_object"},
+        )
+
+    message = str(exc_info.value)
+    assert "model=glm-4.6" in message
+    assert "payload_sha256=" in message
+    assert "wrong" not in message
+
+
+@pytest.mark.asyncio
+async def test_structured_output_native_parse_rejects_defaulted_wrong_keys() -> None:
+    client = Mock()
+    client.chat.completions.parse = AsyncMock(
+        return_value=_structured_create_return(
+            '{"wrong": 1}', parsed=PromptRepresentation()
+        )
+    )
+
+    backend = OpenAIBackend(client)
+    with pytest.raises(StructuredOutputError) as exc_info:
+        await backend.complete(
+            model="gpt-test",
+            messages=[{"role": "user", "content": "Hello"}],
+            max_tokens=100,
+            response_format=PromptRepresentation,
+        )
+
+    message = str(exc_info.value)
+    assert "model=gpt-test" in message
+    assert "payload_sha256=" in message
+    assert "wrong" not in message
+
+
+@pytest.mark.asyncio
+async def test_structured_output_json_object_mode_keeps_string_observations() -> None:
+    """A loose provider emitting ``explicit`` as plain strings keeps its
+    observations instead of falling through to an empty representation."""
+    client = Mock()
+    client.chat.completions.parse = AsyncMock()
+    client.chat.completions.create = AsyncMock(
+        return_value=_structured_create_return(
+            '{"explicit": ["User likes coffee", "User works remotely"]}'
         )
     )
 
@@ -915,6 +1039,10 @@ async def test_structured_output_json_object_mode_repairs_markdown() -> None:
     )
 
     assert isinstance(result.content, PromptRepresentation)
+    assert [e.content for e in result.content.explicit] == [
+        "User likes coffee",
+        "User works remotely",
+    ]
 
 
 @pytest.mark.asyncio
@@ -972,8 +1100,9 @@ def test_json_object_instruction_does_not_pin_dynamic_models() -> None:
     model = json_response_schema_to_pydantic(
         {"type": "object", "properties": {"answer": {"type": "string"}}}
     )
-    first = _json_object_instruction(model)
-    assert _json_object_instruction(model) is first  # cached while alive
+    first = _json_object_instruction(model, tools_present=False)
+    # cached while alive
+    assert _json_object_instruction(model, tools_present=False) is first
 
     ref = weakref.ref(model)
     del model
@@ -1241,11 +1370,13 @@ def test_openai_normalize_content_override_is_authoritative() -> None:
 
 
 @pytest.mark.asyncio
-async def test_openai_backend_structured_with_tools_skips_parsing_tool_call_turn() -> (
-    None
-):
+@pytest.mark.parametrize("structured_output_mode", [None, "json_object"])
+@pytest.mark.parametrize("content", [None, "Let me search for that."])
+async def test_openai_backend_structured_with_tools_skips_parsing_tool_call_turn(
+    structured_output_mode: str | None, content: str | None
+) -> None:
     """A tool-call turn under tools + response_format must not attempt JSON
-    parsing (provider content is null and _parse_or_repair raises on that)."""
+    parsing, in either structured output mode."""
     client = Mock()
     client.chat.completions.create = AsyncMock(
         return_value=SimpleNamespace(
@@ -1253,7 +1384,7 @@ async def test_openai_backend_structured_with_tools_skips_parsing_tool_call_turn
                 SimpleNamespace(
                     finish_reason="tool_calls",
                     message=SimpleNamespace(
-                        content=None,
+                        content=content,
                         tool_calls=[
                             SimpleNamespace(
                                 id="tool_1",
@@ -1283,9 +1414,10 @@ async def test_openai_backend_structured_with_tools_skips_parsing_tool_call_turn
         max_tokens=100,
         tools=[AGENT_TOOL],
         response_format=_StructuredResponse,
+        extra_params={"structured_output_mode": structured_output_mode},
     )
 
-    assert result.content is None  # provider null, not a parsed model
+    assert result.content == content  # provider content, not a parsed model
     assert result.tool_calls[0].name == "search"
     assert result.tool_calls[0].input == {"query": "honcho"}
 
@@ -1312,3 +1444,29 @@ async def test_openai_backend_structured_without_tools_still_uses_parse() -> Non
 
     assert result.content is parsed
     client.chat.completions.create.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_structured_output_parse_validation_error_hides_payload() -> None:
+    """parse() validates the body itself, so prose never reaches the repair
+    path. For PromptRepresentation it surfaces as StructuredOutputError without
+    pydantic's input_value, which would echo the model's output."""
+    secret = "my-sentinel-secret-4417"
+    with pytest.raises(ValidationError) as raised:
+        PromptRepresentation.model_validate_json(f"user said {secret}")
+    validation_error = raised.value
+    client = Mock()
+    client.chat.completions.parse = AsyncMock(side_effect=validation_error)
+
+    backend = OpenAIBackend(client)
+    with pytest.raises(StructuredOutputError) as exc_info:
+        await backend.complete(
+            model="gpt-4.1",
+            messages=[{"role": "user", "content": "Hello"}],
+            max_tokens=100,
+            response_format=PromptRepresentation,
+        )
+
+    assert secret in str(validation_error)
+    assert secret not in str(exc_info.value)
+    assert exc_info.value.__cause__ is None
