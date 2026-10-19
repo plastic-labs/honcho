@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import type { Honcho } from "@honcho-ai/sdk";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { honchoClients } from "../config.js";
 import { register as registerPeers } from "./peers.js";
@@ -115,4 +116,31 @@ test("workspace_chat asks the workspace route with every recall option", async (
       scope: ["therapy", "work"],
     },
   });
+});
+
+test("chat reports an SDK that ignores include_evidence instead of answering None", async () => {
+  // SDKs before 2.5.0 drop includeEvidence and resolve to the bare answer.
+  const staleSdk = {
+    peer: async () => ({ chat: async () => "She keeps them small." }),
+  } as unknown as Honcho;
+  const staleServer = new McpServer({ name: "test", version: "1.0.0" });
+  registerPeers(staleServer, {
+    config,
+    clientFor: () => staleSdk,
+    unscoped: staleSdk,
+  });
+  const staleClient = new Client({ name: "test", version: "1.0.0" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await staleServer.connect(serverTransport);
+  await staleClient.connect(clientTransport);
+
+  const result = await staleClient.callTool({
+    name: "chat",
+    arguments: { peer_id: "alice", query: "How does she review?", include_evidence: true },
+  });
+  expect((result as { isError?: boolean }).isError).toBe(true);
+  expect(text(result)).toContain("does not support include_evidence");
+
+  await staleClient.close();
+  await staleServer.close();
 });

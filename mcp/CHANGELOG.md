@@ -29,6 +29,9 @@ as before.
   `workspace_chat`, the scope tools, `get_conclusions` and `get_derived_conclusions`
   failed; `chat` with `include_evidence` returned `{"content":"None"}`; and `scope` /
   `sessions` recall bounds and conclusion attribution were silently dropped.
+- `chat` with `include_evidence` reports an error when the server's Honcho SDK
+  is older than 2.5.0, instead of answering `{"content":"None"}`. An older SDK
+  drops the option and returns the bare answer.
 
 ## [3.1.0] - 2026-10-07
 

@@ -77,6 +77,12 @@ PROVIDER_TIMEOUT_ERROR_TEXT = (
     "provider_params.timeout must be a positive number of seconds"
 )
 
+# Values of provider_params.thinking_tool_choice_conflict: what a backend does
+# when extended thinking meets a forced tool choice, which Anthropic rejects.
+THINKING_TOOL_CHOICE_CONFLICT_MODES = frozenset(
+    {"throw", "override_thinking", "override_tool"}
+)
+
 
 def coerce_provider_timeout(value: Any) -> float:
     """Coerce a `provider_params.timeout` value to positive, finite seconds.
@@ -131,8 +137,15 @@ class ModelOverrideSettings(BaseModel):
 
     @field_validator("provider_params")
     @classmethod
-    def _validate_provider_timeout(cls, v: dict[str, Any]) -> dict[str, Any]:
-        """Reject bad `timeout` values at config load; normalize good ones to float."""
+    def _validate_provider_params(cls, v: dict[str, Any]) -> dict[str, Any]:
+        """Reject bad `timeout` and `thinking_tool_choice_conflict` values at
+        config load; normalize a good timeout to float."""
+        mode = v.get("thinking_tool_choice_conflict")
+        if mode is not None and mode not in THINKING_TOOL_CHOICE_CONFLICT_MODES:
+            raise ValueError(
+                "provider_params.thinking_tool_choice_conflict must be one of "
+                + f"{sorted(THINKING_TOOL_CHOICE_CONFLICT_MODES)}, got {mode!r}"
+            )
         if "timeout" not in v:
             return v
         return {**v, "timeout": coerce_provider_timeout(v["timeout"])}
