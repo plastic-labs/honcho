@@ -993,6 +993,8 @@ def mock_tracked_db(request: pytest.FixtureRequest):
         "src.reconciler.embed_now.tracked_db",
         "src.dialectic.core.tracked_db",
         "src.dreamer.specialists.tracked_db",
+        "src.utils.memory_brief.tracked_db",
+        "src.dreamer.working_memory.tracked_db",
         "src.dreamer.surprisal.tracked_db",
         "src.deriver.scope_backfill.tracked_db",
     ]

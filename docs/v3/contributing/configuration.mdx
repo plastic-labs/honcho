@@ -374,6 +374,8 @@ The Dialectic API provides theory-of-mind informed responses. It uses a tiered r
 DIALECTIC_MAX_OUTPUT_TOKENS=8192
 DIALECTIC_MAX_INPUT_TOKENS=100000
 DIALECTIC_SESSION_HISTORY_MAX_TOKENS=4096
+DIALECTIC_BUDGET_ENABLED=false  # budget line at levels with 3+ tool iterations
+DIALECTIC_BRIEF_ENABLED=false  # memory layout, counts, and dreamer map notes
 ```
 
 **Per-Level Configuration:**
@@ -515,7 +517,16 @@ DREAM_DOCUMENT_THRESHOLD=50
 DREAM_IDLE_TIMEOUT_MINUTES=60
 DREAM_MIN_HOURS_BETWEEN_DREAMS=8
 DREAM_ENABLED_TYPES=["omni"]
-DREAM_MAX_TOOL_ITERATIONS=20
+DREAM_MAX_TOOL_ITERATIONS=20  # card-refresh dreams only
+DREAM_DEDUCTION_MAX_TOOL_ITERATIONS=12
+DREAM_INDUCTION_MAX_TOOL_ITERATIONS=10
+DREAM_BRIEF_ENABLED=false  # memory layout, counts and the since-last-dream list
+DREAM_BRIEF_MAX_NEW_CONCLUSIONS=50
+DREAM_BRIEF_MAX_NEW_CONCLUSION_TOKENS=8000
+DREAM_BUDGET_ENABLED=false  # budget line + write window for deduction/induction
+DREAM_NOTES_MODE=off  # working notes between dreams: off | shadow | on
+DREAM_NOTES_MAX_TOKENS=3000
+# DREAM_WRITE_WINDOW_ITERATIONS=2  # default: 15% of each specialist's limit
 
 # Specialist model configs (each is independent)
 DREAM_DEDUCTION_MODEL_CONFIG__TRANSPORT=openai

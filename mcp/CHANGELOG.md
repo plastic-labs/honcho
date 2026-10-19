@@ -22,6 +22,12 @@ This package versions independently of the Honcho API, `@honcho-ai/sdk`, and hos
 Nothing is required: a connection that sends neither header is recorded exactly
 as before.
 
+### Fixed
+
+- `chat` with `include_evidence` reports an error when the server's Honcho SDK
+  is older than 2.5.0, instead of answering `{"content":"None"}`. An older SDK
+  drops the option and returns the bare answer.
+
 ## [3.1.0] - 2026-10-07
 
 ### Added
