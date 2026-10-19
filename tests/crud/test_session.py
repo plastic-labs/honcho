@@ -942,3 +942,100 @@ class TestDeleteSessionVectorNamespaceScoping:
             document_namespace_if_tenant_b
             not in recording_store.deleted_many_namespaces
         )
+
+
+class TestDeleteSessionKeepsSiblingSessions:
+    """Deleting one session must not touch any other session's rows.
+
+    Every row here belongs to one tenant. tenant_id leads the composite PKs,
+    and the old batch delete matched on that first column alone, so it removed
+    the messages, embeddings and documents of all three sessions.
+    """
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("multi_tenant", [False, True])
+    async def test_other_sessions_keep_their_rows(
+        self,
+        db_session: AsyncSession,
+        monkeypatch: pytest.MonkeyPatch,
+        multi_tenant: bool,
+    ) -> None:
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+        from src.db import tenant_context
+
+        tenant_id = "tenant-a" if multi_tenant else models.DEFAULT_TENANT_ID
+        monkeypatch.setattr(settings, "MULTI_TENANT", multi_tenant)
+        # Single-tenant mode binds no tenant; rows default to DEFAULT_TENANT_ID.
+        token = tenant_context.set(tenant_id if multi_tenant else None)
+        try:
+            await db_session.execute(
+                pg_insert(models.Tenant)
+                .values(tenant_id=tenant_id, tier="shared")
+                .on_conflict_do_nothing()
+            )
+            ws_a, ws_b = str(generate_nanoid()), str(generate_nanoid())
+            deleted = (ws_a, "deleted")
+            kept = [(ws_a, "same-workspace"), (ws_b, "other-workspace")]
+            sessions = [deleted, *kept]
+
+            # Each session gets one message, one embedding and one document.
+            for ws in (ws_a, ws_b):
+                db_session.add(models.Workspace(name=ws))
+                await db_session.flush()
+                db_session.add(models.Peer(name="alice", workspace_name=ws))
+                await db_session.flush()
+                db_session.add(
+                    models.Collection(
+                        workspace_name=ws, observer="alice", observed="alice"
+                    )
+                )
+            for ws, name in sessions:
+                db_session.add(models.Session(name=name, workspace_name=ws))
+            await db_session.flush()
+            for ws, name in sessions:
+                message = models.Message(
+                    session_name=name,
+                    content="x",
+                    token_count=1,
+                    seq_in_session=1,
+                    peer_name="alice",
+                    workspace_name=ws,
+                )
+                db_session.add(message)
+                await db_session.flush()
+                db_session.add_all(
+                    [
+                        models.MessageEmbedding(
+                            content="x",
+                            message_id=message.public_id,
+                            workspace_name=ws,
+                            session_name=name,
+                            peer_name="alice",
+                        ),
+                        models.Document(
+                            workspace_name=ws,
+                            observer="alice",
+                            observed="alice",
+                            content="x",
+                            session_name=name,
+                        ),
+                    ]
+                )
+            await db_session.commit()
+
+            await crud.delete_session(db_session, *deleted)
+
+            # Only the kept sessions' rows are left, in every table.
+
+            for model in (models.Message, models.MessageEmbedding, models.Document):
+                remaining = (
+                    await db_session.execute(
+                        select(model.workspace_name, model.session_name).where(
+                            model.workspace_name.in_([ws_a, ws_b])
+                        )
+                    )
+                ).all()
+                assert sorted(remaining) == sorted(kept), model.__name__
+        finally:
+            tenant_context.reset(token)

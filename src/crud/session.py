@@ -17,6 +17,7 @@ from sqlalchemy import (
     func,
     insert,
     select,
+    tuple_,
     update,
 )
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -601,13 +602,15 @@ async def _batch_delete_matching(
         Total number of records deleted
     """
     total_deleted = 0
-    primary_key_column = model.__table__.primary_key.columns.values()[0]
+    # The full key: tenant_id leads the composite PKs, so its first column
+    # alone matches every row of the tenant.
+    primary_key = model.__table__.primary_key.columns.values()
 
     while True:
         subquery = (
-            select(primary_key_column).where(and_(*filter_conditions)).limit(batch_size)
+            select(*primary_key).where(and_(*filter_conditions)).limit(batch_size)
         )
-        delete_stmt = delete(model).where(primary_key_column.in_(subquery))
+        delete_stmt = delete(model).where(tuple_(*primary_key).in_(subquery))
         delete_result = typing_cast(CursorResult[Any], await db.execute(delete_stmt))
         batch_deleted = delete_result.rowcount or 0
         total_deleted += batch_deleted
