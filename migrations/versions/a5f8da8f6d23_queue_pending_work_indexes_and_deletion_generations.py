@@ -167,6 +167,15 @@ def _drop_index(index: _QueueIndex, *, concurrently: bool) -> None:
     )
 
 
+def _build_index(
+    connection: Connection, index: _QueueIndex, *, concurrently: bool
+) -> None:
+    """Create the index, first dropping an INVALID leftover of a failed build."""
+    if _index_valid(connection, index.name) is False:
+        _drop_index(index, concurrently=concurrently)
+    _create_index(index, concurrently=concurrently)
+
+
 def upgrade() -> None:
     for table in GENERATION_TABLES:
         op.add_column(
@@ -181,23 +190,21 @@ def upgrade() -> None:
             if_not_exists=True,
         )
 
+    connection = op.get_bind()
     if _caller_owns_transaction():
         for index in QUEUE_INDEXES:
-            _create_index(index, concurrently=False)
+            _build_index(connection, index, concurrently=False)
         return
 
-    connection = op.get_bind()
     with op.get_context().autocommit_block(), _build_timeouts(connection):
         for index in QUEUE_INDEXES:
-            if _index_valid(connection, index.name) is False:
-                _drop_index(index, concurrently=True)
             logger.info(
                 "Building %s concurrently; waits for open transactions on queue"
                 + " and older snapshots anywhere in the database, up to %s",
                 index.name,
                 BUILD_TIMEOUT,
             )
-            _create_index(index, concurrently=True)
+            _build_index(connection, index, concurrently=True)
 
 
 def downgrade() -> None:

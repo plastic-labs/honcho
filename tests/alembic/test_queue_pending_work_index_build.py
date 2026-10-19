@@ -3,11 +3,13 @@
 test_pipeline.py runs revisions on a caller-owned connection, which takes the
 transactional CREATE INDEX branch and never downgrades. These run
 ``command.upgrade`` / ``command.downgrade`` the way ``src.migrate`` does, so
-env.py owns the transaction and the indexes are built CONCURRENTLY.
+env.py owns the transaction and the indexes are built CONCURRENTLY. The
+invalid-leftover case also runs on a caller-owned connection.
 """
 
 from __future__ import annotations
 
+import pytest
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import Engine, text
@@ -75,8 +77,9 @@ def test_upgrade_builds_valid_indexes_and_downgrade_removes_them(
     assert _generation_tables(alembic_engine) == set()
 
 
+@pytest.mark.parametrize("caller_owns_transaction", [False, True])
 def test_invalid_leftover_is_rebuilt(
-    alembic_cfg: Config, alembic_engine: Engine
+    alembic_cfg: Config, alembic_engine: Engine, caller_owns_transaction: bool
 ) -> None:
     command.upgrade(alembic_cfg, DOWN_REVISION)
     index = INDEXES[0]
@@ -97,7 +100,12 @@ def test_invalid_leftover_is_rebuilt(
     invalid = _index_states(alembic_engine)[index]
     assert invalid[1] is False
 
-    command.upgrade(alembic_cfg, REVISION)
+    if caller_owns_transaction:
+        with alembic_engine.begin() as conn:
+            alembic_cfg.attributes["connection"] = conn
+            command.upgrade(alembic_cfg, REVISION)
+    else:
+        command.upgrade(alembic_cfg, REVISION)
 
     rebuilt = _index_states(alembic_engine)[index]
     assert rebuilt[1] is True
