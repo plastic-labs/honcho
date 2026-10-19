@@ -14,6 +14,7 @@ from src.llm.backend import CompletionResult, StreamChunk, ToolCallResult
 from src.llm.request_builder import (
     apply_sdk_passthroughs,
     request_timeout_from_extra_params,
+    thinking_tool_choice_conflict_mode,
 )
 from src.llm.structured_output import (
     StructuredOutputError,
@@ -23,10 +24,6 @@ from src.llm.structured_output import (
 )
 
 logger = logging.getLogger(__name__)
-
-THINKING_TOOL_CHOICE_CONFLICT_MODES = frozenset(
-    {"throw", "override_thinking", "override_tool"}
-)
 
 
 class AnthropicBackend:
@@ -318,12 +315,7 @@ class AnthropicBackend:
             return
         tool_choice = params.get("tool_choice")
         if tool_choice is not None and tool_choice.get("type") in {"any", "tool"}:
-            mode = (extra_params or {}).get("thinking_tool_choice_conflict", "throw")
-            if mode not in THINKING_TOOL_CHOICE_CONFLICT_MODES:
-                expected = sorted(THINKING_TOOL_CHOICE_CONFLICT_MODES)
-                raise ValidationException(
-                    f"Unknown thinking_tool_choice_conflict mode {mode!r}; expected one of {expected}"
-                )
+            mode = thinking_tool_choice_conflict_mode(extra_params, "throw")
             conflict = f"model {model}: tool_choice {tool_choice} forces tool use, "
             conflict += "which Anthropic does not allow alongside extended thinking"
             if mode == "throw":
