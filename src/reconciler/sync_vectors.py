@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol, TypeVar, cast
 
 import sentry_sdk
-from sqlalchemy import and_, delete, or_, select, update
+from sqlalchemy import and_, delete, or_, select, tuple_, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import InstrumentedAttribute
 from sqlalchemy.sql import ColumnElement
@@ -701,24 +701,29 @@ async def _cleanup_soft_deleted_documents_pgvector(
         minutes=older_than_minutes
     )
 
-    # Find soft-deleted documents ready for cleanup
+    # Find soft-deleted documents ready for cleanup, by their full key: this sweep
+    # spans tenants, and id alone is unique only within a tenant.
     stmt = (
-        select(models.Document.id)
+        select(models.Document.tenant_id, models.Document.id)
         .where(models.Document.deleted_at.is_not(None))
         .where(models.Document.deleted_at < cutoff)
         .limit(batch_size)
         .with_for_update(skip_locked=True)
     )
     result = await db.execute(stmt)
-    doc_ids = [row[0] for row in result.all()]
+    doc_keys = [(row[0], row[1]) for row in result.all()]
 
-    if not doc_ids:
+    if not doc_keys:
         return 0
 
     # Hard delete directly (no vector store cleanup needed in pgvector mode)
-    await db.execute(delete(models.Document).where(models.Document.id.in_(doc_ids)))
-    logger.debug(f"Cleaned up {len(doc_ids)} soft-deleted documents (pgvector mode)")
-    return len(doc_ids)
+    await db.execute(
+        delete(models.Document).where(
+            tuple_(models.Document.tenant_id, models.Document.id).in_(doc_keys)
+        )
+    )
+    logger.debug(f"Cleaned up {len(doc_keys)} soft-deleted documents (pgvector mode)")
+    return len(doc_keys)
 
 
 async def _reconcile_documents_batch(

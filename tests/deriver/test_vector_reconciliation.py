@@ -17,10 +17,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
 from src.config import settings
+from src.crud.document import cleanup_soft_deleted_documents
 from src.db import tenant_context
 from src.reconciler.sync_vectors import (
     MAX_SYNC_ATTEMPTS,
     ReconciliationMetrics,
+    _cleanup_soft_deleted_documents_pgvector,  # pyright: ignore[reportPrivateUsage]
     _get_documents_needing_sync,  # pyright: ignore[reportPrivateUsage]
     _get_message_embeddings_needing_sync,  # pyright: ignore[reportPrivateUsage]
     _reconcile_documents_batch,  # pyright: ignore[reportPrivateUsage]
@@ -920,6 +922,88 @@ class TestSoftDeleteCleanup:
         # Only old_doc should be ready
         assert len(ready_for_cleanup) == 1
         assert ready_for_cleanup[0].id == old_doc.id
+
+
+@pytest.mark.asyncio
+class TestSoftDeleteCleanupFullKey:
+    """The cleanups run across tenants and must delete by (tenant_id, id).
+
+    id is unique only within a tenant, so here two tenants share one document id:
+    A's copy is soft-deleted, B's is live. A delete by id alone removes both.
+    """
+
+    async def _tenant_document(
+        self, db_session: AsyncSession, doc_id: str, *, soft_deleted: bool
+    ) -> models.Document:
+        tenant_id = str(generate_nanoid())
+        db_session.add(
+            models.Tenant(tenant_id=tenant_id, vector_correlation_id=tenant_id)
+        )
+        workspace = models.Workspace(name=str(generate_nanoid()), tenant_id=tenant_id)
+        db_session.add(workspace)
+        await db_session.commit()
+        peer = models.Peer(
+            name="alice", workspace_name=workspace.name, tenant_id=tenant_id
+        )
+        db_session.add(peer)
+        await db_session.commit()
+        db_session.add(
+            models.Collection(
+                workspace_name=workspace.name,
+                observer=peer.name,
+                observed=peer.name,
+                tenant_id=tenant_id,
+            )
+        )
+        doc = models.Document(
+            id=doc_id,
+            content="content",
+            workspace_name=workspace.name,
+            observer=peer.name,
+            observed=peer.name,
+            tenant_id=tenant_id,
+            deleted_at=datetime.datetime.now(datetime.UTC)
+            - datetime.timedelta(minutes=10)
+            if soft_deleted
+            else None,
+        )
+        db_session.add(doc)
+        await db_session.commit()
+        return doc
+
+    async def _remaining(self, db_session: AsyncSession, doc_id: str) -> set[str]:
+        rows = await db_session.execute(
+            select(models.Document.tenant_id).where(models.Document.id == doc_id)
+        )
+        return set(rows.scalars().all())
+
+    async def test_pgvector_cleanup_keeps_the_other_tenants_document(
+        self, db_session: AsyncSession
+    ) -> None:
+        doc_id = str(generate_nanoid())
+        deleted = await self._tenant_document(db_session, doc_id, soft_deleted=True)
+        live = await self._tenant_document(db_session, doc_id, soft_deleted=False)
+
+        await _cleanup_soft_deleted_documents_pgvector(db_session, batch_size=10_000)
+        await db_session.commit()
+
+        assert await self._remaining(db_session, doc_id) == {live.tenant_id}
+        assert deleted.tenant_id != live.tenant_id
+
+    async def test_vector_store_cleanup_keeps_the_other_tenants_document(
+        self, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(settings, "MULTI_TENANT", True)
+        reset_prefix_cache()
+        doc_id = str(generate_nanoid())
+        await self._tenant_document(db_session, doc_id, soft_deleted=True)
+        live = await self._tenant_document(db_session, doc_id, soft_deleted=False)
+
+        await cleanup_soft_deleted_documents(
+            db_session, _NamespaceRecordingVectorStore(), batch_size=10_000
+        )
+
+        assert await self._remaining(db_session, doc_id) == {live.tenant_id}
 
 
 @pytest.mark.asyncio
