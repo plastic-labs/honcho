@@ -738,7 +738,7 @@ async def test_structured_output_parsed_none_returns_refusal() -> None:
 async def test_structured_output_parsed_none_no_content_raises() -> None:
     """json_schema with no parsed model, content, or refusal raises so the
     retry/fallback chain engages — it must NOT silently empty like json_object."""
-    from src.exceptions import ValidationException
+    from src.llm.structured_output import StructuredOutputError
 
     client = Mock()
     client.chat.completions.parse = AsyncMock(
@@ -746,7 +746,7 @@ async def test_structured_output_parsed_none_no_content_raises() -> None:
     )
 
     backend = OpenAIBackend(client)
-    with pytest.raises(ValidationException):
+    with pytest.raises(StructuredOutputError):
         await backend.complete(
             model="gpt-4.1",
             messages=[{"role": "user", "content": "Hello"}],
@@ -896,6 +896,36 @@ async def test_structured_output_json_object_mode_request_shape() -> None:
     assert "answer" in system_content  # schema property serialized in
     assert isinstance(result.content, _StructuredResponse)
     assert result.content.answer == "ok"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("with_tools", [False, True])
+async def test_structured_output_json_object_mode_instruction_is_tool_aware(
+    with_tools: bool,
+) -> None:
+    """With tools in play, the json_object instruction must leave room for a
+    tool call instead of demanding a JSON answer on every tool-loop turn."""
+    client = Mock()
+    client.chat.completions.create = AsyncMock(
+        return_value=_structured_create_return('{"answer": "ok"}')
+    )
+
+    backend = OpenAIBackend(client)
+    await backend.complete(
+        model="glm-4.6",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        tools=[AGENT_TOOL] if with_tools else None,
+        response_format=_StructuredResponse,
+        extra_params={"structured_output_mode": "json_object"},
+    )
+
+    call = _await_kwargs(client.chat.completions.create)
+    system_content = call["messages"][0]["content"]
+    assert system_content.startswith(
+        "If you are not calling a tool" if with_tools else "You must respond"
+    )
+    assert "json" in system_content
 
 
 @pytest.mark.asyncio
@@ -1070,8 +1100,9 @@ def test_json_object_instruction_does_not_pin_dynamic_models() -> None:
     model = json_response_schema_to_pydantic(
         {"type": "object", "properties": {"answer": {"type": "string"}}}
     )
-    first = _json_object_instruction(model)
-    assert _json_object_instruction(model) is first  # cached while alive
+    first = _json_object_instruction(model, tools_present=False)
+    # cached while alive
+    assert _json_object_instruction(model, tools_present=False) is first
 
     ref = weakref.ref(model)
     del model
@@ -1339,11 +1370,13 @@ def test_openai_normalize_content_override_is_authoritative() -> None:
 
 
 @pytest.mark.asyncio
-async def test_openai_backend_structured_with_tools_skips_parsing_tool_call_turn() -> (
-    None
-):
+@pytest.mark.parametrize("structured_output_mode", [None, "json_object"])
+@pytest.mark.parametrize("content", [None, "Let me search for that."])
+async def test_openai_backend_structured_with_tools_skips_parsing_tool_call_turn(
+    structured_output_mode: str | None, content: str | None
+) -> None:
     """A tool-call turn under tools + response_format must not attempt JSON
-    parsing (provider content is null and _parse_or_repair raises on that)."""
+    parsing, in either structured output mode."""
     client = Mock()
     client.chat.completions.create = AsyncMock(
         return_value=SimpleNamespace(
@@ -1351,7 +1384,7 @@ async def test_openai_backend_structured_with_tools_skips_parsing_tool_call_turn
                 SimpleNamespace(
                     finish_reason="tool_calls",
                     message=SimpleNamespace(
-                        content=None,
+                        content=content,
                         tool_calls=[
                             SimpleNamespace(
                                 id="tool_1",
@@ -1381,9 +1414,10 @@ async def test_openai_backend_structured_with_tools_skips_parsing_tool_call_turn
         max_tokens=100,
         tools=[AGENT_TOOL],
         response_format=_StructuredResponse,
+        extra_params={"structured_output_mode": structured_output_mode},
     )
 
-    assert result.content is None  # provider null, not a parsed model
+    assert result.content == content  # provider content, not a parsed model
     assert result.tool_calls[0].name == "search"
     assert result.tool_calls[0].input == {"query": "honcho"}
 

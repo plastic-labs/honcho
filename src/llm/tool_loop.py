@@ -7,6 +7,8 @@
 - max-iteration handling and synthesis call
 - stream-final-only mode
 - empty-response retry (one retry nudge when the model returns empty content)
+- structured-answer check (a final answer that misses `response_model` is
+  retried like a provider error)
 """
 
 from __future__ import annotations
@@ -47,6 +49,7 @@ from .runtime import (
     effective_temperature,
     start_captured_span,
 )
+from .structured_output import StructuredOutputError
 from .types import (
     HonchoLLMCallResponse,
     HonchoLLMCallStreamChunk,
@@ -157,6 +160,34 @@ logger = logging.getLogger(__name__)
 # Bounds for max_tool_iterations to prevent runaway loops.
 MIN_TOOL_ITERATIONS = 1
 MAX_TOOL_ITERATIONS = 100
+
+
+def _require_structured_answer(
+    response: HonchoLLMCallResponse[Any],
+    response_model: type[BaseModel] | None,
+    *,
+    allow_empty: bool,
+) -> None:
+    """Raise when a final answer did not parse into `response_model`.
+
+    A backend that degrades instead of raising (an OpenAI refusal, json_object
+    mode's empty answer for a model with required fields) hands back a plain
+    string. Runs inside the retried call, so the miss consumes an attempt and
+    the last attempt reaches the fallback. `allow_empty` lets an empty answer
+    through to the one-shot empty-response nudge.
+    """
+    if response_model is None or response.tool_calls_made:
+        return
+    content = response.content
+    if isinstance(content, BaseModel):
+        return
+    if allow_empty and isinstance(content, str) and not content.strip():
+        return
+    # The content itself stays out of the message: a refusal can quote the
+    # conversation.
+    raise StructuredOutputError(
+        f"Final answer is {type(content).__name__}, not {response_model.__name__}"
+    )
 
 
 def format_assistant_tool_message(
@@ -390,15 +421,32 @@ async def execute_tool_loop(
                     conversation_messages, max_input_tokens
                 )
 
+            # A provider can ignore a forced tool_choice and answer outright.
+            # While the gate is unmet, a no-tool answer is discarded for a
+            # nudge, so it isn't held to `response_model`. Nor is it under
+            # stream_final, which streams the answer afresh and doesn't
+            # validate it.
+            gate_nudge_due = (
+                gate is not None
+                and effective_tool_choice in ("required", "any")
+                and forced_rounds + 1 < max_forced_iterations
+                and iteration < max_tool_iterations - 1
+            )
+            empty_nudge_due = (
+                empty_response_retries < 1 and iteration < max_tool_iterations - 1
+            )
+
             async def _call_with_messages(
                 tool_choice_for_call: str
                 | dict[str, Any]
                 | None = effective_tool_choice,
                 captured_messages: list[dict[str, Any]] = conversation_messages,
                 iteration_for_call: int = iteration + 1,
+                check_answer: bool = not gate_nudge_due,
+                allow_empty_answer: bool = empty_nudge_due,
             ) -> HonchoLLMCallResponse[Any]:
                 plan = get_attempt_plan()
-                return await honcho_llm_call_inner(
+                result = await honcho_llm_call_inner(
                     plan.provider,
                     plan.model,
                     prompt,  # ignored when messages is passed
@@ -421,6 +469,11 @@ async def execute_tool_loop(
                         telemetry, iteration_for_call, step_seq=iteration_for_call
                     ),
                 )
+                if check_answer and not stream_final:
+                    _require_structured_answer(
+                        result, response_model, allow_empty=allow_empty_answer
+                    )
+                return result
 
             call_func: Callable[[], Awaitable[HonchoLLMCallResponse[Any]]]
             if enable_retry:
@@ -452,15 +505,9 @@ async def execute_tool_loop(
             if not response.tool_calls_made:
                 logger.debug("No tool calls in response, finishing")
 
-                # A provider can ignore a forced tool_choice and answer
-                # outright. While the gate is unmet, spend a forced round on a
-                # nudge instead of returning that answer; at the cap, keep it.
-                if (
-                    gate is not None
-                    and effective_tool_choice in ("required", "any")
-                    and forced_rounds + 1 < max_forced_iterations
-                    and iteration < max_tool_iterations - 1
-                ):
+                # While the gate is unmet, spend a forced round on a nudge
+                # instead of returning that answer; at the cap, keep it.
+                if gate_nudge_due and gate is not None:
                     forced_rounds += 1
                     conversation_messages.append(
                         {
@@ -478,8 +525,7 @@ async def execute_tool_loop(
                 if (
                     isinstance(response.content, str)
                     and not response.content.strip()
-                    and empty_response_retries < 1
-                    and iteration < max_tool_iterations - 1
+                    and empty_nudge_due
                 ):
                     empty_response_retries += 1
                     conversation_messages.append(
@@ -711,7 +757,7 @@ async def execute_tool_loop(
 
     async def _final_call() -> HonchoLLMCallResponse[Any]:
         plan = get_attempt_plan()
-        return await honcho_llm_call_inner(
+        response = await honcho_llm_call_inner(
             plan.provider,
             plan.model,
             prompt,
@@ -734,6 +780,9 @@ async def execute_tool_loop(
                 telemetry, synthesis_iteration, step_seq=synthesis_iteration
             ),
         )
+        # No nudge follows synthesis, so an empty answer is a miss too.
+        _require_structured_answer(response, response_model, allow_empty=False)
+        return response
 
     if enable_retry:
         final_call_func = retry(

@@ -1,0 +1,102 @@
+# Old and new Honcho images side by side on one database, for the
+# compatibility matrix. Driven by `python -m tests.compat_matrix.run`; nothing
+# here migrates on start (the image's default CMD runs the API only).
+
+name: honcho-compat-matrix
+
+x-honcho-env: &honcho-env
+  DB_CONNECTION_URI: postgresql+psycopg://postgres:postgres@database:5432/honcho
+  DB_SCHEMA: ${CMX_DB_SCHEMA:-public}
+  CACHE_ENABLED: "true"
+  CACHE_URL: redis://redis:6379/0?suppress=true
+  AUTH_USE_AUTH: "false"
+  SENTRY_ENABLED: "false"
+  METRICS_ENABLED: "false"
+  TELEMETRY_ENABLED: "false"
+  LLM_OPENAI_API_KEY: stub
+  LLM_OPENAI_BASE_URL: http://llm-stub:8080/v1
+  EMBEDDING_MODEL_CONFIG__TRANSPORT: openai
+  EMBEDDING_MODEL_CONFIG__MODEL: stub-embedding
+  EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL: http://llm-stub:8080/v1
+  DERIVER_MODEL_CONFIG__TRANSPORT: openai
+  DERIVER_MODEL_CONFIG__MODEL: stub
+  DERIVER_FLUSH_ENABLED: "true"
+  DERIVER_POLLING_SLEEP_INTERVAL_SECONDS: "0.5"
+  DERIVER_POLLING_BACKOFF_ENABLED: "false"
+  SUMMARY_MODEL_CONFIG__TRANSPORT: openai
+  SUMMARY_MODEL_CONFIG__MODEL: stub
+  SUMMARY_MESSAGES_PER_SHORT_SUMMARY: "4"
+  SUMMARY_MESSAGES_PER_LONG_SUMMARY: "8"
+  DREAM_ENABLED: "true"
+  DREAM_DOCUMENT_THRESHOLD: "1"
+  DREAM_DUE_POLL_INTERVAL_SECONDS: "86400"
+  DREAM_DEDUCTION_MODEL_CONFIG__TRANSPORT: openai
+  DREAM_DEDUCTION_MODEL_CONFIG__MODEL: stub
+  DREAM_INDUCTION_MODEL_CONFIG__TRANSPORT: openai
+  DREAM_INDUCTION_MODEL_CONFIG__MODEL: stub
+  DIALECTIC_LEVELS__minimal__MODEL_CONFIG__TRANSPORT: openai
+  DIALECTIC_LEVELS__minimal__MODEL_CONFIG__MODEL: stub
+  DIALECTIC_LEVELS__low__MODEL_CONFIG__TRANSPORT: openai
+  DIALECTIC_LEVELS__low__MODEL_CONFIG__MODEL: stub
+  DIALECTIC_LEVELS__medium__MODEL_CONFIG__TRANSPORT: openai
+  DIALECTIC_LEVELS__medium__MODEL_CONFIG__MODEL: stub
+  DIALECTIC_LEVELS__high__MODEL_CONFIG__TRANSPORT: openai
+  DIALECTIC_LEVELS__high__MODEL_CONFIG__MODEL: stub
+  DIALECTIC_LEVELS__max__MODEL_CONFIG__TRANSPORT: openai
+  DIALECTIC_LEVELS__max__MODEL_CONFIG__MODEL: stub
+  # Holds every reconciler task, backfills included, until the driver runs
+  # them itself. The scheduler's first run is one interval after start.
+  VECTOR_STORE_RECONCILIATION_INTERVAL_SECONDS: "86400"
+
+x-api: &api
+  environment: *honcho-env
+  depends_on: [database, redis, llm-stub]
+  healthcheck:
+    test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+    interval: 2s
+    timeout: 3s
+    retries: 60
+
+x-deriver: &deriver
+  environment: *honcho-env
+  depends_on: [database, redis, llm-stub]
+  command: ["python", "-m", "src.deriver"]
+
+services:
+  database:
+    image: pgvector/pgvector:pg15
+    environment:
+      POSTGRES_DB: honcho
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports: ["${CMX_PG_PORT:-15432}:5432"]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 2s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+
+  llm-stub:
+    image: python:3.13-slim
+    volumes: ["./llm_stub.py:/stub/llm_stub.py:ro"]
+    command: ["python", "/stub/llm_stub.py", "8080"]
+
+  api-old:
+    <<: *api
+    image: ${HONCHO_OLD_IMAGE:?set HONCHO_OLD_IMAGE}
+    ports: ["${CMX_OLD_API_PORT:-18001}:8000"]
+
+  api-new:
+    <<: *api
+    image: ${HONCHO_NEW_IMAGE:?set HONCHO_NEW_IMAGE}
+    ports: ["${CMX_NEW_API_PORT:-18002}:8000"]
+
+  deriver-old:
+    <<: *deriver
+    image: ${HONCHO_OLD_IMAGE:?set HONCHO_OLD_IMAGE}
+
+  deriver-new:
+    <<: *deriver
+    image: ${HONCHO_NEW_IMAGE:?set HONCHO_NEW_IMAGE}

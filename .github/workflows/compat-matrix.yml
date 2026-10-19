@@ -1,0 +1,137 @@
+name: Compatibility Matrix
+
+# Migration rule 7: the previous release image and the candidate image must
+# both run against the candidate's schema while its backfills are incomplete,
+# and again after they finish. See tests/compat_matrix/README.md.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'migrations/**'
+      - 'src/models.py'
+      - 'src/crud/**'
+      - 'src/reconciler/**'
+      # Queue payloads cross images: the new API enqueues, the old worker runs.
+      - 'src/deriver/**'
+      - 'src/schemas/internal.py'
+      - 'src/utils/queue_payload.py'
+      - 'src/utils/work_unit.py'
+      - 'tests/compat_matrix/**'
+      - '.github/workflows/compat-matrix.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'migrations/**'
+      - 'src/models.py'
+      - 'src/crud/**'
+      - 'src/reconciler/**'
+      # Queue payloads cross images: the new API enqueues, the old worker runs.
+      - 'src/deriver/**'
+      - 'src/schemas/internal.py'
+      - 'src/utils/queue_payload.py'
+      - 'src/utils/work_unit.py'
+      - 'tests/compat_matrix/**'
+      - '.github/workflows/compat-matrix.yml'
+  workflow_dispatch:
+    inputs:
+      old_image:
+        description: >-
+          Previous image to test against (default: the newest release tag
+          reachable from the parent commit)
+        required: false
+      lineage:
+        description: Database lineage
+        type: choice
+        default: all
+        options: [all, dedicated, self-hosted, shared]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      old_image: ${{ steps.old.outputs.image }}
+      lineages: ${{ steps.lineages.outputs.list }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # HEAD^ so a run on a tagged commit still compares against the release
+      # before it. Pre-release tags (v1.2.3-rc1) are never a rollback target.
+      - id: old
+        env:
+          OVERRIDE: ${{ inputs.old_image }}
+        run: |
+          if [ -n "$OVERRIDE" ]; then
+            image="$OVERRIDE"
+          else
+            tag=$(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude '*-*' HEAD^)
+            image="ghcr.io/${{ github.repository }}:${tag}"
+          fi
+          echo "image=${image}" >> "$GITHUB_OUTPUT"
+          echo "Previous image: \`${image}\`" >> "$GITHUB_STEP_SUMMARY"
+      - id: lineages
+        env:
+          CHOSEN: ${{ inputs.lineage }}
+        run: |
+          if [ -z "$CHOSEN" ] || [ "$CHOSEN" = all ]; then
+            echo 'list=["dedicated","self-hosted"]' >> "$GITHUB_OUTPUT"
+          else
+            echo "list=[\"${CHOSEN}\"]" >> "$GITHUB_OUTPUT"
+          fi
+
+  matrix:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        lineage: ${{ fromJSON(needs.plan.outputs.lineages) }}
+    name: matrix (${{ matrix.lineage }})
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build candidate image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: honcho-candidate:ci
+          cache-from: type=gha,scope=compat-matrix
+          cache-to: type=gha,mode=max,scope=compat-matrix
+      - name: Pull previous image
+        env:
+          OLD_IMAGE: ${{ needs.plan.outputs.old_image }}
+        run: docker pull "$OLD_IMAGE"
+      - uses: astral-sh/setup-uv@v2
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - run: uv sync --dev
+      - name: Run matrix
+        env:
+          OLD_IMAGE: ${{ needs.plan.outputs.old_image }}
+          LINEAGE: ${{ matrix.lineage }}
+        run: >-
+          uv run python -m tests.compat_matrix.run
+          --lineage "$LINEAGE"
+          --old-image "$OLD_IMAGE"
+          --new-image honcho-candidate:ci
+      - name: Upload service logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compat-matrix-logs-${{ matrix.lineage }}
+          path: compat-matrix-logs/
+          if-no-files-found: ignore
