@@ -753,7 +753,11 @@ async def create_documents(
                 )
                 pending_doc = pending_by_key.get(dedup_key)
                 if pending_doc is not None:
-                    pending_doc.source_message_ids = first_doc.source_message_ids
+                    # Same validation as the first insert: a malformed id
+                    # would fail the check constraints and the whole batch.
+                    pending_doc.source_message_links = build_source_message_links(
+                        first_doc.source_message_ids, workspace_name
+                    )
                 continue
             first_in_batch[dedup_key] = doc
 

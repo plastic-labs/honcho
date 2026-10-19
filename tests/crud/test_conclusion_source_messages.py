@@ -215,6 +215,27 @@ async def test_in_batch_duplicates_merge_their_citations(
     assert await _edges(db_session, doc.id) == [ids[1], ids[0]]
 
 
+async def test_in_batch_duplicate_drops_malformed_citations(
+    db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    workspace, peer = sample_data
+    workspace_name, peer_name = workspace.name, peer.name
+    session_name, _row_ids, ids = await _seed(db_session, workspace, peer)
+
+    await _create(
+        db_session,
+        workspace_name,
+        peer_name,
+        [
+            _document_create(session_name, [ids[0]]),
+            _document_create(session_name, ["not-a-message-id", ids[1]]),
+        ],
+    )
+
+    [doc] = await _live_documents(db_session, workspace_name)
+    assert await _edges(db_session, doc.id) == [ids[0], ids[1]]
+
+
 async def test_in_batch_duplicates_of_an_existing_conclusion_merge_into_it(
     db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
 ):
