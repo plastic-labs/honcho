@@ -1,6 +1,6 @@
 // Integrations catalog for /v3/guides/overview.
 // Order inside each section is priority order — keep it that way when adding entries.
-// status: "official" | "community"
+// status: "official" | "community" | "unmaintained"
 // icon: a Font Awesome name, or a pinned CDN URL to a monochrome black SVG
 // (Simple Icons, then Lobe Icons) on jsDelivr; style.css inverts them in dark mode.
 
@@ -78,7 +78,7 @@ export const IntegrationsCatalog = () => {
         { name: "LangGraph", icon: "https://cdn.jsdelivr.net/npm/simple-icons@16.33.0/icons/langgraph.svg", href: "/v3/guides/integrations/langgraph", desc: "Persistent memory and theory of mind for LangGraph agents.", status: "official" },
         { name: "CrewAI", icon: "https://cdn.jsdelivr.net/npm/simple-icons@16.33.0/icons/crewai.svg", href: "/v3/guides/integrations/crewai", desc: "Honcho as a storage backend for CrewAI's Memory API.", status: "official" },
         { name: "Agent Zero", icon: "https://cdn.jsdelivr.net/gh/agent0ai/agent-zero@e3051fb584b1a36be2b0a0c90606f1c2c2d356ec/webui/public/darkSymbol.svg", href: "/v3/guides/community/agent0", desc: "Persistent memory plugin for the Agent Zero framework.", status: "community" },
-        { name: "Paperclip", icon: "https://cdn.jsdelivr.net/npm/lucide-static@1.50.0/icons/paperclip.svg", href: "/v3/guides/integrations/paperclip", desc: "Memory for Paperclip companies, agents, issues, and documents.", status: "official" },
+        { name: "Paperclip", icon: "https://cdn.jsdelivr.net/npm/lucide-static@1.50.0/icons/paperclip.svg", href: "/v3/guides/integrations/paperclip", desc: "Built-in Honcho connector for Paperclip agents.", status: "official", via: "MCP" },
       ],
     },
     {
@@ -86,9 +86,9 @@ export const IntegrationsCatalog = () => {
       title: "Apps & workflows",
       blurb: "Memory for chat apps and workflow builders.",
       items: [
-        { name: "SillyTavern", icon: "comments", href: "/v3/guides/integrations/sillytavern", desc: "Long-term memory for SillyTavern characters.", status: "official" },
         { name: "n8n", icon: "https://cdn.jsdelivr.net/npm/simple-icons@16.33.0/icons/n8n.svg", href: "/v3/guides/integrations/n8n", desc: "Importable workflow for memory-aware n8n automations.", status: "official" },
         { name: "Zo Computer", icon: "bolt", href: "/v3/guides/integrations/zo-computer", desc: "Persistent memory skill for Zo workflows.", status: "official" },
+        { name: "SillyTavern", icon: "comments", href: "/v3/guides/integrations/sillytavern", desc: "Long-term memory for SillyTavern characters.", status: "unmaintained" },
       ],
     },
     {
@@ -125,6 +125,9 @@ export const IntegrationsCatalog = () => {
   const pill = (status, via) => {
     if (status === "community") {
       return <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 dark:bg-amber-400/10 dark:text-amber-300">Community</span>;
+    }
+    if (status === "unmaintained") {
+      return <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-zinc-100 text-zinc-500 dark:bg-white/5 dark:text-zinc-400">Unmaintained</span>;
     }
     if (via) {
       return <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-primary/10 text-primary dark:text-primary-light">via {via}</span>;

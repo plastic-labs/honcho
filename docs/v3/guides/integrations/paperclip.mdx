@@ -1,136 +1,88 @@
 ---
 title: "Paperclip"
 icon: "https://cdn.jsdelivr.net/npm/lucide-static@1.50.0/icons/paperclip.svg"
-description: "Add Honcho memory to Paperclip"
+description: "Add Honcho memory to Paperclip agents with the built-in Honcho connector"
 sidebarTitle: "Paperclip"
 ---
 
-Honcho for [Paperclip](https://paperclip.ing) adds persistent Honcho memory to Paperclip while keeping Paperclip as the system of record.
+[Paperclip](https://paperclip.ing) has a built-in Honcho memory connector. It connects your Paperclip company to the [Honcho MCP server](/v3/guides/integrations/mcp) at `https://mcp.honcho.dev`, and agents call Honcho tools when a task needs to recall or save something.
 
 <Note>
-This page covers the current public-host-compatible Paperclip plugin. It supports tools, sync, migration import, and manual prompt previews. It does not depend on automatic prompt-context injection hooks, run transcript import, or legacy workspace file import.
+Memory connectors are experimental in Paperclip and off by default. They first shipped in v2026.1005.0; the workspace setting and agent instructions on this page need v2026.1012.0 or later.
 </Note>
 
-## Install the Plugin
+## Prerequisites
 
-1. In Paperclip, open `Instance Settings` -> `Plugins`.
-2. Click `Install Plugin`.
-3. Enter `@honcho-ai/paperclip-honcho`.
-4. Complete the install from the Paperclip UI.
-   - Plugin download does not currently work on Windows because of a Paperclip host-side issue.
+- Paperclip v2026.1012.0 or later
+- A Honcho API key from [app.honcho.dev](https://app.honcho.dev)
 
-## Quick Setup
+## Connect Honcho
 
-### Minimal Path
+1. In Paperclip, open **Settings → Experimental** and turn on **Memory connectors**.
+2. Open **Connectors** in the sidebar, find **Honcho**, and click **Add key**.
+3. Paste your key into **Honcho API key**.
+4. Enter the workspace agents should use in **Honcho workspace**. Both fields are required.
+5. Choose which agents can use the connection, review the **Agent instructions**, and click **Connect**.
 
-1. Create a Paperclip secret containing the Honcho API key.
-   - For a local Honcho, use whatever credential your local startup expects & `honchoApiKey` is not needed.
-2. Open the Honcho plugin settings page in Paperclip.
-3. If you are using Honcho Cloud, leave the deployment on the default cloud setting.
-4. If you are using a local Honcho instance, switch the deployment to `Self-hosted / local` and set `honchoApiBaseUrl`.
-5. Set `honchoApiKey`.
-6. Save the settings.
-7. Run `Initialize Honcho memory`.
+To change the workspace later, open the connection's **Permissions** tab, edit **Honcho workspace**, and click **Save workspace**.
 
-`honchoApiKey` is the only field required for the standard setup path. The other settings already have defaults.
+Turning **Memory connectors** off again hides setup for new connections. Existing connections keep running.
 
-<Note>
-If you use a local Honcho deployment, `honchoApiBaseUrl` must be reachable from the Paperclip host runtime. If Paperclip is running in Docker, `localhost` may not point at your machine.
-</Note>
+## What Agents Get
 
-## Multi-Agent Hierarchy
+- **Honcho MCP tools.** Every tool the Honcho MCP server exposes, such as `chat`, `search`, `get_peer_context`, `add_messages_to_session`, and `create_conclusions`.
+- **Agent instructions.** A short paragraph Paperclip adds to the prompt of each agent that can use the connection. The default tells agents to recall preferences and prior decisions when work depends on earlier context, to save concise, durable facts after useful work, and never to store credentials or copy whole conversations.
 
-### What Maps Where
+Edit the instructions on the connection's **Permissions** tab. **Tell agents to use Honcho** turns them off without removing tool access, and **Reset to default** restores the default text. Each agent's **Instructions** tab shows the result under **From connections**. Agents receive the instructions only while **Honcho workspace** is set.
 
-Paperclip memory is organized around company, issue, and agent boundaries:
+## How Memory Is Organized
 
-- **Company -> workspace**: each Paperclip company maps to one Honcho workspace.
-- **Issue -> session**: each Paperclip issue maps to one Honcho session inside that workspace.
-- **Humans and agents -> peers**: human actors and Paperclip agents map to Honcho peers.
+- **Workspace:** set by the connection. Paperclip fills in `workspace_id` on every tool that takes one and hides that argument from agents.
+- **Peers and sessions:** agents choose them for each task, guided by the task and the agent instructions. Paperclip does not map issues or agents to Honcho on its own.
+- **Messages:** nothing syncs in the background. Honcho stores only what agents save with tool calls.
 
-This gives the plugin a natural hierarchy: company-level memory lives at the workspace level, issue-level memory lives at the session level, and people or agents are modeled as peers that participate across those scopes.
+To keep memory easy to find, describe a naming convention in the agent instructions. For example: one peer per agent, and one session per issue named after the issue identifier.
 
-### How Agent Observation Works
+<Warning>
+**Honcho workspace** picks the workspace tools run in. It does not restrict the API key. `list_workspaces` takes no workspace, so with an admin key agents can list every workspace on your Honcho instance. To keep agents in one workspace, create a key scoped to that workspace on the [API Keys](https://app.honcho.dev/api-keys) page.
+</Warning>
 
-The current plugin gives agent peers explicit observation settings:
+## Permissions
 
-- `observe_me` defaults to `true`
-- `observe_others` defaults to `true`
+Each Honcho tool is an action on the connection's **Permissions** tab. Set each one to **Allowed** (runs without approval), **Ask first** (a human approves each call), or **Off** (agents cannot run it).
 
-In practice, that means agent peers can both be observed by Honcho and form representations of other peers they interact with.
+Every action starts as **Allowed**, including writes and deletes. Paperclip classifies each action by its verb:
 
-## How It Works
-
-### Identity And Mapping
-
-The integration breaks down into four parts:
-
-- **Identity and mapping** - each Paperclip company maps to a Honcho workspace, agents and human actors map to peers, and issues map to sessions.
-- **What gets copied into Honcho** - issue comments and document revisions sync into Honcho, with document content sectioned and normalized message content capped before ingestion.
-- **What operators get** - operators get a plugin settings page, migration preview/status data, including a per-issue migration mapping preview, repair tools, and an issue-level `Memory` tab.
-- **What agents get** - agents get Honcho retrieval and peer-chat tools inside Paperclip.
-
-## Operator Actions
-
-The settings page exposes the main operator workflow directly:
-
-| Action | What it does |
+| Class | Honcho tools |
 | --- | --- |
-| `Validate config` | Validates the current plugin configuration before any sync or import work runs. |
-| `Test connection` | Resolves the API key secret, checks the Honcho connection, and returns the mapped workspace ID. |
-| `Initialize memory for this company` | Connects Honcho, creates core mappings, imports baseline issue memory, and verifies manual prompt previews. |
-| `Rescan migration sources` | Scans issue comments and issue documents and writes a fresh import preview. |
-| `Import history` | Imports the approved historical preview into Honcho with idempotent ledger checks. |
-| `Preview prompt context` | Builds a manual prompt-context preview for a company or issue without relying on automatic host hooks. |
-| `Repair mappings` | Recreates missing workspace, peer, and session mappings for the current company. |
-| `Resync this issue` | Replays sync for the current issue from the issue Memory tab. |
+| Read | Tools that get, list, search, or query, such as `get_peer_context`, `list_conclusions`, and `search`. |
+| Write | Tools that create or add data, such as `create_session` and `add_messages_to_session`. Tools Paperclip cannot classify also count as writes, including `chat` and `workspace_chat`. |
+| Destructive | `delete_session`, `delete_conclusion`, `remove_peers_from_session`, and `remove_session_from_scope`. |
 
-## Configuration Defaults And Overrides
+Set the destructive actions to **Ask first** or **Off** unless agents should delete memory on their own. Because `chat` and `workspace_chat` count as writes, setting every write to **Ask first** also adds an approval step to recall through those tools.
 
-### Default Behavior
+## Deprecated: Honcho Plugin
 
-| Setting | Default | Use when |
-| --- | --- | --- |
-| `honchoApiKey` | — | Required. Points the plugin at the Paperclip secret containing your Honcho API key. |
-| `honchoApiBaseUrl` | `https://api.honcho.dev` | Override this for self-hosted or non-default Honcho deployments. |
-| `workspacePrefix` | `paperclip` | Change this if you want a different workspace namespace. |
-| `syncIssueComments` | `true` | Turn this off if you do not want comment history imported into Honcho. |
-| `syncIssueDocuments` | `true` | Turn this off if you do not want issue document revisions imported. |
-| `enablePeerChat` | `true` | Required for the peer chat tool surface. |
-| `enablePromptContext` | `false` | Keep this off on the public-host-compatible path and use manual prompt previews instead. |
-| `observe_me` | `true` | Controls whether agent peers are observed by Honcho. |
-| `observe_others` | `true` | Controls whether agent peers form representations of other peers they interact with. |
+The `@honcho-ai/paperclip-honcho` plugin is deprecated and no longer maintained. Version 0.1.4 is its final release. Use the built-in connector for new setups.
 
-The plugin also accepts additional advanced fields in the settings page, including noise-pattern and metadata-strip controls. Most setups can ignore those and start with the defaults above.
-
-## Agent Tools
-
-The plugin registers the following Honcho tools for Paperclip agents:
-
-| Tool | Description |
-| --- | --- |
-| `honcho_get_issue_context` | Retrieve compact Honcho context for the current issue session. |
-| `honcho_search_memory` | Search Honcho memory within the current workspace, narrowing to the current issue by default. |
-| `honcho_search_messages` | Search raw Honcho messages. |
-| `honcho_search_conclusions` | Search high-signal summarized Honcho memory. |
-| `honcho_get_workspace_context` | Retrieve broad workspace recall from Honcho. |
-| `honcho_get_session` | Retrieve issue session context from Honcho. |
-| `honcho_get_agent_context` | Retrieve peer context for a specific agent. |
-| `honcho_get_hierarchy_context` | Retrieve delegated-work context when the host provides lineage metadata. |
-| `honcho_ask_peer` | Query Honcho peer chat for a target peer. Requires peer chat to be enabled in plugin config. |
+The connector works differently from the plugin. It does not sync issue comments or documents, adds no **Memory** tab to issues, and gives agents the Honcho MCP tools instead of the plugin's `honcho_*` tools. To keep using memory the plugin already synced, set the connector's **Honcho workspace** to the workspace the plugin created for your company. You can find it on the [Explore](https://app.honcho.dev/explore) page.
 
 ## Next Steps
 
 <CardGroup cols={2}>
-  <Card title="Paperclip-Honcho Repository" icon="github" href="https://github.com/plastic-labs/paperclip-honcho">
-    Open the repository for source and setup details.
+  <Card title="Honcho MCP" icon="plug" href="/v3/guides/integrations/mcp">
+    The server and tools behind the connector.
   </Card>
 
-  <Card title="Honcho Architecture" icon="sitemap" href="../../documentation/core-concepts/architecture">
-    Review how workspaces, peers, and sessions fit together.
+  <Card title="Paperclip Memory Connectors" icon="github" href="https://github.com/paperclipai/paperclip/blob/master/doc/connections/MEMORY.md">
+    Paperclip's own notes on memory connectors.
   </Card>
 
-  <Card title="Directional Representations" icon="messages" href="../../documentation/features/advanced/directional-representations">
-    Review how `observe_me` and `observe_others` change what peers can model.
+  <Card title="Scoped API Keys" icon="key" href="/v3/documentation/reference/platform">
+    Create a key limited to one workspace.
+  </Card>
+
+  <Card title="Honcho Architecture" icon="sitemap" href="/v3/documentation/core-concepts/architecture">
+    How workspaces, peers, and sessions fit together.
   </Card>
 </CardGroup>
