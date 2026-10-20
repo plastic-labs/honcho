@@ -95,9 +95,12 @@ Three reads, cheapest first:
   hard questions.
 
 When the user states a durable fact about themselves ("I always use uv",
-"never auto-commit"), store it right away with `create_conclusions` so it is
-available before background reasoning catches up. Check with `search` first
-to avoid duplicates.
+"never auto-commit") or asks you to remember something, store it right away
+with `create_conclusions` so it is available before background reasoning
+catches up. Set both `peer_id` and `target_peer_id` to the user peer: that pair
+is the user's own memory, and with your peer as `peer_id` the fact lands where
+recall never reads it. Pass the current `session_id`. Check with `search`
+first to avoid duplicates, and confirm what you saved in one line.
 
 ## Rules of thumb
 

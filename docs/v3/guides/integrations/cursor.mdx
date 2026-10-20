@@ -32,7 +32,7 @@ Already using Honcho with Claude Code or another tool? Choose that tool's worksp
 - **Recall on every conversation.** The agent reads Honcho's picture of you (`get_peer_context`) before it starts working, and searches past sessions or asks Honcho a reasoned question (`chat`) when context would help.
 - **Record after every exchange.** Your messages and the agent's replies go to Honcho, which reasons over them in the background. The agent replaces anything that looks like a secret with `[redacted]` and never records raw tool output.
 - **One session per project.** Each project maps to one Honcho session, named from its git remote so two clones share it and two projects with the same folder name do not. A project's context accumulates instead of fragmenting by day.
-- **Commands.** `/recall <topic>` searches memory; `/remember <fact>` stores a durable preference right away.
+- **A `/recall` command.** `/recall <topic>` asks Honcho what it remembers about a topic. To save something, tell the agent to remember it.
 - **An always-on rule** reminds the agent to recall and record, so you do not have to ask.
 - **Automatic capture**, if you run `honcho init`: three hooks inject memory before your first prompt and record every turn without the agent's involvement. See below.
 
@@ -55,7 +55,7 @@ A hook is a separate process and cannot use the OAuth token Cursor holds for the
 
 ## Manual MCP Setup
 
-If you prefer not to use the plugin, Cursor can connect to the Honcho MCP server directly with an API key. The config block is in the [MCP guide](/v3/guides/integrations/mcp#cursor). You lose the skills, rule and commands, so you will need to ask the agent to use its memory.
+If you prefer not to use the plugin, Cursor can connect to the Honcho MCP server directly with an API key. The config block is in the [MCP guide](/v3/guides/integrations/mcp#cursor). You lose the skills, rule and `/recall` command, so you will need to ask the agent to use its memory.
 
 ## Troubleshooting
 

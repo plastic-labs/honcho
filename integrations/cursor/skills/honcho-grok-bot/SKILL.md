@@ -29,7 +29,7 @@ Pick the first that applies:
 1. **A group chat** (more than one Bot, or several people): `group-<group-name>-<id>`
    when the chat has a stable id you can read, otherwise
    `group-<group-name>-<YYYY-MM-DD>`. Add the user and every participating Bot
-   as peers, and record each Bot's messages under that Bot's own peer.
+   as peers. Each Bot records its own messages (see "Logging each turn").
 2. **A direct conversation with a stable id you can read**: `<bot>-conv-<id>`.
 3. **A direct chat without an id**: one session per Bot per day,
    `<bot>-chat-<YYYY-MM-DD>` in the user's time zone.
@@ -40,19 +40,22 @@ Pick the first that applies:
 Ids may contain only letters, digits, `_` and `-`, so lowercase names and
 replace anything else with `-`.
 
-Keep a context's turns in one session. Do not start a new session mid-day
-because the topic changed; Honcho reasons over a session as a whole and
-summaries follow sessions.
+Stay in the session you picked for the whole conversation, even when the topic
+changes. Honcho reasons over and summarizes each session as one piece.
 
 ## Logging each turn
 
-At the end of every turn, before you yield, append the user's message and your
-reply with `add_messages_to_session`. If a turn produced several of your
-messages, send them in one call. Follow the recording rules in
-`honcho-memory`: verbatim user text, prose replies, secrets replaced with
-`[redacted]`, tool activity summarized in one line at most.
+Grok Bot runs no hooks, so the recording step in `honcho-memory` always
+applies; its automatic-capture exception never does. Make your last action in
+each turn one `add_messages_to_session` call with the user's message and the
+reply you are about to send, following the recording rules in `honcho-memory`.
 
-If a conversation produced no new turns since the last record, record nothing.
+In a group chat every Bot sees every message, so split the work: record only
+your own replies, under your own peer, never another Bot's. Record the user's
+message only if it is not in the session yet.
+
+Never record a message twice. When you are unsure whether it is already
+there, `search` with the session's `session_id` for its opening words first.
 
 ## Setup across Bots
 
@@ -77,5 +80,3 @@ an API key. Never store a Honcho key in your memory, in a file, or in Honcho.
 
 - Do not log raw tool output, downloaded pages, or file contents.
 - Do not create a workspace per Bot. Bots share the user's workspace.
-- Do not record a turn twice. If you are unsure whether the last turn was
-  recorded, `search` the session for its opening words first.

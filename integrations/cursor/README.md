@@ -51,10 +51,10 @@ local copy.
 | Skill `honcho-setup` | yes | yes | Sign-in, workspace choice, first-run bootstrap, status |
 | Rule `honcho-memory` | yes | no | Always-on reminder to recall and record |
 | Hooks `sessionStart`, `beforeSubmitPrompt`, `afterAgentResponse` | yes, with `honcho init` | no | Inject memory before the first prompt and record every turn without the agent's involvement |
-| Commands `/recall`, `/remember` | yes | no | Quick memory search and quick save |
+| Command `/recall` | yes | no | Ask Honcho what it remembers about a topic |
 
 Grok Bot loads only MCP servers and skills from a plugin, so the plugin is
-designed to work from those two alone. The rule and commands are conveniences
+designed to work from those two alone. The rule and command are conveniences
 for the Cursor IDE.
 
 ## How memory is organized
