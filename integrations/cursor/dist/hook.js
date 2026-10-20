@@ -16379,7 +16379,7 @@ function telemetryHeaders(id = {}, extra) {
 }
 // .cursor-plugin/plugin.json
 var plugin_default = {
-  name: "honcho",
+  name: "cursor-honcho",
   displayName: "Honcho",
   version: "0.2.0",
   description: "Persistent memory for Cursor and Grok Bot, powered by Honcho. Remembers who you are, what you prefer, and what you were working on across sessions, projects, and Bots.",

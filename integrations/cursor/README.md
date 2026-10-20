@@ -21,7 +21,7 @@ automatic capture on top, which needs `bun` and a Honcho key in
 1. Install the plugin as a local plugin:
 
    ```bash
-   mkdir -p ~/.cursor/plugins/local/honcho && curl -sL https://codeload.github.com/plastic-labs/honcho/tar.gz/main | tar -xz -C ~/.cursor/plugins/local/honcho --strip-components=3 honcho-main/integrations/cursor
+   mkdir -p ~/.cursor/plugins/local/cursor-honcho && curl -sL https://codeload.github.com/plastic-labs/honcho/tar.gz/main | tar -xz -C ~/.cursor/plugins/local/cursor-honcho --strip-components=3 honcho-main/integrations/cursor
    ```
 
    Then run **Developer: Reload Window**. On Teams and Enterprise plans, an
@@ -47,7 +47,7 @@ its own peer in Honcho; you stay one peer across all of them.
 
 ### From a local checkout (development)
 
-Copy this directory to `~/.cursor/plugins/local/honcho` and reload Cursor.
+Copy this directory to `~/.cursor/plugins/local/cursor-honcho` and reload Cursor.
 Cursor skips a symlink there that points outside `~/.cursor/plugins/local`,
 so copy rather than link. A marketplace install with the same name takes
 precedence over the local copy.
