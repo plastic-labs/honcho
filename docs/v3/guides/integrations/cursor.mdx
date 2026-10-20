@@ -16,10 +16,10 @@ The core needs nothing local: no API key to paste and no local server. Cursor us
     The plugin is not in the Cursor Marketplace yet. Until it is, install it as a local plugin, which gives you memory in every project:
 
     ```bash
-    mkdir -p ~/.cursor/plugins/local/honcho && curl -sL https://codeload.github.com/plastic-labs/honcho/tar.gz/main | tar -xz -C ~/.cursor/plugins/local/honcho --strip-components=3 honcho-main/integrations/cursor
+    mkdir -p ~/.cursor/plugins/local/cursor-honcho && curl -sL https://codeload.github.com/plastic-labs/honcho/tar.gz/main | tar -xz -C ~/.cursor/plugins/local/cursor-honcho --strip-components=3 honcho-main/integrations/cursor
     ```
 
-    Run **Developer: Reload Window** (or restart Cursor), then open **Customize** and check that the Honcho skills and the **honcho** MCP server are listed. On Teams and Enterprise plans, an admin must turn on **Allow Local Plugin Imports** first. To update later, delete `~/.cursor/plugins/local/honcho` and run the command again.
+    Run **Developer: Reload Window** (or restart Cursor), then open **Customize** and check that the Honcho skills and the **honcho** MCP server are listed. On Teams and Enterprise plans, an admin must turn on **Allow Local Plugin Imports** first. To update later, delete `~/.cursor/plugins/local/cursor-honcho` and run the command again.
   </Step>
   <Step title="Sign in">
     In the same panel, open the **honcho** MCP server and choose **Authenticate**. A browser window signs you in to Honcho with OAuth. If you do not have an account yet, create one at [app.honcho.dev](https://app.honcho.dev) first.

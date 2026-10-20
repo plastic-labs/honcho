@@ -10,7 +10,7 @@
   },
   "plugins": [
     {
-      "name": "honcho",
+      "name": "cursor-honcho",
       "source": "./integrations/cursor",
       "description": "Persistent memory for Cursor and Grok Bot, powered by Honcho"
     }

@@ -2,6 +2,13 @@
 
 All notable changes to the Honcho plugin for Cursor and Grok Bot.
 
+## [Unreleased]
+
+- Renamed the plugin from `honcho` to `cursor-honcho` so it no longer collides
+  with claude-honcho, which Cursor imports under the name `honcho`. Local
+  installs now go in `~/.cursor/plugins/local/cursor-honcho`; delete an old
+  `~/.cursor/plugins/local/honcho` copy.
+
 ## [0.2.0] - 2026-10-15
 
 First version in the Honcho monorepo, rewritten for the Cursor Marketplace.
