@@ -6,7 +6,7 @@ from enum import Enum
 from logging import getLogger
 from typing import Any, Literal, cast
 
-from sqlalchemy import delete, literal, or_, select, union_all, update
+from sqlalchemy import delete, literal, or_, select, tuple_, union_all, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import DBAPIError, IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -1663,11 +1663,11 @@ async def cleanup_soft_deleted_documents(
         return 0
 
     # Group by namespace for batch vector deletion
-    by_namespace: dict[str, list[str]] = {}
+    by_namespace: dict[str, list[models.Document]] = {}
     # ai: contained per row — this sweep spans tenants, and an unresolvable one must not strand the rest of the batch's soft-deleted rows
     for doc in documents:
         try:
-            prefix = await prefix_for_tenant(doc.tenant_id)
+            prefix = await prefix_for_tenant(doc.tenant_id, db)
         except (VectorNamespaceUnresolved, VectorStoreError):
             logger.warning(
                 "No vector namespace for tenant %s; leaving its soft-deleted documents",
@@ -1681,31 +1681,34 @@ async def cleanup_soft_deleted_documents(
             doc.observed,
             prefix=prefix,
         )
-        by_namespace.setdefault(namespace, []).append(doc.id)
+        by_namespace.setdefault(namespace, []).append(doc)
 
     # Delete from external vector store (per namespace) and track successful deletions
-    successfully_deleted_ids: set[str] = set()
-    for namespace, ids in by_namespace.items():
+    successfully_deleted_keys: set[tuple[str, str]] = set()
+    for namespace, docs in by_namespace.items():
         try:
-            await external_vector_store.delete_many(namespace, ids)
-            # Only add to successfully_deleted_ids if vector deletion succeeded
-            successfully_deleted_ids.update(ids)
+            await external_vector_store.delete_many(namespace, [d.id for d in docs])
+            # Only add to successfully_deleted_keys if vector deletion succeeded
+            successfully_deleted_keys.update((d.tenant_id, d.id) for d in docs)
         except Exception as e:
             # Log but continue - vectors may already be deleted or namespace may not exist
             logger.warning(f"Failed to delete vectors from {namespace}: {e}")
 
     # Only hard delete documents where vector deletion succeeded
-    if successfully_deleted_ids:
+    # ai: keyed on (tenant_id, id), the PK — an id-only IN can't seek it and reads every partition's index
+    if successfully_deleted_keys:
         await db.execute(
             delete(models.Document).where(
-                models.Document.id.in_(successfully_deleted_ids)
+                tuple_(models.Document.tenant_id, models.Document.id).in_(
+                    successfully_deleted_keys
+                )
             )
         )
         await db.commit()
         logger.debug(
-            f"Cleaned up {len(successfully_deleted_ids)} soft-deleted documents"
+            f"Cleaned up {len(successfully_deleted_keys)} soft-deleted documents"
         )
-        return len(successfully_deleted_ids)
+        return len(successfully_deleted_keys)
 
     # No documents were successfully deleted from vector store
     # Release FOR UPDATE locks by rolling back the transaction

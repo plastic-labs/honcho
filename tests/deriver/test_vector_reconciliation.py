@@ -1437,7 +1437,7 @@ class TestComputeChunkPositions:
         await db_session.commit()
         for row in rows:
             await db_session.refresh(row)
-        a0, a1, b0 = (row.id for row in rows)
+        a0, a1, b0 = ((row.tenant_id, row.id) for row in rows)
 
         positions = await compute_chunk_positions(db_session, [msg_a, msg_b])
 
@@ -1534,3 +1534,43 @@ class TestReEmbedTenantAttribution:
 
         assert failed == 1
         assert docs[1].embedding is not None
+
+    async def test_same_id_in_two_tenants_keeps_each_tenants_vector(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The PK is (tenant_id, id), so two tenants can share a numeric id (e.g.
+        # datasets imported from dedicated instances); a map keyed by id alone hands
+        # both rows whichever tenant's vector was written last.
+        monkeypatch.setattr(settings, "MULTI_TENANT", True)
+        embs = [
+            models.MessageEmbedding(
+                id=1,
+                tenant_id=tenant_id,
+                content=tenant_id,
+                message_id=f"msg-{tenant_id}",
+                workspace_name="ws",
+                session_name="s",
+                peer_name="p",
+                sync_state="pending",
+                sync_attempts=0,
+                embedding=None,
+            )
+            for tenant_id in ("t-a", "t-b")
+        ]
+
+        async def embed(contents: list[str], **_kwargs: object) -> list[list[float]]:
+            return [[1.0 if c == "t-a" else 2.0] * 1536 for c in contents]
+
+        db = AsyncMock()
+        with patch("src.reconciler.sync_vectors.embedding_client") as client:
+            client.simple_batch_embed = embed
+            synced, _failed = await _sync_message_embeddings(db, embs, None)
+
+        written = {
+            params["tenant_id_1"]: params["embedding"][0]
+            for params in (
+                c.args[0].compile().params for c in db.execute.call_args_list
+            )
+        }
+        assert synced == 2
+        assert written == {"t-a": 1.0, "t-b": 2.0}

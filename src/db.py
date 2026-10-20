@@ -194,10 +194,12 @@ if settings.DB.TRACING or settings.MULTI_TENANT:
 # In the cloud deploy it connects as a role that BYPASSES row-level security, so
 # the deriver/reconciler/dreamer can read across all tenants; when
 # DB.SERVICE_CONNECTION_URI is unset it IS the ordinary engine (single-role —
-# correct when MULTI_TENANT is off / self-host). Same connect and pool settings
-# as the main engine.
+# correct when MULTI_TENANT is off / self-host). Flag-off the URI is ignored even
+# when set: a separate engine there would move the queue claim and reconciler onto
+# a different database than the request path writes to. Same connect and pool
+# settings as the main engine.
 # endregion
-if settings.DB.SERVICE_CONNECTION_URI:
+if settings.MULTI_TENANT and settings.DB.SERVICE_CONNECTION_URI:
     service_engine = create_async_engine(
         settings.DB.SERVICE_CONNECTION_URI,
         connect_args=connect_args,

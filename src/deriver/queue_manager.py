@@ -927,8 +927,10 @@ class QueueManager:
         # scope the message reads. The work_unit_key is tenant-namespaced under
         # MULTI_TENANT; carry that tenant into the message-context queries so a
         # session/workspace name shared across tenants can't pull another tenant's
-        # messages into the batch. None (flag off, or a legacy un-prefixed key)
-        # adds no filter, so self-host is unchanged.
+        # messages into the batch. It also goes on every Message.id probe: the PK
+        # is (tenant_id, id), so an id-only lookup can't seek it and reads every
+        # partition's index. None (flag off, or a legacy un-prefixed key) adds no
+        # filter, so self-host is unchanged.
         # endregion
         tenant_clause = (
             models.Message.tenant_id == parsed_key.tenant_id
@@ -998,6 +1000,7 @@ class QueueManager:
                 select(models.Message.id)
                 .where(models.Message.id == immediately_preceding_id_subq)
                 .where(models.Message.peer_name != parsed_key.observed)
+                .where(tenant_clause)
                 .scalar_subquery()
             )
 
@@ -1070,6 +1073,7 @@ class QueueManager:
                     ),
                 )
                 .where(allowed_condition)
+                .where(tenant_clause)
                 .order_by(models.Message.id, models.QueueItem.id)
             )
 

@@ -551,7 +551,15 @@ async def enqueue_dream(
         session_name: Name of the session to scope the dream to if specified
         rebuild: card_refresh only — rebuild the card without the prior card
     """
-    async with service_db("dream_enqueue") as db_session:
+    # region ai
+    # Per-tenant work, like message_enqueue: reject_scope_observed matches peers by
+    # (workspace, name), which is unique only within a tenant, so on the RLS-bypass
+    # service session it would read every tenant's same-named peers (and, unable to
+    # seek the tenant_id-leading index, scan them all). Every caller has a tenant
+    # bound (request, deriver work unit, backlog/dream scheduler); the queue table
+    # has no RLS, so the insert is fine here too.
+    # endregion
+    async with tracked_db("dream_enqueue") as db_session:
         # Authoritative scope check, in the same transaction as the queue insert.
         # A route-level precheck cannot be relied on: it runs in its own session,
         # and a *missing* reserved name passes it (nothing has flagged that peer
@@ -703,7 +711,8 @@ async def _enqueue_scope_task(
     to "pending" in the same transaction as the queue insert, so the status
     surface never claims a job exists that was never enqueued (or vice versa).
     """
-    async with service_db("scope_task_enqueue") as db_session:
+    # ai: tracked_db for the same reason as enqueue_dream — update_scope_backfill_status writes the peer by (workspace, name), which on the service session would hit every tenant's same-named scope peer
+    async with tracked_db("scope_task_enqueue") as db_session:
         try:
             record = create_scope_task_record(
                 workspace_name,

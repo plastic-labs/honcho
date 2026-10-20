@@ -271,6 +271,25 @@ async def test_prefix_for_tenant_reads_the_database_only_once_per_tenant(
 
 
 @pytest.mark.asyncio
+async def test_prefix_for_tenant_reuses_a_passed_session(
+    monkeypatch: pytest.MonkeyPatch, db_session: AsyncSession
+) -> None:
+    """The reconciler already holds a service connection; a cold read must go
+    through it, not check out a second one from the same pool."""
+    import src.dependencies as dependencies_module
+
+    monkeypatch.setattr(settings, "MULTI_TENANT", True)
+    tenant_id = await _create_tenant(db_session, vector_correlation_id="reused-app")
+
+    def no_service_db(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("a passed session must be reused")
+
+    monkeypatch.setattr(dependencies_module, "service_db", no_service_db)
+
+    assert await prefix_for_tenant(tenant_id, db_session) == "reused-app"
+
+
+@pytest.mark.asyncio
 async def test_a_key_set_by_patch_resolves_without_resetting_the_cache(
     monkeypatch: pytest.MonkeyPatch, db_session: AsyncSession
 ) -> None:

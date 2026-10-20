@@ -42,7 +42,13 @@ class WorkspaceDeletionResult:
     conclusions_deleted: int
 
 
-WORKSPACE_CACHE_KEY_TEMPLATE = "v2:workspace:{workspace_name}"
+# region ai
+# v3 (also on the session/peer/collection templates, which share this prefix so
+# delete_workspace's delete_match still sweeps them): v2 payloads predate
+# tenant_id in the cached dict, and merge(load=False) on one builds an incomplete
+# composite-PK identity that fails the next update. The bump turns them into misses.
+# endregion
+WORKSPACE_CACHE_KEY_TEMPLATE = "v3:workspace:{workspace_name}"
 WORKSPACE_LOCK_PREFIX = f"{cache_prefix_namespace()}:lock:v2"
 
 
