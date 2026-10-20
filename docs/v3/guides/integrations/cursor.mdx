@@ -5,7 +5,7 @@ description: "Add AI-native memory to Cursor"
 sidebarTitle: 'Cursor'
 ---
 
-Give Cursor long-term memory that survives new chats, context wipes, and project switches. The Honcho plugin connects Cursor's agent to the hosted Honcho MCP server and ships the skills that make it recall what it knows about you before working and record each exchange afterwards. The same marketplace listing installs into [Grok Bot](/v3/guides/integrations/grok-bot).
+Give Cursor long-term memory that survives new chats, context wipes, and project switches. The Honcho plugin connects Cursor's agent to the hosted Honcho MCP server and ships the skills that make it recall what it knows about you before working and record each exchange afterwards. The same plugin also works in [Grok Bot](/v3/guides/integrations/grok-bot).
 
 The core needs nothing local: no API key to paste and no local server. Cursor users can add automatic capture on top with one command.
 
@@ -13,7 +13,13 @@ The core needs nothing local: no API key to paste and no local server. Cursor us
 
 <Steps>
   <Step title="Install the plugin">
-    Open **Customize** in Cursor's sidebar, find **Honcho** under Plugins, and choose **Install**. Pick user scope to have memory in every project, or project scope for one.
+    The plugin is not in the Cursor Marketplace yet. Until it is, install it as a local plugin, which gives you memory in every project:
+
+    ```bash
+    mkdir -p ~/.cursor/plugins/local/honcho && curl -sL https://codeload.github.com/plastic-labs/honcho/tar.gz/main | tar -xz -C ~/.cursor/plugins/local/honcho --strip-components=3 honcho-main/integrations/cursor
+    ```
+
+    Run **Developer: Reload Window** (or restart Cursor), then open **Customize** and check that the Honcho skills and the **honcho** MCP server are listed. On Teams and Enterprise plans, an admin must turn on **Allow Local Plugin Imports** first. To update later, delete `~/.cursor/plugins/local/honcho` and run the command again.
   </Step>
   <Step title="Sign in">
     In the same panel, open the **honcho** MCP server and choose **Authenticate**. A browser window signs you in to Honcho with OAuth. If you do not have an account yet, create one at [app.honcho.dev](https://app.honcho.dev) first.

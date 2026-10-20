@@ -2,12 +2,12 @@
 
 > Persistent memory for Cursor and Grok Bot, powered by Honcho
 
-One plugin, one Cursor Marketplace listing, two hosts. Cursor installs it from
-the marketplace; Grok Bot installs the same listing from its plugin page. The
-plugin connects your agent to the hosted Honcho MCP server at
-`https://mcp.honcho.dev` and ships the skills that drive the memory loop, so
-the agent remembers who you are, what you prefer, and what you were working on
-across sessions, projects, and Bots.
+One plugin, two hosts. It is not in the Cursor Marketplace yet, so for now
+Cursor installs it as a local plugin and a Grok Bot sets it up from this
+directory's GitHub link. The plugin connects your agent to the hosted Honcho
+MCP server at `https://mcp.honcho.dev` and ships the skills that drive the
+memory loop, so the agent remembers who you are, what you prefer, and what
+you were working on across sessions, projects, and Bots.
 
 There is nothing to run locally for the core: no API key to paste and no local
 server. Sign in with OAuth and start a conversation. Cursor users can add
@@ -18,28 +18,39 @@ automatic capture on top, which needs `bun` and a Honcho key in
 
 ### Cursor
 
-1. Open **Customize** in the sidebar, find **Honcho** under Plugins, and choose
-   **Install** (project or user scope).
-2. In the same panel, open the **honcho** MCP server and choose
+1. Install the plugin as a local plugin:
+
+   ```bash
+   mkdir -p ~/.cursor/plugins/local/honcho && curl -sL https://codeload.github.com/plastic-labs/honcho/tar.gz/main | tar -xz -C ~/.cursor/plugins/local/honcho --strip-components=3 honcho-main/integrations/cursor
+   ```
+
+   Then run **Developer: Reload Window**. On Teams and Enterprise plans, an
+   admin must turn on **Allow Local Plugin Imports** first. To update, delete
+   the folder and run the command again.
+2. Open **Customize**, open the **honcho** MCP server and choose
    **Authenticate**. A browser window completes the sign-in.
 3. Start a new chat and run `/honcho-setup` once.
 
 ### Grok Bot
 
-1. Open the Honcho plugin page (search **Honcho** under **Connect apps**, or
-   use the plugin link from [honcho.dev](https://honcho.dev/docs/v3/guides/integrations/grok-bot))
-   and choose **Add to Grok Bot**.
-2. Tell your Bot: "Set up Honcho." It signs in through a connect card and runs
-   the `honcho-setup` skill.
+1. Give any Bot this prompt:
 
-The install is account-wide: every Bot on the account can use it. Each Bot gets
+   ```text
+   Set up Honcho memory using the plugin at https://github.com/plastic-labs/honcho/tree/main/integrations/cursor: connect its MCP server (https://mcp.honcho.dev, sign in with OAuth), install its skills, then run honcho-setup.
+   ```
+
+2. The Bot adds the MCP server, saves the skills, signs in through a connect
+   card and runs the `honcho-setup` skill.
+
+The setup is account-wide: every Bot on the account can use it. Each Bot gets
 its own peer in Honcho; you stay one peer across all of them.
 
 ### From a local checkout (development)
 
-Copy or symlink this directory to `~/.cursor/plugins/local/honcho` and reload
-Cursor. A marketplace install with the same name takes precedence over the
-local copy.
+Copy this directory to `~/.cursor/plugins/local/honcho` and reload Cursor.
+Cursor skips a symlink there that points outside `~/.cursor/plugins/local`,
+so copy rather than link. A marketplace install with the same name takes
+precedence over the local copy.
 
 ## What you get
 

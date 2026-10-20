@@ -182,8 +182,8 @@ gives them one shared memory.
 | ---------------- | ------------------------------------------------------- | ------------------------------------------------------------------ |
 | Claude Code      | `/plugin marketplace add plastic-labs/claude-honcho`    | [claude-honcho](https://github.com/plastic-labs/claude-honcho)     |
 | Codex            | `npm install -g @honcho-ai/codex-honcho`                | [codex-honcho](https://github.com/plastic-labs/codex-honcho)       |
-| Cursor           | Install **Honcho** from the Cursor Marketplace          | [integrations/cursor](integrations/cursor/)                        |
-| Grok Bot         | **Add to Grok Bot** from the Honcho plugin page         | [integrations/cursor](integrations/cursor/)                        |
+| Cursor           | Local plugin: see [below](#cursor-and-grok-bot)         | [integrations/cursor](integrations/cursor/)                        |
+| Grok Bot         | Prompt a Bot: see [below](#cursor-and-grok-bot)         | [integrations/cursor](integrations/cursor/)                        |
 | DeepSeek Harness | `dsh plugin --profile <name> add @honcho-ai/dsh-honcho` | [dsh-honcho](https://github.com/plastic-labs/dsh-honcho)           |
 | OpenCode         | `opencode plugin "@honcho-ai/opencode-honcho" --global` | [opencode-honcho](https://github.com/plastic-labs/opencode-honcho) |
 | Kilo Code        | `kilo plugin @honcho-ai/kilo-honcho --global`           | [kilo-honcho](kilo-honcho/)                                        |
@@ -227,7 +227,7 @@ Restart Codex to load the hooks. Details: [Codex guide](https://honcho.dev/docs/
 
 ### Cursor and Grok Bot
 
-One Cursor Marketplace listing serves both. In Cursor, open **Customize**, install **Honcho**, authenticate the `honcho` MCP server, then run `/honcho-setup` once. In Grok Bot, add **Honcho** under **Connect apps** (or **Add to Grok Bot** from the plugin page) and ask a Bot to set up Honcho. The plugin connects to the hosted MCP server over OAuth and ships the skills that drive the memory loop, so nothing runs locally.
+One plugin serves both, and it is not in the Cursor Marketplace yet. In Cursor, install it as a local plugin with the one-line command in the [Cursor guide](https://honcho.dev/docs/v3/guides/integrations/cursor), reload the window, authenticate the `honcho` MCP server, then run `/honcho-setup` once. In Grok Bot, give any Bot the link to [`integrations/cursor`](integrations/cursor/) and ask it to set up Honcho; the [Grok Bot guide](https://honcho.dev/docs/v3/guides/integrations/grok-bot) has the exact prompt. The plugin connects to the hosted MCP server over OAuth and ships the skills that drive the memory loop, so nothing runs locally.
 Details: [Cursor guide](https://honcho.dev/docs/v3/guides/integrations/cursor) · [Grok Bot guide](https://honcho.dev/docs/v3/guides/integrations/grok-bot) · [source](integrations/cursor/).
 
 ### DeepSeek Harness
