@@ -14,6 +14,10 @@
     {
       "source": "/v3/documentation/features/advanced/representation-scopes",
       "destination": "/v3/documentation/features/advanced/directional-representations"
+    },
+    {
+      "source": "/v3/guides/community/pi-honcho-memory",
+      "destination": "/v3/guides/integrations/pi"
     }
   ],
   "colors": {
@@ -113,7 +117,7 @@
                 "group": "Coding Agents",
                 "pages": [
                   "v3/guides/integrations/claude-code",
-                  "v3/guides/community/pi-honcho-memory",
+                  "v3/guides/integrations/pi",
                   "v3/guides/integrations/codex",
                   "v3/guides/integrations/opencode",
                   "v3/guides/integrations/kilo",

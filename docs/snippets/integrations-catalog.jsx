@@ -57,7 +57,7 @@ export const IntegrationsCatalog = () => {
       blurb: "Memory that carries across sessions, restarts, and projects in the coding tools you already use.",
       items: [
         { name: "Claude Code", icon: "https://cdn.jsdelivr.net/npm/simple-icons@16.33.0/icons/claudecode.svg", href: "/v3/guides/integrations/claude-code", desc: "Memory that survives context wipes, restarts, and project switches.", status: "official" },
-        { name: "Pi", icon: "https://cdn.jsdelivr.net/npm/simple-icons@16.33.0/icons/pi.svg", href: "/v3/guides/community/pi-honcho-memory", desc: "Persistent memory extension for the pi coding agent CLI.", status: "community" },
+        { name: "Pi", icon: "https://cdn.jsdelivr.net/npm/simple-icons@16.33.0/icons/pi.svg", href: "/v3/guides/integrations/pi", desc: "Peer card, session summary, and recall on every turn for the pi coding agent.", status: "official" },
         { name: "Codex", icon: "https://cdn.jsdelivr.net/npm/simple-icons@15.22.0/icons/openai.svg", href: "/v3/guides/integrations/codex", desc: "Lifecycle hooks capture Codex sessions and restore context on start.", status: "official" },
         { name: "OpenCode", icon: "https://cdn.jsdelivr.net/npm/simple-icons@16.33.0/icons/opencode.svg", href: "/v3/guides/integrations/opencode", desc: "Per-directory, per-repo, or branch-scoped session memory.", status: "official" },
         { name: "Kilo Code", icon: "https://cdn.jsdelivr.net/npm/@lobehub/icons-static-svg@1.95.1/icons/kilocode.svg", href: "/v3/guides/integrations/kilo", desc: "Memory across the Kilo CLI, VS Code, and JetBrains from one install.", status: "official" },
