@@ -10,7 +10,7 @@ from sqlalchemy import delete, literal, or_, select, tuple_, union_all, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import DBAPIError, IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.sql import Select
+from sqlalchemy.sql import ColumnElement, Select
 from sqlalchemy.sql.functions import func
 
 from src import models, schemas
@@ -33,6 +33,30 @@ from src.vector_store import (
 )
 
 logger = getLogger(__name__)
+
+# One (observer, observed) collection. Reads that aggregate over a peer's
+# members pass several; everything else passes one.
+ObservedPair = tuple[str, str]
+
+
+def observed_pairs_clause(
+    pairs: Sequence[ObservedPair],
+) -> list[ColumnElement[bool]]:
+    """WHERE conditions restricting documents to the given collections.
+
+    A single pair renders as two equalities, exactly as single-pair reads always
+    have, so those queries keep their plans; several pairs render as a row
+    ``IN`` over (observer, observed).
+    """
+    if not pairs:
+        raise ValueError("observed_pairs_clause needs at least one pair")
+    if len(pairs) == 1:
+        [(observer, observed)] = pairs
+        return [
+            models.Document.observer == observer,
+            models.Document.observed == observed,
+        ]
+    return [tuple_(models.Document.observer, models.Document.observed).in_(list(pairs))]
 
 
 def build_source_links(
@@ -196,8 +220,13 @@ async def summarize_documents_by_level(
     *,
     observer: str,
     observed: str,
+    pairs: Sequence[ObservedPair] | None = None,
 ) -> DocumentLevelSummary:
-    """Count live documents per level and the span of their creation times."""
+    """Count live documents per level and the span of their creation times.
+
+    ``pairs``, when given, counts across those collections instead of the one
+    named by ``observer``/``observed``.
+    """
     stmt = (
         select(
             models.Document.level,
@@ -207,8 +236,7 @@ async def summarize_documents_by_level(
         )
         .where(
             models.Document.workspace_name == workspace_name,
-            models.Document.observer == observer,
-            models.Document.observed == observed,
+            *observed_pairs_clause(pairs or [(observer, observed)]),
             models.Document.deleted_at.is_(None),
         )
         .group_by(models.Document.level)
@@ -368,10 +396,13 @@ async def query_external_vector_document_ids(
     top_k: int = 5,
     max_distance: float | None = None,
     filters: dict[str, Any] | None = None,
+    pairs: Sequence[ObservedPair] | None = None,
 ) -> list[str] | None:
     """Query external vector store for document IDs sorted by similarity.
 
-    No DB session needed — safe to call outside a tracked_db scope.
+    No DB session needed — safe to call outside a tracked_db scope. External
+    stores keep one namespace per (observer, observed) pair, so ``pairs`` beyond
+    the first cost one query each; results are merged by distance.
 
     Returns:
         Ordered list of document IDs on the external-store path,
@@ -388,29 +419,39 @@ async def query_external_vector_document_ids(
     if external_vector_store is None:
         return []
 
-    namespace = external_vector_store.get_vector_namespace(
-        "document", workspace_name, observer, observed
-    )
-
     vector_filters: dict[str, Any] = {}
     if filters:
         for key in ["level", "session_name"]:
             if key in filters:
                 vector_filters[key] = filters[key]
 
-    vector_results = await external_vector_store.query(
-        namespace,
-        embedding,
-        top_k=top_k,
-        max_distance=max_distance,
-        filters=vector_filters if vector_filters else None,
-        include_attributes=False,
+    namespaces = [
+        external_vector_store.get_vector_namespace(
+            "document", workspace_name, pair_observer, pair_observed
+        )
+        for pair_observer, pair_observed in (pairs or [(observer, observed)])
+    ]
+    per_namespace = await asyncio.gather(
+        *(
+            external_vector_store.query(
+                namespace,
+                embedding,
+                top_k=top_k,
+                max_distance=max_distance,
+                filters=vector_filters if vector_filters else None,
+                include_attributes=False,
+            )
+            for namespace in namespaces
+        )
     )
 
+    vector_results = [result for results in per_namespace for result in results]
     if not vector_results:
         return []
 
-    return [result.id for result in vector_results]
+    if len(namespaces) > 1:
+        vector_results.sort(key=lambda result: result.score)
+    return [result.id for result in vector_results[:top_k]]
 
 
 async def fetch_documents_by_ids(
@@ -420,16 +461,20 @@ async def fetch_documents_by_ids(
     observed: str,
     document_ids: list[str],
     filters: dict[str, Any] | None = None,
+    pairs: Sequence[ObservedPair] | None = None,
 ) -> list[models.Document]:
-    """Fetch documents by IDs, preserving input order. DB-only operation."""
+    """Fetch documents by IDs, preserving input order. DB-only operation.
+
+    ``pairs``, when given, replaces ``observer``/``observed`` with the set of
+    collections the documents may come from.
+    """
     if not document_ids:
         return []
 
     stmt = (
         select(models.Document)
         .where(models.Document.workspace_name == workspace_name)
-        .where(models.Document.observer == observer)
-        .where(models.Document.observed == observed)
+        .where(*observed_pairs_clause(pairs or [(observer, observed)]))
         .where(models.Document.deleted_at.is_(None))
         .where(models.Document.id.in_(document_ids))
     )
@@ -450,13 +495,17 @@ async def _query_documents_pgvector(
     filters: dict[str, Any] | None,
     max_distance: float | None,
     top_k: int,
+    pairs: Sequence[ObservedPair] | None = None,
 ) -> list[models.Document]:
-    """pgvector similarity search — pure DB operation."""
+    """pgvector similarity search — pure DB operation.
+
+    ``pairs``, when given, searches those collections together instead of the
+    one named by ``observer``/``observed``.
+    """
     stmt = (
         select(models.Document)
         .where(models.Document.workspace_name == workspace_name)
-        .where(models.Document.observer == observer)
-        .where(models.Document.observed == observed)
+        .where(*observed_pairs_clause(pairs or [(observer, observed)]))
         .where(models.Document.embedding.isnot(None))
         .where(models.Document.deleted_at.is_(None))
     )
@@ -486,6 +535,7 @@ async def query_documents(
     max_distance: float | None = None,
     top_k: int = 5,
     embedding: list[float] | None = None,
+    pairs: Sequence[ObservedPair] | None = None,
 ) -> Sequence[models.Document]:
     """
     Query documents using semantic similarity.
@@ -504,6 +554,9 @@ async def query_documents(
         max_distance: Maximum cosine distance for results
         top_k: Number of results to return
         embedding: Optional pre-computed embedding for the query (avoids extra API call if possible)
+        pairs: Optional (observer, observed) collections to search together,
+            replacing observer/observed. Results are the top_k across all of
+            them by distance, each keeping its own observer/observed columns.
 
     Returns:
         Sequence of matching documents
@@ -521,6 +574,8 @@ async def query_documents(
                 + f"{settings.EMBEDDING.MAX_INPUT_TOKENS}."
             ) from e
 
+    resolved_pairs: Sequence[ObservedPair] = pairs or [(observer, observed)]
+
     if _uses_pgvector():
         # pgvector path — pure DB, open a short session if none provided
         if db is not None:
@@ -533,6 +588,7 @@ async def query_documents(
                 filters,
                 max_distance,
                 top_k,
+                resolved_pairs,
             )
         async with tracked_db("query_documents.pgvector", read_only=True) as managed_db:
             docs = await _query_documents_pgvector(
@@ -544,6 +600,7 @@ async def query_documents(
                 filters,
                 max_distance,
                 top_k,
+                resolved_pairs,
             )
             for doc in docs:
                 managed_db.expunge(doc)
@@ -558,6 +615,7 @@ async def query_documents(
         top_k=top_k,
         max_distance=max_distance,
         filters=filters,
+        pairs=resolved_pairs,
     )
 
     if not document_ids:
@@ -571,6 +629,7 @@ async def query_documents(
             observed=observed,
             document_ids=document_ids,
             filters=filters,
+            pairs=resolved_pairs,
         )
     async with tracked_db("query_documents.fetch", read_only=True) as managed_db:
         docs = await fetch_documents_by_ids(
@@ -580,6 +639,7 @@ async def query_documents(
             observed=observed,
             document_ids=document_ids,
             filters=filters,
+            pairs=resolved_pairs,
         )
         for doc in docs:
             managed_db.expunge(doc)
@@ -1838,6 +1898,7 @@ def get_child_observations(
     observer: str | None = None,
     observed: str | None = None,
     reverse: bool = False,
+    pairs: Sequence[ObservedPair] | None = None,
 ) -> Select[tuple[models.Document]]:
     """
     Get all observations that have this document as a source/premise.
@@ -1852,6 +1913,8 @@ def get_child_observations(
         observer: Optional filter by observer
         observed: Optional filter by observed
         reverse: Whether to reverse the order (oldest first)
+        pairs: Optional (observer, observed) collections to restrict to;
+            takes precedence over observer/observed
 
     Returns:
         Select query for documents that reference this document as a source,
@@ -1871,10 +1934,13 @@ def get_child_observations(
         or_(linked, models.Document.legacy_source_ids.contains([parent_id])),
         models.Document.deleted_at.is_(None),
     )
-    if observer:
-        stmt = stmt.where(models.Document.observer == observer)
-    if observed:
-        stmt = stmt.where(models.Document.observed == observed)
+    if pairs:
+        stmt = stmt.where(*observed_pairs_clause(pairs))
+    else:
+        if observer:
+            stmt = stmt.where(models.Document.observer == observer)
+        if observed:
+            stmt = stmt.where(models.Document.observed == observed)
 
     # created_at is the transaction timestamp, so documents created in the
     # same batch share it -- id keeps pagination deterministic.

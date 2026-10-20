@@ -15,6 +15,7 @@ from .deriver import (
 from .document import (
     CreateDocumentsResult,
     DocumentLevelSummary,
+    ObservedPair,
     create_documents,
     create_observations,
     delete_document,
@@ -25,6 +26,7 @@ from .document import (
     get_child_observations,
     get_documents_by_ids,
     get_documents_with_filters,
+    observed_pairs_clause,
     query_documents,
     query_documents_most_derived,
     query_documents_recent,
@@ -55,6 +57,18 @@ from .peer import (
     update_peer,
 )
 from .peer_card import get_peer_card, set_peer_card
+from .peer_membership import (
+    AddMemberResult,
+    ObservedSet,
+    add_member,
+    expand_observed,
+    get_members,
+    get_parents,
+    membership_rows_to_schemas,
+    remove_member,
+    resolve_depth,
+    resolve_observed_set,
+)
 from .representation import (
     get_working_representation,
 )
@@ -132,12 +146,14 @@ __all__ = [
     "get_child_observations",
     "get_documents_by_ids",
     "get_documents_with_filters",
+    "observed_pairs_clause",
     "query_documents",
     "query_documents_most_derived",
     "query_documents_recent",
     "query_explicit_documents_after",
     "summarize_documents_by_level",
     "DocumentLevelSummary",
+    "ObservedPair",
     "query_external_vector_document_ids",
     "delete_document",
     "delete_document_by_id",
@@ -164,6 +180,16 @@ __all__ = [
     "get_sessions_for_peer",
     # Peer Card
     "get_peer_card",
+    "AddMemberResult",
+    "ObservedSet",
+    "add_member",
+    "expand_observed",
+    "get_members",
+    "get_parents",
+    "membership_rows_to_schemas",
+    "remove_member",
+    "resolve_depth",
+    "resolve_observed_set",
     "set_peer_card",
     # Representation
     "get_working_representation",

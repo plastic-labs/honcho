@@ -183,9 +183,9 @@ def _flatten_conclusions(document: models.Document) -> list[EvidenceObservation]
     caller.
 
     ``observer``/``observed`` come from the rows rather than from the
-    representation, which does not model them. Workspace chat accumulates
-    across every peer it reads, so without them a caller cannot tell which
-    peer any given conclusion is about.
+    representation, which models only the observed peer. Workspace chat and
+    reads over a peer's members accumulate across several peers, so without
+    them a caller cannot tell which peer any given conclusion is about.
     """
     pairs = {document.id: (document.observer, document.observed)}
     representation = Representation.from_documents([document])

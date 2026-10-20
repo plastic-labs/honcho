@@ -95,6 +95,8 @@ class DialecticAgent:
         observed: str,
         observer_peer_card: list[str] | None = None,
         observed_peer_card: list[str] | None = None,
+        observed_set: crud.ObservedSet | None = None,
+        member_peer_cards: dict[str, list[str]] | None = None,
         metric_key: str | None = None,
         reasoning_level: ReasoningLevel = "low",
         session_id: str | None = None,
@@ -112,6 +114,10 @@ class DialecticAgent:
             observed: The peer being queried about
             observer_peer_card: Biographical information about the observer
             observed_peer_card: Biographical information about the observed peer
+            observed_set: The observed peer expanded over its members. Memory
+                recall covers every peer in it, attributed to the peer each
+                conclusion is about; None reads the observed peer alone.
+            member_peer_cards: Cards for the observed peer's members, by member
             metric_key: Optional key for logging metrics (if provided, agent won't log separately)
             reasoning_level: Level of reasoning to apply
             session_id: ID used for grouping traces (not session_name)
@@ -132,6 +138,9 @@ class DialecticAgent:
         self.observed: str = observed
         self.observer_peer_card: list[str] | None = observer_peer_card
         self.observed_peer_card: list[str] | None = observed_peer_card
+        self.observed_set: crud.ObservedSet = observed_set or crud.ObservedSet(
+            peers=[observed], pairs=[(observer, observed)]
+        )
         self.metric_key: str | None = metric_key
         self.reasoning_level: ReasoningLevel = reasoning_level
         self.instructions: ResolvedDialecticConfiguration = (
@@ -147,6 +156,8 @@ class DialecticAgent:
                     observed,
                     observer_peer_card,
                     observed_peer_card,
+                    members=self.observed_set.members,
+                    member_peer_cards=member_peer_cards,
                     available_tools={
                         name
                         for tool in self._select_tools()
@@ -229,10 +240,15 @@ class DialecticAgent:
         try:
             parts.append(
                 await load_memory_counts(
-                    self.workspace_name, observer=self.observer, observed=self.observed
+                    self.workspace_name,
+                    observer=self.observer,
+                    observed=self.observed,
+                    pairs=self.observed_set.pairs,
                 )
             )
-            if settings.DREAM.NOTES_MODE == "on":
+            # The dreamer's notes describe one pair's memory; across members
+            # they would describe only the target's share of it.
+            if settings.DREAM.NOTES_MODE == "on" and not self.observed_set.aggregated:
                 entries = await load_map_entries(
                     self.workspace_name, observer=self.observer, observed=self.observed
                 )
@@ -349,6 +365,7 @@ class DialecticAgent:
                 workspace_name=self.workspace_name,
                 observer=self.observer,
                 observed=self.observed,
+                pairs=self.observed_set.pairs,
                 query=query,
                 limit=prefetch_limit,
                 levels=["explicit"],
@@ -361,6 +378,7 @@ class DialecticAgent:
                 workspace_name=self.workspace_name,
                 observer=self.observer,
                 observed=self.observed,
+                pairs=self.observed_set.pairs,
                 query=query,
                 limit=prefetch_limit,
                 levels=["deductive", "inductive", "contradiction"],
@@ -381,12 +399,21 @@ class DialecticAgent:
             # Format as two separate sections
             parts: list[str] = []
 
+            peers = self.observed_set.peers
             if not explicit_repr.is_empty():
-                parts.append(explicit_repr.format_as_markdown(include_ids=False))
+                parts.append(
+                    explicit_repr.render_attributed(
+                        peers, lambda r: r.format_as_markdown(include_ids=False)
+                    )
+                )
 
             if not derived_repr.is_empty():
                 # Include IDs for derived so agent can use get_reasoning_chain
-                parts.append(derived_repr.format_as_markdown(include_ids=True))
+                parts.append(
+                    derived_repr.render_attributed(
+                        peers, lambda r: r.format_as_markdown(include_ids=True)
+                    )
+                )
 
             # Recorded last: everything above can still fail into the handler
             # below, which drops the whole block from the prompt. Evidence should
@@ -491,6 +518,7 @@ class DialecticAgent:
             session_allowlist=self.session_allowlist,
             observer=self.observer,
             observed=self.observed,
+            observed_set=self.observed_set,
             run_id=self._run_id,
             agent_type="dialectic",
             parent_category="dialectic",

@@ -151,6 +151,13 @@ model = "gpt-5.4-mini"
 [peer_card]
 ENABLED = true
 
+# Peer memberships and read-time aggregation over them
+[peer]
+AGGREGATION_DEFAULT_DEPTH = 1
+AGGREGATION_MAX_DEPTH = 3
+AGGREGATION_MAX_FANOUT = 50
+MAX_MEMBERS = 100
+
 # Dialectic settings
 [dialectic]
 MAX_OUTPUT_TOKENS = 8192

@@ -37,6 +37,7 @@ from .api_types import (
     PeerCardResponse,
     PeerConfig,
     PeerContextResponse,
+    PeerMembership,
     PeerResponse,
     QueueStatusResponse,
     RepresentationResponse,
@@ -58,6 +59,7 @@ from .conclusions import (
     _require_view,
 )
 from .http import routes
+from .members import membership_body, resolve_member_id
 from .message import Message
 from .mixins import AsyncMetadataConfigMixin
 from .pagination import AsyncPage
@@ -80,6 +82,7 @@ from .utils import (
 if TYPE_CHECKING:
     from .client import Honcho
     from .conclusions import ConclusionsView, WorkspaceConclusions
+    from .members import PeerMembers
 
 from .conclusions import ConclusionCreateParams
 from .peer import (
@@ -96,6 +99,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "HonchoAio",
     "PeerAio",
+    "PeerMembersAio",
     "ScopeAio",
     "SessionAio",
     "ConclusionsViewAio",
@@ -840,6 +844,7 @@ class PeerAio(AsyncMetadataConfigMixin):
         sessions: Sequence[str | SessionBase] | None = None,
         reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
         | None = None,
+        depth: int | None = None,
         response_format: type[TResponseFormat],
         include_evidence: Literal[False] = False,
         timeout: float | None = None,
@@ -856,6 +861,7 @@ class PeerAio(AsyncMetadataConfigMixin):
         sessions: Sequence[str | SessionBase] | None = None,
         reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
         | None = None,
+        depth: int | None = None,
         response_format: type[TResponseFormat],
         include_evidence: Literal[True],
         timeout: float | None = None,
@@ -872,6 +878,7 @@ class PeerAio(AsyncMetadataConfigMixin):
         sessions: Sequence[str | SessionBase] | None = None,
         reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
         | None = None,
+        depth: int | None = None,
         response_format: dict[str, Any] | None = None,
         include_evidence: Literal[True],
         timeout: float | None = None,
@@ -888,6 +895,7 @@ class PeerAio(AsyncMetadataConfigMixin):
         sessions: Sequence[str | SessionBase] | None = None,
         reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
         | None = None,
+        depth: int | None = None,
         response_format: dict[str, Any] | None = None,
         include_evidence: Literal[False] = False,
         timeout: float | None = None,
@@ -904,6 +912,9 @@ class PeerAio(AsyncMetadataConfigMixin):
         sessions: Sequence[str | SessionBase] | None = None,
         reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
         | None = None,
+        depth: int | None = Field(
+            None, ge=0, description="How far to aggregate over members"
+        ),
         response_format: type[BaseModel] | dict[str, Any] | None = None,
         include_evidence: bool = False,
         timeout: float | None = Field(
@@ -935,6 +946,8 @@ class PeerAio(AsyncMetadataConfigMixin):
             body["session_id"] = resolved_session_id
         if reasoning_level:
             body["reasoning_level"] = reasoning_level
+        if depth is not None:
+            body["depth"] = depth
         response_format_schema = serialize_response_format(response_format)
         if response_format_schema is not None:
             body["response_format"] = response_format_schema
@@ -959,6 +972,9 @@ class PeerAio(AsyncMetadataConfigMixin):
         sessions: Sequence[str | SessionBase] | None = None,
         reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
         | None = None,
+        depth: int | None = Field(
+            None, ge=0, description="How far to aggregate over members"
+        ),
         response_format: type[BaseModel] | dict[str, Any] | None = None,
         include_evidence: bool = False,
     ) -> AsyncDialecticStreamResponse:
@@ -985,6 +1001,8 @@ class PeerAio(AsyncMetadataConfigMixin):
             body["session_id"] = resolved_session_id
         if reasoning_level:
             body["reasoning_level"] = reasoning_level
+        if depth is not None:
+            body["depth"] = depth
         response_format_schema = serialize_response_format(response_format)
         if response_format_schema is not None:
             body["response_format"] = response_format_schema
@@ -1063,12 +1081,22 @@ class PeerAio(AsyncMetadataConfigMixin):
         limit: int = Field(
             default=10, ge=1, le=100, description="Number of results to return"
         ),
+        *,
+        depth: int | None = Field(
+            None, ge=0, description="How far to aggregate over members"
+        ),
     ) -> list[Message]:
-        """Search across all messages with this peer as author asynchronously."""
+        """Search across all messages with this peer as author asynchronously.
+
+        See Peer.search for parameter details, including ``depth``.
+        """
         await self._peer._honcho._ensure_workspace_async()
+        body: dict[str, Any] = {"query": query, "filters": filters, "limit": limit}
+        if depth is not None:
+            body["depth"] = depth
         data = await self._peer._honcho._async_http_client.post(
             routes.peer_search(self._peer.workspace_id, self._peer.id),
-            body={"query": query, "filters": filters, "limit": limit},
+            body=body,
         )
         return [
             Message.from_api_response(MessageResponse.model_validate(item))
@@ -1150,11 +1178,14 @@ class PeerAio(AsyncMetadataConfigMixin):
         *,
         scope: str | ScopeBase | Sequence[str | ScopeBase] | None = None,
         sessions: Sequence[str | SessionBase] | None = None,
+        depth: int | None = Field(
+            None, ge=0, description="How far to aggregate over members"
+        ),
     ) -> str:
         """Get a subset of the representation of the peer asynchronously.
 
         See Peer.representation for parameter details, including the depth caveat
-        on ``sessions``.
+        on ``sessions`` and member aggregation via ``depth``.
         """
         await self._peer._honcho._ensure_workspace_async()
         session_id = resolve_id(session)
@@ -1177,6 +1208,8 @@ class PeerAio(AsyncMetadataConfigMixin):
             body["include_most_frequent"] = include_most_frequent
         if max_conclusions is not None:
             body["max_conclusions"] = max_conclusions
+        if depth is not None:
+            body["depth"] = depth
 
         data = await self._peer._honcho._async_http_client.post(
             routes.peer_representation(self._peer.workspace_id, self._peer.id),
@@ -1194,8 +1227,16 @@ class PeerAio(AsyncMetadataConfigMixin):
         search_max_distance: float | None = Field(None, ge=0.0, le=1.0),
         include_most_frequent: bool | None = None,
         max_conclusions: int | None = Field(None, ge=1, le=100),
+        *,
+        depth: int | None = Field(
+            None, ge=0, description="How far to aggregate over members"
+        ),
     ) -> PeerContextResponse:
-        """Get context for this peer asynchronously."""
+        """Get context for this peer asynchronously.
+
+        See Peer.context for parameter details, including ``depth`` and
+        ``member_cards``.
+        """
         await self._peer._honcho._ensure_workspace_async()
         target_id = resolve_id(target)
 
@@ -1212,12 +1253,120 @@ class PeerAio(AsyncMetadataConfigMixin):
             query["include_most_frequent"] = include_most_frequent
         if max_conclusions is not None:
             query["max_conclusions"] = max_conclusions
+        if depth is not None:
+            query["depth"] = depth
 
         data = await self._peer._honcho._async_http_client.get(
             routes.peer_context(self._peer.workspace_id, self._peer.id),
             query=query if query else None,
         )
         return PeerContextResponse.model_validate(data)
+
+    @property
+    def members(self) -> "PeerMembersAio":
+        """Async view of this peer's members. See Peer.members."""
+        return PeerMembersAio(self._peer.members)
+
+    async def parents(
+        self,
+        filters: dict[str, Any] | None = None,
+        *,
+        page: int = 1,
+        size: int = 50,
+    ) -> AsyncPage[PeerMembership]:
+        """Get the peers this peer is a member of asynchronously.
+
+        See Peer.parents for details.
+        """
+        return await _alist_memberships(
+            self._peer._honcho,
+            routes.peer_parents_list(self._peer.workspace_id, self._peer.id),
+            filters,
+            page=page,
+            size=size,
+        )
+
+
+async def _alist_memberships(
+    honcho: "Honcho",
+    route: str,
+    filters: dict[str, Any] | None,
+    *,
+    page: int,
+    size: int,
+) -> AsyncPage[PeerMembership]:
+    await honcho._ensure_workspace_async()
+
+    async def fetch_next(next_page: int) -> AsyncPage[PeerMembership]:
+        data = await honcho._async_http_client.post(
+            route,
+            body={"filters": filters} if filters else None,
+            query={"page": next_page, "size": size},
+        )
+        return AsyncPage(data, PeerMembership, None, fetch_next)
+
+    return await fetch_next(page)
+
+
+class PeerMembersAio:
+    """
+    Async view of a PeerMembers.
+
+    Access via `peer.members.aio` or `peer.aio.members`. Provides async versions
+    of all PeerMembers methods. Shares state with the parent PeerMembers instance.
+    """
+
+    __slots__: ClassVar[tuple[str, ...]] = ("_members",)
+    _members: "PeerMembers"
+
+    def __init__(self, members: "PeerMembers") -> None:
+        self._members = members
+
+    async def add(
+        self,
+        peer: str | PeerBase,
+        metadata: dict[str, Any] | None = None,
+    ) -> PeerMembership:
+        """Add a peer as a member of this peer asynchronously.
+
+        See PeerMembers.add for details.
+        """
+        await self._members._honcho._ensure_workspace_async()
+        data = await self._members._honcho._async_http_client.post(
+            routes.peer_members(self._members.workspace_id, self._members.peer_id),
+            body=membership_body(peer, metadata),
+        )
+        return PeerMembership.model_validate(data)
+
+    async def list(
+        self,
+        filters: dict[str, Any] | None = None,
+        *,
+        page: int = 1,
+        size: int = 50,
+    ) -> AsyncPage[PeerMembership]:
+        """List this peer's members asynchronously, oldest membership first."""
+        return await _alist_memberships(
+            self._members._honcho,
+            routes.peer_members_list(self._members.workspace_id, self._members.peer_id),
+            filters,
+            page=page,
+            size=size,
+        )
+
+    async def remove(self, peer: str | PeerBase) -> None:
+        """Remove a member from this peer asynchronously.
+
+        See PeerMembers.remove for details.
+        """
+        await self._members._honcho._ensure_workspace_async()
+        await self._members._honcho._async_http_client.delete(
+            routes.peer_member(
+                self._members.workspace_id,
+                self._members.peer_id,
+                resolve_member_id(peer),
+            )
+        )
 
 
 class SessionAio(AsyncMetadataConfigMixin):
