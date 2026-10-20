@@ -87,7 +87,7 @@ def test_invalid_leftover_is_rebuilt(
         conn.execute(
             text(
                 f'CREATE INDEX {index} ON "{settings.DB.SCHEMA}".queue'
-                + " USING gin ((payload -> 'observers'))"
+                + " USING gin (workspace_name, (payload -> 'observers'))"
             )
         )
         # What a CREATE INDEX CONCURRENTLY that failed part-way leaves behind.

@@ -7,8 +7,8 @@ counter (INTEGER NOT NULL DEFAULT 0) on workspaces, sessions and collections.
 Every index is partial on ``processed = false`` and on its expression being
 non-null, so it holds only pending rows of the task types that carry the key:
 
-- ix_queue_pending_observers: GIN on ``payload -> 'observers'``
-  (representation fan-out, queried with ``?``)
+- ix_queue_pending_observers: GIN on ``(workspace_name, payload -> 'observers')``
+  (representation fan-out, queried with ``?``; needs btree_gin)
 - ix_queue_pending_observed: ``(workspace_name, payload ->> 'observed')``
   (representation, dream)
 - ix_queue_pending_observer: ``(workspace_name, payload ->> 'observer')``
@@ -27,6 +27,10 @@ then makes the build a no-op. The queue is not
 partitioned in any lineage, so the concurrent path always applies. When env.py
 runs on a caller-supplied connection (the alembic test pipeline), the indexes
 are built with a plain, transactional CREATE INDEX.
+
+btree_gin is created in migrations/env.py. Where the migration role cannot
+create it, ix_queue_pending_observers is skipped with a warning that prints the
+statement to create it later; the model declares it regardless.
 
 Revision ID: a5f8da8f6d23
 Revises: 3e7a1c9d5b20
@@ -67,14 +71,16 @@ class _QueueIndex:
     columns: tuple[str, ...]
     predicate: str
     using: str = "btree"
+    extension: str | None = None
 
 
 QUEUE_INDEXES = (
     _QueueIndex(
         name="ix_queue_pending_observers",
-        columns=("(payload -> 'observers')",),
+        columns=("workspace_name", "(payload -> 'observers')"),
         predicate="processed = false AND (payload -> 'observers') IS NOT NULL",
         using="gin",
+        extension="btree_gin",
     ),
     _QueueIndex(
         name="ix_queue_pending_observed",
@@ -97,6 +103,38 @@ QUEUE_INDEXES = (
         predicate="processed = false AND (payload ->> 'session_name') IS NOT NULL",
     ),
 )
+
+
+def _extension_installed(connection: Connection, extension: str) -> bool:
+    return bool(
+        connection.scalar(
+            text("SELECT 1 FROM pg_extension WHERE extname = :name"),
+            {"name": extension},
+        )
+    )
+
+
+def _buildable_indexes(connection: Connection) -> list[_QueueIndex]:
+    """Return the indexes whose extension is installed, warning about the rest."""
+    indexes: list[_QueueIndex] = []
+    for index in QUEUE_INDEXES:
+        if index.extension and not _extension_installed(connection, index.extension):
+            logger.warning(
+                "%s is not installed; skipping %s. To add the index later, install"
+                + " %s as a privileged role and run: CREATE INDEX CONCURRENTLY %s"
+                + ' ON "%s".queue USING %s (%s) WHERE %s',
+                index.extension,
+                index.name,
+                index.extension,
+                index.name,
+                schema,
+                index.using,
+                ", ".join(index.columns),
+                index.predicate,
+            )
+            continue
+        indexes.append(index)
+    return indexes
 
 
 def _index_valid(connection: Connection, name: str) -> bool | None:
@@ -191,13 +229,14 @@ def upgrade() -> None:
         )
 
     connection = op.get_bind()
+    indexes = _buildable_indexes(connection)
     if _caller_owns_transaction():
-        for index in QUEUE_INDEXES:
+        for index in indexes:
             _build_index(connection, index, concurrently=False)
         return
 
     with op.get_context().autocommit_block(), _build_timeouts(connection):
-        for index in QUEUE_INDEXES:
+        for index in indexes:
             logger.info(
                 "Building %s concurrently; waits for open transactions on queue"
                 + " and older snapshots anywhere in the database, up to %s",

@@ -644,9 +644,11 @@ class QueueItem(Base):
             unique=True,
             postgresql_where=text("task_type = 'dream' AND processed = false"),
         ),
-        # Pending-work lookups by the peer or session a payload references
+        # Pending-work lookups by the peer or session a payload references.
+        # The observers index needs btree_gin for its workspace_name column.
         Index(
             "ix_queue_pending_observers",
+            "workspace_name",
             text("(payload -> 'observers')"),
             postgresql_using="gin",
             postgresql_where=text(

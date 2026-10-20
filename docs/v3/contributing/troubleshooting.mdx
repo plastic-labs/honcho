@@ -226,6 +226,7 @@ uv run alembic upgrade head
 ```sql
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE EXTENSION IF NOT EXISTS btree_gin;
 ```
 
 The `IF NOT EXISTS` calls then short-circuit and the application role needs no extension privileges. This is the supported path for deployments where the platform, not the application, owns extension management.
@@ -241,6 +242,17 @@ You won't hit this with `docker compose` — the bundled stack connects as `post
 ```sql
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE INDEX CONCURRENTLY ix_messages_content_trgm ON "<schema>".messages USING gin (content gin_trgm_ops);
+```
+
+### "btree_gin is not installed; skipping ix_queue_pending_observers"
+
+**Cause:** Migrations couldn't create the `btree_gin` extension, so they skipped the queue index that finds pending work fanning out to a peer within a workspace. Nothing reads it in normal operation; lookups that would use it fall back to other queue indexes.
+
+**Fix:** Install the extension as a privileged role, then create the index with the statement printed in the warning (the migration is already recorded as applied, so re-running migrations won't add it):
+
+```sql
+CREATE EXTENSION IF NOT EXISTS btree_gin;
+CREATE INDEX CONCURRENTLY ix_queue_pending_observers ON "<schema>".queue USING gin (workspace_name, (payload -> 'observers')) WHERE processed = false AND (payload -> 'observers') IS NOT NULL;
 ```
 
 ### Migration waits a long time on "Building ix_messages_content_trgm concurrently"
