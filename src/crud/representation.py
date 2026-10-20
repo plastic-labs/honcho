@@ -195,6 +195,7 @@ class RepresentationManager:
         documents_to_create: list[schemas.DocumentCreate] = []
         for obs, embedding in zip(all_observations, embeddings, strict=True):
             # NOTE: will add additional levels of reasoning in the future
+            source_message_ids: list[str] | None = None
             if isinstance(obs, DeductiveObservation):
                 obs_level = "deductive"
                 obs_content = obs.conclusion
@@ -203,6 +204,7 @@ class RepresentationManager:
                 obs_level = "explicit"
                 obs_content = obs.content
                 obs_premises = None
+                source_message_ids = obs.source_message_ids or None
 
             metadata: schemas.DocumentMetadata = schemas.DocumentMetadata(
                 message_ids=message_ids,
@@ -217,6 +219,7 @@ class RepresentationManager:
                     level=obs_level,
                     metadata=metadata,
                     embedding=embedding,
+                    source_message_ids=source_message_ids,
                 )
             )
 

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `source_message_ids` on conclusion output: the messages an explicit conclusion cites as evidence (Honcho v3.4.0+; a count in table mode, the full list in JSON). `conclusion list --cites <message_id>` narrows to the conclusions that cite a message. Null in JSON on servers or SDKs that predate the field
+
 ### Fixed
 
 - `honcho session summaries`, `honcho session inspect`, `honcho session context` and `honcho workspace queue-status` emit nested SDK objects (summaries, context messages, per-session queue status) as JSON objects instead of Python repr strings like `"content='...' message_id='...'"`

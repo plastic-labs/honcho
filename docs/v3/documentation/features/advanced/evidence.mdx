@@ -111,7 +111,7 @@ Two further limits:
 ```
 </CodeGroup>
 
-**Conclusions** carry the ID, level, and text of each conclusion read. `source_ids` names the conclusions a derived one was reasoned from, so you can walk a chain back toward the explicit statements at its base; explicit conclusions have none, since they derive from messages rather than from other conclusions. `session_id` is null for a conclusion that was reasoned across sessions and so belongs to none. Timestamps are when a conclusion was derived, taken from its source messages where that is recorded.
+**Conclusions** carry the ID, level, and text of each conclusion read. `source_ids` names the conclusions a derived one was reasoned from, so you can walk a chain back toward the explicit statements at its base; explicit conclusions have none, since they derive from messages rather than from other conclusions. To continue the walk from an explicit conclusion to the messages it cites, fetch it from the [conclusions endpoint](/v3/api-reference/conclusions): its `source_message_ids` lists them. `session_id` is null for a conclusion that was reasoned across sessions and so belongs to none. Timestamps are when a conclusion was derived, taken from its source messages where that is recorded.
 
 **Messages** carry identity and provenance only — no content. Fetch a message by its `id` when you need the text.
 

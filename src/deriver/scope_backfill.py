@@ -29,13 +29,14 @@ from dataclasses import dataclass
 from typing import Any
 
 from nanoid import generate as generate_nanoid
-from sqlalchemy import exists, or_, select, update
+from sqlalchemy import delete, exists, insert, or_, select, update
 from sqlalchemy.dialects.postgresql import array
 from sqlalchemy.orm import load_only
 from sqlalchemy.sql.functions import func
 
 from src import crud, models
 from src.config import settings
+from src.crud.document import build_source_message_links
 from src.crud.scope import ScopeBackfillState
 from src.dependencies import tracked_db
 from src.dreamer.working_memory import EPOCH_KEY, NOTES_KEY
@@ -90,6 +91,7 @@ class _CopySpec:
     internal_metadata: dict[str, Any]
     times_derived: int
     source_ids: list[str] | None
+    source_message_ids: list[str] | None
     session_name: str
     restore_document_id: str | None = None
 
@@ -263,6 +265,7 @@ async def _run_backfill(
                     source_ids=list(source.source_ids)
                     if source.source_ids is not None
                     else None,
+                    source_message_ids=source.source_message_ids,
                     session_name=session_name,
                     restore_document_id=soft_deleted_copies.get(key),
                 )
@@ -360,9 +363,21 @@ async def _copy_chunk(
             )
 
         restore_ids: list[str] = []
+        restored_citations: list[dict[str, Any]] = []
         for spec in plans:
             if spec.restore_document_id is not None:
                 restore_ids.append(spec.restore_document_id)
+                restored_citations.extend(
+                    {
+                        "conclusion_id": spec.restore_document_id,
+                        "message_id": link.message_id,
+                        "position": link.position,
+                        "workspace_name": workspace_name,
+                    }
+                    for link in build_source_message_links(
+                        spec.source_message_ids, workspace_name
+                    )
+                )
                 continue
             row = models.Document(
                 workspace_name=workspace_name,
@@ -377,6 +392,7 @@ async def _copy_chunk(
                 },
                 session_name=spec.session_name,
                 source_ids=spec.source_ids,
+                source_message_ids=spec.source_message_ids,
                 embedding=spec.embedding if store_in_postgres else None,
             )
             row.sync_state = "pending"
@@ -389,6 +405,17 @@ async def _copy_chunk(
                 .where(models.Document.id.in_(restore_ids))
                 .values(deleted_at=None, sync_state="pending")
             )
+            # The source may have gained citations since this copy was
+            # removed; a restored copy takes the source's current set.
+            await db.execute(
+                delete(models.ConclusionSourceMessage).where(
+                    models.ConclusionSourceMessage.conclusion_id.in_(restore_ids)
+                )
+            )
+            if restored_citations:
+                await db.execute(
+                    insert(models.ConclusionSourceMessage), restored_citations
+                )
         await db.commit()
 
         # IDs are generated client-side and remain accessible post-commit

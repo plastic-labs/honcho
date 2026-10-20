@@ -53,6 +53,28 @@ def build_source_links(
     ]
 
 
+def build_source_message_links(
+    message_ids: list[str] | None, workspace_name: str
+) -> list[models.ConclusionSourceMessage]:
+    """Convert cited message public ids to ConclusionSourceMessage rows, deduped."""
+    if not message_ids:
+        return []
+    return [
+        models.ConclusionSourceMessage(
+            message_id=mid, position=i, workspace_name=workspace_name
+        )
+        for i, mid in enumerate(dict.fromkeys(message_ids))
+        if models.SOURCE_ID_RE.match(mid)
+    ]
+
+
+def _merge_citations(
+    first: list[str] | None, incoming: list[str] | None
+) -> list[str] | None:
+    """Union two citation lists, keeping first-seen order; None when both empty."""
+    return list(dict.fromkeys([*(first or []), *(incoming or [])])) or None
+
+
 def get_all_documents(
     workspace_name: str,
     *,
@@ -788,9 +810,15 @@ async def create_documents(
                 existing_doc,
             )
 
-    # Tracks dedup keys already accepted from this batch so exact
-    # duplicates within a single inference call collapse to one document.
-    seen_in_batch: set[tuple[str, str, str | None]] = set()
+    # First document seen per dedup key, so exact duplicates within a single
+    # inference call collapse to one document. A collapsed duplicate's
+    # citations fold into the first one, and into its pending row if any.
+    first_in_batch: dict[tuple[str, str, str | None], schemas.DocumentCreate] = {}
+    pending_by_key: dict[tuple[str, str, str | None], models.Document] = {}
+    # Existing row id -> the incoming document replacing it, by its dedup key.
+    replaced_by: dict[
+        str, tuple[schemas.DocumentCreate, tuple[str, str, str | None]]
+    ] = {}
     row_ops: list[_DocumentRowOp] = []
     pending_times_derived: dict[str, int] = {}
 
@@ -819,10 +847,21 @@ async def create_documents(
 
             # Exact-match dedup, always on:
             # 1) collapse exact duplicates within this batch (drop silently).
-            if dedup_key in seen_in_batch:
+            first_doc = first_in_batch.get(dedup_key)
+            if first_doc is not None:
                 exact_dup_in_batch_count += 1
+                first_doc.source_message_ids = _merge_citations(
+                    first_doc.source_message_ids, doc.source_message_ids
+                )
+                pending_doc = pending_by_key.get(dedup_key)
+                if pending_doc is not None:
+                    # Same validation as the first insert: a malformed id
+                    # would fail the check constraints and the whole batch.
+                    pending_doc.source_message_links = build_source_message_links(
+                        first_doc.source_message_ids, workspace_name
+                    )
                 continue
-            seen_in_batch.add(dedup_key)
+            first_in_batch[dedup_key] = doc
 
             # 2) drop exact duplicates of an existing live document, recording
             #    the re-derivation as reinforcement on the existing row.
@@ -860,7 +899,13 @@ async def create_documents(
                     )
                     doc.times_derived = max(doc.times_derived, current_td + 1)
                     pending_times_derived[existing_dup.id] = doc.times_derived
+                    # The replacement inherits the replaced row's citations,
+                    # as it inherits its derivation count.
+                    doc.source_message_ids = _merge_citations(
+                        existing_dup.source_message_ids, doc.source_message_ids
+                    )
                     row_ops.append(_DocumentRowOp("replace", existing_dup.id))
+                    replaced_by.setdefault(existing_dup.id, (doc, dedup_key))
                     semantic_dup_replaced_count += 1
                 elif (
                     duplicate_result is SemanticRejectionResult.REJECTED
@@ -888,6 +933,7 @@ async def create_documents(
             )
             honcho_documents.append(new_doc)
             accepted_documents.append(doc)
+            pending_by_key[dedup_key] = new_doc
             if doc.embedding:
                 docs_with_embeddings.append((new_doc, doc.embedding))
 
@@ -906,6 +952,26 @@ async def create_documents(
                 f"Error adding new document to {workspace_name}/{doc.session_name}/{observer}/{observed}: {e}"
             )
             continue
+
+    # A reinforce aimed at a row this batch also replaces would land on the
+    # deleted row, or be skipped, depending on op order. Its citations belong
+    # to the replacement.
+    for op in row_ops:
+        if op.kind != "reinforce" or op.fallback_document is None:
+            continue
+        replacement = replaced_by.get(op.document_id)
+        if replacement is None:
+            continue
+        replacement_doc, replacement_key = replacement
+        replacement_doc.source_message_ids = _merge_citations(
+            replacement_doc.source_message_ids,
+            op.fallback_document.source_message_ids,
+        )
+        replacement_row = pending_by_key.get(replacement_key)
+        if replacement_row is not None:
+            replacement_row.source_message_links = build_source_message_links(
+                replacement_doc.source_message_ids, workspace_name
+            )
 
     try:
         fallback_docs = await _apply_document_row_updates(
@@ -1426,6 +1492,9 @@ def _document_model_from_create(
             session_name=doc.session_name,
             embedding=doc.embedding,
             source_links=build_source_links(doc.source_ids, workspace_name),
+            source_message_links=build_source_message_links(
+                doc.source_message_ids, workspace_name
+            ),
         )
     else:
         new_doc = models.Document(
@@ -1438,6 +1507,9 @@ def _document_model_from_create(
             internal_metadata=metadata_dict,
             session_name=doc.session_name,
             source_links=build_source_links(doc.source_ids, workspace_name),
+            source_message_links=build_source_message_links(
+                doc.source_message_ids, workspace_name
+            ),
         )
     if doc.embedding:
         new_doc.sync_state = "pending"
@@ -1471,6 +1543,32 @@ async def _apply_document_row_updates(
         .execution_options(populate_existing=True)
     )
     locked = {doc.id: doc for doc in result.scalars()}
+    # Read the targets' current citations under the row lock: the selectin
+    # collection can predate a concurrent writer's links.
+    cite_ids = sorted(
+        {
+            op.document_id
+            for op in ops
+            if op.kind == "reinforce"
+            and op.fallback_document is not None
+            and op.fallback_document.source_message_ids
+        }
+    )
+    existing_citations: dict[str, list[str]] = {doc_id: [] for doc_id in cite_ids}
+    if cite_ids:
+        citation_rows = await db.execute(
+            select(
+                models.ConclusionSourceMessage.conclusion_id,
+                models.ConclusionSourceMessage.message_id,
+            )
+            .where(models.ConclusionSourceMessage.conclusion_id.in_(cite_ids))
+            .order_by(
+                models.ConclusionSourceMessage.conclusion_id,
+                models.ConclusionSourceMessage.position,
+            )
+        )
+        for conclusion_id, message_id in citation_rows.all():
+            existing_citations[conclusion_id].append(message_id)
     now = datetime.datetime.now(datetime.UTC)
     fallbacks: list[schemas.DocumentCreate] = []
     stale_at_lock = {
@@ -1494,8 +1592,34 @@ async def _apply_document_row_updates(
             # An earlier op in this batch replaced this row.
             continue
         row.times_derived = max(row.times_derived + 1, op.incoming_times_derived)
+        if op.fallback_document is not None:
+            _append_citations(
+                row,
+                existing_citations.get(row.id, []),
+                op.fallback_document.source_message_ids,
+                workspace_name,
+            )
     await db.flush()
     return fallbacks
+
+
+def _append_citations(
+    row: models.Document,
+    existing: list[str],
+    incoming: list[str] | None,
+    workspace_name: str,
+) -> None:
+    """Add the incoming citations a reinforced row lacks, after its own.
+
+    ``existing`` is updated in place, so a second reinforce of the same row in
+    one batch sees the first one's additions.
+    """
+    for link in build_source_message_links(incoming, workspace_name):
+        if link.message_id in existing:
+            continue
+        link.position = len(existing)
+        row.source_message_links.append(link)
+        existing.append(link.message_id)
 
 
 class SemanticRejectionResult(Enum):
