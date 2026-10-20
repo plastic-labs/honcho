@@ -9,12 +9,7 @@ This package versions independently of the Honcho API, `@honcho-ai/sdk`, and hos
 
 ## [Unreleased]
 
-### Fixed
-
-- An expired or revoked OAuth token now returns HTTP 401 (`invalid_token`)
-  instead of a tool error, so clients refresh it rather than showing Honcho as
-  signed out after an hour. Tool calls now respond with a single JSON body
-  instead of an SSE stream. API key errors are unchanged.
+## [3.2.0] - 2026-10-20
 
 ### Added
 
@@ -30,6 +25,13 @@ as before.
 
 ### Fixed
 
+- An expired or revoked OAuth token now returns HTTP 401 (`invalid_token`)
+  instead of a tool error, so clients refresh it rather than showing Honcho as
+  signed out after an hour. Tool calls now respond with a single JSON body
+  instead of an SSE stream. API key errors are unchanged.
+- A request carrying an expired or unknown `mcp-session-id` returns HTTP 404
+  instead of 400, the Streamable HTTP signal for a client to start a new
+  session. A request with no session header at all still returns 400.
 - `bun run deploy` and `bun run deploy:staging` reinstall from the lockfile and
   typecheck before deploying. wrangler bundles whatever is in `node_modules`, so a
   checkout with a stale install shipped the Worker against `@honcho-ai/sdk` 2.2.0.
