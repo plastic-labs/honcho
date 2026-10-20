@@ -294,15 +294,20 @@ async def setup_test_database(db_url: URL):
     engine = create_async_engine(db_url, echo=False)
     async with engine.connect() as conn:
         try:
-            logger.info("Attempting to create pgvector and pg_trgm extensions...")
+            logger.info(
+                "Attempting to create pgvector, pg_trgm and btree_gin extensions..."
+            )
             await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
             await conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS btree_gin"))
             await conn.commit()
-            logger.info("pgvector and pg_trgm extensions created successfully.")
+            logger.info(
+                "pgvector, pg_trgm and btree_gin extensions created successfully."
+            )
         except ProgrammingError as e:
             logger.error(f"ProgrammingError: {e}")
             raise RuntimeError(
-                "Failed to create pgvector/pg_trgm extensions. Make sure they're installed on the PostgreSQL server."
+                "Failed to create pgvector/pg_trgm/btree_gin extensions. Make sure they're installed on the PostgreSQL server."
             ) from e
         except OperationalError as e:
             logger.error(f"OperationalError: {e}")
@@ -994,6 +999,8 @@ def mock_tracked_db(request: pytest.FixtureRequest):
         "src.reconciler.embed_now.tracked_db",
         "src.dialectic.core.tracked_db",
         "src.dreamer.specialists.tracked_db",
+        "src.utils.memory_brief.tracked_db",
+        "src.dreamer.working_memory.tracked_db",
         "src.dreamer.surprisal.tracked_db",
         "src.deriver.scope_backfill.tracked_db",
     ]

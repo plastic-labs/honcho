@@ -191,6 +191,67 @@ class DreamSpecialistEvent(BaseEvent, CustomInstructionsFields):
         description="Exception class name when success=False; None on success.",
     )
 
+    # Tool-loop budget (shared with dialectic.completed)
+    hit_iteration_limit: bool = Field(
+        default=False,
+        description="True when the tool loop ran out of iterations and made its final call without a natural stop.",
+    )
+    iteration_limit: int | None = Field(
+        default=None,
+        description="Tool-iteration limit this run was given.",
+    )
+    budget_line_enabled: bool = Field(
+        default=False,
+        description="True when the model was shown how many tool calls it had left.",
+    )
+
+    # Write window (dream.specialist only)
+    write_window_used: bool = Field(
+        default=False,
+        description="True when the pass reached the iterations reserved for writes.",
+    )
+    refused_search_count: int = Field(
+        default=0,
+        description="Search calls refused because they came during the write window.",
+    )
+
+    # Working notes (dream.specialist only)
+    notes_added: int = Field(
+        default=0, description="Note entries added by update_notes."
+    )
+    notes_replaced: int = Field(
+        default=0, description="Note entries rewritten by update_notes."
+    )
+    notes_removed: int = Field(
+        default=0, description="Note entries removed by update_notes."
+    )
+    notes_entries_loaded: int = Field(
+        default=0, description="Note entries loaded into the prompt after pruning."
+    )
+    notes_tokens_loaded: int = Field(
+        default=0, description="Estimated tokens of the note entries loaded."
+    )
+    pending_loaded: int = Field(
+        default=0, description="Pending entries loaded for this pass to resolve."
+    )
+    pending_resolved: int = Field(
+        default=0, description="Pending entries this pass removed (made or discarded)."
+    )
+    pending_expired: int = Field(
+        default=0,
+        description="Pending entries dropped unresolved at load because they expired.",
+    )
+
+    # Since-last-dream work list (dream.specialist only)
+    new_conclusions_shown: int = Field(
+        default=0,
+        description="Explicit conclusions listed as new since the last dream.",
+    )
+    new_conclusions_remaining: int = Field(
+        default=0,
+        description="New explicit conclusions left for later dreams by the list cap.",
+    )
+
     # Peer card custom instructions (dream's own pair comes from the mixin)
     peer_card_custom_instructions_tokens: int = Field(
         default=0,

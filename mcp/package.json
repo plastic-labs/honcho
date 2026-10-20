@@ -13,8 +13,10 @@
     "dev": "wrangler dev",
     "stdio": "bun src/stdio.ts",
     "http": "bun src/http.ts",
-    "deploy": "wrangler deploy",
-    "deploy:staging": "wrangler deploy --env staging"
+    "typecheck": "tsc --noEmit",
+    "check:deploy": "bun install --frozen-lockfile && tsc --noEmit",
+    "deploy": "bun run check:deploy && wrangler deploy",
+    "deploy:staging": "bun run check:deploy && wrangler deploy --env staging"
   },
   "dependencies": {
     "@honcho-ai/sdk": "^2.5.0",

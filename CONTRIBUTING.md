@@ -205,6 +205,7 @@ public and internal vocabularies are being reconciled deliberately.
 | The CLI                      | `honcho-cli/`                                                                      |
 | The MCP server               | `mcp/`                                                                             |
 | The Hermes plugin            | `hermes-plugin-honcho/` — its `README.md` documents intended behavior              |
+| The Cursor and Grok Bot plugin | `integrations/cursor/` — manifest, MCP config, skills and hooks                   |
 | Code shared by integrations  | `harness-plugin-core/`                                                             |
 | Public documentation         | `docs/v3/` — Mintlify; nav lives in `docs/docs.json`                               |
 
