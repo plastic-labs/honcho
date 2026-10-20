@@ -253,6 +253,9 @@ class PeerCardResponse(BaseModel):
     """Peer card API response."""
 
     peer_card: list[str] | None = None
+    member_cards: dict[str, list[str] | None] | None = None
+    """Cards for the target's members, keyed by member peer ID. ``None`` when
+    the read did not aggregate over any members."""
 
 
 class PeerContextResponse(BaseModel):
@@ -262,6 +265,22 @@ class PeerContextResponse(BaseModel):
     target_id: str
     representation: str | None = None
     peer_card: list[str] | None = None
+    member_cards: dict[str, list[str] | None] | None = None
+    """Cards for the target's members, keyed by member peer ID. ``None`` when
+    the read did not aggregate over any members."""
+
+
+class PeerMembership(BaseModel):
+    """One peer's membership in another."""
+
+    parent_id: str
+    """ID of the peer the member belongs to."""
+    peer_id: str
+    """ID of the member peer."""
+    workspace_id: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    """Application-owned metadata for the membership, such as a role."""
+    created_at: datetime.datetime
 
 
 # ==============================================================================

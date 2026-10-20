@@ -1030,6 +1030,33 @@ class TestGetReasoningChainWorkspace:
         assert "Observation" in result
         assert "Premises" in result
 
+    async def test_explicit_observation_shows_derived_conclusions(
+        self,
+        db_session: AsyncSession,
+        make_workspace_ctx: Callable[..., ToolContext],
+        workspace_test_data: Any,
+    ):
+        """Children are found though the workspace context has no pair."""
+        workspace, peer1, peer2, _, _, _, docs_peer2, _ = workspace_test_data
+        child = models.Document(
+            workspace_name=workspace.name,
+            observer=peer1.name,
+            observed=peer2.name,
+            content="User keeps a consistent morning routine",
+            embedding=[0.3] * 1536,
+            level="deductive",
+            source_ids=[docs_peer2[0].id],
+        )
+        db_session.add(child)
+        await db_session.commit()
+
+        ctx = make_workspace_ctx()
+        result = await _handle_get_reasoning_chain(
+            ctx, {"observation_id": docs_peer2[0].id, "direction": "conclusions"}
+        )
+
+        assert "consistent morning routine" in result
+
 
 # =============================================================================
 # Tool Executor Tests

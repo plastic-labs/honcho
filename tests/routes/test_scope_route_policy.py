@@ -192,6 +192,22 @@ def _b_dream_observed(c: TestClient, ws: str, _s: str, p: str):
     )
 
 
+def _b_add_member_parent(c: TestClient, ws: str, _s: str, p: str):
+    return c.post(f"/v3/workspaces/{ws}/peers/{p}/members", json={"peer_id": _OTHER})
+
+
+def _b_list_members(c: TestClient, ws: str, _s: str, p: str):
+    return c.post(f"/v3/workspaces/{ws}/peers/{p}/members/list", json={})
+
+
+def _b_list_parents(c: TestClient, ws: str, _s: str, p: str):
+    return c.post(f"/v3/workspaces/{ws}/peers/{p}/parents/list", json={})
+
+
+def _b_remove_member(c: TestClient, ws: str, _s: str, p: str):
+    return c.delete(f"/v3/workspaces/{ws}/peers/{p}/members/{_OTHER}")
+
+
 def _b_session_create(c: TestClient, ws: str, _s: str, p: str):
     return c.post(
         f"/v3/workspaces/{ws}/sessions",
@@ -364,6 +380,14 @@ POLICY: tuple[Case, ...] = (
         True,
         refuse_missing=True,
         build=_b_session_context_target,
+    ),
+    Case(
+        "POST",
+        f"{_W}/peers/{{peer_id}}/members",
+        "peer_id",
+        True,
+        refuse_missing=True,
+        build=_b_add_member_parent,
     ),
     # ---- observer position: legitimately a scope ----
     Case(
@@ -607,6 +631,36 @@ POLICY: tuple[Case, ...] = (
             "Mints a scoped JWT rather than touching a peer, so no peer row is read "
             "or written. Keys cannot be bound to a scope yet."
         ),
+    ),
+    Case(
+        "POST",
+        f"{_W}/peers/{{peer_id}}/members/list",
+        "peer_id",
+        False,
+        reason=_READ_ONLY_OK,
+        build=_b_list_members,
+        allow_status=(200,),
+    ),
+    Case(
+        "POST",
+        f"{_W}/peers/{{peer_id}}/parents/list",
+        "peer_id",
+        False,
+        reason=_READ_ONLY_OK,
+        build=_b_list_parents,
+        allow_status=(200,),
+    ),
+    Case(
+        "DELETE",
+        f"{_W}/peers/{{peer_id}}/members/{{member_id}}",
+        "peer_id",
+        False,
+        reason=(
+            "Removal only deletes membership rows, and a scope can never hold "
+            "one, so this is a no-op for a scope."
+        ),
+        build=_b_remove_member,
+        allow_status=(204,),
     ),
 )
 

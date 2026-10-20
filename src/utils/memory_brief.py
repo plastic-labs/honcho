@@ -7,7 +7,7 @@ layout, and a counts line for the first user message. Keeping both here means
 the two agents can't drift apart.
 """
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 
 from src import crud
 from src.crud.document import DocumentLevelSummary
@@ -81,11 +81,18 @@ def format_memory_counts(summary: DocumentLevelSummary) -> str:
 
 
 async def load_memory_counts(
-    workspace_name: str, *, observer: str, observed: str
+    workspace_name: str,
+    *,
+    observer: str,
+    observed: str,
+    pairs: Sequence[crud.ObservedPair] | None = None,
 ) -> str:
-    """Query and format the counts line for one observer/observed pair."""
+    """Query and format the counts line for one observer/observed pair.
+
+    ``pairs``, when given, counts across those collections instead.
+    """
     async with tracked_db("memory_brief.counts", read_only=True) as db:
         summary = await crud.summarize_documents_by_level(
-            db, workspace_name, observer=observer, observed=observed
+            db, workspace_name, observer=observer, observed=observed, pairs=pairs
         )
     return format_memory_counts(summary)

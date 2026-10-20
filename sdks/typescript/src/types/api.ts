@@ -86,6 +86,7 @@ export interface PeerChatParams {
   session_id?: string
   target?: string
   reasoning_level?: 'minimal' | 'low' | 'medium' | 'high' | 'max'
+  depth?: number
   response_format?: Record<string, unknown>
   include_evidence?: boolean
 }
@@ -173,6 +174,7 @@ export interface ChatResponse<TContent = string> {
 export interface PeerRepresentationParams {
   session_id?: string
   target?: string
+  depth?: number
   search_query?: string
   search_top_k?: number
   search_max_distance?: number
@@ -182,14 +184,21 @@ export interface PeerRepresentationParams {
 
 export interface PeerCardParams {
   target?: string
+  depth?: number
 }
 
 export interface PeerCardResponse {
   peer_card: string[] | null
+  /**
+   * Cards for the target's members, keyed by member peer ID. Omitted when the
+   * read did not aggregate over any members.
+   */
+  member_cards?: Record<string, string[] | null>
 }
 
 export interface PeerContextParams {
   target?: string
+  depth?: number
   search_query?: string
   search_top_k?: number
   search_max_distance?: number
@@ -202,6 +211,27 @@ export interface PeerContextResponse {
   target_id: string
   representation: string | null
   peer_card: string[] | null
+  /**
+   * Cards for the target's members, keyed by member peer ID. Omitted when the
+   * read did not aggregate over any members.
+   */
+  member_cards?: Record<string, string[] | null>
+}
+
+export interface PeerMembershipCreateParams {
+  peer_id: string
+  metadata?: Record<string, unknown>
+}
+
+/** One peer's membership in another. */
+export interface PeerMembershipResponse {
+  /** ID of the peer the member belongs to. */
+  parent_id: string
+  /** ID of the member peer. */
+  peer_id: string
+  workspace_id: string
+  metadata: Record<string, unknown>
+  created_at: string
 }
 
 // =============================================================================

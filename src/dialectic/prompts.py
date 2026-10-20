@@ -2,7 +2,7 @@
 System prompts for the Dialectic Agent.
 """
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping, Sequence
 
 from src.utils.formatting import custom_instructions_section
 
@@ -116,6 +116,39 @@ def _custom_instructions_suffix(custom_instructions: str | None) -> str:
     return f"\n{section}\n" if section else ""
 
 
+def _members_section(
+    observed: str,
+    members: Sequence[str],
+    member_peer_cards: Mapping[str, list[str]] | None,
+) -> str:
+    """Explain that the subject is made of other peers, and how to attribute."""
+    if not members:
+        return ""
+    cards = "".join(
+        f"""
+<member_peer_card peer="{member}">
+{chr(10).join(card)}
+</member_peer_card>
+"""
+        for member in members
+        if (card := (member_peer_cards or {}).get(member))
+    )
+    cards_section = (
+        f"""
+Known biographical information about the members:
+{cards}"""
+        if cards
+        else ""
+    )
+    return f"""
+## MEMBERS
+
+'{observed}' is made of other peers: {", ".join(f"'{m}'" for m in members)}. Memory for this query covers '{observed}' itself and each of its members. Conclusions about a member are grouped under a heading naming the peer they are about; unheaded conclusions are about '{observed}' itself.
+
+When you rely on a member's conclusion, say which member it came from. A member's conclusion is about that member: do not present it as true of '{observed}' as a whole, or of another member, unless the conclusions themselves say so. If two members hold the same fact, that is two sources, not a contradiction.
+{cards_section}"""
+
+
 def agent_system_prompt(
     observer: str,
     observed: str,
@@ -123,6 +156,8 @@ def agent_system_prompt(
     observed_peer_card: list[str] | None,
     available_tools: Iterable[str] | None = None,
     custom_instructions: str | None = None,
+    members: Sequence[str] = (),
+    member_peer_cards: Mapping[str, list[str]] | None = None,
 ) -> str:
     """System prompt for pair-scoped dialectic recall.
 
@@ -131,6 +166,10 @@ def agent_system_prompt(
         observed: The peer being queried about
         observer_peer_card: Biographical information about the observer
         observed_peer_card: Biographical information about the observed peer
+        members: Peers the observed peer is made of whose memory this query
+            also covers, in expansion order. Empty for a single-peer query,
+            which leaves the prompt unchanged.
+        member_peer_cards: Cards for those members, by member
         available_tools: Tool names offered on this request. Defaults to the
             full pair loadout.
         custom_instructions: Resolved dialectic custom instructions, if any
@@ -183,6 +222,10 @@ You are answering queries about '{observed}'.
 
 {peer_card_section}
 """
+
+    members_section = _members_section(observed, members, member_peer_cards)
+    if members_section:
+        perspective_section += members_section
 
     # Build peer card explanation section (only if peer cards are being used)
     peer_card_explanation = ""
