@@ -75,9 +75,9 @@ honcho stop --wipe     # also delete volumes
 | `honcho workspace list` | List accessible workspaces |
 | `honcho workspace create <id>` | Create or get a workspace |
 | `honcho workspace inspect` | Peers, sessions, config for a workspace |
-| `honcho workspace chat <query>` | Query the dialectic across all peers (optional `-s` / `--scope` / `--reasoning`) |
+| `honcho workspace chat <query>` | Query the dialectic across all peers (optional `-s` / `--scope` / `--reasoning` / `--response-format` / `--evidence`). `--scope` is always a session allowlist, including one name |
 | `honcho workspace search <query>` | Search messages across workspace |
-| `honcho workspace queue-status` | Deriver queue status (filter with `--observer` / `--sender`) |
+| `honcho workspace queue-status` | Deriver queue status (filter with `--observer` / `--sender`). The `sessions` map is keyed by session uid |
 | `honcho workspace delete <id>` | Delete a workspace. Use `--dry-run` to preview, `--cascade` to also delete sessions, `--yes` to skip the confirm prompt |
 
 ### Peers
@@ -88,7 +88,7 @@ honcho stop --wipe     # also delete volumes
 | `honcho peer create <id>` | Create or get a peer |
 | `honcho peer inspect <id>` | Card, session count, recent conclusions |
 | `honcho peer card <id>` | Raw peer card content |
-| `honcho peer chat <query>` | Query the dialectic about a peer (peer via `-p` / `HONCHO_PEER_ID`; optional `--scope` / `--sessions`) |
+| `honcho peer chat <query>` | Query the dialectic about a peer (peer via `-p` / `HONCHO_PEER_ID`; optional `--scope` / `--sessions` / `--response-format` / `--evidence`). One `--scope` is that scope's full view |
 | `honcho peer representation <id>` | Formatted representation |
 | `honcho peer search <query>` | Search a peer's messages (peer via `-p` / `HONCHO_PEER_ID`) |
 | `honcho peer get-metadata <id>` / `set-metadata` | Metadata operations |
@@ -124,7 +124,7 @@ honcho stop --wipe     # also delete volumes
 
 | Command | Description |
 |---------|-------------|
-| `honcho message list` | List messages in a session (session via `-s` / `HONCHO_SESSION_ID`) |
+| `honcho message list` | Recent messages in a session (`--last N`; session via `-s` / `HONCHO_SESSION_ID`) |
 | `honcho message create <content>` | Create a message (requires `--peer/-p`, session via `-s`) |
 | `honcho message get <id>` | Get a single message (session via `-s` / `HONCHO_SESSION_ID`) |
 

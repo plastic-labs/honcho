@@ -3,28 +3,46 @@
 from __future__ import annotations
 
 import json
-from typing import Optional
+from typing import Any, Literal, Optional, cast
 
 import typer
 
 from honcho import (
     APIError,
     AuthenticationError,
+    ChatResponse,
     Honcho,
     NotFoundError,
     PermissionDeniedError,
     ServerError,
 )
 
+from honcho_cli.chat_options import parse_response_format, present_chat_content
 from honcho_cli.config import identity_headers
+from honcho_cli.credentials import arm_named_scope_client, is_named_scope_client
 from honcho_cli.output import print_error, print_result, status, use_json
-from honcho_cli.recall import parse_csv_repeatable, reject_incompatible_recall, scope_for_sdk
+from honcho_cli.recall import (
+    parse_csv_repeatable,
+    reject_incompatible_recall,
+    scope_for_sdk,
+)
 from honcho_cli.validation import validate_resource_id
 
 from honcho_cli._help import HonchoTyperGroup
-from honcho_cli.common import add_common_options, format_evidence, get_client, get_flag_overrides, get_resolved_config, handle_cmd_flags
+from honcho_cli.common import (
+    add_common_options,
+    format_evidence,
+    get_client,
+    get_flag_overrides,
+    get_resolved_config,
+    handle_cmd_flags,
+    resource_uid,
+)
 
-app = typer.Typer(cls=HonchoTyperGroup, help="List, create, inspect, chat, delete, and search workspaces.")
+app = typer.Typer(
+    cls=HonchoTyperGroup,
+    help="List, create, inspect, chat, delete, and search workspaces.",
+)
 add_common_options(app)
 
 
@@ -33,12 +51,15 @@ def _get_workspace_id(workspace_id: str | None) -> str:
     config = get_resolved_config()
     wid = workspace_id or config.workspace_id
     if not wid:
-        print_error("NO_WORKSPACE", "No workspace ID provided. Pass --workspace/-w or set HONCHO_WORKSPACE_ID.")
+        print_error(
+            "NO_WORKSPACE",
+            "No workspace ID provided. Pass --workspace/-w or set HONCHO_WORKSPACE_ID.",
+        )
         raise typer.Exit(1)
     return validate_resource_id(wid, "workspace")
 
 
-def _raw_list(page) -> list:
+def _raw_list(page: Any) -> list[Any]:
     """Collect all raw API response items across all pages of a SyncPage."""
     items = list(page._raw_items)
     while page.has_next_page():
@@ -59,9 +80,14 @@ def list_workspaces(
     client, config = get_client(require_workspace=False)
 
     try:
-        workspaces = list(client.workspaces())
-        items = [{"id": w} for w in workspaces]
-        print_result(items, columns=["id"], title="Workspaces")
+        # The SDK iterator yields names only. Raw pages keep `uid`, the
+        # immutable id added in Honcho 3.4.0.
+        raw = _raw_list(client.workspaces())
+        items = [
+            {"id": w.id, "uid": resource_uid(w), "created_at": str(w.created_at)}
+            for w in raw
+        ]
+        print_result(items, columns=["id", "uid", "created_at"], title="Workspaces")
     except Exception as e:
         _handle_error(e, "workspace", "list")
 
@@ -69,7 +95,9 @@ def list_workspaces(
 @app.command("create")
 def create_workspace(
     workspace_id: str = typer.Argument(help="Workspace ID to create or get"),
-    metadata: Optional[str] = typer.Option(None, "--metadata", help="JSON metadata to associate with the workspace"),
+    metadata: Optional[str] = typer.Option(
+        None, "--metadata", help="JSON metadata to associate with the workspace"
+    ),
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Create or get a workspace."""
@@ -89,7 +117,10 @@ def create_workspace(
     try:
         # Trigger get-or-create via the workspace ensure mechanism
         ws_client.get_configuration()
-        result: dict[str, object] = {"workspace_id": wid}
+        result: dict[str, object] = {
+            "workspace_id": wid,
+            "uid": resource_uid(ws_client),
+        }
         if parsed_metadata is not None:
             ws_client.set_metadata(parsed_metadata)
             result["metadata"] = parsed_metadata
@@ -100,8 +131,12 @@ def create_workspace(
 
 @app.command()
 def inspect(
-    workspace_id: Optional[str] = typer.Argument(None, help="Workspace ID (uses default if omitted)"),
-    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
+    workspace_id: Optional[str] = typer.Argument(
+        None, help="Workspace ID (uses default if omitted)"
+    ),
+    workspace: Optional[str] = typer.Option(
+        None, "--workspace", "-w", help="Override workspace ID"
+    ),
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Inspect a workspace: peers, sessions, config."""
@@ -126,16 +161,28 @@ def inspect(
 
         result = {
             "workspace_id": wid,
+            "uid": resource_uid(client),
             "metadata": ws_metadata,
             "configuration": _config_to_dict(ws_config) if ws_config else None,
             "peer_count": peer_page.total,
             "session_count": session_page.total,
             "peers": [
-                {"id": p.id, "metadata": p.metadata, "created_at": str(p.created_at)}
+                {
+                    "id": p.id,
+                    "uid": resource_uid(p),
+                    "metadata": p.metadata,
+                    "created_at": str(p.created_at),
+                }
                 for p in raw_peers[:20]
             ],
             "sessions": [
-                {"id": s.id, "is_active": s.is_active, "metadata": s.metadata, "created_at": str(s.created_at)}
+                {
+                    "id": s.id,
+                    "uid": resource_uid(s),
+                    "is_active": s.is_active,
+                    "metadata": s.metadata,
+                    "created_at": str(s.created_at),
+                }
                 for s in raw_sessions[:20]
             ],
         }
@@ -147,9 +194,15 @@ def inspect(
 @app.command()
 def delete(
     workspace_id: str = typer.Argument(help="Workspace ID to delete"),
-    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt (for scripted/agent use)"),
-    cascade: bool = typer.Option(False, "--cascade", help="Delete all sessions before deleting the workspace"),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be deleted without deleting"),
+    yes: bool = typer.Option(
+        False, "--yes", "-y", help="Skip confirmation prompt (for scripted/agent use)"
+    ),
+    cascade: bool = typer.Option(
+        False, "--cascade", help="Delete all sessions before deleting the workspace"
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Show what would be deleted without deleting"
+    ),
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Delete a workspace. Use --dry-run first to see what will be deleted.
@@ -177,13 +230,15 @@ def delete(
     raw_sessions = _raw_list(ws_client.sessions()) if (dry_run or cascade) else []
 
     if dry_run:
-        print_result({
-            "dry_run": True,
-            "workspace_id": workspace_id,
-            "sessions_to_delete": len(raw_sessions),
-            "session_ids": [s.id for s in raw_sessions],
-            "warning": "This action cannot be undone.",
-        })
+        print_result(
+            {
+                "dry_run": True,
+                "workspace_id": workspace_id,
+                "sessions_to_delete": len(raw_sessions),
+                "session_ids": [s.id for s in raw_sessions],
+                "warning": "This action cannot be undone.",
+            }
+        )
         return
 
     if not yes:
@@ -193,10 +248,12 @@ def delete(
                 abort=True,
             )
         else:
-            typer.confirm(f"Delete workspace '{workspace_id}'? This cannot be undone.", abort=True)
+            typer.confirm(
+                f"Delete workspace '{workspace_id}'? This cannot be undone.", abort=True
+            )
 
     try:
-        deleted_sessions = []
+        deleted_sessions: list[str] = []
         if cascade and raw_sessions:
             for s in raw_sessions:
                 ws_client.session(s.id).delete()
@@ -204,8 +261,13 @@ def delete(
                 status(f"Deleted session '{s.id}'")
 
         ws_client.delete_workspace(workspace_id)
-        status(f"Workspace '{workspace_id}' deletion accepted (processing in background)")
-        result = {"deleted_workspace": workspace_id, "status": "accepted"}
+        status(
+            f"Workspace '{workspace_id}' deletion accepted (processing in background)"
+        )
+        result: dict[str, Any] = {
+            "deleted_workspace": workspace_id,
+            "status": "accepted",
+        }
         if cascade:
             result["deleted_sessions"] = deleted_sessions
         print_result(result)
@@ -216,26 +278,51 @@ def delete(
 @app.command()
 def chat(
     query: str = typer.Argument(help="Question to ask about the workspace"),
-    reasoning: Optional[str] = typer.Option(None, "--reasoning", "-r", help="Reasoning level: minimal, low, medium, high, max"),
+    reasoning: Optional[str] = typer.Option(
+        None,
+        "--reasoning",
+        "-r",
+        help="Reasoning level: minimal, low, medium, high, max",
+    ),
     scope: Optional[list[str]] = typer.Option(
         None,
         "--scope",
-        help="Recall only from this scope. Repeat or comma-separate for several (explicit conclusions only). Excludes -s.",
+        help=(
+            "Restrict recall to the member sessions of this scope. Workspace chat "
+            "always treats scope as an allowlist, including a single name "
+            "(explicit conclusions only — not the scope's own reasoned view). "
+            "Repeat or comma-separate for several. Excludes -s."
+        ),
+    ),
+    response_format: Optional[str] = typer.Option(
+        None,
+        "--response-format",
+        help=(
+            "JSON Schema the answer must match (root type object). "
+            "Inline JSON, or @path/to/schema.json. Sent as a schema object."
+        ),
     ),
     evidence: bool = typer.Option(
         False,
         "--evidence",
         help="Also report what the answer was built from: the conclusions and messages read and the tools called.",
     ),
-    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
-    session: Optional[str] = typer.Option(None, "--session", "-s", help="Override session ID"),
+    workspace: Optional[str] = typer.Option(
+        None, "--workspace", "-w", help="Override workspace ID"
+    ),
+    session: Optional[str] = typer.Option(
+        None, "--session", "-s", help="Override session ID"
+    ),
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Query the dialectic across all peers in the workspace."""
 
     _REASONING_LEVELS = ("minimal", "low", "medium", "high", "max")
     if reasoning and reasoning not in _REASONING_LEVELS:
-        print_error("INVALID_REASONING", f"--reasoning must be one of: {', '.join(_REASONING_LEVELS)}")
+        print_error(
+            "INVALID_REASONING",
+            f"--reasoning must be one of: {', '.join(_REASONING_LEVELS)}",
+        )
         raise typer.Exit(1)
 
     handle_cmd_flags(json_output=json_output, workspace=workspace, session=session)
@@ -249,25 +336,51 @@ def chat(
         session_from_env=not get_flag_overrides()["session"],
     )
 
-    chat_kwargs: dict[str, object] = {
-        "session": session_id,
-        "reasoning_level": reasoning or None,
-    }
     scope_arg = scope_for_sdk(scope_names)
-    if scope_arg is not None:
-        chat_kwargs["scope"] = scope_arg
+    schema = parse_response_format(response_format)
+    # Validated against _REASONING_LEVELS above. The SDK wants the literal union.
+    reasoning_level = cast(
+        "Literal['minimal', 'low', 'medium', 'high', 'max'] | None",
+        reasoning or None,
+    )
 
     try:
         if not evidence:
-            response = client.chat(query, **chat_kwargs)
-            print_result({"workspace_id": wid, "query": query, "response": response})
+            response = client.chat(
+                query,
+                session=session_id,
+                reasoning_level=reasoning_level,
+                scope=scope_arg,
+                response_format=schema,
+            )
+            print_result(
+                {
+                    "workspace_id": wid,
+                    "query": query,
+                    "response": present_chat_content(
+                        response, structured=schema is not None
+                    ),
+                }
+            )
             return
-        result = client.chat(query, include_evidence=True, **chat_kwargs)
+        result = cast(
+            ChatResponse[str],
+            client.chat(
+                query,
+                session=session_id,
+                reasoning_level=reasoning_level,
+                scope=scope_arg,
+                response_format=schema,
+                include_evidence=True,
+            ),
+        )
         print_result(
             {
                 "workspace_id": wid,
                 "query": query,
-                "response": result.content,
+                "response": present_chat_content(
+                    result.content, structured=schema is not None
+                ),
                 "evidence": format_evidence(result.evidence),
             }
         )
@@ -278,7 +391,9 @@ def chat(
 @app.command()
 def search(
     query: str = typer.Argument(help="Search query"),
-    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
+    workspace: Optional[str] = typer.Option(
+        None, "--workspace", "-w", help="Override workspace ID"
+    ),
     limit: int = typer.Option(10, help="Max results"),
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
@@ -301,20 +416,34 @@ def search(
             }
             for m in results
         ]
-        print_result(items, columns=["id", "peer_id", "session_id", "content"], title=f"Search: {query}")
+        print_result(
+            items,
+            columns=["id", "peer_id", "session_id", "content"],
+            title=f"Search: {query}",
+        )
     except Exception as e:
         _handle_error(e, "workspace", wid)
 
 
 @app.command("queue-status")
 def queue_status(
-    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
-    session: Optional[str] = typer.Option(None, "--session", "-s", help="Override session ID"),
+    workspace: Optional[str] = typer.Option(
+        None, "--workspace", "-w", help="Override workspace ID"
+    ),
+    session: Optional[str] = typer.Option(
+        None, "--session", "-s", help="Override session ID"
+    ),
     observer: Optional[str] = typer.Option(None, help="Filter by observer peer"),
     sender: Optional[str] = typer.Option(None, help="Filter by sender peer"),
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
-    """Get queue processing status."""
+    """Get queue processing status.
+
+    On Honcho 3.4.0 and later the sessions map is keyed by session uid (the
+    server-assigned id), not the client-chosen session name. Each entry's
+    session_id is that same uid. The CLI prints the map as the server
+    returned it.
+    """
 
     handle_cmd_flags(json_output=json_output, workspace=workspace, session=session)
 
@@ -322,7 +451,9 @@ def queue_status(
     client, config = get_client()
 
     try:
-        result = client.queue_status(observer=observer, sender=sender, session=config.session_id or None)
+        result = client.queue_status(
+            observer=observer, sender=sender, session=config.session_id or None
+        )
         print_result(result.model_dump(mode="json"))
     except Exception as e:
         _handle_error(e, "queue", "status")
@@ -330,22 +461,30 @@ def queue_status(
 
 def _with_workspace(client, workspace_id: str):
     """Return a new client pointed at a different workspace."""
-    return Honcho(
+    api_key = client._http.api_key if hasattr(client._http, "api_key") else None
+    fresh = Honcho(
         base_url=str(client.base_url),
-        api_key=client._http.api_key if hasattr(client._http, "api_key") else None,
+        api_key=api_key,
         workspace_id=workspace_id,
         default_headers=identity_headers(),
     )
+    if is_named_scope_client(client):
+        arm_named_scope_client(fresh, api_key)
+    return fresh
 
 
-def _config_to_dict(config) -> dict:
+def _config_to_dict(config: Any) -> Any:
     """Convert a config object to a dict, handling nested objects."""
     if hasattr(config, "__dict__"):
         result = {}
         for k, v in config.__dict__.items():
             if k.startswith("_"):
                 continue
-            result[k] = _config_to_dict(v) if hasattr(v, "__dict__") and not isinstance(v, str) else v
+            result[k] = (
+                _config_to_dict(v)
+                if hasattr(v, "__dict__") and not isinstance(v, str)
+                else v
+            )
         return result
     return config
 
