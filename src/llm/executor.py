@@ -12,6 +12,7 @@ Used by:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import time
 from collections.abc import AsyncGenerator, AsyncIterator
@@ -20,13 +21,18 @@ from typing import Any, Literal, TypeVar, overload
 from pydantic import BaseModel
 
 from src.config import ModelConfig, ModelTransport
+from src.telemetry.tenant import current_tenant_id
 
 from .backend import CompletionResult as BackendCompletionResult
 from .backend import StreamChunk as BackendStreamChunk
 from .backend import ToolCallResult
 from .capture import build_captured_call, dispatch_captured_call, has_exporters
 from .registry import backend_for_provider, default_client
-from .request_builder import execute_completion, execute_stream
+from .request_builder import (
+    coerce_passthrough_mapping,
+    execute_completion,
+    execute_stream,
+)
 from .runtime import AttemptPlan, effective_config_for_call
 from .types import (
     HonchoLLMCallResponse,
@@ -39,6 +45,19 @@ from .types import (
 logger = logging.getLogger(__name__)
 
 M = TypeVar("M", bound=BaseModel)
+
+TENANT_HEADER = "X-Honcho-Tenant"
+
+
+def _tenant_headers(config: ModelConfig) -> dict[str, Any] | None:
+    tenant = current_tenant_id()
+    if tenant is None:
+        return None
+    operator_headers: Any = config.provider_params.get("extra_headers") or {}
+    return {
+        TENANT_HEADER: hashlib.sha256(tenant.encode()).hexdigest()[:32],
+        **coerce_passthrough_mapping("extra_headers", operator_headers),
+    }
 
 
 def _outcome_from_error(
@@ -385,6 +404,9 @@ async def honcho_llm_call_inner(
     # knobs — they pass through extra_params. execute_completion merges
     # build_config_extra_params(effective_config) on top for top_p/seed/etc.
     call_extras: dict[str, Any] = {"json_mode": json_mode, "verbosity": verbosity}
+    tenant_headers = _tenant_headers(effective_config)
+    if tenant_headers:
+        call_extras["extra_headers"] = tenant_headers
 
     if stream:
         # Stream path: setup must run inside the awaited coroutine so it
