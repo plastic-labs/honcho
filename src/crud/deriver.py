@@ -175,12 +175,11 @@ def queue_item_tenant_match() -> ColumnElement[bool] | None:
     # workspace_name or message_id: workspace_name is only unique per tenant
     # (every tenant has a "default" workspace) and message ids are drawn from
     # one global sequence, so either can collide across tenants. tenant_id
-    # does not — the queue_item_batches backfill (migration b7d2f4a81c39,
-    # the `UPDATE {schema}.queue SET tenant_id = split_part(work_unit_key,
-    # ':', 1) ...` step) derived it from the work_unit_key's tenant prefix for
-    # every row that predated the column, and every tenant-bound writer since
+    # does not. No migration backfills it (e5fe7f8bcf62 adds the column
+    # nullable, unfilled); it holds because every tenant-bound writer
     # (src/deriver/enqueue.py's _stamp_tenant_id, the reconciler scheduler,
-    # webhooks/events.py) sets it explicitly on insert. Rows with tenant_id
+    # webhooks/events.py) sets it on insert, and rows that predate the column
+    # exist only on databases that never ran flag-on. Rows with tenant_id
     # IS NULL flag-on are the tenant-less reconciler lane (workspace_name is
     # NULL there too, per the workspace_null_iff_reconciler check) and are
     # left alone here, exactly as active_queue_session_match above leaves
