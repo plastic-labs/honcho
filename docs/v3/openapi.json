@@ -5422,7 +5422,7 @@
           },
           "query": {
             "type": "string",
-            "maxLength": 10000,
+            "maxLength": 40000,
             "minLength": 1,
             "title": "Query",
             "description": "Dialectic API Prompt"

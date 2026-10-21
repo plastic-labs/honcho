@@ -560,7 +560,7 @@ class DialecticParams(BaseModel):
 
     session_id: str | None = None
     target: str | None = None
-    query: str = Field(min_length=1, max_length=10000)
+    query: str = Field(min_length=1, max_length=40000)
     stream: bool = False
     reasoning_level: ReasoningLevel = "low"
     response_format: dict[str, Any] | None = None
