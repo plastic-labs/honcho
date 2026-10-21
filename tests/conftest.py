@@ -480,6 +480,13 @@ async def client(
 
     monkeypatch.setattr("src.main.validate_embedding_schema", _skip_validate)
 
+    # fastapi_pagination's lifespan wrapper regenerates and re-patches the whole
+    # OpenAPI schema on every startup once `app.openapi_schema` is cached (~80ms).
+    # Production starts once; this fixture starts the app per test, so after any
+    # test fetches /openapi.json every later client would pay it. Drop the cache
+    # so startup stays cheap; a test that needs the schema regenerates it.
+    app.openapi_schema = None
+
     with TestClient(app) as c:
         if settings.AUTH.USE_AUTH:
             # give the test client the admin JWT
@@ -573,6 +580,25 @@ def mock_langfuse():
             if isinstance(handler, TestHandler):
                 handler.close()
                 logging.getLogger().removeHandler(handler)
+
+
+@pytest.fixture(autouse=True)
+def no_llm_retry_backoff(monkeypatch: pytest.MonkeyPatch):
+    """Retry LLM calls immediately instead of after the production backoff.
+
+    `honcho_llm_call` and the tool loop build `wait_exponential(min=4, max=10)`
+    at call time, so every test that exercises a retry otherwise sleeps at least
+    4s per attempt. Attempt counting and fallback selection are unaffected.
+    """
+    from tenacity import wait_none
+
+    from src.llm import api, tool_loop
+
+    def no_wait(**_kwargs: object) -> wait_none:
+        return wait_none()
+
+    monkeypatch.setattr(api, "wait_exponential", no_wait)
+    monkeypatch.setattr(tool_loop, "wait_exponential", no_wait)
 
 
 def _content_to_embedding(content: str) -> list[float]:
