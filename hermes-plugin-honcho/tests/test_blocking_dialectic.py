@@ -111,6 +111,7 @@ def test_recent_exchanges_survive_a_process_restart(tmp_path):
     assert record["reason"] == "injected" and record["mode"] == "blocking"
     assert record["query"] == query and isinstance(record["dialectic_ms"], int)
     assert record["dialectic_output"] == ANSWER
+    assert record["recent_turns_count"] == 1 and record["dialectic_reason"] == "answered"
     assert record["payload"] == injected
 
 
@@ -224,14 +225,61 @@ def test_input_cap_cuts_text_then_drops_but_keeps_the_newest_exchange(tmp_path):
     assert "exchange 2: dropped" in trimmed and "exchange 3: dropped" not in trimmed
 
 
-def test_input_cap_never_cuts_the_current_prompt(tmp_path, caplog):
-    provider = _three_exchanges(tmp_path, limit=200)
+def test_an_oversized_prompt_loses_its_middle_not_its_end(tmp_path):
+    provider = _three_exchanges(tmp_path, limit=1000)
+    prompt = "HEAD " + "m" * 3000 + " TAIL"
 
-    query, _ = _query_for(provider, prompt="P" * 250)
+    query, _ = _query_for(provider, prompt=prompt)
 
-    assert query.endswith("P" * 250) and "Exchange 1 of 1" in query  # newest exchange emptied, not dropped
+    assert len(query) <= 1000  # so the manager's own cut, which drops the end, never runs
+    assert "HEAD " in query and query.endswith(" TAIL") and "chars omitted …]" in query
+    record = log_records(tmp_path)[-1]
+    assert record["recent_turns_count"] == 1  # the newest exchange is emptied, never dropped
+    assert record["query_trimmed"][-1].startswith("current prompt: ")
+
+
+def test_a_template_over_the_cap_is_reported(tmp_path, caplog):
+    provider = _three_exchanges(tmp_path, limit=150)
+
+    _query_for(provider, prompt="P" * 250)
+
     assert log_records(tmp_path)[-1]["query_trimmed"][-1].endswith("chars will be cut from the end")
-    assert "dialecticMaxInputChars=200" in caplog.text
+    assert "dialecticMaxInputChars=150" in caplog.text
+
+
+def test_a_template_without_the_prompt_warns_once(tmp_path, caplog):
+    provider = make_provider(tmp_path, dialectic_query_template="What matters? {recent_turns}")
+    for turn in (1, 2):
+        _query_for(provider, prompt=f"request {turn}")
+    assert caplog.text.count("has no {current_prompt}") == 1
+
+
+def test_a_notice_does_not_hide_a_failed_dialectic(tmp_path):
+    manager = BlockingManager()
+    manager.dialectic_query = MagicMock(side_effect=RuntimeError("boom"))
+    provider = make_provider(tmp_path, manager=manager)
+    provider._init_auth_failure = "token expired"
+
+    provider.on_turn_start(1, "Write the parser.")
+    assert "[Honcho memory status]" in provider.prefetch("Write the parser.")
+
+    record = log_records(tmp_path)[-1]
+    assert record["reason"] == "injected" and record["dialectic_reason"] == "dialectic-failed"
+
+
+def test_an_earlier_outcome_never_reaches_a_later_turn(tmp_path):
+    provider = make_provider(tmp_path)
+    provider._blocking_injection = {"payload": "STALE"}
+    with patch.object(provider, "_query_blocking_dialectic", side_effect=RuntimeError("boom")), \
+         pytest.raises(RuntimeError):
+        provider.on_turn_start(2, "Write the parser.")
+    assert provider.prefetch("Write the parser.") == ""
+
+
+def test_context_tokens_does_not_cut_the_answer(tmp_path):
+    provider = make_provider(tmp_path, context_tokens=5)
+    provider.on_turn_start(1, "Write the parser.")
+    assert ANSWER in provider.prefetch("Write the parser.")
 
 
 def test_blocking_mode_makes_no_other_honcho_calls(tmp_path):

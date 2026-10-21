@@ -171,6 +171,7 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
         # Blocking dialectic mode: on_turn_start leaves this turn's outcome here for prefetch() to inject.
         self._dialectic_injection_mode = "async"
         self._blocking_injection: Optional[dict[str, Any]] = None
+        self._blocking_template_warned = False
 
         # Tools-only mode may defer session initialization until a tool call.
         self._session_initialized = False
@@ -623,14 +624,18 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
         outcome = outcome or {"reason": "no-turn-start"}
         notice = "\n\n".join(n for n in (self._pop_auth_notice(), self._pop_peer_notice()) if n)
         payload = "\n\n".join(p for p in (notice, outcome.get("payload", "")) if p)
-        fields = {k: outcome[k] for k in ("query", "query_trimmed", "dialectic_ms", "reasoning_level",
-                                          "dialectic_output", "error") if k in outcome}
-        return self._log_injection("injected" if payload else outcome["reason"], self._truncate_to_budget(payload),
-                                   mode="blocking", **fields)
+        fields = {k: outcome[k] for k in ("query", "query_trimmed", "recent_turns_count", "dialectic_ms",
+                                          "reasoning_level", "dialectic_output", "error") if k in outcome}
+        # A notice alone makes the record "injected", so the dialectic's own outcome is kept apart.
+        # contextTokens is not applied: the answer is the whole injection and the arm sizes it.
+        return self._log_injection("injected" if payload else outcome["reason"], payload, mode="blocking",
+                                   dialectic_reason=outcome.get("reason", "answered"), **fields)
 
     def _run_blocking_dialectic(self, message: str) -> None:
         """Ask the dialectic about this turn's request and recent exchanges, waiting as long as the HTTP timeout
         allows; the outcome waits for prefetch(). Runs here because Hermes abandons a prefetch after seconds."""
+        with self._prefetch_lock:
+            self._blocking_injection = None  # an earlier turn's outcome must never reach this turn
         outcome: dict[str, Any]
         if self._cron_skipped or self._recall_mode == "tools":
             outcome = {"reason": "cron-or-tools-mode"}
@@ -646,9 +651,10 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
 
     def _query_blocking_dialectic(self, message: str) -> dict[str, Any]:
         exchanges = load_exchanges(self._ring_path(), self._session_key)
-        query, trimmed = self._build_blocking_query(message, exchanges)
+        query, trimmed, quoted = self._build_blocking_query(message, exchanges)
         level = self._config.dialectic_reasoning_level if self._config else "low"
-        outcome: dict[str, Any] = {"query": query, "reasoning_level": level, "dialectic_output": ""}
+        outcome: dict[str, Any] = {"query": query, "reasoning_level": level, "dialectic_output": "",
+                                   "recent_turns_count": quoted}
         if trimmed:
             outcome["query_trimmed"] = trimmed
         started = time.monotonic()
