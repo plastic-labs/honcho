@@ -28,6 +28,7 @@ from src.utils.representation import PromptRepresentation, Representation
 from src.utils.retryable_errors import is_retryable_error
 from src.utils.tokens import estimate_tokens, track_deriver_input_tokens
 
+from .pause_hook import maybe_pause_before_write
 from .prompts import (
     estimate_deriver_prompt_tokens,
     format_deriver_message,
@@ -238,6 +239,8 @@ async def process_representation_tasks_batch(
         latest_message.session_name,
         latest_message.created_at,
     )
+
+    await maybe_pause_before_write(messages, observers=observers, observed=observed)
 
     agg_representation_result = crud.CreateDocumentsResult()
     successful_observer_count = 0

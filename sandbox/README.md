@@ -245,3 +245,34 @@ Builds the repo instead of pulling the pinned digest, and points every service a
 they stay in sync. Use it when testing a change to Honcho itself. It trades reproducibility for
 currency — you are running your tree, not the pinned bytes, which is right while iterating and
 wrong when reproducing someone else's result.
+
+## Erasure-slice runner
+
+`sandbox/slice.sh` runs one message-erasure acceptance case on a separate Compose project
+(`slice_harness`): two api replicas (18100, 18101) and two derivers on one Postgres (15532) and one
+Redis (16479), mock provider only.
+
+```bash
+sandbox/slice.sh build slice-harness/honcho:under-test            # working tree
+sandbox/slice.sh build slice-harness/honcho:v3.3.0 v3.3.0         # a git ref
+sandbox/slice.sh run --label X --image-under-test slice-harness/honcho:under-test \
+  --previous-image slice-harness/honcho:v3.3.0 --delete-action api|sql [--release-on same|other]
+sandbox/slice.sh down
+```
+
+The sequence: seed three peers so alice's message M lands in one batch with three observers, write a
+stale card (per observer) and stale summaries (both tiers) carrying M's canary, read every surface
+once, pause the batch at the deriver's output write, stop Redis, delete M, read from both replicas,
+release the batch, swap api and derivers to the previous image, start Redis, read again. Each
+phase's checks land in `results/<label>.json`.
+
+The pause is `src/deriver/pause_hook.py`. It is inert unless `HONCHO_TEST_DERIVER_PAUSE_DIR` and
+`HONCHO_TEST_DERIVER_PAUSE_MATCH` are both set, which only `compose.slice.yml` does.
+
+`--delete-action api` calls `DELETE /v3/workspaces/{w}/sessions/{s}/messages/{m}`. `sql` deletes
+the row directly; when the queue's foreign key blocks that, it detaches `queue.message_id` first.
+`--release-on other` kills the holding deriver and lets the other one re-claim the work unit after
+the one-minute stale timeout this mode sets.
+
+If the previous image's migration step refuses the newer database revision, the runner records
+that and restarts the api without migrations.

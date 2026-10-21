@@ -1,0 +1,86 @@
+# Erasure-slice overlay: two api replicas and two derivers on one Postgres and
+# one Redis, mock provider only. Composed on top of compose.yml + compose.mock.yml
+# by sandbox/slice.sh, which also sets the project name and ports.
+#
+#   SLICE_APP_IMAGE    image for api, api-2, deriver, deriver-2 (swapped mid-run)
+#   SLICE_API_START    api start command (the default runs migrations first)
+#   SLICE_PAUSE_DIR    host directory for the deriver pause barrier
+#   SLICE_PAUSE_MATCH  canary that selects the batch to pause
+#   SLICE_STALE_MINUTES  stale-claim timeout (1 for --release-on other)
+
+x-slice-env: &slice-env
+  DB_CONNECTION_URI: postgresql+psycopg://postgres:postgres@database:5432/honcho_sandbox
+  CACHE_URL: redis://redis:6379/0?suppress=true
+  CACHE_ENABLED: "true"
+  AUTH_USE_AUTH: "false"
+  LOG_LEVEL: INFO
+  PYTHON_DOTENV_DISABLED: "1"
+  HONCHO_CONFIG_TOML_DISABLED: "1"
+  DERIVER_FLUSH_ENABLED: "true"
+  DERIVER_REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS: "0"
+  DERIVER_REPRESENTATION_BATCH_MAX_AGE_SECONDS: "1"
+  DERIVER_POLLING_STARTUP_JITTER_SECONDS: "0"
+  DERIVER_POLLING_JITTER_RATIO: "0"
+  DERIVER_POLLING_BACKOFF_ENABLED: "false"
+  DERIVER_POLLING_SLEEP_INTERVAL_SECONDS: "0.25"
+  DERIVER_STALE_WORK_UNIT_CLEANUP_INTERVAL_SECONDS: "5"
+  DERIVER_STALE_SESSION_TIMEOUT_MINUTES: ${SLICE_STALE_MINUTES:-5}
+  CACHE_CONNECT_TIMEOUT_SECONDS: "1"
+  VECTOR_STORE_RECONCILIATION_INTERVAL_SECONDS: "2"
+  DREAM_ENABLED: "false"
+  LLM_OPENAI_API_KEY: sandbox-not-a-real-key
+  LLM_OPENAI_BASE_URL: http://mock-provider:8000/v1
+  EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL: http://mock-provider:8000/v1
+  HONCHO_TEST_DERIVER_PAUSE_DIR: /pause
+  HONCHO_TEST_DERIVER_PAUSE_MATCH: ${SLICE_PAUSE_MATCH:-}
+
+x-slice-api: &slice-api
+  image: ${SLICE_APP_IMAGE:?set by slice.sh}
+  entrypoint: ["sh", "-c", "${SLICE_API_START:-sh docker/entrypoint.sh}"]
+  healthcheck:
+    test:
+      [
+        "CMD",
+        "/app/.venv/bin/python",
+        "-c",
+        "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2).read()",
+      ]
+    interval: 2s
+    timeout: 5s
+    retries: 30
+    start_period: 5s
+  environment: *slice-env
+  restart: "no"
+
+x-slice-deriver: &slice-deriver
+  image: ${SLICE_APP_IMAGE:?set by slice.sh}
+  entrypoint: ["/app/.venv/bin/python", "-m", "src.deriver"]
+  environment: *slice-env
+  volumes:
+    - ${SLICE_PAUSE_DIR:?set by slice.sh}:/pause
+  restart: "no"
+
+services:
+  api:
+    <<: *slice-api
+    hostname: api-1
+
+  api-2:
+    <<: *slice-api
+    hostname: api-2
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${SLICE_API2_PORT:-18101}:8000"
+
+  deriver:
+    <<: *slice-deriver
+    hostname: deriver-1
+
+  deriver-2:
+    <<: *slice-deriver
+    hostname: deriver-2
+    depends_on:
+      api:
+        condition: service_healthy
