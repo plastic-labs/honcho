@@ -559,7 +559,7 @@ async def test_publish_webhook_event_uses_ambient_tenant_when_omitted(
 async def test_deliver_webhook_looks_up_endpoints_under_the_signed_tenant(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The endpoint lookup binds the tenant the body is signed with (re-vet F32)."""
+    """The endpoint lookup binds the tenant the body is signed with."""
     bound: list[str | None] = []
 
     @contextlib.asynccontextmanager

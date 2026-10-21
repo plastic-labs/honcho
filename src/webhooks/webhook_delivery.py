@@ -38,7 +38,9 @@ async def deliver_webhook(
     # tenant_context.get() at the point of use: this is the one call site that
     # builds a webhook body, so the value is auditable right here instead of
     # depending on ambient state, and it mirrors publish_webhook_event's own
-    # explicit-threading of the same tenant for the same reason.
+    # explicit-threading of the same tenant for the same reason. The endpoint
+    # lookup below binds the same tenant (tracked_db(tenant_id=...)), so the
+    # endpoints read and the tenant signed into the body cannot diverge.
     #
     # Fails closed: under MULTI_TENANT, a work unit with no tenant_id raises
     # WebhookTenantUnresolved before any DB session is opened or any body is
@@ -53,8 +55,6 @@ async def deliver_webhook(
             + "but MULTI_TENANT is enabled; refusing to deliver an unattributed event."
         )
     try:
-        # The endpoint lookup binds the same tenant the body is signed with,
-        # rather than whatever tenant_context the caller left ambient.
         async with tracked_db("webhook.deliver", tenant_id=tenant_id) as db:
             webhook_urls = await _get_webhook_urls(db, workspace_name)
 

@@ -92,9 +92,10 @@ def construct_work_unit_key(
     # region ai
     # A tenant_id equal to a task-type name would make the prefixed key
     # indistinguishable from an un-prefixed one in parse_work_unit_key (the two
-    # are told apart by leading-segment membership in TASK_TYPES). The tenant
-    # id issuer mints opaque nanoids, so this cannot happen in practice; the
-    # guard makes the invariant explicit instead of latent.
+    # are told apart by leading-segment membership in TASK_TYPES).
+    # TenantCreate rejects such ids at registration (reject_task_type_names), so
+    # a registered tenant cannot reach this; the guard keeps the invariant
+    # explicit for an id that arrives any other way.
     # endregion
     if tenant in TASK_TYPES:
         raise ValueError(

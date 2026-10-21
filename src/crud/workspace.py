@@ -647,13 +647,16 @@ async def get_workspace_stats(
             or 0
         )
 
+    # region ai
+    # count(*), not count(id): id is not in ix_messages_peer_lookup, so counting
+    # it forces a heap fetch per row. Under MULTI_TENANT (RLS supplies the
+    # leading tenant_id), count(*) lets the (tenant_id, workspace_name,
+    # peer_name, created_at) index answer count/min/max on its own when no
+    # session allowlist applies, with heap visits only for pages not yet
+    # all-visible. Same result: id is NOT NULL.
+    # endregion
     msg_row = (
         await db.execute(
-            # count(*), not count(id): id is not in ix_messages_peer_lookup, so
-            # counting it forces a heap fetch per row; count(*) lets the
-            # (tenant_id, workspace_name, peer_name, created_at) index answer
-            # count/min/max on its own when no session allowlist applies. Same
-            # result: id is NOT NULL.
             select(
                 func.count(),
                 func.min(models.Message.created_at),

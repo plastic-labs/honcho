@@ -178,8 +178,10 @@ def queue_item_tenant_match() -> ColumnElement[bool] | None:
     # does not. No migration backfills it (e5fe7f8bcf62 adds the column
     # nullable, unfilled); it holds because every tenant-bound writer
     # (src/deriver/enqueue.py's _stamp_tenant_id, the reconciler scheduler,
-    # webhooks/events.py) sets it on insert, and rows that predate the column
-    # exist only on databases that never ran flag-on. Rows with tenant_id
+    # webhooks/events.py) sets it on insert, and any row that predates the
+    # column was written flag-off (flag-on needs the column). If an undrained
+    # flag-off queue is switched flag-on, those NULL rows are skipped here,
+    # never misattributed. Rows with tenant_id
     # IS NULL flag-on are the tenant-less reconciler lane (workspace_name is
     # NULL there too, per the workspace_null_iff_reconciler check) and are
     # left alone here, exactly as active_queue_session_match above leaves

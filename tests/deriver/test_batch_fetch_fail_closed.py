@@ -1,4 +1,4 @@
-"""get_queue_item_batch fails closed on an un-prefixed key flag-on (re-vet F15)."""
+"""get_queue_item_batch fails closed on an un-prefixed key flag-on."""
 
 from typing import Any
 

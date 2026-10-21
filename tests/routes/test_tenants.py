@@ -232,7 +232,7 @@ def test_create_tenant_invalid_id(client: TestClient, enabled: str):
 def test_create_tenant_rejects_task_type_ids(
     client: TestClient, enabled: str, tenant_id: str
 ):
-    """A tenant_id equal to a work-unit task type is reserved, a 422 (re-vet F43)."""
+    """A tenant_id equal to a work-unit task type is reserved: 422."""
     response = client.post(
         "/v3/tenants",
         json=_create_body(tenant_id),

@@ -1,4 +1,4 @@
-"""The tenant_id column default fails closed under MULTI_TENANT (re-vet F30)."""
+"""The tenant_id column default fails closed under MULTI_TENANT."""
 
 import pytest
 from nanoid import generate as generate_nanoid

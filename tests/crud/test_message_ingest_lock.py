@@ -1,4 +1,4 @@
-"""The ingest advisory lock's key (re-vet F03)."""
+"""The ingest advisory lock's key: tenant-scoped under MULTI_TENANT, flag-off SQL unchanged."""
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession

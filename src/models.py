@@ -47,15 +47,17 @@ DEFAULT_TENANT_ID = "default"
 
 
 def _default_tenant_id() -> str:
-    """Model-side default for tenant_id columns: the request's tenant, or the
-    single self-host tenant when none is in scope."""
+    """Model-side default for tenant_id columns: the bound tenant; flag-off with
+    none bound, the single self-host tenant; flag-on with none bound, raises."""
     # region ai
     # Populates every ORM create without threading tenant_id through call sites.
     # Intentionally NOT a DB-level default: that would need a migration and could
     # silently stamp a tenant on a flag-on row that forgot to set one (tracked_db
     # fail-closes that case instead). Flag-on with no tenant bound raises for
     # the same reason: 'default' is the self-host tenant, and stamping it on a
-    # shared-pool row would file the row under the wrong tenant silently.
+    # multi-tenant row would file the row under the wrong tenant silently.
+    # (tracked_db already refuses an unbound session; this also covers inserts
+    # on service_db, which binds no tenant.)
     # endregion
     tenant = tenant_context.get()
     if tenant:
