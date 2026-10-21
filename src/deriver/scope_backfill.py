@@ -195,6 +195,7 @@ async def _run_backfill(
                 )
             )
             .where(
+                models.Document.tenant_id == models.scoped_tenant_id(),
                 models.Document.workspace_name == workspace_name,
                 models.Document.session_name == session_name,
                 models.Document.level == "explicit",
