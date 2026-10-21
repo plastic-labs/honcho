@@ -270,6 +270,14 @@ class QueueManager:
 
         Beating from here rather than from inside each long task covers every task
         type at once, including ones added later.
+
+        The beat shares the event loop with the work, so anything that blocks the
+        loop -- CPU-bound code, a sync ``time.sleep``, a blocking library call --
+        silences every claim in this process at once. A block longer than the stale
+        window less one interval (4 min at the defaults) gets them all reaped. That
+        coupling is deliberate: a thread-based beat would keep a wedged process's
+        claims alive forever, so no other replica could take its work over. Blocking
+        work belongs in ``asyncio.to_thread``.
         """
         interval = claim_heartbeat_interval_seconds()
         while True:
