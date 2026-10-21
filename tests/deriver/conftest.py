@@ -407,6 +407,11 @@ async def seed_work_unit(
             message_id: int | None = None
             if with_messages:
                 message = models.Message(
+                    # The messages live in sample_data's self-host workspace
+                    # whatever tenant the queue row names (only the row's
+                    # token count is read), so stamp its tenant explicitly:
+                    # flag-on, the column default refuses to guess.
+                    tenant_id=DEFAULT_TENANT_ID,
                     session_name=session.name,
                     workspace_name=workspace.name,
                     peer_name=peer.name,

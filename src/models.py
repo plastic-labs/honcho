@@ -53,9 +53,19 @@ def _default_tenant_id() -> str:
     # Populates every ORM create without threading tenant_id through call sites.
     # Intentionally NOT a DB-level default: that would need a migration and could
     # silently stamp a tenant on a flag-on row that forgot to set one (tracked_db
-    # fail-closes that case instead).
+    # fail-closes that case instead). Flag-on with no tenant bound raises for
+    # the same reason: 'default' is the self-host tenant, and stamping it on a
+    # shared-pool row would file the row under the wrong tenant silently.
     # endregion
-    return tenant_context.get() or DEFAULT_TENANT_ID
+    tenant = tenant_context.get()
+    if tenant:
+        return tenant
+    if settings.MULTI_TENANT:
+        raise ValueError(
+            "tenant_id default requires a bound tenant when MULTI_TENANT is "
+            + "enabled; set tenant_context or pass tenant_id explicitly"
+        )
+    return DEFAULT_TENANT_ID
 
 
 # Association table for many-to-many relationship between sessions and peers
