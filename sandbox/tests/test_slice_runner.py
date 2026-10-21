@@ -6,10 +6,11 @@ import argparse
 import importlib.util
 import subprocess
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, call
 
 import httpx
 import pytest
+from psycopg.errors import ForeignKeyViolation
 
 
 @pytest.fixture
@@ -189,6 +190,71 @@ def test_comparison_restores_redis_before_either_image_and_stops_workers(
     ]
     assert [c[0] for c in calls].count("stop_apps") == 3
     assert calls[-1] == ("stop_apps", (), {})
+
+
+@pytest.mark.parametrize(
+    "outcome", ["bare-success", "recovered", "detach-fails", "retry-fails"]
+)
+def test_sql_delete_verdict_through_execute(runner, monkeypatch, outcome):
+    runner.args.scenario = "original"
+    runner.args.delete_action = "sql"
+    runner.message_id = 42
+    # Keep the actual delete() and execute() paths; stub only orchestration and
+    # I/O so recovery and its final verdict are tested without a database/Docker.
+    for method in (
+        "up",
+        "seed",
+        "wait_paused",
+        "warm_reads",
+        "stop_redis",
+        "run_checks",
+        "release",
+        "swap",
+        "start_redis",
+        "record_phase",
+    ):
+        monkeypatch.setattr(runner, method, MagicMock())
+    bare_delete = "DELETE FROM messages WHERE id = %s"
+    detach = "UPDATE queue SET message_id = NULL WHERE message_id = %s"
+    effects = [ForeignKeyViolation("queue message FK"), [], []]
+    queries = [bare_delete, detach, bare_delete]
+    if outcome == "bare-success":
+        effects = [[]]
+        queries = [bare_delete]
+    elif outcome == "detach-fails":
+        effects[1] = ForeignKeyViolation("detach failed")
+        queries = queries[:2]
+    elif outcome == "retry-fails":
+        effects[2] = ForeignKeyViolation("retry failed")
+    sql = MagicMock(side_effect=effects)
+    monkeypatch.setattr(runner, "sql", sql)
+
+    result = runner.execute()
+
+    assert sql.call_args_list == [call(query, (42,)) for query in queries]
+    assert ("queue message FK" in result["notes"]) is (outcome != "bare-success")
+    delete_steps = [step for step in result["steps"] if step["name"] == "delete-sql"]
+    if outcome in ("bare-success", "recovered"):
+        assert result["verdict"] == "pass"
+        assert result["counts"]["failed_steps"] == 0
+        assert len(delete_steps) == 1 and delete_steps[0]["ok"] is True
+        assert ("detached" in delete_steps[0]["detail"]) is (outcome == "recovered")
+        runner.release.assert_called_once_with()
+        assert runner.run_checks.call_args_list == [
+            call("after-delete"),
+            call("after-release"),
+            call("after-swap"),
+        ]
+    else:
+        assert result["verdict"] == "blocked"
+        assert result["counts"]["failed_steps"] == 1
+        assert not delete_steps
+        error = next(step for step in result["steps"] if step["name"] == "runner-error")
+        assert error["ok"] is False
+        assert outcome.replace("-fails", " failed") in error["detail"]
+        runner.release.assert_not_called()
+        runner.run_checks.assert_not_called()
+        runner.record_phase.assert_called_once_with("runner-error")
 
 
 def test_failed_prerequisite_cannot_report_pass(runner, monkeypatch):

@@ -393,7 +393,9 @@ class Run:
             self.sql("DELETE FROM messages WHERE id = %s", (self.message_id,))
             self.step("delete-sql", True, "bare DELETE FROM messages succeeded")
         except psycopg.Error as exc:
-            self.step("delete-sql-bare", False, f"bare DELETE blocked: {exc}".strip())
+            self.notes.append(
+                f"Bare SQL DELETE blocked; trying queue detach/retry: {exc}"
+            )
             # The smallest change that lets the row go: detach the queue rows
             # that reference it, leaving everything else as it was.
             self.sql(

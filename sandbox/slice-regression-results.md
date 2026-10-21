@@ -3,6 +3,9 @@
 Local run on 2026-10-21, Compose project `del2773_cache_1021`, mock provider only.
 API ports 19100/19101; Postgres 16532; Redis 17479. No production or staging data.
 Commands and scenario contracts are in [the sandbox README](README.md#erasure-slice-runner).
+The E2E measurements below belong to harness commit
+`b06c6ca384316ce98410fb2eae072e7aea29526a`; later SQL fallback verdict bookkeeping
+corrections were verified with compact runner tests, not a new Docker run.
 
 ## Images
 
