@@ -246,6 +246,19 @@ def _tools_for_answer_call(
     return None, None
 
 
+async def _stream_completed_answer(
+    content: str, finish_reasons: list[str]
+) -> AsyncIterator[HonchoLLMCallStreamChunk]:
+    """Stream an answer the loop already has, as one chunk.
+
+    It carries no ``output_tokens``: the loop's totals already count the call
+    that produced it.
+    """
+    yield HonchoLLMCallStreamChunk(
+        content=content, is_done=True, finish_reasons=finish_reasons
+    )
+
+
 async def stream_final_response(
     *,
     winning_plan: AttemptPlan,
@@ -540,8 +553,7 @@ async def execute_tool_loop(
             # A provider can ignore a forced tool_choice and answer outright.
             # While the gate is unmet, a no-tool answer is discarded for a
             # nudge, so it isn't held to `response_model`. Nor is it under
-            # stream_final, which streams the answer afresh and doesn't
-            # validate it.
+            # stream_final, which streams the answer as is.
             gate_nudge_due = (
                 gate is not None
                 and effective_tool_choice in ("required", "any")
@@ -657,33 +669,43 @@ async def execute_tool_loop(
                     continue
 
                 if stream_final:
-                    # Snapshot the plan that just succeeded — streaming retries
-                    # pin to this exact client/model so we don't bounce back to
-                    # primary after the tool loop settled on fallback.
-                    winning_plan = get_attempt_plan()
-                    # +2 (not +1): the in-loop call we just made used iteration+1,
-                    # so the streamed tail needs the next ordinal — otherwise its
-                    # trace resource id collides with that call's. Mirrors the
-                    # synthesis path's distinct-next-value behavior.
-                    stream_telemetry = _telemetry_for_iteration(
-                        telemetry, iteration + 2, step_seq=iteration + 2
-                    )
-                    stream = stream_final_response(
-                        winning_plan=winning_plan,
-                        prompt=prompt,
-                        max_tokens=max_tokens,
-                        conversation_messages=conversation_messages,
-                        response_model=response_model,
-                        json_mode=json_mode,
-                        temperature=temperature,
-                        stop_seqs=stop_seqs,
-                        verbosity=verbosity,
-                        enable_retry=enable_retry,
-                        retry_attempts=retry_attempts,
-                        before_retry_callback=before_retry_callback,
-                        telemetry=stream_telemetry,
-                        tools=tools,
-                    )
+                    # The answer is already complete, so stream it rather than
+                    # asking again: a second call doubles the cost, answers from
+                    # a fresh sample, and can come back empty when the model
+                    # spends it all on thinking.
+                    answer = response.content
+                    if isinstance(answer, BaseModel):
+                        answer = answer.model_dump_json(by_alias=True)
+                    if not isinstance(answer, str) or not answer.strip():
+                        # Only reached on the last iteration, where no empty-answer
+                        # nudge is left: ask once more for a streamed answer.
+                        winning_plan = get_attempt_plan()
+                        # +2 (not +1): the in-loop call used iteration+1, so the
+                        # streamed tail needs the next ordinal, or its trace
+                        # resource id collides with that call's.
+                        stream_telemetry = _telemetry_for_iteration(
+                            telemetry, iteration + 2, step_seq=iteration + 2
+                        )
+                        stream = stream_final_response(
+                            winning_plan=winning_plan,
+                            prompt=prompt,
+                            max_tokens=max_tokens,
+                            conversation_messages=conversation_messages,
+                            response_model=response_model,
+                            json_mode=json_mode,
+                            temperature=temperature,
+                            stop_seqs=stop_seqs,
+                            verbosity=verbosity,
+                            enable_retry=enable_retry,
+                            retry_attempts=retry_attempts,
+                            before_retry_callback=before_retry_callback,
+                            telemetry=stream_telemetry,
+                            tools=tools,
+                        )
+                    else:
+                        stream = _stream_completed_answer(
+                            answer, response.finish_reasons
+                        )
                     return StreamingResponseWithMetadata(
                         stream=stream,
                         tool_calls_made=all_tool_calls,
