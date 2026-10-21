@@ -104,7 +104,8 @@ def test_recent_exchanges_survive_a_process_restart(tmp_path):
     assert "Assistant: Parser written." in query
     assert "an older request" not in query
     assert query.rstrip().endswith("Now add error handling.")
-    assert kwargs == {"reasoning_level": "high", "peer": "user", "apply_injection_cap": False, "raise_errors": True}
+    assert kwargs == {"reasoning_level": "high", "peer": "user", "apply_injection_cap": False, "raise_errors": True,
+                      "stream": True}
     assert ANSWER in injected
 
     record = log_records(tmp_path)[-1]
@@ -373,3 +374,45 @@ def test_a_dialectic_slower_than_the_prefetch_timeout_still_injects(tmp_path):
 
     memory.on_turn_start(1, "Write the parser.")
     assert ANSWER in memory.prefetch_all("Write the parser.")
+
+
+class StreamingPeer:
+    """An SDK peer whose streaming chat yields ``chunks``, then raises ``error`` if one is given."""
+
+    def __init__(self, chunks, error=None):
+        self.chunks, self.error, self.calls = chunks, error, []
+
+    def chat(self, *_args, **_kwargs):
+        raise AssertionError("blocking mode must stream")
+
+    def chat_stream(self, query, **kwargs):
+        self.calls.append((query, kwargs))
+        yield from self.chunks
+        if self.error:
+            raise self.error
+
+
+def streaming_manager(peer):
+    from hermes_plugin_honcho.session import HonchoSession, HonchoSessionManager
+
+    mgr = HonchoSessionManager(config=HonchoClientConfig(host="hermes", api_key="k", enabled=True,
+                                                         dialectic_dynamic=False, dialectic_reasoning_level="high"))
+    mgr._cache["k"] = HonchoSession(key="k", user_peer_id="u", assistant_peer_id="a", honcho_session_id="s")
+    mgr._get_or_create_peer = lambda _peer_id: peer
+    return mgr
+
+
+def test_streamed_dialectic_joins_the_chunks_and_asks_as_the_ai_peer():
+    peer = StreamingPeer(["They want ", "tests ", "first."])
+    answer = streaming_manager(peer).dialectic_query("k", "q", reasoning_level="high", apply_injection_cap=False,
+                                                     raise_errors=True, stream=True)
+    assert answer == "They want tests first."
+    assert peer.calls == [("q", {"reasoning_level": "high", "target": "u"})]
+
+
+def test_a_stream_that_breaks_midway_is_an_error_not_a_short_answer():
+    import httpx
+
+    peer = StreamingPeer(["They want "], error=httpx.RemoteProtocolError("peer closed connection"))
+    with pytest.raises(httpx.RemoteProtocolError):
+        streaming_manager(peer).dialectic_query("k", "q", raise_errors=True, stream=True)

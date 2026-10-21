@@ -659,9 +659,10 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
             outcome["query_trimmed"] = trimmed
         started = time.monotonic()
         try:
-            # raise_errors: a rejected query or a timeout must not look like an empty answer.
+            # raise_errors: a rejected query or a timeout must not look like an empty answer. stream: headers
+            # come back before the dialectic runs, so a proxy bounding time-to-headers cannot cut a slow answer.
             output = self._manager.dialectic_query(self._session_key, query, reasoning_level=level, peer="user",
-                                                   apply_injection_cap=False, raise_errors=True) or ""
+                                                   apply_injection_cap=False, raise_errors=True, stream=True) or ""
         except Exception as e:
             logger.warning("Honcho blocking dialectic failed: %s: %s", type(e).__name__, e)
             output = ""
