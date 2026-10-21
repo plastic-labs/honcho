@@ -182,10 +182,6 @@ async def test_stream_records_partial_output_and_outcome(
         return chunks()
 
     backend.stream.side_effect = setup
-    if with_tools:
-        # The tool loop streams an answer it already has; only an empty one
-        # is asked for again as a stream, which is the call under test.
-        backend.complete.return_value = CompletionResult(content="")
     stream = await api.honcho_llm_call(
         model_config=ModelConfig(transport="openai", model="synthetic"),
         prompt="question",
@@ -265,10 +261,6 @@ async def test_stream_setup_retries_record_each_actual_attempt_once(
         return chunks()
 
     backend.stream.side_effect = setup
-    if with_tools:
-        # The tool loop streams an answer it already has; only an empty one
-        # is asked for again as a stream, which is the call under test.
-        backend.complete.return_value = CompletionResult(content="")
     stream = await api.honcho_llm_call(
         model_config=ConfiguredModelSettings(
             transport="openai",
