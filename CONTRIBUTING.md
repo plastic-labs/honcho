@@ -339,9 +339,10 @@ changed. Which layer you need depends on what you touched:
 | A `/v3` endpoint or deriver queue behavior                        | Actually run the stack and exercise it — not just pytest                       |
 | A migration                                                       | `uv run python scripts/run_alembic_tests.py`; every revision needs a test file |
 
-The TypeScript SDK tests need a running server with a database and Redis, which pytest
-orchestrates. Run them with `uv run pytest tests/ -k typescript` from the repo root —
-`bun test` on its own will fail. To type-check the SDK alone:
+The TypeScript SDK tests run against a real server. `cd sdks/typescript && bun run test`
+starts a throwaway one (fresh database, the API, and the mock LLM provider) and runs
+`bun test` against it; bare `bun test` has no server and fails. It needs the same Postgres
+as pytest (`DB_CONNECTION_URI`). To type-check the SDK alone:
 `cd sdks/typescript && bun run tsc --noEmit`.
 
 ### Migrations
