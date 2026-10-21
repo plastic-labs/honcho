@@ -23,6 +23,7 @@ uv tool install honcho-cli
 
 ```bash
 honcho init                 # confirm/set apiKey + Honcho URL in ~/.honcho/config.json
+honcho install              # detect local AI agents and install Honcho
 honcho start --setup basic  # local stack: LLM provider key + Docker
 honcho doctor               # verify config + connectivity
 honcho                      # show banner + command list
@@ -63,6 +64,7 @@ honcho stop --wipe     # also delete volumes
 | Command | Description |
 |---------|-------------|
 | `honcho init` | Confirm/set `apiKey` + `environmentUrl` in `~/.honcho/config.json`. |
+| `honcho install` | Detect local AI agents, check Honcho status, and install plugins or view MCP guides. |
 | `honcho start` | Start a local Honcho stack (API, deriver, Postgres, Redis). Requires Docker and a cloud LLM key. `--setup basic` / `--setup advanced` runs an interactive config wizard (TTY only). Does not change `environmentUrl`. |
 | `honcho stop` | Stop the local stack. `--wipe` also deletes volumes. |
 | `honcho status` | Show every local stack (or `--profile` for one). |

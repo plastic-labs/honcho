@@ -22,6 +22,8 @@ dependencies = [
     "honcho-ai>=2.5.0",
     "rich>=13.0.0",
     "httpx>=0.27.0",
+    "json5>=0.12.0",
+    "pyyaml>=6.0.0",
 ]
 
 [project.urls]

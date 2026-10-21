@@ -295,6 +295,7 @@ The same `claude mcp add` form (or its client-specific equivalent) works in any 
 ```bash
 uv tool install honcho-cli
 honcho init                 # Honcho API key or browser login + server URL
+honcho install              # detect local AI agents and install Honcho
 honcho start --setup basic  # local stack: LLM provider key + Docker
 honcho doctor
 ```
