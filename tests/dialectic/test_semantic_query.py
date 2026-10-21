@@ -2,6 +2,7 @@
 """Peer chat separates retrieval text from additional reasoning instructions."""
 
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -15,12 +16,13 @@ from src.llm import (
     StreamingResponseWithMetadata,
 )
 from src.schemas import DialecticOptions
-from src.utils.representation import Representation
+from src.utils.representation import ExplicitObservation, Representation
 
 QUERY = "What context helps answer the user's question about Prague?"
 SEMANTIC = "weather in Prague"
 REASONING = "Focus on travel preferences, and answer in two sentences."
 BRIEF = "Memory counts: 3 explicit.\nMap notes:\n- Prefers train travel."
+OBSERVATION = "The user enjoys visiting Prague in spring."
 
 
 @pytest.mark.asyncio
@@ -28,11 +30,15 @@ BRIEF = "Memory counts: 3 explicit.\nMap notes:\n- Prefers train travel."
 @pytest.mark.parametrize("semantic_query", [SEMANTIC, None])
 @pytest.mark.parametrize("reasoning_context", [REASONING, None])
 @pytest.mark.parametrize("brief", [BRIEF, None], ids=["with_brief", "without_brief"])
+@pytest.mark.parametrize(
+    "prefetch", [True, False], ids=["with_prefetch", "without_prefetch"]
+)
 async def test_retrieval_excludes_instructions_and_reasoning_preserves_query(
     semantic_query: str | None,
     reasoning_context: str | None,
     streaming: bool,
     brief: str | None,
+    prefetch: bool,
 ) -> None:
     """Each optional field affects only its own side of the retrieval boundary."""
     agent = DialecticAgent(
@@ -43,7 +49,19 @@ async def test_retrieval_excludes_instructions_and_reasoning_preserves_query(
         reasoning_level="low",
     )
     embed = AsyncMock(return_value=[0.1] * 4)
-    search = AsyncMock(return_value=Representation())
+    search = AsyncMock(
+        return_value=Representation(
+            explicit=[
+                ExplicitObservation(
+                    content=OBSERVATION,
+                    created_at=datetime(2026, 1, 1, tzinfo=UTC),
+                    message_ids=[1],
+                )
+            ]
+            if prefetch
+            else []
+        )
+    )
 
     async def chunks() -> AsyncIterator[HonchoLLMCallStreamChunk]:
         yield HonchoLLMCallStreamChunk(content="ok")
@@ -98,6 +116,14 @@ async def test_retrieval_excludes_instructions_and_reasoning_preserves_query(
     assert QUERY in sent[-1]["content"]
     assert (REASONING in sent[-1]["content"]) == (reasoning_context is not None)
     assert (BRIEF in sent[-1]["content"]) == (brief is not None)
+    content = sent[-1]["content"]
+    assert (OBSERVATION in content) == prefetch
+    if prefetch:
+        query_section, observations_section = content.split(
+            "## Relevant Observations (prefetched)", 1
+        )
+        assert (REASONING in query_section) == (reasoning_context is not None)
+        assert REASONING not in observations_section
 
 
 @pytest.mark.parametrize("field", ["semantic_query", "reasoning_context"])

@@ -479,9 +479,13 @@ class DialecticAgent:
             semantic_query if semantic_query is not None else query
         )
 
+        query_section = f"Query: {query}"
+        if reasoning_context is not None:
+            query_section += f"\n\nReasoning context: {reasoning_context}"
+
         if prefetched_observations:
             user_content = (
-                f"Query: {query}\n\n"
+                f"{query_section}\n\n"
                 f"## {self._prefetch_heading()}\n"
                 f"{self._prefetch_intro()}\n\n"
                 f"{prefetched_observations}"
@@ -490,10 +494,7 @@ class DialecticAgent:
                 task_name, "prefetched_observations", prefetched_observations, "blob"
             )
         else:
-            user_content = f"Query: {query}"
-
-        if reasoning_context is not None:
-            user_content += f"\n\nReasoning context: {reasoning_context}"
+            user_content = query_section
 
         brief = await self._pair_brief()
         if brief:
