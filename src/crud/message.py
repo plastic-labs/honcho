@@ -4,12 +4,13 @@ from logging import getLogger
 from typing import Any
 
 from nanoid import generate as generate_nanoid
-from sqlalchemy import ColumnElement, Select, and_, func, or_, select, text
+from sqlalchemy import ColumnElement, Select, TextClause, and_, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute
 
 from src import models, schemas
 from src.config import settings
+from src.db import tenant_context
 from src.dependencies import tracked_db
 from src.embedding_client import embedding_client
 from src.telemetry.events import EmbeddingCallPurpose
@@ -397,6 +398,43 @@ async def _build_merged_snippets(
     return snippets
 
 
+def _ingest_lock(
+    workspace_name: str, session_name: str
+) -> tuple[TextClause, dict[str, str]]:
+    """The per-session advisory lock that serializes seq_in_session assignment."""
+    # region ai
+    # Advisory locks are database-wide, not RLS-scoped. Under MULTI_TENANT every
+    # tenant has a "default" workspace and session names are customer-chosen, so
+    # keying on (workspace, session) alone made unrelated tenants queue behind
+    # each other's ingests. The tenant joins the first key flag-on only: flag-off
+    # SQL is unchanged, so a self-host rolling deploy never has old and new pods
+    # locking different keys for the same session.
+    # endregion
+    if not settings.MULTI_TENANT:
+        return (
+            text(
+                "SELECT pg_advisory_xact_lock(hashtext(:workspace_name), hashtext(:session_name))"
+            ),
+            {"workspace_name": workspace_name, "session_name": session_name},
+        )
+    tenant = tenant_context.get()
+    if not tenant:
+        raise ValueError(
+            "message ingest requires a tenant when MULTI_TENANT is enabled"
+        )
+    return (
+        text(
+            "SELECT pg_advisory_xact_lock("
+            + "hashtext(:tenant || ':' || :workspace_name), hashtext(:session_name))"
+        ),
+        {
+            "tenant": tenant,
+            "workspace_name": workspace_name,
+            "session_name": session_name,
+        },
+    )
+
+
 async def create_messages(
     db: AsyncSession,
     messages: list[schemas.MessageCreate],
@@ -439,12 +477,7 @@ async def create_messages(
     )
 
     await db.execute(text("SET LOCAL lock_timeout = '5s'"))
-    await db.execute(
-        text(
-            "SELECT pg_advisory_xact_lock(hashtext(:workspace_name), hashtext(:session_name))"
-        ),
-        {"workspace_name": workspace_name, "session_name": session_name},
-    )
+    await db.execute(*_ingest_lock(workspace_name, session_name))
 
     # Get the last sequence number on a session - uses (workspace_name, session_name, seq_in_session) index
     last_seq = (
