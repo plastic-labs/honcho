@@ -1,29 +1,21 @@
 """Work unit utility functions for generating and parsing work unit keys."""
 
-from typing import Any
+from typing import Any, get_args
 
 from pydantic import BaseModel
 
 from src.config import settings
 from src.db import tenant_context
+from src.utils.types import TaskType
 
 # The task types that lead a base (non-tenant-namespaced) work_unit_key.
 # region ai
 # Used to tell whether a key carries a leading tenant_id prefix: the prefix is
 # present (added under MULTI_TENANT) iff the first segment is not one of these.
+# Derived from TaskType so a new task type is reserved as a tenant id
+# (TenantCreate.reject_task_type_names) without a second list to update.
 # endregion
-TASK_TYPES = frozenset(
-    {
-        "representation",
-        "summary",
-        "dream",
-        "webhook",
-        "deletion",
-        "reconciler",
-        "scope_backfill",
-        "scope_removal",
-    }
-)
+TASK_TYPES: frozenset[str] = frozenset(get_args(TaskType))
 
 # region ai
 # reconciler is the only task type that is NOT tenant-scoped: it scans every
