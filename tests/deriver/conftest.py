@@ -16,7 +16,7 @@ from src.config import settings
 from src.models import DEFAULT_TENANT_ID
 from src.utils.queue_payload import create_payload
 from src.utils.types import TaskType
-from src.utils.work_unit import construct_work_unit_key
+from src.utils.work_unit import construct_work_unit_key, tenant_id_for_work_unit_key
 
 
 @pytest.fixture(autouse=True)
@@ -205,6 +205,8 @@ async def add_queue_items(
                 processed=False,
                 workspace_name=workspace_name,
                 message_id=message_id,
+                # As enqueue's _stamp_tenant_id does: the column mirrors the key.
+                tenant_id=tenant_id_for_work_unit_key(work_unit_key),
             )
             db_session.add(queue_item)
             queue_items.append(queue_item)

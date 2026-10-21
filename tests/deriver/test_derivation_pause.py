@@ -206,7 +206,7 @@ async def test_the_next_batch_fetch_stops_once_the_tenant_is_paused(
     finally:
         tenant_context.reset(token)
     assert items[0].work_unit_key.startswith(f"{tenant_id}:")
-    items[0].tenant_id = tenant_id
+    assert items[0].tenant_id == tenant_id
     aqs = models.ActiveQueueSession(
         work_unit_key=items[0].work_unit_key, tenant_id=tenant_id
     )
