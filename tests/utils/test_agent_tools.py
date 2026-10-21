@@ -2735,3 +2735,39 @@ class TestObservationContextSessionCorrelation:
 
         assert {m.session_name for m in result} == {session.name}
         assert [m.seq_in_session for m in result] == [2, 3, 4]
+
+    async def test_two_target_sessions_come_back_grouped_by_session(
+        self, db_session: AsyncSession, tool_test_data: Any
+    ):
+        workspace, _peer1, peer2, session, messages, _ = tool_test_data
+        other = models.Session(
+            name=str(generate_nanoid()), workspace_name=workspace.name
+        )
+        db_session.add(other)
+        await db_session.flush()
+        other_messages = [
+            models.Message(
+                workspace_name=workspace.name,
+                session_name=other.name,
+                peer_name=peer2.name,
+                content=f"Other session message {i}",
+                seq_in_session=i + 1,
+                token_count=10,
+            )
+            for i in range(5)
+        ]
+        db_session.add_all(other_messages)
+        await db_session.flush()
+
+        result = await get_observation_context(
+            db_session,
+            workspace_name=workspace.name,
+            session_name=None,
+            message_ids=[messages[2].public_id, other_messages[2].public_id],
+        )
+
+        expected = sorted(
+            [(session.name, seq) for seq in (2, 3, 4)]
+            + [(other.name, seq) for seq in (2, 3, 4)]
+        )
+        assert [(m.session_name, m.seq_in_session) for m in result] == expected

@@ -1142,10 +1142,9 @@ async def get_observation_context(
     # region ai
     # seq_in_session is per-session, so the neighbour test must also match the
     # session: without it, a call with no session_name (peer-scoped) pulls the
-    # seq±1 rows of every other session the observer can see. The BETWEEN on
-    # the bare column (rather than arithmetic on it) keeps the probe sargable
-    # on the unique (tenant_id, workspace_name, session_name, seq_in_session)
-    # index.
+    # seq±1 rows of every other session the observer can see. Ordered by
+    # session first so a peer-scoped result keeps each session's turns
+    # together for the transcript it feeds.
     # endregion
     stmt = (
         select(models.Message)
@@ -1161,7 +1160,9 @@ async def get_observation_context(
             )
             .exists()
         )
-        .order_by(models.Message.seq_in_session.asc())
+        .order_by(
+            models.Message.session_name.asc(), models.Message.seq_in_session.asc()
+        )
     )
 
     if session_name:
