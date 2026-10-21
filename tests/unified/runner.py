@@ -37,6 +37,7 @@ from honcho.session import SessionPeerConfig as SDKSessionPeerConfig
 
 from tests.bench.harness import HonchoHarness
 from tests.unified.schema import (
+    AddMemberAction,
     AddMessageAction,
     AddMessagesAction,
     ContainsAssertion,
@@ -621,6 +622,10 @@ class UnifiedTestExecutor:
                     json={"session_ids": step.session_ids},
                 )
 
+        elif isinstance(step, AddMemberAction):
+            parent = await self.client.aio.peer(id=step.parent_peer_id)
+            await parent.aio.members.add(step.peer_id)
+
         elif isinstance(step, WaitAction):
             if step.duration:
                 await asyncio.sleep(step.duration)
@@ -755,6 +760,7 @@ class UnifiedTestExecutor:
                 reasoning_level=step.reasoning_level,
                 response_format=step.response_format,
                 include_evidence=True,
+                depth=step.depth,
             )
             return _query_result(response)
 
@@ -786,7 +792,10 @@ class UnifiedTestExecutor:
 
             peer = await self.client.aio.peer(id=step.observer_peer_id)
             representation = await peer.aio.representation(
-                step.session_id, target=step.observed_peer_id, search_query=step.input
+                step.session_id,
+                target=step.observed_peer_id,
+                search_query=step.input,
+                depth=step.depth,
             )
             return representation
 
@@ -810,6 +819,8 @@ class UnifiedTestExecutor:
                 body["target"] = step.observed_peer_id
             if step.reasoning_level:
                 body["reasoning_level"] = step.reasoning_level
+            if step.depth is not None:
+                body["depth"] = step.depth
             response = await self._request(
                 "POST", f"/peers/{step.observer_peer_id}/chat", json=body
             )
@@ -830,6 +841,8 @@ class UnifiedTestExecutor:
                 body["target"] = step.observed_peer_id
             if step.input:
                 body["search_query"] = step.input
+            if step.depth is not None:
+                body["depth"] = step.depth
             response = await self._request(
                 "POST", f"/peers/{step.observer_peer_id}/representation", json=body
             )

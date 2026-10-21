@@ -42,6 +42,9 @@ Tests are defined in JSON files. A test definition consists of a name, optional 
     * `create_scope`: Create a scope and optionally add member sessions. Add the
       sessions *before* the messages you want in scope — membership only affects
       messages ingested after a session joins.
+    * `add_member`: Make `peer_id` a member of `parent_peer_id`. Reads that
+      name the parent then include the member's memory. Aggregation happens at
+      read time, so a membership added after the deriver has run still counts.
 
 3. **Waiting**:
     * `wait`: Wait for duration or "queue_empty".
@@ -54,6 +57,8 @@ Tests are defined in JSON files. A test definition consists of a name, optional 
           workspace_chat, to the union of several). Valid for "chat",
           "get_representation", "get_context", and "workspace_chat"; get_context
           takes a single scope and requires `observed_peer_id`.
+        * `depth`: how many levels of members a "chat" or "get_representation"
+          aggregates (0 reads the peer alone). Omit it for the server default.
 
 ### Raw HTTP vs the SDK
 
