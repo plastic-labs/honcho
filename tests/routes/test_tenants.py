@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import models
 from src.config import settings
 from src.main import app
+from src.utils.work_unit import TASK_TYPES
 
 # A stable, non-empty service secret for the enabled cases. Constant-time
 # comparison against this is the whole of the tenant API's auth check.
@@ -222,6 +223,19 @@ def test_create_tenant_invalid_id(client: TestClient, enabled: str):
     response = client.post(
         "/v3/tenants",
         json=_create_body("bad:id"),
+        headers={HEADER: enabled},
+    )
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.parametrize("tenant_id", sorted(TASK_TYPES))
+def test_create_tenant_rejects_task_type_ids(
+    client: TestClient, enabled: str, tenant_id: str
+):
+    """A tenant_id equal to a work-unit task type is reserved, a 422 (re-vet F43)."""
+    response = client.post(
+        "/v3/tenants",
+        json=_create_body(tenant_id),
         headers={HEADER: enabled},
     )
     assert response.status_code == 422, response.text

@@ -23,9 +23,7 @@ from src.config import settings
 from src.crud.deriver import PAUSE_EXEMPT_TASK_TYPES, not_paused_clause
 from src.db import tenant_context
 from src.deriver.queue_manager import QueueManager
-from src.utils.work_unit import (
-    _TASK_TYPES,  # pyright: ignore[reportPrivateUsage]
-)
+from src.utils.work_unit import TASK_TYPES
 from tests.deriver.conftest import SeedWorkUnit
 
 
@@ -55,12 +53,12 @@ def test_every_task_type_is_classified() -> None:
     The exemption list defaults a new type to paused, which is the safe direction
     for billing. This pins the current split so the default is never silent.
     """
-    assert PAUSE_EXEMPT_TASK_TYPES <= _TASK_TYPES
+    assert PAUSE_EXEMPT_TASK_TYPES <= TASK_TYPES
     assert {
         "representation",
         "summary",
         "dream",
-    } == _TASK_TYPES - PAUSE_EXEMPT_TASK_TYPES
+    } == TASK_TYPES - PAUSE_EXEMPT_TASK_TYPES
 
 
 def test_the_clause_is_never_built_flag_off() -> None:

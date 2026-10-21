@@ -12,7 +12,7 @@ from src.db import tenant_context
 # Used to tell whether a key carries a leading tenant_id prefix: the prefix is
 # present (added under MULTI_TENANT) iff the first segment is not one of these.
 # endregion
-_TASK_TYPES = frozenset(
+TASK_TYPES = frozenset(
     {
         "representation",
         "summary",
@@ -92,11 +92,11 @@ def construct_work_unit_key(
     # region ai
     # A tenant_id equal to a task-type name would make the prefixed key
     # indistinguishable from an un-prefixed one in parse_work_unit_key (the two
-    # are told apart by leading-segment membership in _TASK_TYPES). The tenant
+    # are told apart by leading-segment membership in TASK_TYPES). The tenant
     # id issuer mints opaque nanoids, so this cannot happen in practice; the
     # guard makes the invariant explicit instead of latent.
     # endregion
-    if tenant in _TASK_TYPES:
+    if tenant in TASK_TYPES:
         raise ValueError(
             f"tenant_id {tenant!r} collides with a task-type name and would "
             + "produce an ambiguous work_unit_key"
@@ -182,7 +182,7 @@ def _split_tenant_prefix(work_unit_key: str) -> tuple[str | None, str]:
     # task type means no prefix; anything else is a tenant_id to strip off.
     # endregion
     head, _, rest = work_unit_key.partition(":")
-    if head and head not in _TASK_TYPES and rest:
+    if head and head not in TASK_TYPES and rest:
         return head, rest
     return None, work_unit_key
 
