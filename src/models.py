@@ -394,6 +394,16 @@ class Message(Base):
             "id",
             postgresql_include=["created_at"],
         ),
+        # A session's messages by id with token_count: the token-budget window of
+        # session context and the deriver's batch is index-only (migration 647b773f05ac).
+        Index(
+            "ix_messages_session_tokens",
+            "tenant_id",
+            "workspace_name",
+            "session_name",
+            "id",
+            postgresql_include=["token_count"],
+        ),
         Index(
             "ix_messages_peer_lookup",
             "tenant_id",
@@ -725,6 +735,28 @@ class Document(Base):
             "observer",
             "observed",
             "workspace_name",
+        ),
+        # conclusions/list: a workspace's live documents by recency, and their count
+        # (migration 647b773f05ac).
+        Index(
+            "ix_documents_workspace_recent",
+            "tenant_id",
+            "workspace_name",
+            "created_at",
+            "id",
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+        # A collection's most-derived live documents: peer context and representation.
+        Index(
+            "ix_documents_collection_derived",
+            "tenant_id",
+            "workspace_name",
+            "observer",
+            "observed",
+            text("times_derived DESC"),
+            text("created_at DESC"),
+            "id",
+            postgresql_where=text("deleted_at IS NULL"),
         ),
         # ai: HNSW is a single-column vector index (per-partition under HASH(tenant_id))
         Index(
