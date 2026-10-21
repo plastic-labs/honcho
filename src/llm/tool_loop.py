@@ -819,6 +819,11 @@ async def execute_tool_loop(
 
     async def _final_call() -> HonchoLLMCallResponse[Any]:
         plan = get_attempt_plan()
+        synthesis_tools, synthesis_tool_choice = final_call_tools or None, None
+        if synthesis_tools is None and plan.provider == "anthropic":
+            # Anthropic rejects a history with tool_use/tool_result blocks
+            # unless tools are defined, so offer them with calls disallowed.
+            synthesis_tools, synthesis_tool_choice = tools, "none"
         response = await honcho_llm_call_inner(
             plan.provider,
             plan.model,
@@ -833,8 +838,8 @@ async def execute_tool_loop(
             plan.thinking_budget_tokens,
             stream=False,
             client_override=plan.client,
-            tools=final_call_tools or None,
-            tool_choice=None,
+            tools=synthesis_tools,
+            tool_choice=synthesis_tool_choice,
             messages=conversation_messages,
             selected_config=plan.selected_config,
             plan=plan,
