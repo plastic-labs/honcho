@@ -25,7 +25,7 @@ from .client import HonchoClientConfig, resolve_config_path
 from .client import _host_block, _HostLookup
 from .client import join_plugin_threads, spawn_context_thread
 from .dialectic import DialecticMixin
-from .recent_turns import append_exchange, extract_exchange, load_exchanges, ring_path
+from .recent_turns import KEEP_EXCHANGES, append_exchange, extract_exchange, load_exchanges, ring_path
 from .session_peers import assistant_peer_id_for, sanitize_peer_id
 from .session_context import usable_honcho_summary
 from .tool_schemas import ALL_TOOL_SCHEMAS
@@ -106,6 +106,11 @@ _CONTEXT_SECTIONS = (
     ("aiRepresentation", "ai_representation", "AI Self-Representation"),
     ("aiCard", "ai_card", "AI Identity Card"),
 )
+
+# A turn Hermes never synced (it ended without a reply) is recorded with this in place of one.
+_UNSYNCED_TURN_REPLY = "(that turn ended without a reply)"
+# The previous request matches the newest recorded one on this many whitespace-normalized chars.
+_STUB_MATCH_CHARS = 500
 
 _PREWARM_QUERY = "Summarize what you know about this user. Focus on preferences, current projects, and working style."
 
@@ -625,7 +630,8 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
         notice = "\n\n".join(n for n in (self._pop_auth_notice(), self._pop_peer_notice()) if n)
         payload = "\n\n".join(p for p in (notice, outcome.get("payload", "")) if p)
         fields = {k: outcome[k] for k in ("query", "query_trimmed", "recent_turns_count", "dialectic_ms",
-                                          "reasoning_level", "dialectic_output", "error") if k in outcome}
+                                          "reasoning_level", "dialectic_output", "error", "previous_message_stubbed")
+                  if k in outcome}
         # A notice alone makes the record "injected", so the dialectic's own outcome is kept apart.
         # contextTokens is not applied: the answer is the whole injection and the arm sizes it.
         return self._log_injection("injected" if payload else outcome["reason"], payload, mode="blocking",
@@ -651,10 +657,13 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
 
     def _query_blocking_dialectic(self, message: str) -> dict[str, Any]:
         exchanges = load_exchanges(self._ring_path(), self._session_key)
+        stubbed = self._stub_unsynced_turn(exchanges)
         query, trimmed, quoted = self._build_blocking_query(message, exchanges)
         level = self._config.dialectic_reasoning_level if self._config else "low"
         outcome: dict[str, Any] = {"query": query, "reasoning_level": level, "dialectic_output": "",
                                    "recent_turns_count": quoted}
+        if stubbed:
+            outcome["previous_message_stubbed"] = True
         if trimmed:
             outcome["query_trimmed"] = trimmed
         started = time.monotonic()
@@ -673,6 +682,31 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
         else:
             outcome.setdefault("reason", "dialectic-empty")
         return outcome
+
+    def _stub_unsynced_turn(self, exchanges: list[dict[str, Any]]) -> bool:
+        """Record the previous turn's request when Hermes never synced that turn, and say whether it did.
+
+        Hermes skips memory sync for a turn that ended without a reply (interrupted, or a degenerate
+        response it discarded), so the ring has no entry for it. The request is still what the user
+        last asked, and Hermes passes it to on_turn_start, so it is added (and persisted) as an exchange
+        with no tools and no reply. Appends to ``exchanges`` in place."""
+        previous = sanitize_context(self._previous_turn_message or "").strip()
+        if self._turn_count <= 1 or not previous:
+            return False
+
+        def _key(text: str) -> str:
+            return " ".join(text.split())[:_STUB_MATCH_CHARS]
+
+        if exchanges and _key(str(exchanges[-1].get("user") or "")) == _key(previous):
+            return False
+        stub = extract_exchange(previous, _UNSYNCED_TURN_REPLY, None)
+        stub["turn"] = self._turn_count - 1
+        exchanges.append(stub)
+        del exchanges[:-KEEP_EXCHANGES]  # as the ring file keeps them
+        append_exchange(self._ring_path(), self._session_key, stub)
+        logger.info("Honcho recent turns: turn %d was never synced; recorded its request without a reply",
+                    self._turn_count - 1)
+        return True
 
     def _ring_path(self):
         return ring_path(getattr(self._config, "hermes_home", None))

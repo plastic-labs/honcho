@@ -416,3 +416,47 @@ def test_a_stream_that_breaks_midway_is_an_error_not_a_short_answer():
     peer = StreamingPeer(["They want "], error=httpx.RemoteProtocolError("peer closed connection"))
     with pytest.raises(httpx.RemoteProtocolError):
         streaming_manager(peer).dialectic_query("k", "q", raise_errors=True, stream=True)
+
+
+def test_a_turn_hermes_never_synced_is_recorded_from_its_request(tmp_path):
+    first = make_provider(tmp_path)
+    first.on_turn_start(1, "Write the parser.")
+    first.prefetch("Write the parser.")
+    first.sync_turn("Write the parser.", "Parser written.")
+    # Turn 2 ends without a reply, so Hermes never calls sync_turn for it.
+    make_provider(tmp_path).on_turn_start(2, "Now add retry.", previous_message="Write the parser.")
+
+    third = make_provider(tmp_path)
+    third.on_turn_start(3, "How does the VM dispatch a panic?", previous_message="Now add retry.")
+    third.prefetch("How does the VM dispatch a panic?")
+
+    query = third._manager.dialectic_calls[0][1]
+    assert query.index("User: Write the parser.") < query.index("User: Now add retry.")
+    assert "Assistant: (that turn ended without a reply)" in query
+    record = log_records(tmp_path)[-1]
+    assert record["previous_message_stubbed"] is True and record["recent_turns_count"] == 2
+    # Persisted, so the next turn quotes it as well, and it is not stubbed a second time.
+    fourth = make_provider(tmp_path)
+    fourth.on_turn_start(4, "Add docs.", previous_message="How does the VM dispatch a panic?")
+    fourth.prefetch("Add docs.")
+    users = [t["user"] for t in load_exchanges(ring_path(tmp_path), "session-a")]
+    assert users == ["Write the parser.", "Now add retry.", "How does the VM dispatch a panic?"]
+
+
+def test_a_synced_previous_turn_is_not_stubbed_again(tmp_path):
+    provider = make_provider(tmp_path)
+    provider.sync_turn("Write   the parser.", "Parser written.")
+    provider.on_turn_start(2, "Now add retry.", previous_message="Write the parser.")
+    provider.prefetch("Now add retry.")
+
+    assert len(load_exchanges(ring_path(tmp_path), "session-a")) == 1
+    record = log_records(tmp_path)[-1]
+    assert "previous_message_stubbed" not in record and record["recent_turns_count"] == 1
+
+
+def test_no_stub_on_the_first_turn(tmp_path):
+    provider = make_provider(tmp_path)
+    provider.on_turn_start(1, "Write the parser.", previous_message="something older")
+    provider.prefetch("Write the parser.")
+    assert not ring_path(tmp_path).exists()
+    assert "previous_message_stubbed" not in log_records(tmp_path)[-1]
