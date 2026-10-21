@@ -929,9 +929,17 @@ class QueueManager:
         # session/workspace name shared across tenants can't pull another tenant's
         # messages into the batch. It also goes on every Message.id probe: the PK
         # is (tenant_id, id), so an id-only lookup can't seek it and reads every
-        # partition's index. None (flag off, or a legacy un-prefixed key) adds no
-        # filter, so self-host is unchanged.
+        # partition's index. Flag off, the key is never prefixed and None adds
+        # no filter, so self-host is unchanged. Flag on, an un-prefixed
+        # representation key is a writer bug, and an unfiltered read on the
+        # service session would span every tenant: raise before any read, so
+        # the bad key surfaces in logs instead of the batch running unscoped.
         # endregion
+        if settings.MULTI_TENANT and parsed_key.tenant_id is None:
+            raise ValueError(
+                f"work_unit_key {work_unit_key!r} has no tenant prefix but "
+                + "MULTI_TENANT is enabled; refusing an unscoped batch read"
+            )
         tenant_clause = (
             models.Message.tenant_id == parsed_key.tenant_id
             if parsed_key.tenant_id is not None
