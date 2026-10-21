@@ -2693,3 +2693,45 @@ class TestEvidenceCoverage:
             f"{tool_name} returns rows to the model but never records them, so "
             "they will be missing from evidence"
         )
+
+
+@pytest.mark.asyncio
+class TestObservationContextSessionCorrelation:
+    """Neighbours are seq±1 within the target's own session.
+
+    seq_in_session is per-session, so with no session_name (a peer-scoped
+    call) a seq-only correlation pulled other sessions' seq±1 rows too.
+    """
+
+    async def test_no_session_returns_only_target_sessions_neighbours(
+        self, db_session: AsyncSession, tool_test_data: Any
+    ):
+        workspace, _peer1, peer2, session, messages, _ = tool_test_data
+        other = models.Session(
+            name=str(generate_nanoid()), workspace_name=workspace.name
+        )
+        db_session.add(other)
+        await db_session.flush()
+        for i in range(5):
+            db_session.add(
+                models.Message(
+                    workspace_name=workspace.name,
+                    session_name=other.name,
+                    peer_name=peer2.name,
+                    content=f"Other session message {i}",
+                    seq_in_session=i + 1,
+                    token_count=10,
+                )
+            )
+        await db_session.flush()
+
+        target = messages[2]  # seq 3 in `session`
+        result = await get_observation_context(
+            db_session,
+            workspace_name=workspace.name,
+            session_name=None,
+            message_ids=[target.public_id],
+        )
+
+        assert {m.session_name for m in result} == {session.name}
+        assert [m.seq_in_session for m in result] == [2, 3, 4]
