@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import crud, models
 from src.config import settings
 from src.models import Peer, Workspace
+from src.security import JWTParams, create_jwt
 from src.utils.scopes import scope_peer_name
 from tests.conftest import (
     _content_to_embedding,  # pyright: ignore[reportPrivateUsage]
@@ -93,6 +94,11 @@ def _representation(
         if response.status_code == 200
         else response.text
     )
+
+
+def _headings(text: str) -> list[str]:
+    """The `# <peer>` section headings of an aggregated read, in order."""
+    return [line[2:] for line in text.splitlines() if line.startswith("# ")]
 
 
 @pytest.fixture
@@ -251,6 +257,86 @@ class TestDepthAndBounds:
         assert "more than 3 peers" in body
         # Querying a member directly still works.
         assert _representation(client, team, "alice")[0] == 200
+
+
+class TestObserverPairs:
+    async def test_a_directional_read_keeps_its_observer_for_every_member(
+        self, client: TestClient, db_session: AsyncSession, team: str
+    ):
+        for observed, fact in (
+            ("engineering-team", "Bob thinks the team is behind"),
+            ("alice", "Bob thinks Alice is overloaded"),
+        ):
+            await _seed(
+                db_session, team, observer="bob", observed=observed, contents=[fact]
+            )
+        _member(client, team, "engineering-team", "alice")
+
+        status, text = _representation(client, team, "bob", target="engineering-team")
+        assert status == 200
+        assert _headings(text) == ["engineering-team", "alice"]
+        assert "Alice is overloaded" in text
+        assert "Alice leads the rewrite" not in text  # alice's own memory
+        assert "ships on Fridays" not in text  # the team's own memory
+
+    async def test_a_self_read_uses_each_members_own_memory_not_the_parents_view(
+        self, client: TestClient, db_session: AsyncSession, team: str
+    ):
+        await _seed(
+            db_session,
+            team,
+            observer="engineering-team",
+            observed="alice",
+            contents=["The team's view of Alice"],
+        )
+        _member(client, team, "engineering-team", "alice")
+
+        _, text = _representation(client, team, "engineering-team")
+        assert "Alice leads the rewrite" in text
+        assert "team's view of Alice" not in text
+
+    async def test_a_session_allowlist_applies_to_every_member(
+        self, client: TestClient, db_session: AsyncSession, team: str
+    ):
+        kept, dropped = str(generate_nanoid()), str(generate_nanoid())
+        for session in (kept, dropped):
+            assert client.post(
+                f"/v3/workspaces/{team}/sessions", json={"id": session}
+            ).status_code in (200, 201)
+        for name in ("alice", "bob"):
+            for session, verb in ((kept, "kept"), (dropped, "dropped")):
+                await _seed(
+                    db_session,
+                    team,
+                    observer=name,
+                    observed=name,
+                    contents=[f"{name} {verb} this"],
+                    session_name=session,
+                )
+            _member(client, team, "engineering-team", name)
+
+        status, text = _representation(
+            client, team, "engineering-team", filters={"session_id": [kept]}
+        )
+        assert status == 200
+        assert "alice kept this" in text
+        assert "bob kept this" in text
+        assert "dropped" not in text
+
+    async def test_a_parent_key_reads_its_members_through_the_parent(
+        self, client: TestClient, team: str, monkeypatch: pytest.MonkeyPatch
+    ):
+        _member(client, team, "engineering-team", "alice")
+        monkeypatch.setattr(settings.AUTH, "USE_AUTH", True)
+        monkeypatch.setattr(settings.AUTH, "JWT_SECRET", "test-secret")
+        team_key = create_jwt(JWTParams(w=team, p="engineering-team"))
+        client.headers["Authorization"] = f"Bearer {team_key}"
+
+        status, text = _representation(client, team, "engineering-team")
+        assert status == 200
+        assert "Alice leads the rewrite" in text
+        # Membership grants the read through the parent, not of the member itself.
+        assert _representation(client, team, "alice")[0] == 401
 
 
 class TestScopes:
@@ -519,3 +605,185 @@ class TestCardContextAndSearch:
 
         assert search(None) == ["alice"]
         assert search(0) == []
+
+
+# org
+# |-- platform -- ana, ben, cal, sre -- hal
+# |-- product --- cal, dee, eve
+# |-- research -- fay, gus
+# `-- gus           (also a direct member, added last)
+#
+# Membership rows in creation order: each level of an expansion is ordered by
+# when its memberships were created. org -> gus comes last, so only its level
+# explains gus being read at depth 1.
+ORG_EDGES = [
+    ("org", "platform"),
+    ("org", "product"),
+    ("org", "research"),
+    ("platform", "ana"),
+    ("platform", "ben"),
+    ("platform", "cal"),
+    ("platform", "sre"),
+    ("product", "cal"),
+    ("product", "dee"),
+    ("product", "eve"),
+    ("research", "fay"),
+    ("research", "gus"),
+    ("sre", "hal"),
+    ("org", "gus"),
+]
+ORG_LEVELS = [
+    ["org"],
+    ["platform", "product", "research", "gus"],
+    ["ana", "ben", "cal", "sre", "dee", "eve", "fay"],
+    ["hal"],
+]
+
+
+def _org_fact(peer: str) -> str:
+    return f"{peer} holds fact {peer}-1"
+
+
+def _org_expected(depth: int) -> list[str]:
+    return [peer for level in ORG_LEVELS[: depth + 1] for peer in level]
+
+
+@pytest.fixture
+async def org(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+) -> str:
+    """The org chart above, every peer holding one fact of its own."""
+    workspace, _ = sample_data
+    ws = workspace.name
+    for peer in _org_expected(3):
+        _peer(client, ws, peer)
+        await _seed(
+            db_session, ws, observer=peer, observed=peer, contents=[_org_fact(peer)]
+        )
+    for parent, member in ORG_EDGES:
+        _member(client, ws, parent, member)
+    return ws
+
+
+class TestOrgChart:
+    @pytest.mark.parametrize("depth", [1, 2, 3])
+    async def test_each_depth_adds_exactly_one_level(
+        self, client: TestClient, org: str, depth: int
+    ):
+        status, text = _representation(
+            client, org, "org", depth=depth, max_conclusions=50
+        )
+        assert status == 200
+        assert _headings(text) == _org_expected(depth)
+        for peer in _org_expected(depth):
+            assert _org_fact(peer) in text, peer
+
+    async def test_a_peer_on_several_paths_is_read_once_at_its_shallowest_level(
+        self, client: TestClient, org: str, monkeypatch: pytest.MonkeyPatch
+    ):
+        # A cap of exactly the distinct peers: counting cal or gus twice trips it.
+        monkeypatch.setattr(
+            settings.PEER, "AGGREGATION_MAX_FANOUT", len(_org_expected(3))
+        )
+        status, text = _representation(client, org, "org", depth=3, max_conclusions=50)
+        assert status == 200, text
+        headings = _headings(text)
+        # cal is under platform and product; gus under research and org itself.
+        for peer in ("cal", "gus"):
+            assert headings.count(peer) == 1, peer
+            assert text.count(_org_fact(peer)) == 1, peer
+        assert headings.index("gus") < headings.index("ana")
+
+    async def test_removing_a_middle_link_drops_its_subtree(
+        self, client: TestClient, org: str
+    ):
+        response = client.delete(f"/v3/workspaces/{org}/peers/org/members/platform")
+        assert response.status_code in (200, 204), response.text
+
+        _, text = _representation(client, org, "org", depth=3, max_conclusions=50)
+        headings = _headings(text)
+        for gone in ("platform", "ana", "ben", "sre", "hal"):
+            assert gone not in headings, gone
+        assert "cal" in headings  # still reached through product
+        _, subtree = _representation(client, org, "platform", depth=2)
+        assert _headings(subtree) == ["platform", "ana", "ben", "cal", "sre", "hal"]
+
+    async def test_the_fanout_cap_counts_only_peers_within_the_requested_depth(
+        self, client: TestClient, org: str, monkeypatch: pytest.MonkeyPatch
+    ):
+        # Exactly the depth-1 set; the eight peers below must not count toward it.
+        monkeypatch.setattr(
+            settings.PEER, "AGGREGATION_MAX_FANOUT", len(_org_expected(1))
+        )
+
+        assert _representation(client, org, "org", depth=1)[0] == 200
+        status, body = _representation(client, org, "org", depth=2)
+        assert status == 422
+        assert "more than 5 peers" in body
+
+    async def test_member_cards_are_one_flat_map_over_every_level(
+        self, client: TestClient, org: str
+    ):
+        for peer in ("platform", "cal", "hal"):
+            assert (
+                client.put(
+                    f"/v3/workspaces/{org}/peers/{peer}/card",
+                    json={"peer_card": [f"Name: {peer}"]},
+                ).status_code
+                == 200
+            )
+
+        cards = client.get(f"/v3/workspaces/{org}/peers/org/card?depth=3").json()[
+            "member_cards"
+        ]
+        assert list(cards) == _org_expected(3)[1:]
+        assert cards["hal"] == ["Name: hal"]  # not nested under sre
+        assert cards["ben"] is None
+        shallower = client.get(f"/v3/workspaces/{org}/peers/org/card?depth=2").json()
+        assert "hal" not in shallower["member_cards"]
+
+    async def test_a_directional_read_keeps_its_observer_at_every_level(
+        self, client: TestClient, db_session: AsyncSession, org: str
+    ):
+        _peer(client, org, "zed")
+        for observed in ("org", "platform", "ana", "hal"):
+            await _seed(
+                db_session,
+                org,
+                observer="zed",
+                observed=observed,
+                contents=[f"zed's view of {observed}"],
+            )
+
+        _, text = _representation(client, org, "zed", target="org", depth=3)
+        assert _headings(text) == ["org", "platform", "ana", "hal"]
+        assert "zed's view of hal" in text
+        assert " holds fact " not in text  # no peer's own memory
+
+    async def test_search_reaches_the_deepest_level_only_at_that_depth(
+        self, client: TestClient, org: str
+    ):
+        session = str(generate_nanoid())
+        assert client.post(
+            f"/v3/workspaces/{org}/sessions",
+            json={"id": session, "peers": {"hal": {}}},
+        ).status_code in (200, 201)
+        assert client.post(
+            f"/v3/workspaces/{org}/sessions/{session}/messages",
+            json={
+                "messages": [{"peer_id": "hal", "content": "the quokka drill passed"}]
+            },
+        ).status_code in (200, 201)
+
+        def search(depth: int) -> list[str]:
+            response = client.post(
+                f"/v3/workspaces/{org}/peers/org/search",
+                json={"query": "quokka", "depth": depth},
+            )
+            assert response.status_code == 200, response.text
+            return [m["peer_id"] for m in response.json()]
+
+        assert search(3) == ["hal"]
+        assert search(2) == []
