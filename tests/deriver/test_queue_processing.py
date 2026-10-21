@@ -2246,6 +2246,49 @@ class TestQueueRetry:
         assert "WebhookTenantUnresolved" in items[0].error
         assert await self._aqs_rows(db_session, work_unit_key) == 0
 
+    async def test_unprefixed_representation_key_under_multi_tenant_fails_the_unit(
+        self,
+        db_session: AsyncSession,
+        sample_session_with_peers: tuple[models.Session, list[models.Peer]],
+        create_queue_payload: Callable[..., Any],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A representation unit queued flag-off and processed flag-on fails
+        every item once and releases the claim, without fetching a batch."""
+        qm, work_unit_key, worker_id, _ = await self._seed_work_unit(
+            db_session, sample_session_with_peers, create_queue_payload, n_messages=2
+        )
+        monkeypatch.setattr(settings, "MULTI_TENANT", True)
+
+        # region ai
+        # The batch fetch refuses an un-prefixed key before its first await, so
+        # a loop that retried in place would never yield. The spy stops the loop
+        # after a few calls so a regression fails here instead of hanging.
+        # endregion
+        real_batch = qm.get_queue_item_batch
+        batch_calls = 0
+
+        async def spy_batch(*args: Any, **kwargs: Any) -> Any:
+            nonlocal batch_calls
+            batch_calls += 1
+            if batch_calls >= 3:
+                qm.shutdown_event.set()
+            return await real_batch(*args, **kwargs)
+
+        monkeypatch.setattr(qm, "get_queue_item_batch", spy_batch)
+
+        await qm.process_work_unit(work_unit_key, worker_id)
+
+        assert batch_calls == 0
+        items = await self._fetch_items(db_session, work_unit_key)
+        assert len(items) == 2
+        assert all(item.processed for item in items)
+        assert all(
+            item.error is not None and "no tenant prefix" in item.error
+            for item in items
+        )
+        assert await self._aqs_rows(db_session, work_unit_key) == 0
+
     async def test_counter_cleared_after_success(
         self,
         db_session: AsyncSession,
