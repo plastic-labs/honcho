@@ -6,9 +6,14 @@ from nanoid import generate as generate_nanoid
 
 from src import crud
 from src.config import ConfiguredModelSettings, settings
+from src.crud.lifecycle import LifecycleFence
 from src.crud.representation import RepresentationManager
 from src.dependencies import tracked_db
-from src.exceptions import EmptyRepresentationError, RepresentationSaveError
+from src.exceptions import (
+    EmptyRepresentationError,
+    RepresentationSaveError,
+    StaleLifecycleError,
+)
 from src.llm import HonchoLLMCallResponse, honcho_llm_call
 from src.llm.types import LLMTelemetryContext, degraded_response_parse_class
 from src.models import Message
@@ -55,6 +60,7 @@ async def process_representation_tasks_batch(
     hit_batch_token_cap: bool = False,
     was_flush_enabled: bool = False,
     batch_max_tokens: int = 0,
+    fence: LifecycleFence | None = None,
 ) -> None:
     """
     Process messages with minimal overhead - single LLM call, save to multiple collections.
@@ -70,6 +76,7 @@ async def process_representation_tasks_batch(
         hit_batch_token_cap: queue batcher clamped this batch to fit
         was_flush_enabled: DERIVER.FLUSH_ENABLED snapshot at batch time
         batch_max_tokens: DERIVER.REPRESENTATION_BATCH_TARGET_INPUT_TOKENS snapshot
+        fence: Generations captured with the batch input, checked at write time
     """
     if not messages:
         return
@@ -273,6 +280,7 @@ async def process_representation_tasks_batch(
                         latest_message.session_name,
                         latest_message.created_at,
                         message_level_configuration,
+                        fence=fence,
                     )
                 )
                 agg_representation_result.exact_dup_existing_count += (
@@ -288,6 +296,8 @@ async def process_representation_tasks_batch(
                     representation_result.semantic_dup_replaced_count
                 )
                 successful_observer_count += 1
+            except StaleLifecycleError:
+                raise
             except Exception as e:  # noqa: BLE001
                 logger.exception(
                     "Failed to save representation for observer %s", observer

@@ -17,6 +17,7 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from src import crud, schemas
 from src.config import settings
+from src.crud.erasure import MessageIdentity, TenantContext, erase_message
 from src.dependencies import db, read_db
 from src.deriver import enqueue
 from src.exceptions import FileTooLargeError, ResourceNotFoundException
@@ -400,3 +401,32 @@ async def update_message(
     except ValueError as e:
         logger.warning(f"Failed to update message {message_id}: {str(e)}")
         raise ResourceNotFoundException("Message not found") from e
+
+
+@router.delete(
+    "/{message_id}",
+    dependencies=[
+        Depends(require_auth(workspace_name="workspace_id", session_name="session_id"))
+    ],
+)
+async def delete_message(
+    workspace_id: str = Path(...),
+    session_id: str = Path(...),
+    message_id: str = Path(...),
+    db: AsyncSession = db,
+):
+    """
+    Erase a message from a Session.
+
+    The message, its embeddings and its queued work are removed before the
+    response returns. Conclusions derived from the Session, the affected peer
+    cards and the Session's summaries are invalidated with it.
+
+    This action cannot be undone.
+    """
+    await erase_message(
+        db,
+        TenantContext(workspace_name=workspace_id),
+        MessageIdentity(session_name=session_id, message_id=message_id),
+    )
+    return {"message": "Message deleted successfully"}

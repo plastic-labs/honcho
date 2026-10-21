@@ -22,6 +22,7 @@ from nanoid import generate as generate_nanoid
 
 from src import crud
 from src.config import ConfiguredModelSettings, settings
+from src.crud.lifecycle import capture_fence
 from src.dependencies import tracked_db
 from src.dreamer.working_memory import (
     UPDATE_NOTES_TOOL,
@@ -443,6 +444,11 @@ If you update it, send the full deduplicated list and remove stale entries.
         created_counts_by_level: Counter[str] = Counter()
         deleted_counts_by_level: Counter[str] = Counter()
 
+        async with tracked_db("dreamer.capture_fence") as db:
+            fence = await capture_fence(
+                db, workspace_name, representations=[(observer, observed)]
+            )
+
         # Determine if peer card tools should be included. Specialists that
         # cannot write to the peer card (e.g., induction) skip the fetch and
         # the prompt section entirely.
@@ -567,6 +573,7 @@ If you update it, send the full deduplicated list and remove stale entries.
                 run_id=run_id,
                 agent_type=self.name,
                 parent_category="dream",
+                fence=fence,
                 handler_resolver=(
                     _handler_resolver(
                         max_iterations - window + 1 if budget_enabled else None,

@@ -253,6 +253,14 @@ class EmptySummaryError(DegradedLLMResponseError):
 
 
 @final
+class StaleLifecycleError(HonchoException):
+    """A producer's input was erased after it was captured; the write is refused."""
+
+    status_code: int = 409
+    detail: str = "Input changed by a deletion; recompute"
+
+
+@final
 class UpstreamLLMError(HonchoException):
     """Raised when the upstream model provider is unreachable or failing.
 

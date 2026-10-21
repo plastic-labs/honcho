@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from src import crud, exceptions, models, schemas
 from src.config import settings
+from src.crud.lifecycle import LifecycleFence
 from src.dependencies import tracked_db
 from src.dreamer.dream_scheduler import check_and_schedule_dream
 from src.embedding_client import EmbeddingTokenLimitError, embedding_client
@@ -88,6 +89,8 @@ class RepresentationManager:
         session_name: str,
         message_created_at: datetime.datetime,
         message_level_configuration: ResolvedConfiguration,
+        *,
+        fence: LifecycleFence | None = None,
     ) -> crud.CreateDocumentsResult:
         """
         Save Representation objects to the collection as a set of documents.
@@ -97,6 +100,8 @@ class RepresentationManager:
             message_ids: Message ID range to link with observations
             session_name: Session name to link with existing summary context
             message_created_at: Timestamp when the message was created
+            fence: Generations captured with the input, checked in the write
+                transaction
 
         Returns:
             The result of document creation, including saved documents and
@@ -161,6 +166,7 @@ class RepresentationManager:
                 session_name,
                 message_created_at,
                 message_level_configuration,
+                fence,
             )
 
         create_document_duration = (time.perf_counter() - create_document_start) * 1000
@@ -182,6 +188,7 @@ class RepresentationManager:
         session_name: str,
         message_created_at: datetime.datetime,
         message_level_configuration: ResolvedConfiguration,
+        fence: LifecycleFence | None = None,
     ) -> crud.CreateDocumentsResult:
         # get_or_create_collection already handles IntegrityError with rollback and a retry
         collection = await crud.get_or_create_collection(
@@ -228,6 +235,7 @@ class RepresentationManager:
             observer=self.observer,
             observed=self.observed,
             deduplicate=settings.DERIVER.DEDUPLICATE,
+            fence=fence,
         )
 
         if message_level_configuration.dream.enabled:

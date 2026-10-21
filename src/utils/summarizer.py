@@ -6,18 +6,25 @@ from dataclasses import replace
 from enum import Enum
 from functools import cache
 from inspect import cleandoc as c
-from typing import Any, TypedDict
+from typing import Any, TypedDict, cast
 
 from nanoid import generate as generate_nanoid
-from sqlalchemy import update
+from sqlalchemy import func, literal, select, update
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, TEXT
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import schemas
 from src.cache.client import cache as cache_client
 from src.config import ConfiguredModelSettings, settings
+from src.crud.lifecycle import LifecycleFence, capture_fence, check_fence
 from src.crud.session import session_cache_key
 from src.dependencies import tracked_db
-from src.exceptions import EmptySummaryError, ResourceNotFoundException
+from src.exceptions import (
+    EmptySummaryError,
+    ResourceNotFoundException,
+    StaleLifecycleError,
+)
 from src.llm import HonchoLLMCallResponse, honcho_llm_call
 from src.llm.types import (
     LLMTelemetryContext,
@@ -435,7 +442,7 @@ async def summarize_if_needed(
         # Every long boundary is also a short one under the default cadence,
         # so a refused summary must escape here or it is silently dropped.
         for result in results:
-            if isinstance(result, EmptySummaryError):
+            if isinstance(result, EmptySummaryError | StaleLifecycleError):
                 raise result
     else:
         # If only one summary needs to be created, run individually
@@ -503,7 +510,11 @@ async def _create_and_save_summary(
         except ResourceNotFoundException:
             return
         session_id = session.id
-        summaries: dict[str, Summary] = session.internal_metadata.get(SUMMARIES_KEY, {})
+        try:
+            fence = await capture_fence(db, workspace_name, session_name=session_name)
+        except StaleLifecycleError:
+            return
+        summaries = await _load_summaries(db, workspace_name, session_name) or {}
         latest_summary = summaries.get(summary_type.value)
         if latest_summary:
             latest_summary_message_id = latest_summary["message_id"]
@@ -607,6 +618,7 @@ async def _create_and_save_summary(
                 new_summary,
                 workspace_name,
                 session_name,
+                fence=fence,
             )
 
     accumulate_metric(
@@ -793,51 +805,89 @@ async def _save_summary(
     summary: Summary,
     workspace_name: str,
     session_name: str,
+    *,
+    fence: LifecycleFence | None = None,
 ) -> None:
     """
     Save a summary as metadata on a session.
+
+    Only the summary's own tier is written; the other tier is merged server-side.
 
     Args:
         db: Database session
         summary: The summary to save
         workspace_name: Workspace name
         session_name: Session name
-    """
-    from src.exceptions import ResourceNotFoundException
+        fence: Generations captured with the summary's input
 
-    # Get the label value from the enum
+    Raises:
+        StaleLifecycleError: If the session was erased after the fence was captured.
+    """
     label_value = summary["summary_type"]
 
-    try:
-        session = await crud.get_session(db, session_name, workspace_name)
-    except ResourceNotFoundException:
-        # If session doesn't exist, we can't save the summary
-        logger.warning(
-            f"Cannot save summary: session {session_name} not found in workspace {workspace_name}"
-        )
-        return
+    if fence is not None:
+        try:
+            await check_fence(db, fence)
+        except StaleLifecycleError:
+            await db.rollback()
+            raise
 
-    # Use SQLAlchemy update() with PostgreSQL's || operator to properly merge JSONB
-    # We need to merge the new summary into the existing summaries structure
-    update_data = {}
-    existing_summaries = session.internal_metadata.get(SUMMARIES_KEY, {})
-    existing_summaries[label_value] = summary
-    update_data[SUMMARIES_KEY] = existing_summaries
-
+    existing_summaries = func.coalesce(
+        models.Session.internal_metadata.op("->", return_type=JSONB)(
+            literal(SUMMARIES_KEY)
+        ),
+        literal({}, JSONB),
+    )
     stmt = (
         update(models.Session)
         .where(models.Session.workspace_name == workspace_name)
         .where(models.Session.name == session_name)
         .values(
-            internal_metadata=models.Session.internal_metadata.op("||")(update_data)
+            internal_metadata=func.jsonb_set(
+                models.Session.internal_metadata,
+                literal([SUMMARIES_KEY], ARRAY(TEXT)),
+                existing_summaries.op("||")(literal({label_value: summary}, JSONB)),
+                True,
+            )
         )
     )
 
-    await db.execute(stmt)
+    result = cast(CursorResult[Any], await db.execute(stmt))
+    if not result.rowcount:
+        logger.warning(
+            "Cannot save summary: session %s not found in workspace %s",
+            session_name,
+            workspace_name,
+        )
     await db.commit()
 
     cache_key = session_cache_key(workspace_name, session_name)
     await cache_client.delete(cache_key)
+
+
+async def _load_summaries(
+    db: AsyncSession, workspace_name: str, session_name: str
+) -> dict[str, Summary] | None:
+    """Read an active session's summaries from the database, bypassing the cache.
+
+    Returns None when the session does not exist or is inactive.
+    """
+    row = (
+        await db.execute(
+            select(
+                models.Session.internal_metadata.op("->", return_type=JSONB)(
+                    literal(SUMMARIES_KEY)
+                )
+            ).where(
+                models.Session.workspace_name == workspace_name,
+                models.Session.name == session_name,
+                models.Session.is_active,
+            )
+        )
+    ).one_or_none()
+    if row is None:
+        return None
+    return row[0] or {}
 
 
 async def get_summarized_history(
@@ -916,13 +966,7 @@ async def get_summary(
     Returns:
         The summary data dictionary, or None if no summary exists
     """
-    try:
-        session = await crud.get_session(db, session_name, workspace_name)
-    except ResourceNotFoundException:
-        # If session doesn't exist, there's no summary to retrieve
-        return None
-
-    summaries: dict[str, Summary] = session.internal_metadata.get(SUMMARIES_KEY, {})
+    summaries = await _load_summaries(db, workspace_name, session_name)
     if not summaries or summary_type.value not in summaries:
         return None
     return summaries[summary_type.value]
@@ -944,13 +988,9 @@ async def get_both_summaries(
     Returns:
         A tuple of the short and long summaries, or None if no summary exists
     """
-    try:
-        session = await crud.get_session(db, session_name, workspace_name)
-    except ResourceNotFoundException:
-        # If session doesn't exist, there's no summary to retrieve
+    summaries = await _load_summaries(db, workspace_name, session_name)
+    if summaries is None:
         return None, None
-
-    summaries: dict[str, Summary] = session.internal_metadata.get(SUMMARIES_KEY, {})
     return summaries.get(SummaryType.SHORT.value), summaries.get(SummaryType.LONG.value)
 
 

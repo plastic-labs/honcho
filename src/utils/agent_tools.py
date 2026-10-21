@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
 from src.config import settings
+from src.crud.lifecycle import LifecycleFence
 from src.dependencies import tracked_db
 from src.embedding_client import EmbeddingTokenLimitError, embedding_client
 from src.exceptions import ResourceNotFoundException
@@ -853,6 +854,7 @@ async def create_observations(
     message_created_at: str,
     run_id: str | None = None,
     parent_category: str | None = None,
+    fence: LifecycleFence | None = None,
 ) -> ObservationsCreatedResult:
     """
     Create multiple observations (documents) in the memory system in a single call.
@@ -1004,6 +1006,7 @@ async def create_observations(
                     observer=observer,
                     observed=observed,
                     deduplicate=settings.DERIVER.DEDUPLICATE,
+                    fence=fence,
                 )
             ).created_documents
         logger.info(
@@ -1211,6 +1214,8 @@ class ToolContext:
     # they loaded; `dataclasses.replace` copies of this context share the same
     # accumulator, so delegating handlers reach it without extra wiring.
     evidence: EvidenceAccumulator | None = None
+    # Generations captured with an automatic writer's input; checked by writes
+    fence: LifecycleFence | None = None
 
 
 def _normalize_observation_id(obs_id: str) -> str:
@@ -1394,6 +1399,7 @@ async def _handle_create_observations_impl(
             message_created_at=message_created_at,
             run_id=ctx.run_id,
             parent_category=ctx.parent_category,
+            fence=ctx.fence,
         )
 
     # Merge validation and embedding failures
@@ -1583,6 +1589,7 @@ async def _handle_update_peer_card(
             peer_card=normalized_peer_card,
             observer=ctx.observer,
             observed=ctx.observed,
+            fence=ctx.fence,
         )
     logger.info(
         f"Updated peer card for {ctx.workspace_name}/{ctx.observer}/{ctx.observed}"
@@ -2394,6 +2401,7 @@ async def create_tool_executor(
     session_allowlist: list[str] | None = None,
     handler_resolver: Callable[[str], Any] | None = None,
     evidence: EvidenceAccumulator | None = None,
+    fence: LifecycleFence | None = None,
 ) -> Callable[[str, dict[str, Any]], Any]:
     """
     Create a unified tool executor function for all agent operations.
@@ -2423,6 +2431,8 @@ async def create_tool_executor(
         evidence: Optional accumulator that read handlers record the
             conclusions and messages they load into. None means evidence was
             not requested and nothing is collected.
+        fence: Generations captured with the agent's input; write tools refuse
+            once they move.
 
     Returns:
         An async callable that executes tools with the captured context
@@ -2445,6 +2455,7 @@ async def create_tool_executor(
         agent_type=agent_type,
         parent_category=parent_category,
         evidence=evidence,
+        fence=fence,
     )
 
     async def execute_tool(tool_name: str, tool_input: dict[str, Any]) -> str:

@@ -16,12 +16,14 @@ from sqlalchemy.sql.functions import func
 from src import models, schemas
 from src.config import settings
 from src.crud.collection import get_or_create_collection
+from src.crud.lifecycle import LifecycleFence, check_fence
 from src.crud.peer import get_peer, reject_scope_observed
 from src.crud.session import get_session
 from src.dependencies import tracked_db
 from src.embedding_client import EmbeddingTokenLimitError, embedding_client
 from src.exceptions import (
     ResourceNotFoundException,
+    StaleLifecycleError,
     ValidationException,
     VectorStoreError,
 )
@@ -650,6 +652,7 @@ async def create_documents(
     observer: str,
     observed: str,
     deduplicate: bool = False,
+    fence: LifecycleFence | None = None,
 ) -> CreateDocumentsResult:
     """
     Create multiple documents with optional duplicate detection.
@@ -665,6 +668,8 @@ async def create_documents(
         observer: Name of the observing peer
         observed: Name of the observed peer
         deduplicate: Enable semantic duplicate detection
+        fence: Generations captured with the producer's input. Checked before
+            any insert, reinforcement or reinforcement fallback.
 
     Returns:
         List of DocumentCreate schemas that were actually inserted (excludes
@@ -908,6 +913,8 @@ async def create_documents(
             continue
 
     try:
+        if fence is not None:
+            await check_fence(db, fence)
         fallback_docs = await _apply_document_row_updates(
             db,
             row_ops,
@@ -1021,6 +1028,9 @@ async def create_documents(
         raise ValidationException(
             "Failed to create documents due to integrity constraint violation"
         ) from e
+    except StaleLifecycleError:
+        await db.rollback()
+        raise
     except DBAPIError:
         # Leave the session clean for callers that own it (e.g. a deadlock
         # at the final commit); the queue layer classifies and retries.

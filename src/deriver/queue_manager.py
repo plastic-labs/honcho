@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import dataclasses
 import random
 import signal
 import time
@@ -31,6 +32,7 @@ from src.crud.deriver import (
 from src.crud.deriver import (
     cleanup_stale_work_units as crud_cleanup_stale_work_units,
 )
+from src.crud.lifecycle import LifecycleFence, capture_fence
 from src.dependencies import tracked_db
 from src.deriver.consumer import (
     process_item,
@@ -41,6 +43,7 @@ from src.dreamer.dream_scheduler import (
     get_dream_scheduler,
     set_dream_scheduler,
 )
+from src.exceptions import StaleLifecycleError
 from src.models import QueueItem
 from src.reconciler import (
     ReconcilerScheduler,
@@ -93,6 +96,8 @@ class QueueBatchResult:
     hit_batch_token_cap: bool = False
     was_flush_enabled: bool = False
     batch_max_tokens: int = 0
+    # Generations observed when the batch input was read
+    fence: LifecycleFence | None = None
 
 
 def _detach_queue_batch_objects(
@@ -696,11 +701,15 @@ class QueueManager:
                                     hit_batch_token_cap=batch_result.hit_batch_token_cap,
                                     was_flush_enabled=batch_result.was_flush_enabled,
                                     batch_max_tokens=batch_result.batch_max_tokens,
+                                    fence=batch_result.fence,
                                 )
                                 await self.mark_queue_items_as_processed(
                                     items_to_process, work_unit_key
                                 )
                                 queue_item_count += len(items_to_process)
+                            except StaleLifecycleError:
+                                self._release_stale_work_unit(work_unit_key)
+                                break
                             except Exception as e:
                                 if await self._handle_processing_error(
                                     e,
@@ -731,6 +740,9 @@ class QueueManager:
                                     [queue_item], work_unit_key
                                 )
                                 queue_item_count += 1
+                            except StaleLifecycleError:
+                                self._release_stale_work_unit(work_unit_key)
+                                break
                             except Exception as e:
                                 if await self._handle_processing_error(
                                     e,
@@ -795,6 +807,14 @@ class QueueManager:
                     logger.debug(
                         f"Work unit {work_unit_key} already cleaned up by another worker, skipping webhook"
                     )
+
+    @staticmethod
+    def _release_stale_work_unit(work_unit_key: str) -> None:
+        """Leave the items unprocessed; a later claim recomputes from live input."""
+        logger.info(
+            "Work unit %s was fenced by a deletion; releasing for recompute",
+            work_unit_key,
+        )
 
     @sentry_sdk.trace
     async def get_next_queue_item(
@@ -871,6 +891,20 @@ class QueueManager:
                 .where(models.ActiveQueueSession.id == aqs_id)
             )
             if not ownership_check.scalar_one_or_none():
+                return QueueBatchResult(
+                    was_flush_enabled=was_flush_enabled,
+                    batch_max_tokens=batch_max_tokens,
+                )
+
+            # Before the message read: an erasure committing after this point
+            # moves the generation, one committing before hides the message.
+            try:
+                session_fence = await capture_fence(
+                    db,
+                    parsed_key.workspace_name or "",
+                    session_name=parsed_key.session_name,
+                )
+            except StaleLifecycleError:
                 return QueueBatchResult(
                     was_flush_enabled=was_flush_enabled,
                     batch_max_tokens=batch_max_tokens,
@@ -1085,6 +1119,23 @@ class QueueManager:
             else:
                 hit_batch_token_cap = False
 
+            fence = session_fence
+            if items_to_process and parsed_key.observed is not None:
+                observers = cast(
+                    list[str], items_to_process[0].payload.get("observers") or []
+                )
+                representation_fence = await capture_fence(
+                    db,
+                    session_fence.workspace_name,
+                    representations=[
+                        (observer, parsed_key.observed) for observer in observers
+                    ],
+                )
+                fence = dataclasses.replace(
+                    session_fence,
+                    representations=representation_fence.representations,
+                )
+
         return QueueBatchResult(
             messages_context=messages_context,
             items_to_process=items_to_process,
@@ -1092,6 +1143,7 @@ class QueueManager:
             hit_batch_token_cap=hit_batch_token_cap,
             was_flush_enabled=was_flush_enabled,
             batch_max_tokens=batch_max_tokens,
+            fence=fence,
         )
 
     async def _oldest_unprocessed_item(

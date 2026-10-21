@@ -632,8 +632,9 @@ class TestCreateObservations:
             observer: str,
             observed: str,
             deduplicate: bool = False,
+            fence: Any = None,
         ) -> crud.CreateDocumentsResult:
-            _ = (workspace_name, observer, observed, deduplicate)
+            _ = (workspace_name, observer, observed, deduplicate, fence)
             created_documents.extend(documents)
             return crud.CreateDocumentsResult(created_documents=documents)
 
@@ -695,8 +696,9 @@ class TestCreateObservations:
             observer: str,
             observed: str,
             deduplicate: bool = False,
+            fence: Any = None,
         ) -> crud.CreateDocumentsResult:
-            _ = (workspace_name, observer, observed, deduplicate)
+            _ = (workspace_name, observer, observed, deduplicate, fence)
             created_documents.extend(documents)
             return crud.CreateDocumentsResult(created_documents=documents)
 
@@ -756,8 +758,9 @@ class TestCreateObservations:
             observer: str,
             observed: str,
             deduplicate: bool = False,
+            fence: Any = None,
         ) -> crud.CreateDocumentsResult:
-            _ = (workspace_name, observer, observed, deduplicate)
+            _ = (workspace_name, observer, observed, deduplicate, fence)
             created_documents.extend(documents)
             return crud.CreateDocumentsResult(created_documents=documents)
 
@@ -814,8 +817,9 @@ class TestCreateObservations:
             observer: str,
             observed: str,
             deduplicate: bool = False,
+            fence: Any = None,
         ) -> crud.CreateDocumentsResult:
-            _ = (workspace_name, observer, observed, deduplicate)
+            _ = (workspace_name, observer, observed, deduplicate, fence)
             return crud.CreateDocumentsResult(created_documents=documents)
 
         monkeypatch.setattr(
@@ -909,8 +913,9 @@ class TestCreateObservations:
             observer: str,
             observed: str,
             deduplicate: bool = False,
+            fence: Any = None,
         ) -> crud.CreateDocumentsResult:
-            _ = (workspace_name, observer, observed)
+            _ = (workspace_name, observer, observed, fence)
             captured["deduplicate"] = deduplicate
             return crud.CreateDocumentsResult(created_documents=documents)
 
