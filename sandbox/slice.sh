@@ -10,16 +10,17 @@
 #   sandbox/slice.sh build IMG [GIT_REF]   build IMG from the working tree or a ref
 #   sandbox/slice.sh down                  remove this project's containers and volumes
 #
-# SLICE_PROJECT, SLICE_API1_PORT, SLICE_API2_PORT, SLICE_DB_PORT and
-# SLICE_REDIS_PORT override the project name (slice_harness) and host ports
-# (18100, 18101, 15532, 16479).
+# The project name defaults to the worktree directory (slice-harness ->
+# slice_harness). SLICE_PROJECT overrides it. A project other than slice_harness
+# must set SLICE_API1_PORT, SLICE_API2_PORT, SLICE_DB_PORT and SLICE_REDIS_PORT.
 
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/.." && pwd)"
 
-PROJECT="${SLICE_PROJECT:-slice_harness}"
+DEFAULT_PROJECT="$(basename "$REPO" | tr -- '-.' '__')"
+PROJECT="${SLICE_PROJECT:-$DEFAULT_PROJECT}"
 
 compose() {
   COMPOSE_PROJECT_NAME="$PROJECT" HONCHO_SANDBOX_IMAGE=unused SLICE_APP_IMAGE=unused \

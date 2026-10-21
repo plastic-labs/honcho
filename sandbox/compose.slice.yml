@@ -84,3 +84,8 @@ services:
     depends_on:
       api:
         condition: service_healthy
+
+  # AOF in the container's own filesystem: a stop/start keeps entries written
+  # before the outage, so post-outage reads can hit stale cache bytes.
+  redis:
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "always"]

@@ -24,7 +24,14 @@ import httpx
 import psycopg
 
 HERE = Path(__file__).resolve().parent
-PROJECT = os.environ.get("SLICE_PROJECT", "slice_harness")
+# One project per checkout: the default name comes from the worktree directory,
+# and only slice_harness may fall back to the default ports.
+PROJECT = os.environ.get(
+    "SLICE_PROJECT", HERE.parent.name.replace("-", "_").replace(".", "_")
+)
+PORT_ENV = ("SLICE_API1_PORT", "SLICE_API2_PORT", "SLICE_DB_PORT", "SLICE_REDIS_PORT")
+if PROJECT != "slice_harness" and not all(name in os.environ for name in PORT_ENV):
+    sys.exit(f"project {PROJECT} must set {', '.join(PORT_ENV)}")
 API_PORTS = {
     "api-1": int(os.environ.get("SLICE_API1_PORT", "18100")),
     "api-2": int(os.environ.get("SLICE_API2_PORT", "18101")),
@@ -451,7 +458,18 @@ class Run:
 
     def start_redis(self) -> None:
         self.compose("start", "redis")
-        self.step("redis-started", True, "")
+        self.wait_for(
+            "redis",
+            lambda: (
+                self.compose("exec", "-T", "redis", "redis-cli", "ping").stdout.strip()
+                == "PONG"
+            ),
+            20,
+        )
+        keys = self.compose("exec", "-T", "redis", "redis-cli", "dbsize", check=False)
+        self.step(
+            "redis-started", True, f"{keys.stdout.strip()} keys survived the outage"
+        )
         # Let derivers poll and reconcilers tick against the previous image.
         time.sleep(self.args.settle_seconds)
 
