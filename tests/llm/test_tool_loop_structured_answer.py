@@ -199,10 +199,14 @@ async def test_synthesis_refusal_is_retried_on_the_fallback() -> None:
 
 
 @pytest.mark.asyncio
-async def test_stream_final_answer_is_not_checked() -> None:
-    model = _ScriptedModel([{"*": _response(_REFUSAL)}])
+async def test_stream_final_answer_is_checked_like_a_plain_one() -> None:
+    """The streamed answer is the one in hand, so it is held to the same check."""
+    model = _ScriptedModel(
+        [{_PRIMARY: _response(_REFUSAL), _FALLBACK: _response(_Answer(answer="ok"))}]
+    )
 
     result = await _run_loop(model, retry_attempts=3, stream_final=True)
 
     assert isinstance(result, StreamingResponseWithMetadata)
-    assert model.models == [_PRIMARY]
+    assert [chunk.content async for chunk in result] == ['{"answer":"ok"}']
+    assert model.models == [_PRIMARY, _PRIMARY, _FALLBACK]
