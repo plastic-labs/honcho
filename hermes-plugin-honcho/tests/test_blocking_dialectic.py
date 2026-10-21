@@ -110,6 +110,7 @@ def test_recent_exchanges_survive_a_process_restart(tmp_path):
     record = log_records(tmp_path)[-1]
     assert record["reason"] == "injected" and record["mode"] == "blocking"
     assert record["query"] == query and isinstance(record["dialectic_ms"], int)
+    assert record["dialectic_output"] == ANSWER
     assert record["payload"] == injected
 
 

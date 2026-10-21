@@ -623,7 +623,7 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
         outcome = outcome or {"reason": "no-turn-start"}
         notice = "\n\n".join(n for n in (self._pop_auth_notice(), self._pop_peer_notice()) if n)
         payload = "\n\n".join(p for p in (notice, outcome.get("payload", "")) if p)
-        fields = {k: outcome[k] for k in ("query", "dialectic_ms", "reasoning_level") if k in outcome}
+        fields = {k: outcome[k] for k in ("query", "dialectic_ms", "reasoning_level", "dialectic_output") if k in outcome}
         return self._log_injection("injected" if payload else outcome["reason"], self._truncate_to_budget(payload),
                                    mode="blocking", **fields)
 
@@ -655,7 +655,8 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
         except Exception as e:
             logger.warning("Honcho blocking dialectic failed: %s", e)
             output, reason = "", "dialectic-failed"
-        outcome = {"query": query, "reasoning_level": level, "dialectic_ms": round((time.monotonic() - started) * 1000)}
+        outcome = {"query": query, "reasoning_level": level, "dialectic_ms": round((time.monotonic() - started) * 1000),
+                   "dialectic_output": output or ""}
         if output and output.strip():
             outcome["payload"] = self._format_blocking_result(output)
         else:
