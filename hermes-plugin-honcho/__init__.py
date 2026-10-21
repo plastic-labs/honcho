@@ -25,7 +25,8 @@ from .client import HonchoClientConfig, resolve_config_path
 from .client import _host_block, _HostLookup
 from .client import join_plugin_threads, spawn_context_thread
 from .dialectic import DialecticMixin
-from .recent_turns import KEEP_EXCHANGES, append_exchange, extract_exchange, load_exchanges, ring_path
+from .recent_turns import (KEEP_EXCHANGES, append_exchange, extract_exchange, load_exchanges, request_text,
+                           ring_path, same_request)
 from .session_peers import assistant_peer_id_for, sanitize_peer_id
 from .session_context import usable_honcho_summary
 from .tool_schemas import ALL_TOOL_SCHEMAS
@@ -55,6 +56,14 @@ _INTERNAL_GATEWAY_TURN_RE = re.compile(
 def _is_internal_gateway_turn(text: str) -> bool:
     """Return True for machine-generated gateway/delegation notifications."""
     return bool(_INTERNAL_GATEWAY_TURN_RE.match(text or ""))
+
+
+def _as_int(value: Any) -> int:
+    """``value`` as an int, or -1 when it is not one."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return -1
 
 
 def _cfg_usable(cfg) -> bool:
@@ -109,8 +118,6 @@ _CONTEXT_SECTIONS = (
 
 # A turn Hermes never synced (it ended without a reply) is recorded with this in place of one.
 _UNSYNCED_TURN_REPLY = "(that turn ended without a reply)"
-# The previous request matches the newest recorded one on this many whitespace-normalized chars.
-_STUB_MATCH_CHARS = 500
 
 _PREWARM_QUERY = "Summarize what you know about this user. Focus on preferences, current projects, and working style."
 
@@ -689,15 +696,17 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
         Hermes skips memory sync for a turn that ended without a reply (interrupted, or a degenerate
         response it discarded), so the ring has no entry for it. The request is still what the user
         last asked, and Hermes passes it to on_turn_start, so it is added (and persisted) as an exchange
-        with no tools and no reply. Appends to ``exchanges`` in place."""
-        previous = sanitize_context(self._previous_turn_message or "").strip()
+        with no tools and no reply. Appends to ``exchanges`` in place.
+
+        The previous turn counts as synced when the ring holds an exchange from it or holds the same
+        request. Both are needed: Hermes' turn number can fall back after a compaction, and its
+        previous message can be a rewritten form of what sync_turn recorded."""
+        previous = request_text(sanitize_context(self._previous_turn_message or ""))
         if self._turn_count <= 1 or not previous:
             return False
-
-        def _key(text: str) -> str:
-            return " ".join(text.split())[:_STUB_MATCH_CHARS]
-
-        if exchanges and _key(str(exchanges[-1].get("user") or "")) == _key(previous):
+        if any(_as_int(turn.get("turn")) >= self._turn_count - 1 for turn in exchanges):
+            return False
+        if any(same_request(previous, str(turn.get("user") or "")) for turn in exchanges):
             return False
         stub = extract_exchange(previous, _UNSYNCED_TURN_REPLY, None)
         stub["turn"] = self._turn_count - 1

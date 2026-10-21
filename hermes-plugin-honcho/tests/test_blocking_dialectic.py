@@ -460,3 +460,61 @@ def test_no_stub_on_the_first_turn(tmp_path):
     provider.prefetch("Write the parser.")
     assert not ring_path(tmp_path).exists()
     assert "previous_message_stubbed" not in log_records(tmp_path)[-1]
+
+
+# The request Hermes restated after a compaction in the run that showed the false stub.
+REQUEST = ("The core window helpers module (ranking/offset/aggregate helpers, frame constructors, validation) "
+           "is in place now. Next piece is wiring this into the query builders.")
+
+
+def _replayed(text: str) -> str:
+    from agent.context_compressor import _INFLIGHT_TASK_REPLAY_HEADER
+
+    return f"{_INFLIGHT_TASK_REPLAY_HEADER}\n{text}"
+
+
+def _skill_turn(text: str) -> str:
+    from agent.skill_commands import _SINGLE_SKILL_INSTRUCTION, _SINGLE_SKILL_MARKER, _SKILL_INVOCATION_PREFIX
+
+    return (f'{_SKILL_INVOCATION_PREFIX}"review" skill. {_SINGLE_SKILL_MARKER}\n\n# Review\nSkill body.\n\n'
+            f"{_SINGLE_SKILL_INSTRUCTION}{text}")
+
+
+def _stub_for(tmp_path, *, synced_turn: int, turn: int, previous: str) -> HonchoMemoryProvider:
+    """A provider at ``turn`` whose ring holds REQUEST synced at ``synced_turn``, with Hermes' ``previous``."""
+    writer = make_provider(tmp_path)
+    writer._turn_count = synced_turn
+    writer.sync_turn(REQUEST, "Wired into the query builders.")
+    provider = make_provider(tmp_path)
+    provider.on_turn_start(turn, "Now add a named window.", previous_message=previous)
+    provider.prefetch("Now add a named window.")
+    return provider
+
+
+@pytest.mark.parametrize("previous", [
+    _replayed(REQUEST),
+    # Merged onto the compaction summary: the request follows the last header.
+    "[CONTEXT SUMMARY]: earlier work ...\n--- END OF CONTEXT SUMMARY ---\n\n" + _replayed(_replayed(REQUEST)),
+    _skill_turn(REQUEST),
+    REQUEST[:200] + "\n\n(and keep the tests green)",
+], ids=["compaction-replay", "replay-on-summary", "skill-scaffold", "longer-restatement"])
+def test_a_rewritten_previous_request_is_not_stubbed(tmp_path, previous):
+    # Turn numbers do not settle it: the ring entry is two turns back.
+    _stub_for(tmp_path, synced_turn=2, turn=4, previous=previous)
+
+    assert [t["user"] for t in load_exchanges(ring_path(tmp_path), "session-a")] == [REQUEST]
+    assert "previous_message_stubbed" not in log_records(tmp_path)[-1]
+
+
+def test_an_exchange_from_the_previous_turn_counts_as_synced(tmp_path):
+    # After a compaction Hermes' turn number can fall back (turn 4 reported as 3).
+    _stub_for(tmp_path, synced_turn=3, turn=3, previous="something else entirely")
+    assert "previous_message_stubbed" not in log_records(tmp_path)[-1]
+
+
+def test_an_unsynced_turn_after_a_compaction_is_stubbed_without_the_header(tmp_path):
+    _stub_for(tmp_path, synced_turn=2, turn=4, previous=_replayed("Add the PARTITION BY clause."))
+
+    users = [t["user"] for t in load_exchanges(ring_path(tmp_path), "session-a")]
+    assert users == [REQUEST, "Add the PARTITION BY clause."]
+    assert log_records(tmp_path)[-1]["previous_message_stubbed"] is True

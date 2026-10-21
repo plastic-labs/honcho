@@ -23,6 +23,10 @@ _KEEP_SESSIONS = 16
 _MAX_TOOL_LINES = 25
 _ARGS_CHARS, _RESULT_CHARS, _TEXT_CHARS = 120, 200, 4000
 _WS_RE = re.compile(r"\s+")
+# Hermes restates an unfinished request after a compaction boundary behind this header
+# (agent/context_compressor.py, _INFLIGHT_TASK_REPLAY_HEADER), possibly after the summary.
+_REPLAY_HEADER_RE = re.compile(r"\[STILL IN PROGRESS —[^\]]*\]")
+_SAME_REQUEST_CHARS = 300
 _ring_lock = threading.Lock()
 
 
@@ -59,6 +63,30 @@ def _is_real_user(message: Any) -> bool:
         return _is_real_user_message(message)
     except Exception:
         return isinstance(message, dict) and message.get("role") == "user"
+
+
+def request_text(text: str) -> str:
+    """The user's request in a message Hermes may have rewritten.
+
+    A compaction restates an unfinished request after a replay header (once per cycle, so the
+    request is what follows the last one), and a slash-skill turn wraps the instruction in the
+    skill's body. ``sync_turn`` sees neither, so both are removed before comparing with it."""
+    text = _REPLAY_HEADER_RE.split(text or "")[-1]
+    try:
+        from agent.skill_commands import extract_user_instruction_from_skill_message
+        text = extract_user_instruction_from_skill_message(text) or ""
+    except Exception:
+        pass
+    return text.strip()
+
+
+def same_request(a: str, b: str) -> bool:
+    """Whether two renderings of a user message are the same request: either one, whitespace
+    normalized, contains the start of the other."""
+    na, nb = _WS_RE.sub(" ", a or "").strip(), _WS_RE.sub(" ", b or "").strip()
+    if not na or not nb:
+        return False
+    return na[:_SAME_REQUEST_CHARS] in nb or nb[:_SAME_REQUEST_CHARS] in na
 
 
 def summarize_tool_calls(messages: list) -> list[str]:
