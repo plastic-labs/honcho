@@ -649,8 +649,13 @@ async def get_workspace_stats(
 
     msg_row = (
         await db.execute(
+            # count(*), not count(id): id is not in ix_messages_peer_lookup, so
+            # counting it forces a heap fetch per row; count(*) lets the
+            # (tenant_id, workspace_name, peer_name, created_at) index answer
+            # count/min/max on its own when no session allowlist applies. Same
+            # result: id is NOT NULL.
             select(
-                func.count(models.Message.id),
+                func.count(),
                 func.min(models.Message.created_at),
                 func.max(models.Message.created_at),
             ).where(*msg_filters)
