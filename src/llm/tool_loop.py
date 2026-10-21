@@ -232,6 +232,20 @@ def append_tool_results(
     conversation_messages.extend(adapter.format_tool_results(tool_results))
 
 
+def _tools_for_answer_call(
+    provider: str, tools: list[dict[str, Any]] | None
+) -> tuple[list[dict[str, Any]] | None, str | None]:
+    """Tools and tool_choice for a call that must answer rather than call a tool.
+
+    Anthropic rejects a history holding tool_use/tool_result blocks unless
+    tools are defined, so it gets the loop's tools with calls disallowed.
+    Other transports get none.
+    """
+    if provider == "anthropic" and tools:
+        return tools, "none"
+    return None, None
+
+
 async def stream_final_response(
     *,
     winning_plan: AttemptPlan,
@@ -247,6 +261,7 @@ async def stream_final_response(
     retry_attempts: int,
     before_retry_callback: Callable[[Any], None],
     telemetry: LLMTelemetryContext | None = None,
+    tools: list[dict[str, Any]] | None = None,
 ) -> AsyncIterator[HonchoLLMCallStreamChunk]:
     """Stream the final response after tool execution is complete.
 
@@ -264,6 +279,9 @@ async def stream_final_response(
     # this counter, every retried stream-setup emit reports the same attempt
     # value — telemetry can't tell the retry sequence apart.
     stream_attempt = 0
+    answer_tools, answer_tool_choice = _tools_for_answer_call(
+        winning_plan.provider, tools
+    )
 
     async def _setup_stream() -> AsyncIterator[HonchoLLMCallStreamChunk]:
         nonlocal stream_attempt
@@ -291,8 +309,8 @@ async def stream_final_response(
             winning_plan.thinking_budget_tokens,
             stream=True,
             client_override=winning_plan.client,
-            tools=None,
-            tool_choice=None,
+            tools=answer_tools,
+            tool_choice=answer_tool_choice,
             messages=conversation_messages,
             selected_config=winning_plan.selected_config,
             plan=plan_for_attempt,
@@ -664,6 +682,7 @@ async def execute_tool_loop(
                         retry_attempts=retry_attempts,
                         before_retry_callback=before_retry_callback,
                         telemetry=stream_telemetry,
+                        tools=tools,
                     )
                     return StreamingResponseWithMetadata(
                         stream=stream,
@@ -800,6 +819,7 @@ async def execute_tool_loop(
             retry_attempts=retry_attempts,
             before_retry_callback=before_retry_callback,
             telemetry=stream_telemetry,
+            tools=tools,
         )
         return StreamingResponseWithMetadata(
             stream=stream,
@@ -819,11 +839,11 @@ async def execute_tool_loop(
 
     async def _final_call() -> HonchoLLMCallResponse[Any]:
         plan = get_attempt_plan()
-        synthesis_tools, synthesis_tool_choice = final_call_tools or None, None
-        if synthesis_tools is None and plan.provider == "anthropic":
-            # Anthropic rejects a history with tool_use/tool_result blocks
-            # unless tools are defined, so offer them with calls disallowed.
-            synthesis_tools, synthesis_tool_choice = tools, "none"
+        synthesis_tools, synthesis_tool_choice = (
+            (final_call_tools, None)
+            if final_call_tools
+            else _tools_for_answer_call(plan.provider, tools)
+        )
         response = await honcho_llm_call_inner(
             plan.provider,
             plan.model,

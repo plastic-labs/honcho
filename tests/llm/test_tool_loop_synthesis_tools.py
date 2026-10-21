@@ -1,7 +1,8 @@
-"""The max-iteration synthesis call and the tool definitions it sends."""
+"""The call that produces the answer after tool rounds, and the tools it defines."""
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from typing import Any, cast
 from unittest.mock import patch
 
@@ -11,7 +12,12 @@ from src.config import ModelConfig
 from src.llm import tool_loop
 from src.llm.runtime import AttemptPlan
 from src.llm.tool_loop import execute_tool_loop
-from src.llm.types import HonchoLLMCallResponse, ProviderClient
+from src.llm.types import (
+    HonchoLLMCallResponse,
+    HonchoLLMCallStreamChunk,
+    ProviderClient,
+    StreamingResponseWithMetadata,
+)
 
 TOOLS = [
     {"name": "search", "description": "Search", "input_schema": {"type": "object"}}
@@ -32,9 +38,17 @@ def _plan(provider: str) -> AttemptPlan:
     )
 
 
-async def _synthesis_call_kwargs(provider: str) -> dict[str, Any]:
-    """Run one tool round into the iteration limit; return the synthesis call's kwargs."""
+async def _answer_call_kwargs(
+    provider: str, *, max_tool_iterations: int = 1, stream_final: bool = False
+) -> dict[str, Any]:
+    """Run one tool round, then let the loop finish; return the answering call's kwargs.
+
+    With one iteration the loop hits its limit and synthesizes; with more, the
+    model answers in the loop (and under stream_final that answer is streamed
+    afresh).
+    """
     calls: list[dict[str, Any]] = []
+    # Built per run: the loop mutates the responses it is handed.
     responses = iter(
         [
             HonchoLLMCallResponse(
@@ -49,22 +63,28 @@ async def _synthesis_call_kwargs(provider: str) -> dict[str, Any]:
         ]
     )
 
-    async def fake_call(*_args: Any, **kwargs: Any) -> HonchoLLMCallResponse[Any]:
+    async def fake_call(*_args: Any, **kwargs: Any) -> Any:
         calls.append(kwargs)
+        if kwargs.get("stream"):
+
+            async def chunks() -> AsyncIterator[HonchoLLMCallStreamChunk]:
+                yield HonchoLLMCallStreamChunk(content="done")
+
+            return chunks()
         return next(responses)
 
     async def execute(_name: str, _input: dict[str, Any]) -> str:
         return "result"
 
     with patch.object(tool_loop, "honcho_llm_call_inner", new=fake_call):
-        await execute_tool_loop(
+        result = await execute_tool_loop(
             prompt="hi",
             max_tokens=64,
             messages=[{"role": "user", "content": "hi"}],
             tools=TOOLS,
             tool_choice="auto",
             tool_executor=execute,
-            max_tool_iterations=1,
+            max_tool_iterations=max_tool_iterations,
             response_model=None,
             json_mode=False,
             temperature=None,
@@ -75,22 +95,43 @@ async def _synthesis_call_kwargs(provider: str) -> dict[str, Any]:
             max_input_tokens=None,
             get_attempt_plan=lambda: _plan(provider),
             before_retry_callback=lambda _retry_state: None,
-            stream_final=False,
+            stream_final=stream_final,
             telemetry=None,
         )
+        if stream_final:
+            assert isinstance(result, StreamingResponseWithMetadata)
+            assert [c.content async for c in result] == ["done"]
+            assert calls[-1]["stream"] is True
     return calls[-1]
 
 
+_PATHS = pytest.mark.parametrize(
+    "max_tool_iterations, stream_final",
+    [(1, False), (1, True), (3, True)],
+    ids=["synthesis", "streamed-synthesis", "streamed-answer"],
+)
+
+
 @pytest.mark.asyncio
-async def test_anthropic_synthesis_defines_tools_but_disallows_calls() -> None:
+@_PATHS
+async def test_anthropic_answer_call_defines_tools_but_disallows_calls(
+    max_tool_iterations: int, stream_final: bool
+) -> None:
     """Anthropic rejects tool_use/tool_result history unless tools are defined."""
-    kwargs = await _synthesis_call_kwargs("anthropic")
+    kwargs = await _answer_call_kwargs(
+        "anthropic", max_tool_iterations=max_tool_iterations, stream_final=stream_final
+    )
     assert kwargs["tools"] == TOOLS
     assert kwargs["tool_choice"] == "none"
 
 
 @pytest.mark.asyncio
-async def test_other_providers_synthesize_without_tools() -> None:
-    kwargs = await _synthesis_call_kwargs("openai")
+@_PATHS
+async def test_other_providers_answer_without_tools(
+    max_tool_iterations: int, stream_final: bool
+) -> None:
+    kwargs = await _answer_call_kwargs(
+        "openai", max_tool_iterations=max_tool_iterations, stream_final=stream_final
+    )
     assert kwargs["tools"] is None
     assert kwargs["tool_choice"] is None
