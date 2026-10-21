@@ -53,7 +53,9 @@ async def deliver_webhook(
             + "but MULTI_TENANT is enabled; refusing to deliver an unattributed event."
         )
     try:
-        async with tracked_db("webhook.deliver") as db:
+        # The endpoint lookup binds the same tenant the body is signed with,
+        # rather than whatever tenant_context the caller left ambient.
+        async with tracked_db("webhook.deliver", tenant_id=tenant_id) as db:
             webhook_urls = await _get_webhook_urls(db, workspace_name)
 
         if not webhook_urls:
