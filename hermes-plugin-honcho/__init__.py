@@ -25,6 +25,7 @@ from .client import HonchoClientConfig, resolve_config_path
 from .client import _host_block, _HostLookup
 from .client import join_plugin_threads, spawn_context_thread
 from .dialectic import DialecticMixin
+from .recent_turns import append_exchange, extract_exchange, load_exchanges, ring_path
 from .session_peers import assistant_peer_id_for, sanitize_peer_id
 from .session_context import usable_honcho_summary
 from .tool_schemas import ALL_TOOL_SCHEMAS
@@ -167,6 +168,9 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
         # Set once a process that starts past turn 1 has replayed the previous turn's refresh.
         self._resume_catch_up_done = False
         self._previous_turn_message = ""
+        # Blocking dialectic mode: on_turn_start leaves this turn's outcome here for prefetch() to inject.
+        self._dialectic_injection_mode = "async"
+        self._blocking_injection: Optional[dict[str, Any]] = None
 
         # Tools-only mode may defer session initialization until a tool call.
         self._session_initialized = False
@@ -250,6 +254,7 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
                          "dialectic_depth_levels", "reasoning_heuristic"):
                 setattr(self, f"_{name}", getattr(cfg, name))
             self._query_rewrite_enabled = cfg.query_rewrite
+            self._dialectic_injection_mode = getattr(cfg, "dialectic_injection_mode", "async")
             self._FIRST_TURN_BASE_TIMEOUT = cfg.first_turn_base_wait
             self._FIRST_TURN_DIALECTIC_CAP = cfg.first_turn_dialectic_wait
             self._dialectic_depth = max(1, min(cfg.dialectic_depth, 3))
@@ -385,7 +390,8 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
 
         # Generic dialectic prewarm is incompatible with latest-message query rewriting,
         # which needs the first substantive user message.
-        if self._recall_mode in {"context", "hybrid"} and not self._recall_sync:
+        # Blocking mode runs exactly one dialectic per turn, so it never prewarms.
+        if self._recall_mode in {"context", "hybrid"} and not self._recall_sync and not self._blocking_mode():
             if self._query_rewriter is None or not self._query_rewrite_enabled:
                 self._spawn_dialectic(_PREWARM_QUERY, thread_name="honcho-prewarm-dialectic", fired_at=0,
                                       log_label="dialectic prewarm", use_query_rewrite=False)
@@ -394,6 +400,10 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
                 logger.debug("Honcho generic dialectic prewarm skipped: awaiting first user message")
 
         self._session_initialized = True
+
+    def _blocking_mode(self) -> bool:
+        """dialecticInjectionMode is "blocking": one dialectic per turn in on_turn_start, injected alone."""
+        return self._dialectic_injection_mode == "blocking"
 
     def _session_ready(self) -> bool:
         """Whether the manager/session key can be used safely. Background init sets
@@ -471,9 +481,10 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
             return None
         return os.path.join(os.path.expanduser("~"), ".honcho", "injection.log")
 
-    def _log_injection(self, reason: str, payload: str = "") -> str:
+    def _log_injection(self, reason: str, payload: str = "", **extra: Any) -> str:
         """Append one record of what this turn injected and why, then return ``payload`` unchanged. Never raises.
-        The reason matters because prefetch has several ways to return nothing and each needs a different fix."""
+        The reason matters because prefetch has several ways to return nothing and each needs a different fix.
+        ``extra`` fields (blocking mode: query, dialectic_ms, mode) are appended to the record."""
         path = self._injection_log_path
         if not path:
             return payload
@@ -481,7 +492,7 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
             record = json.dumps({
                 "ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "turn": self._turn_count,
                 "session_key": self._session_key or "", "recall_mode": self._recall_mode,
-                "reason": reason, "bytes": len(payload.encode("utf-8")), "payload": payload,
+                "reason": reason, "bytes": len(payload.encode("utf-8")), "payload": payload, **extra,
             }, ensure_ascii=False)
             with self._injection_log_lock:
                 os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -566,6 +577,9 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
         if self._cron_skipped or self._recall_mode == "tools":
             return self._log_injection("cron-or-tools-mode")
 
+        if self._blocking_mode():
+            return self._prefetch_blocking()
+
         if self._recall_sync:
             from .recall_sync import prefetch_sync
             notice = self._pop_auth_notice() or self._pop_peer_notice()
@@ -601,6 +615,55 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
         if not parts:
             return self._log_injection("fetched-but-empty")
         return self._log_injection("injected", self._truncate_to_budget("\n\n".join(parts)))
+
+    def _prefetch_blocking(self) -> str:
+        """Blocking mode: inject only what on_turn_start's dialectic produced (plus one-time notices), once."""
+        with self._prefetch_lock:
+            outcome, self._blocking_injection = self._blocking_injection, None
+        outcome = outcome or {"reason": "no-turn-start"}
+        notice = "\n\n".join(n for n in (self._pop_auth_notice(), self._pop_peer_notice()) if n)
+        payload = "\n\n".join(p for p in (notice, outcome.get("payload", "")) if p)
+        fields = {k: outcome[k] for k in ("query", "dialectic_ms", "reasoning_level") if k in outcome}
+        return self._log_injection("injected" if payload else outcome["reason"], self._truncate_to_budget(payload),
+                                   mode="blocking", **fields)
+
+    def _run_blocking_dialectic(self, message: str) -> None:
+        """Ask the dialectic about this turn's request and recent exchanges, waiting as long as the HTTP timeout
+        allows; the outcome waits for prefetch(). Runs here because Hermes abandons a prefetch after seconds."""
+        outcome: dict[str, Any]
+        if self._cron_skipped or self._recall_mode == "tools":
+            outcome = {"reason": "cron-or-tools-mode"}
+        elif not message or self._is_trivial_prompt(message):
+            outcome = {"reason": "trivial-prompt"}
+        else:
+            self._start_session_init_background()
+            if self._init_thread is not None:
+                self._init_thread.join()
+            outcome = self._query_blocking_dialectic(message) if self._session_ready() else {"reason": "session-not-ready"}
+        with self._prefetch_lock:
+            self._blocking_injection = outcome
+
+    def _query_blocking_dialectic(self, message: str) -> dict[str, Any]:
+        exchanges = load_exchanges(self._ring_path(), self._session_key)
+        query = self._build_blocking_query(message, exchanges)
+        level = self._config.dialectic_reasoning_level if self._config else "low"
+        started = time.monotonic()
+        try:
+            output = self._manager.dialectic_query(self._session_key, query, reasoning_level=level, peer="user",
+                                                   apply_injection_cap=False)
+            reason = "dialectic-empty"
+        except Exception as e:
+            logger.warning("Honcho blocking dialectic failed: %s", e)
+            output, reason = "", "dialectic-failed"
+        outcome = {"query": query, "reasoning_level": level, "dialectic_ms": round((time.monotonic() - started) * 1000)}
+        if output and output.strip():
+            outcome["payload"] = self._format_blocking_result(output)
+        else:
+            outcome["reason"] = reason
+        return outcome
+
+    def _ring_path(self):
+        return ring_path(getattr(self._config, "hermes_home", None))
 
     def _previous_user_message(self) -> str:
         """The user message that opened the previous turn.
@@ -721,7 +784,7 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
     def queue_prefetch(self, query: str, *, session_id: str = "") -> None:
         """Fire background prefetch threads for the upcoming turn.
         Context and dialectic refreshes have independent cadence controls."""
-        if self._cron_skipped or self._recall_mode == "tools" or self._recall_sync:
+        if self._cron_skipped or self._recall_mode == "tools" or self._recall_sync or self._blocking_mode():
             return
         if not self._session_ready() or not query:
             self._start_session_init_background()
@@ -796,6 +859,9 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
         self._previous_turn_message = kwargs.get("previous_message") or ""
         self._turn_author = {"id": kwargs.get("author_id") or None, "name": kwargs.get("author_name") or None,
                              "is_bot": bool(kwargs.get("author_is_bot"))}
+        if self._blocking_mode():
+            self._run_blocking_dialectic(message)
+            return
         # Here rather than in prefetch(): the memory manager abandons a prefetch after a few
         # seconds, and the catch-up waits on Honcho as long as the refresh it replaces could.
         if (turn_number > 1 and self._base_context_cache is None and not self._resume_catch_up_done
@@ -848,12 +914,16 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
 
     def sync_turn(
         self, user_content: str, assistant_content: str, *, session_id: str = "",
-        turn_author: Optional[Dict[str, Any]] = None,
+        turn_author: Optional[Dict[str, Any]] = None, messages: Optional[List[Dict[str, Any]]] = None,
     ) -> None:
         """Record the conversation turn in Honcho (non-blocking), chunking messages that
         exceed the Honcho API limit. Honors saveMessages: false. ``turn_author`` names who wrote
         the user side. The ``on_turn_start`` stash is the fallback for callers that never pass it.
-        A bot author's turn is written into that bot's own a2a session, never the human's."""
+        A bot author's turn is written into that bot's own a2a session, never the human's.
+        In blocking dialectic mode the exchange (with a summary of ``messages``' tool calls) is first
+        written to the local recent-turns file, before any network work, so a one-shot process keeps it."""
+        if self._blocking_mode():
+            self._remember_exchange(user_content, assistant_content, messages, turn_author)
         if not self._writes_enabled():
             return
         if _is_internal_gateway_turn(user_content):
@@ -907,6 +977,21 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
         if self._sync_thread and self._sync_thread.is_alive():
             self._sync_thread.join(timeout=5.0)
         self._sync_thread = self._spawn_write(_sync, "honcho-sync", "Honcho sync_turn failed: %s")
+
+    def _remember_exchange(self, user_content: str, assistant_content: str, messages: Optional[list],
+                           turn_author: Optional[Dict[str, Any]]) -> None:
+        """Append this turn to the recent-turns file the next blocking dialectic quotes. Never raises."""
+        try:
+            author = turn_author if isinstance(turn_author, dict) else self._turn_author
+            if self._cron_skipped or not self._session_key or author.get("is_bot") or _is_internal_gateway_turn(user_content):
+                return
+            exchange = extract_exchange(user_content, assistant_content, messages)
+            exchange.update(user=sanitize_context(exchange["user"]).strip(), turn=self._turn_count,
+                            assistant=sanitize_context(exchange["assistant"]).strip())
+            if exchange["user"] or exchange["assistant"]:
+                append_exchange(self._ring_path(), self._session_key, exchange)
+        except Exception as e:
+            logger.warning("Honcho recent-turns capture failed: %s", e)
 
     def _a2a_session_key(self, author: Dict[str, Any]) -> str:
         """Honcho session for one sender bot's turns into this agent, named from core's ``a2a_key``.

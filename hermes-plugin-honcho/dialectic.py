@@ -8,10 +8,25 @@ import threading
 import time
 
 from .client import spawn_context_thread
+from .recent_turns import render_exchanges
 
 logger = logging.getLogger("plugins.memory.honcho")
 
 _STRUCTURE_RE = re.compile(r"^(?:[*-] |\s*\d+\. )", re.MULTILINE)  # bullet / ordered-list line
+
+_QUERY_PLACEHOLDER_RE = re.compile(r"\{(current_prompt|recent_turns|peer_name)\}")
+# Blocking-mode defaults for dialecticQueryTemplate / dialecticResultTemplate. Placeholders are
+# substituted literally, so a template may contain other braces.
+DEFAULT_BLOCKING_QUERY_TEMPLATE = (
+    "What do I need to know to fulfil the user's request as faithfully to their personal preferences as "
+    "possible?\n\n"
+    "## Recent exchanges with {peer_name}\n{recent_turns}\n\n"
+    "## Current request from {peer_name}\n{current_prompt}"
+)
+DEFAULT_BLOCKING_RESULT_TEMPLATE = (
+    "Honcho thinks you need to know the following about the user to fulfil the user request as faithfully to "
+    "the user's preferences accumulated in memory: {dialectic_output}"
+)
 
 
 class DialecticMixin:
@@ -150,6 +165,34 @@ class DialecticMixin:
             return False
         structured = "\n" in result and bool("##" in result or "•" in result or _STRUCTURE_RE.search(result))
         return structured or len(result.strip()) > 300
+
+    def _build_blocking_query(self, current: str, exchanges: list[dict]) -> str:
+        """Render dialecticQueryTemplate over the current prompt and recent exchanges. When the result is
+        over dialecticMaxInputChars the oldest exchanges are dropped first, so the current prompt survives."""
+        template = (self._config.dialectic_query_template if self._config else None) or DEFAULT_BLOCKING_QUERY_TEMPLATE
+        peer_name = (self._config.peer_name if self._config else None) or "the user"
+        limit = self._config.dialectic_max_input_chars if self._config else 10000
+
+        def _render(kept: list[dict]) -> str:
+            values = {"peer_name": peer_name, "recent_turns": render_exchanges(kept), "current_prompt": current}
+            # One pass, so placeholder-like text inside the substituted values is left alone.
+            return _QUERY_PLACEHOLDER_RE.sub(lambda m: values[m.group(1)], template)
+
+        kept = list(exchanges)
+        query = _render(kept)
+        while len(query) > limit and kept:
+            kept.pop(0)
+            query = _render(kept)
+        if len(kept) < len(exchanges) or len(query) > limit:
+            logger.warning("Honcho blocking dialectic query over dialecticMaxInputChars=%d: dropped %d of %d "
+                           "recent exchange(s)%s", limit, len(exchanges) - len(kept), len(exchanges),
+                           f", and {len(query) - limit} chars will be cut from the end" if len(query) > limit else "")
+        return query
+
+    def _format_blocking_result(self, output: str) -> str:
+        """Wrap a dialectic answer in dialecticResultTemplate."""
+        template = (self._config.dialectic_result_template if self._config else None) or DEFAULT_BLOCKING_RESULT_TEMPLATE
+        return template.replace("{dialectic_output}", output.strip())
 
     def _run_dialectic_depth(self, query: str, *, use_query_rewrite: bool = True) -> str:
         """Run up to dialecticDepth .chat() passes, bailing early once a pass returns
