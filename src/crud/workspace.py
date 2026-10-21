@@ -371,17 +371,13 @@ async def delete_workspace(
     )
     sessions_count = int(
         await db.scalar(
-            select(func.count(models.Session.id)).where(
-                models.Session.workspace_name == workspace_name
-            )
+            select(func.count()).where(models.Session.workspace_name == workspace_name)
         )
         or 0
     )
     messages_count = int(
         await db.scalar(
-            select(func.count(models.Message.id)).where(
-                models.Message.workspace_name == workspace_name
-            )
+            select(func.count()).where(models.Message.workspace_name == workspace_name)
         )
         or 0
     )
@@ -621,7 +617,7 @@ async def get_workspace_stats(
         )
         session_count = int(
             await db.scalar(
-                select(func.count(models.Session.id)).where(
+                select(func.count()).where(
                     models.Session.workspace_name == workspace_name,
                     models.Session.name.in_(session_names),
                 )
@@ -640,7 +636,7 @@ async def get_workspace_stats(
         )
         session_count = int(
             await db.scalar(
-                select(func.count(models.Session.id)).where(
+                select(func.count()).where(
                     models.Session.workspace_name == workspace_name
                 )
             )
@@ -718,7 +714,7 @@ async def get_active_peers(
     subq = (
         select(
             models.Message.peer_name,
-            func.count(models.Message.id).label("msg_count"),
+            func.count().label("msg_count"),
             func.max(models.Message.created_at).label("last_msg_at"),
         )
         .where(*msg_filters)
