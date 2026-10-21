@@ -104,7 +104,7 @@ def test_recent_exchanges_survive_a_process_restart(tmp_path):
     assert "Assistant: Parser written." in query
     assert "an older request" not in query
     assert query.rstrip().endswith("Now add error handling.")
-    assert kwargs == {"reasoning_level": "high", "peer": "user", "apply_injection_cap": False}
+    assert kwargs == {"reasoning_level": "high", "peer": "user", "apply_injection_cap": False, "raise_errors": True}
     assert ANSWER in injected
 
     record = log_records(tmp_path)[-1]
@@ -162,21 +162,76 @@ def test_exchange_falls_back_to_the_transcript_for_the_reply():
     assert exchange["assistant"] == "Parser written."
 
 
-def test_templates_render_literally_and_history_yields_to_the_input_cap(tmp_path, caplog):
+def test_templates_render_literally(tmp_path):
     template = 'Q for {peer_name}: {"json": true}\n{recent_turns}\nNOW: {current_prompt}'
     provider = make_provider(tmp_path, peer_name="ada", dialectic_query_template=template,
-                             dialectic_result_template="<<{dialectic_output}>>", dialectic_max_input_chars=300)
-    for n in range(3):
-        provider.sync_turn(f"request {n} " + "z" * 60, "ok")
+                             dialectic_result_template="<<{dialectic_output}>>")
+    provider.sync_turn("Earlier {current_prompt} request", "ok")
 
-    provider.on_turn_start(4, "Ship {recent_turns} it.")
+    provider.on_turn_start(2, "Ship {recent_turns} it.")
     assert provider.prefetch("Ship it.") == f"<<{ANSWER}>>"
 
     query = provider._manager.dialectic_calls[0][1]
-    assert query.startswith('Q for ada: {"json": true}')
+    assert query.startswith('Q for ada: {"json": true}\n### Exchange 1 of 1\nUser: Earlier {current_prompt} request')
     assert query.endswith("NOW: Ship {recent_turns} it.")
-    assert "request 2" in query and "request 0" not in query and len(query) <= 300
-    assert "dialecticMaxInputChars=300" in caplog.text
+
+
+def _three_exchanges(tmp_path, limit: int) -> HonchoMemoryProvider:
+    """A provider holding three exchanges of ten 60-char tool lines, a 200-char reply and a 100-char request."""
+    provider = make_provider(tmp_path, dialectic_max_input_chars=limit)
+    for n in range(3):
+        provider.sync_turn(f"req{n} " + "u" * 95, f"rep{n} " + "a" * 195)
+        provider._turn_count = n + 1
+    path = ring_path(tmp_path)
+    data = json.loads(path.read_text())
+    for n, turn in enumerate(data["sessions"]["session-a"]):
+        turn["tools"] = [f"t{n}.{i}(" + "x" * 50 + ")" for i in range(10)]
+    path.write_text(json.dumps(data))
+    return provider
+
+
+def _query_for(provider, prompt="CURRENT PROMPT") -> tuple[str, dict]:
+    provider.on_turn_start(9, prompt)
+    provider.prefetch(prompt)
+    return provider._manager.dialectic_calls[-1][1], provider._blocking_injection
+
+
+def test_input_cap_trims_the_oldest_exchanges_tool_lines_first(tmp_path):
+    full, _ = _query_for(_three_exchanges(tmp_path / "full", limit=100_000))
+    provider = _three_exchanges(tmp_path / "cut", limit=len(full) - 300)
+
+    query, _ = _query_for(provider)
+
+    (note,) = log_records(tmp_path / "cut")[-1]["query_trimmed"]
+    dropped = int(note.removeprefix("exchange 1: ").split()[0])
+    assert len(query) <= len(full) - 300 and query.endswith("CURRENT PROMPT")
+    # Only the oldest exchange's last tool lines went; its text and the newer exchanges are whole.
+    assert f"t0.{9 - dropped}(" in query and f"t0.{10 - dropped}(" not in query
+    assert all(f"t{n}.9(" in query for n in (1, 2)) and "rep0 " in query
+
+
+def test_input_cap_cuts_text_then_drops_but_keeps_the_newest_exchange(tmp_path):
+    provider = _three_exchanges(tmp_path, limit=900)
+
+    query, _ = _query_for(provider)
+
+    assert len(query) <= 900 and query.endswith("CURRENT PROMPT")
+    assert "req0 " not in query and "req1 " not in query  # older exchanges dropped after trimming
+    assert "Exchange 1 of 1" in query and "req2 " in query
+    trimmed = log_records(tmp_path)[-1]["query_trimmed"]
+    assert trimmed[:4] == ["exchange 1: 10 tool line(s)", "exchange 1: assistant text cut by 200 chars",
+                           "exchange 1: user text cut by 100 chars", "exchange 1: dropped"]
+    assert "exchange 2: dropped" in trimmed and "exchange 3: dropped" not in trimmed
+
+
+def test_input_cap_never_cuts_the_current_prompt(tmp_path, caplog):
+    provider = _three_exchanges(tmp_path, limit=200)
+
+    query, _ = _query_for(provider, prompt="P" * 250)
+
+    assert query.endswith("P" * 250) and "Exchange 1 of 1" in query  # newest exchange emptied, not dropped
+    assert log_records(tmp_path)[-1]["query_trimmed"][-1].endswith("chars will be cut from the end")
+    assert "dialecticMaxInputChars=200" in caplog.text
 
 
 def test_blocking_mode_makes_no_other_honcho_calls(tmp_path):
@@ -218,6 +273,7 @@ def test_no_answer_injects_nothing(tmp_path, answer, reason):
 
     record = log_records(tmp_path)[-1]
     assert record["reason"] == reason and "Write the parser." in record["query"]
+    assert record.get("error") == (None if answer == "" else "RuntimeError: boom")
 
 
 def test_trivial_prompt_skips_the_dialectic(tmp_path):

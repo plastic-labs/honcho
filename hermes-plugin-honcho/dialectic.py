@@ -14,6 +14,7 @@ logger = logging.getLogger("plugins.memory.honcho")
 
 _STRUCTURE_RE = re.compile(r"^(?:[*-] |\s*\d+\. )", re.MULTILINE)  # bullet / ordered-list line
 
+_TRIM_MARK = " …[trimmed]"
 _QUERY_PLACEHOLDER_RE = re.compile(r"\{(current_prompt|recent_turns|peer_name)\}")
 # Blocking-mode defaults for dialecticQueryTemplate / dialecticResultTemplate. Placeholders are
 # substituted literally, so a template may contain other braces.
@@ -166,9 +167,12 @@ class DialecticMixin:
         structured = "\n" in result and bool("##" in result or "•" in result or _STRUCTURE_RE.search(result))
         return structured or len(result.strip()) > 300
 
-    def _build_blocking_query(self, current: str, exchanges: list[dict]) -> str:
-        """Render dialecticQueryTemplate over the current prompt and recent exchanges. When the result is
-        over dialecticMaxInputChars the oldest exchanges are dropped first, so the current prompt survives."""
+    def _build_blocking_query(self, current: str, exchanges: list[dict]) -> tuple[str, list[str]]:
+        """Render dialecticQueryTemplate over the current prompt and recent exchanges, and say what was trimmed.
+
+        Over dialecticMaxInputChars, exchanges are trimmed oldest first: tool lines from the end, then the
+        reply, then the user text, and only then is the exchange dropped. The newest exchange is trimmed but
+        never dropped, and the current prompt is never touched."""
         template = (self._config.dialectic_query_template if self._config else None) or DEFAULT_BLOCKING_QUERY_TEMPLATE
         peer_name = (self._config.peer_name if self._config else None) or "the user"
         limit = self._config.dialectic_max_input_chars if self._config else 10000
@@ -178,16 +182,38 @@ class DialecticMixin:
             # One pass, so placeholder-like text inside the substituted values is left alone.
             return _QUERY_PLACEHOLDER_RE.sub(lambda m: values[m.group(1)], template)
 
-        kept = list(exchanges)
-        query = _render(kept)
-        while len(query) > limit and kept:
-            kept.pop(0)
-            query = _render(kept)
-        if len(kept) < len(exchanges) or len(query) > limit:
-            logger.warning("Honcho blocking dialectic query over dialecticMaxInputChars=%d: dropped %d of %d "
-                           "recent exchange(s)%s", limit, len(exchanges) - len(kept), len(exchanges),
-                           f", and {len(query) - limit} chars will be cut from the end" if len(query) > limit else "")
-        return query
+        kept = [{**turn, "tools": list(turn.get("tools") or ())} for turn in exchanges]
+        query, trimmed = _render(kept), []
+        idx = 0
+        while len(query) > limit and idx < len(kept):
+            turn, n = kept[idx], len(exchanges) - len(kept) + idx + 1
+            if turn["tools"]:
+                dropped = 0
+                while turn["tools"] and len(query) > limit:
+                    turn["tools"].pop()
+                    dropped += 1
+                    query = _render(kept)
+                trimmed.append(f"exchange {n}: {dropped} tool line(s)")
+                continue
+            for key in ("assistant", "user"):
+                text = str(turn.get(key) or "")
+                if text and len(query) > limit:
+                    keep = max(0, len(text) - (len(query) - limit) - len(_TRIM_MARK))
+                    turn[key] = text[:keep] + _TRIM_MARK if keep else ""
+                    trimmed.append(f"exchange {n}: {key} text cut by {len(text) - keep} chars")
+                    query = _render(kept)
+            if len(query) <= limit or idx == len(kept) - 1:
+                idx += 1
+            else:
+                kept.pop(idx)
+                trimmed.append(f"exchange {n}: dropped")
+                query = _render(kept)
+        if len(query) > limit:
+            trimmed.append(f"{len(query) - limit} chars will be cut from the end")
+        if trimmed:
+            logger.warning("Honcho blocking dialectic query over dialecticMaxInputChars=%d (%d recent exchange(s)): %s",
+                           limit, len(exchanges), "; ".join(trimmed))
+        return query, trimmed
 
     def _format_blocking_result(self, output: str) -> str:
         """Wrap a dialectic answer in dialecticResultTemplate."""

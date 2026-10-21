@@ -623,7 +623,8 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
         outcome = outcome or {"reason": "no-turn-start"}
         notice = "\n\n".join(n for n in (self._pop_auth_notice(), self._pop_peer_notice()) if n)
         payload = "\n\n".join(p for p in (notice, outcome.get("payload", "")) if p)
-        fields = {k: outcome[k] for k in ("query", "dialectic_ms", "reasoning_level", "dialectic_output") if k in outcome}
+        fields = {k: outcome[k] for k in ("query", "query_trimmed", "dialectic_ms", "reasoning_level",
+                                          "dialectic_output", "error") if k in outcome}
         return self._log_injection("injected" if payload else outcome["reason"], self._truncate_to_budget(payload),
                                    mode="blocking", **fields)
 
@@ -645,22 +646,25 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
 
     def _query_blocking_dialectic(self, message: str) -> dict[str, Any]:
         exchanges = load_exchanges(self._ring_path(), self._session_key)
-        query = self._build_blocking_query(message, exchanges)
+        query, trimmed = self._build_blocking_query(message, exchanges)
         level = self._config.dialectic_reasoning_level if self._config else "low"
+        outcome: dict[str, Any] = {"query": query, "reasoning_level": level, "dialectic_output": ""}
+        if trimmed:
+            outcome["query_trimmed"] = trimmed
         started = time.monotonic()
         try:
+            # raise_errors: a rejected query or a timeout must not look like an empty answer.
             output = self._manager.dialectic_query(self._session_key, query, reasoning_level=level, peer="user",
-                                                   apply_injection_cap=False)
-            reason = "dialectic-empty"
+                                                   apply_injection_cap=False, raise_errors=True) or ""
         except Exception as e:
-            logger.warning("Honcho blocking dialectic failed: %s", e)
-            output, reason = "", "dialectic-failed"
-        outcome = {"query": query, "reasoning_level": level, "dialectic_ms": round((time.monotonic() - started) * 1000),
-                   "dialectic_output": output or ""}
-        if output and output.strip():
+            logger.warning("Honcho blocking dialectic failed: %s: %s", type(e).__name__, e)
+            output = ""
+            outcome.update(reason="dialectic-failed", error=f"{type(e).__name__}: {e}")
+        outcome.update(dialectic_ms=round((time.monotonic() - started) * 1000), dialectic_output=output)
+        if output.strip():
             outcome["payload"] = self._format_blocking_result(output)
         else:
-            outcome["reason"] = reason
+            outcome.setdefault("reason", "dialectic-empty")
         return outcome
 
     def _ring_path(self):
