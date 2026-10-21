@@ -512,7 +512,7 @@ For verification steps and production notes, see [Self-hosting docs → Manual S
 </details>
 <!-- markdownlint-enable MD033 -->
 
-Contributors: see [`CONTRIBUTING.md`](./CONTRIBUTING.md) for pre-commit setup. Deploying to Fly.io: see [Self-hosting docs → Deploying on Fly.io](https://honcho.dev/docs/v3/contributing/self-hosting#deploying-on-fly-io).
+Contributors: install the git hooks with `uv run pre-commit install --hook-type pre-commit --hook-type commit-msg --hook-type pre-push`. Tests only run at push time, so a clean commit is not a clean push. Deploying to Fly.io: see [Self-hosting docs → Deploying on Fly.io](https://honcho.dev/docs/v3/contributing/self-hosting#deploying-on-fly-io).
 
 ## Configuration
 
@@ -706,7 +706,7 @@ See the [SDK Reference](https://honcho.dev/docs/v3/documentation/reference/sdk) 
 
 ## Contributing
 
-We welcome contributions to Honcho. One thing to know before you start: **pull requests must be linked to an issue carrying the `maintainer-approved` label**, or they are closed automatically. [Browse the approved queue](https://github.com/plastic-labs/honcho/issues?q=is%3Aissue+is%3Aopen+label%3Amaintainer-approved), or make your case in [Discord](http://discord.gg/honcho) — that is where maintainers are most active.
+**Pull requests are limited to maintainers.** If you find a bug or want a change, please [open an issue](https://github.com/plastic-labs/honcho/issues/new/choose) instead. If you think your work is an exception, make the case in [Discord](http://discord.gg/honcho), where maintainers are most active.
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for the full process, an architecture walkthrough, and a map of where to change what. For vulnerabilities, see [SECURITY.md](./SECURITY.md) — note that Honcho does not operate a bug bounty.
 

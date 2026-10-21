@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-**Before opening a PR or filing an issue**, read [If you're an agent](CONTRIBUTING.md#if-youre-an-agent) in `CONTRIBUTING.md`. Every PR needs a linked issue labelled `maintainer-approved`, and issues follow [Filing an issue](CONTRIBUTING.md#filing-an-issue). Run the `pre-pr` skill (`skills/pre-pr/`) before opening a PR.
+**Before opening a PR or filing an issue**, read [If you're an agent](CONTRIBUTING.md#if-youre-an-agent) in `CONTRIBUTING.md`. Pull requests are limited to maintainers (write access); everyone else files an issue. Issues follow [Filing an issue](CONTRIBUTING.md#filing-an-issue).
 
 # Honcho Overview
 
