@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 #
-# Erasure-slice acceptance runner: two api replicas and two derivers on the mock
-# provider, one message delete under a paused multi-observer batch, Redis down,
-# then a swap to the previous image. Results land in results/<label>.json.
+# Erasure-slice runner: paused multi-observer message deletion, mock provider only.
+# Original sequence or persisted-Redis unsafe-control/prototype comparison.
+# Results include per-phase logs and image identities; no supported rollback claim.
 #
 #   sandbox/slice.sh run --label X --image-under-test IMG [--previous-image IMG]
 #                        [--delete-action api|sql] [--release-on same|other]
-#                        [--results-dir DIR]
+#                        [--results-dir DIR] [--scenario original|persisted-cache]
+#                        [--unsafe-negative-control-image V3_4_0_IMAGE]
 #   sandbox/slice.sh build IMG [GIT_REF]   build IMG from the working tree or a ref
 #   sandbox/slice.sh down                  remove this project's containers and volumes
 #

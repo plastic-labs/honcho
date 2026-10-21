@@ -1,15 +1,17 @@
 """Erasure-slice acceptance runner.
 
 Drives the two-api / two-deriver sandbox through one message delete while a
-multi-observer deriver batch is paused, Redis is down, and the stack is swapped
-to a previous image, then checks every surface the deleted message could leak
-through. Invoked by sandbox/slice.sh; see `slice.sh --help`.
+multi-observer deriver batch is paused and Redis is down. Preserves the original
+image-swap sequence and adds a persisted-cache unsafe-control/prototype comparison.
+This is a bounded sizing slice, not full lifecycle or supported rollback proof.
+Invoked by sandbox/slice.sh; see sandbox/README.md.
 """
 
 from __future__ import annotations
 
 import argparse
 import datetime
+import hashlib
 import json
 import os
 import shutil
@@ -22,6 +24,7 @@ from typing import Any
 
 import httpx
 import psycopg
+from redis import Redis
 
 HERE = Path(__file__).resolve().parent
 # One project per checkout: the default name comes from the worktree directory,
@@ -47,6 +50,15 @@ OBSERVERS = ["alice", "bob", "carol"]
 SUMMARY_KEYS = {
     "short": "honcho_chat_summary_short",
     "long": "honcho_chat_summary_long",
+}
+APP_SERVICES = ("api", "api-2", "deriver", "deriver-2")
+UNSAFE_PHASE = "unsafe-negative-control"
+PROTOTYPE_PHASE = "prototype-persisted-cache"
+EXPOSURE_CHECKS = {
+    "context-clean",
+    "summary-clean-short",
+    "summary-clean-long",
+    *(f"card-clean-{observer}" for observer in OBSERVERS),
 }
 MIGRATION_FREE_START = (
     "exec /app/.venv/bin/fastapi run --host 0.0.0.0 --workers 1 src/main.py"
@@ -76,6 +88,13 @@ class Run:
         self.names_before: dict[str, str] = {}
         self.started = time.monotonic()
         self.slow_requests: list[str] = []
+        self.cache_keys: list[str] = []
+        self.cache_manifest: dict[str, dict[str, Any]] = {}
+        self.cache_snapshots: list[dict[str, Any]] = []
+        self.phase_evidence: dict[str, dict[str, Any]] = {}
+        self.redis_connections: dict[str, dict[str, list[str]]] = {}
+        self.results_dir = Path(args.results_dir)
+        self.results_dir.mkdir(parents=True, exist_ok=True)
 
     # ------------------------------------------------------------------ plumbing
 
@@ -96,7 +115,7 @@ class Run:
         }
 
     def compose(
-        self, *argv: str, check: bool = True
+        self, *argv: str, check: bool = True, input_text: str | None = None
     ) -> subprocess.CompletedProcess[str]:
         cmd = [
             "docker", "compose", "-p", PROJECT,
@@ -106,7 +125,11 @@ class Run:
             *argv,
         ]  # fmt: skip
         result = subprocess.run(
-            cmd, env=self.compose_env(), capture_output=True, text=True
+            cmd,
+            env=self.compose_env(),
+            capture_output=True,
+            text=True,
+            input=input_text,
         )
         if check and result.returncode != 0:
             raise RuntimeError(
@@ -141,6 +164,38 @@ class Run:
                 "pass": passed,
                 "evidence": evidence,
             }
+        )
+
+    def require(self, name: str, passed: bool, detail: str) -> None:
+        self.step(name, passed, detail)
+        if not passed:
+            raise AssertionError(f"{name}: {detail}")
+
+    def visibility_check(
+        self,
+        check_id: str,
+        surface: str,
+        replica: str,
+        phase: str,
+        response: httpx.Response,
+        canary_present: bool,
+    ) -> None:
+        # An HTTP error is never an expected exposure. Do not merely invert a
+        # failed no-leak assertion: that would accept a 500/connection failure.
+        expect_exposure = phase == UNSAFE_PHASE and check_id in EXPOSURE_CHECKS
+        self.check(
+            check_id,
+            surface,
+            replica,
+            phase,
+            response.status_code == 200 and canary_present == expect_exposure,
+            f"{response.status_code} canary={canary_present}"
+            f" expected={'EXPOSED (UNSAFE)' if expect_exposure else 'hidden'}",
+        )
+        self.checks[-1].update(
+            expected="exposed-unsafe" if expect_exposure else "hidden",
+            canary_present=canary_present,
+            status_code=response.status_code,
         )
 
     def http(
@@ -401,12 +456,13 @@ class Run:
         )
         return f"representation queue rows (id, processed, error, message_id): {rows}"
 
-    def swap(self) -> None:
-        if not self.args.previous_image:
+    def swap(self, image: str | None = None, *, readers_only: bool = False) -> None:
+        image = image or self.args.previous_image
+        if not image:
             self.step("swap", True, "skipped: no --previous-image")
             return
-        self.app_image = self.args.previous_image
-        services = ["api", "api-2", "deriver", "deriver-2"]
+        self.app_image = image
+        services = ["api", "api-2"] if readers_only else list(APP_SERVICES)
         self.compose("up", "-d", "--no-deps", "--force-recreate", "api")
         started = self.wait_for(
             "previous api",
@@ -415,7 +471,10 @@ class Run:
         ) and self.api_ok("api-1")
         if not started:
             logs = self.compose("logs", "--tail", "15", "api", check=False).stdout
-            self.step("swap-api-with-migrations", False, logs.strip()[-900:])
+            self.notes.append(
+                "Migration startup failed; trying migration-free API: "
+                + logs.strip()[-900:]
+            )
             self.api_start = MIGRATION_FREE_START
             self.compose("up", "-d", "--no-deps", "--force-recreate", "api")
             started = self.wait_for("previous api", lambda: self.api_ok("api-1"), 45)
@@ -425,7 +484,7 @@ class Run:
         self.step(
             "swap",
             healthy,
-            f"api, api-2, deriver, deriver-2 -> {self.app_image}"
+            f"{', '.join(services)} -> {self.app_image}"
             + (
                 " (migration-free start)"
                 if self.api_start == MIGRATION_FREE_START
@@ -458,7 +517,7 @@ class Run:
 
     def start_redis(self) -> None:
         self.compose("start", "redis")
-        self.wait_for(
+        ready = self.wait_for(
             "redis",
             lambda: (
                 self.compose("exec", "-T", "redis", "redis-cli", "ping").stdout.strip()
@@ -467,11 +526,188 @@ class Run:
             20,
         )
         keys = self.compose("exec", "-T", "redis", "redis-cli", "dbsize", check=False)
-        self.step(
-            "redis-started", True, f"{keys.stdout.strip()} keys survived the outage"
+        self.require(
+            "redis-started", ready, f"{keys.stdout.strip()} keys survived the outage"
         )
         # Let derivers poll and reconcilers tick against the previous image.
         time.sleep(self.args.settle_seconds)
+
+    # ------------------------------------------------------ persisted-cache proof
+
+    def redis(self) -> Redis:
+        # Direct, strict client: no cashews suppress mode or process-local fallback.
+        return Redis(host="127.0.0.1", port=REDIS_PORT, socket_timeout=2)
+
+    def preserve_cache(self) -> None:
+        result = self.compose(
+            "exec",
+            "-T",
+            "api",
+            "/app/.venv/bin/python",
+            "-",
+            WORKSPACE,
+            SESSION,
+            self.canary,
+            input_text=(HERE / "slice_cache_fixture.py").read_text(),
+        )
+        line = next(
+            line
+            for line in result.stdout.splitlines()
+            if line.startswith("SLICE_CACHE_KEYS=")
+        )
+        keys = self.cache_keys = json.loads(line.split("=", 1)[1])
+        self.require(
+            "cache-fixture-keys", len(keys) == 4 and len(set(keys)) == 4, str(keys)
+        )
+        with self.redis() as client:
+            for key in keys:
+                self.require("cache-fixture-live-ttl", client.ttl(key) > 0, key)
+                # Fixture-only: expiry cannot manufacture a clean result while
+                # the paused batch, outage, or Docker startup takes a long time.
+                self.require("cache-fixture-persist", bool(client.persist(key)), key)
+        self.cache_snapshot("before-outage", baseline=True)
+
+    def cache_snapshot(self, phase: str, *, baseline: bool = False) -> None:
+        with self.redis() as client:
+            info = client.info()
+            manifest = {}
+            # Never scan unrelated cache entries, rewrite values, or delete keys.
+            for key in self.cache_keys:
+                value = client.get(key)
+                manifest[key] = {
+                    "sha256": hashlib.sha256(value).hexdigest()
+                    if value is not None
+                    else None,
+                    "bytes": len(value) if value is not None else 0,
+                    "canary_occurrences": value.count(self.canary.encode())
+                    if value
+                    else 0,
+                    "ttl": client.ttl(key),
+                }
+            snapshot = {
+                "phase": phase,
+                "run_id": info["run_id"],
+                "aof_enabled": info["aof_enabled"],
+                "aof_current_size": info["aof_current_size"],
+                "redis_container": self.compose(
+                    "ps", "-a", "-q", "redis"
+                ).stdout.strip(),
+                "entries": manifest,
+            }
+        self.cache_snapshots.append(snapshot)
+        if baseline:
+            self.cache_manifest = manifest
+        valid = len(manifest) == 4 and all(
+            entry["ttl"] == -1
+            and entry["canary_occurrences"] == (2 if ":session:" in key else 1)
+            for key, entry in manifest.items()
+        )
+        first = self.cache_snapshots[0]
+        self.require(
+            f"cache-bytes-{phase}",
+            valid
+            and manifest == self.cache_manifest
+            and info["aof_enabled"] == 1
+            and info["aof_current_size"] > 0
+            and snapshot["redis_container"] == first["redis_container"],
+            f"{len(manifest)} exact canary entries; TTL=-1; AOF enabled; same container",
+        )
+        if not baseline:
+            self.require(
+                f"redis-restarted-{phase}",
+                info["run_id"] != first["run_id"],
+                "Redis process changed since pre-delete fixture; bytes survived restart",
+            )
+
+    def stop_apps(self) -> None:
+        self.compose("stop", *APP_SERVICES)
+        self.require(
+            "apps-stopped",
+            all(self.container_exited(service) for service in APP_SERVICES),
+            "both APIs and both workers stopped before Redis/image comparison",
+        )
+
+    def assert_redis_startup(self, phase: str) -> None:
+        with self.redis() as client:
+            client_addresses = [entry["addr"] for entry in client.client_list()]
+        self.redis_connections[phase] = {}
+        for service in ("api", "api-2"):
+            container = self.inspect_container(service)
+            ips = {
+                network["IPAddress"]
+                for network in container["NetworkSettings"]["Networks"].values()
+                if network["IPAddress"]
+            }
+            connections = [
+                addr for addr in client_addresses if addr.rsplit(":", 1)[0] in ips
+            ]
+            self.redis_connections[phase][service] = connections
+            self.require(
+                f"redis-client-{phase}-{service}",
+                bool(connections),
+                f"Redis CLIENT LIST has live connections from API container: {connections}",
+            )
+            logs = self.compose("logs", "--no-color", service).stdout
+            self.require(
+                f"redis-connected-{phase}-{service}",
+                "Connected to cache at redis://redis:6379/0" in logs
+                and "Falling back to a process-local" not in logs,
+                "API startup connected to Redis without process-local fallback",
+            )
+        self.require(
+            f"workers-stopped-{phase}",
+            all(self.container_exited(service) for service in ("deriver", "deriver-2")),
+            "comparison is read-only; no old-image worker can mutate the shared dataset",
+        )
+
+    def persisted_comparison(self) -> None:
+        self.stop_apps()
+        self.start_redis()
+        self.cache_snapshot("redis-returned-before-image-start")
+        for phase, image in (
+            (UNSAFE_PHASE, self.args.unsafe_negative_control_image),
+            (PROTOTYPE_PHASE, self.args.image_under_test),
+        ):
+            self.swap(image, readers_only=True)
+            self.assert_redis_startup(phase)
+            self.cache_snapshot(f"before-{phase}")
+            self.run_checks(phase)
+            self.cache_snapshot(f"after-{phase}")
+            self.stop_apps()
+
+    def inspect_container(self, service: str) -> dict[str, Any]:
+        cid = self.compose("ps", "-a", "-q", service).stdout.strip()
+        if not cid:
+            return {}
+        return json.loads(
+            subprocess.check_output(["docker", "inspect", cid], text=True)
+        )[0]
+
+    def record_phase(self, phase: str) -> None:
+        path = self.results_dir / f"{self.args.label}.{phase}.compose.log"
+        logs = self.compose("logs", "--no-color", check=False)
+        path.write_text(logs.stdout + logs.stderr)
+        containers = {}
+        for service in APP_SERVICES:
+            inspected = self.inspect_container(service)
+            if inspected:
+                containers[service] = {
+                    "container_id": inspected["Id"],
+                    "image_id": inspected["Image"],
+                    "image_ref": inspected["Config"]["Image"],
+                    "state": inspected["State"]["Status"],
+                }
+        self.phase_evidence[phase] = {
+            "image": self.app_image,
+            "containers": containers,
+            "redis_clients": self.redis_connections.get(phase),
+            "log": str(path),
+            "expectation": (
+                "UNSAFE negative control MUST expose cards, both summary tiers, and context; other surfaces clean"
+                if phase == UNSAFE_PHASE
+                else "all checked surfaces clean"
+            ),
+        }
 
     # ------------------------------------------------------------------ checks
 
@@ -501,6 +737,7 @@ class Run:
             except (httpx.HTTPError, ValueError) as exc:
                 self.check("api-reachable", "HTTP", replica, phase, False, repr(exc))
         self.db_checks(phase)
+        self.record_phase(phase)
 
     def contains_canary(self, response: httpx.Response) -> bool:
         return self.canary in response.text
@@ -533,21 +770,27 @@ class Run:
                 f"{response.status_code} canary={self.contains_canary(response)}",
             )  # fmt: skip
         response = self.http(replica, "GET", f"{base}/context")
-        self.check(
-            "context-clean", "GET session context", replica, phase,
-            response.status_code == 200 and not self.contains_canary(response),
-            f"{response.status_code} canary={self.contains_canary(response)}",
-        )  # fmt: skip
+        self.visibility_check(
+            "context-clean",
+            "GET session context",
+            replica,
+            phase,
+            response,
+            self.contains_canary(response),
+        )
 
         response = self.http(replica, "GET", f"{base}/summaries")
         body = response.json() if response.status_code == 200 else {}
         for tier in ("short", "long"):
             content = json.dumps(body.get(f"{tier}_summary"))
-            self.check(
-                f"summary-clean-{tier}", "GET session summaries", replica, phase,
-                response.status_code == 200 and self.canary not in content,
-                f"{response.status_code} canary={self.canary in content}",
-            )  # fmt: skip
+            self.visibility_check(
+                f"summary-clean-{tier}",
+                "GET session summaries",
+                replica,
+                phase,
+                response,
+                self.canary in content,
+            )
 
         for observer in OBSERVERS:
             params = {} if observer == OBSERVED else {"target": OBSERVED}
@@ -557,11 +800,14 @@ class Run:
                 f"/workspaces/{WORKSPACE}/peers/{observer}/card",
                 params=params,
             )
-            self.check(
-                f"card-clean-{observer}", "GET peer card", replica, phase,
-                response.status_code == 200 and not self.contains_canary(response),
-                f"{response.status_code} canary={self.contains_canary(response)}",
-            )  # fmt: skip
+            self.visibility_check(
+                f"card-clean-{observer}",
+                "GET peer card",
+                replica,
+                phase,
+                response,
+                self.contains_canary(response),
+            )
 
         derived_ids = {row[0] for row in self.derived_documents()}
         response = self.http(
@@ -701,6 +947,8 @@ class Run:
             self.seed()
             self.wait_paused()
             self.warm_reads()
+            if self.args.scenario == "persisted-cache":
+                self.preserve_cache()
             self.stop_redis()
             self.delete()
             self.step("delete-done", True, "starting after-delete reads")
@@ -708,30 +956,68 @@ class Run:
             self.release()
             self.run_checks("after-release")
             self.step("after-release-reads-done", True, "")
-            self.swap()
-            self.start_redis()
-            self.run_checks("after-swap")
+            if self.args.scenario == "persisted-cache":
+                self.persisted_comparison()
+            else:
+                self.swap()
+                self.start_redis()
+                self.run_checks("after-swap")
         except Exception as exc:  # noqa: BLE001
             self.step("runner-error", False, repr(exc))
+            try:
+                self.record_phase("runner-error")
+            except Exception as log_exc:  # noqa: BLE001
+                self.notes.append(f"Could not collect failure logs: {log_exc!r}")
         failed = [c for c in self.checks if c["pass"] is False]
+        failed_steps = [s for s in self.steps if not s["ok"]]
         blocked = any(s["name"] == "runner-error" for s in self.steps)
+        for phase, evidence in self.phase_evidence.items():
+            checks = [c for c in self.checks if c["phase"] == phase]
+            evidence.update(
+                checks=len(checks),
+                failed=sum(c["pass"] is False for c in checks),
+                expected_exposures=sum(
+                    c.get("expected") == "exposed-unsafe" for c in checks
+                ),
+                actual_exposures=sum(c.get("canary_present", False) for c in checks),
+            )
         return {
             "label": self.args.label,
             "image_under_test": self.args.image_under_test,
             "previous_image": self.args.previous_image,
+            "scenario": self.args.scenario,
+            "unsafe_negative_control_image": self.args.unsafe_negative_control_image,
+            "supported_rollback_proven": False,
+            "phases": self.phase_evidence,
+            "cache_snapshots": self.cache_snapshots,
             "started_at": started_at,
             "duration_s": round(time.monotonic() - started),
             "topology": {
                 "api_replicas": 2,
                 "derivers": 2,
-                "redis_down_during": "delete+reads+release+swap",
+                "redis_down_during": (
+                    "delete+reads+release"
+                    if self.args.scenario == "persisted-cache"
+                    else "delete+reads+release+swap"
+                ),
+                "comparison_workers": "stopped"
+                if self.args.scenario == "persisted-cache"
+                else "running",
                 "delete_action": self.args.delete_action,
                 "release_on": self.args.release_on,
                 "paused_on": self.paused_on,
             },
             "steps": self.steps,
             "checks": self.checks,
-            "verdict": "blocked" if blocked else ("fail" if failed else "pass"),
+            "counts": {
+                "checks": len(self.checks),
+                "unexpected_check_failures": len(failed),
+                "steps": len(self.steps),
+                "failed_steps": len(failed_steps),
+            },
+            "verdict": "blocked"
+            if blocked
+            else ("fail" if failed or failed_steps else "pass"),
             "notes": "; ".join(
                 [f"canary {self.canary}", f"{len(failed)} failing checks", *self.notes]
             ),
@@ -744,11 +1030,26 @@ def main() -> None:
     parser.add_argument("--label", required=True)
     parser.add_argument("--image-under-test", required=True)
     parser.add_argument("--previous-image", default="")
+    parser.add_argument(
+        "--scenario", choices=["original", "persisted-cache"], default="original"
+    )
+    parser.add_argument("--unsafe-negative-control-image", default="")
     parser.add_argument("--delete-action", choices=["api", "sql"], default="api")
     parser.add_argument("--release-on", choices=["same", "other"], default="same")
     parser.add_argument("--settle-seconds", type=float, default=8)
     parser.add_argument("--results-dir", default=str(HERE / ".slice" / "results"))
     args = parser.parse_args()
+    if args.scenario == "persisted-cache":
+        if not args.unsafe_negative_control_image or args.previous_image:
+            parser.error(
+                "persisted-cache requires --unsafe-negative-control-image (v3.4.0), not --previous-image"
+            )
+        if args.delete_action != "api":
+            parser.error("persisted-cache requires prototype --delete-action api")
+    elif args.unsafe_negative_control_image:
+        parser.error(
+            "--unsafe-negative-control-image requires --scenario persisted-cache"
+        )
 
     result = Run(args).execute()
     results_dir = Path(args.results_dir)
@@ -757,7 +1058,8 @@ def main() -> None:
     out.write_text(json.dumps(result, indent=2, default=str) + "\n")
     failed = sum(1 for c in result["checks"] if c["pass"] is False)
     print(
-        f"\n{result['verdict']}: {failed}/{len(result['checks'])} checks failed -> {out}"
+        f"\n{result['verdict']}: {failed}/{len(result['checks'])} unexpected check failures, "
+        f"{result['counts']['failed_steps']} failed steps -> {out}"
     )
     sys.exit(0 if result["verdict"] == "pass" else 1)
 

@@ -248,34 +248,110 @@ wrong when reproducing someone else's result.
 
 ## Erasure-slice runner
 
-`sandbox/slice.sh` runs one message-erasure acceptance case on a separate Compose project
-(`slice_harness`): two api replicas (18100, 18101) and two derivers on one Postgres (15532) and one
-Redis (16479), mock provider only.
-The project name defaults to the worktree directory name (`slice-erasure` → `slice_erasure`), and
-`SLICE_PROJECT` overrides it. Any project other than `slice_harness` must also set
-`SLICE_API1_PORT`, `SLICE_API2_PORT`, `SLICE_DB_PORT` and `SLICE_REDIS_PORT`.
+`sandbox/slice.sh` runs a bounded message-erasure sizing experiment: two API replicas and two
+derivers on one disposable Postgres and Redis, **mock provider only**. Each run destroys and
+recreates **its selected Compose project's** data. Never point it at an existing user stack.
+The project defaults to the worktree directory name (`slice-erasure` → `slice_erasure`);
+`SLICE_PROJECT` overrides it. Projects other than `slice_harness` must set all four port variables.
+
+Use unique images and free, loopback-bound ports. For example:
 
 ```bash
-sandbox/slice.sh build slice-harness/honcho:under-test            # working tree
-sandbox/slice.sh build slice-harness/honcho:v3.3.0 v3.3.0         # a git ref
-sandbox/slice.sh run --label X --image-under-test slice-harness/honcho:under-test \
-  --previous-image slice-harness/honcho:v3.3.0 --delete-action api|sql [--release-on same|other]
-sandbox/slice.sh down
+export SLICE_PROJECT=del2773_cache_1021
+export SLICE_API1_PORT=19100 SLICE_API2_PORT=19101
+export SLICE_DB_PORT=16532 SLICE_REDIS_PORT=17479
+# Verify these ports and this project are unused before the first run.
+sandbox/slice.sh build del2773/honcho:prototype
+sandbox/slice.sh build del2773/honcho:unsafe-v3.4.0 v3.4.0
+
+# Original sequence: Redis stays unavailable THROUGH old-image startup.
+sandbox/slice.sh run --label original --image-under-test del2773/honcho:prototype \
+  --previous-image del2773/honcho:unsafe-v3.4.0
+
+# Regression: Redis returns BEFORE image startup, with proven pre-delete bytes.
+sandbox/slice.sh run --scenario persisted-cache --label persisted-cache \
+  --image-under-test del2773/honcho:prototype \
+  --unsafe-negative-control-image del2773/honcho:unsafe-v3.4.0
+
+sandbox/slice.sh down  # only this disposable project's containers/volumes
 ```
 
-The sequence: seed three peers so alice's message M lands in one batch with three observers, write a
-stale card (per observer) and stale summaries (both tiers) carrying M's canary, read every surface
-once, pause the batch at the deriver's output write, stop Redis, delete M, read from both replicas,
-release the batch, swap api and derivers to the previous image, start Redis, read again. Each
-phase's checks land in `results/<label>.json`.
+### Original acceptance sequence
 
-The pause is `src/deriver/pause_hook.py`. It is inert unless `HONCHO_TEST_DERIVER_PAUSE_DIR` and
-`HONCHO_TEST_DERIVER_PAUSE_MATCH` are both set, which only `compose.slice.yml` does.
+Seed alice's message M in a batch with three observers. Inject one card per observer (API) and
+both summary tiers (SQL) carrying M's canary; the mock does not derive their text. Warm reads,
+pause the real multi-observer batch at its output write, stop Redis, delete M, read both replicas,
+release the batch, then swap APIs **and workers** to the selected previous image while Redis is
+still unavailable. Restore Redis and check again. This default `--scenario original` preserves
+the original 116 no-leak checks. An old image can pass by falling back to empty process-local
+memory during startup; this scenario alone is **not persisted-cache or rollback safety proof**.
 
-`--delete-action api` calls `DELETE /v3/workspaces/{w}/sessions/{s}/messages/{m}`. `sql` deletes
-the row directly; when the queue's foreign key blocks that, it detaches `queue.message_id` first.
-`--release-on other` kills the holding deriver and lets the other one re-claim the work unit after
-the one-minute stale timeout this mode sets.
+The pause is `src/deriver/pause_hook.py`, inert unless `HONCHO_TEST_DERIVER_PAUSE_DIR` and
+`HONCHO_TEST_DERIVER_PAUSE_MATCH` are set (only the slice overlay does this).
+`--delete-action api` calls the prototype's message DELETE route. Original-only `sql` deletes
+the message directly, detaching `queue.message_id` if its FK blocks deletion.
+`--release-on other` kills the holder and lets the other worker re-claim after a one-minute stale
+timeout; it does not transfer the paused process's in-memory output to another worker.
 
-If the previous image's migration step refuses the newer database revision, the runner records
-that and restarts the api without migrations.
+### Persisted-Redis regression
+
+**v3.4.0 is an UNSAFE NEGATIVE CONTROL, not a supported rollback target.** This mode requires
+`--unsafe-negative-control-image`, not `--previous-image`, and prototype API deletion.
+
+1. Seed, pause and warm as above. `slice_cache_fixture.py` uses Honcho's real unwrapped fetch
+   functions and cache serializer to populate the three peer entries and the session entry
+   containing both summary tiers **before deletion**. The host checks Redis directly, then
+   removes only these four fixture TTLs with `PERSIST`. This is deliberate test-only pinning,
+   not a production TTL/invalidation policy.
+2. Record each exact key, payload SHA-256, byte count, canary occurrence count and TTL. Require
+   four populated entries, both summary canaries, TTL `-1`, and AOF enabled. Stop Redis, delete
+   through the prototype and release the held batch; assert the original post-delete/release
+   API and DB checks.
+3. Stop both APIs and **both workers**. Restart the same Redis container **before** image startup.
+   Require a new Redis process ID with the same four exact payloads. No restore, `SET`, deletion,
+   flush or expiry of those entries is allowed after the initial fixture.
+4. Start only v3.4.0's two API replicas. Require successful Redis-connected startup without
+   process-local fallback, plus live Redis `CLIENT LIST` connections from each API container.
+   On **each** replica, require HTTP 200 and exposure of all three
+   cards, both summary tiers, and session context. Other message/conclusion/vector/DB checks
+   must remain clean. Missing exposure is a regression failure, not a pass. HTTP errors do not
+   count as expected exposure.
+5. Stop the old APIs, then start the prototype's two APIs against the **same post-delete database
+   and unchanged persisted Redis dataset**. Require Redis-connected startup and no leak on any
+   checked surface on either replica. Workers stay stopped throughout this read comparison,
+   preventing old-image writers from changing the dataset. The original case separately covers
+   worker startup after the image swap.
+6. Verify the same four cache hashes, contents and non-expiring TTLs before and after **each**
+   image's reads. Thus a prototype pass cannot be explained by expired, missing or rewritten
+   test entries. Both API replicas are stopped at the end; backing services remain until `down`.
+
+A successful regression requires **both expected unsafe exposure and prototype non-exposure**,
+plus every fixture/connection/prerequisite proof. Results distinguish expected exposures from
+unexpected failures; failed setup steps also fail the run.
+
+### Evidence and limits
+
+[Recorded local regression results](slice-regression-results.md) include the image IDs,
+per-phase outcomes, cache hashes and evidence filenames from the 2026-10-21 run.
+
+Results default to `sandbox/.slice/results/<label>.json` (`--results-dir` overrides). Each phase
+records image refs, actual container image IDs/states, expected outcome, check and exposure
+counts, plus a separate `<label>.<phase>.compose.log`. The persisted scenario also records all
+cache snapshots. CLI output is suitable for teeing into a runner log. A failed migration startup
+is noted; the runner may retry without migrations for this sizing experiment, never as a claim
+that an image is a supported rollback floor.
+
+Fast runner tests (no Docker, DB fixtures, or provider calls):
+
+```bash
+uv run pytest -o addopts= sandbox/tests/test_slice_runner.py
+```
+
+What this demonstrates: a hard-deleted message, one paused multi-observer batch, injected stale
+cards and both summaries, local pgvector cleanup, two API readers, and the specific persisted
+Redis return/startup ordering. **It does not demonstrate production tombstones, complete lineage,
+external-vector recovery, every producer or primitive, durable purge, suppression, shared-tenant
+isolation, or activation-to-expand rollback.** Unchanged name IDs during a message deletion are
+not proof of name-tombstone/recreation safety. Real derived-artifact and full lifecycle coverage
+belongs in DEV-3141; production cache visibility/outbox and supported rollback-floor work remain
+DEV-2777 and DEV-2781. No passing slice establishes fleet readiness.
