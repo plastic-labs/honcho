@@ -28,6 +28,7 @@ from src.embedding_client import embedding_client
 from src.exceptions import VectorNamespaceUnresolved, VectorStoreError
 from src.telemetry import prometheus_metrics
 from src.telemetry.events import EmbeddingCallPurpose
+from src.telemetry.prometheus.metrics import BACKLOG_GAUGE_CAP
 from src.utils.types import embedding_call_purpose
 from src.vector_store import VectorRecord, VectorStore, get_external_vector_store
 from src.vector_store.tenant_namespace import prefix_for_tenant
@@ -36,6 +37,7 @@ logger = logging.getLogger(__name__)
 
 # Constants
 RECONCILIATION_BATCH_SIZE = 50
+MESSAGE_CANDIDATE_FANOUT = 10
 RECONCILIATION_TIME_BUDGET_SECONDS = 240  # Leave headroom for other maintenance work
 MAX_SYNC_ATTEMPTS = 20  # After this many failures, mark as failed
 # Flat wait between sync attempts. With MAX_SYNC_ATTEMPTS=20 this gives ~3 hours
@@ -150,11 +152,15 @@ async def _get_message_embeddings_needing_sync(
     Note: "synced" = done forever, "failed" = permanent failure (manual intervention)
     """
     # Step 1: pick distinct message_ids with at least one eligible pending row,
-    # prioritizing those with the oldest last_sync_at.
-    msg_id_stmt = (
+    # prioritizing those with the oldest last_sync_at. The candidates come from
+    # an index-ordered walk of the oldest eligible rows, capped at
+    # batch_size * MESSAGE_CANDIDATE_FANOUT, so the aggregate never covers the
+    # whole pending set. A message's first appearance in that walk is its
+    # oldest chunk, so the order matches grouping over every pending row.
+    candidates = (
         select(
             models.MessageEmbedding.message_id,
-            func.min(models.MessageEmbedding.last_sync_at).label("oldest_attempt"),
+            models.MessageEmbedding.last_sync_at,
         )
         .where(
             and_(
@@ -162,8 +168,17 @@ async def _get_message_embeddings_needing_sync(
                 backoff_eligible(models.MessageEmbedding.last_sync_at),
             )
         )
-        .group_by(models.MessageEmbedding.message_id)
-        .order_by(func.min(models.MessageEmbedding.last_sync_at).asc().nullsfirst())
+        .order_by(models.MessageEmbedding.last_sync_at.asc().nullsfirst())
+        .limit(batch_size * MESSAGE_CANDIDATE_FANOUT)
+        .subquery()
+    )
+    msg_id_stmt = (
+        select(
+            candidates.c.message_id,
+            func.min(candidates.c.last_sync_at).label("oldest_attempt"),
+        )
+        .group_by(candidates.c.message_id)
+        .order_by(func.min(candidates.c.last_sync_at).asc().nullsfirst())
         .limit(batch_size)
     )
     msg_id_rows = (await db.execute(msg_id_stmt)).all()
@@ -850,7 +865,8 @@ async def _cleanup_pgvector_batch(
 
 async def record_pending_embeddings_backlog() -> None:
     """Set the pending-embeddings backlog gauge to the current count of
-    MessageEmbedding rows awaiting a vector (sync_state='pending')."""
+    MessageEmbedding rows awaiting a vector (sync_state='pending'), capped at
+    BACKLOG_GAUGE_CAP."""
     # region ai
     # Called from ``ReconcilerScheduler._scheduler_loop``, deliberately NOT from
     # ``run_vector_reconciliation_cycle``: the cycle runs off the queue behind
@@ -860,23 +876,24 @@ async def record_pending_embeddings_backlog() -> None:
     # count is a property of the database, not the process, so every replica must
     # refresh it on its own timer for ``max()``/``avg()`` to mean anything.
     #
-    # Cost: one COUNT per replica per scheduler interval (~5 min by default).
-    # ``ix_message_embeddings_sync_state_last_sync_at`` keeps the scan proportional to
-    # the pending backlog, not the whole table — which is not the same as cheap: after
-    # an embedding outage the backlog is exactly what is large. Still a small duty
-    # cycle, and the cost shrinks as the reconciler drains.
+    # Cost: one COUNT per replica per scheduler interval (~5 min by default),
+    # stopped at BACKLOG_GAUGE_CAP rows. Uncapped, the scan grows with the pending
+    # backlog, and after an embedding outage the backlog is exactly what is large;
+    # multiplied by every replica that would saturate a shared database.
     #
     # Best-effort: a metrics/DB hiccup here must never break the scheduler loop.
     # endregion
     if not settings.METRICS.ENABLED:
         return
     try:
+        pending = (
+            select(models.MessageEmbedding.id)
+            .where(models.MessageEmbedding.sync_state == "pending")
+            .limit(BACKLOG_GAUGE_CAP)
+            .subquery()
+        )
         async with service_db("reconciler_pending_count", read_only=True) as db:
-            count = await db.scalar(
-                select(func.count())
-                .select_from(models.MessageEmbedding)
-                .where(models.MessageEmbedding.sync_state == "pending")
-            )
+            count = await db.scalar(select(func.count()).select_from(pending))
         prometheus_metrics.set_message_embeddings_pending(count=count or 0)
     except Exception:
         logger.warning(

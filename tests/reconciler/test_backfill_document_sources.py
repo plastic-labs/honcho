@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
+from src.reconciler import backfill_document_sources
 from src.reconciler.backfill_document_sources import (
     count_pending_document_sources,
     drain_document_sources_batch,
@@ -164,3 +165,15 @@ async def test_source_ids_property_falls_back_until_drained(
 
     assert doc.legacy_source_ids is None
     assert doc.source_ids == [a, b]
+
+
+@pytest.mark.asyncio
+async def test_count_pending_stops_at_cap(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ws, peer = await _collection(db_session)
+    db_session.add_all([_doc(ws, peer, legacy=[generate_nanoid()]) for _ in range(3)])
+    await db_session.commit()
+    monkeypatch.setattr(backfill_document_sources, "BACKLOG_GAUGE_CAP", 2)
+
+    assert await count_pending_document_sources(db_session) == 2

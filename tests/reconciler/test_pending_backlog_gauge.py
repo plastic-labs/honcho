@@ -16,10 +16,15 @@ queue-driven reconciliation cycle does not.
 import asyncio
 
 import pytest
+from nanoid import generate as generate_nanoid
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from src import models
+from src.config import settings
 from src.reconciler import scheduler as scheduler_module
 from src.reconciler import sync_vectors
 from src.reconciler.scheduler import ReconcilerScheduler
+from src.telemetry import prometheus_metrics
 
 
 @pytest.fixture(autouse=True)
@@ -84,3 +89,54 @@ def test_reconciliation_cycle_does_not_drive_the_gauge() -> None:
 
     referenced = sync_vectors.run_vector_reconciliation_cycle.__code__.co_names
     assert "record_pending_embeddings_backlog" not in referenced
+
+
+async def test_backlog_gauge_stops_at_cap(
+    db_session: AsyncSession,
+    sample_data: tuple[models.Workspace, models.Peer],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, peer = sample_data
+    session = models.Session(name=str(generate_nanoid()), workspace_name=workspace.name)
+    db_session.add(session)
+    await db_session.commit()
+    message_id = str(generate_nanoid())
+    db_session.add(
+        models.Message(
+            public_id=message_id,
+            session_name=session.name,
+            workspace_name=workspace.name,
+            peer_name=peer.name,
+            content="message",
+            seq_in_session=1,
+        )
+    )
+    await db_session.commit()
+    db_session.add_all(
+        [
+            models.MessageEmbedding(
+                content=f"chunk-{i}",
+                message_id=message_id,
+                workspace_name=workspace.name,
+                session_name=session.name,
+                peer_name=peer.name,
+                sync_state="pending",
+                embedding=None,
+            )
+            for i in range(3)
+        ]
+    )
+    await db_session.commit()
+
+    recorded: list[int] = []
+    monkeypatch.setattr(settings.METRICS, "ENABLED", True)
+    monkeypatch.setattr(sync_vectors, "BACKLOG_GAUGE_CAP", 2)
+    monkeypatch.setattr(
+        prometheus_metrics,
+        "set_message_embeddings_pending",
+        lambda *, count: recorded.append(count),  # pyright: ignore
+    )
+
+    await sync_vectors.record_pending_embeddings_backlog()
+
+    assert recorded == [2]
