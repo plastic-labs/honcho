@@ -24,10 +24,13 @@ import httpx
 import psycopg
 
 HERE = Path(__file__).resolve().parent
-PROJECT = "slice_harness"
-API_PORTS = {"api-1": 18100, "api-2": 18101}
-DB_PORT = 15532
-REDIS_PORT = 16479
+PROJECT = os.environ.get("SLICE_PROJECT", "slice_harness")
+API_PORTS = {
+    "api-1": int(os.environ.get("SLICE_API1_PORT", "18100")),
+    "api-2": int(os.environ.get("SLICE_API2_PORT", "18101")),
+}
+DB_PORT = int(os.environ.get("SLICE_DB_PORT", "15532"))
+REDIS_PORT = int(os.environ.get("SLICE_REDIS_PORT", "16479"))
 DB_URL = f"postgresql://postgres:postgres@127.0.0.1:{DB_PORT}/honcho_sandbox"
 
 WORKSPACE = "slice-ws"

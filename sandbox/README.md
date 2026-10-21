@@ -251,6 +251,8 @@ wrong when reproducing someone else's result.
 `sandbox/slice.sh` runs one message-erasure acceptance case on a separate Compose project
 (`slice_harness`): two api replicas (18100, 18101) and two derivers on one Postgres (15532) and one
 Redis (16479), mock provider only.
+`SLICE_PROJECT`, `SLICE_API1_PORT`, `SLICE_API2_PORT`, `SLICE_DB_PORT` and `SLICE_REDIS_PORT`
+override the project name and ports, so two runners can share one Docker host.
 
 ```bash
 sandbox/slice.sh build slice-harness/honcho:under-test            # working tree

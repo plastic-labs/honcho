@@ -9,16 +9,22 @@
 #                        [--results-dir DIR]
 #   sandbox/slice.sh build IMG [GIT_REF]   build IMG from the working tree or a ref
 #   sandbox/slice.sh down                  remove this project's containers and volumes
+#
+# SLICE_PROJECT, SLICE_API1_PORT, SLICE_API2_PORT, SLICE_DB_PORT and
+# SLICE_REDIS_PORT override the project name (slice_harness) and host ports
+# (18100, 18101, 15532, 16479).
 
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/.." && pwd)"
 
+PROJECT="${SLICE_PROJECT:-slice_harness}"
+
 compose() {
-  COMPOSE_PROJECT_NAME=slice_harness HONCHO_SANDBOX_IMAGE=unused SLICE_APP_IMAGE=unused \
+  COMPOSE_PROJECT_NAME="$PROJECT" HONCHO_SANDBOX_IMAGE=unused SLICE_APP_IMAGE=unused \
     SLICE_PAUSE_DIR="$HERE/.slice/pause" \
-    docker compose -p slice_harness \
+    docker compose -p "$PROJECT" \
     -f "$HERE/compose.yml" -f "$HERE/compose.mock.yml" -f "$HERE/compose.slice.yml" "$@"
 }
 
@@ -43,7 +49,7 @@ case "${1:-}" in
     compose down -v --remove-orphans
     ;;
   *)
-    sed -n '3,12p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '3,16p' "$0" | sed 's/^# \{0,1\}//'
     [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ] || exit 1
     ;;
 esac
