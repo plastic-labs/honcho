@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      { "command": "bun run ${CURSOR_PLUGIN_ROOT}/dist/hook.js session-start", "timeout": 20 }
+    ],
+    "beforeSubmitPrompt": [
+      { "command": "bun run ${CURSOR_PLUGIN_ROOT}/dist/hook.js before-submit-prompt", "timeout": 10 }
+    ],
+    "afterAgentResponse": [
+      { "command": "bun run ${CURSOR_PLUGIN_ROOT}/dist/hook.js after-agent-response", "timeout": 15 }
+    ]
+  }
+}

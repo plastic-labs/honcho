@@ -9,6 +9,8 @@ This package versions independently of the Honcho API, `@honcho-ai/sdk`, and hos
 
 ## [Unreleased]
 
+## [3.2.0] - 2026-10-20
+
 ### Added
 
 - A caller-set `X-Honcho-Plugin` header is forwarded to the Honcho API as the
@@ -20,6 +22,25 @@ This package versions independently of the Honcho API, `@honcho-ai/sdk`, and hos
 
 Nothing is required: a connection that sends neither header is recorded exactly
 as before.
+
+### Fixed
+
+- An expired or revoked OAuth token now returns HTTP 401 (`invalid_token`)
+  instead of a tool error, so clients refresh it rather than showing Honcho as
+  signed out after an hour. Tool calls now respond with a single JSON body
+  instead of an SSE stream. API key errors are unchanged.
+- A request carrying an expired or unknown `mcp-session-id` returns HTTP 404
+  instead of 400, the Streamable HTTP signal for a client to start a new
+  session. A request with no session header at all still returns 400.
+- `bun run deploy` and `bun run deploy:staging` reinstall from the lockfile and
+  typecheck before deploying. wrangler bundles whatever is in `node_modules`, so a
+  checkout with a stale install shipped the Worker against `@honcho-ai/sdk` 2.2.0.
+  `workspace_chat`, the scope tools, `get_conclusions` and `get_derived_conclusions`
+  failed; `chat` with `include_evidence` returned `{"content":"None"}`; and `scope` /
+  `sessions` recall bounds and conclusion attribution were silently dropped.
+- `chat` with `include_evidence` reports an error when the server's Honcho SDK
+  is older than 2.5.0, instead of answering `{"content":"None"}`. An older SDK
+  drops the option and returns the bare answer.
 
 ## [3.1.0] - 2026-10-07
 

@@ -1,0 +1,34 @@
+{
+  "name": "honcho",
+  "displayName": "Honcho",
+  "version": "0.2.0",
+  "description": "Persistent memory for Cursor and Grok Bot, powered by Honcho. Remembers who you are, what you prefer, and what you were working on across sessions, projects, and Bots.",
+  "author": {
+    "name": "Plastic Labs",
+    "email": "hello@plasticlabs.ai"
+  },
+  "homepage": "https://honcho.dev/docs/v3/guides/integrations/cursor",
+  "repository": "https://github.com/plastic-labs/honcho",
+  "license": "MIT",
+  "keywords": [
+    "honcho",
+    "memory",
+    "persistent-memory",
+    "context",
+    "personalization",
+    "grok-bot",
+    "mcp"
+  ],
+  "category": "productivity",
+  "tags": [
+    "memory",
+    "context",
+    "personalization"
+  ],
+  "logo": "assets/logo.svg",
+  "mcpServers": "./mcp.json",
+  "hooks": "./hooks/hooks.json",
+  "skills": "./skills/",
+  "rules": "./rules/",
+  "commands": "./commands/"
+}

@@ -253,6 +253,12 @@ extensions:
 To teach Goose the recommended memory flow, save the [instructions](https://raw.githubusercontent.com/plastic-labs/honcho/refs/heads/main/mcp/instructions.md) into a `.goosehints` file in your Goose config directory (or a project root). This is Goose's equivalent of Claude Desktop's "Project Instructions". Not sure of your config path? Run `goose info`.
 </Tip>
 
+### Paperclip
+
+[Paperclip](https://paperclip.ing) has a built-in Honcho connector for `https://mcp.honcho.dev`, so there is no config file to edit. Turn on **Settings → Experimental → Memory connectors**, open **Connectors**, choose **Honcho**, and enter your API key and a workspace ID. Paperclip fills in `workspace_id` on every tool call and adds its own usage instructions to agent prompts.
+
+Memory connectors are experimental and need Paperclip v2026.1012.0 or later. See the [Paperclip guide](/v3/guides/integrations/paperclip) for agent instructions and permissions.
+
 ---
 
 ## Run locally

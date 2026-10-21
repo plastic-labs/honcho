@@ -7,9 +7,11 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-20
+
 ### Fixed
 
-- `honcho session summaries`, `honcho session inspect`, `honcho session context` and `honcho workspace queue-status` emit nested SDK objects (summaries, context messages, per-session queue status) as JSON objects instead of Python repr strings like `"content='...' message_id='...'"`
+- `honcho session summaries`, `honcho session inspect`, `honcho session context` and `honcho workspace queue-status` emit nested SDK objects (summaries, context messages, per-session queue status) as JSON objects instead of Python repr strings like `"content='...' message_id='...'"` (#1324)
 
 ## [0.2.0] - 2026-09-21
 

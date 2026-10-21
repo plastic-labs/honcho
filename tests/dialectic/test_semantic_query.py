@@ -20,14 +20,19 @@ from src.utils.representation import Representation
 QUERY = "What context helps answer the user's question about Prague?"
 SEMANTIC = "weather in Prague"
 REASONING = "Focus on travel preferences, and answer in two sentences."
+BRIEF = "Memory counts: 3 explicit.\nMap notes:\n- Prefers train travel."
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("streaming", [False, True], ids=["answer", "answer_stream"])
 @pytest.mark.parametrize("semantic_query", [SEMANTIC, None])
 @pytest.mark.parametrize("reasoning_context", [REASONING, None])
+@pytest.mark.parametrize("brief", [BRIEF, None], ids=["with_brief", "without_brief"])
 async def test_retrieval_excludes_instructions_and_reasoning_preserves_query(
-    semantic_query: str | None, reasoning_context: str | None, streaming: bool
+    semantic_query: str | None,
+    reasoning_context: str | None,
+    streaming: bool,
+    brief: str | None,
 ) -> None:
     """Each optional field affects only its own side of the retrieval boundary."""
     agent = DialecticAgent(
@@ -68,6 +73,7 @@ async def test_retrieval_excludes_instructions_and_reasoning_preserves_query(
         patch("src.dialectic.core.embedding_client.embed", new=embed),
         patch("src.dialectic.core.search_memory", new=search),
         patch("src.dialectic.core.honcho_llm_call", new=llm),
+        patch.object(DialecticAgent, "_pair_brief", new=AsyncMock(return_value=brief)),
     ):
         if streaming:
             async for _ in agent.answer_stream(
@@ -91,6 +97,7 @@ async def test_retrieval_excludes_instructions_and_reasoning_preserves_query(
     assert sent[-1]["role"] == "user"
     assert QUERY in sent[-1]["content"]
     assert (REASONING in sent[-1]["content"]) == (reasoning_context is not None)
+    assert (BRIEF in sent[-1]["content"]) == (brief is not None)
 
 
 @pytest.mark.parametrize("field", ["semantic_query", "reasoning_context"])
