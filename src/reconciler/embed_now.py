@@ -370,7 +370,7 @@ async def _upsert_external(
         records: list[VectorRecord] = []
         synced_chunks: list[_ClaimedChunk] = []
         for c in chunks:
-            pos = chunk_position.get(c.id)
+            pos = chunk_position.get((c.tenant_id, c.id))
             if pos is None:
                 continue
             records.append(

@@ -23,6 +23,7 @@ from src.db import (
     register_db_connection_instrumentation,
     register_db_query_instrumentation,
     request_context,
+    service_engine,
 )
 from src.exceptions import HonchoException
 from src.reconciler import ReconcilerScheduler, set_reconciler_scheduler
@@ -142,7 +143,8 @@ async def lifespan(_: FastAPI):
     # the configured EMBEDDING_VECTOR_DIMENSIONS does not match the physical
     # pgvector columns, the process refuses to start rather than silently
     # writing wrong-dim vectors.
-    await validate_embedding_schema(engine)
+    # ai: the service engine — its namespace sample reads every tenant's workspaces, which RLS hides from the request role with no tenant bound
+    await validate_embedding_schema(service_engine)
     # Fail closed on a multi-tenant half-state (no-op unless MULTI_TENANT is on);
     # the validator's module docstring lists the four it refuses.
     await validate_tenant_isolation(engine, instance_type="api")

@@ -596,6 +596,10 @@ def _build_queue_status_query(
     )
 
     stmt = stmt.where(models.QueueItem.workspace_name == workspace_name)
+    # ai: queue has no RLS and workspace_name is unique only per tenant, so without this a "default" workspace's status counts every tenant's "default"
+    queue_item_match = queue_item_tenant_match()
+    if queue_item_match is not None:
+        stmt = stmt.where(queue_item_match)
 
     # Only include user-facing task types
     stmt = stmt.where(models.QueueItem.task_type.in_(_TRACKED_TASK_TYPES))

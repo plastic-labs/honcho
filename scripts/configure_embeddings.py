@@ -42,7 +42,7 @@ from sqlalchemy import select, text  # noqa: E402
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine  # noqa: E402
 
 from src.config import settings  # noqa: E402
-from src.db import engine  # noqa: E402
+from src.db import engine, service_engine  # noqa: E402
 from src.models import Collection, Tenant, Workspace  # noqa: E402
 from src.vector_store import VectorStore  # noqa: E402
 
@@ -341,6 +341,9 @@ async def _emit_report(
     """Print the per-namespace inventory and return an exit code. 0 on a
     clean report (all matching or missing); non-zero on any mismatch.
 
+    ``engine`` must see every tenant's rows: the service engine, since RLS hides
+    them from the request role when no tenant is bound.
+
     ``is_report_mode=True`` means the operator explicitly invoked ``--report``
     — only then do we print the "no effect with pgvector" notice. Implicit
     post-apply calls from interactive/dry-run/yes mode stay silent when the
@@ -453,7 +456,7 @@ async def _run_pipeline(args: argparse.Namespace) -> int:
     _validate_identifier(schema, kind="DB.SCHEMA")
 
     if args.report:
-        return await _emit_report(engine, target_dim, is_report_mode=True)
+        return await _emit_report(service_engine, target_dim, is_report_mode=True)
 
     plan = await _build_pgvector_plan(engine, target_dim, schema)
     if not plan.needs_alter:
@@ -462,7 +465,7 @@ async def _run_pipeline(args: argparse.Namespace) -> int:
             + f" {schema}.message_embeddings.embedding already at dim {target_dim},"
             + " skipping ALTER"
         )
-        return await _emit_report(engine, target_dim, is_report_mode=False)
+        return await _emit_report(service_engine, target_dim, is_report_mode=False)
 
     current_summary = ", ".join(
         f"{schema}.{t}.embedding={plan.current_dims[t]}" for t in _EMBEDDING_TABLES
@@ -490,7 +493,7 @@ async def _run_pipeline(args: argparse.Namespace) -> int:
 
     await _apply_pgvector_alter(engine, plan)
     print(f"\npgvector schema is now at dim {target_dim}")
-    return await _emit_report(engine, target_dim, is_report_mode=False)
+    return await _emit_report(service_engine, target_dim, is_report_mode=False)
 
 
 def main(argv: list[str] | None = None) -> int:

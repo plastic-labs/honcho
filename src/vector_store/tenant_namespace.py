@@ -19,8 +19,13 @@ under ``MULTI_TENANT`` the prefix comes from the tenant instead.
 # than an error.
 # endregion
 
+from typing import TYPE_CHECKING
+
 from src.config import settings
 from src.exceptions import VectorNamespaceUnresolved, VectorStoreError
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 # region ai
 # Resolved lazily at the vector call rather than eagerly where the tenant is bound: the
@@ -83,12 +88,17 @@ async def resolve_namespace_prefix(explicit: str | None = None) -> str:
     return await prefix_for_tenant(tenant_id)
 
 
-async def prefix_for_tenant(tenant_id: str | None) -> str:
+async def prefix_for_tenant(
+    tenant_id: str | None, db: "AsyncSession | None" = None
+) -> str:
     """The namespace prefix for a named tenant.
 
     For paths that resolve a namespace row by row from the row's own ``tenant_id``
     rather than an ambient tenant: the cross-tenant reconciler and soft-delete sweep,
     and immediate embedding. Each row gets its own tenant's namespace.
+
+    Pass ``db`` when the caller already holds a service session: a cold read then
+    reuses its connection instead of checking out a second one from the same pool.
 
     Raises:
         VectorNamespaceUnresolved: ``MULTI_TENANT`` is on and the row has no tenant,
@@ -118,12 +128,19 @@ async def prefix_for_tenant(tenant_id: str | None) -> str:
     # same point inside a cross-tenant batch and escape the per-row containment the
     # callers apply, taking every co-batched tenant down with it.
     # endregion
+    async def read(session: "AsyncSession") -> tuple[bool, str | None]:
+        tenant = await session.get(models.Tenant, tenant_id)
+        # ai: read inside the block — service_db's teardown rolls back (expiring the instance) and closes it, so an attribute read after exit raises DetachedInstanceError
+        return tenant is not None, tenant.vector_correlation_id if tenant else None
+
     try:
-        async with service_db("vector_namespace_prefix", read_only=True) as db:
-            tenant = await db.get(models.Tenant, tenant_id)
-            # ai: read inside the block — service_db's teardown rolls back (expiring the instance) and closes it, so an attribute read after exit raises DetachedInstanceError
-            registered = tenant is not None
-            key = tenant.vector_correlation_id if tenant is not None else None
+        if db is not None:
+            # ai: savepoint so a failed read can't abort the caller's transaction — the callers record the failure on that same session
+            async with db.begin_nested():
+                registered, key = await read(db)
+        else:
+            async with service_db("vector_namespace_prefix", read_only=True) as s:
+                registered, key = await read(s)
     except Exception as exc:
         raise VectorStoreError(
             f"Could not read the vector namespace key for tenant {tenant_id}."

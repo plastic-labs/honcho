@@ -11,7 +11,11 @@ tenant-subordinate setting belongs in ``_SUBORDINATES``.
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 from collections.abc import Callable
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -81,6 +85,33 @@ async def test_isolation_validator_is_a_no_op() -> None:
     # A transaction-mode pooler or an unreachable service role are boot refusals
     # flag-on; flag-off the validator returns before reading either, or the engine.
     await validate_tenant_isolation(untouchable_engine(), instance_type="api")
+
+
+def test_service_uri_builds_no_second_engine() -> None:
+    # src.db builds its engines at import, before any monkeypatch could reach them,
+    # so check a fresh interpreter. A second engine flag-off would move the queue
+    # claim and reconciler onto a database the request path never writes to.
+    env = {
+        **os.environ,
+        "PYTHON_DOTENV_DISABLED": "1",
+        "MULTI_TENANT": "false",
+        "DB_SERVICE_CONNECTION_URI": (
+            "postgresql+psycopg://service:service@127.0.0.1:1/unreachable"
+        ),
+    }
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import src.db as d; print(d.service_engine is d.engine)",
+        ],
+        env=env,
+        cwd=str(Path(__file__).resolve().parent.parent),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert result.stdout.strip().splitlines()[-1] == "True"
 
 
 def test_tenant_api_stays_disabled(client: TestClient) -> None:
