@@ -25,6 +25,7 @@ from src import models
 from src.cache.client import close_cache, init_cache
 from src.config import settings
 from src.crud.deriver import (
+    claim_heartbeat_interval_seconds,
     claim_rows_query,
     not_paused_clause,
 )
@@ -239,6 +240,71 @@ class QueueManager:
         ownership = self.worker_ownership.get(worker_id)
         if ownership and ownership.work_unit_key == work_unit_key:
             del self.worker_ownership[worker_id]
+
+    async def _touch_claim(self, work_unit_key: str, aqs_id: str) -> bool:
+        """Refresh one claim's last_updated. False when the row is already gone."""
+        async with service_db("heartbeat_work_unit_claim") as db:
+            result = cast(
+                CursorResult[Any],
+                await db.execute(
+                    update(models.ActiveQueueSession)
+                    .where(models.ActiveQueueSession.work_unit_key == work_unit_key)
+                    .where(models.ActiveQueueSession.id == aqs_id)
+                    .values(last_updated=func.now())
+                ),
+            )
+            await db.commit()
+            return result.rowcount > 0
+
+    async def _heartbeat_claim(self, work_unit_key: str, worker_id: str) -> None:
+        """Keep this worker's claim alive for as long as it holds the work unit.
+
+        A claim is otherwise refreshed only when a queue ITEM completes
+        (``process_queue_item_batch``). Task types whose whole unit is one long
+        item -- the reconciler cycle, a dream -- therefore never refresh it, and
+        ``cleanup_stale_work_units`` reaps the claim out from under them once they
+        run past ``STALE_SESSION_TIMEOUT_MINUTES``. Another replica then claims the
+        same unit and runs it concurrently: ``SKIP LOCKED`` stops double-WRITING,
+        not double-scanning, so the cost of a slow cycle multiplies by however many
+        replicas pile on.
+
+        Beating from here rather than from inside each long task covers every task
+        type at once, including ones added later.
+
+        The beat shares the event loop with the work, so anything that blocks the
+        loop -- CPU-bound code, a sync ``time.sleep``, a blocking library call --
+        silences every claim in this process at once. A block longer than the stale
+        window less one interval (4 min at the defaults) gets them all reaped. That
+        coupling is deliberate: a thread-based beat would keep a wedged process's
+        claims alive forever, so no other replica could take its work over. Blocking
+        work belongs in ``asyncio.to_thread``.
+        """
+        interval = claim_heartbeat_interval_seconds()
+        while True:
+            await asyncio.sleep(interval)
+            ownership = self.worker_ownership.get(worker_id)
+            if ownership is None or ownership.work_unit_key != work_unit_key:
+                return
+            try:
+                if not await self._touch_claim(work_unit_key, ownership.aqs_id):
+                    # Already reaped: a concurrent claimer may now own this unit.
+                    # Say so loudly -- it means a beat was missed, or the work ran
+                    # past the window even with the heartbeat running.
+                    logger.warning(
+                        "Claim for work unit %s (AQS %s) no longer exists; it was"
+                        + " reaped while still being processed",
+                        work_unit_key,
+                        ownership.aqs_id,
+                    )
+                    return
+            except Exception:
+                # Never let a heartbeat failure kill the work it is protecting; the
+                # next beat retries, and four may fail before the claim goes stale.
+                logger.warning(
+                    "Failed to refresh claim for work unit %s",
+                    work_unit_key,
+                    exc_info=True,
+                )
 
     def create_worker_id(self) -> str:
         """Generate a unique worker ID for this processing task"""
@@ -679,6 +745,15 @@ class QueueManager:
                 if work_unit.tenant_id is not None
                 else None
             )
+            # region ai
+            # Hold the claim open for as long as this worker owns the unit. Started
+            # here, outside the try, so the finally below always cancels it -- and
+            # here rather than inside the long task types, so every task type gets
+            # it. See _heartbeat_claim for what goes wrong without it.
+            # endregion
+            heartbeat = asyncio.create_task(
+                self._heartbeat_claim(work_unit_key, worker_id)
+            )
             try:
                 if tenant_token is not None:
                     # region ai
@@ -808,6 +883,11 @@ class QueueManager:
                         break
 
             finally:
+                # Cancel before the claim is released below. An in-flight beat
+                # could not resurrect a deleted row -- an UPDATE matches nothing --
+                # but it would log a misleading "reaped while processing" warning
+                # on an ordinary teardown.
+                heartbeat.cancel()
                 if tenant_token is not None:
                     tenant_context.reset(tenant_token)
                     sentry_sdk.get_isolation_scope().remove_tag("tenant_id")
