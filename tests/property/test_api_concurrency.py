@@ -87,17 +87,17 @@ class JitterSession(AsyncSession):
     one starts, and the unique-violation paths never run.
     """
 
-    async def execute(self, *args: Any, **kwargs: Any) -> Any:  # pyright: ignore
+    async def execute(self, *args: Any, **kwargs: Any) -> Any:
         result = await super().execute(*args, **kwargs)
         await asyncio.sleep(random.random() * 0.005)
         return result
 
-    async def scalar(self, *args: Any, **kwargs: Any) -> Any:  # pyright: ignore
+    async def scalar(self, *args: Any, **kwargs: Any) -> Any:
         result = await super().scalar(*args, **kwargs)
         await asyncio.sleep(random.random() * 0.005)
         return result
 
-    async def scalars(self, *args: Any, **kwargs: Any) -> Any:  # pyright: ignore
+    async def scalars(self, *args: Any, **kwargs: Any) -> Any:
         result = await super().scalars(*args, **kwargs)
         await asyncio.sleep(random.random() * 0.005)
         return result
@@ -107,11 +107,11 @@ class Harness:
     """Runs request batches concurrently and tracks real DB-session overlap."""
 
     def __init__(self, engine: AsyncEngine) -> None:
-        self.factory = async_sessionmaker(
+        self.factory: async_sessionmaker[JitterSession] = async_sessionmaker(
             bind=engine, expire_on_commit=False, class_=JitterSession
         )
-        self.in_flight = 0
-        self.max_in_flight = 0
+        self.in_flight: int = 0
+        self.max_in_flight: int = 0
 
     async def _db(self) -> AsyncGenerator[AsyncSession, Any]:
         async with self.factory() as session:
@@ -205,9 +205,6 @@ def test_concurrent_requests_do_not_5xx(
                 for req, r in zip(batch, responses, strict=True)
                 if r.status_code >= 500
             ]
-            if os.environ.get("HONCHO_FUZZ_STATS"):
-                for req, r in zip(batch, responses, strict=True):
-                    print("STAT", req[0], req[1].split("/", 4)[-1], r.status_code)
             assert not bad, bad
             # Get-or-create is idempotent, so losing a race must not surface as 409.
             conflicts = [
