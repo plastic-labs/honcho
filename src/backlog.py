@@ -14,6 +14,7 @@ from src.db import tenant_context
 from src.dependencies import service_db
 from src.deriver.enqueue import enqueue_dream
 from src.dreamer.dream_due import (
+    CollectionKey,
     CountMemo,
     DueDream,
     list_due_dreams,
@@ -65,6 +66,9 @@ def outstanding_work_seconds(
 
 DREAM_DUE_LEASE = "dream_due"
 
+# Sweep finds past MAX_ENQUEUED_PER_POLL carried to the next poll, at most this
+# many times the per-poll cap; the rest wait for their slot's next cycle.
+SWEEP_CARRY_POLLS = 10
 # How many missed sweep ticks the holder catches up on in one poll.
 SWEEP_CATCH_UP_TICKS = 3
 # Wake just past the tick boundary, so the clock reads the new tick.
@@ -113,6 +117,7 @@ class DreamDuePoller:
         self._due_dreams: list[DueDream] = []
         self._last_sweep_tick: int | None = None
         self._count_memo: CountMemo = {}
+        self._revisit: list[CollectionKey] = []
         self._lease: AdvisoryLease | None = (
             AdvisoryLease("honcho:dream-due-poller")
             if settings.DERIVER.SCHEDULER == "api"
@@ -182,6 +187,7 @@ class DreamDuePoller:
                 self._due_dreams = []
                 self._last_sweep_tick = None
                 self._count_memo.clear()
+                self._revisit = []
                 prometheus_metrics.set_dreams_due(count=0)
                 return
 
@@ -202,7 +208,12 @@ class DreamDuePoller:
             asyncio.timeout(settings.DREAM.DUE_POLL_INTERVAL_SECONDS),
             service_db("dream_due_poll", read_only=True) as db,
         ):
-            due = await list_due_dreams(db, sweep=sweep, count_memo=self._count_memo)
+            due = await list_due_dreams(
+                db,
+                sweep=sweep,
+                revisit=self._revisit if scheduling else (),
+                count_memo=self._count_memo,
+            )
         if scheduling:
             self._last_sweep_tick = tick
         self._due_dreams = due
@@ -215,6 +226,19 @@ class DreamDuePoller:
 
     async def _enqueue_due_dreams(self) -> None:
         cap = settings.DREAM.MAX_ENQUEUED_PER_POLL
+        # region ai
+        # A window find past the cap is seen again next poll; a sweep find isn't
+        # until its slot comes round a cycle later, so the overflow is carried and
+        # rechecked (it may have been dreamed or changed meanwhile). Due dreams sort
+        # oldest first, so carried finds go ahead of window finds until drained.
+        # endregion
+        self._revisit = list(
+            dict.fromkeys(
+                (d.tenant_id, d.workspace_name, d.observer, d.observed)
+                for d in self._due_dreams[cap:]
+                if d.found_by_sweep
+            )
+        )[: cap * SWEEP_CARRY_POLLS]
         for due_dream in self._due_dreams[:cap]:
             # region ai
             # enqueue_dream opens tracked_db, which fails closed flag-on without a

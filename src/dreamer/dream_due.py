@@ -6,8 +6,20 @@ from datetime import UTC, datetime, timedelta
 from logging import getLogger
 from typing import Any, NamedTuple, cast
 
-from sqlalchemy import BigInteger, ColumnElement, func, select, text, tuple_
+from sqlalchemy import (
+    TEXT,
+    BigInteger,
+    ColumnElement,
+    Row,
+    TableValuedAlias,
+    and_,
+    func,
+    literal,
+    select,
+    text,
+)
 from sqlalchemy import cast as sa_cast
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
@@ -57,7 +69,7 @@ class DueDream(NamedTuple):
 _CHUNK = 1000
 
 # A collection's last below-threshold count: (newest explicit created_at, cap, count).
-type CountMemo = dict[tuple[str, str, str, str], tuple[datetime, int, int]]
+type CountMemo = dict["CollectionKey", tuple[datetime, int, int]]
 
 
 def _chunks[T](items: Sequence[T], size: int = _CHUNK) -> Iterator[Sequence[T]]:
@@ -79,7 +91,7 @@ class _Candidate:
     from_sweep: bool
 
     @property
-    def collection_key(self) -> tuple[str, str, str, str]:
+    def collection_key(self) -> "CollectionKey":
         return (self.tenant_id, self.workspace_name, self.observer, self.observed)
 
     @property
@@ -97,6 +109,75 @@ class _Candidate:
             },
             tenant_id=self.tenant_id,
         )
+
+
+type CollectionKey = tuple[str, str, str, str]
+
+_COLLECTION_COLUMNS = (
+    models.Collection.tenant_id,
+    models.Collection.workspace_name,
+    models.Collection.observer,
+    models.Collection.observed,
+    models.Collection.internal_metadata,
+)
+
+
+def _to_candidate(
+    row: Row[Any],
+    *,
+    newest: tuple[datetime, str] | None,
+    from_sweep: bool,
+) -> _Candidate:
+    newest_created_at, newest_session_name = newest or (None, None)
+    return _Candidate(
+        tenant_id=row[0],
+        workspace_name=row[1],
+        observer=row[2],
+        observed=row[3],
+        internal_metadata=cast("dict[str, Any] | None", row[4]) or {},
+        newest_created_at=newest_created_at,
+        newest_session_name=newest_session_name,
+        from_sweep=from_sweep,
+    )
+
+
+def _key_table(keys: Sequence[tuple[str, ...]], *names: str) -> TableValuedAlias:
+    """The keys as an unnest() row set, for a join that prunes partitions per row."""
+    # region ai
+    # A row IN list over a partitioned table keeps every partition any arm hits
+    # and probes each with the whole OR; joining an unnest() instead gives a
+    # parameterized nested loop, pruned to one partition per key at run time.
+    # endregion
+    columns = list(zip(*keys, strict=True))
+    return (
+        func.unnest(*[literal(list(column), ARRAY(TEXT)) for column in columns])
+        .table_valued(*names)
+        .render_derived(name="k")
+    )
+
+
+async def _collections_by_key(
+    db: AsyncSession, keys: Sequence[CollectionKey]
+) -> list[Row[Any]]:
+    rows: list[Row[Any]] = []
+    for chunk in _chunks(keys):
+        k = _key_table(chunk, "tenant_id", "workspace_name", "observer", "observed")
+        rows.extend(
+            (
+                await db.execute(
+                    select(*_COLLECTION_COLUMNS).join(
+                        k,
+                        and_(
+                            models.Collection.tenant_id == k.c.tenant_id,
+                            models.Collection.workspace_name == k.c.workspace_name,
+                            models.Collection.observer == k.c.observer,
+                            models.Collection.observed == k.c.observed,
+                        ),
+                    )
+                )
+            ).all()
+        )
+    return rows
 
 
 def sweep_slots() -> int:
@@ -161,13 +242,16 @@ async def list_due_dreams(
     db: AsyncSession,
     *,
     sweep: Sequence[int] = (),
+    revisit: Sequence[CollectionKey] = (),
     now: datetime | None = None,
     count_memo: CountMemo | None = None,
 ) -> list[DueDream]:
     """List collections past the threshold, the idle timeout, the min-hours gate, any earlier attempt, pending representation work, and the session's dream setting.
 
     Candidates come from the lookback window (collections with a recent explicit
-    document) and from the slow sweep's slots listed in `sweep`.
+    document), from the slow sweep's slots listed in `sweep`, and from the
+    collections in `revisit` (sweep finds a previous poll couldn't enqueue),
+    which are checked like sweep finds.
     Due dreams come back oldest newest-document first. A caller that polls
     repeatedly passes the same `count_memo` to skip recounting window
     collections that have not changed since their last count.
@@ -189,13 +273,19 @@ async def list_due_dreams(
         in_window = {c.collection_key for c in candidates}
         for key in [key for key in count_memo if key not in in_window]:
             del count_memo[key]
+    seen = {c.collection_key for c in candidates}
+    swept: list[_Candidate] = []
     if sweep and (slots := sweep_slots()):
-        seen = {c.collection_key for c in candidates}
-        candidates.extend(
-            c
-            for c in await _sweep_candidates(db, sweep=sweep, slots=slots)
-            if c.collection_key not in seen
+        swept.extend(await _sweep_candidates(db, sweep=sweep, slots=slots))
+    if revisit:
+        swept.extend(
+            _to_candidate(row, newest=None, from_sweep=True)
+            for row in await _collections_by_key(db, revisit)
         )
+    for c in swept:
+        if c.collection_key not in seen:
+            seen.add(c.collection_key)
+            candidates.append(c)
     candidates = [c for c in candidates if not _min_hours_gated(c, now)]
     if not candidates:
         return []
@@ -284,7 +374,7 @@ async def _window_candidates(
     rows = (
         await db.execute(select(newest).where(newest.c.created_at <= idle_cutoff))
     ).all()
-    newest_by_key = {
+    newest_by_key: dict[CollectionKey, tuple[datetime, str]] = {
         (row[0], row[1], row[2], row[3]): (row[4], row[5])
         for row in rows
         if row[5] is not None
@@ -292,42 +382,14 @@ async def _window_candidates(
     if not newest_by_key:
         return []
 
-    candidates: list[_Candidate] = []
-    for chunk in _chunks(list(newest_by_key)):
-        collections = (
-            await db.execute(
-                select(
-                    models.Collection.tenant_id,
-                    models.Collection.workspace_name,
-                    models.Collection.observer,
-                    models.Collection.observed,
-                    models.Collection.internal_metadata,
-                ).where(
-                    tuple_(
-                        models.Collection.tenant_id,
-                        models.Collection.workspace_name,
-                        models.Collection.observer,
-                        models.Collection.observed,
-                    ).in_(chunk)
-                )
-            )
-        ).all()
-        for row in collections:
-            key = (row[0], row[1], row[2], row[3])
-            newest_created_at, newest_session_name = newest_by_key[key]
-            candidates.append(
-                _Candidate(
-                    tenant_id=row[0],
-                    workspace_name=row[1],
-                    observer=row[2],
-                    observed=row[3],
-                    internal_metadata=cast("dict[str, Any] | None", row[4]) or {},
-                    newest_created_at=newest_created_at,
-                    newest_session_name=newest_session_name,
-                    from_sweep=False,
-                )
-            )
-    return candidates
+    return [
+        _to_candidate(
+            row,
+            newest=newest_by_key[(row[0], row[1], row[2], row[3])],
+            from_sweep=False,
+        )
+        for row in await _collections_by_key(db, list(newest_by_key))
+    ]
 
 
 async def _sweep_candidates(
@@ -336,28 +398,12 @@ async def _sweep_candidates(
     """Every collection in these sweep slots; newest document still unknown."""
     rows = (
         await db.execute(
-            select(
-                models.Collection.tenant_id,
-                models.Collection.workspace_name,
-                models.Collection.observer,
-                models.Collection.observed,
-                models.Collection.internal_metadata,
-            ).where(collection_sweep_slot(slots).in_(list(sweep)))
+            select(*_COLLECTION_COLUMNS).where(
+                collection_sweep_slot(slots).in_(list(sweep))
+            )
         )
     ).all()
-    return [
-        _Candidate(
-            tenant_id=row[0],
-            workspace_name=row[1],
-            observer=row[2],
-            observed=row[3],
-            internal_metadata=cast("dict[str, Any] | None", row[4]) or {},
-            newest_created_at=None,
-            newest_session_name=None,
-            from_sweep=True,
-        )
-        for row in rows
-    ]
+    return [_to_candidate(row, newest=None, from_sweep=True) for row in rows]
 
 
 def _min_hours_gated(candidate: _Candidate, now: datetime) -> bool:
@@ -452,37 +498,34 @@ async def _drop_disabled(
     )
     workspaces: dict[tuple[str, str], models.Workspace] = {}
     for chunk in _chunks(workspace_keys):
+        k = _key_table(chunk, "tenant_id", "name")
         for workspace in (
-            (
-                await db.execute(
-                    select(models.Workspace).where(
-                        tuple_(models.Workspace.tenant_id, models.Workspace.name).in_(
-                            chunk
-                        )
-                    )
+            await db.scalars(
+                select(models.Workspace).join(
+                    k,
+                    and_(
+                        models.Workspace.tenant_id == k.c.tenant_id,
+                        models.Workspace.name == k.c.name,
+                    ),
                 )
             )
-            .scalars()
-            .all()
-        ):
+        ).all():
             workspaces[(workspace.tenant_id, workspace.name)] = workspace
     sessions: dict[tuple[str, str, str], models.Session] = {}
     for chunk in _chunks(session_keys):
+        k = _key_table(chunk, "tenant_id", "workspace_name", "name")
         for session in (
-            (
-                await db.execute(
-                    select(models.Session).where(
-                        tuple_(
-                            models.Session.tenant_id,
-                            models.Session.workspace_name,
-                            models.Session.name,
-                        ).in_(chunk)
-                    )
+            await db.scalars(
+                select(models.Session).join(
+                    k,
+                    and_(
+                        models.Session.tenant_id == k.c.tenant_id,
+                        models.Session.workspace_name == k.c.workspace_name,
+                        models.Session.name == k.c.name,
+                    ),
                 )
             )
-            .scalars()
-            .all()
-        ):
+        ).all():
             sessions[(session.tenant_id, session.workspace_name, session.name)] = (
                 session
             )

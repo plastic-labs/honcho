@@ -299,6 +299,26 @@ class TestDreamDuePoller:
         assert first == sweep_slots_for_ticks([10])
         assert second == sweep_slots_for_ticks([11, 12])
 
+    async def test_sweep_finds_past_the_cap_are_rechecked_next_poll(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setattr(settings.DREAM, "MAX_ENQUEUED_PER_POLL", 1)
+        poller = _dream_poller(lease=_FakeLease(held=True))
+        swept = [d._replace(found_by_sweep=True) for d in _due_dreams(3)]
+        query = AsyncMock(side_effect=[swept, []])
+
+        with (
+            patch("src.backlog.list_due_dreams", query),
+            patch("src.backlog.enqueue_dream", AsyncMock()),
+        ):
+            await poller.poll()
+            await poller.poll()
+
+        assert query.await_args is not None
+        assert query.await_args.kwargs["revisit"] == [
+            (d.tenant_id, d.workspace_name, d.observer, d.observed) for d in swept[1:]
+        ]
+
     async def test_shutdown_releases_the_lease(self):
         lease = _FakeLease(held=True)
         poller = _dream_poller(lease=lease)

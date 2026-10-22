@@ -575,6 +575,26 @@ class TestLookbackAndSweep:
 
         assert await list_due_dreams(db_session, sweep=[slot]) == []
 
+    async def test_a_revisited_collection_is_checked_like_a_sweep_find(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        from src.dreamer.dream_due import list_due_dreams
+
+        collection = await _make_collection(db_session, sample_data)
+        await _insert_docs(db_session, collection, "explicit", 60, age_minutes=30 * 60)
+        key = (
+            collection.tenant_id,
+            collection.workspace_name,
+            collection.observer,
+            collection.observed,
+        )
+
+        (due,) = await list_due_dreams(db_session, revisit=[key])
+        assert due.found_by_sweep
+        assert due.observer == collection.observer
+
     async def test_a_window_candidate_is_not_reported_twice(
         self,
         db_session: AsyncSession,
