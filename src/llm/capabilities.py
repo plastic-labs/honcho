@@ -87,10 +87,11 @@ _CLAUDE_EXCEPTIONS: dict[tuple[str, int, int], ModelCapabilities] = {
 }
 
 # claude-<family>-<major>[-<minor>], anywhere in the id so vendor prefixes
-# ("anthropic/", "anthropic.") and date or "@" suffixes still match. The minor
+# ("anthropic/", "anthropic.") and date or "@" suffixes still match. Proxies
+# such as OpenRouter spell the version with a dot (claude-opus-4.6). The minor
 # is one or two digits, so a dated id like claude-opus-4-20250514 reads as 4.0.
 _CLAUDE_MODEL = re.compile(
-    r"claude-(?P<family>[a-z]+)-(?P<major>\d+)(?:-(?P<minor>\d{1,2})(?!\d))?"
+    r"claude-(?P<family>[a-z]+)-(?P<major>\d+)(?:[-.](?P<minor>\d{1,2})(?!\d))?"
 )
 
 

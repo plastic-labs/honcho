@@ -363,10 +363,15 @@ class AnthropicBackend:
         )
         extra_body: dict[str, Any] = params.get("extra_body") or {}
         operator_thinking_config = extra_body.get("thinking")
-        operator_thinking = (
-            isinstance(operator_thinking_config, dict)
-            and cast(dict[str, Any], operator_thinking_config).get("type") != "disabled"
+        operator_thinking_type = (
+            cast(dict[str, Any], operator_thinking_config).get("type")
+            if isinstance(operator_thinking_config, dict)
+            else None
         )
+        if operator_thinking_type == "disabled":
+            # The operator turned thinking off; nothing to configure or guard.
+            return
+        operator_thinking = isinstance(operator_thinking_config, dict)
         if not (thinking_budget_tokens or effort or operator_thinking):
             return
 

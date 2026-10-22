@@ -402,7 +402,8 @@ def strip_thinking_blocks(
 
     Returns:
         The history with the blocks removed (messages without any are reused
-        as-is) and how many blocks were removed.
+        as-is, messages holding nothing else are dropped) and how many blocks
+        were removed.
     """
     removed = 0
     result: list[dict[str, Any]] = []
@@ -421,7 +422,9 @@ def strip_thinking_blocks(
             result.append(msg)
             continue
         removed += len(content) - len(kept)
-        result.append({**msg, "content": kept})
+        if kept:
+            # A message left with no content would be rejected; drop it.
+            result.append({**msg, "content": kept})
     return result, removed
 
 
