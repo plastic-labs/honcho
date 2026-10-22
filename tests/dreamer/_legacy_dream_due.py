@@ -1,6 +1,8 @@
-"""The full-scan due-dream query that list_due_dreams replaced, kept as a test oracle."""
+"""The full-scan due-dream query that list_due_dreams replaced, kept as a test oracle.
 
-# ruff: noqa: E712
+Delete it once the windowed query has run on the shared pool for a full sweep cycle.
+"""
+
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
@@ -10,14 +12,33 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
 from src.config import settings
-from src.dreamer.dream_due import (
-    DueDream,
-    _observed_key,  # pyright: ignore[reportPrivateUsage]
-    _within_min_hours_gate,  # pyright: ignore[reportPrivateUsage]
-)
+from src.dreamer.dream_due import DueDream
 from src.schemas import DreamType
 from src.utils.config_helpers import get_configuration
 from src.utils.work_unit import construct_work_unit_key, parse_work_unit_key
+
+
+# Copies of the helpers the old query used, so a change to dream_due's own
+# copies shows up in the parity test instead of passing on both sides.
+def _observed_key(
+    tenant_id: str | None, workspace_name: str | None, observed: str | None
+) -> tuple[str | None, ...]:
+    if settings.MULTI_TENANT:
+        return (tenant_id, workspace_name, observed)
+    return (workspace_name, observed)
+
+
+def _within_min_hours_gate(last_dream_at: str, now: datetime) -> bool:
+    try:
+        last_dream_time = datetime.fromisoformat(last_dream_at)
+    except (ValueError, TypeError):
+        return False
+
+    if last_dream_time.tzinfo is None:
+        last_dream_time = last_dream_time.replace(tzinfo=UTC)
+
+    hours_since = (now - last_dream_time).total_seconds() / 3600
+    return hours_since < settings.DREAM.MIN_HOURS_BETWEEN_DREAMS
 
 
 async def legacy_list_due_dreams(db: AsyncSession) -> list[DueDream]:

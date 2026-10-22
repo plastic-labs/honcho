@@ -427,6 +427,7 @@ async def _seed_tenant_docs(
     peer_name: str,
     count: int,
     age_minutes: int,
+    sessionless: bool = False,
 ) -> str:
     """Seed a Session and `count` idle explicit Documents for a tenant; return the session name."""
     session_name = f"s-{generate_nanoid()}"
@@ -448,7 +449,7 @@ async def _seed_tenant_docs(
                 workspace_name=workspace_name,
                 observer=peer_name,
                 observed=peer_name,
-                session_name=session_name,
+                session_name=None if sessionless else session_name,
                 tenant_id=tenant_id,
                 created_at=created_at,
             )
@@ -756,7 +757,7 @@ def test_an_unset_lookback_grows_to_fit_long_gates(monkeypatch: pytest.MonkeyPat
     from src.config import DreamSettings
 
     monkeypatch.delenv("DREAM_DUE_LOOKBACK_HOURS", raising=False)
-    dream = DreamSettings(MIN_HOURS_BETWEEN_DREAMS=30)  # pyright: ignore[reportCallIssue]
+    dream = DreamSettings(MIN_HOURS_BETWEEN_DREAMS=30)
     assert dream.DUE_LOOKBACK_HOURS == 31
     assert DreamSettings().DUE_LOOKBACK_HOURS == 24
 
@@ -795,9 +796,15 @@ class TestParityWithTheFullScan:
             ("p-stored", 60, 90, {"dream": {"last_dream_document_count": 40}}, True),
             ("p-disabled", 60, 90, {}, False),
             ("p-due-2", 55, 200, {}, True),
+            # The states below also get a queue row or sessionless documents.
+            ("p-attempted", 60, 90, {}, True),
+            ("p-attempted-before", 60, 90, {}, True),
+            ("p-pending", 60, 90, {}, True),
+            ("p-sessionless", 60, 90, {}, True),
         ]
         for tenant, docs, age, metadata, enabled in states:
-            tenant_id = f"{tenant}-{generate_nanoid(size=6)}"
+            # ai: "." never appears in a nanoid, so the state name splits back off cleanly
+            tenant_id = f"{tenant}.{generate_nanoid(size=6)}"
             await _seed_tenant_collection(
                 db_session, tenant_id=tenant_id, workspace_name="ws", peer_name="peer"
             )
@@ -814,14 +821,58 @@ class TestParityWithTheFullScan:
             assert collection is not None
             collection.internal_metadata = metadata
             await db_session.commit()
-            await _seed_tenant_docs(
+            session_name = await _seed_tenant_docs(
                 db_session,
                 tenant_id=tenant_id,
                 workspace_name="ws",
                 peer_name="peer",
                 count=docs,
                 age_minutes=age,
+                sessionless=tenant == "p-sessionless",
             )
+            if tenant.startswith("p-attempted"):
+                # An attempt after the newest document blocks; one before it doesn't.
+                attempt_age = age - 30 if tenant == "p-attempted" else age + 30
+                db_session.add(
+                    models.QueueItem(
+                        work_unit_key=construct_work_unit_key(
+                            "ws",
+                            {
+                                "task_type": "dream",
+                                "observer": "peer",
+                                "observed": "peer",
+                                "dream_type": DreamType.OMNI.value,
+                            },
+                            tenant_id=tenant_id,
+                        ),
+                        payload={"task_type": "dream"},
+                        task_type="dream",
+                        workspace_name="ws",
+                        tenant_id=tenant_id,
+                        processed=True,
+                        created_at=_now() - datetime.timedelta(minutes=attempt_age),
+                    )
+                )
+            if tenant == "p-pending":
+                db_session.add(
+                    models.QueueItem(
+                        work_unit_key=construct_work_unit_key(
+                            "ws",
+                            {
+                                "task_type": "representation",
+                                "session_name": session_name,
+                                "observed": "peer",
+                            },
+                            tenant_id=tenant_id,
+                        ),
+                        payload={"task_type": "representation"},
+                        task_type="representation",
+                        workspace_name="ws",
+                        tenant_id=tenant_id,
+                        processed=False,
+                    )
+                )
+            await db_session.commit()
 
         def keys(due: list[Any]) -> set[tuple[str, str, str, str, str]]:
             return {
@@ -833,4 +884,8 @@ class TestParityWithTheFullScan:
         old = keys(await legacy_list_due_dreams(db_session))
 
         assert new == old
-        assert {key[0].rsplit("-", 1)[0] for key in new} == {"p-due", "p-due-2"}
+        assert {key[0].split(".", 1)[0] for key in new} == {
+            "p-due",
+            "p-due-2",
+            "p-attempted-before",
+        }
