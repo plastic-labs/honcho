@@ -86,6 +86,27 @@ Native `--mode processes` is the supported topology; `--api-workers` controls AP
 workers. Embedded mode and installed server wheels follow the lifecycle and
 packaging work. The base CLI still supports Python 3.11+ for remote/Compose use.
 
+Use deterministic local providers with either backend:
+
+```bash
+uv run --all-packages honcho start --backend native --profile mock-native \
+  --dependencies docker --providers mock
+honcho start --backend compose --profile mock-compose --providers mock
+```
+
+The native backend requires `honcho-mock-provider` in the current environment
+(`uv sync --all-packages` in a checkout, or the CLI's `mock` extra). Compose runs
+the provider from the selected Honcho image and requires Compose 2.30+ for raw
+environment files. An immutable local image ID (`--image sha256:...`) can be used
+to verify a locally built image.
+
+The preset replaces reasoning, embedding, and fallback credentials and endpoints,
+uses PostgreSQL vector storage, and disables telemetry, Sentry, and Langfuse.
+Startup validates these settings before the API and deriver run. The mock only
+generates synthetic content and hash-derived embeddings; use lexical assertions
+when checking recall. Live profile credentials are preserved. Stop before
+changing `--providers`; subsequent starts remember the selected preset.
+
 ## Commands
 
 ### Onboarding

@@ -81,6 +81,7 @@ class LocalProfile:
     redis_port: int = DEFAULT_REDIS_PORT
     image: str = DEFAULT_IMAGE
     backend: str = "compose"
+    providers: str = "live"
 
     @property
     def project_name(self) -> str:
@@ -136,6 +137,7 @@ def load_profile(name: str) -> LocalProfile:
         redis_port=_port(data.get("redisPort"), profile.redis_port),
         image=image if isinstance(image, str) and image else profile.image,
         backend="native" if data.get("backend") == "native" else "compose",
+        providers="mock" if data.get("providers") == "mock" else "live",
     )
 
 
@@ -152,6 +154,8 @@ def save_profile(profile: LocalProfile) -> None:
     }
     if profile.backend == "native":
         payload["backend"] = profile.backend
+    if profile.providers == "mock":
+        payload["providers"] = profile.providers
     profile.profile_file().write_text(json.dumps(payload, indent=2) + "\n")
 
 
