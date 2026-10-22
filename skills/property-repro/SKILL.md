@@ -21,9 +21,9 @@ fail on the reported input, then fix the cause.
 | `test_api_auth.py` | The per-operation fuzzer with auth on and a random token per request (none, forged, expired, admin, workspace/peer/session/named-scope keys across two workspaces), checked against an oracle built from the route policy. | The report involves a scoped key, a 401/403, or data visible to the wrong caller. |
 
 They are skipped unless pytest gets `--fuzz` (CI passes it; the pre-push hook
-doesn't, to keep it fast), so every command below includes it. All but the
-auth fuzzer use `fuzz_client` (one DB session per request, as in production)
-from `tests/property/conftest.py`.
+doesn't, to keep it fast), so every command below includes it. All of them
+use `fuzz_client` (one DB session per request, as in production) from
+`tests/property/conftest.py`.
 
 ## Workflow
 
