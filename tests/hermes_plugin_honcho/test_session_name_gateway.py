@@ -53,10 +53,11 @@ def _install_stubs() -> None:
         cache_mod._slot_for = lambda *a, **k: None
         sys.modules[f"{PACKAGE_NAME}.client_cache"] = cache_mod
 
+        # Load as a module, not a package: submodule_search_locations would make
+        # `from .client_cache` miss the stub and import real Hermes plugins.
         spec = importlib.util.spec_from_file_location(
             f"{PACKAGE_NAME}.client",
             PLUGIN_ROOT / "client.py",
-            submodule_search_locations=[str(PLUGIN_ROOT)],
         )
         assert spec and spec.loader
         client_mod = importlib.util.module_from_spec(spec)
