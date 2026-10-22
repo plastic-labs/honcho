@@ -1,6 +1,7 @@
 """Register revision-specific hooks for migration verification."""
 
 from . import (
+    test_0c67be41049b_drop_id_only_token_count_fallback,
     test_05486ce795d5_make_session_name_required_on_messages,
     test_066e87ca5b07_align_schema_with_declarative_models,
     test_08894082221a_replace_collection_name_with_observer_,
@@ -16,6 +17,7 @@ from . import (
     test_119a52b73c60_support_external_embeddings,
     test_556a16564f50_add_user_id_and_app_id_to_tables,
     test_564ba40505c5_add_session_name_column_to_documents,
+    test_29093eb3eeda_merge_main_s_session_peers_index_into_,
     test_917195d9b5e9_add_messageembedding_table,
     test_a1b2c3d4e5f6_initial_schema,
     test_a7c3e9f1b2d4_add_document_sources_table,
@@ -25,6 +27,7 @@ from . import (
     test_b8183c5ffb48_codify_document_level_and_times_derived,
     test_baa22cad81e2_standardize_constraint_names,
     test_bb6fb3a7a643_add_message_seq_in_session_column,
+    test_c075274557cd_merge_main_s_messages_trigram_index_into_,
     test_c4e8a2b91d57_queue_workspace_reconciler_check,
     test_c3828084f472_add_indexes_for_messages_and_,
     test_d429de0e5338_adopt_peer_paradigm,
@@ -39,9 +42,11 @@ __all__ = [
     "test_05486ce795d5_make_session_name_required_on_messages",
     "test_066e87ca5b07_align_schema_with_declarative_models",
     "test_08894082221a_replace_collection_name_with_observer_",
+    "test_0c67be41049b_drop_id_only_token_count_fallback",
     "test_110bdf470272_rename_deriver_disabled_to_deriver_",
     "test_119a52b73c60_support_external_embeddings",
     "test_20f89a421aff_rename_metamessage_type_to_label",
+    "test_29093eb3eeda_merge_main_s_session_peers_index_into_",
     "test_29ade7350c19_remove_document_level_valid_constraint",
     "test_3e7a1c9d5b20_index_messages_content_trgm",
     "test_43d77d0c5846_add_tenant_derivation_paused",
@@ -60,6 +65,7 @@ __all__ = [
     "test_b8d2f4a6c9e1_index_session_peers_by_peer",
     "test_baa22cad81e2_standardize_constraint_names",
     "test_bb6fb3a7a643_add_message_seq_in_session_column",
+    "test_c075274557cd_merge_main_s_messages_trigram_index_into_",
     "test_c3828084f472_add_indexes_for_messages_and_",
     "test_c4e8a2b91d57_queue_workspace_reconciler_check",
     "test_d429de0e5338_adopt_peer_paradigm",
