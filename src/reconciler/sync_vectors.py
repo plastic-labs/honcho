@@ -26,6 +26,7 @@ from src.db import tenant_context
 from src.dependencies import service_db
 from src.embedding_client import embedding_client
 from src.exceptions import VectorNamespaceUnresolved, VectorStoreError
+from src.reconciler.gauge_counts import capped_count
 from src.telemetry import prometheus_metrics
 from src.telemetry.events import EmbeddingCallPurpose
 from src.utils.types import embedding_call_purpose
@@ -860,24 +861,28 @@ async def record_pending_embeddings_backlog() -> None:
     # count is a property of the database, not the process, so every replica must
     # refresh it on its own timer for ``max()``/``avg()`` to mean anything.
     #
-    # Cost: one COUNT per replica per scheduler interval (~5 min by default).
-    # ``ix_message_embeddings_sync_state_last_sync_at`` keeps the scan proportional to
-    # the pending backlog, not the whole table — which is not the same as cheap: after
-    # an embedding outage the backlog is exactly what is large. Still a small duty
-    # cycle, and the cost shrinks as the reconciler drains.
+    # Cost: one capped COUNT per replica per scheduler interval (~5 min by
+    # default), over ``ix_message_embeddings_sync_state_last_sync_at``. Capped
+    # (gauge_counts.GAUGE_COUNT_CAP) because after an embedding outage the backlog
+    # is exactly what is large, and every replica pays for it.
+    #
+    # Under DERIVER.SCHEDULER == "api" this runs in the API process, where
+    # DeriverMetricsPoller already sets the same gauge on every pass; a second
+    # writer would only repeat the count, so it is skipped there.
     #
     # Best-effort: a metrics/DB hiccup here must never break the scheduler loop.
     # endregion
-    if not settings.METRICS.ENABLED:
+    if not settings.METRICS.ENABLED or settings.DERIVER.SCHEDULER == "api":
         return
     try:
         async with service_db("reconciler_pending_count", read_only=True) as db:
-            count = await db.scalar(
-                select(func.count())
-                .select_from(models.MessageEmbedding)
-                .where(models.MessageEmbedding.sync_state == "pending")
+            count, capped = await capped_count(
+                db,
+                select(models.MessageEmbedding.id).where(
+                    models.MessageEmbedding.sync_state == "pending"
+                ),
             )
-        prometheus_metrics.set_message_embeddings_pending(count=count or 0)
+        prometheus_metrics.set_message_embeddings_pending(count=count, capped=capped)
     except Exception:
         logger.warning(
             "Failed to record pending-embeddings backlog gauge", exc_info=True

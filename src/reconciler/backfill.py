@@ -35,7 +35,8 @@ class Backfill:
 
     name: str
     has_pending: Callable[[AsyncSession], Awaitable[bool]]
-    count_pending: Callable[[AsyncSession], Awaitable[int]]
+    # Counted up to gauge_counts.GAUGE_COUNT_CAP: (count, whether it hit the cap).
+    count_pending: Callable[[AsyncSession], Awaitable[tuple[int, bool]]]
     # Processes one batch and returns the rows it touched; 0 means drained.
     run_batch: Callable[[AsyncSession, int], Awaitable[int]]
     interval_seconds: int
@@ -151,8 +152,10 @@ async def record_backfill_pending() -> None:
     for backfill in BACKFILLS.values():
         try:
             async with service_db("backfill_pending_count", read_only=True) as db:
-                count = await backfill.count_pending(db)
-            prometheus_metrics.set_backfill_pending(task=backfill.name, count=count)
+                count, capped = await backfill.count_pending(db)
+            prometheus_metrics.set_backfill_pending(
+                task=backfill.name, count=count, capped=capped
+            )
         except Exception:
             logger.warning(
                 "Failed to record backfill_pending for %s", backfill.name, exc_info=True
