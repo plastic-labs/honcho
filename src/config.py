@@ -1528,7 +1528,7 @@ class DreamSettings(HonchoSettings):
                     + f"least {floor_hours:.2f}: max(IDLE_TIMEOUT_MINUTES / 60, "
                     + "MIN_HOURS_BETWEEN_DREAMS) + 2 * DUE_POLL_INTERVAL_SECONDS / 3600"
                 )
-            self.DUE_LOOKBACK_HOURS = math.ceil(floor_hours)
+            self.DUE_LOOKBACK_HOURS = math.ceil(floor_hours)  # pyright: ignore[reportConstantRedefinition]
         if (
             self.DUE_SWEEP_HOURS
             and self.DUE_SWEEP_HOURS * 3600 < self.DUE_POLL_INTERVAL_SECONDS

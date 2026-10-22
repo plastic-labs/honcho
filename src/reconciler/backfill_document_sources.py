@@ -17,11 +17,11 @@ drops the column, the index, and this task.
 
 from typing import Any, cast
 
-from sqlalchemy import CursorResult, text
+from sqlalchemy import CursorResult, Integer, literal_column, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.db import Base
-from src.reconciler.gauge_counts import GAUGE_COUNT_CAP
+from src.reconciler.gauge_counts import GAUGE_COUNT_CAP, capped_count
 
 BACKFILL_BATCH_SIZE = 500
 
@@ -102,15 +102,13 @@ async def count_pending_document_sources(
     db: AsyncSession, cap: int = GAUGE_COUNT_CAP
 ) -> tuple[int, bool]:
     """Documents still carrying legacy JSONB linkage, counted up to `cap`; and whether it hit the cap."""
-    count = await db.scalar(
-        text(
-            f"SELECT count(*) FROM (SELECT 1 FROM {_qualified('documents')}"  # nosec B608
-            + f" WHERE {_PENDING_PREDICATE} LIMIT :limit) pending"
-        ),
-        {"limit": cap + 1},
+    return await capped_count(
+        db,
+        select(literal_column("1", Integer))
+        .select_from(text(_qualified("documents")))
+        .where(text(_PENDING_PREDICATE)),
+        cap,
     )
-    count = int(count or 0)
-    return min(count, cap), count > cap
 
 
 async def drain_document_sources_batch(

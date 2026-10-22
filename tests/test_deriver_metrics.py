@@ -142,7 +142,7 @@ class TestPoller:
         assert dream_query.await_count == 0
 
     async def test_metrics_keep_advancing_while_a_dream_poll_is_stuck(self):
-        """A dream poll that hangs must not freeze deriver_metrics_last_success (F25)."""
+        """A dream poll that hangs must not freeze deriver_metrics_last_success."""
         poller = DeriverMetricsPoller()
         dream_poller = _dream_poller(lease=None)
         poller.dream_due_poller = dream_poller
@@ -333,7 +333,7 @@ def test_the_poll_wakes_just_past_the_next_tick_boundary(
 ):
     monkeypatch.setattr(settings.DREAM, "DUE_POLL_INTERVAL_SECONDS", 300)
     # A poll that took 4 s still wakes at the next boundary, not 300 s later.
-    assert seconds_to_next_tick(300 * 7 + 4) == pytest.approx(296 + 1)
+    assert seconds_to_next_tick(300 * 7 + 4) == 296 + 1
     assert sweep_tick_at(300 * 7 + 4 + seconds_to_next_tick(300 * 7 + 4)) == 8
 
 

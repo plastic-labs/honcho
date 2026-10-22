@@ -4,8 +4,9 @@ The dream-due poll (src/dreamer/dream_due.py) finds collections whose newest
 explicit document falls inside a lookback window (DREAM.DUE_LOOKBACK_HOURS),
 instead of aggregating every explicit document of every collection. This partial
 index serves that range: one short scan per partition over the window's
-explicit documents. It doesn't lead with tenant_id because the poll runs
-across tenants on the service session.
+explicit documents. It doesn't lead with tenant_id because the poll's
+created_at range spans every tenant, so a tenant-leading index couldn't serve
+it as one range scan per partition.
 
 The build holds no long write lock (see migrations.utils.create_index_online).
 

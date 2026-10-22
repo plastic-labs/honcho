@@ -518,10 +518,16 @@ class TestMultiTenantDueDreams:
         assert all(d.tenant_id != "tenant-a" for d in due)
 
 
-async def _collection_slot(db_session: AsyncSession, slots: int) -> int:
+async def _collection_slot(
+    db_session: AsyncSession, collection: models.Collection, slots: int
+) -> int:
     from src.dreamer.dream_due import collection_sweep_slot
 
-    slot = await db_session.scalar(select(collection_sweep_slot(slots)))
+    slot = await db_session.scalar(
+        select(collection_sweep_slot(slots)).where(
+            models.Collection.id == collection.id
+        )
+    )
     assert slot is not None
     return int(slot)
 
@@ -551,7 +557,7 @@ class TestLookbackAndSweep:
         collection = await _make_collection(db_session, sample_data)
         await _insert_docs(db_session, collection, "explicit", 60, age_minutes=30 * 60)
         slots = sweep_slots()
-        slot = await _collection_slot(db_session, slots)
+        slot = await _collection_slot(db_session, collection, slots)
 
         assert await count_due_dreams(db_session) == 0
         (due,) = await list_due_dreams(db_session, sweep=[slot])
@@ -559,12 +565,12 @@ class TestLookbackAndSweep:
         assert due.observer == collection.observer
         assert await list_due_dreams(db_session, sweep=[(slot + 1) % slots]) == []
 
-    async def test_the_sweep_applies_the_same_rule(
+    async def test_the_sweep_applies_the_min_hours_gate(
         self,
         db_session: AsyncSession,
         sample_data: tuple[models.Workspace, models.Peer],
     ):
-        """Below the threshold, gated by min-hours, or dreams off: the sweep finds nothing."""
+        """A collection in its slot but dreamed too recently: the sweep finds nothing."""
         from src.dreamer.dream_due import list_due_dreams, sweep_slots
 
         last_dream_at = (_now() - datetime.timedelta(hours=2)).isoformat()
@@ -572,7 +578,7 @@ class TestLookbackAndSweep:
             db_session, sample_data, {"dream": {"last_dream_at": last_dream_at}}
         )
         await _insert_docs(db_session, collection, "explicit", 60, age_minutes=30 * 60)
-        slot = await _collection_slot(db_session, sweep_slots())
+        slot = await _collection_slot(db_session, collection, sweep_slots())
 
         assert await list_due_dreams(db_session, sweep=[slot]) == []
 
@@ -605,7 +611,7 @@ class TestLookbackAndSweep:
 
         collection = await _make_collection(db_session, sample_data)
         await _insert_docs(db_session, collection, "explicit", 60, age_minutes=90)
-        slot = await _collection_slot(db_session, sweep_slots())
+        slot = await _collection_slot(db_session, collection, sweep_slots())
 
         (due,) = await list_due_dreams(db_session, sweep=[slot])
         assert not due.found_by_sweep

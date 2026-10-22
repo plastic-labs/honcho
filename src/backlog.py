@@ -107,8 +107,10 @@ class DreamDuePoller:
     # lease polls, enqueues and reports dreams_due; every other replica reports 0,
     # and KEDA wakes the deriver from the eligible work units the holder enqueues.
     # In deriver mode there is no lease: every API replica keeps measuring
-    # dreams_due as a wake signal and enqueues nothing, and the slow sweep, which
-    # only an enqueuing poller needs, stays off.
+    # dreams_due as a wake signal and enqueues nothing, without the slow sweep,
+    # so there dreams_due counts window candidates only. Under the api scheduler
+    # the /deriver/metrics route's dreams_due and outstanding-work values are
+    # holder-only too; max() across replicas still reads right.
     # endregion
 
     def __init__(self) -> None:

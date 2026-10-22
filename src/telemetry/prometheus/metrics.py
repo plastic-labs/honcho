@@ -252,7 +252,7 @@ message_embeddings_pending_gauge = NamespacedGauge(
 message_embeddings_pending_capped_gauge = NamespacedGauge(
     "message_embeddings_pending_capped",
     "1 when message_embeddings_pending stopped counting at its cap, so the real "
-    + "backlog is at least that value",
+    + "backlog is at least that value. Aggregate with max()",
     ["namespace"],
 )
 
@@ -267,7 +267,7 @@ backfill_pending_gauge = NamespacedGauge(
 backfill_pending_capped_gauge = NamespacedGauge(
     "backfill_pending_capped",
     "1 when backfill_pending stopped counting at its cap, by backfill name, so the "
-    + "real count is at least that value",
+    + "real count is at least that value. Aggregate with max()",
     ["namespace", "task"],
 )
 
@@ -282,8 +282,9 @@ message_embeddings_pending_due_gauge = NamespacedGauge(
 deriver_outstanding_work_seconds_gauge = NamespacedGauge(
     "deriver_outstanding_work_seconds",
     "Seconds of outstanding deriver work, 0 when a deriver has nothing to do. "
-    + "Service-wide DB value, reported independently by every API replica — "
-    + "aggregate with max(), never sum()",
+    + "Service-wide DB value, reported independently by every API replica (under "
+    + "DERIVER_SCHEDULER=api only the dream_due lease holder counts due dreams in "
+    + "it) — aggregate with max(), never sum()",
     ["namespace"],
 )
 
@@ -382,10 +383,12 @@ deriver_effective_worker_cap_gauge = NamespacedGauge(
 
 dreams_due_gauge = NamespacedGauge(
     "dreams_due",
-    "Collections whose next dream is due and would actually run. "
-    + "Service-wide DB count. Under DERIVER_SCHEDULER=api only the dream_due "
-    + "lease holder measures it and every other API replica reports 0; otherwise "
-    + "every API replica reports it independently. Aggregate with max(), never sum()",
+    "Collections whose next dream is due and would actually run, as found by the "
+    + "last dream-due poll: the lookback window, plus the sweep slots that poll "
+    + "visited under DERIVER_SCHEDULER=api. Under DERIVER_SCHEDULER=api only the "
+    + "dream_due lease holder measures it and every other API replica reports 0; "
+    + "otherwise every API replica reports it independently. Aggregate with max(), "
+    + "never sum()",
     ["namespace"],
 )
 
@@ -398,8 +401,9 @@ scheduler_lease_held_gauge = NamespacedGauge(
 
 dream_due_sweep_found_counter = NamespacedCounter(
     "dream_due_sweep_found",
-    "Due dreams that only the slow sweep found: collections due for longer than "
-    + "DREAM.DUE_LOOKBACK_HOURS, which the lookback window no longer sees",
+    "Due dreams found only by the slow sweep: collections whose newest explicit "
+    + "document is older than DREAM.DUE_LOOKBACK_HOURS, so the lookback window "
+    + "missed them",
     ["namespace"],
 )
 
@@ -783,13 +787,14 @@ class PrometheusMetrics:
             self.set_deriver_metrics()
             self.set_deriver_outstanding_work(seconds=0)
             self.set_dreams_due(count=0)
-            self._touch(dream_due_sweep_found_counter)
             # ai: flag-off this process never emits it, so no series is fabricated
             if settings.MULTI_TENANT:
                 self.set_paused_tenants(count=0)
 
             if settings.DERIVER.SCHEDULER == "api":
                 self.set_scheduler_lease_held(lease="dream_due", held=False)
+                # ai: only the api scheduler sweeps, so deriver mode never emits it
+                self._touch(dream_due_sweep_found_counter)
                 self.set_message_embeddings_pending(count=0)
                 self._initialize_backfill_pending()
 
