@@ -48,8 +48,8 @@ def _fake_backfill(rows: _Rows, **overrides: Any) -> Backfill:
     async def has_pending(_db: AsyncSession) -> bool:
         return rows.remaining > 0
 
-    async def count_pending(_db: AsyncSession) -> int:
-        return rows.remaining
+    async def count_pending(_db: AsyncSession) -> tuple[int, bool]:
+        return rows.remaining, False
 
     async def run_batch(db: AsyncSession, batch_size: int) -> int:
         rows.sessions.append(db)
@@ -340,10 +340,10 @@ async def test_scheduler_loop_refreshes_backfill_gauge(
 async def test_cycle_does_not_drive_the_gauge(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    calls: list[tuple[str, int]] = []
+    calls: list[tuple[str, int, bool]] = []
 
-    def _record(*, task: str, count: int) -> None:
-        calls.append((task, count))
+    def _record(*, task: str, count: int, capped: bool = False) -> None:
+        calls.append((task, count, capped))
 
     monkeypatch.setattr("src.config.settings.METRICS.ENABLED", True)
     monkeypatch.setattr(prometheus_metrics, "set_backfill_pending", _record)
@@ -357,10 +357,10 @@ async def test_cycle_does_not_drive_the_gauge(
 async def test_record_backfill_pending_sets_gauge(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    calls: list[tuple[str, int]] = []
+    calls: list[tuple[str, int, bool]] = []
 
-    def _record(*, task: str, count: int) -> None:
-        calls.append((task, count))
+    def _record(*, task: str, count: int, capped: bool = False) -> None:
+        calls.append((task, count, capped))
 
     monkeypatch.setattr("src.config.settings.METRICS.ENABLED", True)
     monkeypatch.setattr(prometheus_metrics, "set_backfill_pending", _record)
@@ -370,4 +370,4 @@ async def test_record_backfill_pending_sets_gauge(
 
     await backfill_module.record_backfill_pending()
 
-    assert calls == [("fake", 7)]
+    assert calls == [("fake", 7, False)]

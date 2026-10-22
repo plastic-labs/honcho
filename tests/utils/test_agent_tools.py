@@ -2,6 +2,7 @@
 
 import asyncio
 import inspect
+import itertools
 import json
 import re
 from collections.abc import Callable
@@ -2766,8 +2767,11 @@ class TestObservationContextSessionCorrelation:
             message_ids=[messages[2].public_id, other_messages[2].public_id],
         )
 
-        expected = sorted(
-            [(session.name, seq) for seq in (2, 3, 4)]
-            + [(other.name, seq) for seq in (2, 3, 4)]
+        # ai: grouped, not compared to a Python sort: Postgres orders session names by its collation
+        groups = [
+            (name, [m.seq_in_session for m in group])
+            for name, group in itertools.groupby(result, key=lambda m: m.session_name)
+        ]
+        assert sorted(groups) == sorted(
+            [(session.name, [2, 3, 4]), (other.name, [2, 3, 4])]
         )
-        assert [(m.session_name, m.seq_in_session) for m in result] == expected

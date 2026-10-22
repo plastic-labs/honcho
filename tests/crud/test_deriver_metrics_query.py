@@ -383,6 +383,37 @@ class TestPendingEmbeddings:
         assert stats.embeddings_pending == 0
         assert stats.embeddings_pending_due == 0
 
+    async def test_both_counts_stop_at_the_gauge_cap(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        from src.reconciler import gauge_counts
+
+        workspace, peer = sample_data
+        for _ in range(3):
+            session = await _make_session(db_session, workspace)
+            message = await _add_message(db_session, workspace, peer, session)
+            db_session.add(
+                models.MessageEmbedding(
+                    content="x",
+                    message_id=message.public_id,
+                    workspace_name=workspace.name,
+                    session_name=session.name,
+                    peer_name=peer.name,
+                    sync_state="pending",
+                )
+            )
+        await db_session.commit()
+        monkeypatch.setattr(gauge_counts, "GAUGE_COUNT_CAP", 2)
+
+        stats = await crud.get_deriver_metrics(db_session)
+
+        assert stats.embeddings_pending == 2
+        assert stats.embeddings_pending_capped
+        assert stats.embeddings_pending_due == 2
+
 
 class TestMetricsAgreeWithDeriver:
     @pytest.mark.parametrize(

@@ -795,6 +795,13 @@ class Document(Base):
             "id",
             postgresql_where=text("deleted_at IS NULL"),
         ),
+        # The dream-due poll: explicit documents written within the lookback window.
+        # ai: rationale in migration a40bd716a0d6
+        Index(
+            "ix_documents_explicit_created_at",
+            "created_at",
+            postgresql_where=text("level = 'explicit'"),
+        ),
         # ai: HNSW is a single-column vector index (per-partition under HASH(tenant_id))
         Index(
             "ix_documents_embedding_hnsw",

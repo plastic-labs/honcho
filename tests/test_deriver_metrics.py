@@ -1,6 +1,8 @@
 """Tests for the outstanding-work value, the poller and the JSON route."""
 
+import asyncio
 import time
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -10,11 +12,14 @@ from src import schemas
 from src.backlog import (
     DeriverMetricsPoller,
     DeriverMetricsSnapshot,
+    DreamDuePoller,
     active_work_seconds,
     outstanding_work_seconds,
+    seconds_to_next_tick,
+    ticks_to_sweep,
 )
 from src.config import settings
-from src.dreamer.dream_due import DueDream
+from src.dreamer.dream_due import DueDream, sweep_slots_for_ticks, sweep_tick_at
 from src.models import DEFAULT_TENANT_ID
 from src.routers import deriver_metrics
 
@@ -79,20 +84,37 @@ class TestScaleSignal:
         assert active_work_seconds() > 0
 
 
+class _FakeLease:
+    """Stands in for AdvisoryLease: holds whatever the test says."""
+
+    def __init__(self, *, held: bool) -> None:
+        self.held: bool = held
+        self.released: bool = False
+
+    async def ensure(self) -> bool:
+        return self.held
+
+    async def release(self) -> None:
+        self.released = True
+        self.held = False
+
+
+def _dream_poller(*, lease: _FakeLease | None) -> DreamDuePoller:
+    poller = DreamDuePoller()
+    poller._lease = lease  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]
+    return poller
+
+
 @pytest.mark.asyncio
 class TestPoller:
     async def test_refresh_publishes_a_snapshot(self):
         stats = schemas.DeriverMetrics(eligible_work_units=2, pending_items=4)
         poller = DeriverMetricsPoller()
+        poller.dream_due_poller._due_dreams = _due_dreams(3)  # pyright: ignore[reportPrivateUsage]
 
-        with (
-            patch(
-                "src.backlog.crud.get_deriver_metrics",
-                AsyncMock(return_value=stats),
-            ),
-            patch(
-                "src.backlog.list_due_dreams", AsyncMock(return_value=_due_dreams(3))
-            ),
+        with patch(
+            "src.backlog.crud.get_deriver_metrics",
+            AsyncMock(return_value=stats),
         ):
             await poller.refresh()
 
@@ -102,56 +124,63 @@ class TestPoller:
         assert snapshot.dreams_due == 3
         assert snapshot.signal_seconds == active_work_seconds()
 
-    async def test_dream_query_runs_on_its_own_spacing(self):
-        """The dream query is the expensive one, so it must not run every pass."""
-        stats = schemas.DeriverMetrics()
+    async def test_refresh_never_runs_the_dream_query(self):
+        """The dream poll runs on its own task, so a slow one can't stall this pass."""
         poller = DeriverMetricsPoller()
-        dream_count = AsyncMock(return_value=_due_dreams(1))
+        dream_query = AsyncMock(return_value=_due_dreams(1))
 
         with (
             patch(
                 "src.backlog.crud.get_deriver_metrics",
-                AsyncMock(return_value=stats),
+                AsyncMock(return_value=schemas.DeriverMetrics()),
             ),
-            patch("src.backlog.list_due_dreams", dream_count),
+            patch("src.backlog.list_due_dreams", dream_query),
         ):
             await poller.refresh()
             await poller.refresh()
 
-        assert dream_count.await_count == 1
-        assert poller.snapshot.dreams_due == 1
+        assert dream_query.await_count == 0
 
-    async def test_a_failed_dream_query_is_retried_on_the_next_pass(self):
-        """Advancing the deadline first would republish the old count for a whole interval."""
-        stats = schemas.DeriverMetrics()
+    async def test_metrics_keep_advancing_while_a_dream_poll_is_stuck(self):
+        """A dream poll that hangs must not freeze deriver_metrics_last_success."""
         poller = DeriverMetricsPoller()
-        dream_count = AsyncMock(side_effect=[RuntimeError("db down"), _due_dreams(4)])
+        dream_poller = _dream_poller(lease=None)
+        poller.dream_due_poller = dream_poller
+        release = asyncio.Event()
+
+        async def stuck_poll(*_args: Any, **_kwargs: Any) -> list[DueDream]:
+            await release.wait()
+            return []
 
         with (
             patch(
                 "src.backlog.crud.get_deriver_metrics",
-                AsyncMock(return_value=stats),
+                AsyncMock(return_value=schemas.DeriverMetrics()),
             ),
-            patch("src.backlog.list_due_dreams", dream_count),
+            patch("src.backlog.list_due_dreams", stuck_poll),
         ):
-            with pytest.raises(RuntimeError):
-                await poller.refresh()
+            stuck = asyncio.create_task(dream_poller.poll())
+            await asyncio.sleep(0)
             await poller.refresh()
+            first = poller.snapshot.measured_at
+            await asyncio.sleep(0.01)
+            await poller.refresh()
+            assert not stuck.done()
+            release.set()
+            await stuck
 
-        assert dream_count.await_count == 2
-        assert poller.snapshot.dreams_due == 4
+        assert first is not None
+        assert poller.snapshot.measured_at is not None
+        assert poller.snapshot.measured_at > first
 
     async def test_a_failed_pass_leaves_the_previous_snapshot_alone(self):
         """A half-finished pass must never be published as a measurement."""
         stats = schemas.DeriverMetrics(eligible_work_units=1)
         poller = DeriverMetricsPoller()
 
-        with (
-            patch(
-                "src.backlog.crud.get_deriver_metrics",
-                AsyncMock(return_value=stats),
-            ),
-            patch("src.backlog.list_due_dreams", AsyncMock(return_value=[])),
+        with patch(
+            "src.backlog.crud.get_deriver_metrics",
+            AsyncMock(return_value=stats),
         ):
             await poller.refresh()
 
@@ -168,25 +197,24 @@ class TestPoller:
 
         assert poller.snapshot is first
 
-    async def test_api_scheduler_enqueues_due_dreams(
-        self, monkeypatch: pytest.MonkeyPatch
-    ):
-        monkeypatch.setattr(settings.DERIVER, "SCHEDULER", "api")
-        stats = schemas.DeriverMetrics()
-        poller = DeriverMetricsPoller()
+
+@pytest.mark.asyncio
+class TestDreamDuePoller:
+    async def test_the_lease_holder_polls_with_a_sweep_slot_and_enqueues(self):
         due = _due_dreams(2)
+        poller = _dream_poller(lease=_FakeLease(held=True))
+        query = AsyncMock(return_value=due)
         enqueue = AsyncMock()
 
         with (
-            patch(
-                "src.backlog.crud.get_deriver_metrics",
-                AsyncMock(return_value=stats),
-            ),
-            patch("src.backlog.list_due_dreams", AsyncMock(return_value=due)),
+            patch("src.backlog.list_due_dreams", query),
             patch("src.backlog.enqueue_dream", enqueue),
         ):
-            await poller.refresh()
+            await poller.poll()
 
+        assert poller.dreams_due == 2
+        assert query.await_args is not None
+        assert query.await_args.kwargs["sweep"] != []
         assert enqueue.await_count == 2
         first_call = enqueue.await_args_list[0]
         assert first_call.args == (due[0].workspace_name,)
@@ -195,76 +223,126 @@ class TestPoller:
         assert first_call.kwargs["dream_type"] == due[0].dream_type
         assert first_call.kwargs["session_name"] == due[0].session_name
 
-    async def test_api_scheduler_does_not_reenqueue_from_the_cached_list(
-        self, monkeypatch: pytest.MonkeyPatch
-    ):
-        monkeypatch.setattr(settings.DERIVER, "SCHEDULER", "api")
-        stats = schemas.DeriverMetrics()
-        poller = DeriverMetricsPoller()
+    async def test_a_replica_without_the_lease_polls_nothing_and_reports_zero(self):
+        poller = _dream_poller(lease=_FakeLease(held=False))
+        poller._due_dreams = _due_dreams(3)  # pyright: ignore[reportPrivateUsage]
+        query = AsyncMock(return_value=_due_dreams(1))
         enqueue = AsyncMock()
 
         with (
-            patch(
-                "src.backlog.crud.get_deriver_metrics",
-                AsyncMock(return_value=stats),
-            ),
-            patch(
-                "src.backlog.list_due_dreams",
-                AsyncMock(return_value=_due_dreams(1)),
-            ),
+            patch("src.backlog.list_due_dreams", query),
             patch("src.backlog.enqueue_dream", enqueue),
         ):
-            await poller.refresh()
-            await poller.refresh()
+            await poller.poll()
 
-        assert enqueue.await_count == 1
+        assert query.await_count == 0
+        assert enqueue.await_count == 0
+        assert poller.dreams_due == 0
 
-    async def test_deriver_scheduler_enqueues_nothing(
+    async def test_deriver_scheduler_measures_without_a_sweep_and_enqueues_nothing(
+        self,
+    ):
+        poller = _dream_poller(lease=None)
+        query = AsyncMock(return_value=_due_dreams(1))
+        enqueue = AsyncMock()
+
+        with (
+            patch("src.backlog.list_due_dreams", query),
+            patch("src.backlog.enqueue_dream", enqueue),
+        ):
+            await poller.poll()
+
+        assert enqueue.await_count == 0
+        assert poller.dreams_due == 1
+        assert query.await_args is not None
+        assert query.await_args.kwargs["sweep"] == []
+
+    async def test_the_lease_is_only_built_for_the_api_scheduler(
         self, monkeypatch: pytest.MonkeyPatch
     ):
         monkeypatch.setattr(settings.DERIVER, "SCHEDULER", "deriver")
-        stats = schemas.DeriverMetrics()
-        poller = DeriverMetricsPoller()
-        enqueue = AsyncMock()
-
-        with (
-            patch(
-                "src.backlog.crud.get_deriver_metrics",
-                AsyncMock(return_value=stats),
-            ),
-            patch(
-                "src.backlog.list_due_dreams",
-                AsyncMock(return_value=_due_dreams(1)),
-            ),
-            patch("src.backlog.enqueue_dream", enqueue),
-        ):
-            await poller.refresh()
-
-        assert enqueue.await_count == 0
-        assert poller.snapshot.dreams_due == 1
-
-    async def test_one_failed_enqueue_does_not_stop_the_rest(
-        self, monkeypatch: pytest.MonkeyPatch
-    ):
+        assert DreamDuePoller()._lease is None  # pyright: ignore[reportPrivateUsage]
         monkeypatch.setattr(settings.DERIVER, "SCHEDULER", "api")
-        stats = schemas.DeriverMetrics()
-        poller = DeriverMetricsPoller()
+        assert DreamDuePoller()._lease is not None  # pyright: ignore[reportPrivateUsage]
+
+    async def test_one_failed_enqueue_does_not_stop_the_rest(self):
+        poller = _dream_poller(lease=_FakeLease(held=True))
         enqueue = AsyncMock(side_effect=[RuntimeError("db down"), None])
 
         with (
             patch(
-                "src.backlog.crud.get_deriver_metrics",
-                AsyncMock(return_value=stats),
-            ),
-            patch(
-                "src.backlog.list_due_dreams",
-                AsyncMock(return_value=_due_dreams(2)),
+                "src.backlog.list_due_dreams", AsyncMock(return_value=_due_dreams(2))
             ),
             patch("src.backlog.enqueue_dream", enqueue),
         ):
-            await poller.refresh()
+            await poller.poll()
 
         assert enqueue.await_count == 2
+
+    async def test_the_next_poll_catches_up_on_ticks_it_missed(self):
+        poller = _dream_poller(lease=_FakeLease(held=True))
+        query = AsyncMock(return_value=[])
+        interval = settings.DREAM.DUE_POLL_INTERVAL_SECONDS
+
+        with (
+            patch("src.backlog.list_due_dreams", query),
+            patch("src.backlog.time.time", return_value=interval * 10 + 5),
+        ):
+            await poller.poll()
+        with (
+            patch("src.backlog.list_due_dreams", query),
+            patch("src.backlog.time.time", return_value=interval * 12 + 5),
+        ):
+            await poller.poll()
+
+        first, second = (call.kwargs["sweep"] for call in query.await_args_list)
+        assert first == sweep_slots_for_ticks([10])
+        assert second == sweep_slots_for_ticks([11, 12])
+
+    async def test_sweep_finds_past_the_cap_are_rechecked_next_poll(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setattr(settings.DREAM, "MAX_ENQUEUED_PER_POLL", 1)
+        poller = _dream_poller(lease=_FakeLease(held=True))
+        swept = [d._replace(found_by_sweep=True) for d in _due_dreams(3)]
+        query = AsyncMock(side_effect=[swept, []])
+
+        with (
+            patch("src.backlog.list_due_dreams", query),
+            patch("src.backlog.enqueue_dream", AsyncMock()),
+        ):
+            await poller.poll()
+            await poller.poll()
+
+        assert query.await_args is not None
+        assert query.await_args.kwargs["revisit"] == [
+            (d.tenant_id, d.workspace_name, d.observer, d.observed) for d in swept[1:]
+        ]
+
+    async def test_shutdown_releases_the_lease(self):
+        lease = _FakeLease(held=True)
+        poller = _dream_poller(lease=lease)
+
+        await poller.shutdown()
+
+        assert lease.released
+
+
+def test_the_poll_wakes_just_past_the_next_tick_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(settings.DREAM, "DUE_POLL_INTERVAL_SECONDS", 300)
+    # A poll that took 4 s still wakes at the next boundary, not 300 s later.
+    assert seconds_to_next_tick(300 * 7 + 4) == 296 + 1
+    assert sweep_tick_at(300 * 7 + 4 + seconds_to_next_tick(300 * 7 + 4)) == 8
+
+
+def test_ticks_to_sweep_catches_up_a_bounded_number_of_ticks():
+    assert list(ticks_to_sweep(None, 20)) == [20]
+    assert list(ticks_to_sweep(19, 20)) == [20]
+    assert list(ticks_to_sweep(20, 20)) == []
+    assert list(ticks_to_sweep(17, 20)) == [18, 19, 20]
+    assert list(ticks_to_sweep(5, 20)) == [18, 19, 20]
 
 
 @pytest.mark.asyncio

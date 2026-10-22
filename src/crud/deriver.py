@@ -390,6 +390,7 @@ async def cleanup_stale_work_units(db: AsyncSession) -> None:
 
 async def get_deriver_metrics(db: AsyncSession) -> schemas.DeriverMetrics:
     """Count the outstanding deriver work in the whole database, read-only."""
+    from src.reconciler import gauge_counts  # noqa: PLC0415
     from src.reconciler.sync_vectors import backoff_eligible  # noqa: PLC0415
 
     # region ai
@@ -466,18 +467,15 @@ async def get_deriver_metrics(db: AsyncSession) -> schemas.DeriverMetrics:
     if claimable_tenant_clause is not None:
         pending = pending.where(claimable_tenant_clause)
 
-    embeddings = select(
-        func.count(),
-        func.coalesce(
-            func.sum(
-                case(
-                    (backoff_eligible(models.MessageEmbedding.last_sync_at), 1),
-                    else_=0,
-                )
-            ),
-            0,
-        ),
-    ).where(models.MessageEmbedding.sync_state == "pending")
+    # region ai
+    # Every API replica runs this pass every 30 s, and the embeddings backlog is
+    # largest exactly when the embedder is down, so both counts stop at
+    # GAUGE_COUNT_CAP (the reconciler's gauges do the same). KEDA's
+    # embeddings_pending_due trigger compares against a target far below it.
+    # endregion
+    pending_embeddings = select(models.MessageEmbedding.id).where(
+        models.MessageEmbedding.sync_state == "pending"
+    )
 
     eligible_count = (await db.execute(eligible)).scalar_one()
     excluded_by_tenant: dict[str, int] = (
@@ -503,7 +501,17 @@ async def get_deriver_metrics(db: AsyncSession) -> schemas.DeriverMetrics:
             )
         }
     pending_count, oldest_age = (await db.execute(pending)).one()
-    embeddings_pending, embeddings_due = (await db.execute(embeddings)).one()
+    cap = gauge_counts.GAUGE_COUNT_CAP
+    embeddings_pending, embeddings_capped = await gauge_counts.capped_count(
+        db, pending_embeddings, cap
+    )
+    embeddings_due, _ = await gauge_counts.capped_count(
+        db,
+        pending_embeddings.where(
+            backoff_eligible(models.MessageEmbedding.last_sync_at)
+        ),
+        cap,
+    )
 
     return schemas.DeriverMetrics(
         eligible_work_units=int(eligible_count),
@@ -514,8 +522,9 @@ async def get_deriver_metrics(db: AsyncSession) -> schemas.DeriverMetrics:
         inflight_units_by_tenant=inflight_by_tenant,
         pending_items=int(pending_count),
         oldest_pending_age_seconds=float(oldest_age),
-        embeddings_pending=int(embeddings_pending),
-        embeddings_pending_due=int(embeddings_due),
+        embeddings_pending=embeddings_pending,
+        embeddings_pending_capped=embeddings_capped,
+        embeddings_pending_due=embeddings_due,
     )
 
 

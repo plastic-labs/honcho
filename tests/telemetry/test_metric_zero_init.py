@@ -400,6 +400,20 @@ def test_backfill_pending_zero_init_follows_scheduler(
         assert sample("backfill_pending", task=name) == expected
 
 
+@pytest.mark.usefixtures("metrics_enabled")
+@pytest.mark.parametrize("scheduler", ["api", "deriver"])
+def test_dream_due_lease_metrics_zero_init_only_under_the_api_scheduler(
+    monkeypatch: pytest.MonkeyPatch, scheduler: str
+):
+    """Only the api scheduler takes the lease and sweeps."""
+    monkeypatch.setattr("src.config.settings.DERIVER.SCHEDULER", scheduler)
+    prometheus_metrics.initialize_bounded_metrics(instance_type="api")
+    lease = 0.0 if scheduler == "api" else None
+    assert sample("scheduler_lease_held", lease="dream_due") == lease
+    assert sample("dream_due_sweep_found_total") == lease
+    assert sample("message_embeddings_pending_capped") == 0.0
+
+
 # ---------------------------------------------------------------------------
 # telemetry_events_dropped: per-emitter child materialization
 # ---------------------------------------------------------------------------
