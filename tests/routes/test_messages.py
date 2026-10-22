@@ -1150,6 +1150,27 @@ async def test_create_messages_with_file_too_large(
 
 
 @pytest.mark.asyncio
+async def test_upload_malformed_pdf_returns_422(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    """A truncated or garbage PDF is a bad upload (422), not a server error."""
+    test_workspace, test_peer = sample_data
+    test_session = models.Session(
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
+    )
+    db_session.add(test_session)
+    await db_session.commit()
+
+    for payload in (b"", b"not a pdf", b"%PDF-1.4\n"):
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages/upload",
+            files={"file": ("a.pdf", payload, "application/pdf")},
+            data={"peer_id": test_peer.name},
+        )
+        assert response.status_code == 422, payload
+
+
+@pytest.mark.asyncio
 async def test_create_message_with_timestamp(
     client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
 ):

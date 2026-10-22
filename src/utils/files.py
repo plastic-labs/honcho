@@ -1,5 +1,6 @@
 import datetime
 import logging
+import zlib
 from io import BytesIO
 from typing import Any, Protocol
 
@@ -31,13 +32,29 @@ class PDFProcessor:
 
     async def extract_text(self, content: bytes) -> str:
         from pypdf import PdfReader
+        from pypdf.errors import PyPdfError
 
-        reader = PdfReader(BytesIO(content))
         text_parts: list[str] = []
-        for page_num, page in enumerate(reader.pages):
-            text = page.extract_text()
-            if text and text.strip():
-                text_parts.append(f"[Page {page_num + 1}]\n{text}")
+        try:
+            reader = PdfReader(BytesIO(content))
+            for page_num, page in enumerate(reader.pages):
+                text = page.extract_text()
+                if text and text.strip():
+                    text_parts.append(f"[Page {page_num + 1}]\n{text}")
+        except (
+            PyPdfError,
+            zlib.error,
+            ValueError,
+            KeyError,
+            IndexError,
+            TypeError,
+            AttributeError,
+            OverflowError,
+            RecursionError,
+        ) as exc:
+            # pypdf surfaces malformed input as a mix of its own errors and
+            # builtin parse failures; all of them mean the upload is bad.
+            raise ValidationException("Uploaded PDF could not be read") from exc
         return "\n\n".join(text_parts)
 
 

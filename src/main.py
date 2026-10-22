@@ -291,10 +291,18 @@ async def internal_validation_exception_handler(
 # column type, and a `\u0000` escape in JSONB.
 _INPUT_DATA_SQLSTATES = {"22003", "22P05"}
 
+# A lone surrogate escape inside a JSONB value (free-form metadata or
+# configuration) is 22P02, a SQLSTATE that also covers server-side bugs such as
+# a bad cast, so only the surrogate message is treated as caller input.
+_JSON_SURROGATE_SQLSTATE = "22P02"
+
 
 def _is_input_data_error(exc: DataError) -> bool:
     orig = exc.orig
-    if getattr(orig, "sqlstate", None) in _INPUT_DATA_SQLSTATES:
+    sqlstate = getattr(orig, "sqlstate", None)
+    if sqlstate in _INPUT_DATA_SQLSTATES:
+        return True
+    if sqlstate == _JSON_SURROGATE_SQLSTATE and "surrogate" in str(orig):
         return True
     # psycopg rejects NUL in text parameters client-side, without a SQLSTATE
     return isinstance(orig, psycopg.DataError) and "NUL (0x00)" in str(orig)

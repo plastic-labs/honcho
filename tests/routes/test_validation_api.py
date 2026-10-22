@@ -290,3 +290,14 @@ def test_nul_in_id_filter_returns_422(
 def test_page_beyond_bigint_offset_returns_422(client: TestClient):
     response = client.post("/v3/workspaces/list", params={"page": 2**62}, json={})
     assert response.status_code == 422
+
+
+def test_lone_surrogate_in_free_form_json_returns_422(client: TestClient):
+    # Pydantic accepts the surrogate inside an Any-typed dict; Postgres JSONB
+    # then rejects it, which must surface as a 422 rather than a 500.
+    response = client.post(
+        "/v3/workspaces",
+        content=b'{"id": "surrogate-ws", "metadata": {"k": "\\ud800"}}',
+        headers={"content-type": "application/json"},
+    )
+    assert response.status_code == 422
