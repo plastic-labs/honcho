@@ -3,15 +3,20 @@ from __future__ import annotations
 import copy
 import json
 import logging
-import re
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import Any, cast
 
-from anthropic.types import TextBlock, ThinkingBlock, ToolUseBlock
+from anthropic.types import (
+    RedactedThinkingBlock,
+    TextBlock,
+    ThinkingBlock,
+    ToolUseBlock,
+)
 from pydantic import BaseModel, ValidationError
 
 from src.exceptions import ValidationException
 from src.llm.backend import CompletionResult, StreamChunk, ToolCallResult
+from src.llm.capabilities import anthropic_capabilities
 from src.llm.request_builder import (
     apply_sdk_passthroughs,
     request_timeout_from_extra_params,
@@ -26,7 +31,16 @@ from src.llm.structured_output import (
 
 logger = logging.getLogger(__name__)
 
-_CLAUDE_MODERN_MODEL = re.compile(r"claude-[a-z]+-(\d+)")
+# output_config.effort levels. Honcho's "minimal" has no Anthropic equivalent
+# and maps to the lowest one; "none" can't turn thinking off on adaptive
+# models, so it sends no effort.
+_ANTHROPIC_EFFORTS = frozenset({"low", "medium", "high", "xhigh", "max"})
+
+
+def _anthropic_effort(thinking_effort: str | None) -> str | None:
+    if thinking_effort == "minimal":
+        return "low"
+    return thinking_effort if thinking_effort in _ANTHROPIC_EFFORTS else None
 
 
 class AnthropicBackend:
@@ -51,7 +65,7 @@ class AnthropicBackend:
         max_output_tokens: int | None = None,
         extra_params: dict[str, Any] | None = None,
     ) -> CompletionResult:
-        del max_output_tokens, thinking_effort
+        del max_output_tokens
 
         request_messages, system_messages = self._extract_system(messages)
         params: dict[str, Any] = {
@@ -77,7 +91,6 @@ class AnthropicBackend:
             converted_tool_choice = self._convert_tool_choice(tool_choice)
             if converted_tool_choice is not None:
                 params["tool_choice"] = converted_tool_choice
-        self._apply_thinking(params, model, thinking_budget_tokens, extra_params)
         if extra_params:
             for key in ("top_p", "top_k"):
                 if key in extra_params:
@@ -85,6 +98,9 @@ class AnthropicBackend:
             # Operator escape hatch: forward Anthropic SDK passthrough kwargs
             # from ModelConfig.provider_params. Shallow merge with operator-wins.
             apply_sdk_passthroughs(params, extra_params)
+        self._apply_thinking(
+            params, model, thinking_budget_tokens, thinking_effort, extra_params
+        )
 
         timeout = request_timeout_from_extra_params(extra_params)
         if timeout is not None:
@@ -109,9 +125,8 @@ class AnthropicBackend:
         elif (
             response_format and isinstance(response_format, type) and params["messages"]
         ):
-            self._append_text_to_last_message(
-                params["messages"],
-                schema_instruction(response_format, tools_present=bool(tools)),
+            self._add_schema_instruction(
+                params, schema_instruction(response_format, tools_present=bool(tools))
             )
 
         response = await self._client.messages.create(**params)
@@ -141,7 +156,7 @@ class AnthropicBackend:
         extra_params: dict[str, Any] | None = None,
     ) -> AsyncIterator[StreamChunk]:
         is_json_mode = self._json_mode(extra_params)
-        del max_output_tokens, thinking_effort
+        del max_output_tokens
 
         request_messages, system_messages = self._extract_system(messages)
         params: dict[str, Any] = {
@@ -196,11 +211,12 @@ class AnthropicBackend:
         elif (
             response_format and isinstance(response_format, type) and params["messages"]
         ):
-            self._append_text_to_last_message(
-                params["messages"],
-                schema_instruction(response_format, tools_present=bool(tools)),
+            self._add_schema_instruction(
+                params, schema_instruction(response_format, tools_present=bool(tools))
             )
-        self._apply_thinking(params, model, thinking_budget_tokens, extra_params)
+        self._apply_thinking(
+            params, model, thinking_budget_tokens, thinking_effort, extra_params
+        )
 
         async with self._client.messages.stream(**params) as stream:
             async for chunk in stream:
@@ -245,6 +261,11 @@ class AnthropicBackend:
                         "thinking": block.thinking,
                         "signature": block.signature,
                     }
+                )
+            elif isinstance(block, RedactedThinkingBlock):
+                # No readable text, but it must be replayed with the turn.
+                thinking_full_blocks.append(
+                    {"type": "redacted_thinking", "data": block.data}
                 )
             elif isinstance(block, ToolUseBlock):
                 tool_calls.append(
@@ -306,18 +327,50 @@ class AnthropicBackend:
         params: dict[str, Any],
         model: str,
         thinking_budget_tokens: int | None,
+        thinking_effort: str | None,
         extra_params: dict[str, Any] | None,
     ) -> None:
-        """First message to certain models can't force thinking and ask for tool, so we leave
-        the resolution up to the caller.
+        """Configure thinking for `model` and reconcile it with tool_choice.
+
+        Runs after the provider_params passthroughs, so a `thinking` supplied
+        through `extra_body` counts as requested thinking too.
+
+        A budget model gets `{"type": "enabled", "budget_tokens": N}`. An
+        adaptive model gets `{"type": "adaptive"}` when thinking is requested,
+        plus `output_config.effort` from `thinking_effort`; it rejects a
+        budget, so the budget only switches thinking on. A forced tool_choice
+        either conflicts with thinking (older models: resolved by the
+        `thinking_tool_choice_conflict` mode), is accepted, or is rejected
+        outright, in which case it is relaxed to `auto`.
 
         https://platform.claude.com/docs/en/build-with-claude/thinking#thinking-with-tool-use
         """
-
-        if not thinking_budget_tokens:
-            return
+        caps = anthropic_capabilities(model)
         tool_choice = params.get("tool_choice")
-        if tool_choice is not None and tool_choice.get("type") in {"any", "tool"}:
+        forced = tool_choice is not None and tool_choice.get("type") in {"any", "tool"}
+
+        if forced and caps.forced_tool_choice == "rejected":
+            logger.warning(
+                "Relaxing tool_choice %s to auto: model %s rejects forced tool use",
+                tool_choice,
+                model,
+            )
+            params["tool_choice"] = {"type": "auto"}
+            forced = False
+
+        effort = (
+            _anthropic_effort(thinking_effort) if caps.thinking == "adaptive" else None
+        )
+        extra_body: dict[str, Any] = params.get("extra_body") or {}
+        operator_thinking_config = extra_body.get("thinking")
+        operator_thinking = (
+            isinstance(operator_thinking_config, dict)
+            and cast(dict[str, Any], operator_thinking_config).get("type") != "disabled"
+        )
+        if not (thinking_budget_tokens or effort or operator_thinking):
+            return
+
+        if forced and caps.forced_tool_choice == "conflicts_with_thinking":
             mode = thinking_tool_choice_conflict_mode(extra_params, "throw")
             conflict = f"model {model}: tool_choice {tool_choice} forces tool use, "
             conflict += "which Anthropic does not allow alongside extended thinking"
@@ -328,19 +381,57 @@ class AnthropicBackend:
                 params["tool_choice"] = {"type": "auto"}
             else:
                 logger.warning("Dropping extended thinking for %s", conflict)
+                if operator_thinking:
+                    remaining = {k: v for k, v in extra_body.items() if k != "thinking"}
+                    if remaining:
+                        params["extra_body"] = remaining
+                    else:
+                        params.pop("extra_body")
                 return
-        params["thinking"] = {
-            "type": "enabled",
-            "budget_tokens": thinking_budget_tokens,
-        }
+
+        if operator_thinking:
+            # extra_body.thinking replaces whatever Honcho would send.
+            return
+        if caps.thinking == "budget":
+            if thinking_budget_tokens:
+                params["thinking"] = {
+                    "type": "enabled",
+                    "budget_tokens": thinking_budget_tokens,
+                }
+            return
+        params["thinking"] = {"type": "adaptive"}
+        if effort:
+            params["output_config"] = {"effort": effort}
 
     @staticmethod
     def _supports_assistant_prefill(model: str) -> bool:
-        # Claude 4-class and newer models (claude-<family>-<major>, major >= 4)
-        # reject assistant-prefill and require the conversation to end with a
-        # user message. Claude 3 names (claude-3-...) don't match and keep it.
-        match = _CLAUDE_MODERN_MODEL.match(model)
-        return not (match and int(match.group(1)) >= 4)
+        return anthropic_capabilities(model).supports_prefill
+
+    @classmethod
+    def _add_schema_instruction(cls, params: dict[str, Any], instruction: str) -> None:
+        """Add the response-schema instruction to the request.
+
+        With tools, the request is one round of a tool loop that sends the same
+        history again next round, so the instruction goes into the system
+        prompt, which stays the same every round. Suffixed onto the last
+        message instead, it would vanish from that message on the next round
+        and change the prefix that replayed thinking blocks are bound to.
+        Without tools, it is appended to the last message.
+        """
+        if not params.get("tools"):
+            cls._append_text_to_last_message(params["messages"], instruction)
+            return
+        system = params.get("system")
+        if system:
+            system[-1]["text"] = f"{system[-1]['text']}\n\n{instruction}"
+        else:
+            params["system"] = [
+                {
+                    "type": "text",
+                    "text": instruction,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ]
 
     @staticmethod
     def _extract_system(
