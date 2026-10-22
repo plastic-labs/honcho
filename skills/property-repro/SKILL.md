@@ -18,8 +18,11 @@ fail on the reported input, then fix the cause.
 | `test_api_no_server_errors.py` | Schemathesis: every operation, from the app's own OpenAPI schema, in positive and negative mode. Path and body IDs point at seeded resources (`seeded_ids`) most of the time. | The report is one request. |
 | `test_api_inputs.py` | Hand-written strategies for what the schema doesn't describe: multipart uploads, the filter DSL, odd JSON in metadata/configuration, store-then-read round trips. | The input is a file, a filter, or a JSON value. |
 | `test_api_stateful.py` | A `RuleBasedStateMachine` over workspaces, peers, sessions, messages, conclusions, including use after delete. | The bug needs a history ("after I deleted the session…"). |
+| `test_api_auth.py` | The per-operation fuzzer with auth on and a random token per request (none, forged, expired, admin, workspace/peer/session/named-scope keys across two workspaces), checked against an oracle built from the route policy. | The report involves a scoped key, a 401/403, or data visible to the wrong caller. |
 
-All of them use `fuzz_client` (one DB session per request, as in production)
+They are skipped unless pytest gets `--fuzz` (CI passes it; the pre-push hook
+doesn't, to keep it fast), so every command below includes it. All but the
+auth fuzzer use `fuzz_client` (one DB session per request, as in production)
 from `tests/property/conftest.py`.
 
 ## Workflow
@@ -29,7 +32,7 @@ from `tests/property/conftest.py`.
 
    ```bash
    HONCHO_FUZZ_EXAMPLES=1000 uv run pytest tests/property/test_api_no_server_errors.py \
-     -k "sessions/{session_id}/messages and POST" -n 0 -p no:cacheprovider \
+     --fuzz -k "sessions/{session_id}/messages and POST" -n 0 -p no:cacheprovider \
      --tb=line --show-capture=no
    ```
 
@@ -39,7 +42,7 @@ from `tests/property/conftest.py`.
    only ever gets 404/422 is only being fuzzed on its error paths:
 
    ```bash
-   HONCHO_FUZZ_STATS=/tmp/stats.txt uv run pytest tests/property/test_api_no_server_errors.py
+   HONCHO_FUZZ_STATS=/tmp/stats.txt uv run pytest --fuzz tests/property/test_api_no_server_errors.py
    awk '{k=$1" "$2" "$3; t[k]++; if ($4<300) ok[k]++} END {for (k in t) if (!ok[k]) print k}' /tmp/stats.txt
    ```
 
