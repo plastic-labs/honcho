@@ -77,6 +77,9 @@ dev = [
 
 [tool.uv]
 exclude-newer = "5 days"
+# certifi is the CA bundle: trust-store fixes (e.g. the Oct 2026 emSign distrust)
+# must not wait out the exclude-newer cooldown.
+exclude-newer-package = { certifi = false }
 
 [tool.uv.workspace]
 members = [
