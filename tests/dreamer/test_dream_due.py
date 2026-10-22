@@ -1,10 +1,12 @@
 """Tests for the read-only count of collections whose next dream is due."""
 
 import datetime
+from typing import Any
 from unittest.mock import patch
 
 import pytest
 from nanoid import generate as generate_nanoid
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
@@ -513,3 +515,228 @@ class TestMultiTenantDueDreams:
         assert due_dream.observer == peer_name
         assert due_dream.observed == peer_name
         assert all(d.tenant_id != "tenant-a" for d in due)
+
+
+async def _collection_slot(db_session: AsyncSession, slots: int) -> int:
+    from src.dreamer.dream_due import collection_sweep_slot
+
+    slot = await db_session.scalar(select(collection_sweep_slot(slots)))
+    assert slot is not None
+    return int(slot)
+
+
+@pytest.mark.asyncio
+class TestLookbackAndSweep:
+    """The window sees collections with a recent explicit document; the sweep
+    revisits every collection once per DUE_SWEEP_HOURS."""
+
+    async def test_an_idle_collection_inside_the_lookback_is_due(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        collection = await _make_collection(db_session, sample_data)
+        await _insert_docs(db_session, collection, "explicit", 60, age_minutes=23 * 60)
+
+        assert await count_due_dreams(db_session) == 1
+
+    async def test_a_due_collection_outside_the_lookback_is_found_only_by_its_slot(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        from src.dreamer.dream_due import list_due_dreams, sweep_slots
+
+        collection = await _make_collection(db_session, sample_data)
+        await _insert_docs(db_session, collection, "explicit", 60, age_minutes=30 * 60)
+        slots = sweep_slots()
+        slot = await _collection_slot(db_session, slots)
+
+        assert await count_due_dreams(db_session) == 0
+        (due,) = await list_due_dreams(db_session, sweep_slot=slot)
+        assert due.found_by_sweep
+        assert due.observer == collection.observer
+        assert await list_due_dreams(db_session, sweep_slot=(slot + 1) % slots) == []
+
+    async def test_the_sweep_applies_the_same_rule(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """Below the threshold, gated by min-hours, or dreams off: the sweep finds nothing."""
+        from src.dreamer.dream_due import list_due_dreams, sweep_slots
+
+        last_dream_at = (_now() - datetime.timedelta(hours=2)).isoformat()
+        collection = await _make_collection(
+            db_session, sample_data, {"dream": {"last_dream_at": last_dream_at}}
+        )
+        await _insert_docs(db_session, collection, "explicit", 60, age_minutes=30 * 60)
+        slot = await _collection_slot(db_session, sweep_slots())
+
+        assert await list_due_dreams(db_session, sweep_slot=slot) == []
+
+    async def test_a_window_candidate_is_not_reported_twice(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        from src.dreamer.dream_due import list_due_dreams, sweep_slots
+
+        collection = await _make_collection(db_session, sample_data)
+        await _insert_docs(db_session, collection, "explicit", 60, age_minutes=90)
+        slot = await _collection_slot(db_session, sweep_slots())
+
+        (due,) = await list_due_dreams(db_session, sweep_slot=slot)
+        assert not due.found_by_sweep
+
+    async def test_the_count_is_capped_at_what_the_rule_needs(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """last_dream_document_count + threshold documents is enough, and exactly that many is due."""
+        collection = await _make_collection(
+            db_session, sample_data, {"dream": {"last_dream_document_count": 10}}
+        )
+        await _insert_docs(db_session, collection, "explicit", 59, age_minutes=90)
+        assert await count_due_dreams(db_session) == 0
+
+        await _insert_docs(db_session, collection, "explicit", 1, age_minutes=90)
+        assert await count_due_dreams(db_session) == 1
+
+    async def test_due_dreams_come_back_oldest_newest_document_first(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        from src.dreamer.dream_due import list_due_dreams
+
+        workspace, _peer = sample_data
+        newer = await _make_collection(db_session, sample_data)
+        other_peer = models.Peer(
+            name=f"p-{generate_nanoid()}", workspace_name=workspace.name
+        )
+        db_session.add(other_peer)
+        await db_session.commit()
+        older = models.Collection(
+            observer=other_peer.name,
+            observed=other_peer.name,
+            workspace_name=workspace.name,
+            internal_metadata={},
+        )
+        db_session.add(older)
+        await db_session.commit()
+        await _insert_docs(db_session, newer, "explicit", 60, age_minutes=90)
+        await _insert_docs(db_session, older, "explicit", 60, age_minutes=300)
+
+        due = await list_due_dreams(db_session)
+
+        assert [d.observer for d in due] == [older.observer, newer.observer]
+
+
+def test_sweep_slot_follows_the_poll_clock(monkeypatch: pytest.MonkeyPatch):
+    from src.dreamer.dream_due import sweep_slot_at, sweep_slots
+
+    monkeypatch.setattr(settings.DREAM, "DUE_POLL_INTERVAL_SECONDS", 300)
+    monkeypatch.setattr(settings.DREAM, "DUE_SWEEP_HOURS", 24)
+    assert sweep_slots() == 288
+    assert sweep_slot_at(0) == 0
+    assert sweep_slot_at(299) == 0
+    assert sweep_slot_at(300 * 290) == 2
+
+    monkeypatch.setattr(settings.DREAM, "DUE_SWEEP_HOURS", 0)
+    assert sweep_slots() == 0
+    assert sweep_slot_at(1234) is None
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"DUE_LOOKBACK_HOURS": 8}, "DUE_LOOKBACK_HOURS"),
+        ({"DUE_SWEEP_HOURS": 1, "DUE_POLL_INTERVAL_SECONDS": 7200}, "DUE_SWEEP_HOURS"),
+    ],
+)
+def test_dream_settings_refuse_a_window_shorter_than_the_gates(
+    overrides: dict[str, int], message: str
+):
+    from pydantic import ValidationError
+
+    from src.config import DreamSettings
+
+    with pytest.raises(ValidationError, match=message):
+        DreamSettings(**overrides)  # pyright: ignore[reportArgumentType]
+
+
+@pytest.mark.asyncio
+class TestParityWithTheFullScan:
+    """Inside the lookback, the window returns what the full scan returned."""
+
+    async def test_same_due_set_as_the_full_scan(
+        self,
+        db_session: AsyncSession,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        from src.dreamer.dream_due import list_due_dreams
+        from tests.dreamer._legacy_dream_due import legacy_list_due_dreams
+
+        monkeypatch.setattr(settings, "MULTI_TENANT", True)
+        # (tenant, docs, age_minutes, metadata, workspace dream.enabled)
+        states: list[tuple[str, int, int, dict[str, object], bool]] = [
+            ("p-due", 60, 90, {}, True),
+            ("p-below", 30, 90, {}, True),
+            ("p-busy", 60, 10, {}, True),
+            (
+                "p-gated",
+                60,
+                90,
+                {
+                    "dream": {
+                        "last_dream_at": (
+                            _now() - datetime.timedelta(hours=2)
+                        ).isoformat()
+                    }
+                },
+                True,
+            ),
+            ("p-stored", 60, 90, {"dream": {"last_dream_document_count": 40}}, True),
+            ("p-disabled", 60, 90, {}, False),
+            ("p-due-2", 55, 200, {}, True),
+        ]
+        for tenant, docs, age, metadata, enabled in states:
+            tenant_id = f"{tenant}-{generate_nanoid(size=6)}"
+            await _seed_tenant_collection(
+                db_session, tenant_id=tenant_id, workspace_name="ws", peer_name="peer"
+            )
+            workspace = await db_session.scalar(
+                select(models.Workspace).where(models.Workspace.tenant_id == tenant_id)
+            )
+            assert workspace is not None
+            workspace.configuration = {"dream": {"enabled": enabled}}
+            collection = await db_session.scalar(
+                select(models.Collection).where(
+                    models.Collection.tenant_id == tenant_id
+                )
+            )
+            assert collection is not None
+            collection.internal_metadata = metadata
+            await db_session.commit()
+            await _seed_tenant_docs(
+                db_session,
+                tenant_id=tenant_id,
+                workspace_name="ws",
+                peer_name="peer",
+                count=docs,
+                age_minutes=age,
+            )
+
+        def keys(due: list[Any]) -> set[tuple[str, str, str, str, str]]:
+            return {
+                (d.tenant_id, d.workspace_name, d.observer, d.observed, d.session_name)
+                for d in due
+            }
+
+        new = keys(await list_due_dreams(db_session))
+        old = keys(await legacy_list_due_dreams(db_session))
+
+        assert new == old
+        assert {key[0].rsplit("-", 1)[0] for key in new} == {"p-due", "p-due-2"}
