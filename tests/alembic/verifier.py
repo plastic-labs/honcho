@@ -107,6 +107,23 @@ class MigrationVerifier:
                 f"Index {index_name} not found on {table_name} after migration {self.revision}"
             )
 
+    def assert_indexes_valid(self, checks: Sequence[tuple[str, str]]) -> None:
+        """Assert that indexes exist and are valid (indisvalid), not left by a stopped build"""
+        for table_name, index_name in checks:
+            valid = self.conn.scalar(
+                text(
+                    "SELECT i.indisvalid FROM pg_index i"
+                    + " JOIN pg_class c ON c.oid = i.indexrelid"
+                    + " JOIN pg_namespace n ON n.oid = c.relnamespace"
+                    + " WHERE c.relname = :name AND n.nspname = :schema"
+                ),
+                {"name": index_name, "schema": self.schema},
+            )
+            assert valid is True, (
+                f"Index {index_name} on {table_name} is {'missing' if valid is None else 'INVALID'}"
+                + f" after migration {self.revision}"
+            )
+
     def assert_indexes_not_exist(self, checks: Sequence[tuple[str, str]]) -> None:
         """Assert that indexes do not exist in the schema"""
         for table_name, index_name in checks:

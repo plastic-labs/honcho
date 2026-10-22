@@ -10,11 +10,11 @@ from tests.alembic.verifier import MigrationVerifier
 def prepare_merge_main_s_messages_trigram_index_into(
     _verifier: MigrationVerifier,
 ) -> None:
-    """Merge revision with no schema change; nothing to seed."""
+    """A merge revision: no schema change, nothing to seed."""
 
 
 @register_after_upgrade("c075274557cd")
 def verify_merge_main_s_messages_trigram_index_into(
     _verifier: MigrationVerifier,
 ) -> None:
-    """Merge revision with no schema change; nothing to verify."""
+    """A merge revision: no schema change to check."""

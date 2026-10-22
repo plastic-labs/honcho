@@ -175,12 +175,13 @@ def queue_item_tenant_match() -> ColumnElement[bool] | None:
     # workspace_name or message_id: workspace_name is only unique per tenant
     # (every tenant has a "default" workspace) and message ids are drawn from
     # one global sequence, so either can collide across tenants. tenant_id
-    # does not — the queue_item_batches backfill (migration b7d2f4a81c39,
-    # the `UPDATE {schema}.queue SET tenant_id = split_part(work_unit_key,
-    # ':', 1) ...` step) derived it from the work_unit_key's tenant prefix for
-    # every row that predated the column, and every tenant-bound writer since
+    # does not. No migration backfills it (e5fe7f8bcf62 adds the column
+    # nullable, unfilled); it holds because every tenant-bound writer
     # (src/deriver/enqueue.py's _stamp_tenant_id, the reconciler scheduler,
-    # webhooks/events.py) sets it explicitly on insert. Rows with tenant_id
+    # webhooks/events.py) sets it on insert, and any row that predates the
+    # column was written flag-off (flag-on needs the column). If an undrained
+    # flag-off queue is switched flag-on, those NULL rows are skipped here,
+    # never misattributed. Rows with tenant_id
     # IS NULL flag-on are the tenant-less reconciler lane (workspace_name is
     # NULL there too, per the workspace_null_iff_reconciler check) and are
     # left alone here, exactly as active_queue_session_match above leaves
@@ -241,13 +242,33 @@ def claim_rows_query(limit: int) -> Select[Any]:
     # endregion
     # The concurrency each tenant already holds. Sized by the fleet's live
     # workers, not by queue depth, so it stays a small aggregate.
+    # region ai
+    # Group and join on a COALESCEd key rather than joining with
+    # IS NOT DISTINCT FROM. tenant_id is nullable (the tenant-less reconciler
+    # lane), and IS NOT DISTINCT FROM is not a hashable join condition, so the
+    # planner can only serve it with a Nested Loop over a Materialize -- one pass
+    # over the whole inflight set for EVERY eligible row, so the claim's cost grows
+    # with (pending units x tenants holding work) rather than with either alone.
+    # The COALESCE form is plain equality, so it hash-joins instead; on a synthetic
+    # backlog that was a ~6x drop in claim latency for an identical result.
+    #
+    # '' is a safe sentinel for "no tenant": tenant ids are non-empty by schema
+    # (RESOURCE_NAME_PATTERN, min_length=1), so it can never collide with a real
+    # one. Both sides must COALESCE or the NULL lane stops matching itself.
+    # endregion
+    # One expression object, used by both the SELECT and the GROUP BY: building it
+    # twice emits two bind parameters, and Postgres then sees two different
+    # expressions and rejects the grouping.
+    inflight_tenant_key = func.coalesce(
+        models.ActiveQueueSession.tenant_id, NO_TENANT_KEY
+    )
     inflight = (
         select(
-            models.ActiveQueueSession.tenant_id.label("tenant_id"),
+            inflight_tenant_key.label("tenant_key"),
             func.count().label("inflight_units"),
         )
         .where(models.ActiveQueueSession.last_updated >= stale_claim_cutoff())
-        .group_by(models.ActiveQueueSession.tenant_id)
+        .group_by(inflight_tenant_key)
         .subquery()
     )
 
@@ -268,7 +289,8 @@ def claim_rows_query(limit: int) -> Select[Any]:
         )
         .outerjoin(
             inflight,
-            models.QueueItemBatch.tenant_id.is_not_distinct_from(inflight.c.tenant_id),
+            func.coalesce(models.QueueItemBatch.tenant_id, NO_TENANT_KEY)
+            == inflight.c.tenant_key,
         )
         .where(unclaimed_work_unit_clause(models.QueueItemBatch.work_unit_key))
     )
@@ -304,10 +326,28 @@ def claim_rows_query(limit: int) -> Select[Any]:
     )
 
 
+# Sentinel standing in for a NULL tenant_id in hash-joinable keys. Tenant ids are
+# non-empty by schema (RESOURCE_NAME_PATTERN, min_length=1), so this cannot collide
+# with a real one.
+NO_TENANT_KEY = ""
+
+
 def stale_claim_cutoff() -> datetime:
     return datetime.now(UTC) - timedelta(
         minutes=settings.DERIVER.STALE_SESSION_TIMEOUT_MINUTES
     )
+
+
+def claim_heartbeat_interval_seconds() -> float:
+    """How often an in-flight claim refreshes itself, well inside the stale cutoff.
+
+    Derived from ``STALE_SESSION_TIMEOUT_MINUTES`` rather than configured
+    separately: the two are halves of one invariant -- a heartbeat slower than the
+    cutoff reaps live work -- and a second knob is a way for them to drift apart.
+    A fifth of the window tolerates four consecutive failed beats before a claim
+    is considered stale.
+    """
+    return max(5.0, settings.DERIVER.STALE_SESSION_TIMEOUT_MINUTES * 60 / 5)
 
 
 def not_live_claimed_work_unit_clause(

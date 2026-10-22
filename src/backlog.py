@@ -175,10 +175,11 @@ class DeriverMetricsPoller:
         cap = settings.DREAM.MAX_ENQUEUED_PER_POLL
         for due_dream in self._due_dreams[:cap]:
             # region ai
-            # enqueue_dream runs cross-tenant on service_db; bind this due-dream's tenant
-            # (parsed from its work_unit_key in list_due_dreams) so construct_work_unit_key
-            # namespaces the queued dream to it — the deriver's claim then keeps the batch
-            # tenant-homogeneous. No-op flag off.
+            # enqueue_dream opens tracked_db, which fails closed flag-on without a
+            # tenant, so bind this due-dream's tenant (its collection's tenant_id, from
+            # list_due_dreams). The binding also lets RLS scope enqueue_dream's reads
+            # and construct_work_unit_key namespace the queued dream to it, keeping the
+            # deriver's batch tenant-homogeneous. No-op flag off.
             # endregion
             tenant_token = (
                 tenant_context.set(due_dream.tenant_id)

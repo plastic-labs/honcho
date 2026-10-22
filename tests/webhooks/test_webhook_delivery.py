@@ -1,6 +1,8 @@
+import contextlib
 import hashlib
 import hmac
 import json
+from collections.abc import AsyncGenerator
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -551,3 +553,35 @@ async def test_publish_webhook_event_uses_ambient_tenant_when_omitted(
     queue_item = result.scalar_one()
     assert queue_item.tenant_id == ambient_tenant_id
     assert tenant_id_for_work_unit_key(queue_item.work_unit_key) == ambient_tenant_id
+
+
+@pytest.mark.asyncio
+async def test_deliver_webhook_looks_up_endpoints_under_the_signed_tenant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The endpoint lookup binds the tenant the body is signed with."""
+    bound: list[str | None] = []
+
+    @contextlib.asynccontextmanager
+    async def fake_tracked_db(
+        _name: str | None = None, *, tenant_id: str | None = None, **_: Any
+    ) -> AsyncGenerator[Any]:
+        bound.append(tenant_id)
+        yield AsyncMock()
+
+    monkeypatch.setattr(settings, "MULTI_TENANT", True)
+    monkeypatch.setattr(webhook_delivery, "tracked_db", fake_tracked_db)
+    monkeypatch.setattr(
+        webhook_delivery, "_get_webhook_urls", AsyncMock(return_value=[])
+    )
+
+    payload = WebhookPayload(event_type="peer.created", data={"id": "p_123"})
+    token = tenant_context.set("tenant-b")
+    try:
+        await webhook_delivery.deliver_webhook(
+            payload, "workspace-a", tenant_id="tenant-a"
+        )
+    finally:
+        tenant_context.reset(token)
+
+    assert bound == ["tenant-a"]

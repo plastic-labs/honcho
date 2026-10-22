@@ -47,15 +47,46 @@ DEFAULT_TENANT_ID = "default"
 
 
 def _default_tenant_id() -> str:
-    """Model-side default for tenant_id columns: the request's tenant, or the
-    single self-host tenant when none is in scope."""
+    """Model-side default for tenant_id columns: the bound tenant; flag-off with
+    none bound, the single self-host tenant; flag-on with none bound, raises."""
     # region ai
     # Populates every ORM create without threading tenant_id through call sites.
     # Intentionally NOT a DB-level default: that would need a migration and could
     # silently stamp a tenant on a flag-on row that forgot to set one (tracked_db
-    # fail-closes that case instead).
+    # fail-closes that case instead). Flag-on with no tenant bound raises for
+    # the same reason: 'default' is the self-host tenant, and stamping it on a
+    # multi-tenant row would file the row under the wrong tenant silently.
+    # (tracked_db already refuses an unbound session; this also covers inserts
+    # on service_db, which binds no tenant.)
     # endregion
-    return tenant_context.get() or DEFAULT_TENANT_ID
+    tenant = tenant_context.get()
+    if tenant:
+        return tenant
+    if settings.MULTI_TENANT:
+        raise ValueError(
+            "tenant_id default requires a bound tenant when MULTI_TENANT is "
+            + "enabled; set tenant_context or pass tenant_id explicitly"
+        )
+    return DEFAULT_TENANT_ID
+
+
+def scoped_tenant_id() -> str:
+    """The tenant_id a tenant-scoped read filters on explicitly."""
+    # region ai
+    # The bound tenant, or DEFAULT_TENANT_ID flag-off: the same value
+    # _default_tenant_id stamps on writes. Under MULTI_TENANT with no tenant bound
+    # it raises rather than read the 'default' tenant (tracked_db fail-closes the
+    # same case). Binding tenant_id explicitly, not only through RLS, lets the
+    # (tenant_id, ...) indexes give order flag-off too, where no policy supplies it.
+    # endregion
+    tenant = tenant_context.get()
+    if tenant:
+        return tenant
+    if settings.MULTI_TENANT:
+        raise ValueError(
+            "no tenant bound under MULTI_TENANT; a tenant-scoped read needs one"
+        )
+    return DEFAULT_TENANT_ID
 
 
 # Association table for many-to-many relationship between sessions and peers
@@ -394,6 +425,21 @@ class Message(Base):
             "id",
             postgresql_include=["created_at"],
         ),
+        # A session's messages by id, with created_at and token_count.
+        # region ai
+        # The token-budget window of session context and the deriver's batch sum
+        # token_count from the index. It covers every use of
+        # ix_messages_session_lookup above, which can be dropped once nothing reads
+        # it (rationale in migration 647b773f05ac).
+        # endregion
+        Index(
+            "ix_messages_session_tokens",
+            "tenant_id",
+            "workspace_name",
+            "session_name",
+            "id",
+            postgresql_include=["created_at", "token_count"],
+        ),
         Index(
             "ix_messages_peer_lookup",
             "tenant_id",
@@ -725,6 +771,29 @@ class Document(Base):
             "observer",
             "observed",
             "workspace_name",
+        ),
+        # conclusions/list: a workspace's live documents by recency, and their count.
+        # ai: rationale in migration 647b773f05ac
+        Index(
+            "ix_documents_workspace_recent",
+            "tenant_id",
+            "workspace_name",
+            "created_at",
+            "id",
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+        # A collection's most-derived live documents: peer context and representation.
+        # ai: rationale in migration 647b773f05ac
+        Index(
+            "ix_documents_collection_derived",
+            "tenant_id",
+            "workspace_name",
+            "observer",
+            "observed",
+            text("times_derived DESC"),
+            text("created_at DESC"),
+            "id",
+            postgresql_where=text("deleted_at IS NULL"),
         ),
         # ai: HNSW is a single-column vector index (per-partition under HASH(tenant_id))
         Index(
