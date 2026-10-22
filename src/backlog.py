@@ -13,7 +13,12 @@ from src.config import settings
 from src.db import tenant_context
 from src.dependencies import service_db
 from src.deriver.enqueue import enqueue_dream
-from src.dreamer.dream_due import DueDream, list_due_dreams, sweep_slot_at
+from src.dreamer.dream_due import (
+    DueDream,
+    list_due_dreams,
+    sweep_slots_for_ticks,
+    sweep_tick_at,
+)
 from src.scheduler_lease import AdvisoryLease
 from src.telemetry import prometheus_metrics
 
@@ -59,6 +64,32 @@ def outstanding_work_seconds(
 
 DREAM_DUE_LEASE = "dream_due"
 
+# How many missed sweep ticks the holder catches up on in one poll.
+SWEEP_CATCH_UP_TICKS = 3
+# Wake just past the tick boundary, so the clock reads the new tick.
+_TICK_MARGIN_SECONDS = 1.0
+
+
+def seconds_to_next_tick(epoch_seconds: float) -> float:
+    """Seconds from this time until just past the next poll tick boundary."""
+    interval = settings.DREAM.DUE_POLL_INTERVAL_SECONDS
+    return interval - epoch_seconds % interval + _TICK_MARGIN_SECONDS
+
+
+def ticks_to_sweep(last_tick: int | None, tick: int) -> range:
+    """The ticks a poll at `tick` sweeps, given the last tick swept."""
+    # region ai
+    # A poll timed by "wait one interval after the last poll" drifts by the poll's
+    # own duration and the clock-derived slot then jumps two at a time, skipping
+    # one. The loop sleeps to tick boundaries instead, and this catches up on the
+    # ticks since the last successful sweep (at most SWEEP_CATCH_UP_TICKS), so an
+    # overrun or a failed poll doesn't skip slots. A tick already swept is not
+    # swept again; with no history (a new holder) only the current tick is.
+    # endregion
+    if last_tick is None:
+        return range(tick, tick + 1)
+    return range(max(last_tick + 1, tick - SWEEP_CATCH_UP_TICKS + 1), tick + 1)
+
 
 class DreamDuePoller:
     """Finds due dreams on its own timer and, when it owns scheduling, enqueues them."""
@@ -79,6 +110,7 @@ class DreamDuePoller:
         self._task: asyncio.Task[None] | None = None
         self._shutdown_event: asyncio.Event = asyncio.Event()
         self._due_dreams: list[DueDream] = []
+        self._last_sweep_tick: int | None = None
         self._lease: AdvisoryLease | None = (
             AdvisoryLease("honcho:dream-due-poller")
             if settings.DERIVER.SCHEDULER == "api"
@@ -119,19 +151,20 @@ class DreamDuePoller:
 
     async def _loop(self) -> None:
         while not self._shutdown_event.is_set():
-            # ai: a failed poll retries on the metrics interval, not a full poll interval
-            interval = settings.DREAM.DUE_POLL_INTERVAL_SECONDS
             try:
                 await self.poll()
+                wait = seconds_to_next_tick(time.time())
             except Exception as e:
                 logger.error("DreamDuePoller poll failed: %s", e)
                 if settings.SENTRY.ENABLED:
                     sentry_sdk.capture_exception(e)
-                interval = min(
-                    interval, settings.DERIVER.BACKLOG_METRICS_POLL_INTERVAL_SECONDS
+                # ai: a failed poll retries on the metrics interval, not at the next tick
+                wait = min(
+                    seconds_to_next_tick(time.time()),
+                    settings.DERIVER.BACKLOG_METRICS_POLL_INTERVAL_SECONDS,
                 )
             with contextlib.suppress(TimeoutError):
-                await asyncio.wait_for(self._shutdown_event.wait(), timeout=interval)
+                await asyncio.wait_for(self._shutdown_event.wait(), timeout=wait)
 
     async def poll(self) -> None:
         """One poll: refresh the due list and dreams_due, and enqueue when scheduling."""
@@ -145,6 +178,7 @@ class DreamDuePoller:
                 )
             if not held:
                 self._due_dreams = []
+                self._last_sweep_tick = None
                 prometheus_metrics.set_dreams_due(count=0)
                 return
 
@@ -154,10 +188,16 @@ class DreamDuePoller:
         # closed here (this runs on API boot with no request tenant in scope).
         # read_only: the enqueue below opens its own sessions.
         # endregion
+        tick = sweep_tick_at(time.time())
+        sweep = (
+            sweep_slots_for_ticks(ticks_to_sweep(self._last_sweep_tick, tick))
+            if scheduling
+            else []
+        )
         async with service_db("dream_due_poll", read_only=True) as db:
-            due = await list_due_dreams(
-                db, sweep_slot=sweep_slot_at(time.time()) if scheduling else None
-            )
+            due = await list_due_dreams(db, sweep=sweep)
+        if scheduling:
+            self._last_sweep_tick = tick
         self._due_dreams = due
         prometheus_metrics.set_dreams_due(count=len(due))
         prometheus_metrics.record_dream_due_sweep_found(

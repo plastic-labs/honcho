@@ -15,9 +15,11 @@ from src.backlog import (
     DreamDuePoller,
     active_work_seconds,
     outstanding_work_seconds,
+    seconds_to_next_tick,
+    ticks_to_sweep,
 )
 from src.config import settings
-from src.dreamer.dream_due import DueDream
+from src.dreamer.dream_due import DueDream, sweep_slots_for_ticks, sweep_tick_at
 from src.models import DEFAULT_TENANT_ID
 from src.routers import deriver_metrics
 
@@ -212,7 +214,7 @@ class TestDreamDuePoller:
 
         assert poller.dreams_due == 2
         assert query.await_args is not None
-        assert query.await_args.kwargs["sweep_slot"] is not None
+        assert query.await_args.kwargs["sweep"] != []
         assert enqueue.await_count == 2
         first_call = enqueue.await_args_list[0]
         assert first_call.args == (due[0].workspace_name,)
@@ -253,7 +255,7 @@ class TestDreamDuePoller:
         assert enqueue.await_count == 0
         assert poller.dreams_due == 1
         assert query.await_args is not None
-        assert query.await_args.kwargs["sweep_slot"] is None
+        assert query.await_args.kwargs["sweep"] == []
 
     async def test_the_lease_is_only_built_for_the_api_scheduler(
         self, monkeypatch: pytest.MonkeyPatch
@@ -277,6 +279,26 @@ class TestDreamDuePoller:
 
         assert enqueue.await_count == 2
 
+    async def test_the_next_poll_catches_up_on_ticks_it_missed(self):
+        poller = _dream_poller(lease=_FakeLease(held=True))
+        query = AsyncMock(return_value=[])
+        interval = settings.DREAM.DUE_POLL_INTERVAL_SECONDS
+
+        with (
+            patch("src.backlog.list_due_dreams", query),
+            patch("src.backlog.time.time", return_value=interval * 10 + 5),
+        ):
+            await poller.poll()
+        with (
+            patch("src.backlog.list_due_dreams", query),
+            patch("src.backlog.time.time", return_value=interval * 12 + 5),
+        ):
+            await poller.poll()
+
+        first, second = (call.kwargs["sweep"] for call in query.await_args_list)
+        assert first == sweep_slots_for_ticks([10])
+        assert second == sweep_slots_for_ticks([11, 12])
+
     async def test_shutdown_releases_the_lease(self):
         lease = _FakeLease(held=True)
         poller = _dream_poller(lease=lease)
@@ -284,6 +306,23 @@ class TestDreamDuePoller:
         await poller.shutdown()
 
         assert lease.released
+
+
+def test_the_poll_wakes_just_past_the_next_tick_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(settings.DREAM, "DUE_POLL_INTERVAL_SECONDS", 300)
+    # A poll that took 4 s still wakes at the next boundary, not 300 s later.
+    assert seconds_to_next_tick(300 * 7 + 4) == pytest.approx(296 + 1)
+    assert sweep_tick_at(300 * 7 + 4 + seconds_to_next_tick(300 * 7 + 4)) == 8
+
+
+def test_ticks_to_sweep_catches_up_a_bounded_number_of_ticks():
+    assert list(ticks_to_sweep(None, 20)) == [20]
+    assert list(ticks_to_sweep(19, 20)) == [20]
+    assert list(ticks_to_sweep(20, 20)) == []
+    assert list(ticks_to_sweep(17, 20)) == [18, 19, 20]
+    assert list(ticks_to_sweep(5, 20)) == [18, 19, 20]
 
 
 @pytest.mark.asyncio

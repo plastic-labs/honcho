@@ -553,10 +553,10 @@ class TestLookbackAndSweep:
         slot = await _collection_slot(db_session, slots)
 
         assert await count_due_dreams(db_session) == 0
-        (due,) = await list_due_dreams(db_session, sweep_slot=slot)
+        (due,) = await list_due_dreams(db_session, sweep=[slot])
         assert due.found_by_sweep
         assert due.observer == collection.observer
-        assert await list_due_dreams(db_session, sweep_slot=(slot + 1) % slots) == []
+        assert await list_due_dreams(db_session, sweep=[(slot + 1) % slots]) == []
 
     async def test_the_sweep_applies_the_same_rule(
         self,
@@ -573,7 +573,7 @@ class TestLookbackAndSweep:
         await _insert_docs(db_session, collection, "explicit", 60, age_minutes=30 * 60)
         slot = await _collection_slot(db_session, sweep_slots())
 
-        assert await list_due_dreams(db_session, sweep_slot=slot) == []
+        assert await list_due_dreams(db_session, sweep=[slot]) == []
 
     async def test_a_window_candidate_is_not_reported_twice(
         self,
@@ -586,7 +586,7 @@ class TestLookbackAndSweep:
         await _insert_docs(db_session, collection, "explicit", 60, age_minutes=90)
         slot = await _collection_slot(db_session, sweep_slots())
 
-        (due,) = await list_due_dreams(db_session, sweep_slot=slot)
+        (due,) = await list_due_dreams(db_session, sweep=[slot])
         assert not due.found_by_sweep
 
     async def test_the_count_is_capped_at_what_the_rule_needs(

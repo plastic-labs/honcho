@@ -1,6 +1,6 @@
 """Read-only listing of the collections whose next dream is due. Enqueues nothing."""
 
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from logging import getLogger
@@ -108,22 +108,37 @@ def sweep_slots() -> int:
     )
 
 
+def sweep_tick_at(epoch_seconds: float) -> int:
+    """The poll tick this time falls in: one tick per DUE_POLL_INTERVAL_SECONDS."""
+    return int(epoch_seconds // settings.DREAM.DUE_POLL_INTERVAL_SECONDS)
+
+
 def sweep_slot_at(epoch_seconds: float) -> int | None:
     """The sweep slot a poll at this time visits, or None when the sweep is off."""
     slots = sweep_slots()
     if not slots:
         return None
-    return int(epoch_seconds // settings.DREAM.DUE_POLL_INTERVAL_SECONDS) % slots
+    return sweep_tick_at(epoch_seconds) % slots
+
+
+def sweep_slots_for_ticks(ticks: Iterable[int]) -> list[int]:
+    """The sweep slots these poll ticks visit; empty when the sweep is off."""
+    slots = sweep_slots()
+    if not slots:
+        return []
+    return sorted({tick % slots for tick in ticks})
 
 
 def collection_sweep_slot(slots: int) -> ColumnElement[int]:
     """SQL for a collection's sweep slot: a stable hash of its (tenant_id, id)."""
     # region ai
-    # Stateless on purpose: every poll derives its slot from the clock and every
-    # collection's slot from its own key, so a lease handover neither skips nor
-    # repeats part of the cycle and no cursor has to be stored. hashtext is int4,
-    # so it's widened before the modulo, and the double modulo keeps a negative
-    # hash in [0, slots).
+    # Stateless: each poll's slot comes from the clock and each collection's slot
+    # from its own key, so there is no cursor to store or hand over. The holder
+    # sleeps to each tick boundary and catches up on the last few ticks it missed,
+    # but a lease handover (a new holder starts at the current tick) or a poll
+    # that overruns several ticks still skips slots; their collections wait one
+    # more cycle. The double modulo keeps a negative hash in [0, slots) without
+    # abs(), which overflows on int4's minimum.
     # endregion
     hashed = sa_cast(
         func.hashtext(
@@ -142,13 +157,13 @@ async def count_due_dreams(db: AsyncSession) -> int:
 async def list_due_dreams(
     db: AsyncSession,
     *,
-    sweep_slot: int | None = None,
+    sweep: Sequence[int] = (),
     now: datetime | None = None,
 ) -> list[DueDream]:
     """List collections past the threshold, the idle timeout, the min-hours gate, any earlier attempt, pending representation work, and the session's dream setting.
 
     Candidates come from the lookback window (collections with a recent explicit
-    document) and, when `sweep_slot` is given, from that slot of the slow sweep.
+    document) and from the slow sweep's slots listed in `sweep`.
     Due dreams come back oldest newest-document first.
     """
     dream_types = [
@@ -163,11 +178,11 @@ async def list_due_dreams(
     idle_cutoff = now - timedelta(minutes=settings.DREAM.IDLE_TIMEOUT_MINUTES)
 
     candidates = await _window_candidates(db, now=now, idle_cutoff=idle_cutoff)
-    if sweep_slot is not None and (slots := sweep_slots()):
+    if sweep and (slots := sweep_slots()):
         seen = {c.collection_key for c in candidates}
         candidates.extend(
             c
-            for c in await _sweep_candidates(db, slot=sweep_slot, slots=slots)
+            for c in await _sweep_candidates(db, sweep=sweep, slots=slots)
             if c.collection_key not in seen
         )
     candidates = [c for c in candidates if not _min_hours_gated(c, now)]
@@ -305,9 +320,9 @@ async def _window_candidates(
 
 
 async def _sweep_candidates(
-    db: AsyncSession, *, slot: int, slots: int
+    db: AsyncSession, *, sweep: Sequence[int], slots: int
 ) -> list[_Candidate]:
-    """Every collection in one sweep slot; newest document still unknown."""
+    """Every collection in these sweep slots; newest document still unknown."""
     rows = (
         await db.execute(
             select(
@@ -316,7 +331,7 @@ async def _sweep_candidates(
                 models.Collection.observer,
                 models.Collection.observed,
                 models.Collection.internal_metadata,
-            ).where(collection_sweep_slot(slots) == slot)
+            ).where(collection_sweep_slot(slots).in_(list(sweep)))
         )
     ).all()
     return [
