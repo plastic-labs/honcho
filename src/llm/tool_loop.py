@@ -235,46 +235,39 @@ def append_tool_results(
     conversation_messages.extend(adapter.format_tool_results(tool_results))
 
 
-def _drop_bound_thinking(
+def _without_stale_thinking(
     conversation_messages: list[dict[str, Any]],
     plan: AttemptPlan,
-    reason: str,
+    stale_before: int,
 ) -> list[dict[str, Any]]:
-    """Strip replayed thinking blocks after history or the tool set changed.
+    """Strip replayed thinking blocks whose request prefix has since changed.
 
     Models with `preserved_thinking` reject a replayed thinking block once the
     system prompt, the tool set or any earlier message differs from what it
-    was produced under. Dropping the blocks keeps the request valid at the
-    cost of that reasoning. Other models keep their blocks: older Claude
-    models require the current tool-use turn's thinking to be replayed.
+    was produced under. `stale_before` counts the leading messages produced
+    before the loop last edited history or changed the tool set; their
+    thinking blocks are dropped from this request (the history itself is left
+    as-is, since the next attempt may target another model). Blocks after it
+    were produced against the current prefix and stay: thinking may be
+    removed from the front of a history, just not from the middle.
+
+    Other models keep every block: older Claude models require the current
+    tool-use turn's thinking to be replayed.
     """
+    if stale_before <= 0:
+        return conversation_messages
     if not capabilities_for(plan.provider, plan.model).preserved_thinking:
         return conversation_messages
-    stripped, removed = strip_thinking_blocks(conversation_messages)
-    if removed:
-        logger.info(
-            "Dropped %d replayed thinking block(s) for %s: %s",
-            removed,
-            plan.model,
-            reason,
-        )
-    return stripped
-
-
-def _truncate_history(
-    conversation_messages: list[dict[str, Any]],
-    max_input_tokens: int,
-    plan: AttemptPlan,
-) -> list[dict[str, Any]]:
-    """`truncate_messages_to_fit`, dropping replayed thinking if it cut anything."""
-    from .conversation import truncate_messages_to_fit
-
-    truncated = truncate_messages_to_fit(conversation_messages, max_input_tokens)
-    if truncated is conversation_messages:
-        return truncated
-    return _drop_bound_thinking(
-        truncated, plan, "history was truncated to fit max_input_tokens"
+    front, removed = strip_thinking_blocks(conversation_messages[:stale_before])
+    if not removed:
+        return conversation_messages
+    logger.debug(
+        "Dropped %d replayed thinking block(s) for %s: history or tools changed "
+        + "since they were produced",
+        removed,
+        plan.model,
     )
+    return front + conversation_messages[stale_before:]
 
 
 async def stream_final_response(
@@ -304,10 +297,10 @@ async def stream_final_response(
     streaming call against the same pinned model for transient errors, and
     stop on a non-retryable client error, since no other model is reachable.
     """
-    # The answer streams without tools, so the tool set every earlier
-    # thinking block was produced under no longer matches.
-    conversation_messages = _drop_bound_thinking(
-        conversation_messages, winning_plan, "the final answer streams without tools"
+    # The answer streams without tools, so no earlier thinking block matches
+    # the request's tool set anymore.
+    conversation_messages = _without_stale_thinking(
+        conversation_messages, winning_plan, len(conversation_messages)
     )
 
     # Bump the per-retry attempt index inside `_setup_stream`. The pinned
@@ -512,7 +505,7 @@ async def execute_tool_loop(
         Final HonchoLLMCallResponse with accumulated token counts and tool call
         history, or a StreamingResponseWithMetadata if stream_final=True.
     """
-    from .conversation import count_message_tokens
+    from .conversation import count_message_tokens, truncate_messages_to_fit
 
     if not MIN_TOOL_ITERATIONS <= max_tool_iterations <= MAX_TOOL_ITERATIONS:
         raise ValidationException(
@@ -559,6 +552,10 @@ async def execute_tool_loop(
     # An empty gate would be unsatisfiable, so it means no gate.
     gate = frozenset(force_tools_until or ()) or None
     forced_rounds = 0
+    # Leading messages whose thinking blocks were produced before the loop
+    # last rewrote history (truncation) or changed the tool set; models with
+    # preserved thinking get them without those blocks.
+    stale_thinking_before = 0
 
     while iteration < max_tool_iterations:
         step = start_captured_span(
@@ -575,9 +572,12 @@ async def execute_tool_loop(
             if max_input_tokens is not None:
                 if count_message_tokens(conversation_messages) > max_input_tokens:
                     hit_input_token_cap = True
-                conversation_messages = _truncate_history(
-                    conversation_messages, max_input_tokens, get_attempt_plan()
+                truncated = truncate_messages_to_fit(
+                    conversation_messages, max_input_tokens
                 )
+                if truncated is not conversation_messages:
+                    stale_thinking_before = len(truncated)
+                conversation_messages = truncated
 
             # A provider can ignore a forced tool_choice and answer outright.
             # While the gate is unmet, a no-tool answer is discarded for a
@@ -602,6 +602,7 @@ async def execute_tool_loop(
                 iteration_for_call: int = iteration + 1,
                 check_answer: bool = not gate_nudge_due,
                 allow_empty_answer: bool = empty_nudge_due,
+                stale_before: int = stale_thinking_before,
             ) -> HonchoLLMCallResponse[Any]:
                 plan = get_attempt_plan()
                 result = await honcho_llm_call_inner(
@@ -620,7 +621,9 @@ async def execute_tool_loop(
                     client_override=plan.client,
                     tools=tools,
                     tool_choice=tool_choice_for_call,
-                    messages=captured_messages,
+                    messages=_without_stale_thinking(
+                        captured_messages, plan, stale_before
+                    ),
                     selected_config=plan.selected_config,
                     plan=plan,
                     telemetry=_telemetry_for_iteration(
@@ -836,9 +839,10 @@ async def execute_tool_loop(
     if max_input_tokens is not None:
         if count_message_tokens(conversation_messages) > max_input_tokens:
             hit_input_token_cap = True
-        conversation_messages = _truncate_history(
-            conversation_messages, max_input_tokens, get_attempt_plan()
-        )
+        truncated = truncate_messages_to_fit(conversation_messages, max_input_tokens)
+        if truncated is not conversation_messages:
+            stale_thinking_before = len(truncated)
+        conversation_messages = truncated
 
     if stream_final:
         # Snapshot the plan the loop settled on — streaming retries pin to
@@ -878,12 +882,10 @@ async def execute_tool_loop(
 
     current_attempt.set(1)
 
+    # The synthesis call offers a different tool set (final_call_tools, or
+    # none), which no earlier thinking block was produced under.
     if (final_call_tools or None) != tools:
-        conversation_messages = _drop_bound_thinking(
-            conversation_messages,
-            get_attempt_plan(),
-            "the synthesis call offers a different tool set",
-        )
+        stale_thinking_before = len(conversation_messages)
 
     async def _final_call() -> HonchoLLMCallResponse[Any]:
         plan = get_attempt_plan()
@@ -903,7 +905,9 @@ async def execute_tool_loop(
             client_override=plan.client,
             tools=final_call_tools or None,
             tool_choice=None,
-            messages=conversation_messages,
+            messages=_without_stale_thinking(
+                conversation_messages, plan, stale_thinking_before
+            ),
             selected_config=plan.selected_config,
             plan=plan,
             telemetry=_telemetry_for_iteration(

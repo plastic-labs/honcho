@@ -14,10 +14,12 @@ from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
+from tenacity import wait_none
 
 from src.config import ModelConfig
 from src.llm import tool_loop
-from src.llm.runtime import AttemptPlan
+from src.llm.errors import llm_retry_condition
+from src.llm.runtime import AttemptPlan, current_attempt
 from src.llm.tool_loop import execute_tool_loop
 from src.llm.types import (
     HonchoLLMCallResponse,
@@ -78,24 +80,35 @@ def _thinking_blocks_in(messages: list[dict[str, Any]]) -> int:
 
 
 async def _run_loop(
-    model: str,
+    model: str | Callable[[], AttemptPlan],
     responses: list[HonchoLLMCallResponse[Any]],
     *,
     max_tool_iterations: int,
     max_input_tokens: int | None = None,
     stream_final: bool = False,
+    fail_call: int | None = None,
+    retry_attempts: int = 1,
 ) -> tuple[
     list[dict[str, Any]],
     HonchoLLMCallResponse[Any] | StreamingResponseWithMetadata,
 ]:
-    """Run the loop; return each call's messages and tools, and the result."""
+    """Run the loop; return each call's model, messages and tools, and the result.
+
+    `fail_call` (0-based) makes that provider call raise, so a retry runs.
+    """
     calls: list[dict[str, Any]] = []
     remaining = iter(responses)
 
-    async def fake_call(*_args: Any, **kwargs: Any) -> Any:
+    async def fake_call(*args: Any, **kwargs: Any) -> Any:
         calls.append(
-            {"messages": deepcopy(kwargs["messages"]), "tools": kwargs.get("tools")}
+            {
+                "model": args[1],
+                "messages": deepcopy(kwargs["messages"]),
+                "tools": kwargs.get("tools"),
+            }
         )
+        if len(calls) - 1 == fail_call:
+            raise RuntimeError("provider unavailable")
         if kwargs.get("stream"):
 
             async def chunks() -> AsyncIterator[HonchoLLMCallStreamChunk]:
@@ -107,7 +120,13 @@ async def _run_loop(
     async def execute(_name: str, _input: dict[str, Any]) -> str:
         return "result"
 
-    with patch.object(tool_loop, "honcho_llm_call_inner", new=fake_call):
+    def next_attempt(retry_state: Any) -> None:
+        current_attempt.set(retry_state.attempt_number + 1)
+
+    with (
+        patch.object(tool_loop, "honcho_llm_call_inner", new=fake_call),
+        patch.object(tool_loop, "wait_exponential", return_value=wait_none()),
+    ):
         result = await execute_tool_loop(
             prompt="hi",
             max_tokens=4096,
@@ -121,11 +140,16 @@ async def _run_loop(
             temperature=None,
             stop_seqs=None,
             verbosity=None,
-            enable_retry=False,
-            retry_attempts=1,
+            enable_retry=retry_attempts > 1,
+            retry_attempts=retry_attempts,
             max_input_tokens=max_input_tokens,
-            get_attempt_plan=_plan_for(model),
-            before_retry_callback=lambda _retry_state: None,
+            get_attempt_plan=_plan_for(model) if isinstance(model, str) else model,
+            before_retry_callback=next_attempt,
+            retry_condition=llm_retry_condition(
+                can_fall_back=retry_attempts > 1,
+                retry_attempts=retry_attempts,
+                model="anthropic/test",
+            ),
             stream_final=stream_final,
             telemetry=None,
         )
@@ -198,3 +222,67 @@ async def test_streamed_final_answer_drops_thinking() -> None:
     streamed = calls[-1]
     assert streamed["tools"] is None
     assert _thinking_blocks_in(streamed["messages"]) == 0
+
+
+def _cut_on_call(n: int) -> Callable[[list[dict[str, Any]], int], list[dict[str, Any]]]:
+    """A truncation that changes history only on its `n`-th invocation (1-based)."""
+    seen = 0
+
+    def cut(messages: list[dict[str, Any]], _max_tokens: int) -> list[dict[str, Any]]:
+        nonlocal seen
+        seen += 1
+        return list(messages) if seen == n else messages
+
+    return cut
+
+
+@pytest.mark.asyncio
+async def test_thinking_produced_after_an_edit_is_kept() -> None:
+    """Only blocks from before the edit go stale; later ones match the new prefix."""
+    with patch(
+        "src.llm.conversation.truncate_messages_to_fit", side_effect=_cut_on_call(2)
+    ):
+        calls, _ = await _run_loop(
+            "claude-sonnet-5-5",
+            [_tool_call_turn("t1"), _tool_call_turn("t2"), _answer()],
+            max_tool_iterations=5,
+            max_input_tokens=1_000,
+        )
+
+    assert [_thinking_blocks_in(call["messages"]) for call in calls] == [0, 0, 1]
+    # The stale turn keeps its tool_use block.
+    assert [block["type"] for block in calls[2]["messages"][1]["content"]] == [
+        "tool_use"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_fallback_to_preserved_thinking_model_gets_stale_thinking_stripped() -> (
+    None
+):
+    """The strip is decided per attempt: a Claude 4 primary keeps its blocks,
+    and a Claude 5.5 fallback on the retry gets them without."""
+    primary = _plan_for("claude-sonnet-4-5")
+    fallback = _plan_for("claude-opus-5-5")
+
+    def plan() -> AttemptPlan:
+        return primary() if current_attempt.get() < 2 else fallback()
+
+    with patch(
+        "src.llm.conversation.truncate_messages_to_fit", side_effect=_cut_on_call(2)
+    ):
+        calls, _ = await _run_loop(
+            plan,
+            [_tool_call_turn("t1"), _answer()],
+            max_tool_iterations=5,
+            max_input_tokens=1_000,
+            fail_call=1,
+            retry_attempts=2,
+        )
+
+    assert [call["model"] for call in calls] == [
+        "claude-sonnet-4-5",
+        "claude-sonnet-4-5",
+        "claude-opus-5-5",
+    ]
+    assert [_thinking_blocks_in(call["messages"]) for call in calls] == [0, 1, 0]

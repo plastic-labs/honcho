@@ -1025,3 +1025,26 @@ async def test_anthropic_backend_appends_schema_instruction_to_existing_system_w
     assert call["messages"] == [{"role": "user", "content": "Hello"}]
     # The caller's history is not edited.
     assert history[1] == {"role": "user", "content": "Hello"}
+
+
+@pytest.mark.asyncio
+async def test_anthropic_backend_skips_conflict_guard_when_operator_disables_thinking() -> (
+    None
+):
+    client = _client_with_text_response()
+    backend = AnthropicBackend(client)
+
+    await backend.complete(
+        model="claude-haiku-4-5",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=4096,
+        tools=[SEARCH_TOOL],
+        tool_choice="required",
+        thinking_budget_tokens=2048,
+        extra_params={"extra_body": {"thinking": {"type": "disabled"}}},
+    )
+
+    call = client.messages.create.await_args.kwargs
+    assert call["tool_choice"] == {"type": "any"}
+    assert "thinking" not in call
+    assert "output_config" not in call

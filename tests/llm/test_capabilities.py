@@ -28,6 +28,22 @@ from src.llm.capabilities import anthropic_capabilities, capabilities_for
         ("anthropic/claude-sonnet-5-5", "adaptive", False, "rejected", True),
         ("anthropic.claude-haiku-5-5", "adaptive", False, "skips_thinking", True),
         ("claude-opus-4-5@20251101", "budget", False, "conflicts_with_thinking", False),
+        (
+            "us.anthropic.claude-opus-4-1-20250805-v1:0",
+            "budget",
+            False,
+            "conflicts_with_thinking",
+            False,
+        ),
+        # Proxies spell the version with a dot.
+        (
+            "anthropic/claude-opus-4.6",
+            "adaptive",
+            False,
+            "conflicts_with_thinking",
+            False,
+        ),
+        ("claude-opus-5.5", "adaptive", False, "rejected", True),
         # An unlisted newer Claude gets the strictest known behavior.
         ("claude-sonnet-6", "adaptive", False, "rejected", True),
         ("claude-haiku-5-7", "adaptive", False, "rejected", True),
