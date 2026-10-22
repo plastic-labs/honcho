@@ -69,6 +69,7 @@ async def _echo_executor(name: str, _input: dict[str, Any]) -> str:
 
 
 async def _run(model: _ScriptedModel, **overrides: Any) -> None:
+    """Run the tool loop with `model` standing in for the provider."""
     with patch.object(tool_loop, "honcho_llm_call_inner", new=model):
         await execute_tool_loop(
             prompt="hi",

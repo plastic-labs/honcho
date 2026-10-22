@@ -1287,6 +1287,7 @@ class TestToolLoopValidation:
 
     @pytest.mark.parametrize("bad_value", [0, -1, 101, 1_000])
     async def test_invalid_max_tool_iterations_raises(self, bad_value: int) -> None:
+        """An out-of-range `max_tool_iterations` fails before any LLM call."""
         from src.llm.errors import llm_retry_condition
         from src.llm.tool_loop import execute_tool_loop
 

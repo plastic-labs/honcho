@@ -64,6 +64,7 @@ async def _echo_executor(name: str, _input: dict[str, Any]) -> str:
 
 
 async def _run(model: _ScriptedModel, *, max_tool_iterations: int = 5, **kw: Any):
+    """Run the tool loop with `model` standing in for the provider."""
     with patch.object(tool_loop, "honcho_llm_call_inner", new=model):
         return await execute_tool_loop(
             prompt="hi",
@@ -164,6 +165,9 @@ _WRITE_TOOL = {
 
 @pytest.mark.asyncio
 async def test_final_call_offers_only_the_final_call_tools_and_runs_them() -> None:
+    """At the iteration limit, the final call offers only `final_call_tools` and runs
+    the calls it makes.
+    """
     executed: list[str] = []
 
     async def executor(name: str, _input: dict[str, Any]) -> str:

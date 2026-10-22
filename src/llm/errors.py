@@ -138,6 +138,7 @@ def llm_retry_condition(
     """
 
     def _should_retry(retry_state: RetryCallState) -> bool:
+        """Decide whether tenacity retries the attempt recorded in `retry_state`."""
         outcome = retry_state.outcome
         if outcome is None or not outcome.failed:
             return False

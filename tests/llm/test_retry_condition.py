@@ -42,16 +42,19 @@ _REQUEST = httpx.Request("POST", "http://tentacruel-litellm.internal/v1/chat")
 
 
 def _response(status: int) -> httpx.Response:
+    """An httpx response with `status`, as the provider SDKs wrap one."""
     return httpx.Response(status, request=_REQUEST, text="rejected")
 
 
 def _openai(status: int) -> openai.APIStatusError:
+    """An OpenAI SDK status error carrying `status`."""
     return openai.APIStatusError(
         f"Error code: {status}", response=_response(status), body=None
     )
 
 
 def _anthropic(status: int) -> anthropic.APIStatusError:
+    """An Anthropic SDK status error carrying `status`."""
     return anthropic.APIStatusError(
         f"Error code: {status}", response=_response(status), body=None
     )
@@ -107,11 +110,15 @@ RETRYABLE = [
 
 @pytest.mark.parametrize("exc", NON_RETRYABLE)
 def test_provider_rejections_are_not_retryable(exc: BaseException) -> None:
+    """A 4xx that rejects the request itself is not retryable, from any SDK."""
     assert is_non_retryable_client_error(exc)
 
 
 @pytest.mark.parametrize("exc", RETRYABLE)
 def test_everything_else_stays_retryable(exc: BaseException) -> None:
+    """Transient statuses, outages, Honcho's own errors and response checks stay
+    retryable.
+    """
     assert not is_non_retryable_client_error(exc)
 
 
@@ -132,6 +139,7 @@ async def _run_with_condition(
     calls = 0
 
     async def _call() -> str:
+        """Return or raise the next scripted outcome."""
         nonlocal calls
         outcome = outcomes[min(calls, len(outcomes) - 1)]
         calls += 1
@@ -157,12 +165,16 @@ async def _run_with_condition(
 
 
 async def test_success_is_not_retried() -> None:
+    """A successful call returns after one attempt."""
     calls, result = await _run_with_condition(["ok"], can_fall_back=False)
 
     assert (calls, result) == (1, "ok")
 
 
 async def test_rejection_without_fallback_stops_and_reraises_the_original() -> None:
+    """Without a fallback, a rejection stops after one call and surfaces the provider's
+    own exception.
+    """
     rejection = _openai(400)
 
     calls, raised = await _run_with_condition([rejection], can_fall_back=False)
@@ -172,6 +184,9 @@ async def test_rejection_without_fallback_stops_and_reraises_the_original() -> N
 
 
 async def test_rejection_with_fallback_keeps_the_full_budget() -> None:
+    """With a fallback, a rejection keeps the full budget, so the fallback still gets
+    its attempt.
+    """
     calls, raised = await _run_with_condition([_openai(400)], can_fall_back=True)
 
     assert calls == 3
@@ -179,6 +194,9 @@ async def test_rejection_with_fallback_keeps_the_full_budget() -> None:
 
 
 async def test_rejection_after_a_transient_failure_stops_there() -> None:
+    """A rejection stops the retries even after an earlier transient failure was
+    retried.
+    """
     calls, raised = await _run_with_condition(
         [UpstreamLLMError("blip"), _openai(400), "ok"], can_fall_back=False
     )
@@ -188,6 +206,7 @@ async def test_rejection_after_a_transient_failure_stops_there() -> None:
 
 
 async def test_transient_failures_still_use_the_budget() -> None:
+    """Rate limits and outages are retried until a later attempt succeeds."""
     calls, result = await _run_with_condition(
         [_openai(429), UpstreamLLMError("blip"), "ok"], can_fall_back=False
     )
@@ -196,6 +215,7 @@ async def test_transient_failures_still_use_the_budget() -> None:
 
 
 async def test_cancellation_is_not_retried() -> None:
+    """Cancellation propagates on the first attempt, as with tenacity's default."""
     cancelled = asyncio.CancelledError()
 
     calls, raised = await _run_with_condition([cancelled], can_fall_back=True)
@@ -205,6 +225,7 @@ async def test_cancellation_is_not_retried() -> None:
 
 
 async def test_early_stop_is_logged_once(caplog: pytest.LogCaptureFixture) -> None:
+    """An early stop logs one warning naming the model, the attempt and the status."""
     with caplog.at_level(logging.WARNING, logger="src.llm.errors"):
         await _run_with_condition([_openai(400)], can_fall_back=False)
 
@@ -256,10 +277,12 @@ class _Recorder:
     """Stands in for `honcho_llm_call_inner`, recording the model per call."""
 
     def __init__(self, outcome: Any) -> None:
+        """Answer every call with `outcome`, raising it if it is an exception."""
         self.outcome: Any = outcome
         self.models: list[str] = []
 
     async def __call__(self, _provider: str, model: str, *_a: Any, **_kw: Any) -> Any:
+        """Record the model, then return or raise the configured outcome."""
         self.models.append(model)
         if isinstance(self.outcome, BaseException):
             raise self.outcome
@@ -270,6 +293,9 @@ class _Recorder:
 async def test_toolless_rejection_without_fallback_is_one_call(
     path_kwargs: dict[str, Any],
 ) -> None:
+    """Each tool-less retry site stops after one call, without a backoff sleep, when
+    there is no fallback.
+    """
     inner = _Recorder(_openai(400))
     sleep = AsyncMock()
 
@@ -294,6 +320,9 @@ async def test_toolless_rejection_without_fallback_is_one_call(
 async def test_toolless_rejection_with_fallback_still_reaches_it(
     path_kwargs: dict[str, Any],
 ) -> None:
+    """Each tool-less retry site keeps today's attempt sequence when a fallback is
+    configured.
+    """
     inner = _Recorder(_openai(400))
 
     with (
@@ -356,6 +385,7 @@ async def test_budget_and_retry_flag_edges_are_unchanged(
     enable_retry: bool,
     expected_models: list[str],
 ) -> None:
+    """`retry_attempts=1` and `enable_retry=False` select models exactly as before."""
     inner = _Recorder(_openai(400))
 
     with (
@@ -381,6 +411,9 @@ async def test_validate_response_refusals_still_use_the_budget() -> None:
     )
 
     def refuse(_response: HonchoLLMCallResponse[Any]) -> None:
+        """A `validate_response` hook that refuses every response, as the summarizer
+        does with an empty summary.
+        """
         raise _degraded()
 
     with (
@@ -407,10 +440,12 @@ _TOOLS: list[dict[str, Any]] = [
 
 
 async def _recall(_name: str, _input: dict[str, Any]) -> str:
+    """Tool executor stub: every tool call succeeds."""
     return "recalled"
 
 
 def _tool_call_response() -> HonchoLLMCallResponse[Any]:
+    """A model response that calls the `recall` tool, so the loop continues."""
     return HonchoLLMCallResponse(
         content="",
         output_tokens=1,
@@ -423,11 +458,15 @@ class _ToolLoopRecorder:
     """Answers the first call from `first`, then raises `rejection`."""
 
     def __init__(self, first: Any, rejection: BaseException) -> None:
+        """Answer the first call with `first`, if given, and every later call with
+        `rejection`.
+        """
         self.first: Any = first
         self.rejection: BaseException = rejection
         self.models: list[str] = []
 
     async def __call__(self, *_args: Any, **kwargs: Any) -> Any:
+        """Record the attempt's model, then answer from the script."""
         self.models.append(kwargs["plan"].model)
         if len(self.models) == 1 and self.first is not None:
             return self.first
@@ -444,6 +483,7 @@ class _ToolLoopRecorder:
 async def test_tool_loop_iteration_rejection(
     config: ModelConfig, expected_models: list[str]
 ) -> None:
+    """The per-iteration retry site stops on a rejection only when there is no fallback."""
     inner = _ToolLoopRecorder(first=None, rejection=_anthropic(400))
 
     with (
@@ -475,6 +515,7 @@ async def test_tool_loop_synthesis_rejection(
 ) -> None:
     # One iteration that calls a tool, so the loop hits its limit and the
     # rejection lands on the synthesis call.
+    """The final-answer retry site stops on a rejection only when there is no fallback."""
     inner = _ToolLoopRecorder(first=_tool_call_response(), rejection=_openai(400))
 
     with (

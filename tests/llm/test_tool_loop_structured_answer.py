@@ -92,6 +92,10 @@ async def _run_loop(
     max_tool_iterations: int = 5,
     stream_final: bool = False,
 ) -> HonchoLLMCallResponse[Any] | StreamingResponseWithMetadata:
+    """Run the tool loop with `model` standing in for the provider, retrying with no
+    backoff.
+    """
+
     def before_retry(retry_state: Any) -> None:
         current_attempt.set(retry_state.attempt_number + 1)
 

@@ -33,6 +33,9 @@ def _make_plan() -> AttemptPlan:
 
 @pytest.mark.asyncio
 async def test_tool_loop_replays_reasoning_content_on_continuation() -> None:
+    """The next call replays the assistant turn with its `reasoning_content` and tool
+    calls.
+    """
     calls: list[list[dict[str, Any]]] = []
     responses = iter(
         [
@@ -110,6 +113,9 @@ async def test_tool_loop_replays_reasoning_content_on_continuation() -> None:
 
 @pytest.mark.asyncio
 async def test_tool_loop_replays_null_assistant_content_on_continuation() -> None:
+    """An assistant turn with null content is replayed with its reasoning details and
+    tool calls.
+    """
     calls: list[list[dict[str, Any]]] = []
     responses = iter(
         [
