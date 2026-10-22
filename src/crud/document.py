@@ -125,6 +125,7 @@ def get_documents_with_filters(
     """
     stmt = (
         select(models.Document)
+        .where(models.Document.tenant_id == models.scoped_tenant_id())
         .where(models.Document.workspace_name == workspace_name)
         .where(models.Document.deleted_at.is_(None))  # Exclude soft-deleted
     )
@@ -208,6 +209,7 @@ async def query_documents_most_derived(
     stmt = (
         select(models.Document)
         .where(
+            models.Document.tenant_id == models.scoped_tenant_id(),
             models.Document.workspace_name == workspace_name,
             models.Document.observer == observer,
             models.Document.observed == observed,

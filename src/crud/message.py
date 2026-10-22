@@ -277,6 +277,7 @@ def _apply_token_limit(
     Returns:
         Select statement with token limit applied
     """
+    tenant_id = models.scoped_tenant_id()
     # Create a subquery that calculates running sum of tokens for most recent messages
     token_subquery = (
         select(
@@ -285,14 +286,18 @@ def _apply_token_limit(
             .over(order_by=models.Message.id.desc())
             .label("running_token_sum"),
         )
-        .where(*base_conditions)
+        .where(models.Message.tenant_id == tenant_id, *base_conditions)
         .subquery()
     )
 
     # Select Message objects where running sum doesn't exceed token_limit
     return (
         select(models.Message)
-        .join(token_subquery, models.Message.id == token_subquery.c.id)
+        .join(
+            token_subquery,
+            (models.Message.tenant_id == tenant_id)
+            & (models.Message.id == token_subquery.c.id),
+        )
         .where(token_subquery.c.running_token_sum <= token_limit)
     )
 
