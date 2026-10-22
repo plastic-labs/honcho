@@ -224,6 +224,7 @@ async def get_scopes(
     """
     stmt = (
         select(models.Peer)
+        .where(models.Peer.tenant_id == models.scoped_tenant_id())
         .where(models.Peer.workspace_name == workspace_name)
         .where(scope_peer_clause())
     )

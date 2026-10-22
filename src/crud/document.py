@@ -82,6 +82,7 @@ def get_all_documents(
     """
     stmt = (
         select(models.Document)
+        .where(models.Document.tenant_id == models.scoped_tenant_id())
         .where(models.Document.workspace_name == workspace_name)
         .where(models.Document.observer == observer)
         .where(models.Document.observed == observed)
@@ -169,6 +170,7 @@ async def query_documents_recent(
         Sequence of documents ordered by created_at descending
     """
     stmt = select(models.Document).where(
+        models.Document.tenant_id == models.scoped_tenant_id(),
         models.Document.workspace_name == workspace_name,
         models.Document.observer == observer,
         models.Document.observed == observed,
@@ -1787,6 +1789,7 @@ def get_child_observations(
     )
     # Undrained rows still carry linkage in the legacy JSONB column.
     stmt = select(models.Document).where(
+        models.Document.tenant_id == models.scoped_tenant_id(),
         models.Document.workspace_name == workspace_name,
         or_(linked, models.Document.legacy_source_ids.contains([parent_id])),
         models.Document.deleted_at.is_(None),

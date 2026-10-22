@@ -284,7 +284,7 @@ class Peer(Base):
         "internal_metadata", JSONB, default=dict, server_default=text("'{}'::jsonb")
     )
     created_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), index=True
+        DateTime(timezone=True), server_default=func.now()
     )
     # region ai
     # workspace_name's FK to workspaces is now the composite (below), since
@@ -307,7 +307,14 @@ class Peer(Base):
             ["workspace_name", "tenant_id"],
             ["workspaces.name", "workspaces.tenant_id"],
         ),
-        Index("ix_peers_tenant_workspace", "tenant_id", "workspace_name"),
+        # This index serves the peer list of one workspace, in the order of the list.
+        Index(
+            "ix_peers_tenant_workspace_created",
+            "tenant_id",
+            "workspace_name",
+            "created_at",
+            "id",
+        ),
         CheckConstraint("length(id) = 21", name="id_length"),
         CheckConstraint("length(name) <= 512", name="name_length"),
         CheckConstraint("id ~ '^[A-Za-z0-9_-]+$'", name="id_format"),
@@ -337,7 +344,7 @@ class Session(Base):
         "internal_metadata", JSONB, default=dict, server_default=text("'{}'::jsonb")
     )
     created_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), index=True
+        DateTime(timezone=True), server_default=func.now()
     )
     workspace_name: Mapped[str] = mapped_column(TEXT, nullable=False)
     configuration: Mapped[dict[str, Any]] = mapped_column(
@@ -357,7 +364,14 @@ class Session(Base):
             ["workspace_name", "tenant_id"],
             ["workspaces.name", "workspaces.tenant_id"],
         ),
-        Index("ix_sessions_tenant_workspace", "tenant_id", "workspace_name"),
+        # This index serves the session list of one workspace, in the order of the list.
+        Index(
+            "ix_sessions_tenant_workspace_created",
+            "tenant_id",
+            "workspace_name",
+            "created_at",
+            "id",
+        ),
         CheckConstraint("length(name) <= 512", name="name_length"),
         CheckConstraint("length(id) = 21", name="id_length"),
         CheckConstraint("id ~ '^[A-Za-z0-9_-]+$'", name="id_format"),
@@ -418,20 +432,10 @@ class Message(Base):
             ["peer_name", "workspace_name", "tenant_id"],
             ["peers.name", "peers.workspace_name", "peers.tenant_id"],
         ),
-        Index(
-            "ix_messages_session_lookup",
-            "tenant_id",
-            "session_name",
-            "id",
-            postgresql_include=["created_at"],
-        ),
-        # A session's messages by id, with created_at and token_count.
-        # region ai
-        # The token-budget window of session context and the deriver's batch sum
-        # token_count from the index. It covers every use of
-        # ix_messages_session_lookup above, which can be dropped once nothing reads
-        # it (rationale in migration 647b773f05ac).
-        # endregion
+        # This index holds the messages of one session in id order, with created_at
+        # and token_count. Session context and the deriver batch get the token_count
+        # sum from the index only. It replaces ix_messages_session_lookup (revision
+        # a3f9c2e81d47).
         Index(
             "ix_messages_session_tokens",
             "tenant_id",
@@ -499,7 +503,7 @@ class MessageEmbedding(Base):
     session_name: Mapped[str] = mapped_column(TEXT, nullable=False)
     peer_name: Mapped[str] = mapped_column(TEXT, nullable=False)
     created_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), index=True
+        DateTime(timezone=True), server_default=func.now()
     )
     # Vector sync state tracking
     sync_state: Mapped[VectorSyncState] = mapped_column(
@@ -558,15 +562,14 @@ class MessageEmbedding(Base):
             postgresql_with={"m": 16, "ef_construction": 64},
             postgresql_ops={"embedding": "vector_cosine_ops"},
         ),
-        # region ai
-        # NOT tenant_id-leading on purpose: the reconciler scans this cross-tenant
-        # (sync_state='pending' over all tenants), so a tenant_id prefix wouldn't
-        # help. (Also drops the redundant single-column sync_state index.)
-        # endregion
+        # This index holds only the pending rows, for the cross-tenant reads of the
+        # reconciler. Thus it has no tenant_id prefix. Every sync_state predicate is
+        # 'pending', so a full index only adds an entry for each sync (see revision
+        # a3f9c2e81d47).
         Index(
-            "ix_message_embeddings_sync_state_last_sync_at",
-            "sync_state",
-            "last_sync_at",
+            "ix_message_embeddings_pending_claim",
+            text("last_sync_at NULLS FIRST"),
+            postgresql_where=text("sync_state = 'pending'"),
         ),
         {"postgresql_partition_by": "HASH (tenant_id)"},
     )
@@ -653,15 +656,16 @@ class Document(Base):
     )
     embedding: MappedColumn[Any] = mapped_column(Vector(_VECTOR_DIM), nullable=True)
     created_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), index=True
+        DateTime(timezone=True), server_default=func.now()
     )
 
     observer: Mapped[str] = mapped_column(TEXT)
     observed: Mapped[str] = mapped_column(TEXT)
     workspace_name: Mapped[str] = mapped_column(TEXT, nullable=False)
     session_name: Mapped[str | None] = mapped_column(TEXT, nullable=True)
+    # ix_documents_deleted_at in __table_args__ indexes this column. It is partial.
     deleted_at: Mapped[datetime.datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True, index=True, default=None
+        DateTime(timezone=True), nullable=True, default=None
     )
 
     # Vector sync state tracking
@@ -763,14 +767,32 @@ class Document(Base):
             ["session_name", "workspace_name", "tenant_id"],
             ["sessions.name", "sessions.workspace_name", "sessions.tenant_id"],
         ),
-        # Tenant-scoped collection lookups
-        # ai: replaces the single observer/observed indexes
+        # This index serves the reads of one collection in created_at order: the
+        # collection list, the recent documents and the dreams. It replaces
+        # ix_documents_tenant_collection. It keeps that column order for the
+        # lookups that use it.
         Index(
-            "ix_documents_tenant_collection",
+            "ix_documents_tenant_collection_created",
             "tenant_id",
             "observer",
             "observed",
             "workspace_name",
+            "created_at",
+        ),
+        # This index serves the reads of the documents of one session: session
+        # delete and scope backfill.
+        Index(
+            "ix_documents_tenant_session",
+            "tenant_id",
+            "workspace_name",
+            "session_name",
+        ),
+        # This index holds only the soft-deleted documents, for the cleanup. Most
+        # rows are not deleted. Thus a full index holds mostly NULL values.
+        Index(
+            "ix_documents_deleted_at",
+            "deleted_at",
+            postgresql_where=text("deleted_at IS NOT NULL"),
         ),
         # conclusions/list: a workspace's live documents by recency, and their count.
         # ai: rationale in migration 647b773f05ac
@@ -805,14 +827,14 @@ class Document(Base):
                 "embedding": "vector_cosine_ops"
             },  # Cosine distance operator
         ),
-        # region ai
-        # Reconciler scans this cross-tenant (sync_state='pending'), so NOT
-        # tenant_id-leading. Also drops the redundant single-column sync_state index.
-        # endregion
+        # This index holds only the pending rows, in the order of the reconciler
+        # claim (last_sync_at NULLS FIRST). Thus the LIMIT of the claim stops early.
+        # The claim is cross-tenant, so the index has no tenant_id prefix (see
+        # revision a3f9c2e81d47).
         Index(
-            "ix_documents_sync_state_last_sync_at",
-            "sync_state",
-            "last_sync_at",
+            "ix_documents_pending_claim",
+            text("last_sync_at NULLS FIRST"),
+            postgresql_where=text("sync_state = 'pending'"),
         ),
         # Serves reverse traversal on undrained legacy rows; dropped with the
         # column in the follow-up migration.
@@ -821,10 +843,12 @@ class Document(Base):
             "source_ids",
             postgresql_using="gin",
         ),
-        # Rows the reconciler still has to drain; empty once the drain
-        # finishes. Dropped with the column in the follow-up migration.
+        # This index holds the rows that the reconciler must still drain, in the
+        # (tenant_id, id) order of the backfill. It is empty when the drain is
+        # complete. The follow-up migration drops it with the column.
         Index(
-            "ix_documents_legacy_sources_pending",
+            "ix_documents_legacy_sources_tenant",
+            "tenant_id",
             "id",
             postgresql_where=text(
                 "source_ids IS NOT NULL OR internal_metadata ?| ARRAY['source_ids', 'premise_ids']"  # noqa: E501
@@ -892,7 +916,8 @@ class QueueItem(Base):
     # FKs to sessions / messages / workspaces: the app manages queue lifecycle and
     # already tolerates missing referents.
     # endregion
-    tenant_id: Mapped[str | None] = mapped_column(TEXT, nullable=True, index=True)
+    # ix_queue_tenant_workspace in __table_args__ indexes this column.
+    tenant_id: Mapped[str | None] = mapped_column(TEXT, nullable=True)
     session_id: Mapped[str | None] = mapped_column(TEXT, nullable=True, index=True)
     work_unit_key: Mapped[str] = mapped_column(TEXT, nullable=False)
 
@@ -923,6 +948,11 @@ class QueueItem(Base):
             "message_id",
             postgresql_where=text("message_id IS NOT NULL"),
         ),
+        # This index serves the queue rows of one tenant, or of one workspace of a
+        # tenant: queue status and workspace delete. It replaces the single-column
+        # tenant_id index. ix_queue_workspace_name stays, because those reads have
+        # no tenant_id predicate when MULTI_TENANT is off.
+        Index("ix_queue_tenant_workspace", "tenant_id", "workspace_name"),
         Index(
             "ix_queue_work_unit_key_processed_id",
             "work_unit_key",

@@ -233,6 +233,7 @@ class DreamScheduler:
             stmt = (
                 select(models.Document.session_name)
                 .where(
+                    models.Document.tenant_id == models.scoped_tenant_id(),
                     models.Document.workspace_name == workspace_name,
                     models.Document.observer == observer,
                     models.Document.observed == observed,
