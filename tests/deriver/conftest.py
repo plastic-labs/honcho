@@ -16,7 +16,7 @@ from src.config import settings
 from src.models import DEFAULT_TENANT_ID
 from src.utils.queue_payload import create_payload
 from src.utils.types import TaskType
-from src.utils.work_unit import construct_work_unit_key
+from src.utils.work_unit import construct_work_unit_key, tenant_id_for_work_unit_key
 
 
 @pytest.fixture(autouse=True)
@@ -205,6 +205,8 @@ async def add_queue_items(
                 processed=False,
                 workspace_name=workspace_name,
                 message_id=message_id,
+                # As enqueue's _stamp_tenant_id does: the column mirrors the key.
+                tenant_id=tenant_id_for_work_unit_key(work_unit_key),
             )
             db_session.add(queue_item)
             queue_items.append(queue_item)
@@ -406,7 +408,15 @@ async def seed_work_unit(
         for token_count, age_seconds in zip(token_counts, ages, strict=True):
             message_id: int | None = None
             if with_messages:
+                # region ai
+                # The messages live in sample_data's self-host workspace, so
+                # stamp them with its tenant explicitly: flag-on, the column
+                # default refuses to guess. The aggregate's token probe is
+                # tenant-keyed, so a queue row naming another tenant counts 0
+                # tokens for its message.
+                # endregion
                 message = models.Message(
+                    tenant_id=DEFAULT_TENANT_ID,
                     session_name=session.name,
                     workspace_name=workspace.name,
                     peer_name=peer.name,

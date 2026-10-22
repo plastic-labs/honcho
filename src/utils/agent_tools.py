@@ -1124,9 +1124,9 @@ async def get_observation_context(
     if deny:
         return []
 
-    # Use a CTE to get seq_in_session values for target messages
+    # Use a CTE to get (session_name, seq_in_session) for target messages
     stmt = (
-        select(models.Message.seq_in_session)
+        select(models.Message.session_name, models.Message.seq_in_session)
         .where(models.Message.workspace_name == workspace_name)
         .where(models.Message.public_id.in_(message_ids))
     )
@@ -1138,21 +1138,31 @@ async def get_observation_context(
 
     target_seqs_cte = stmt.cte("target_seqs")
 
-    # Query messages where seq_in_session is within ±1 of any target sequence
-    # We use EXISTS with arithmetic to check if the message is adjacent to any target
+    # Query messages within ±1 seq of a target in the target's own session.
+    # region ai
+    # seq_in_session is per-session, so the neighbour test must also match the
+    # session: without it, a call with no session_name (peer-scoped) pulls the
+    # seq±1 rows of every other session the observer can see. Ordered by
+    # session first so a peer-scoped result keeps each session's turns
+    # together for the transcript it feeds.
+    # endregion
     stmt = (
         select(models.Message)
         .where(models.Message.workspace_name == workspace_name)
         .where(
             select(target_seqs_cte.c.seq_in_session)
+            .where(target_seqs_cte.c.session_name == models.Message.session_name)
             .where(
-                (
-                    target_seqs_cte.c.seq_in_session - models.Message.seq_in_session
-                ).between(-1, 1)
+                models.Message.seq_in_session.between(
+                    target_seqs_cte.c.seq_in_session - 1,
+                    target_seqs_cte.c.seq_in_session + 1,
+                )
             )
             .exists()
         )
-        .order_by(models.Message.seq_in_session.asc())
+        .order_by(
+            models.Message.session_name.asc(), models.Message.seq_in_session.asc()
+        )
     )
 
     if session_name:

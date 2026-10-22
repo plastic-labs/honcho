@@ -371,17 +371,13 @@ async def delete_workspace(
     )
     sessions_count = int(
         await db.scalar(
-            select(func.count(models.Session.id)).where(
-                models.Session.workspace_name == workspace_name
-            )
+            select(func.count()).where(models.Session.workspace_name == workspace_name)
         )
         or 0
     )
     messages_count = int(
         await db.scalar(
-            select(func.count(models.Message.id)).where(
-                models.Message.workspace_name == workspace_name
-            )
+            select(func.count()).where(models.Message.workspace_name == workspace_name)
         )
         or 0
     )
@@ -621,7 +617,7 @@ async def get_workspace_stats(
         )
         session_count = int(
             await db.scalar(
-                select(func.count(models.Session.id)).where(
+                select(func.count()).where(
                     models.Session.workspace_name == workspace_name,
                     models.Session.name.in_(session_names),
                 )
@@ -640,17 +636,25 @@ async def get_workspace_stats(
         )
         session_count = int(
             await db.scalar(
-                select(func.count(models.Session.id)).where(
+                select(func.count()).where(
                     models.Session.workspace_name == workspace_name
                 )
             )
             or 0
         )
 
+    # region ai
+    # count(*), not count(id): id is not in ix_messages_peer_lookup, so counting
+    # it forces a heap fetch per row. Under MULTI_TENANT (RLS supplies the
+    # leading tenant_id), count(*) lets the (tenant_id, workspace_name,
+    # peer_name, created_at) index answer count/min/max on its own when no
+    # session allowlist applies, with heap visits only for pages not yet
+    # all-visible. Same result: id is NOT NULL.
+    # endregion
     msg_row = (
         await db.execute(
             select(
-                func.count(models.Message.id),
+                func.count(),
                 func.min(models.Message.created_at),
                 func.max(models.Message.created_at),
             ).where(*msg_filters)
@@ -710,7 +714,7 @@ async def get_active_peers(
     subq = (
         select(
             models.Message.peer_name,
-            func.count(models.Message.id).label("msg_count"),
+            func.count().label("msg_count"),
             func.max(models.Message.created_at).label("last_msg_at"),
         )
         .where(*msg_filters)

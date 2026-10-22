@@ -38,6 +38,7 @@ from src.utils.scopes import (
     scope_name_from_peer,
 )
 from src.utils.types import DocumentLevel
+from src.utils.work_unit import TASK_TYPES
 
 # ---------------------------------------------------------------------------
 # Metadata validation helpers
@@ -152,6 +153,21 @@ class TenantCreate(BaseModel):
         str, Field(min_length=1, max_length=128, pattern=RESOURCE_NAME_PATTERN)
     ]
     tier: TenantTier
+
+    @field_validator("tenant_id")
+    @classmethod
+    def reject_task_type_names(cls, v: str) -> str:
+        # region ai
+        # Work-unit keys tell a tenant prefix from an un-prefixed key by whether
+        # the leading segment is a task type, so construct_work_unit_key refuses
+        # a tenant named like one. Refusing it here makes that a 422 at
+        # registration instead of a tenant that exists but can enqueue nothing.
+        # endregion
+        if v in TASK_TYPES:
+            raise ValueError(
+                f"tenant_id {v!r} is reserved: it collides with a work-unit task type"
+            )
+        return v
 
     # region ai
     # Create carries identity only. The mutable facts (TenantUpdate) are not

@@ -1,29 +1,21 @@
 """Work unit utility functions for generating and parsing work unit keys."""
 
-from typing import Any
+from typing import Any, get_args
 
 from pydantic import BaseModel
 
 from src.config import settings
 from src.db import tenant_context
+from src.utils.types import TaskType
 
 # The task types that lead a base (non-tenant-namespaced) work_unit_key.
 # region ai
 # Used to tell whether a key carries a leading tenant_id prefix: the prefix is
 # present (added under MULTI_TENANT) iff the first segment is not one of these.
+# Derived from TaskType so a new task type is reserved as a tenant id
+# (TenantCreate.reject_task_type_names) without a second list to update.
 # endregion
-_TASK_TYPES = frozenset(
-    {
-        "representation",
-        "summary",
-        "dream",
-        "webhook",
-        "deletion",
-        "reconciler",
-        "scope_backfill",
-        "scope_removal",
-    }
-)
+TASK_TYPES: frozenset[str] = frozenset(get_args(TaskType))
 
 # region ai
 # reconciler is the only task type that is NOT tenant-scoped: it scans every
@@ -92,11 +84,12 @@ def construct_work_unit_key(
     # region ai
     # A tenant_id equal to a task-type name would make the prefixed key
     # indistinguishable from an un-prefixed one in parse_work_unit_key (the two
-    # are told apart by leading-segment membership in _TASK_TYPES). The tenant
-    # id issuer mints opaque nanoids, so this cannot happen in practice; the
-    # guard makes the invariant explicit instead of latent.
+    # are told apart by leading-segment membership in TASK_TYPES).
+    # TenantCreate rejects such ids at registration (reject_task_type_names), so
+    # a registered tenant cannot reach this; the guard keeps the invariant
+    # explicit for an id that arrives any other way.
     # endregion
-    if tenant in _TASK_TYPES:
+    if tenant in TASK_TYPES:
         raise ValueError(
             f"tenant_id {tenant!r} collides with a task-type name and would "
             + "produce an ambiguous work_unit_key"
@@ -182,7 +175,7 @@ def _split_tenant_prefix(work_unit_key: str) -> tuple[str | None, str]:
     # task type means no prefix; anything else is a tenant_id to strip off.
     # endregion
     head, _, rest = work_unit_key.partition(":")
-    if head and head not in _TASK_TYPES and rest:
+    if head and head not in TASK_TYPES and rest:
         return head, rest
     return None, work_unit_key
 

@@ -733,6 +733,11 @@ class QueueManager:
         async with self.semaphore:
             queue_item_count = 0
             # region ai
+            # Set only when a fetch comes back empty: queue.empty fires on a
+            # confirmed drain, never on an error, shutdown or lost-ownership break.
+            # endregion
+            drained = False
+            # region ai
             # Bind the work unit's tenant for the duration: every per-tenant DB
             # session opened while processing it (the representation batch,
             # process_item, and their nested crud/summarizer/dreamer sessions)
@@ -764,6 +769,20 @@ class QueueManager:
                     # the two cleanups pair.
                     # endregion
                     sentry_sdk.set_tag("tenant_id", work_unit.tenant_id)
+                if (
+                    settings.MULTI_TENANT
+                    and work_unit.tenant_id is None
+                    and work_unit.task_type == "representation"
+                ):
+                    # region ai
+                    # An un-prefixed representation key under MULTI_TENANT (a
+                    # queue written flag-off, then switched on) can never be
+                    # scoped: get_queue_item_batch refuses it. Fail the whole
+                    # unit once here instead of looping on that refusal; the
+                    # finally releases the claim.
+                    # endregion
+                    await self._fail_unscoped_work_unit(work_unit_key)
+                    return
                 while not self.shutdown_event.is_set():
                     # Get worker ownership info for verification
                     ownership = self.worker_ownership.get(worker_id)
@@ -787,6 +806,7 @@ class QueueManager:
                                 logger.debug(
                                     f"No more queue items to process for work unit {work_unit_key} for worker {worker_id}"
                                 )
+                                drained = True
                                 break
 
                             try:
@@ -846,6 +866,7 @@ class QueueManager:
                                 logger.debug(
                                     f"No more queue items to process for work unit {work_unit_key} for worker {worker_id}"
                                 )
+                                drained = True
                                 break
 
                             try:
@@ -873,6 +894,14 @@ class QueueManager:
                         )
                         if settings.SENTRY.ENABLED:
                             sentry_sdk.capture_exception(e)
+                        # region ai
+                        # Back off and release the unit rather than retry in
+                        # place: an error raised before the iteration's first
+                        # await would otherwise spin without yielding and stall
+                        # every worker on this event loop.
+                        # endregion
+                        await asyncio.sleep(self._jitter(RETRY_BACKOFF_SECONDS))
+                        break
 
                     # Check for shutdown after processing each batch
                     if self.shutdown_event.is_set():
@@ -901,7 +930,7 @@ class QueueManager:
                     removed = False
 
                 self.untrack_worker_work_unit(worker_id, work_unit_key)
-                if removed and queue_item_count > 0:
+                if removed and drained and queue_item_count > 0:
                     # Only publish webhook if we actually removed an active session
                     try:
                         if (
@@ -927,7 +956,7 @@ class QueueManager:
                         logger.exception("Error triggering queue_empty webhook")
                 else:
                     logger.debug(
-                        f"Work unit {work_unit_key} already cleaned up by another worker, skipping webhook"
+                        f"Work unit {work_unit_key} not drained, empty, or already cleaned up by another worker; skipping webhook"
                     )
 
     @sentry_sdk.trace
@@ -1009,9 +1038,17 @@ class QueueManager:
         # session/workspace name shared across tenants can't pull another tenant's
         # messages into the batch. It also goes on every Message.id probe: the PK
         # is (tenant_id, id), so an id-only lookup can't seek it and reads every
-        # partition's index. None (flag off, or a legacy un-prefixed key) adds no
-        # filter, so self-host is unchanged.
+        # partition's index. Flag off, the key is never prefixed and None adds
+        # no filter, so self-host is unchanged. Flag on, an unfiltered read on
+        # the service session would span every tenant, so an un-prefixed key
+        # raises before any read. process_work_unit fails such a unit before
+        # it gets here; this is the backstop for any other caller.
         # endregion
+        if settings.MULTI_TENANT and parsed_key.tenant_id is None:
+            raise ValueError(
+                f"work_unit_key {work_unit_key!r} has no tenant prefix but "
+                + "MULTI_TENANT is enabled; refusing an unscoped batch read"
+            )
         tenant_clause = (
             models.Message.tenant_id == parsed_key.tenant_id
             if parsed_key.tenant_id is not None
@@ -1395,6 +1432,27 @@ class QueueManager:
                 .values(last_updated=func.now())
             )
             await db.commit()
+
+    async def _fail_unscoped_work_unit(self, work_unit_key: str) -> None:
+        """Mark every pending item of an un-prefixed key errored under MULTI_TENANT."""
+        error = (
+            f"work_unit_key {work_unit_key!r} has no tenant prefix but "
+            + "MULTI_TENANT is enabled"
+        )
+        async with service_db("fail_unscoped_work_unit") as db:
+            result = cast(
+                CursorResult[Any],
+                await db.execute(
+                    update(models.QueueItem)
+                    .where(models.QueueItem.work_unit_key == work_unit_key)
+                    .where(models.QueueItem.processed.is_(False))
+                    .values(processed=True, error=error)
+                ),
+            )
+            await db.commit()
+        logger.error("%s; marked %d queue items errored", error, result.rowcount)
+        if settings.SENTRY.ENABLED:
+            sentry_sdk.capture_message(error, level="error")
 
     async def _cleanup_work_unit(
         self,

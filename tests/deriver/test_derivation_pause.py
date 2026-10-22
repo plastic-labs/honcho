@@ -21,10 +21,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import models
 from src.config import settings
 from src.crud.deriver import PAUSE_EXEMPT_TASK_TYPES, not_paused_clause
+from src.db import tenant_context
 from src.deriver.queue_manager import QueueManager
-from src.utils.work_unit import (
-    _TASK_TYPES,  # pyright: ignore[reportPrivateUsage]
-)
+from src.utils.work_unit import TASK_TYPES
 from tests.deriver.conftest import SeedWorkUnit
 
 
@@ -54,12 +53,12 @@ def test_every_task_type_is_classified() -> None:
     The exemption list defaults a new type to paused, which is the safe direction
     for billing. This pins the current split so the default is never silent.
     """
-    assert PAUSE_EXEMPT_TASK_TYPES <= _TASK_TYPES
+    assert PAUSE_EXEMPT_TASK_TYPES <= TASK_TYPES
     assert {
         "representation",
         "summary",
         "dream",
-    } == _TASK_TYPES - PAUSE_EXEMPT_TASK_TYPES
+    } == TASK_TYPES - PAUSE_EXEMPT_TASK_TYPES
 
 
 def test_the_clause_is_never_built_flag_off() -> None:
@@ -158,7 +157,6 @@ async def test_the_next_item_fetch_stops_once_the_tenant_is_paused(
 @pytest.mark.asyncio
 async def test_the_next_batch_fetch_stops_once_the_tenant_is_paused(
     db_session: AsyncSession,
-    sample_session_with_peers: tuple[models.Session, list[models.Peer]],
     create_queue_payload: Callable[..., Any],
     add_queue_items: Callable[
         [Sequence[tuple[dict[str, Any], int]], str, str],
@@ -167,40 +165,54 @@ async def test_the_next_batch_fetch_stops_once_the_tenant_is_paused(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A representation batch comes back empty for a tenant paused mid-unit."""
-    session, peers = sample_session_with_peers
-    peer = peers[0]
-    message = models.Message(
-        session_name=session.name,
-        workspace_name=session.workspace_name,
-        peer_name=peer.name,
-        content="hello",
-        token_count=10,
-        seq_in_session=1,
-    )
-    db_session.add(message)
-    await db_session.commit()
-    await db_session.refresh(message)
-    payload = create_queue_payload(
-        message=message,
-        task_type="representation",
-        observed=peer.name,
-        observer=peer.name,
-    )
-    items = await add_queue_items(
-        [(payload, message.id)], session.id, session.workspace_name
-    )
     tenant_id = await _register_tenant(db_session, paused=False)
     # region ai
-    # Built flag-off, so the key and messages need no tenant plumbing; the claim
-    # row carries the tenant, which is what the batch fetch's pause check reads.
+    # Built flag-on under the tenant, as a real writer would: the rows are
+    # stamped with it and the key carries its prefix. The batch fetch refuses
+    # an un-prefixed key flag-on, so a flag-off key can't stand in here.
     # endregion
+    monkeypatch.setattr(settings, "MULTI_TENANT", True)
+    token = tenant_context.set(tenant_id)
+    try:
+        workspace = models.Workspace(name=str(generate_nanoid()))
+        db_session.add(workspace)
+        await db_session.flush()
+        peer = models.Peer(name=str(generate_nanoid()), workspace_name=workspace.name)
+        session = models.Session(
+            name=str(generate_nanoid()), workspace_name=workspace.name
+        )
+        db_session.add_all([peer, session])
+        await db_session.flush()
+        message = models.Message(
+            session_name=session.name,
+            workspace_name=workspace.name,
+            peer_name=peer.name,
+            content="hello",
+            token_count=10,
+            seq_in_session=1,
+        )
+        db_session.add(message)
+        await db_session.commit()
+        await db_session.refresh(message)
+        payload = create_queue_payload(
+            message=message,
+            task_type="representation",
+            observed=peer.name,
+            observer=peer.name,
+        )
+        items = await add_queue_items(
+            [(payload, message.id)], session.id, workspace.name
+        )
+    finally:
+        tenant_context.reset(token)
+    assert items[0].work_unit_key.startswith(f"{tenant_id}:")
+    assert items[0].tenant_id == tenant_id
     aqs = models.ActiveQueueSession(
         work_unit_key=items[0].work_unit_key, tenant_id=tenant_id
     )
     db_session.add(aqs)
     await db_session.commit()
     await db_session.refresh(aqs)
-    monkeypatch.setattr(settings, "MULTI_TENANT", True)
     qm = QueueManager()
 
     batch = await qm.get_queue_item_batch(
