@@ -21,7 +21,6 @@ from sqlalchemy import CursorResult, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.db import Base
-from src.telemetry.prometheus.metrics import BACKLOG_GAUGE_CAP
 
 BACKFILL_BATCH_SIZE = 500
 
@@ -99,13 +98,11 @@ async def has_pending_document_sources(db: AsyncSession) -> bool:
 
 
 async def count_pending_document_sources(db: AsyncSession) -> int:
-    """Number of documents still carrying legacy JSONB linkage, capped at
-    BACKLOG_GAUGE_CAP."""
+    """Number of documents still carrying legacy JSONB linkage."""
     count = await db.scalar(
         text(
-            f"SELECT count(*) FROM (SELECT 1 FROM {_qualified('documents')} WHERE {_PENDING_PREDICATE} LIMIT :cap) AS pending"  # nosec B608
-        ),
-        {"cap": BACKLOG_GAUGE_CAP},
+            f"SELECT count(*) FROM {_qualified('documents')} WHERE {_PENDING_PREDICATE}"  # nosec B608
+        )
     )
     return count or 0
 

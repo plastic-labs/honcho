@@ -28,7 +28,6 @@ from src.embedding_client import embedding_client
 from src.exceptions import VectorNamespaceUnresolved, VectorStoreError
 from src.telemetry import prometheus_metrics
 from src.telemetry.events import EmbeddingCallPurpose
-from src.telemetry.prometheus.metrics import BACKLOG_GAUGE_CAP
 from src.utils.types import embedding_call_purpose
 from src.vector_store import VectorRecord, VectorStore, get_external_vector_store
 from src.vector_store.tenant_namespace import prefix_for_tenant
@@ -865,8 +864,7 @@ async def _cleanup_pgvector_batch(
 
 async def record_pending_embeddings_backlog() -> None:
     """Set the pending-embeddings backlog gauge to the current count of
-    MessageEmbedding rows awaiting a vector (sync_state='pending'), capped at
-    BACKLOG_GAUGE_CAP."""
+    MessageEmbedding rows awaiting a vector (sync_state='pending')."""
     # region ai
     # Called from ``ReconcilerScheduler._scheduler_loop``, deliberately NOT from
     # ``run_vector_reconciliation_cycle``: the cycle runs off the queue behind
@@ -876,24 +874,23 @@ async def record_pending_embeddings_backlog() -> None:
     # count is a property of the database, not the process, so every replica must
     # refresh it on its own timer for ``max()``/``avg()`` to mean anything.
     #
-    # Cost: one COUNT per replica per scheduler interval (~5 min by default),
-    # stopped at BACKLOG_GAUGE_CAP rows. Uncapped, the scan grows with the pending
-    # backlog, and after an embedding outage the backlog is exactly what is large;
-    # multiplied by every replica that would saturate a shared database.
+    # Cost: one COUNT per replica per scheduler interval (~5 min by default).
+    # ``ix_message_embeddings_sync_state_last_sync_at`` keeps the scan proportional to
+    # the pending backlog, not the whole table — which is not the same as cheap: after
+    # an embedding outage the backlog is exactly what is large. Still a small duty
+    # cycle, and the cost shrinks as the reconciler drains.
     #
     # Best-effort: a metrics/DB hiccup here must never break the scheduler loop.
     # endregion
     if not settings.METRICS.ENABLED:
         return
     try:
-        pending = (
-            select(models.MessageEmbedding.id)
-            .where(models.MessageEmbedding.sync_state == "pending")
-            .limit(BACKLOG_GAUGE_CAP)
-            .subquery()
-        )
         async with service_db("reconciler_pending_count", read_only=True) as db:
-            count = await db.scalar(select(func.count()).select_from(pending))
+            count = await db.scalar(
+                select(func.count())
+                .select_from(models.MessageEmbedding)
+                .where(models.MessageEmbedding.sync_state == "pending")
+            )
         prometheus_metrics.set_message_embeddings_pending(count=count or 0)
     except Exception:
         logger.warning(

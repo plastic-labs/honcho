@@ -232,11 +232,6 @@ telemetry_buffer_size_gauge = NamespacedGauge(
     ["namespace"],
 )
 
-# Backlog gauges count at most this many rows, so a large backlog costs every
-# replica a bounded scan instead of one that grows with the backlog. A reading
-# at the cap means "at least this many".
-BACKLOG_GAUGE_CAP = 100_000
-
 # Embedding backlog: MessageEmbedding rows still awaiting a vector
 # (sync_state='pending').
 # region ai
@@ -248,16 +243,16 @@ BACKLOG_GAUGE_CAP = 100_000
 # endregion
 message_embeddings_pending_gauge = NamespacedGauge(
     "message_embeddings_pending",
-    "MessageEmbedding rows awaiting embedding (sync_state='pending'), "
-    + f"capped at {BACKLOG_GAUGE_CAP}. Service-wide DB count, reported independently by every replica — "
+    "MessageEmbedding rows awaiting embedding (sync_state='pending'). "
+    + "Service-wide DB count, reported independently by every replica — "
     + "aggregate with max() or avg(), never sum()",
     ["namespace"],
 )
 
 backfill_pending_gauge = NamespacedGauge(
     "backfill_pending",
-    "Rows still matching a backfill's pending predicate, by backfill name, "
-    + f"capped at {BACKLOG_GAUGE_CAP}. Service-wide DB count, reported independently by every replica running "
+    "Rows still matching a backfill's pending predicate, by backfill name. "
+    + "Service-wide DB count, reported independently by every replica running "
     + "the reconciler scheduler — aggregate with max() or avg(), never sum()",
     ["namespace", "task"],
 )
