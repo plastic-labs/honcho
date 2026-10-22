@@ -656,7 +656,7 @@ def test_sweep_slot_follows_the_poll_clock(monkeypatch: pytest.MonkeyPatch):
         ({"DUE_SWEEP_HOURS": 1, "DUE_POLL_INTERVAL_SECONDS": 7200}, "DUE_SWEEP_HOURS"),
     ],
 )
-def test_dream_settings_refuse_a_window_shorter_than_the_gates(
+def test_dream_settings_refuse_a_lookback_or_sweep_shorter_than_its_floor(
     overrides: dict[str, int], message: str
 ):
     from pydantic import ValidationError
@@ -665,6 +665,16 @@ def test_dream_settings_refuse_a_window_shorter_than_the_gates(
 
     with pytest.raises(ValidationError, match=message):
         DreamSettings(**overrides)  # pyright: ignore[reportArgumentType]
+
+
+def test_an_unset_lookback_grows_to_fit_long_gates(monkeypatch: pytest.MonkeyPatch):
+    """A deploy with MIN_HOURS_BETWEEN_DREAMS past the default lookback still boots."""
+    from src.config import DreamSettings
+
+    monkeypatch.delenv("DREAM_DUE_LOOKBACK_HOURS", raising=False)
+    dream = DreamSettings(MIN_HOURS_BETWEEN_DREAMS=30)  # pyright: ignore[reportCallIssue]
+    assert dream.DUE_LOOKBACK_HOURS == 31
+    assert DreamSettings().DUE_LOOKBACK_HOURS == 24
 
 
 @pytest.mark.asyncio

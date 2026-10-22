@@ -1450,6 +1450,7 @@ class DreamSettings(HonchoSettings):
     MIN_HOURS_BETWEEN_DREAMS: Annotated[int, Field(default=8, gt=0, le=72)] = 8
     DUE_POLL_INTERVAL_SECONDS: Annotated[int, Field(default=300, ge=1)] = 300
     # Only collections with an explicit document this recent are checked each poll.
+    # Unset, it grows to fit IDLE_TIMEOUT_MINUTES and MIN_HOURS_BETWEEN_DREAMS.
     DUE_LOOKBACK_HOURS: Annotated[int, Field(default=24, gt=0, le=720)] = 24
     # Every collection is also revisited once per this many hours; 0 disables.
     DUE_SWEEP_HOURS: Annotated[int, Field(default=24, ge=0, le=720)] = 24
@@ -1505,24 +1506,29 @@ class DreamSettings(HonchoSettings):
 
     @model_validator(mode="after")
     def _validate_due_lookback(self) -> "DreamSettings":
-        """The lookback must outlast every time gate, plus two polls of slack."""
+        """Fit the lookback to the time gates, and the sweep to the poll interval."""
         # region ai
         # A collection whose writes stopped at N is due by N + max(idle, min_hours):
-        # the idle gate opens at N + idle, and the last dream predates N. A lookback
-        # shorter than that would drop collections that become due by time alone.
-        # The two polls of slack let a backlog over MAX_ENQUEUED_PER_POLL drain
-        # before its collections leave the window.
+        # the idle gate opens at N + idle, and the last dream predates N, since the
+        # documents that make it due were written after it. A lookback shorter than
+        # that would leave collections that become due by time alone to the sweep.
+        # Two polls of slack give the oldest due collections (enqueued first) two
+        # more polls before they leave the window; the sweep catches the rest.
+        # Left unset, the lookback grows to fit the gates, so a deploy with long
+        # gates keeps booting; set explicitly too short, it is refused.
         # endregion
         floor_hours = (
             max(self.IDLE_TIMEOUT_MINUTES / 60, self.MIN_HOURS_BETWEEN_DREAMS)
             + 2 * self.DUE_POLL_INTERVAL_SECONDS / 3600
         )
         if floor_hours > self.DUE_LOOKBACK_HOURS:
-            raise ValueError(
-                f"dream.DUE_LOOKBACK_HOURS ({self.DUE_LOOKBACK_HOURS}) must be at least "
-                + f"{floor_hours:.2f}: max(IDLE_TIMEOUT_MINUTES / 60, "
-                + "MIN_HOURS_BETWEEN_DREAMS) + 2 * DUE_POLL_INTERVAL_SECONDS / 3600"
-            )
+            if "DUE_LOOKBACK_HOURS" in self.model_fields_set:
+                raise ValueError(
+                    f"dream.DUE_LOOKBACK_HOURS ({self.DUE_LOOKBACK_HOURS}) must be at "
+                    + f"least {floor_hours:.2f}: max(IDLE_TIMEOUT_MINUTES / 60, "
+                    + "MIN_HOURS_BETWEEN_DREAMS) + 2 * DUE_POLL_INTERVAL_SECONDS / 3600"
+                )
+            self.DUE_LOOKBACK_HOURS = math.ceil(floor_hours)
         if (
             self.DUE_SWEEP_HOURS
             and self.DUE_SWEEP_HOURS * 3600 < self.DUE_POLL_INTERVAL_SECONDS
