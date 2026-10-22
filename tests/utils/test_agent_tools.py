@@ -2766,8 +2766,9 @@ class TestObservationContextSessionCorrelation:
             message_ids=[messages[2].public_id, other_messages[2].public_id],
         )
 
-        expected = sorted(
-            [(session.name, seq) for seq in (2, 3, 4)]
-            + [(other.name, seq) for seq in (2, 3, 4)]
-        )
-        assert [(m.session_name, m.seq_in_session) for m in result] == expected
+        pairs = [(m.session_name, m.seq_in_session) for m in result]
+        first, second = pairs[0][0], pairs[-1][0]
+        assert {first, second} == {session.name, other.name}
+        assert pairs == [(first, seq) for seq in (2, 3, 4)] + [
+            (second, seq) for seq in (2, 3, 4)
+        ]

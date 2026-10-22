@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import jwt
 import pytest
 import pytest_asyncio
+import sentry_sdk
 from alembic import command
 from alembic.config import Config
 from cashews.picklers import PicklerType
@@ -629,6 +630,20 @@ def _reset_vector_namespace_cache():  # pyright: ignore[reportUnusedFunction]
     reset_prefix_cache()
     yield
     reset_prefix_cache()
+
+
+@pytest.fixture(autouse=True)
+def _reset_sentry_tenant_tag():  # pyright: ignore[reportUnusedFunction]
+    """Drop the Sentry tenant_id tag around each test.
+
+    Without a Sentry ASGI middleware scope, require_auth tags the process-wide
+    isolation scope, and sentry_sdk.isolation_scope() forks from it, so one
+    test's tenant would otherwise leak into another's assertions depending on
+    which tests share a worker.
+    """
+    sentry_sdk.get_isolation_scope().remove_tag("tenant_id")
+    yield
+    sentry_sdk.get_isolation_scope().remove_tag("tenant_id")
 
 
 @pytest.fixture(autouse=True)
