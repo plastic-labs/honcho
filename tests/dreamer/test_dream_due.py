@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 from nanoid import generate as generate_nanoid
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
@@ -602,6 +602,70 @@ class TestLookbackAndSweep:
         assert await count_due_dreams(db_session) == 0
 
         await _insert_docs(db_session, collection, "explicit", 1, age_minutes=90)
+        assert await count_due_dreams(db_session) == 1
+
+    async def test_an_unchanged_collection_is_not_recounted(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """A memoized below-threshold count stands until a newer document arrives."""
+        from src.dreamer.dream_due import CountMemo, list_due_dreams
+
+        collection = await _make_collection(db_session, sample_data)
+        await _insert_docs(db_session, collection, "explicit", 30, age_minutes=90)
+        memo: CountMemo = {}
+
+        assert await list_due_dreams(db_session, count_memo=memo) == []
+        ((_newest, cap, count),) = memo.values()
+        assert (cap, count) == (settings.DREAM.DOCUMENT_THRESHOLD, 30)
+
+        # The memo, not the table, decides while the newest document is unchanged:
+        # a doctored memo naming the current newest document hides a due collection.
+        await _insert_docs(db_session, collection, "explicit", 30, age_minutes=90)
+        assert await count_due_dreams(db_session) == 1
+        newest = await db_session.scalar(
+            select(func.max(models.Document.created_at)).where(
+                models.Document.observer == collection.observer,
+                models.Document.workspace_name == collection.workspace_name,
+            )
+        )
+        assert newest is not None
+        (key,) = memo
+        memo[key] = (newest, cap, 0)
+        assert await list_due_dreams(db_session, count_memo=memo) == []
+
+        # A newer document moves the newest created_at, so the count reruns.
+        await _insert_docs(db_session, collection, "explicit", 1, age_minutes=80)
+        assert len(await list_due_dreams(db_session, count_memo=memo)) == 1
+
+    async def test_the_memo_forgets_collections_that_leave_the_window(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        from src.dreamer.dream_due import CountMemo, list_due_dreams
+
+        collection = await _make_collection(db_session, sample_data)
+        await _insert_docs(db_session, collection, "explicit", 30, age_minutes=90)
+        memo: CountMemo = {}
+        await list_due_dreams(db_session, count_memo=memo)
+        assert memo
+
+        later = _now() + datetime.timedelta(hours=settings.DREAM.DUE_LOOKBACK_HOURS)
+        await list_due_dreams(db_session, count_memo=memo, now=later)
+        assert memo == {}
+
+    async def test_a_negative_cap_counts_as_due_instead_of_failing_the_poll(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        collection = await _make_collection(
+            db_session, sample_data, {"dream": {"last_dream_document_count": -1000}}
+        )
+        await _insert_docs(db_session, collection, "explicit", 1, age_minutes=90)
+
         assert await count_due_dreams(db_session) == 1
 
     async def test_due_dreams_come_back_oldest_newest_document_first(

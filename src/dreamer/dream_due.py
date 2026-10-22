@@ -56,6 +56,9 @@ class DueDream(NamedTuple):
 # Max rows bound into one IN list or unnest batch.
 _CHUNK = 1000
 
+# A collection's last below-threshold count: (newest explicit created_at, cap, count).
+type CountMemo = dict[tuple[str, str, str, str], tuple[datetime, int, int]]
+
 
 def _chunks[T](items: Sequence[T], size: int = _CHUNK) -> Iterator[Sequence[T]]:
     for start in range(0, len(items), size):
@@ -159,12 +162,15 @@ async def list_due_dreams(
     *,
     sweep: Sequence[int] = (),
     now: datetime | None = None,
+    count_memo: CountMemo | None = None,
 ) -> list[DueDream]:
     """List collections past the threshold, the idle timeout, the min-hours gate, any earlier attempt, pending representation work, and the session's dream setting.
 
     Candidates come from the lookback window (collections with a recent explicit
     document) and from the slow sweep's slots listed in `sweep`.
-    Due dreams come back oldest newest-document first.
+    Due dreams come back oldest newest-document first. A caller that polls
+    repeatedly passes the same `count_memo` to skip recounting window
+    collections that have not changed since their last count.
     """
     dream_types = [
         DreamType(dream_type)
@@ -178,6 +184,11 @@ async def list_due_dreams(
     idle_cutoff = now - timedelta(minutes=settings.DREAM.IDLE_TIMEOUT_MINUTES)
 
     candidates = await _window_candidates(db, now=now, idle_cutoff=idle_cutoff)
+    if count_memo is not None:
+        # ai: entries for collections that left the window are dropped, which bounds the memo
+        in_window = {c.collection_key for c in candidates}
+        for key in [key for key in count_memo if key not in in_window]:
+            del count_memo[key]
     if sweep and (slots := sweep_slots()):
         seen = {c.collection_key for c in candidates}
         candidates.extend(
@@ -198,7 +209,7 @@ async def list_due_dreams(
     # endregion
     window = [c for c in candidates if not c.from_sweep]
     window = await _drop_disabled(db, await _drop_attempted(db, window, dream_types))
-    window = await _drop_below_threshold(db, window)
+    window = await _drop_below_threshold(db, window, count_memo)
 
     swept = await _drop_below_threshold(db, [c for c in candidates if c.from_sweep])
     swept = [
@@ -514,25 +525,44 @@ def _documents_table() -> str:
     return f'"{settings.DB.SCHEMA}".documents'
 
 
+def _count_cap(candidate: _Candidate) -> int:
+    # ai: never negative: LIMIT -1 would fail the whole poll on hand-edited metadata
+    return max(
+        0,
+        int(candidate.dream_metadata.get("last_dream_document_count", 0))
+        + settings.DREAM.DOCUMENT_THRESHOLD,
+    )
+
+
 async def _drop_below_threshold(
-    db: AsyncSession, candidates: list[_Candidate]
+    db: AsyncSession,
+    candidates: list[_Candidate],
+    count_memo: CountMemo | None = None,
 ) -> list[_Candidate]:
     """Keep collections with at least DOCUMENT_THRESHOLD explicit documents since their last dream."""
     # region ai
     # The count stops at what the rule needs: a collection is due once it has
     # last_dream_document_count + DOCUMENT_THRESHOLD explicit documents, so each
-    # per-collection scan of ix_documents_tenant_collection is capped there
-    # instead of counting the whole collection. Like the query this replaces, it
-    # counts soft-deleted explicit documents too (last_dream_document_count was
-    # recorded the same way).
+    # per-collection scan of ix_documents_tenant_collection is capped there.
+    # That cap rarely bites (a collection that isn't due never reaches it, so
+    # its count walks the whole collection), so below-threshold counts are
+    # memoized: a count under the cap can only grow with a new explicit
+    # document, which moves the collection's newest created_at. A document whose
+    # transaction began before the newest one but committed after it doesn't
+    # move it; the sweep, which never reads the memo, catches that collection.
+    # Like the query this replaces, it counts soft-deleted explicit documents
+    # too (last_dream_document_count was recorded the same way).
     # endregion
+    if count_memo is not None:
+        candidates = [
+            c
+            for c in candidates
+            if (memo := count_memo.get(c.collection_key)) is None
+            or memo[:2] != (c.newest_created_at, _count_cap(c))
+        ]
     kept: list[_Candidate] = []
     for chunk in _chunks(candidates):
-        caps = [
-            int(c.dream_metadata.get("last_dream_document_count", 0))
-            + settings.DREAM.DOCUMENT_THRESHOLD
-            for c in chunk
-        ]
+        caps = [_count_cap(c) for c in chunk]
         rows = (
             await db.execute(
                 text(
@@ -549,11 +579,12 @@ async def _drop_below_threshold(
             )
         ).all()
         counts = {int(row[0]): int(row[1]) for row in rows}
-        kept.extend(
-            c
-            for index, (c, cap) in enumerate(zip(chunk, caps, strict=True), start=1)
-            if counts.get(index, 0) >= cap
-        )
+        for index, (c, cap) in enumerate(zip(chunk, caps, strict=True), start=1):
+            count = counts.get(index, 0)
+            if count >= cap:
+                kept.append(c)
+            elif count_memo is not None and c.newest_created_at is not None:
+                count_memo[c.collection_key] = (c.newest_created_at, cap, count)
     return kept
 
 

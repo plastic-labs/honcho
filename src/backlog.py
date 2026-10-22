@@ -14,6 +14,7 @@ from src.db import tenant_context
 from src.dependencies import service_db
 from src.deriver.enqueue import enqueue_dream
 from src.dreamer.dream_due import (
+    CountMemo,
     DueDream,
     list_due_dreams,
     sweep_slots_for_ticks,
@@ -111,6 +112,7 @@ class DreamDuePoller:
         self._shutdown_event: asyncio.Event = asyncio.Event()
         self._due_dreams: list[DueDream] = []
         self._last_sweep_tick: int | None = None
+        self._count_memo: CountMemo = {}
         self._lease: AdvisoryLease | None = (
             AdvisoryLease("honcho:dream-due-poller")
             if settings.DERIVER.SCHEDULER == "api"
@@ -179,6 +181,7 @@ class DreamDuePoller:
             if not held:
                 self._due_dreams = []
                 self._last_sweep_tick = None
+                self._count_memo.clear()
                 prometheus_metrics.set_dreams_due(count=0)
                 return
 
@@ -199,7 +202,7 @@ class DreamDuePoller:
             asyncio.timeout(settings.DREAM.DUE_POLL_INTERVAL_SECONDS),
             service_db("dream_due_poll", read_only=True) as db,
         ):
-            due = await list_due_dreams(db, sweep=sweep)
+            due = await list_due_dreams(db, sweep=sweep, count_memo=self._count_memo)
         if scheduling:
             self._last_sweep_tick = tick
         self._due_dreams = due
