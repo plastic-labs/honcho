@@ -194,7 +194,11 @@ class DreamDuePoller:
             if scheduling
             else []
         )
-        async with service_db("dream_due_poll", read_only=True) as db:
+        # ai: bounded so a wedged connection fails the poll instead of stalling the loop
+        async with (
+            asyncio.timeout(settings.DREAM.DUE_POLL_INTERVAL_SECONDS),
+            service_db("dream_due_poll", read_only=True) as db,
+        ):
             due = await list_due_dreams(db, sweep=sweep)
         if scheduling:
             self._last_sweep_tick = tick
