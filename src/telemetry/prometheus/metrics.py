@@ -249,11 +249,25 @@ message_embeddings_pending_gauge = NamespacedGauge(
     ["namespace"],
 )
 
+message_embeddings_pending_capped_gauge = NamespacedGauge(
+    "message_embeddings_pending_capped",
+    "1 when message_embeddings_pending stopped counting at its cap, so the real "
+    + "backlog is at least that value",
+    ["namespace"],
+)
+
 backfill_pending_gauge = NamespacedGauge(
     "backfill_pending",
     "Rows still matching a backfill's pending predicate, by backfill name. "
     + "Service-wide DB count, reported independently by every replica running "
     + "the reconciler scheduler — aggregate with max() or avg(), never sum()",
+    ["namespace", "task"],
+)
+
+backfill_pending_capped_gauge = NamespacedGauge(
+    "backfill_pending_capped",
+    "1 when backfill_pending stopped counting at its cap, by backfill name, so the "
+    + "real count is at least that value",
     ["namespace", "task"],
 )
 
@@ -369,8 +383,23 @@ deriver_effective_worker_cap_gauge = NamespacedGauge(
 dreams_due_gauge = NamespacedGauge(
     "dreams_due",
     "Collections whose next dream is due and would actually run. "
-    + "Service-wide DB count, reported independently by every API replica — "
-    + "aggregate with max() or avg(), never sum()",
+    + "Service-wide DB count. Under DERIVER_SCHEDULER=api only the dream_due "
+    + "lease holder measures it and every other API replica reports 0; otherwise "
+    + "every API replica reports it independently. Aggregate with max(), never sum()",
+    ["namespace"],
+)
+
+scheduler_lease_held_gauge = NamespacedGauge(
+    "scheduler_lease_held",
+    "1 on the replica that holds the named singleton lease, else 0. Exactly one "
+    + "replica should read 1: sum() across replicas is the holder count",
+    ["namespace", "lease"],
+)
+
+dream_due_sweep_found_counter = NamespacedCounter(
+    "dream_due_sweep_found",
+    "Due dreams that only the slow sweep found: collections due for longer than "
+    + "DREAM.DUE_LOOKBACK_HOURS, which the lookback window no longer sees",
     ["namespace"],
 )
 
@@ -754,11 +783,13 @@ class PrometheusMetrics:
             self.set_deriver_metrics()
             self.set_deriver_outstanding_work(seconds=0)
             self.set_dreams_due(count=0)
+            self._touch(dream_due_sweep_found_counter)
             # ai: flag-off this process never emits it, so no series is fabricated
             if settings.MULTI_TENANT:
                 self.set_paused_tenants(count=0)
 
             if settings.DERIVER.SCHEDULER == "api":
+                self.set_scheduler_lease_held(lease="dream_due", held=False)
                 self.set_message_embeddings_pending(count=0)
                 self._initialize_backfill_pending()
 
@@ -812,15 +843,21 @@ class PrometheusMetrics:
         except Exception as e:
             self._handle_metric_error("set_telemetry_buffer_size", e)
 
-    def set_message_embeddings_pending(self, *, count: int) -> None:
+    def set_message_embeddings_pending(
+        self, *, count: int, capped: bool = False
+    ) -> None:
         try:
             message_embeddings_pending_gauge.labels().set(count)
+            message_embeddings_pending_capped_gauge.labels().set(int(capped))
         except Exception as e:
             self._handle_metric_error("set_message_embeddings_pending", e)
 
-    def set_backfill_pending(self, *, task: str, count: int) -> None:
+    def set_backfill_pending(
+        self, *, task: str, count: int, capped: bool = False
+    ) -> None:
         try:
             backfill_pending_gauge.labels(task=task).set(count)
+            backfill_pending_capped_gauge.labels(task=task).set(int(capped))
         except Exception as e:
             self._handle_metric_error("set_backfill_pending", e)
 
@@ -886,6 +923,20 @@ class PrometheusMetrics:
             dreams_due_gauge.labels().set(count)
         except Exception as e:
             self._handle_metric_error("set_dreams_due", e)
+
+    def set_scheduler_lease_held(self, *, lease: str, held: bool) -> None:
+        try:
+            scheduler_lease_held_gauge.labels(lease=lease).set(int(held))
+        except Exception as e:
+            self._handle_metric_error("set_scheduler_lease_held", e)
+
+    def record_dream_due_sweep_found(self, *, count: int) -> None:
+        if count <= 0:
+            return
+        try:
+            dream_due_sweep_found_counter.labels().inc(count)
+        except Exception as e:
+            self._handle_metric_error("record_dream_due_sweep_found", e)
 
     def set_deriver_metrics_last_success(self, *, timestamp: float) -> None:
         try:
