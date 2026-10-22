@@ -380,6 +380,7 @@ async def get_scope_sessions(
             (models.Session.name == models.SessionPeer.session_name)
             & (models.Session.workspace_name == models.SessionPeer.workspace_name),
         )
+        .where(models.SessionPeer.tenant_id == models.scoped_tenant_id())
         .where(models.SessionPeer.workspace_name == workspace_name)
         .where(models.SessionPeer.peer_name == scope_peer_name(scope_name))
         .where(models.SessionPeer.left_at.is_(None))

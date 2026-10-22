@@ -477,7 +477,8 @@ async def delete_workspace(
         )
         await db.execute(
             delete(models.SessionPeer).where(
-                models.SessionPeer.workspace_name == workspace_name
+                models.SessionPeer.tenant_id == models.scoped_tenant_id(),
+                models.SessionPeer.workspace_name == workspace_name,
             )
         )
         await db.execute(

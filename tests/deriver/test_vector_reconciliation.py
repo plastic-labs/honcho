@@ -1439,7 +1439,10 @@ class TestComputeChunkPositions:
             await db_session.refresh(row)
         a0, a1, b0 = ((row.tenant_id, row.id) for row in rows)
 
-        positions = await compute_chunk_positions(db_session, [msg_a, msg_b])
+        tenant = a0[0]
+        positions = await compute_chunk_positions(
+            db_session, [(tenant, msg_a), (tenant, msg_b)]
+        )
 
         assert positions[a0] == 0
         assert positions[a1] == 1
@@ -1574,3 +1577,89 @@ class TestReEmbedTenantAttribution:
         }
         assert synced == 2
         assert written == {"t-a": 1.0, "t-b": 2.0}
+
+
+async def _tenant_with_message(
+    db_session: AsyncSession, public_id: str, chunk_count: int
+) -> str:
+    """A new tenant with one message (public_id given) and its pending chunks."""
+    tenant_id = str(generate_nanoid())
+    db_session.add(models.Tenant(tenant_id=tenant_id))
+    workspace = models.Workspace(name=str(generate_nanoid()), tenant_id=tenant_id)
+    db_session.add(workspace)
+    await db_session.commit()
+    peer = models.Peer(
+        name=str(generate_nanoid()), workspace_name=workspace.name, tenant_id=tenant_id
+    )
+    session = models.Session(
+        name=str(generate_nanoid()), workspace_name=workspace.name, tenant_id=tenant_id
+    )
+    db_session.add_all([peer, session])
+    await db_session.commit()
+    db_session.add(
+        models.Message(
+            public_id=public_id,
+            session_name=session.name,
+            workspace_name=workspace.name,
+            peer_name=peer.name,
+            tenant_id=tenant_id,
+            content="message",
+            seq_in_session=1,
+        )
+    )
+    await db_session.commit()
+    for _ in range(chunk_count):
+        db_session.add(
+            models.MessageEmbedding(
+                content="chunk",
+                message_id=public_id,
+                workspace_name=workspace.name,
+                session_name=session.name,
+                peer_name=peer.name,
+                tenant_id=tenant_id,
+                sync_state="pending",
+                embedding=None,
+                last_sync_at=None,
+            )
+        )
+    await db_session.commit()
+    return tenant_id
+
+
+@pytest.mark.asyncio
+class TestReconcilerKeysMessagesByTenant:
+    """Two tenants can hold a message with the same public_id. The reconciler
+    reads every tenant, so it keys a message by (tenant_id, message_id)."""
+
+    async def test_a_claim_of_one_message_takes_one_tenants_chunks(
+        self, db_session: AsyncSession
+    ) -> None:
+        public_id = str(generate_nanoid())
+        first = await _tenant_with_message(db_session, public_id, chunk_count=2)
+        second = await _tenant_with_message(db_session, public_id, chunk_count=3)
+
+        claimed = await _get_message_embeddings_needing_sync(db_session, batch_size=1)
+
+        tenants = {emb.tenant_id for emb in claimed}
+        assert len(tenants) == 1
+        assert len(claimed) == {first: 2, second: 3}[tenants.pop()]
+
+    async def test_chunk_positions_read_only_the_requested_tenant(
+        self, db_session: AsyncSession
+    ) -> None:
+        public_id = str(generate_nanoid())
+        first = await _tenant_with_message(db_session, public_id, chunk_count=2)
+        second = await _tenant_with_message(db_session, public_id, chunk_count=2)
+        rows = (
+            await db_session.execute(
+                select(models.MessageEmbedding.tenant_id, models.MessageEmbedding.id)
+                .where(models.MessageEmbedding.message_id == public_id)
+                .order_by(models.MessageEmbedding.tenant_id, models.MessageEmbedding.id)
+            )
+        ).all()
+
+        positions = await compute_chunk_positions(db_session, [(first, public_id)])
+
+        first_ids = [row.id for row in rows if row.tenant_id == first]
+        assert [positions[(first, emb_id)] for emb_id in first_ids] == [0, 1]
+        assert not any(tenant_id == second for tenant_id, _ in positions)

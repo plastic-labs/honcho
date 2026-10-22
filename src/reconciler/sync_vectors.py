@@ -36,6 +36,7 @@ logger = logging.getLogger(__name__)
 
 # Constants
 RECONCILIATION_BATCH_SIZE = 50
+MESSAGE_CANDIDATE_FANOUT = 10
 RECONCILIATION_TIME_BUDGET_SECONDS = 240  # Leave headroom for other maintenance work
 MAX_SYNC_ATTEMPTS = 20  # After this many failures, mark as failed
 # Flat wait between sync attempts. With MAX_SYNC_ATTEMPTS=20 this gives ~3 hours
@@ -149,12 +150,19 @@ async def _get_message_embeddings_needing_sync(
 
     Note: "synced" = done forever, "failed" = permanent failure (manual intervention)
     """
-    # Step 1: pick distinct message_ids with at least one eligible pending row,
-    # prioritizing those with the oldest last_sync_at.
-    msg_id_stmt = (
+    # Step 1: pick distinct messages, as (tenant_id, message_id), with at least
+    # one eligible pending row, prioritizing those with the oldest last_sync_at.
+    # The key has tenant_id: the reconciler reads every tenant, and a message_id
+    # alone does not identify one tenant's message. The candidates come from
+    # an index-ordered walk of the oldest eligible rows, capped at
+    # batch_size * MESSAGE_CANDIDATE_FANOUT, so the aggregate never covers the
+    # whole pending set. A message's first appearance in that walk is its
+    # oldest chunk, so the order matches grouping over every pending row.
+    candidates = (
         select(
+            models.MessageEmbedding.tenant_id,
             models.MessageEmbedding.message_id,
-            func.min(models.MessageEmbedding.last_sync_at).label("oldest_attempt"),
+            models.MessageEmbedding.last_sync_at,
         )
         .where(
             and_(
@@ -162,13 +170,23 @@ async def _get_message_embeddings_needing_sync(
                 backoff_eligible(models.MessageEmbedding.last_sync_at),
             )
         )
-        .group_by(models.MessageEmbedding.message_id)
-        .order_by(func.min(models.MessageEmbedding.last_sync_at).asc().nullsfirst())
+        .order_by(models.MessageEmbedding.last_sync_at.asc().nullsfirst())
+        .limit(batch_size * MESSAGE_CANDIDATE_FANOUT)
+        .subquery()
+    )
+    msg_id_stmt = (
+        select(
+            candidates.c.tenant_id,
+            candidates.c.message_id,
+            func.min(candidates.c.last_sync_at).label("oldest_attempt"),
+        )
+        .group_by(candidates.c.tenant_id, candidates.c.message_id)
+        .order_by(func.min(candidates.c.last_sync_at).asc().nullsfirst())
         .limit(batch_size)
     )
     msg_id_rows = (await db.execute(msg_id_stmt)).all()
-    message_ids = [row[0] for row in msg_id_rows]
-    if not message_ids:
+    message_keys = [(row[0], row[1]) for row in msg_id_rows]
+    if not message_keys:
         return []
 
     # Step 2: claim all pending rows for those messages. Skip rows another
@@ -178,7 +196,10 @@ async def _get_message_embeddings_needing_sync(
         select(models.MessageEmbedding)
         .where(
             and_(
-                models.MessageEmbedding.message_id.in_(message_ids),
+                tuple_(
+                    models.MessageEmbedding.tenant_id,
+                    models.MessageEmbedding.message_id,
+                ).in_(message_keys),
                 models.MessageEmbedding.sync_state == "pending",
                 backoff_eligible(models.MessageEmbedding.last_sync_at),
             )
@@ -237,7 +258,7 @@ async def _bump_message_embedding_sync_attempts(
 
 
 async def compute_chunk_positions(
-    db: AsyncSession, message_ids: list[str]
+    db: AsyncSession, message_keys: Sequence[tuple[str, str]]
 ) -> dict[tuple[str, int], int]:
     """Map each MessageEmbedding row's ``(tenant_id, id)`` to its 0-indexed chunk
     position within its message.
@@ -247,8 +268,11 @@ async def compute_chunk_positions(
     ``{message_id}_{chunk_position}`` vector id stays stable no matter which
     rows a given caller claimed. Shared by the reconciler and the immediate
     embed path so the two writers always agree on vector ids.
+
+    ``message_keys`` are ``(tenant_id, message_id)`` pairs: the reconciler reads
+    every tenant, and a message_id alone does not identify one tenant's message.
     """
-    if not message_ids:
+    if not message_keys:
         return {}
 
     # region ai
@@ -262,7 +286,11 @@ async def compute_chunk_positions(
             models.MessageEmbedding.id,
             models.MessageEmbedding.message_id,
         )
-        .where(models.MessageEmbedding.message_id.in_(message_ids))
+        .where(
+            tuple_(
+                models.MessageEmbedding.tenant_id, models.MessageEmbedding.message_id
+            ).in_(list(message_keys))
+        )
         .order_by(models.MessageEmbedding.message_id, models.MessageEmbedding.id)
     )
     sibling_rows = (await db.execute(sibling_stmt)).all()
@@ -620,8 +648,8 @@ async def _sync_message_embeddings(
     # 1. Persisting chunk_position in the MessageEmbedding table
     # 2. Removing MessageEmbedding table entirely if it becomes unnecessary
     # See: https://github.com/plastic-labs/honcho/issues/XXX
-    message_ids = list({emb.message_id for emb in embeddings})
-    chunk_position = await compute_chunk_positions(db, message_ids)
+    message_keys = sorted({(emb.tenant_id, emb.message_id) for emb in embeddings})
+    chunk_position = await compute_chunk_positions(db, message_keys)
 
     # Step 3: Build vector records and upsert to external store (all cases)
     # ai: contained per row for the same reason as the document path — one unresolvable tenant must not wedge the whole cross-tenant batch

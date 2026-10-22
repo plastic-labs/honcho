@@ -1173,6 +1173,10 @@ class QueueManager:
                 )  # always include the first unprocessed message
             )
 
+            # queue joins on the CTE's message_id, not on Message.id. Then the
+            # planner can start from the small CTE and read each message by its
+            # primary key. With Message.id here, the planner joined messages to
+            # queue first, and that read every message of the tenant.
             query = (
                 select(
                     models.Message,
@@ -1186,12 +1190,12 @@ class QueueManager:
                     and_(
                         models.QueueItem.work_unit_key == work_unit_key,
                         ~models.QueueItem.processed,
-                        models.QueueItem.message_id == models.Message.id,
+                        models.QueueItem.message_id == cte.c.message_id,
                     ),
                 )
                 .where(allowed_condition)
                 .where(tenant_clause)
-                .order_by(models.Message.id, models.QueueItem.id)
+                .order_by(cte.c.message_id, models.QueueItem.id)
             )
 
             result = await db.execute(query)

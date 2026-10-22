@@ -796,6 +796,7 @@ async def delete_session(
         await db.execute(
             delete(models.SessionPeer).where(
                 models.SessionPeer.session_name == session_name,
+                models.SessionPeer.tenant_id == models.scoped_tenant_id(),
                 models.SessionPeer.workspace_name == workspace_name,
             )
         )
@@ -916,6 +917,7 @@ async def clone_session(
 
     # Clone peers from original session to new session (including their configurations)
     stmt = select(models.SessionPeer).where(
+        models.SessionPeer.tenant_id == models.scoped_tenant_id(),
         models.SessionPeer.workspace_name == workspace_name,
         models.SessionPeer.session_name == original_session_name,
     )
@@ -989,6 +991,7 @@ async def remove_peers_from_session(
         update(models.SessionPeer)
         .where(
             models.SessionPeer.session_name == session_name,
+            models.SessionPeer.tenant_id == models.scoped_tenant_id(),
             models.SessionPeer.workspace_name == workspace_name,
             models.SessionPeer.peer_name.in_(peer_names),
             models.SessionPeer.left_at.is_(None),  # Only update active peers
@@ -1047,6 +1050,7 @@ async def get_peers_from_session(
                 models.Peer.workspace_name == models.SessionPeer.workspace_name,
             ),
         )
+        .where(models.SessionPeer.tenant_id == models.scoped_tenant_id())
         .where(models.SessionPeer.session_name == session_name)
         .where(models.Peer.workspace_name == workspace_name)
         .where(models.SessionPeer.left_at.is_(None))  # Only active peers
@@ -1082,6 +1086,7 @@ async def is_peer_in_session(
     """
     result = await db.scalar(
         select(models.SessionPeer.peer_name)
+        .where(models.SessionPeer.tenant_id == models.scoped_tenant_id())
         .where(models.SessionPeer.workspace_name == workspace_name)
         .where(models.SessionPeer.session_name == session_name)
         .where(models.SessionPeer.peer_name == peer_name)
@@ -1123,6 +1128,7 @@ async def get_session_peer_configuration(
         )
         .where(models.SessionPeer.session_name == session_name)
         .where(models.Peer.workspace_name == workspace_name)
+        .where(models.SessionPeer.tenant_id == models.scoped_tenant_id())
         .where(models.SessionPeer.workspace_name == workspace_name)
     )
 
@@ -1188,6 +1194,7 @@ async def set_peers_for_session(
         update(models.SessionPeer)
         .where(
             models.SessionPeer.session_name == session_name,
+            models.SessionPeer.tenant_id == models.scoped_tenant_id(),
             models.SessionPeer.workspace_name == workspace_name,
             models.SessionPeer.left_at.is_(None),  # Only update active peers
             models.SessionPeer.peer_name.notin_(peer_names.keys()),
@@ -1299,6 +1306,7 @@ async def _get_or_add_peers_to_session(
             return []
         select_stmt = select(models.SessionPeer).where(
             models.SessionPeer.session_name == session_name,
+            models.SessionPeer.tenant_id == models.scoped_tenant_id(),
             models.SessionPeer.workspace_name == workspace_name,
             models.SessionPeer.left_at.is_(None),  # Only active peers
         )
@@ -1384,6 +1392,7 @@ async def _get_or_add_peers_to_session(
             await db.scalar(
                 select(func.count()).where(
                     models.SessionPeer.session_name == session_name,
+                    models.SessionPeer.tenant_id == models.scoped_tenant_id(),
                     models.SessionPeer.workspace_name == workspace_name,
                     models.SessionPeer.left_at.is_(None),  # Only active peers
                     models.SessionPeer.configuration["observe_others"].astext.cast(
@@ -1410,6 +1419,7 @@ async def _get_or_add_peers_to_session(
     # Return all active session peers after the upsert
     select_stmt = select(models.SessionPeer).where(
         models.SessionPeer.session_name == session_name,
+        models.SessionPeer.tenant_id == models.scoped_tenant_id(),
         models.SessionPeer.workspace_name == workspace_name,
         models.SessionPeer.left_at.is_(None),  # Only active peers
     )
@@ -1449,6 +1459,7 @@ async def get_peer_config(
 
     # Get row from session_peer table
     stmt = select(models.SessionPeer).where(
+        models.SessionPeer.tenant_id == models.scoped_tenant_id(),
         models.SessionPeer.workspace_name == workspace_name,
         models.SessionPeer.session_name == session_name,
         models.SessionPeer.peer_name == peer_id,
@@ -1501,6 +1512,7 @@ async def set_peer_config(
         select(models.SessionPeer)
         .where(models.SessionPeer.session_name == session_name)
         .where(models.SessionPeer.peer_name == peer_name)
+        .where(models.SessionPeer.tenant_id == models.scoped_tenant_id())
         .where(models.SessionPeer.workspace_name == workspace_name)
     )
     result = await db.execute(stmt)
@@ -1520,6 +1532,7 @@ async def set_peer_config(
             # Use a single efficient query to count existing observers
             existing_observers_stmt = select(func.count()).where(
                 models.SessionPeer.session_name == session_name,
+                models.SessionPeer.tenant_id == models.scoped_tenant_id(),
                 models.SessionPeer.workspace_name == workspace_name,
                 models.SessionPeer.left_at.is_(None),  # Only active peers
                 models.SessionPeer.peer_name

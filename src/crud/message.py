@@ -84,6 +84,7 @@ async def get_peer_session_names(
     """
     stmt = (
         select(models.session_peers_table.c.session_name)
+        .where(models.session_peers_table.c.tenant_id == models.scoped_tenant_id())
         .where(models.session_peers_table.c.workspace_name == workspace_name)
         .where(models.session_peers_table.c.peer_name == peer_name)
         .distinct()
@@ -195,6 +196,7 @@ def observer_scope_clause(
     session_peers = models.session_peers_table
     stmt = (
         select(1)
+        .where(session_peers.c.tenant_id == models.scoped_tenant_id())
         .where(session_peers.c.workspace_name == workspace_name)
         .where(session_peers.c.peer_name == observer)
         .where(session_peers.c.session_name == session_column)

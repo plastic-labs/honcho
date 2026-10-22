@@ -21,6 +21,7 @@ from . import (
     test_917195d9b5e9_add_messageembedding_table,
     test_a1b2c3d4e5f6_initial_schema,
     test_a7c3e9f1b2d4_add_document_sources_table,
+    test_b3c890d417d1_index_session_peers_by_tenant,
     test_b7d2f4a81c39_add_queue_item_batches_aggregate,
     test_b8d2f4a6c9e1_index_session_peers_by_peer,
     test_b765d82110bd_change_metamessages_to_user_level_with_,
@@ -39,6 +40,7 @@ from . import (
 )
 
 __all__ = [
+    "test_b3c890d417d1_index_session_peers_by_tenant",
     "test_05486ce795d5_make_session_name_required_on_messages",
     "test_066e87ca5b07_align_schema_with_declarative_models",
     "test_08894082221a_replace_collection_name_with_observer_",
