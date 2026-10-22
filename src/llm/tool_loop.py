@@ -26,7 +26,7 @@ from collections.abc import (
 from typing import Any, ParamSpec, TypeVar
 
 from pydantic import BaseModel
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import RetryCallState, retry, stop_after_attempt, wait_exponential
 
 from src.config import ModelTransport
 from src.exceptions import ValidationException
@@ -40,6 +40,7 @@ from src.utils.types import (
     set_last_tool_metadata,
 )
 
+from .errors import llm_retry_condition
 from .executor import honcho_llm_call_inner
 from .registry import history_adapter_for_provider
 from .runtime import (
@@ -256,7 +257,8 @@ async def stream_final_response(
     bleed the outer current_attempt ContextVar into streaming retries,
     potentially rolling the selection back to primary after the tool loop
     had already settled on fallback. Tenacity retries re-issue the same
-    streaming call against the same pinned model for transient errors.
+    streaming call against the same pinned model for transient errors, and
+    stop on a non-retryable client error, since no other model is reachable.
     """
 
     # Bump the per-retry attempt index inside `_setup_stream`. The pinned
@@ -301,6 +303,11 @@ async def stream_final_response(
 
     if enable_retry:
         wrapped = retry(
+            retry=llm_retry_condition(
+                can_fall_back=False,
+                retry_attempts=retry_attempts,
+                model=f"{winning_plan.provider}/{winning_plan.model}",
+            ),
             stop=stop_after_attempt(retry_attempts),
             wait=wait_exponential(multiplier=1, min=4, max=10),
             before_sleep=before_retry_callback,
@@ -425,6 +432,7 @@ async def execute_tool_loop(
     max_input_tokens: int | None,
     get_attempt_plan: Callable[[], AttemptPlan],
     before_retry_callback: Callable[[Any], None],
+    retry_condition: Callable[[RetryCallState], bool],
     stream_final: bool = False,
     iteration_callback: IterationCallback | None = None,
     telemetry: LLMTelemetryContext | None = None,
@@ -447,6 +455,9 @@ async def execute_tool_loop(
     it offers no tools, so the model must answer. With `final_call_tools`, it
     offers those tools instead (for an agent whose output is its writes), and
     any calls it makes are executed; no further call follows them.
+
+    Each iteration and the final call retry under `retry_condition`, which
+    the caller builds with `llm_retry_condition` for its model config.
 
     Returns:
         Final HonchoLLMCallResponse with accumulated token counts and tool call
@@ -576,6 +587,7 @@ async def execute_tool_loop(
             call_func: Callable[[], Awaitable[HonchoLLMCallResponse[Any]]]
             if enable_retry:
                 call_func = retry(
+                    retry=retry_condition,
                     stop=stop_after_attempt(retry_attempts),
                     wait=wait_exponential(multiplier=1, min=4, max=10),
                     before_sleep=before_retry_callback,
@@ -848,6 +860,7 @@ async def execute_tool_loop(
 
     if enable_retry:
         final_call_func = retry(
+            retry=retry_condition,
             stop=stop_after_attempt(retry_attempts),
             wait=wait_exponential(multiplier=1, min=4, max=10),
             before_sleep=before_retry_callback,

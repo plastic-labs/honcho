@@ -23,6 +23,7 @@ from src.config import ConfiguredModelSettings, ModelConfig
 from src.exceptions import ValidationException
 from src.telemetry.reasoning_traces import log_reasoning_trace
 
+from .errors import llm_retry_condition
 from .executor import honcho_llm_call_inner
 from .runtime import (
     AttemptPlan,
@@ -195,6 +196,12 @@ async def honcho_llm_call(
     Backup provider/model (if configured on the primary ModelConfig's
     `fallback`) is used on the final retry attempt, which is 3 by default.
 
+    A provider rejection of the request itself (a 4xx other than
+    408/409/425/429; see `is_non_retryable_client_error`) is not retried when
+    no fallback is configured, since the same model would reject it again.
+    With a fallback it is retried as before, so the fallback still gets its
+    attempt.
+
     A caller-supplied `run` stays owned by the caller; otherwise the call opens
     and ends its own around the tool loop.
 
@@ -320,8 +327,17 @@ async def honcho_llm_call(
             )
             logger.info(f"Will retry with attempt {next_attempt}/{retry_attempts}")
 
+    # Stops early only without a fallback, so the attempts it stops are always
+    # the primary's.
+    retry_condition = llm_retry_condition(
+        can_fall_back=runtime_model_config.fallback is not None,
+        retry_attempts=retry_attempts,
+        model=f"{runtime_model_config.transport}/{runtime_model_config.model}",
+    )
+
     if enable_retry:
         decorated = retry(
+            retry=retry_condition,
             stop=stop_after_attempt(retry_attempts),
             wait=wait_exponential(multiplier=1, min=4, max=10),
             before_sleep=before_retry_callback,
@@ -442,6 +458,7 @@ async def honcho_llm_call(
                 wrapped = ai_track(sentry_track_name)(wrapped)
             if enable_retry:
                 wrapped = retry(
+                    retry=retry_condition,
                     stop=stop_after_attempt(retry_attempts),
                     wait=wait_exponential(multiplier=1, min=4, max=10),
                     before_sleep=before_retry_callback,
@@ -511,6 +528,7 @@ async def honcho_llm_call(
             max_input_tokens=max_input_tokens,
             get_attempt_plan=_get_attempt_plan,
             before_retry_callback=before_retry_callback,
+            retry_condition=retry_condition,
             stream_final=stream_final_only,
             iteration_callback=iteration_callback,
             telemetry=telemetry,

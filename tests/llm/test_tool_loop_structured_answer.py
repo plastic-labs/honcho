@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from tenacity import wait_none
 
 from src.llm import tool_loop
+from src.llm.errors import llm_retry_condition
 from src.llm.runtime import AttemptPlan, current_attempt
 from src.llm.structured_output import StructuredOutputError
 from src.llm.tool_loop import execute_tool_loop
@@ -116,6 +117,9 @@ async def _run_loop(
             max_input_tokens=None,
             get_attempt_plan=lambda: _plan_for_current_attempt(retry_attempts),
             before_retry_callback=before_retry,
+            retry_condition=llm_retry_condition(
+                can_fall_back=True, retry_attempts=retry_attempts, model="test/model"
+            ),
             stream_final=stream_final,
             telemetry=None,
         )

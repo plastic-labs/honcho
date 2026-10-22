@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- LLM calls no longer retry a request the provider rejected outright when no fallback model is configured. A 4xx other than 408, 409, 425 or 429 (for example a 400 for a prompt over the context window, or a 401) now fails on the first attempt instead of being sent three times with about 8s of backoff. Transient failures (408, 409, 425, 429, 5xx, connection errors) and the response checks that consume attempts (refused or empty summaries and representations, structured answers that miss their schema) are retried as before. With a fallback configured nothing changes: the rejected request is still retried and the final attempt goes to the fallback. Applies to the deriver, summarizer, dialectic and dreamer, which all call through `honcho_llm_call`
+
 ## [3.4.0] - 2026-10-20
 
 ### Added
