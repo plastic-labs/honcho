@@ -256,3 +256,37 @@ def test_filter_validations_api(
     error = response.json()["detail"][0]
     assert error["loc"] == ["body", "filters"]
     assert error["type"] == "dict_type"
+
+
+def test_get_or_create_path_id_failing_schema_returns_422(client: TestClient):
+    # The route builds WorkspaceCreate(name=...) from the path, so the ID's
+    # pattern violation is raised inside the handler, not by request parsing
+    response = client.put("/v3/workspaces/bad:id", json={})
+    assert response.status_code == 422
+    assert response.json()["detail"][0]["type"] == "string_pattern_mismatch"
+
+
+def test_nul_in_configuration_is_stripped(client: TestClient):
+    # Configuration allows extra keys, stored as JSONB, which rejects NUL
+    response = client.post(
+        "/v3/workspaces",
+        json={"name": "nul-config", "configuration": {"k\u0000": "a\u0000b"}},
+    )
+    assert response.status_code in (200, 201)
+    assert response.json()["configuration"]["k"] == "ab"
+
+
+def test_nul_in_id_filter_returns_422(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    test_workspace, _ = sample_data
+    response = client.get(
+        f"/v3/workspaces/{test_workspace.name}/queue/status",
+        params={"observer_id": "\u0000"},
+    )
+    assert response.status_code == 422
+
+
+def test_page_beyond_bigint_offset_returns_422(client: TestClient):
+    response = client.post("/v3/workspaces/list", params={"page": 2**62}, json={})
+    assert response.status_code == 422

@@ -20,6 +20,9 @@ from tests.property.conftest import API_SCHEMA
 
 # Raise locally to dig for rarer failures, e.g. HONCHO_FUZZ_EXAMPLES=1000
 MAX_EXAMPLES = int(os.environ.get("HONCHO_FUZZ_EXAMPLES", "50"))
+# A file to append one "<mode> <METHOD> <path> <status>" line per request to.
+# A route that never reaches a 2xx is only being fuzzed on its error paths.
+STATS_PATH = os.environ.get("HONCHO_FUZZ_STATS")
 
 # Body fields that name an existing resource, mapped to the seeded ID to use.
 BODY_ID_FIELDS = {
@@ -97,6 +100,9 @@ def test_operation_does_not_return_5xx(
                 f"{type(exc).__name__}: {first_line}\n{case.as_curl_command()}",
                 pytrace=False,
             )
+        if STATS_PATH:
+            with open(STATS_PATH, "a") as stats:
+                stats.write(f"{mode.value} {operation.label} {response.status_code}\n")
         assert response.status_code < 500, (
             f"{response.status_code} from {case.as_curl_command()}\n{response.text}"
         )
