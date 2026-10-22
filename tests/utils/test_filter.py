@@ -338,6 +338,8 @@ _CONSTRAINS_NOTHING: list[tuple[Any, dict[str, Any]]] = [
 def test_filter_that_constrains_nothing_matches_everything(
     model: Any, filters: dict[str, Any]
 ):
+    """Renders an explicit TRUE, not a dropped condition, so an OR containing
+    it matches every row instead of narrowing to the other operands."""
     assert _where(model, filters).strip() == "true"
 
 
@@ -355,10 +357,14 @@ _NEGATES_NOTHING: list[tuple[Any, dict[str, Any]]] = [
 def test_negating_a_filter_that_constrains_nothing_matches_nothing(
     model: Any, filters: dict[str, Any]
 ):
+    """NOT of "everything" is "nothing". The dropped operand used to leave the
+    NOT with no condition, which failed open to every row."""
     assert _where(model, filters).strip() == "true IS NOT true"
 
 
 def test_wildcard_inside_and_leaves_the_other_operands():
+    """TRUE is AND's identity, so the wildcard must vanish from the rendered SQL
+    and leave the other operand's condition exactly as it was."""
     where = _where(Message, {"AND": [{"peer_id": "*"}, {"peer_id": "bob"}]})
     assert "peer_name =" in where
     assert "true" not in where

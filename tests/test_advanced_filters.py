@@ -472,9 +472,14 @@ async def test_wildcards_and_empty_filters_inside_logical_operators(
     bob = peer_names[0]
 
     def list_names(filters: dict[str, Any]) -> set[str]:
+        """Peer ids the list endpoint returns for `filters`, among this test's peers.
+
+        ANDed with the test's own peers so the expected set is exact. That
+        outer AND does not mask the bug: the operator under test is nested
+        inside it.
+        """
         response = client.post(
             f"/v3/workspaces/{test_workspace.name}/peers/list",
-            # Only consider the peers created here.
             json={"filters": {"AND": [filters, {"id": {"in": peer_names}}]}},
         )
         assert response.status_code == 200, filters

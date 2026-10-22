@@ -537,6 +537,11 @@ def _build_source_ids_condition(
     from ..models import DocumentSource
 
     def _member(sid: Any) -> ColumnElement[bool]:
+        """Condition that the document is linked to source `sid`.
+
+        Raises:
+            FilterError: If `sid` is not a non-empty string.
+        """
         if not isinstance(sid, str) or not sid:
             raise FilterError("source_ids filter entries must be non-empty strings")
         linked = (
