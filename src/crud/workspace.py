@@ -69,7 +69,14 @@ def workspace_cache_key(workspace_name: str) -> str:
 async def _fetch_workspace(
     db: AsyncSession, workspace_name: str
 ) -> dict[str, Any] | None:
-    """Fetch a workspace from the database and return as a plain dict for safe caching."""
+    """Fetch a workspace as a plain dict, served from cache when present."""
+    return await _select_workspace(db, workspace_name)
+
+
+async def _select_workspace(
+    db: AsyncSession, workspace_name: str
+) -> dict[str, Any] | None:
+    """Read a workspace straight from the database, bypassing the cache."""
     obj = await db.scalar(
         select(models.Workspace).where(models.Workspace.name == workspace_name)
     )
@@ -85,11 +92,19 @@ async def _fetch_workspace(
     }
 
 
+async def _existing_workspace_result(
+    db: AsyncSession, data: dict[str, Any]
+) -> GetOrCreateResult[models.Workspace]:
+    """Reconstruct a workspace from its fetched dict and merge it into the session."""
+    obj = models.Workspace(**data)
+    make_transient_to_detached(obj)
+    existing_workspace = await db.merge(obj, load=False)
+    return GetOrCreateResult(existing_workspace, created=False)
+
+
 async def get_or_create_workspace(
     db: AsyncSession,
     workspace: schemas.WorkspaceCreate,
-    *,
-    _retry: bool = False,
 ) -> GetOrCreateResult[models.Workspace]:
     """
     Get an existing workspace or create a new one if it doesn't exist.
@@ -111,13 +126,8 @@ async def get_or_create_workspace(
     # Check if workspace already exists
     data = await _fetch_workspace(db, workspace.name)
     if data is not None:
-        # Workspace already exists
         logger.debug("Found existing workspace: %s", workspace.name)
-        # Reconstruct ORM object from cached dict and merge into session
-        obj = models.Workspace(**data)
-        make_transient_to_detached(obj)
-        existing_workspace = await db.merge(obj, load=False)
-        return GetOrCreateResult(existing_workspace, created=False)
+        return await _existing_workspace_result(db, data)
 
     # Workspace doesn't exist, create a new one
     honcho_workspace = models.Workspace(
@@ -153,11 +163,16 @@ async def get_or_create_workspace(
             honcho_workspace, created=True, on_commit=_after_commit
         )
     except IntegrityError:
-        if _retry:
+        # The unique violation means another transaction created the row, so
+        # read it straight from the database. The cached `_fetch_workspace` can
+        # answer None here without querying, which used to turn the lost race
+        # into a 409.
+        data = await _select_workspace(db, workspace.name)
+        if data is None:
             raise ConflictException(
                 f"Unable to create or get workspace: {workspace.name}"
             ) from None
-        return await get_or_create_workspace(db, workspace, _retry=True)
+        return await _existing_workspace_result(db, data)
 
 
 async def get_all_workspaces(
