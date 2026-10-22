@@ -959,7 +959,12 @@ def _active_profile_name() -> str:
 
 
 def _all_profile_host_configs() -> list[tuple[str, str, dict]]:
-    """(profile_name, host_key, host_block) for every known profile, reading honcho.json once."""
+    """(profile_name, host_key, host_block) for every known profile, reading honcho.json once.
+
+    A profile with its own honcho.json is described by that file: its root keys with its
+    own host block on top, matching _pref()'s block-over-root precedence. Reading the
+    default file for such a profile reports settings its runtime never uses.
+    """
     try:
         from hermes_cli.profiles import list_profiles
         profiles = list_profiles()
@@ -968,9 +973,25 @@ def _all_profile_host_configs() -> list[tuple[str, str, dict]]:
     cfg = _read_config()
     # _host_block (not hosts.get) keeps legacy dot-form keys ("hermes.work") readable.
     return [("default", HOST, cfg.get("hosts", {}).get(HOST, {}))] + [
-        (p.name, profile_host_key(p.name), _host_block(cfg, profile_host_key(p.name)))
-        for p in profiles if p.name != "default"
+        (p.name, profile_host_key(p.name), _profile_host_block(p.name, cfg)) for p in profiles if p.name != "default"
     ]
+
+
+def _profile_host_block(profile_name: str, cfg: dict) -> dict:
+    """The host block ``profile_name`` actually runs with.
+
+    Its own honcho.json wins when present (root keys, then its host block on top);
+    otherwise the block cloned into the default file. An unreadable local file falls
+    back to the default file rather than failing a read-only command.
+    """
+    local_path = _profile_config_path(profile_name)
+    if local_path is not None:
+        local = read_json_or_empty(local_path)
+        if local:
+            block = {key: value for key, value in local.items() if key != "hosts"}
+            block.update(_host_block(local, profile_host_key(profile_name)))
+            return block
+    return _host_block(cfg, profile_host_key(profile_name))
 
 
 def cmd_status(args) -> None:
