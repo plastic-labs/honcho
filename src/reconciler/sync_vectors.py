@@ -850,8 +850,8 @@ async def _cleanup_pgvector_batch(
 
 
 async def record_pending_embeddings_backlog() -> None:
-    """Set the pending-embeddings backlog gauge to the current count of
-    MessageEmbedding rows awaiting a vector (sync_state='pending')."""
+    """Set the pending-embeddings backlog gauge to the count, capped at GAUGE_COUNT_CAP, of
+    MessageEmbedding rows awaiting a vector (sync_state='pending'). Skipped under DERIVER.SCHEDULER == "api"."""
     # region ai
     # Called from ``ReconcilerScheduler._scheduler_loop``, deliberately NOT from
     # ``run_vector_reconciliation_cycle``: the cycle runs off the queue behind
@@ -867,8 +867,10 @@ async def record_pending_embeddings_backlog() -> None:
     # is exactly what is large, and every replica pays for it.
     #
     # Under DERIVER.SCHEDULER == "api" this runs in the API process, where
-    # DeriverMetricsPoller already sets the same gauge on every pass; a second
-    # writer would only repeat the count, so it is skipped there.
+    # DeriverMetricsPoller already sets the same gauge (capped the same way)
+    # every 30 s; a second writer would repeat the count and make the gauge
+    # alternate between two measurements taken at different times, so it is
+    # skipped there.
     #
     # Best-effort: a metrics/DB hiccup here must never break the scheduler loop.
     # endregion

@@ -371,6 +371,7 @@ class DeriverMetricsPoller:
             pending_items=stats.pending_items,
             oldest_pending_age_seconds=stats.oldest_pending_age_seconds,
             embeddings_pending=stats.embeddings_pending,
+            embeddings_pending_capped=stats.embeddings_pending_capped,
             embeddings_pending_due=stats.embeddings_pending_due,
         )
         if settings.MULTI_TENANT:

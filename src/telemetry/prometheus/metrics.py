@@ -872,6 +872,7 @@ class PrometheusMetrics:
         pending_items: int = 0,
         oldest_pending_age_seconds: float = 0.0,
         embeddings_pending: int = 0,
+        embeddings_pending_capped: bool = False,
         embeddings_pending_due: int = 0,
     ) -> None:
         try:
@@ -902,6 +903,9 @@ class PrometheusMetrics:
                 oldest_pending_age_seconds
             )
             message_embeddings_pending_gauge.labels().set(embeddings_pending)
+            message_embeddings_pending_capped_gauge.labels().set(
+                int(embeddings_pending_capped)
+            )
             message_embeddings_pending_due_gauge.labels().set(embeddings_pending_due)
         except Exception as e:
             self._handle_metric_error("set_deriver_metrics", e)

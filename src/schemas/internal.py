@@ -159,7 +159,10 @@ class DeriverMetrics(BaseModel):
     inflight_units_by_tenant: dict[str, int] | None = None
     pending_items: int = 0
     oldest_pending_age_seconds: float = 0.0
+    # Both embeddings counts stop at reconciler.gauge_counts.GAUGE_COUNT_CAP.
     embeddings_pending: int = 0
+    # True when embeddings_pending stopped at the cap.
+    embeddings_pending_capped: bool = False
     embeddings_pending_due: int = 0
 
 
