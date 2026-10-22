@@ -2289,6 +2289,74 @@ class TestQueueRetry:
         )
         assert await self._aqs_rows(db_session, work_unit_key) == 0
 
+    async def test_queue_empty_fires_only_on_a_confirmed_drain(
+        self,
+        db_session: AsyncSession,
+        sample_session_with_peers: tuple[models.Session, list[models.Peer]],
+        create_queue_payload: Callable[..., Any],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A loop that breaks on an error after a successful batch releases the
+        unit without publishing queue.empty."""
+
+        async def noop_batch(*_args: Any, **_kwargs: Any) -> None:
+            return None
+
+        qm, work_unit_key, worker_id, _ = await self._seed_work_unit(
+            db_session, sample_session_with_peers, create_queue_payload, n_messages=2
+        )
+        real_batch = qm.get_queue_item_batch
+        batch_calls = 0
+
+        async def failing_second_fetch(*args: Any, **kwargs: Any) -> Any:
+            nonlocal batch_calls
+            batch_calls += 1
+            if batch_calls == 2:
+                raise RuntimeError("transient fetch failure")
+            return await real_batch(*args, **kwargs)
+
+        monkeypatch.setattr(qm, "get_queue_item_batch", failing_second_fetch)
+        monkeypatch.setattr("src.deriver.queue_manager.RETRY_BACKOFF_SECONDS", 0)
+        publish = AsyncMock()
+        with (
+            patch(
+                "src.deriver.queue_manager.process_representation_batch",
+                side_effect=noop_batch,
+            ),
+            patch("src.deriver.queue_manager.publish_webhook_event", publish),
+        ):
+            await qm.process_work_unit(work_unit_key, worker_id)
+
+        assert batch_calls == 2
+        publish.assert_not_awaited()
+        assert await self._aqs_rows(db_session, work_unit_key) == 0
+
+    async def test_queue_empty_fires_on_a_clean_drain(
+        self,
+        db_session: AsyncSession,
+        sample_session_with_peers: tuple[models.Session, list[models.Peer]],
+        create_queue_payload: Callable[..., Any],
+    ) -> None:
+        """A unit processed until its fetch comes back empty publishes queue.empty."""
+
+        async def noop_batch(*_args: Any, **_kwargs: Any) -> None:
+            return None
+
+        qm, work_unit_key, worker_id, _ = await self._seed_work_unit(
+            db_session, sample_session_with_peers, create_queue_payload, n_messages=2
+        )
+        publish = AsyncMock()
+        with (
+            patch(
+                "src.deriver.queue_manager.process_representation_batch",
+                side_effect=noop_batch,
+            ),
+            patch("src.deriver.queue_manager.publish_webhook_event", publish),
+        ):
+            await qm.process_work_unit(work_unit_key, worker_id)
+
+        publish.assert_awaited_once()
+
     async def test_counter_cleared_after_success(
         self,
         db_session: AsyncSession,

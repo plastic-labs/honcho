@@ -667,6 +667,11 @@ class QueueManager:
         async with self.semaphore:
             queue_item_count = 0
             # region ai
+            # Set only when a fetch comes back empty: queue.empty fires on a
+            # confirmed drain, never on an error, shutdown or lost-ownership break.
+            # endregion
+            drained = False
+            # region ai
             # Bind the work unit's tenant for the duration: every per-tenant DB
             # session opened while processing it (the representation batch,
             # process_item, and their nested crud/summarizer/dreamer sessions)
@@ -726,6 +731,7 @@ class QueueManager:
                                 logger.debug(
                                     f"No more queue items to process for work unit {work_unit_key} for worker {worker_id}"
                                 )
+                                drained = True
                                 break
 
                             try:
@@ -785,6 +791,7 @@ class QueueManager:
                                 logger.debug(
                                     f"No more queue items to process for work unit {work_unit_key} for worker {worker_id}"
                                 )
+                                drained = True
                                 break
 
                             try:
@@ -843,7 +850,7 @@ class QueueManager:
                     removed = False
 
                 self.untrack_worker_work_unit(worker_id, work_unit_key)
-                if removed and queue_item_count > 0:
+                if removed and drained and queue_item_count > 0:
                     # Only publish webhook if we actually removed an active session
                     try:
                         if (
@@ -869,7 +876,7 @@ class QueueManager:
                         logger.exception("Error triggering queue_empty webhook")
                 else:
                     logger.debug(
-                        f"Work unit {work_unit_key} already cleaned up by another worker, skipping webhook"
+                        f"Work unit {work_unit_key} not drained, empty, or already cleaned up by another worker; skipping webhook"
                     )
 
     @sentry_sdk.trace
