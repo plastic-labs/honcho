@@ -379,6 +379,59 @@ class TestCloneRespectsProfileOwnConfig:
         assert honcho_cli._profile_config_path("custom") is None
 
 
+class TestSyncReportsLocalProfilesBeforePreflight:
+    """A profile with its own honcho.json is settled independently of the default profile.
+
+    The default-config preflight only decides whether the remaining profiles can be
+    cloned; letting it return first hid the local-profile skips behind "run setup".
+    """
+
+    @staticmethod
+    def _run(monkeypatch, capsys, tmp_path, *, default_cfg, local_profiles):
+        import hermes_plugin_honcho.cli as honcho_cli
+        profiles_dir = tmp_path / "profiles"
+        for name in local_profiles:
+            (profiles_dir / name).mkdir(parents=True, exist_ok=True)
+            (profiles_dir / name / "honcho.json").write_text('{"peerName": "x"}')
+        (profiles_dir / "plain").mkdir(parents=True, exist_ok=True)
+        monkeypatch.setattr(honcho_cli, "_read_config", lambda: default_cfg)
+        monkeypatch.setattr("hermes_cli.profiles.get_profile_dir", lambda name: profiles_dir / name)
+        # The clone path writes and registers a peer; neither belongs in a report test.
+        monkeypatch.setattr(honcho_cli, "_write_config", lambda cfg, path=None: None)
+        monkeypatch.setattr(honcho_cli, "_ensure_peer_exists", lambda host_key=None: True)
+        names = ["default", *local_profiles, "plain"]
+        monkeypatch.setattr(
+            "hermes_cli.profiles.list_profiles",
+            lambda: [SimpleNamespace(name=n) for n in names],
+        )
+        honcho_cli._sync_profiles(verbose=True)
+        return capsys.readouterr().out
+
+    def test_local_profiles_are_reported_when_default_has_no_config(self, monkeypatch, capsys, tmp_path):
+        output = self._run(monkeypatch, capsys, tmp_path, default_cfg={}, local_profiles=["coder"])
+        assert "= coder has its own honcho.json (skipped)" in output
+        assert "1 profile(s) have their own honcho.json" in output
+
+    def test_local_profiles_are_reported_when_default_block_is_missing(self, monkeypatch, capsys, tmp_path):
+        output = self._run(
+            monkeypatch, capsys, tmp_path, default_cfg={"hosts": {}}, local_profiles=["coder", "ops"]
+        )
+        assert "= coder has its own honcho.json (skipped)" in output
+        assert "= ops has its own honcho.json (skipped)" in output
+        assert "2 profile(s) have their own honcho.json" in output
+
+    def test_clone_still_runs_when_a_default_exists(self, monkeypatch, capsys, tmp_path):
+        output = self._run(
+            monkeypatch,
+            capsys,
+            tmp_path,
+            default_cfg={"apiKey": "***", "hosts": {"hermes": {"peerName": "eri"}}},
+            local_profiles=["coder"],
+        )
+        assert "= coder has its own honcho.json (skipped)" in output
+        assert "+ plain -> hermes_plain" in output
+
+
 class TestSetupWizardDeploymentShape:
     """The gateway identity-mapping tree writes pinUserPeer / userPeerAliases /
     runtimePeerPrefix based on the operator's intent.

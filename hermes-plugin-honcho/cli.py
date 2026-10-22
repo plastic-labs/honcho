@@ -337,19 +337,44 @@ def _sync_profiles(verbose: bool) -> int:
         profiles = list_profiles()
     except Exception as e:
         return say(f"  Could not list profiles: {e}\n") or 0
+
+    # Classify before the default-config preflight: a profile with its own honcho.json is
+    # settled regardless of whether the default profile is configured, so reporting it
+    # must not depend on a preflight that only concerns the profiles left to clone.
+    candidates = [p for p in profiles if p.name != "default"]
+    local_names = [p.name for p in candidates if _profile_config_path(p.name) is not None]
+    for name in local_names:
+        say(f"  = {name} has its own honcho.json (skipped)")
+    to_clone = [p for p in candidates if p.name not in set(local_names)]
+
+    local = len(local_names)
+
+    def describe_local() -> None:
+        if local:
+            say(f"  {local} profile(s) have their own honcho.json (skipped).")
+        say()
+
+    if not to_clone:
+        if local:
+            say(f"\n  {local} profile(s) have their own honcho.json (skipped).")
+        else:
+            say("  All profiles already have Honcho config.")
+        say()
+        return 0
+
     cfg = _read_config()
     if not cfg:
-        return say("  No Honcho config found. Run 'hermes honcho setup' first.\n") or 0
+        say("  No Honcho config found. Run 'hermes honcho setup' first.\n")
+        describe_local()
+        return 0
     default_block, has_key = _default_block_and_key(cfg)
     if not default_block and not has_key:
-        return say("  Honcho not configured on default profile. Run 'hermes honcho setup' first.\n") or 0
+        say("  Honcho not configured on default profile. Run 'hermes honcho setup' first.\n")
+        describe_local()
+        return 0
 
-    created = skipped = local = 0
-    for p in (p for p in profiles if p.name != "default"):
-        if _profile_config_path(p.name) is not None:
-            say(f"  = {p.name} has its own honcho.json (skipped)")
-            local += 1
-            continue
+    created = skipped = 0
+    for p in to_clone:
         try:
             cloned = clone_honcho_for_profile(p.name)
         except ConfigWriteRefused as e:
