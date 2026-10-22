@@ -68,6 +68,25 @@ def _local_config_path() -> Path:
     return get_hermes_home() / "honcho.json"
 
 
+def _profile_config_path(profile_name: str) -> Path | None:
+    """A named profile's own honcho.json, or None when it has none.
+
+    resolve_config_path() prefers this file for the running profile, so a profile-local
+    config is authoritative over anything cloned into the default profile's file. Commands
+    that act on *other* profiles must consult this before reading or writing the default
+    file on their behalf. Returns None when the profile is unknown or Hermes cannot be
+    imported, which keeps every caller on its previous behaviour.
+    """
+    if not profile_name or profile_name in {"default", "custom"}:
+        return None
+    try:
+        from hermes_cli.profiles import get_profile_dir
+        path = get_profile_dir(profile_name) / "honcho.json"
+    except Exception:
+        return None
+    return path if path.is_file() else None
+
+
 class _ReadConfig(dict):
     """A command's config, with the ``snapshot`` and ``path`` _write_config() needs to apply only its edits."""
 
@@ -279,7 +298,12 @@ def _inherit_defaults(block: dict, default_block: dict, cfg: dict, keys: tuple[s
 
 def clone_honcho_for_profile(profile_name: str) -> bool:
     """Create a host block for a new profile, cloned from the default host block
-    (called during profile creation). False if Honcho isn't configured or the block exists."""
+    (called during profile creation). False if Honcho isn't configured, the block exists,
+    or the profile has its own honcho.json (which resolve_config_path() prefers, so a
+    block written here would never be read and the peer would be created from the wrong
+    settings)."""
+    if _profile_config_path(profile_name) is not None:
+        return False
     cfg = _read_config()
     if not cfg:
         return False
@@ -320,8 +344,12 @@ def _sync_profiles(verbose: bool) -> int:
     if not default_block and not has_key:
         return say("  Honcho not configured on default profile. Run 'hermes honcho setup' first.\n") or 0
 
-    created = skipped = 0
+    created = skipped = local = 0
     for p in (p for p in profiles if p.name != "default"):
+        if _profile_config_path(p.name) is not None:
+            say(f"  = {p.name} has its own honcho.json (skipped)")
+            local += 1
+            continue
         try:
             cloned = clone_honcho_for_profile(p.name)
         except ConfigWriteRefused as e:
@@ -334,6 +362,8 @@ def _sync_profiles(verbose: bool) -> int:
     say(f"\n  {created} profile(s) synced." if created else "  All profiles already have Honcho config.")
     if skipped:
         say(f"  {skipped} profile(s) already configured (skipped).")
+    if local:
+        say(f"  {local} profile(s) have their own honcho.json (skipped).")
     say()
     return created
 
