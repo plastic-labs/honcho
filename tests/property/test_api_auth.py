@@ -44,7 +44,9 @@ from tests.routes.test_auth_route_policy import (
 )
 
 MAX_EXAMPLES = int(os.environ.get("HONCHO_FUZZ_EXAMPLES", "25"))
-SECRET = "test-secret"
+# 32+ bytes, so PyJWT does not warn on every encode and decode
+SECRET = "property-test-secret-0123456789ab"
+WRONG_SECRET = "property-test-wrong-secret-01234567"
 
 WS_A, WS_B = "auth-ws-a", "auth-ws-b"
 ALICE, BOB = "auth-alice", "auth-bob"
@@ -104,13 +106,13 @@ def _build_tokens() -> list[Token]:
         Token("invalid", create_admin_jwt()[:-3] + "AAA", sc="bad-signature"),
         Token(
             "invalid",
-            pyjwt.encode({"t": "", "ad": True}, "wrong-secret", algorithm="HS256"),
+            pyjwt.encode({"t": "", "ad": True}, WRONG_SECRET, algorithm="HS256"),
             sc="wrong-secret-admin",
         ),
         Token(
             "invalid",
             pyjwt.encode(
-                {"t": "", "w": WS_A, "p": ALICE}, "wrong-secret", algorithm="HS256"
+                {"t": "", "w": WS_A, "p": ALICE}, WRONG_SECRET, algorithm="HS256"
             ),
             sc="wrong-secret-peer",
         ),
