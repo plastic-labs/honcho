@@ -6,6 +6,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 
+import psycopg
 import sentry_sdk
 from fastapi import FastAPI, Request, Response
 from fastapi.encoders import jsonable_encoder
@@ -13,9 +14,11 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi_pagination import add_pagination
+from pydantic import ValidationError
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
+from sqlalchemy.exc import DataError
 
 from src._version import HONCHO_VERSION
 from src.backlog import DeriverMetricsPoller
@@ -266,6 +269,47 @@ async def validation_exception_handler(_request: Request, exc: RequestValidation
         status_code=422,
         content={"detail": jsonable_encoder(exc.errors())},
     )
+
+
+@app.exception_handler(ValidationError)
+async def internal_validation_exception_handler(
+    _request: Request, exc: ValidationError
+):
+    """422 for request input that fails a schema built inside a handler.
+
+    Routes that get-or-create a parent build e.g. `WorkspaceCreate(name=...)`
+    from a path parameter, so an ID the schema rejects surfaces here rather
+    than as a `RequestValidationError`.
+    """
+    return _AsciiJSONResponse(
+        status_code=422,
+        content={"detail": jsonable_encoder(exc.errors(include_url=False))},
+    )
+
+
+# SQLSTATEs for input Postgres cannot store: a value out of range for its
+# column type, and a `\u0000` escape in JSONB.
+_INPUT_DATA_SQLSTATES = {"22003", "22P05"}
+
+
+def _is_input_data_error(exc: DataError) -> bool:
+    orig = exc.orig
+    if getattr(orig, "sqlstate", None) in _INPUT_DATA_SQLSTATES:
+        return True
+    # psycopg rejects NUL in text parameters client-side, without a SQLSTATE
+    return isinstance(orig, psycopg.DataError) and "NUL (0x00)" in str(orig)
+
+
+@app.exception_handler(DataError)
+async def data_exception_handler(request: Request, exc: DataError):
+    """422 for request values Postgres cannot store; anything else is a 500."""
+    if _is_input_data_error(exc):
+        logger.warning(f"Rejected unstorable input: {exc.orig}")
+        return JSONResponse(
+            status_code=422,
+            content={"detail": "Request contains a value that cannot be stored"},
+        )
+    return await global_exception_handler(request, exc)
 
 
 @app.exception_handler(Exception)
