@@ -308,6 +308,7 @@ src/
 - Token counting on messages for usage tracking
 - JSONB metadata fields for extensibility
 - HNSW indexes for vector similarity search
+- **Index a large or partitioned table with `migrations.utils.create_index_online` / `drop_index_online`**, not a hand-rolled `CREATE INDEX CONCURRENTLY`. They build concurrently (on a partitioned table: `ON ONLY` the parent, each partition concurrently, then `ATTACH`), are safe to rerun after a stopped build, and keep `src/models.py`'s `Index()` as the declaration to match by hand.
 - **A `Select` that feeds a list endpoint MUST have a total ORDER BY ending in a unique column** (e.g. `created_at, id`). `paginate_offset_or_cursor` (`src/utils/pagination.py`) seeks by the sort key in both cursor mode and the offset shim; without a unique tail, rows that share a sort key are skipped or repeated across pages.
 
 ### Key Architectural Decisions

@@ -1,10 +1,9 @@
 """migrations.utils.create_index_online, through revision 647b773f05ac.
 
-test_pipeline.py runs revisions on a caller-owned connection, which takes the
-transactional CREATE INDEX branch. These run ``command.upgrade`` the way
-``src.migrate`` does, so the revision takes the concurrent paths: CREATE INDEX
+These run ``command.upgrade`` the way ``src.migrate`` does, with env.py owning
+the transaction, so the revision takes the concurrent paths: CREATE INDEX
 CONCURRENTLY on a plain table, and ON ONLY + per partition + ATTACH on a
-partitioned one.
+partitioned one. (test_pipeline.py runs the same path on plain tables.)
 """
 
 from __future__ import annotations
@@ -28,7 +27,8 @@ DOCUMENT_COLUMNS = (
     + " times_derived int, created_at timestamptz, deleted_at timestamptz"
 )
 MESSAGE_COLUMNS = (
-    "id bigint NOT NULL, workspace_name text, session_name text, token_count int"
+    "id bigint NOT NULL, workspace_name text, session_name text,"
+    + " created_at timestamptz, token_count int"
 )
 
 
@@ -141,23 +141,24 @@ def test_partitioned_build_that_stopped_part_way_is_finished(
     that is INVALID (stopped in its build) or valid but not attached (stopped
     before ATTACH). The revision keeps p0, rebuilds or reuses p1, and attaches it."""
     schema = settings.DB.SCHEMA
-    name, columns = (
+    name, columns, include = (
         "ix_messages_session_tokens",
         "tenant_id, workspace_name, session_name, id",
+        "INCLUDE (created_at, token_count)",
     )
     command.upgrade(alembic_cfg, DOWN_REVISION)
     _partition(alembic_engine)
     with alembic_engine.begin() as conn:
         conn.execute(
             text(
-                f'CREATE INDEX {name} ON ONLY "{schema}".messages ({columns}) INCLUDE (token_count)'
+                f'CREATE INDEX {name} ON ONLY "{schema}".messages ({columns}) {include}'
             )
         )
         for remainder in range(2):
             conn.execute(
                 text(
                     f'CREATE INDEX {name}_p{remainder} ON "{schema}".messages_p{remainder}'
-                    + f" ({columns}) INCLUDE (token_count)"
+                    + f" ({columns}) {include}"
                 )
             )
         conn.execute(
@@ -184,3 +185,87 @@ def test_partitioned_build_that_stopped_part_way_is_finished(
     ]
     # An INVALID p1 is dropped and built again; a valid one is attached as it is.
     assert (_oid(alembic_engine, f"{name}_p1") != p1_before) is p1_invalid
+
+
+def test_partitioned_build_refuses_an_invalid_attached_partition(
+    alembic_cfg: Config, alembic_engine: Engine
+) -> None:
+    """A partition index attached by hand while INVALID leaves the parent INVALID;
+    the revision raises instead of stamping it."""
+    schema = settings.DB.SCHEMA
+    name, columns, include = (
+        "ix_messages_session_tokens",
+        "tenant_id, workspace_name, session_name, id",
+        "INCLUDE (created_at, token_count)",
+    )
+    command.upgrade(alembic_cfg, DOWN_REVISION)
+    _partition(alembic_engine)
+    with alembic_engine.begin() as conn:
+        conn.execute(
+            text(
+                f'CREATE INDEX {name} ON ONLY "{schema}".messages ({columns}) {include}'
+            )
+        )
+        for remainder in range(2):
+            conn.execute(
+                text(
+                    f'CREATE INDEX {name}_p{remainder} ON "{schema}".messages_p{remainder}'
+                    + f" ({columns}) {include}"
+                )
+            )
+            conn.execute(
+                text(
+                    f'ALTER INDEX "{schema}".{name}'
+                    + f' ATTACH PARTITION "{schema}".{name}_p{remainder}'
+                )
+            )
+        conn.execute(
+            text(
+                "UPDATE pg_index SET indisvalid = false"
+                + f" WHERE indexrelid IN ('\"{schema}\".{name}'::regclass,"
+                + f" '\"{schema}\".{name}_p1'::regclass)"
+            )
+        )
+    assert _valid(alembic_engine, name) is False
+
+    with pytest.raises(RuntimeError, match="still INVALID"):
+        command.upgrade(alembic_cfg, REVISION)
+
+
+def test_short_lock_statement_retries_in_place(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A lock_timeout on ON ONLY or ATTACH is retried as one statement, not by
+    rerunning the revision; any other error is raised at once."""
+    from sqlalchemy.exc import DBAPIError
+
+    import migrations.utils as utils
+
+    class _Orig(Exception):
+        def __init__(self, sqlstate: str) -> None:
+            super().__init__(sqlstate)
+            self.sqlstate: str = sqlstate
+
+    calls: list[str] = []
+    failures = iter(["55P03", "55P03"])
+
+    def fake_execute(sql: str) -> None:
+        calls.append(sql)
+        code = next(failures, None)
+        if code is not None:
+            raise DBAPIError(sql, None, _Orig(code))
+
+    def no_sleep(_seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr("migrations.utils.op.execute", fake_execute)
+    monkeypatch.setattr("migrations.utils.time.sleep", no_sleep)
+
+    utils._execute_short_lock("ALTER INDEX x ATTACH PARTITION y")  # pyright: ignore[reportPrivateUsage]
+    assert len(calls) == 3
+
+    calls.clear()
+    failures = iter(["42P01"])
+    with pytest.raises(DBAPIError):
+        utils._execute_short_lock("ALTER INDEX x ATTACH PARTITION y")  # pyright: ignore[reportPrivateUsage]
+    assert len(calls) == 1

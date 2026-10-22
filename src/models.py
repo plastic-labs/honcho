@@ -58,6 +58,25 @@ def _default_tenant_id() -> str:
     return tenant_context.get() or DEFAULT_TENANT_ID
 
 
+def scoped_tenant_id() -> str:
+    """The tenant_id a tenant-scoped read filters on explicitly."""
+    # region ai
+    # The bound tenant, or DEFAULT_TENANT_ID flag-off: the same value
+    # _default_tenant_id stamps on writes. Under MULTI_TENANT with no tenant bound
+    # it raises rather than read the 'default' tenant (tracked_db fail-closes the
+    # same case). Binding tenant_id explicitly, not only through RLS, lets the
+    # (tenant_id, ...) indexes give order flag-off too, where no policy supplies it.
+    # endregion
+    tenant = tenant_context.get()
+    if tenant:
+        return tenant
+    if settings.MULTI_TENANT:
+        raise ValueError(
+            "no tenant bound under MULTI_TENANT; a tenant-scoped read needs one"
+        )
+    return DEFAULT_TENANT_ID
+
+
 # Association table for many-to-many relationship between sessions and peers
 session_peers_table = Table(
     "session_peers",
@@ -394,15 +413,20 @@ class Message(Base):
             "id",
             postgresql_include=["created_at"],
         ),
-        # A session's messages by id with token_count: the token-budget window of
-        # session context and the deriver's batch is index-only (migration 647b773f05ac).
+        # A session's messages by id, with created_at and token_count.
+        # region ai
+        # The token-budget window of session context and the deriver's batch sum
+        # token_count from the index. It covers every use of
+        # ix_messages_session_lookup above, which can be dropped once nothing reads
+        # it (rationale in migration 647b773f05ac).
+        # endregion
         Index(
             "ix_messages_session_tokens",
             "tenant_id",
             "workspace_name",
             "session_name",
             "id",
-            postgresql_include=["token_count"],
+            postgresql_include=["created_at", "token_count"],
         ),
         Index(
             "ix_messages_peer_lookup",
@@ -736,8 +760,8 @@ class Document(Base):
             "observed",
             "workspace_name",
         ),
-        # conclusions/list: a workspace's live documents by recency, and their count
-        # (migration 647b773f05ac).
+        # conclusions/list: a workspace's live documents by recency, and their count.
+        # ai: rationale in migration 647b773f05ac
         Index(
             "ix_documents_workspace_recent",
             "tenant_id",
@@ -747,6 +771,7 @@ class Document(Base):
             postgresql_where=text("deleted_at IS NULL"),
         ),
         # A collection's most-derived live documents: peer context and representation.
+        # ai: rationale in migration 647b773f05ac
         Index(
             "ix_documents_collection_derived",
             "tenant_id",

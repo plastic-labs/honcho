@@ -19,4 +19,4 @@ def prepare_tenant_read_indexes(verifier: MigrationVerifier) -> None:
 
 @register_after_upgrade("647b773f05ac")
 def verify_tenant_read_indexes(verifier: MigrationVerifier) -> None:
-    verifier.assert_indexes_exist(INDEXES)
+    verifier.assert_indexes_valid(INDEXES)

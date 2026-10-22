@@ -1,3 +1,6 @@
+import logging
+import random
+import time
 from collections.abc import Generator
 from contextlib import contextmanager
 
@@ -6,9 +9,14 @@ from alembic import op
 from sqlalchemy.exc import DBAPIError
 
 from src.config import settings
+from src.migrate import LOCK_NOT_AVAILABLE
+
+logger = logging.getLogger("alembic")
 
 # The statement_timeout of one concurrent index build (a partition, or a plain table).
 BUILD_TIMEOUT = "60min"
+# In-place retries of one short-lock statement (ON ONLY, ATTACH, a partitioned DROP).
+SHORT_LOCK_ATTEMPTS = 5
 
 
 def get_schema() -> str:
@@ -171,7 +179,12 @@ def make_column_non_nullable_safe(table_name: str, column_name: str) -> None:
 
 
 def caller_owns_transaction() -> bool:
-    """True when env.py runs inside a transaction the caller opened (the alembic test pipeline)."""
+    """True when env.py runs inside a transaction the caller opened.
+
+    That is env.py reusing a connection from config.attributes["connection"].
+    Nothing in this repo passes one: src.migrate and the alembic tests let env.py
+    own the transaction.
+    """
     config = op.get_context().config
     return config is not None and not config.attributes.get("owns_transaction", True)
 
@@ -200,15 +213,30 @@ def _is_partitioned(table: str) -> bool:
 
 
 def _partitions(table: str) -> list[str]:
-    return list(
-        op.get_bind().scalars(
-            sa.text(
-                "SELECT c.relname FROM pg_inherits h JOIN pg_class c ON c.oid = h.inhrelid"
-                + " WHERE h.inhparent = to_regclass(:table) ORDER BY c.relname"
-            ),
-            {"table": f'"{get_schema()}"."{table}"'},
-        )
+    """The table's leaf partitions in its own schema, excluding any being detached.
+
+    A sub-partitioned child (relkind 'p') can't take CREATE INDEX CONCURRENTLY, and a
+    child in another schema would be addressed wrongly, so both are refused.
+    """
+    rows = op.get_bind().execute(
+        sa.text(
+            "SELECT c.relname, c.relkind, n.nspname FROM pg_inherits h"
+            + " JOIN pg_class c ON c.oid = h.inhrelid"
+            + " JOIN pg_namespace n ON n.oid = c.relnamespace"
+            + " WHERE h.inhparent = to_regclass(:table) AND NOT h.inhdetachpending"
+            + " ORDER BY c.relname"
+        ),
+        {"table": f'"{get_schema()}"."{table}"'},
     )
+    partitions: list[str] = []
+    for relname, relkind, nspname in rows:
+        if relkind != "r" or nspname != get_schema():
+            raise ValueError(
+                f"partition {nspname}.{relname} of {table} is not a plain table in"
+                + f" schema {get_schema()}; create_index_online can't build it"
+            )
+        partitions.append(relname)
+    return partitions
 
 
 def _attached_partitions(index: str) -> set[str]:
@@ -228,8 +256,36 @@ def _attached_partitions(index: str) -> set[str]:
 
 def _partition_index_name(index: str, table: str, partition: str) -> str:
     name = f"{index}_{partition.removeprefix(table + '_')}"
-    assert len(name) <= 63, f"index name {name} is longer than 63 bytes"
+    if len(name.encode()) > 63:
+        raise ValueError(f"index name {name} is longer than 63 bytes")
     return name
+
+
+def _execute_short_lock(sql: str, attempts: int = SHORT_LOCK_ATTEMPTS) -> None:
+    """Run one short-lock statement, retrying it in place on lock_timeout.
+
+    In an autocommit block a timed-out statement leaves nothing to roll back, so a
+    retry here costs one statement, not a rerun of the revision under
+    src.migrate.run_with_lock_retry's budget, which the whole upgrade shares.
+    """
+    for attempt in range(1, attempts + 1):
+        try:
+            op.execute(sql)
+            return
+        except DBAPIError as exc:
+            if getattr(exc.orig, "sqlstate", None) != LOCK_NOT_AVAILABLE or (
+                attempt == attempts
+            ):
+                raise
+            delay = random.uniform(0.25, 0.5) * 2 ** (attempt - 1)
+            logger.warning(
+                "lock_timeout on %r (attempt %d/%d), retrying in %.1fs",
+                sql,
+                attempt,
+                attempts,
+                delay,
+            )
+            time.sleep(delay)
 
 
 @contextmanager
@@ -258,7 +314,7 @@ def build_timeouts(timeout: str = BUILD_TIMEOUT) -> Generator[None]:
                     {"name": name, "value": value},
                 )
         except DBAPIError:
-            # A dropped connection can't be restored; let the build's own error surface.
+            # ai: a dropped connection can't be restored; let the build's own error surface.
             if not connection.invalidated:
                 raise
 
@@ -282,13 +338,21 @@ def create_index_online(
     last partition is attached. The concurrent builds run under build_timeouts().
     The other steps are short but lock: ON ONLY takes SHARE on the parent table
     (writes wait), and ATTACH takes ACCESS EXCLUSIVE on the partition's new index.
-    They keep the migration's lock_timeout, so src.migrate retries them.
+    They keep the migration's lock_timeout and retry in place on a timeout
+    (_execute_short_lock).
 
     It is safe to run again: a valid index and an attached partition are kept, and
     an INVALID index (a build that stopped part-way) is dropped and built again.
-    To build ahead of a release, run the same steps by hand; the revision then
-    finds them done. Where the caller owns the transaction (the alembic test
-    pipeline), it is one transactional CREATE INDEX.
+    A hand-run of the same steps is picked up if it uses the same names: `name`
+    for the parent, and _partition_index_name() for each partition (`name` plus
+    the partition's suffix). An unattached partition index under another name is
+    not detected; it is left behind and a second one is built. Don't hand-build
+    while a deploy runs this revision: an in-progress build looks INVALID and is
+    dropped and built again.
+
+    The caller-owned branch (env.py reusing a connection from
+    config.attributes["connection"], in the caller's transaction) is one
+    transactional CREATE INDEX. Nothing in this repo takes it.
     """
     schema = get_schema()
     tail = (f" INCLUDE ({include})" if include else "") + (
@@ -312,13 +376,25 @@ def create_index_online(
         with op.get_context().autocommit_block(), build_timeouts():
             if index_valid(name) is False:
                 op.execute(f'DROP INDEX CONCURRENTLY "{schema}"."{name}"')
+            logger.info(
+                "Building %s on %s concurrently; waits for older transactions, up to %s",
+                name,
+                table,
+                BUILD_TIMEOUT,
+            )
             create(name, parent, concurrently=True)
         return
 
-    if index_valid(name):
+    parent_valid = index_valid(name)
+    if parent_valid:
         return
     with op.get_context().autocommit_block():
-        create(name, f"ONLY {parent}", concurrently=False)
+        if parent_valid is None:
+            # ai: ON ONLY takes SHARE on the parent table even when the index exists,
+            # so a rerun that finds the parent skips it.
+            _execute_short_lock(
+                f'CREATE INDEX IF NOT EXISTS "{name}" ON ONLY {parent} ({columns}){tail}'
+            )
         attached = _attached_partitions(name)
         for partition in _partitions(table):
             if partition in attached:
@@ -327,9 +403,20 @@ def create_index_online(
             with build_timeouts():
                 if index_valid(child) is False:
                     op.execute(f'DROP INDEX CONCURRENTLY "{schema}"."{child}"')
+                logger.info(
+                    "Building %s on %s concurrently; waits for older transactions, up to %s",
+                    child,
+                    partition,
+                    BUILD_TIMEOUT,
+                )
                 create(child, f'"{schema}"."{partition}"', concurrently=True)
-            op.execute(
+            _execute_short_lock(
                 f'ALTER INDEX "{schema}"."{name}" ATTACH PARTITION "{schema}"."{child}"'
+            )
+        if not index_valid(name):
+            raise RuntimeError(
+                f"{name} is still INVALID after attaching every partition of {table};"
+                + " a partition index attached by hand may be INVALID or differ in definition"
             )
 
 
@@ -337,15 +424,28 @@ def drop_index_online(name: str, table: str) -> None:
     """Drop an index that create_index_online made.
 
     A partitioned index can't be dropped CONCURRENTLY: there it is one DROP INDEX,
-    which also drops the attached partition indexes. Partition indexes that a
-    stopped build left unattached are dropped by name.
+    which takes ACCESS EXCLUSIVE on the table and every partition, and also drops
+    the attached partition indexes. It runs in its own transaction, so one drop
+    never holds its locks while waiting on another table's. Partition indexes that
+    a stopped build left unattached are dropped by name.
     """
     schema = get_schema()
-    if caller_owns_transaction() or _is_partitioned(table):
+    if caller_owns_transaction():
         op.execute(f'DROP INDEX IF EXISTS "{schema}"."{name}"')
-        for partition in _partitions(table):
-            child = _partition_index_name(name, table, partition)
-            op.execute(f'DROP INDEX IF EXISTS "{schema}"."{child}"')
+        if _is_partitioned(table):
+            for partition in _partitions(table):
+                child = _partition_index_name(name, table, partition)
+                op.execute(f'DROP INDEX IF EXISTS "{schema}"."{child}"')
+        return
+    if _is_partitioned(table):
+        with op.get_context().autocommit_block():
+            _execute_short_lock(f'DROP INDEX IF EXISTS "{schema}"."{name}"')
+            for partition in _partitions(table):
+                child = _partition_index_name(name, table, partition)
+                with build_timeouts():
+                    op.execute(
+                        f'DROP INDEX CONCURRENTLY IF EXISTS "{schema}"."{child}"'
+                    )
         return
     with op.get_context().autocommit_block(), build_timeouts():
         op.execute(f'DROP INDEX CONCURRENTLY IF EXISTS "{schema}"."{name}"')
