@@ -61,6 +61,19 @@ class TestPairAgentPrompt:
         for term in ("honcho", "peer", "session", "message", "conclusion"):
             assert term in prompt
 
+    def test_states_single_turn_contract(self) -> None:
+        """The caller cannot reply, so the prompt must not invite a next turn.
+
+        Without this, answers close with offers ("If you want, I can…") and
+        questions nobody can answer, and the contradiction section asked the
+        model to end with "Which statement is correct?".
+        """
+        prompt = agent_system_prompt("alice", "alice", None, None)
+        assert "no one can reply" in prompt
+        assert "Current user request" in prompt
+        assert "Which statement is correct?" not in prompt
+        assert "Ask the user which statement is correct" not in prompt
+
     def test_does_not_offer_removed_write_tools(self) -> None:
         prompt = agent_system_prompt("alice", "alice", None, None)
         assert "create_observations_deductive" not in prompt
