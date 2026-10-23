@@ -301,7 +301,7 @@ class PeerRepresentationGet(BaseModel):
     max_conclusions: int | None = Field(
         default=25,
         ge=1,
-        le=100,
+        le=1000,
         description="Only used if `search_query` is provided. Maximum number of conclusions to include in the representation",
     )
 

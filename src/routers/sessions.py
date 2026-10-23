@@ -799,7 +799,7 @@ async def get_session_context(
     max_conclusions: int | None = Query(
         None,
         ge=1,
-        le=100,
+        le=1000,
         description="Only used if `search_query` is provided. The maximum number of conclusions to include in the representation",
     ),
 ):

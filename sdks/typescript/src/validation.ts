@@ -556,7 +556,7 @@ export const RepresentationOptionsSchema = z
       .number()
       .int()
       .min(1, 'maxConclusions must be at least 1')
-      .max(100, 'maxConclusions must be at most 100')
+      .max(1000, 'maxConclusions must be at most 1000')
       .optional(),
   })
   .strict()

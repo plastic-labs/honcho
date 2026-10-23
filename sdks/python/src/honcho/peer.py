@@ -793,7 +793,7 @@ class Peer(PeerBase, MetadataConfigMixin):
         search_top_k: int | None = Field(None, ge=1, le=100),
         search_max_distance: float | None = Field(None, ge=0.0, le=1.0),
         include_most_frequent: bool | None = None,
-        max_conclusions: int | None = Field(None, ge=1, le=100),
+        max_conclusions: int | None = Field(None, ge=1, le=1000),
         *,
         scope: str | ScopeBase | Sequence[str | ScopeBase] | None = None,
         sessions: Sequence[str | SessionBase] | None = None,
@@ -876,7 +876,7 @@ class Peer(PeerBase, MetadataConfigMixin):
         search_top_k: int | None = Field(None, ge=1, le=100),
         search_max_distance: float | None = Field(None, ge=0.0, le=1.0),
         include_most_frequent: bool | None = None,
-        max_conclusions: int | None = Field(None, ge=1, le=100),
+        max_conclusions: int | None = Field(None, ge=1, le=1000),
     ) -> PeerContextResponse:
         """
         Get context for this peer, including representation and peer card.
