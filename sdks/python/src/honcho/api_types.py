@@ -240,7 +240,7 @@ class PeerRepresentationParams(BaseModel):
     search_top_k: int | None = Field(default=None, ge=1, le=100)
     search_max_distance: float | None = Field(default=None, ge=0.0, le=1.0)
     include_most_frequent: bool | None = None
-    max_conclusions: int | None = Field(default=25, ge=1, le=100)
+    max_conclusions: int | None = Field(default=25, ge=1, le=1000)
 
 
 class RepresentationResponse(BaseModel):

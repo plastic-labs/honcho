@@ -698,7 +698,7 @@ async def get_peer_context(
     max_conclusions: int | None = Query(
         None,
         ge=1,
-        le=100,
+        le=1000,
         description="Maximum number of conclusions to include in the representation",
     ),
 ):
