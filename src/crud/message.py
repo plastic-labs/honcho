@@ -10,6 +10,7 @@ from sqlalchemy.orm import InstrumentedAttribute
 
 from src import models, schemas
 from src.config import settings
+from src.crud.lifecycle import live_session_peer_row
 from src.dependencies import tracked_db
 from src.embedding_client import embedding_client
 from src.telemetry.events import EmbeddingCallPurpose
@@ -82,13 +83,14 @@ async def get_peer_session_names(
         Distinct session names the peer has a matching membership record in.
     """
     stmt = (
-        select(models.session_peers_table.c.session_name)
-        .where(models.session_peers_table.c.workspace_name == workspace_name)
-        .where(models.session_peers_table.c.peer_name == peer_name)
+        select(models.SessionPeer.session_name)
+        .where(models.SessionPeer.workspace_name == workspace_name)
+        .where(models.SessionPeer.peer_name == peer_name)
+        .where(live_session_peer_row())
         .distinct()
     )
     if active_only:
-        stmt = stmt.where(models.session_peers_table.c.left_at.is_(None))
+        stmt = stmt.where(models.SessionPeer.left_at.is_(None))
     result = await db.execute(stmt)
     return [row[0] for row in result.all()]
 

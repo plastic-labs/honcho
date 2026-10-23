@@ -21,6 +21,12 @@ from src.cache.client import (
     safe_cache_set,
 )
 from src.config import settings
+from src.crud.lifecycle import (
+    live_message_row,
+    live_peer_row,
+    live_session_row,
+    live_workspace_row,
+)
 from src.exceptions import ConflictException, ResourceNotFoundException
 from src.telemetry.events import WorkspaceCreatedEvent, emit
 from src.utils.filter import apply_filter
@@ -71,7 +77,9 @@ async def _fetch_workspace(
 ) -> dict[str, Any] | None:
     """Fetch a workspace from the database and return as a plain dict for safe caching."""
     obj = await db.scalar(
-        select(models.Workspace).where(models.Workspace.name == workspace_name)
+        select(models.Workspace).where(
+            models.Workspace.name == workspace_name, live_workspace_row()
+        )
     )
     if obj is None:
         return None
@@ -171,7 +179,7 @@ async def get_all_workspaces(
         filters: Filter the workspaces by a dictionary of metadata
         reverse: Whether to reverse the default creation order
     """
-    stmt = select(models.Workspace)
+    stmt = select(models.Workspace).where(live_workspace_row())
     stmt = apply_filter(stmt, models.Workspace, filters)
     if reverse:
         stmt = stmt.order_by(
@@ -584,7 +592,7 @@ async def get_workspace_stats(
             newest_message_at=None,
         )
 
-    msg_filters = [models.Message.workspace_name == workspace_name]
+    msg_filters = [models.Message.workspace_name == workspace_name, live_message_row()]
     if session_names is not None:
         msg_filters.append(models.Message.session_name.in_(session_names))
         peer_count = int(
@@ -596,7 +604,7 @@ async def get_workspace_stats(
                     (models.Peer.workspace_name == models.Message.workspace_name)
                     & (models.Peer.name == models.Message.peer_name),
                 )
-                .where(*msg_filters, ~scope_peer_clause())
+                .where(*msg_filters, live_peer_row(), ~scope_peer_clause())
             )
             or 0
         )
@@ -605,6 +613,7 @@ async def get_workspace_stats(
                 select(func.count(models.Session.id)).where(
                     models.Session.workspace_name == workspace_name,
                     models.Session.name.in_(session_names),
+                    live_session_row(),
                 )
             )
             or 0
@@ -614,6 +623,7 @@ async def get_workspace_stats(
             await db.scalar(
                 select(func.count(models.Peer.id)).where(
                     models.Peer.workspace_name == workspace_name,
+                    live_peer_row(),
                     ~scope_peer_clause(),
                 )
             )
@@ -622,7 +632,8 @@ async def get_workspace_stats(
         session_count = int(
             await db.scalar(
                 select(func.count(models.Session.id)).where(
-                    models.Session.workspace_name == workspace_name
+                    models.Session.workspace_name == workspace_name,
+                    live_session_row(),
                 )
             )
             or 0
@@ -683,6 +694,7 @@ async def get_active_peers(
     msg_filters = [
         models.Message.workspace_name == workspace_name,
         models.Message.created_at >= window_start,
+        live_message_row(),
     ]
     if session_names is not None:
         msg_filters.append(models.Message.session_name.in_(session_names))
@@ -710,6 +722,7 @@ async def get_active_peers(
             .join(subq, models.Peer.name == subq.c.peer_name)
             .where(
                 models.Peer.workspace_name == workspace_name,
+                live_peer_row(),
                 ~scope_peer_clause(),
             )
         )
@@ -719,6 +732,7 @@ async def get_active_peers(
             .outerjoin(subq, models.Peer.name == subq.c.peer_name)
             .where(
                 models.Peer.workspace_name == workspace_name,
+                live_peer_row(),
                 ~scope_peer_clause(),
             )
         )
