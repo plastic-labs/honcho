@@ -1,5 +1,8 @@
+import json
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from fastapi.testclient import TestClient
 from nanoid import generate as generate_nanoid
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -258,12 +261,40 @@ def test_filter_validations_api(
     assert error["type"] == "dict_type"
 
 
-def test_get_or_create_path_id_failing_schema_returns_422(client: TestClient):
-    # The route builds WorkspaceCreate(name=...) from the path, so the ID's
-    # pattern violation is raised inside the handler, not by request parsing
-    response = client.put("/v3/workspaces/bad:id", json={})
-    assert response.status_code == 422
-    assert response.json()["detail"][0]["type"] == "string_pattern_mismatch"
+@pytest.mark.parametrize(
+    ("method", "path", "body", "path_param"),
+    [
+        ("PUT", "/v3/workspaces/bad:id", {}, "workspace_id"),
+        ("POST", "/v3/workspaces/bad:id/peers", {"id": "p"}, "workspace_id"),
+        ("POST", "/v3/workspaces/bad:id/sessions", {"id": "s"}, "workspace_id"),
+        ("POST", "/v3/workspaces/bad:id/scopes", {"id": "sc"}, "workspace_id"),
+        ("PUT", "/v3/workspaces/{ws}/sessions/bad:id", {}, "session_id"),
+        (
+            "POST",
+            "/v3/workspaces/{ws}/sessions/bad:id/messages",
+            {"messages": [{"content": "hi", "peer_id": "{peer}"}]},
+            "session_id",
+        ),
+    ],
+)
+def test_get_or_create_path_id_failing_schema_returns_422(
+    client: TestClient,
+    sample_data: tuple[Workspace, Peer],
+    method: str,
+    path: str,
+    body: dict[str, Any],
+    path_param: str,
+):
+    # The handler builds a create schema from the path ID, so the pattern
+    # violation is raised inside it, not by request parsing
+    test_workspace, test_peer = sample_data
+    body = json.loads(json.dumps(body).replace("{peer}", test_peer.name))
+    response = client.request(method, path.format(ws=test_workspace.name), json=body)
+    assert response.status_code == 422, response.text
+    error = response.json()["detail"][0]
+    assert error["type"] == "string_pattern_mismatch"
+    assert error["loc"] == ["path", path_param]
+    assert "input" not in error
 
 
 def test_nul_in_configuration_is_stripped(client: TestClient):

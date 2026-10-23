@@ -59,8 +59,11 @@ use `fuzz_client` (one DB session per request, as in production) from
    - NUL (`\x00`) is *stripped* at the schema boundary (`NulStripped`,
      `strip_nul` in `src/utils/sanitization.py`), not rejected. A new free-form
      text or JSON field needs the same treatment.
-   - A pydantic `ValidationError` raised inside a handler (e.g. a get-or-create
-     that builds `WorkspaceCreate` from a path ID) is already a 422 (`src/main.py`).
+   - A handler that builds a create schema from a path ID (get-or-create of a
+     parent workspace or session) goes through `schema_from_path`
+     (`src/utils/path_params.py`), which turns a bad ID into a 422 at
+     `path.<param>`. A `ValidationError` anywhere else is a server bug and stays
+     a 500.
    - Values Postgres can't store are a 422 only for an explicit allowlist of
      SQLSTATEs (`_is_input_data_error` in `src/main.py`). Widen it only for an
      input class, and match narrowly when the SQLSTATE also covers server bugs

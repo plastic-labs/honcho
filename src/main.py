@@ -14,7 +14,6 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi_pagination import add_pagination
-from pydantic import ValidationError
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
@@ -268,22 +267,6 @@ async def validation_exception_handler(_request: Request, exc: RequestValidation
     return _AsciiJSONResponse(
         status_code=422,
         content={"detail": jsonable_encoder(exc.errors())},
-    )
-
-
-@app.exception_handler(ValidationError)
-async def internal_validation_exception_handler(
-    _request: Request, exc: ValidationError
-):
-    """422 for request input that fails a schema built inside a handler.
-
-    Routes that get-or-create a parent build e.g. `WorkspaceCreate(name=...)`
-    from a path parameter, so an ID the schema rejects surfaces here rather
-    than as a `RequestValidationError`.
-    """
-    return _AsciiJSONResponse(
-        status_code=422,
-        content={"detail": jsonable_encoder(exc.errors(include_url=False))},
     )
 
 
