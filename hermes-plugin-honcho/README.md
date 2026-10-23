@@ -364,8 +364,8 @@ Host key is derived from the active Hermes profile: `hermes` (default) or `herme
 | `injection.sessionStart` | list | unset | Which base-context sections to inject: any of `summary`, `peerRepresentation`, `peerCard`, `aiRepresentation`, `aiCard`. Unset injects all of them in that order. `[]` injects nothing. A host block with an `injection` object replaces the root pin wholesale |
 | `logging` | bool | `false` | Append one JSON record per turn to `~/.honcho/injection.log` saying what was injected and why. The file is owner-only and holds the user's representation verbatim. `HONCHO_LOGGING=1` also switches it on and `HONCHO_INJECTION_LOG=<path>` moves it |
 | `queryRewrite` | bool | `false` | Rewrite the latest message into a retrieval query before dialectic (one extra auxiliary LLM call per cycle) |
-| `firstTurnBaseWait` | float | `3.0` | Max seconds turn 1 waits for base context / session init. `0` disables the wait (fully async; context surfaces on later turns). Turns 2+ never wait on a stalled init |
-| `firstTurnDialecticWait` | float | `2.0` | Max seconds turn 1 waits for a dialectic result. `0` disables |
+| `firstTurnBaseWait` | float | `3.0` | Max seconds a process's first turn waits for base context / session init: turn 1, or the first turn of `hermes chat --resume`, which recalls on the previous user message. The wait runs before Hermes' prefetch timeout starts, so values above it hold. `0` disables the wait (fully async; context surfaces on later turns). Later turns never wait on a stalled init |
+| `firstTurnDialecticWait` | float | `2.0` | Max seconds a process's first turn waits for a dialectic result, after the base wait. `0` disables |
 
 ### Observation (Granular)
 
@@ -471,3 +471,16 @@ Presets:
   }
 }
 ```
+
+## Development
+
+The unit tests run against a pinned Hermes install (the plugin imports Hermes core
+modules) and make no network calls:
+
+```bash
+cd hermes-plugin-honcho
+uv run --group test pytest tests
+```
+
+The Hermes pin is the `hermes-agent` entry in the `test` dependency group of
+`pyproject.toml`; bump it together with `uv lock`.

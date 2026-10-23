@@ -140,6 +140,7 @@ class HonchoAio(AsyncMetadataConfigMixin):
     ) -> tuple[dict[str, object], dict[str, object]]:
         """Parse workspace metadata and configuration from an API response."""
         workspace = WorkspaceResponse.model_validate(data)
+        self._honcho._uid = workspace.uid
         # Return configuration as dict for mixin compatibility
         return workspace.metadata or {}, workspace.configuration.model_dump(
             exclude_none=True
@@ -172,6 +173,7 @@ class HonchoAio(AsyncMetadataConfigMixin):
             self._get_fetch_route(), body=self._get_fetch_body()
         )
         workspace = WorkspaceResponse.model_validate(data)
+        self._honcho._uid = workspace.uid
         self._honcho._metadata = workspace.metadata or {}
         self._honcho._configuration = workspace.configuration
         return self._honcho._configuration
@@ -219,6 +221,7 @@ class HonchoAio(AsyncMetadataConfigMixin):
             metadata=peer_data.metadata,
             configuration=peer_data.configuration,
             created_at=peer_data.created_at,
+            uid=peer_data.uid,
         )
 
     async def peers(
@@ -256,6 +259,7 @@ class HonchoAio(AsyncMetadataConfigMixin):
                 metadata=peer.metadata,
                 configuration=peer.configuration,
                 created_at=peer.created_at,
+                uid=peer.uid,
             )
 
         async def fetch_next(next_page: int) -> AsyncPage[PeerResponse, Peer]:
@@ -330,6 +334,7 @@ class HonchoAio(AsyncMetadataConfigMixin):
                 session_data.configuration.model_dump()
             ),
             created_at=session_data.created_at,
+            uid=session_data.uid,
             is_active=session_data.is_active,
         )
 
@@ -368,6 +373,7 @@ class HonchoAio(AsyncMetadataConfigMixin):
                 metadata=session.metadata,
                 configuration=session.configuration,
                 created_at=session.created_at,
+                uid=session.uid,
                 is_active=session.is_active,
             )
 
@@ -784,6 +790,7 @@ class PeerAio(AsyncMetadataConfigMixin):
         self._peer._metadata = peer.metadata or {}
         self._peer._configuration = peer.configuration
         self._peer._created_at = peer.created_at
+        self._peer._uid = peer.uid
 
     async def get_metadata(self) -> dict[str, object]:
         """Get metadata from the server asynchronously."""
@@ -1029,6 +1036,7 @@ class PeerAio(AsyncMetadataConfigMixin):
                     session.configuration.model_dump()
                 ),
                 created_at=session.created_at,
+                uid=session.uid,
                 is_active=session.is_active,
             )
 
@@ -1271,6 +1279,7 @@ class SessionAio(AsyncMetadataConfigMixin):
             session.configuration.model_dump()
         )
         self._session._created_at = session.created_at
+        self._session._uid = session.uid
         self._session._is_active = session.is_active
 
     async def get_metadata(self) -> dict[str, object]:
@@ -1369,8 +1378,8 @@ class SessionAio(AsyncMetadataConfigMixin):
 
         peers_data: list[Any] = data.get("items", [])
         return [
-            Peer(PeerResponse.model_validate(peer).id, self._session._honcho)
-            for peer in peers_data
+            Peer(p.id, self._session._honcho, uid=p.uid)
+            for p in (PeerResponse.model_validate(peer) for peer in peers_data)
         ]
 
     async def get_peer_configuration(self, peer: str | PeerBase) -> SessionPeerConfig:
@@ -1491,6 +1500,7 @@ class SessionAio(AsyncMetadataConfigMixin):
             metadata=cloned.metadata,
             configuration=cloned.configuration,
             created_at=cloned.created_at,
+            uid=cloned.uid,
             is_active=cloned.is_active,
         )
 
@@ -2239,6 +2249,7 @@ class ScopeAio:
                 metadata=response.metadata,
                 configuration=response.configuration,
                 created_at=response.created_at,
+                uid=response.uid,
                 is_active=response.is_active,
             )
 

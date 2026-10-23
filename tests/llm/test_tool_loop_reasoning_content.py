@@ -8,6 +8,7 @@ import pytest
 
 from src.config import ModelConfig
 from src.llm import tool_loop
+from src.llm.errors import llm_retry_condition
 from src.llm.runtime import AttemptPlan
 from src.llm.tool_loop import execute_tool_loop
 from src.llm.types import HonchoLLMCallResponse, ProviderClient
@@ -32,6 +33,9 @@ def _make_plan() -> AttemptPlan:
 
 @pytest.mark.asyncio
 async def test_tool_loop_replays_reasoning_content_on_continuation() -> None:
+    """The next call replays the assistant turn with its `reasoning_content` and tool
+    calls.
+    """
     calls: list[list[dict[str, Any]]] = []
     responses = iter(
         [
@@ -89,6 +93,9 @@ async def test_tool_loop_replays_reasoning_content_on_continuation() -> None:
             max_input_tokens=None,
             get_attempt_plan=_make_plan,
             before_retry_callback=lambda _retry_state: None,
+            retry_condition=llm_retry_condition(
+                can_fall_back=False, retry_attempts=1, model="test/model"
+            ),
             stream_final=False,
             telemetry=None,
         )
@@ -106,6 +113,9 @@ async def test_tool_loop_replays_reasoning_content_on_continuation() -> None:
 
 @pytest.mark.asyncio
 async def test_tool_loop_replays_null_assistant_content_on_continuation() -> None:
+    """An assistant turn with null content is replayed with its reasoning details and
+    tool calls.
+    """
     calls: list[list[dict[str, Any]]] = []
     responses = iter(
         [
@@ -171,6 +181,9 @@ async def test_tool_loop_replays_null_assistant_content_on_continuation() -> Non
             max_input_tokens=None,
             get_attempt_plan=_make_plan,
             before_retry_callback=lambda _retry_state: None,
+            retry_condition=llm_retry_condition(
+                can_fall_back=False, retry_attempts=1, model="test/model"
+            ),
             stream_final=False,
             telemetry=None,
         )

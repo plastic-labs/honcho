@@ -1,22 +1,22 @@
 /**
  * Test preload script - runs before any tests
  *
- * This script checks if tests are being run via pytest (which sets HONCHO_TEST_URL)
- * and fails fast with a helpful message if not.
+ * The suite needs a running Honcho server, which `bun run test` starts and
+ * points HONCHO_TEST_URL at. Fail fast with a helpful message if it's missing.
  */
 
 if (!process.env.HONCHO_TEST_URL) {
   console.error(`
 ╔══════════════════════════════════════════════════════════════════╗
-║  ERROR: Do not run \`bun test\` directly!                         ║
+║  ERROR: No test server. Use \`bun run test\`, not \`bun test\`.     ║
 ║                                                                  ║
-║  These tests require a running server with database and Redis.  ║
-║  The infrastructure is set up automatically by pytest.          ║
+║  \`bun run test\` starts a throwaway Honcho server (fresh database, ║
+║  API, mock LLM provider) and runs \`bun test\` against it. It      ║
+║  needs Postgres at DB_CONNECTION_URI.                            ║
 ║                                                                  ║
-║  Run tests from the monorepo root:                              ║
+║  To use a server you already have running instead:              ║
 ║                                                                  ║
-║    cd /path/to/honcho                                           ║
-║    uv run pytest tests/ -k typescript                           ║
+║    HONCHO_TEST_URL=http://localhost:8000 bun test               ║
 ║                                                                  ║
 ╚══════════════════════════════════════════════════════════════════╝
 `)

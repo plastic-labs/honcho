@@ -133,6 +133,11 @@ class LLMTelemetryContext:
 
 IterationCallback = Callable[[IterationData], None]
 
+# Called after each round of tool results with (rounds used, round limit). A
+# returned string is appended to the end of the conversation as a user turn so
+# the model can see how much of its budget is left; None appends nothing.
+BudgetLine = Callable[[int, int], str | None]
+
 
 class HonchoLLMCallResponse(BaseModel, Generic[T]):
     """Response object for LLM calls.
@@ -163,6 +168,53 @@ class HonchoLLMCallResponse(BaseModel, Generic[T]):
     # case). Maps 1:1 to `RepresentationCompletedEvent.hit_input_token_cap`
     # and `DialecticCompletedEvent.hit_input_token_cap`.
     hit_input_token_cap: bool = False
+    # True when the tool loop ran out of iterations and made its final call
+    # without a natural stop.
+    hit_iteration_limit: bool = False
+
+
+# Finish reasons arrive provider-native (never normalized by the executor), so
+# each set holds the lowercased OpenAI, Anthropic, and Gemini spellings.
+_OUTPUT_CAP_FINISH_REASONS = frozenset(
+    {"length", "max_tokens", "model_context_window_exceeded"}
+)
+_FILTERED_FINISH_REASONS = frozenset(
+    {
+        "content_filter",
+        "refusal",
+        "safety",
+        "recitation",
+        "prohibited_content",
+        "blocklist",
+        "spii",
+        "image_safety",
+    }
+)
+
+
+def hit_output_cap(finish_reasons: list[str]) -> bool:
+    """True when any provider reported stopping at the output-token cap."""
+    return any(r.lower() in _OUTPUT_CAP_FINISH_REASONS for r in finish_reasons)
+
+
+def degraded_response_parse_class(response: HonchoLLMCallResponse[Any]) -> str | None:
+    """Classify why an empty response looks degraded, or ``None`` if it doesn't.
+
+    The parse layer can still hand back a valid-but-empty model for a body that
+    was cut off right after the opening of a list, so the provider's finish
+    reason is the remaining evidence:
+
+    * ``truncated`` -- the output token budget ran out;
+    * ``content_filtered`` -- the provider withheld or refused the body.
+
+    Zero output tokens is deliberately not a signal: backends report 0 when the
+    provider omits usage, which would refuse every honest empty batch.
+    """
+    if hit_output_cap(response.finish_reasons):
+        return "truncated"
+    if any(r.lower() in _FILTERED_FINISH_REASONS for r in response.finish_reasons):
+        return "content_filtered"
+    return None
 
 
 class HonchoLLMCallStreamChunk(BaseModel):
@@ -203,6 +255,7 @@ class StreamingResponseWithMetadata:
     thinking_content: str | None
     iterations: int
     hit_input_token_cap: bool
+    hit_iteration_limit: bool
     _run_span: Any | None
 
     def __init__(
@@ -217,6 +270,7 @@ class StreamingResponseWithMetadata:
         iterations: int = 0,
         hit_input_token_cap: bool = False,
         run_span: Any | None = None,
+        hit_iteration_limit: bool = False,
     ):
         self._stream = stream
         self.tool_calls_made = tool_calls_made
@@ -227,6 +281,7 @@ class StreamingResponseWithMetadata:
         self.thinking_content = thinking_content
         self.iterations = iterations
         self.hit_input_token_cap = hit_input_token_cap
+        self.hit_iteration_limit = hit_iteration_limit
         self._run_span = run_span
 
     def __aiter__(self) -> AsyncIterator[HonchoLLMCallStreamChunk]:
@@ -276,6 +331,7 @@ class StreamingResponseWithMetadata:
 __all__ = [
     "HonchoLLMCallResponse",
     "HonchoLLMCallStreamChunk",
+    "BudgetLine",
     "IterationCallback",
     "IterationData",
     "LLMTelemetryContext",
@@ -284,4 +340,6 @@ __all__ = [
     "StreamingResponseWithMetadata",
     "T",
     "VerbosityType",
+    "degraded_response_parse_class",
+    "hit_output_cap",
 ]

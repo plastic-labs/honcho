@@ -41,7 +41,9 @@ Edit `%APPDATA%\Claude\claude_desktop_config.json`:
         "mcp-remote",
         "https://mcp.honcho.dev",
         "--header",
-        "Authorization:${AUTH_HEADER}"
+        "Authorization:${AUTH_HEADER}",
+        "--header",
+        "X-Honcho-Plugin:claude-desktop"
       ],
       "env": {
         "AUTH_HEADER": "Bearer hch-your-key-here"
@@ -63,7 +65,8 @@ For best results, create a project and paste these [instructions](https://raw.gi
 claude mcp add honcho \
   --transport http \
   "https://mcp.honcho.dev" \
-  --header "Authorization: Bearer hch-your-key-here"
+  --header "Authorization: Bearer hch-your-key-here" \
+  --header "X-Honcho-Plugin: claude-code"
 ```
 
 Or if you prefer the [Claude Code Honcho plugin](/v3/guides/integrations/claudecode) for a deeper integration with persistent memory, git awareness, and agent skills:
@@ -83,7 +86,9 @@ args = [
   "mcp-remote",
   "https://mcp.honcho.dev",
   "--header",
-  "Authorization:Bearer hch-your-key-here"
+  "Authorization:Bearer hch-your-key-here",
+  "--header",
+  "X-Honcho-Plugin:codex"
 ]
 ```
 
@@ -101,7 +106,8 @@ Cursor supports MCP servers natively via HTTP. Add to your global config at `~/.
     "honcho": {
       "url": "https://mcp.honcho.dev",
       "headers": {
-        "Authorization": "Bearer hch-your-key-here"
+        "Authorization": "Bearer hch-your-key-here",
+        "X-Honcho-Plugin": "cursor"
       }
     }
   }
@@ -120,7 +126,8 @@ Add to `~/.codeium/windsurf/mcp_config.json`:
     "honcho": {
       "serverUrl": "https://mcp.honcho.dev",
       "headers": {
-        "Authorization": "Bearer hch-your-key-here"
+        "Authorization": "Bearer hch-your-key-here",
+        "X-Honcho-Plugin": "windsurf"
       }
     }
   }
@@ -142,7 +149,8 @@ Add to your workspace `.vscode/mcp.json`:
       "type": "http",
       "url": "https://mcp.honcho.dev",
       "headers": {
-        "Authorization": "Bearer hch-your-key-here"
+        "Authorization": "Bearer hch-your-key-here",
+        "X-Honcho-Plugin": "vscode"
       }
     }
   }
@@ -159,7 +167,8 @@ Or add to your User Settings JSON (`Cmd+Shift+P` → "Preferences: Open User Set
         "type": "http",
         "url": "https://mcp.honcho.dev",
         "headers": {
-          "Authorization": "Bearer hch-your-key-here"
+          "Authorization": "Bearer hch-your-key-here",
+          "X-Honcho-Plugin": "vscode"
         }
       }
     }
@@ -186,7 +195,8 @@ Cline supports remote MCP servers natively. Open Cline's MCP settings at:
     "honcho": {
       "url": "https://mcp.honcho.dev",
       "headers": {
-        "Authorization": "Bearer hch-your-key-here"
+        "Authorization": "Bearer hch-your-key-here",
+        "X-Honcho-Plugin": "cline"
       }
     }
   }
@@ -205,7 +215,8 @@ Add to `~/.config/zed/settings.json`:
     "honcho": {
       "url": "https://mcp.honcho.dev",
       "headers": {
-        "Authorization": "Bearer hch-your-key-here"
+        "Authorization": "Bearer hch-your-key-here",
+        "X-Honcho-Plugin": "zed"
       }
     }
   }
@@ -220,7 +231,7 @@ Zed uses `context_servers` instead of `mcpServers`. Native HTTP support requires
 
 [Goose](https://goose-docs.ai/) supports remote MCP servers natively over Streamable HTTP.
 
-The easiest way is to run `goose configure`, choose **Add Extension → Remote Extension (Streamable HTTP)**, and enter the name `honcho`, the URI `https://mcp.honcho.dev`, and the header `Authorization: Bearer hch-your-key-here`.
+The easiest way is to run `goose configure`, choose **Add Extension → Remote Extension (Streamable HTTP)**, and enter the name `honcho`, the URI `https://mcp.honcho.dev`, and the headers `Authorization: Bearer hch-your-key-here` and `X-Honcho-Plugin: goose`.
 
 Or edit your `config.yaml` directly (on Linux, `~/.config/goose/config.yaml`):
 
@@ -234,12 +245,19 @@ extensions:
     uri: https://mcp.honcho.dev
     headers:
       Authorization: "Bearer hch-your-key-here"
+      X-Honcho-Plugin: goose
     timeout: 60
 ```
 
 <Tip>
 To teach Goose the recommended memory flow, save the [instructions](https://raw.githubusercontent.com/plastic-labs/honcho/refs/heads/main/mcp/instructions.md) into a `.goosehints` file in your Goose config directory (or a project root). This is Goose's equivalent of Claude Desktop's "Project Instructions". Not sure of your config path? Run `goose info`.
 </Tip>
+
+### Paperclip
+
+[Paperclip](https://paperclip.ing) has a built-in Honcho connector for `https://mcp.honcho.dev`, so there is no config file to edit. Turn on **Settings → Experimental → Memory connectors**, open **Connectors**, choose **Honcho**, and enter your API key and a workspace ID. Paperclip fills in `workspace_id` on every tool call and adds its own usage instructions to agent prompts.
+
+Memory connectors are experimental and need Paperclip v2026.1012.0 or later. See the [Paperclip guide](/v3/guides/integrations/paperclip) for agent instructions and permissions.
 
 ---
 
@@ -336,7 +354,7 @@ Or with `mcp-remote`:
 }
 ```
 
-Bearer auth is required on every request, including established sessions. Optional `X-Honcho-Workspace-ID` fills `workspace_id` when the tool argument is omitted.
+Bearer auth is required on every request, including established sessions. Optional `X-Honcho-Workspace-ID` fills `workspace_id` when the tool argument is omitted, and optional `X-Honcho-Plugin` names your client (see [Identify your client](#identify-your-client)).
 
 `HOST` defaults to `0.0.0.0` (what Docker needs inside the container). For a laptop run, set `HOST=127.0.0.1`. `PORT` defaults to `3000`. `GET /health` is unauthenticated. MCP is served at `/` and `/mcp`.
 
@@ -374,6 +392,16 @@ See the [local environment guide](/v3/contributing/self-hosting#from-source-dock
 Every workspace-scoped tool takes a `workspace_id` argument. You can also set `X-Honcho-Workspace-ID` on the connection; that value fills `workspace_id` when the argument is omitted.
 
 Use `list_workspaces` to discover IDs (each result includes metadata and `created_at`), or `create_workspace` if none fit, then reuse the same ID for subsequent tool calls.
+
+---
+
+## Identify your client
+
+Set `X-Honcho-Plugin` on the connection to name whatever configured it. The configs above use a short slug for the client; an integration that ships its own config should use `<name>/<version>`, for example `cursor-honcho/0.2.0`.
+
+Without it, Honcho sees your client's `User-Agent`. IDEs send a real one (`Cursor/3.1.0 (darwin arm64)`); a client that goes through `mcp-remote` or another Node bridge only sends the HTTP library's name (`undici`), which is why the bridge configs above set the header.
+
+The header is optional. Connections that send nothing work exactly as before.
 
 ---
 

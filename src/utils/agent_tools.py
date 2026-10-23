@@ -4,6 +4,7 @@ import weakref
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
+from functools import partial
 from typing import Any, cast
 
 from pydantic import ValidationError
@@ -37,6 +38,7 @@ from src.utils.representation import (
     allowlist_safe_levels,
 )
 from src.utils.sanitization import strip_nul
+from src.utils.scopes import is_scope_peer_name
 from src.utils.types import ToolResult, embedding_call_purpose, get_current_iteration
 
 logger = logging.getLogger(__name__)
@@ -262,6 +264,23 @@ def _truncate_tool_output(
         + f"\n\n[OUTPUT TRUNCATED - showing {max_chars:,} of {original_chars:,} characters]"
     )
     return truncated, original_chars, True
+
+
+def _describe_tool_error(error: Exception) -> str:
+    """Bounded description of `error`, safe to hand back to the model.
+
+    Exception text is unbounded and not written for the model: SQLAlchemy
+    appends the full statement and its bound parameters, which for a query with
+    tens of thousands of parameters runs to millions of characters. It gets the
+    same budget as successful tool output.
+    """
+    message = str(error).strip()
+    max_chars = settings.LLM.MAX_TOOL_OUTPUT_CHARS
+    if len(message) > max_chars:
+        message = (
+            message[:max_chars] + f"… [truncated {len(message) - max_chars:,} chars]"
+        )
+    return f"{type(error).__name__}: {message}" if message else type(error).__name__
 
 
 def _truncation_metadata(was_truncated: bool, original_chars: int) -> dict[str, Any]:
@@ -2242,8 +2261,19 @@ async def _handle_get_reasoning_chain(
         return f"ERROR: Invalid direction '{direction}'. Must be 'premises', 'conclusions', or 'both'"
 
     # Get the observation itself
+    # IDs can come from the caller's query, not just scoped search results.
+    # Confine every hop of a named scope's chain to its collection.
+    fetch_chain_documents = (
+        partial(
+            crud.fetch_documents_by_ids, observer=ctx.observer, observed=ctx.observed
+        )
+        if is_scope_peer_name(ctx.observer)
+        else crud.get_documents_by_ids
+    )
     async with tracked_db("tool.get_reasoning_chain", read_only=True) as db:
-        docs = await crud.get_documents_by_ids(db, ctx.workspace_name, [observation_id])
+        docs = await fetch_chain_documents(
+            db, ctx.workspace_name, document_ids=[observation_id]
+        )
         if not docs or not docs[0]:
             return f"ERROR: Observation '{observation_id}' not found"
 
@@ -2259,8 +2289,8 @@ async def _handle_get_reasoning_chain(
         # Get premises/sources if requested
         if direction in ("premises", "both"):
             if level == "deductive" and doc.source_ids:
-                premises = await crud.get_documents_by_ids(
-                    db, ctx.workspace_name, doc.source_ids
+                premises = await fetch_chain_documents(
+                    db, ctx.workspace_name, document_ids=doc.source_ids
                 )
                 _record_conclusion_evidence(ctx, premises)
                 if premises:
@@ -2277,8 +2307,8 @@ async def _handle_get_reasoning_chain(
                         f"\n**Premises:** Referenced {len(doc.source_ids)} premise IDs but none found in database"
                     )
             elif level == "inductive" and doc.source_ids:
-                sources = await crud.get_documents_by_ids(
-                    db, ctx.workspace_name, doc.source_ids
+                sources = await fetch_chain_documents(
+                    db, ctx.workspace_name, document_ids=doc.source_ids
                 )
                 _record_conclusion_evidence(ctx, sources)
                 if sources:
@@ -2341,6 +2371,13 @@ _TOOL_HANDLERS: dict[str, Callable[[ToolContext, dict[str, Any]], Any]] = {
     "delete_observations": _handle_delete_observations,
     "get_reasoning_chain": _handle_get_reasoning_chain,
 }
+
+
+def get_tool_handler(
+    tool_name: str,
+) -> Callable[[ToolContext, dict[str, Any]], Any] | None:
+    """Default handler lookup, for `handler_resolver`s that wrap it."""
+    return _TOOL_HANDLERS.get(tool_name)
 
 
 async def create_tool_executor(
@@ -2486,7 +2523,9 @@ async def create_tool_executor(
             raise
         except ValueError as e:
             # Recoverable errors (bad input, validation failures) - return to LLM
-            result_str = f"Tool {tool_name} failed with invalid input: {e}"
+            result_str = (
+                f"Tool {tool_name} failed with invalid input: {_describe_tool_error(e)}"
+            )
             is_error = True
             logger.warning(result_str)
         except KeyError as e:
@@ -2498,7 +2537,7 @@ async def create_tool_executor(
             # Unexpected errors - log with full traceback but still return to LLM
             # We don't re-raise because the LLM should be able to continue with other tools
             result_str = (
-                f"Tool {tool_name} failed unexpectedly: {type(e).__name__}: {e}"
+                f"Tool {tool_name} failed unexpectedly: {_describe_tool_error(e)}"
             )
             is_error = True
             logger.error(result_str, exc_info=True)

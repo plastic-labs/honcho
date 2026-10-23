@@ -23,6 +23,7 @@ from src.config import ConfiguredModelSettings, ModelConfig
 from src.exceptions import ValidationException
 from src.telemetry.reasoning_traces import log_reasoning_trace
 
+from .errors import llm_retry_condition
 from .executor import honcho_llm_call_inner
 from .runtime import (
     AttemptPlan,
@@ -35,6 +36,7 @@ from .runtime import (
 )
 from .tool_loop import execute_tool_loop
 from .types import (
+    BudgetLine,
     HonchoLLMCallResponse,
     HonchoLLMCallStreamChunk,
     IterationCallback,
@@ -63,6 +65,7 @@ async def honcho_llm_call(
     thinking_budget_tokens: int | None = None,
     enable_retry: bool = True,
     retry_attempts: int = 3,
+    validate_response: Callable[[HonchoLLMCallResponse[Any]], None] | None = None,
     stream: Literal[False] = False,
     stream_final_only: bool = False,
     tools: list[dict[str, Any]] | None = None,
@@ -71,6 +74,8 @@ async def honcho_llm_call(
     max_tool_iterations: int = 10,
     force_tools_until: Collection[str] | None = None,
     max_forced_iterations: int = 3,
+    budget_line: BudgetLine | None = None,
+    final_call_tools: list[dict[str, Any]] | None = None,
     messages: list[dict[str, Any]] | None = None,
     max_input_tokens: int | None = None,
     trace_name: str | None = None,
@@ -95,6 +100,7 @@ async def honcho_llm_call(
     thinking_budget_tokens: int | None = None,
     enable_retry: bool = True,
     retry_attempts: int = 3,
+    validate_response: Callable[[HonchoLLMCallResponse[Any]], None] | None = None,
     stream: Literal[False] = False,
     stream_final_only: bool = False,
     tools: list[dict[str, Any]] | None = None,
@@ -103,6 +109,8 @@ async def honcho_llm_call(
     max_tool_iterations: int = 10,
     force_tools_until: Collection[str] | None = None,
     max_forced_iterations: int = 3,
+    budget_line: BudgetLine | None = None,
+    final_call_tools: list[dict[str, Any]] | None = None,
     messages: list[dict[str, Any]] | None = None,
     max_input_tokens: int | None = None,
     trace_name: str | None = None,
@@ -127,6 +135,7 @@ async def honcho_llm_call(
     thinking_budget_tokens: int | None = None,
     enable_retry: bool = True,
     retry_attempts: int = 3,
+    validate_response: Callable[[HonchoLLMCallResponse[Any]], None] | None = None,
     stream: Literal[True] = ...,
     stream_final_only: bool = False,
     tools: list[dict[str, Any]] | None = None,
@@ -135,6 +144,8 @@ async def honcho_llm_call(
     max_tool_iterations: int = 10,
     force_tools_until: Collection[str] | None = None,
     max_forced_iterations: int = 3,
+    budget_line: BudgetLine | None = None,
+    final_call_tools: list[dict[str, Any]] | None = None,
     messages: list[dict[str, Any]] | None = None,
     max_input_tokens: int | None = None,
     trace_name: str | None = None,
@@ -158,6 +169,7 @@ async def honcho_llm_call(
     thinking_budget_tokens: int | None = None,
     enable_retry: bool = True,
     retry_attempts: int = 3,
+    validate_response: Callable[[HonchoLLMCallResponse[Any]], None] | None = None,
     stream: bool = False,
     stream_final_only: bool = False,
     tools: list[dict[str, Any]] | None = None,
@@ -166,6 +178,8 @@ async def honcho_llm_call(
     max_tool_iterations: int = 10,
     force_tools_until: Collection[str] | None = None,
     max_forced_iterations: int = 3,
+    budget_line: BudgetLine | None = None,
+    final_call_tools: list[dict[str, Any]] | None = None,
     messages: list[dict[str, Any]] | None = None,
     max_input_tokens: int | None = None,
     trace_name: str | None = None,
@@ -182,8 +196,21 @@ async def honcho_llm_call(
     Backup provider/model (if configured on the primary ModelConfig's
     `fallback`) is used on the final retry attempt, which is 3 by default.
 
+    A provider rejection of the request itself (a 4xx other than
+    408/409/425/429; see `is_non_retryable_client_error`) is not retried when
+    no fallback is configured, since the same model would reject it again.
+    With a fallback it is retried as before, so the fallback still gets its
+    attempt.
+
     A caller-supplied `run` stays owned by the caller; otherwise the call opens
     and ends its own around the tool loop.
+
+    `validate_response` runs on each attempt's response inside the retried
+    call, so raising from it consumes an attempt exactly like a provider error:
+    it is retried and reaches the fallback on the final attempt (with
+    `enable_retry=False`, the first raise propagates). It sees the response
+    before call-level fields such as `hit_input_token_cap` are set. Tool-less,
+    non-streaming calls only.
 
     Raises:
         ValidationException: If streaming and tool calling are combined
@@ -203,6 +230,11 @@ async def honcho_llm_call(
             "Streaming is not supported with tool calling. "
             + "Set stream=False when using tools, or use stream_final_only=True "
             + "to stream only the final response after tool calls."
+        )
+
+    if validate_response is not None and (stream or (tools and tool_executor)):
+        raise ValidationException(
+            "validate_response is only supported on tool-less, non-streaming calls"
         )
 
     # tenacity uses 1-indexed attempts.
@@ -249,7 +281,7 @@ async def honcho_llm_call(
                 plan=plan,
                 telemetry=telemetry,
             )
-        return await honcho_llm_call_inner(
+        response = await honcho_llm_call_inner(
             plan.provider,
             plan.model,
             prompt,
@@ -269,6 +301,9 @@ async def honcho_llm_call(
             plan=plan,
             telemetry=telemetry,
         )
+        if validate_response is not None:
+            validate_response(response)
+        return response
 
     decorated = _call_with_provider_selection
 
@@ -292,8 +327,17 @@ async def honcho_llm_call(
             )
             logger.info(f"Will retry with attempt {next_attempt}/{retry_attempts}")
 
+    # Stops early only without a fallback, so the attempts it stops are always
+    # the primary's.
+    retry_condition = llm_retry_condition(
+        can_fall_back=runtime_model_config.fallback is not None,
+        retry_attempts=retry_attempts,
+        model=f"{runtime_model_config.transport}/{runtime_model_config.model}",
+    )
+
     if enable_retry:
         decorated = retry(
+            retry=retry_condition,
             stop=stop_after_attempt(retry_attempts),
             wait=wait_exponential(multiplier=1, min=4, max=10),
             before_sleep=before_retry_callback,
@@ -384,7 +428,7 @@ async def honcho_llm_call(
                         telemetry=telemetry,
                         messages=captured_messages,
                     )
-                return await honcho_llm_call_inner(
+                response = await honcho_llm_call_inner(
                     plan.provider,
                     plan.model,
                     prompt,
@@ -405,12 +449,16 @@ async def honcho_llm_call(
                     telemetry=telemetry,
                     messages=captured_messages,
                 )
+                if validate_response is not None:
+                    validate_response(response)
+                return response
 
             wrapped = _toolless_call
             if sentry_track_name:
                 wrapped = ai_track(sentry_track_name)(wrapped)
             if enable_retry:
                 wrapped = retry(
+                    retry=retry_condition,
                     stop=stop_after_attempt(retry_attempts),
                     wait=wait_exponential(multiplier=1, min=4, max=10),
                     before_sleep=before_retry_callback,
@@ -468,6 +516,8 @@ async def honcho_llm_call(
             max_tool_iterations=max_tool_iterations,
             force_tools_until=force_tools_until,
             max_forced_iterations=max_forced_iterations,
+            budget_line=budget_line,
+            final_call_tools=final_call_tools,
             response_model=response_model,
             json_mode=json_mode,
             temperature=temperature,
@@ -478,6 +528,7 @@ async def honcho_llm_call(
             max_input_tokens=max_input_tokens,
             get_attempt_plan=_get_attempt_plan,
             before_retry_callback=before_retry_callback,
+            retry_condition=retry_condition,
             stream_final=stream_final_only,
             iteration_callback=iteration_callback,
             telemetry=telemetry,

@@ -88,6 +88,15 @@ class WorkspaceDialecticAgent(DialecticAgent):
     # DialecticAgent seams
     # ------------------------------------------------------------------
 
+    def _layout_enabled(self) -> bool:
+        # The pair layout doesn't describe a workspace, and __init__ replaces
+        # the system prompt anyway.
+        return False
+
+    def _pair_brief_enabled(self) -> bool:
+        # Counts and dreamer notes are per pair; there is no pair here.
+        return False
+
     async def _prefetch_relevant_observations(self, query: str) -> str | None:
         """Orientation + routing prefetch: stats, active peers, peer cards.
 

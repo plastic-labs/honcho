@@ -8,7 +8,7 @@
 
 ---
 
-![Static Badge](https://img.shields.io/badge/Server-3.3.0-blue)
+![Static Badge](https://img.shields.io/badge/Server-3.4.0-blue)
 [![PyPI version](https://img.shields.io/pypi/v/honcho-ai.svg)](https://pypi.org/project/honcho-ai/)
 [![NPM version](https://img.shields.io/npm/v/@honcho-ai/sdk.svg)](https://npmjs.org/package/@honcho-ai/sdk)
 [![CLI](https://img.shields.io/pypi/v/honcho-cli.svg?label=honcho-cli)](https://pypi.org/project/honcho-cli/)
@@ -47,7 +47,7 @@ The Honcho project is split between several repositories, with this one hosting 
 
 | I want to...                           | Path                                                       | Get started                   |
 | -------------------------------------- | ---------------------------------------------------------- | ----------------------------- |
-| Give my coding agent persistent memory | Claude Code, OpenCode, Kilo Code, OpenClaw, Hermes, or any MCP client | [Integrations](#integrations) |
+| Give my coding agent persistent memory | Claude Code, Cursor, Grok Bot, OpenCode, Kilo Code, OpenClaw, Hermes, or any MCP client | [Integrations](#integrations) |
 | Add memory to my product               | Python or TypeScript SDK                                   | [Quickstart](#quickstart)     |
 | Run Honcho locally                     | Install CLI, then `honcho start --setup`                   | [CLI](#cli)                   |
 | Inspect a deployment                   | `honcho workspace inspect`, `honcho doctor`                | [CLI](#cli)                   |
@@ -61,7 +61,7 @@ The Honcho project is split between several repositories, with this one hosting 
 | Peer-centric model      | Tracks users, agents, groups, projects, and ideas as entities that change over time. |
 | Multi-peer perspective  | Models what one peer knows about another when configured.                            |
 | Managed or self-hosted  | Use `api.honcho.dev`, `honcho start` locally, or run the FastAPI server yourself.    |
-| Agent-tool integrations | MCP, Claude Code, OpenCode, Kilo Code, OpenClaw, Hermes, Cursor-compatible clients.  |
+| Agent-tool integrations | MCP, Claude Code, Cursor, Grok Bot, OpenCode, Kilo Code, OpenClaw, Hermes.  |
 
 ## The Honcho Loop
 
@@ -182,7 +182,8 @@ gives them one shared memory.
 | ---------------- | ------------------------------------------------------- | ------------------------------------------------------------------ |
 | Claude Code      | `/plugin marketplace add plastic-labs/claude-honcho`    | [claude-honcho](https://github.com/plastic-labs/claude-honcho)     |
 | Codex            | `npm install -g @honcho-ai/codex-honcho`                | [codex-honcho](https://github.com/plastic-labs/codex-honcho)       |
-| Cursor           | `curl -fsSL .../cursor-honcho/main/install.sh \| bash`  | [cursor-honcho](https://github.com/plastic-labs/cursor-honcho)     |
+| Cursor           | Install **Honcho** from the Cursor Marketplace          | [integrations/cursor](integrations/cursor/)                        |
+| Grok Bot         | **Add to Grok Bot** from the Honcho plugin page         | [integrations/cursor](integrations/cursor/)                        |
 | DeepSeek Harness | `dsh plugin --profile <name> add @honcho-ai/dsh-honcho` | [dsh-honcho](https://github.com/plastic-labs/dsh-honcho)           |
 | OpenCode         | `opencode plugin "@honcho-ai/opencode-honcho" --global` | [opencode-honcho](https://github.com/plastic-labs/opencode-honcho) |
 | Kilo Code        | `kilo plugin @honcho-ai/kilo-honcho --global`           | [kilo-honcho](kilo-honcho/)                                        |
@@ -190,7 +191,7 @@ gives them one shared memory.
 | Hermes           | `hermes memory setup`                                   | built in upstream                                                  |
 | Any MCP client   | `claude mcp add honcho --transport http ...`            | [MCP guide](https://honcho.dev/docs/v3/guides/integrations/mcp)    |
 
-Get a key at [app.honcho.dev](https://app.honcho.dev), then `honcho init` (or `uv tool install honcho-cli && honcho init`) writes it to `~/.honcho/config.json` once for every integration.
+Get a key at [app.honcho.dev](https://app.honcho.dev), then `honcho init` (or `uv tool install honcho-cli && honcho init`) writes it to `~/.honcho/config.json` once for every integration. Cursor and Grok Bot are the exception: the marketplace plugin signs in with OAuth, and `honcho init` is optional there (in Cursor it turns on automatic capture).
 
 ### Claude Code
 
@@ -224,13 +225,10 @@ codex-honcho install      # registers hooks + MCP + skill in ~/.codex
 
 Restart Codex to load the hooks. Details: [Codex guide](https://honcho.dev/docs/v3/guides/integrations/codex) · [repo](https://github.com/plastic-labs/codex-honcho).
 
-### Cursor
+### Cursor and Grok Bot
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/plastic-labs/cursor-honcho/main/install.sh | bash
-```
-
-Windows (PowerShell): `irm https://raw.githubusercontent.com/plastic-labs/cursor-honcho/main/install.ps1 | iex`. The installer wires global hooks and MCP config. Details: [cursor-honcho](https://github.com/plastic-labs/cursor-honcho).
+One Cursor Marketplace listing serves both. In Cursor, open **Customize**, install **Honcho**, authenticate the `honcho` MCP server, then run `/honcho-setup` once. In Grok Bot, add **Honcho** under **Connect apps** (or **Add to Grok Bot** from the plugin page) and ask a Bot to set up Honcho. The plugin connects to the hosted MCP server over OAuth and ships the skills that drive the memory loop, so nothing runs locally.
+Details: [Cursor guide](https://honcho.dev/docs/v3/guides/integrations/cursor) · [Grok Bot guide](https://honcho.dev/docs/v3/guides/integrations/grok-bot) · [source](integrations/cursor/).
 
 ### DeepSeek Harness
 
@@ -356,7 +354,7 @@ Honcho is open source under AGPL-3.0. To **run** a personal instance, install th
 git clone https://github.com/plastic-labs/honcho.git
 cd honcho
 cp docker-compose.yml.example docker-compose.yml
-cp .env.template .env       # fill in LLM_GEMINI_API_KEY / LLM_ANTHROPIC_API_KEY / LLM_OPENAI_API_KEY
+cp .env.template .env       # set LLM_OPENAI_API_KEY (see "LLM provider" below for OpenRouter etc.)
 docker compose up
 ```
 
@@ -369,93 +367,85 @@ honcho = Honcho(workspace_id="my-app-testing", base_url="http://localhost:8000")
 
 <!-- markdownlint-disable MD033 -->
 <details>
-<summary>Local development without Docker</summary>
+<summary>Without Docker (manual setup)</summary>
 
-Below is a guide on setting up a local environment for running the Honcho Server without Docker.
+Everything below runs directly on the host — no Docker required. You need:
 
-#### Prerequisites and Dependencies
+- [uv](https://docs.astral.sh/uv/) (it installs the required Python, 3.13+, for you)
+- PostgreSQL with the [pgvector](https://github.com/pgvector/pgvector) extension, local or managed
+- An API key for one LLM provider
 
-Honcho is developed using [python](https://www.python.org/) and [uv](https://docs.astral.sh/uv/).
+Redis is optional; caching is off by default (`CACHE_ENABLED=false`).
 
-The minimum python version is `3.10`
-The minimum uv version is `0.5.0`
-
-#### Setup
-
-Once the dependencies are installed on the system run the following steps to get
-the local project setup.
-
-1. **Clone the repository**
+1. **Clone and install**
 
 ```bash
 git clone https://github.com/plastic-labs/honcho.git
-```
-
-2. **Enter the repository and install the python dependencies**
-
-We recommend using a virtual environment to isolate the dependencies for Honcho
-from other projects on the same system. `uv` will create a virtual environment
-when you sync your dependencies in the project.
-
-```bash
 cd honcho
 uv sync
 ```
 
-This will create a virtual environment and install the dependencies for Honcho.
-The default virtual environment will be located at `honcho/.venv`. Activate the
-virtual environment via:
+2. **Set up PostgreSQL with pgvector**
+
+Install Postgres and pgvector natively, then create a `honcho` role and database and enable the extensions in it as a superuser.
+
+On Ubuntu/Debian:
 
 ```bash
-source honcho/.venv/bin/activate
+# Postgres and pgvector majors must match the distro's packaged version.
+# Ubuntu 24.04:
+sudo apt install postgresql-16 postgresql-16-pgvector
+# Debian 12:
+sudo apt install postgresql-15 postgresql-15-pgvector
+# Other versions: add the PostgreSQL APT repo (apt.postgresql.org) first.
+
+sudo -u postgres psql -c "CREATE ROLE honcho LOGIN PASSWORD 'honcho';"
+sudo -u postgres createdb -O honcho honcho
+sudo -u postgres psql -d honcho -c "CREATE EXTENSION IF NOT EXISTS vector;"
+sudo -u postgres psql -d honcho -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;"  # optional, speeds up message search
 ```
 
-3. **Set up a database**
-
-Honcho utilizes [Postgres](https://www.postgresql.org/) for its database with
-pgvector. An easy way to get started with a postgres database is to create a project
-with [Supabase](https://supabase.com/)
-
-Alternatively, a `docker-compose` template is available with a sample database configuration.
-To use Docker:
+On macOS, Homebrew makes your login user the superuser, so drop the `sudo -u postgres`:
 
 ```bash
-cp docker-compose.yml.example docker-compose.yml
-docker compose up -d database
+brew install postgresql@17 pgvector
+brew services start postgresql@17
+
+psql -d postgres -c "CREATE ROLE honcho LOGIN PASSWORD 'honcho';"
+createdb -O honcho honcho
+psql -d honcho -c "CREATE EXTENSION IF NOT EXISTS vector;"
+psql -d honcho -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;"
 ```
 
-4. **Edit the environment variables**
+A managed Postgres that offers pgvector (Supabase, Neon, RDS, and so on) works too. Enable the same extensions in its database.
 
-Honcho uses a `.env` file for managing runtime environment variables. A
-`.env.template` file is included for convenience. Several of the configurations
-are not required and are only necessary for additional logging, monitoring, and
-security.
+3. **Configure `.env`**
 
-Below are the required configurations:
+```bash
+cp .env.template .env
+```
+
+Only two settings are required:
 
 ```env
-DB_CONNECTION_URI= # Connection uri for a postgres database (with postgresql+psycopg prefix)
-
-# LLM Provider API Keys
-LLM_GEMINI_API_KEY= # API Key for Google Gemini (used for deriver, summary, and dialectic minimal/low by default)
-LLM_ANTHROPIC_API_KEY= # API Key for Anthropic (used for dialectic medium/high/max and dream by default)
-LLM_OPENAI_API_KEY= # API Key for OpenAI (used for embeddings when EMBED_MESSAGES=true)
+DB_CONNECTION_URI=postgresql+psycopg://honcho:honcho@localhost:5432/honcho
+LLM_OPENAI_API_KEY=sk-...
 ```
 
-> Note that the `DB_CONNECTION_URI` must have the prefix `postgresql+psycopg` to
-> function properly. This is a requirement brought by `sqlalchemy`
+`DB_CONNECTION_URI` must use the `postgresql+psycopg` prefix (a SQLAlchemy requirement).
 
-The template has the additional functionality disabled by default. To ensure
-that they are disabled you can verify the following environment variables are
-set to false:
+**LLM provider.** You need one key, not one per vendor. Every feature defaults to `openai / gpt-5.4-mini`, and embeddings default to `openai / text-embedding-3-small`. To use OpenRouter or another OpenAI-compatible endpoint (Together, Fireworks, vLLM, Ollama, LiteLLM), put that provider's key in `LLM_OPENAI_API_KEY` and set the model and base URL on each feature in `.env`:
 
 ```env
-AUTH_USE_AUTH=false
-SENTRY_ENABLED=false
+LLM_OPENAI_API_KEY=sk-or-v1-...
+DERIVER_MODEL_CONFIG__MODEL=google/gemini-2.5-flash
+DERIVER_MODEL_CONFIG__OVERRIDES__BASE_URL=https://openrouter.ai/api/v1
+# ...repeat for DIALECTIC_LEVELS__*, SUMMARY_*, DREAM_*
 ```
 
-If you set `AUTH_USE_AUTH` to true you will need to generate a JWT secret. You can
-do this with the following command:
+Models must support tool calling. If your provider doesn't serve embeddings, point `EMBEDDING_MODEL_CONFIG__*` at one that does. See [`.env.template`](./.env.template) for every per-feature line, and the [configuration guide](https://honcho.dev/docs/v3/contributing/configuration#llm-configuration) for direct Anthropic/Gemini keys and mixing providers.
+
+**Auth.** Auth is off by default (`AUTH_USE_AUTH=false`). Turn it on before exposing the server to a network. Enabling it requires a JWT secret, which you can generate with:
 
 ```bash
 python scripts/generate_jwt_secret.py
@@ -488,32 +478,24 @@ curl -H "Authorization: Bearer $TOKEN" http://localhost:8000/v3/workspaces
 
 Duration units: `s` (seconds), `m` (minutes), `h` (hours), `d` (days), `w` (weeks), `y` (years).
 
-5. **Run database migrations**
-
-With the database set up and environment variables configured, run the migrations
-to create the necessary tables:
+4. **Run database migrations**
 
 ```bash
 uv run alembic upgrade head
 ```
 
-This will create all tables for Honcho including workspaces, peers, sessions,
-messages, and the queue system.
-
 Migrations hold a session-level advisory lock, so they need a session-mode connection (direct Postgres or a session pooler), not a transaction-mode pooler. A Supabase-style `:6543` port is rewritten to `:5432` automatically.
 
-6. **Launch Honcho**
+5. **Launch Honcho**
 
-With everything set up, you can now launch a local instance of Honcho. In addition to the database, two
-components need to be running:
+Two processes need to run alongside the database.
 
 **Start the API server:**
 
 ```bash
-uv run fastapi dev src/main.py
+uv run fastapi dev src/main.py                  # local development, reloads on code changes
+uv run fastapi run --host 0.0.0.0 src/main.py   # on a server
 ```
-
-This is a development server that will reload whenever code is changed.
 
 **Start a background worker (deriver):**
 
@@ -524,6 +506,8 @@ uv run python -m src.deriver
 ```
 
 The deriver generates representations, summaries, peer cards, and manages dreaming tasks. You can increase the number of derivers to improve runtime efficiency.
+
+For verification steps and production notes, see [Self-hosting docs → Manual Setup](https://honcho.dev/docs/v3/contributing/self-hosting#manual-setup).
 
 </details>
 <!-- markdownlint-enable MD033 -->

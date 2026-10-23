@@ -1,3 +1,4 @@
+import logging
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, Mock
@@ -8,6 +9,8 @@ from pydantic import BaseModel
 
 from src.exceptions import ValidationException
 from src.llm.backends.anthropic import AnthropicBackend
+from src.llm.structured_output import StructuredOutputError
+from src.utils.representation import PromptRepresentation
 
 
 @pytest.mark.asyncio
@@ -176,11 +179,18 @@ async def test_anthropic_backend_throws_by_default_when_tool_choice_forces_tool_
 
 
 @pytest.mark.asyncio
-async def test_anthropic_backend_rejects_unknown_conflict_mode() -> None:
+async def test_anthropic_backend_unknown_conflict_mode_falls_back_to_throw(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Config load rejects unknown modes; one that reaches the backend from a
+    ModelConfig built in code is logged and the default, throw, applies."""
     client = _client_with_text_response()
     backend = AnthropicBackend(client)
 
-    with pytest.raises(ValidationException, match="thinking_tool_choice_conflict"):
+    with (
+        caplog.at_level(logging.ERROR, logger="src.llm.request_builder"),
+        pytest.raises(ValidationException, match="Cannot send request"),
+    ):
         await backend.complete(
             model="claude-haiku-4-5",
             messages=[{"role": "user", "content": "Hello"}],
@@ -190,6 +200,8 @@ async def test_anthropic_backend_rejects_unknown_conflict_mode() -> None:
             thinking_budget_tokens=2048,
             extra_params={"thinking_tool_choice_conflict": "bogus"},
         )
+
+    assert "Unknown thinking_tool_choice_conflict mode 'bogus'" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -567,6 +579,25 @@ async def test_anthropic_backend_repairs_malformed_structured_output(
     assert repair_calls == [
         ('{"answer": not-json', StructuredResponse, "claude-3-5-sonnet-latest")
     ]
+
+
+@pytest.mark.asyncio
+async def test_anthropic_backend_rejects_wrong_structured_output_keys() -> None:
+    client = _make_client([TextBlock(type="text", text='{"wrong": 1}')])
+
+    backend = AnthropicBackend(client)
+    with pytest.raises(StructuredOutputError) as exc_info:
+        await backend.complete(
+            model="claude-sonnet-4-5",
+            messages=[{"role": "user", "content": "Hello"}],
+            max_tokens=100,
+            response_format=PromptRepresentation,
+        )
+
+    message = str(exc_info.value)
+    assert "model=claude-sonnet-4-5" in message
+    assert "payload_sha256=" in message
+    assert "wrong" not in message
 
 
 @pytest.mark.asyncio
