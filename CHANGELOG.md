@@ -5,10 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
-## [Unreleased]
+## [3.4.1] - 2026-10-23
+
+### Security
+
+- The Docker image ships certifi 2026.10.19, up from 2026.4.22, so outbound TLS from the API and the deriver (LLM providers, embeddings, webhooks) verifies against the current CA bundle. The build's uv moves from 0.9.24 to 0.13.5. Self-hosted deployments that install from `uv.lock` need uv 0.13.5 or newer: older uv ignores the lockfile's per-package `exclude-newer` override for certifi and resolves an older bundle (#1439)
 
 ### Fixed
 
+- In filters, a `"*"` wildcard or an empty `{}` now counts as TRUE inside `AND`, `OR` and `NOT` instead of being dropped. `{"OR": [{"id": "*"}, {"id": "bob"}]}` used to narrow to bob and now matches every row, and `{"NOT": [{"id": "*"}]}` or `{"NOT": [{}]}` used to match every row and now matches none. A wildcard or `{}` at the top level still selects every row. `source_ids: ["a", "*"]` now matches conclusions linked to `a` instead of every conclusion. Queries never widen past their workspace (#1433)
 - LLM calls no longer retry a request the provider rejected outright when no fallback model is configured. A 4xx other than 408, 409, 425 or 429 (for example a 400 for a prompt over the context window, or a 401) now fails on the first attempt instead of being sent three times with about 8s of backoff. Transient failures (408, 409, 425, 429, 5xx, connection errors) and the response checks that consume attempts (refused or empty summaries and representations, structured answers that miss their schema) are retried as before. With a fallback configured nothing changes: the rejected request is still retried and the final attempt goes to the fallback. Applies to the deriver, summarizer, dialectic and dreamer, which all call through `honcho_llm_call` (#1435)
 
 ## [3.4.0] - 2026-10-20
