@@ -1,15 +1,19 @@
-"""Inactive deletion foundation for today's dedicated schema.
+"""Deletion lifecycle checks for today's dedicated schema.
 
-No production read/delete path uses these helpers yet. They check direct parent
-liveness, not derived-artifact validity, authorization, or generation barriers.
-They must not be used as an unlocked preflight check before a protected write.
+Nothing sets ``deleted_at`` yet. Read paths filter on the row-wise ``live_*``
+clauses so tombstoned rows and their dependents stay hidden once deletion is
+enabled. These check direct parent liveness, not derived-artifact validity,
+authorization, or generation barriers. They must not be used as an unlocked
+preflight check before a protected write.
 """
 
 from dataclasses import dataclass
 from typing import Literal
 
-from sqlalchemy import and_, select
+from sqlalchemy import ColumnElement, and_, exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import QueryableAttribute, aliased
+from sqlalchemy.orm.util import AliasedClass
 from sqlalchemy.sql.selectable import Exists
 
 from src import models
@@ -129,3 +133,91 @@ async def is_primitive_live(
         return bool(
             await context.db.scalar(select(primitive_liveness_clause(identity)))
         )
+
+
+def _workspace_live(workspace_name: QueryableAttribute[str]) -> ColumnElement[bool]:
+    workspace = aliased(models.Workspace)
+    return exists().where(
+        workspace.name == workspace_name, workspace.deleted_at.is_(None)
+    )
+
+
+def _peer_live(
+    workspace_name: QueryableAttribute[str], peer_name: QueryableAttribute[str]
+) -> ColumnElement[bool]:
+    peer = aliased(models.Peer)
+    return exists().where(
+        peer.workspace_name == workspace_name,
+        peer.name == peer_name,
+        peer.deleted_at.is_(None),
+    )
+
+
+def _session_live(
+    workspace_name: QueryableAttribute[str], session_name: QueryableAttribute[str]
+) -> ColumnElement[bool]:
+    session = aliased(models.Session)
+    return exists().where(
+        session.workspace_name == workspace_name,
+        session.name == session_name,
+        session.deleted_at.is_(None),
+    )
+
+
+def live_workspace_row(
+    workspace: type[models.Workspace]
+    | AliasedClass[models.Workspace] = models.Workspace,
+) -> ColumnElement[bool]:
+    """Row-wise filter: the workspace is not tombstoned."""
+    return workspace.deleted_at.is_(None)
+
+
+def live_peer_row(
+    peer: type[models.Peer] | AliasedClass[models.Peer] = models.Peer,
+) -> ColumnElement[bool]:
+    """Row-wise filter: neither the peer nor its workspace is tombstoned.
+
+    Parents are checked with correlated semi-joins on their unique keys, and a
+    missing parent fails closed.
+    """
+    return and_(peer.deleted_at.is_(None), _workspace_live(peer.workspace_name))
+
+
+def live_session_row(
+    session: type[models.Session] | AliasedClass[models.Session] = models.Session,
+) -> ColumnElement[bool]:
+    """Row-wise filter: neither the session nor its workspace is tombstoned.
+
+    ``is_active`` is a separate archive state and is not checked here.
+    """
+    return and_(
+        session.deleted_at.is_(None),
+        _workspace_live(session.workspace_name),
+    )
+
+
+def live_message_row(
+    message: type[models.Message] | AliasedClass[models.Message] = models.Message,
+) -> ColumnElement[bool]:
+    """Row-wise filter: the message, its session, author peer and workspace are live."""
+    return and_(
+        message.deleted_at.is_(None),
+        _workspace_live(message.workspace_name),
+        _session_live(message.workspace_name, message.session_name),
+        _peer_live(message.workspace_name, message.peer_name),
+    )
+
+
+def live_session_peer_row(
+    session_peer: type[models.SessionPeer]
+    | AliasedClass[models.SessionPeer] = models.SessionPeer,
+) -> ColumnElement[bool]:
+    """Row-wise filter: the membership's session, peer and workspace are live.
+
+    ``left_at`` is a separate membership state and is not checked here.
+    """
+    return and_(
+        _workspace_live(session_peer.workspace_name),
+        _session_live(session_peer.workspace_name, session_peer.session_name),
+        _peer_live(session_peer.workspace_name, session_peer.peer_name),
+    )
