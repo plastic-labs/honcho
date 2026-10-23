@@ -19,6 +19,7 @@ fail on the reported input, then fix the cause.
 | `test_api_inputs.py` | Hand-written strategies for what the schema doesn't describe: multipart uploads, the filter DSL, odd JSON in metadata/configuration, store-then-read round trips. | The input is a file, a filter, or a JSON value. |
 | `test_api_stateful.py` | A `RuleBasedStateMachine` over workspaces, peers, sessions, messages, conclusions, including use after delete. | The bug needs a history ("after I deleted the session…"). |
 | `test_api_auth.py` | The per-operation fuzzer with auth on and a random token per request (none, forged, expired, admin, workspace/peer/session/named-scope keys across two workspaces), checked against an oracle built from the route policy. | The report involves a scoped key, a 401/403, or data visible to the wrong caller. |
+| `test_api_concurrency.py` | Batches of requests on colliding names fired at once over httpx's ASGI transport, each on its own DB connection; also checks get-or-create leaves exactly one row. | The bug is intermittent, a spurious 409, or only shows up under load. |
 
 They are skipped unless pytest gets `--fuzz` (CI passes it; the pre-push hook
 doesn't, to keep it fast), so every command below includes it. All of them
