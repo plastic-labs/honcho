@@ -187,13 +187,23 @@ class SessionContextMixin:
         session = self._cached_session(session_key)
         if not session:
             raise RuntimeError(f"Honcho session {session_key!r} is not loaded")
+        from honcho.api_types import PeerContextResponse
+        from honcho.http import routes
+
         observer_peer_id, target_peer_id = self._resolve_observer_target(session, "user")
-        knobs = {"search_top_k": search_top_k, "search_max_distance": search_max_distance,
+        knobs = {"target": target_peer_id or session.user_peer_id, "search_query": search_query,
+                 "search_top_k": search_top_k, "search_max_distance": search_max_distance,
                  "include_most_frequent": include_most_frequent, "max_conclusions": max_conclusions}
-        kwargs = {k: v for k, v in knobs.items() if v is not None}
-        ctx = self._authed_call("rerank context fetch", lambda: self._get_or_create_peer(observer_peer_id).context(
-            target=target_peer_id or session.user_peer_id, search_query=search_query, **kwargs,
-        ))
+        query = {k: v for k, v in knobs.items() if v is not None}
+
+        def _fetch() -> PeerContextResponse:
+            # Same request as peer.context(): its SDK validator caps max_conclusions at 100, the server may allow more.
+            peer = self._get_or_create_peer(observer_peer_id)
+            peer._honcho._ensure_workspace()
+            data = peer._honcho._http.get(routes.peer_context(peer.workspace_id, peer.id), query=query)
+            return PeerContextResponse.model_validate(data)
+
+        ctx = self._authed_call("rerank context fetch", _fetch)
         return {"representation": getattr(ctx, "representation", None) or "",
                 "card": self._normalize_card(getattr(ctx, "peer_card", None))}
 

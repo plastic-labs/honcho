@@ -242,21 +242,26 @@ def test_failures_inject_nothing_and_log_why(tmp_path, monkeypatch, env, manager
     assert record.get("error") == error
 
 
-def test_get_rerank_context_passes_knobs_and_omits_none():
+def test_get_rerank_context_sends_more_than_the_sdk_cap_and_omits_none():
     manager = HonchoSessionManager.__new__(HonchoSessionManager)
     session = HonchoSession(key="k", user_peer_id="user-1", assistant_peer_id="ai", honcho_session_id="s")
-    peer = MagicMock()
-    peer.context.return_value = SimpleNamespace(representation=REPRESENTATION, peer_card=["Name: Ada"])
+    http = MagicMock()
+    http.get.return_value = {"peer_id": "ai", "target_id": "user-1", "representation": REPRESENTATION,
+                             "peer_card": ["Name: Ada"]}
+    peer = SimpleNamespace(workspace_id="ws", id="ai", _honcho=MagicMock(_http=http))
     manager._cached_session = lambda key: session
     manager._resolve_observer_target = lambda s, p: ("ai", "user-1")
     manager._get_or_create_peer = lambda peer_id: peer
-    manager._authed_call = lambda label, fn: fn()
+    labels = []
+    manager._authed_call = lambda label, fn: labels.append(label) or fn()
 
     ctx = manager.get_rerank_context("k", "query", max_conclusions=400, search_top_k=100,
                                      search_max_distance=None, include_most_frequent=True)
 
-    peer.context.assert_called_once_with(target="user-1", search_query="query", search_top_k=100,
-                                         include_most_frequent=True, max_conclusions=400)
+    http.get.assert_called_once_with("/v3/workspaces/ws/peers/ai/context", query={
+        "target": "user-1", "search_query": "query", "search_top_k": 100, "include_most_frequent": True,
+        "max_conclusions": 400})
+    assert labels == ["rerank context fetch"]
     assert ctx == {"representation": REPRESENTATION, "card": ["Name: Ada"]}
 
 
