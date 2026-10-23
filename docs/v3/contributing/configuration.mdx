@@ -499,6 +499,7 @@ SUMMARY_MODEL_CONFIG__TRANSPORT=openai
 SUMMARY_MODEL_CONFIG__MODEL=gpt-5.4-mini
 SUMMARY_MAX_TOKENS_SHORT=1500
 SUMMARY_MAX_TOKENS_LONG=6000
+SUMMARY_MAX_INPUT_TOKENS=100000
 # SUMMARY_MODEL_CONFIG__THINKING_EFFORT=minimal
 # SUMMARY_MODEL_CONFIG__THINKING_BUDGET_TOKENS=1024
 SUMMARY_MESSAGES_PER_SHORT_SUMMARY=20
@@ -506,6 +507,8 @@ SUMMARY_MESSAGES_PER_LONG_SUMMARY=60
 ```
 
 `SUMMARY_MAX_TOKENS_SHORT` / `SUMMARY_MAX_TOKENS_LONG` are the output caps for each summary call. The prompt asks for about 60% of the cap as a soft target, so a summary has room to finish instead of being cut off. If you set `SUMMARY_MODEL_CONFIG__MAX_OUTPUT_TOKENS`, it acts as a ceiling: startup fails if either summary cap is larger than it.
+
+`SUMMARY_MAX_INPUT_TOKENS` caps the whole summary prompt: instructions, previous summary and messages. The messages in a summary are chosen by count (`SUMMARY_MESSAGES_PER_*`), so long messages can add up to more than the model accepts. When they do, the oldest messages are left out of that summary, with a warning in the log, and a single message larger than the budget on its own is clipped. Keep it below the context window of the summary model and of its fallback. It must be at least twice the larger of `SUMMARY_MAX_TOKENS_SHORT` and `SUMMARY_MAX_TOKENS_LONG`, because the previous summary is always sent in full and messages need room beside it.
 
 **Dream Processing:**
 
@@ -855,6 +858,7 @@ model = "gpt-5.4-mini"
 ENABLED = true
 MAX_TOKENS_SHORT = 1500
 MAX_TOKENS_LONG = 6000
+MAX_INPUT_TOKENS = 100000
 
 [summary.model_config]
 transport = "openai"
