@@ -1265,8 +1265,9 @@ class TestWorkspaceChatPrompt:
         """The endpoint is non-interactive, so the prompt must say so.
 
         Without this the model answers a recall query with a plan and a menu of
-        lookups for a caller that cannot reply. The pair agent talks to a peer
-        and is deliberately left alone.
+        lookups for a caller that cannot reply. The pair agent states the same
+        contract in its own words (see test_dialectic_prompts.py) rather than
+        carrying this section.
         """
         from src.dialectic.prompts import (
             agent_system_prompt,
