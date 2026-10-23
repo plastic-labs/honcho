@@ -10,6 +10,7 @@ from unittest.mock import patch
 import pytest
 
 from src.llm import tool_loop
+from src.llm.errors import llm_retry_condition
 from src.llm.runtime import AttemptPlan
 from src.llm.tool_loop import execute_tool_loop
 from src.llm.types import HonchoLLMCallResponse
@@ -63,6 +64,7 @@ async def _echo_executor(name: str, _input: dict[str, Any]) -> str:
 
 
 async def _run(model: _ScriptedModel, *, max_tool_iterations: int = 5, **kw: Any):
+    """Run the tool loop with `model` standing in for the provider."""
     with patch.object(tool_loop, "honcho_llm_call_inner", new=model):
         return await execute_tool_loop(
             prompt="hi",
@@ -85,6 +87,9 @@ async def _run(model: _ScriptedModel, *, max_tool_iterations: int = 5, **kw: Any
             max_input_tokens=None,
             get_attempt_plan=_make_plan,
             before_retry_callback=lambda _r: None,
+            retry_condition=llm_retry_condition(
+                can_fall_back=False, retry_attempts=1, model="test/model"
+            ),
             stream_final=kw.pop("stream_final", False),
             telemetry=None,
             **kw,
@@ -160,6 +165,9 @@ _WRITE_TOOL = {
 
 @pytest.mark.asyncio
 async def test_final_call_offers_only_the_final_call_tools_and_runs_them() -> None:
+    """At the iteration limit, the final call offers only `final_call_tools` and runs
+    the calls it makes.
+    """
     executed: list[str] = []
 
     async def executor(name: str, _input: dict[str, Any]) -> str:
@@ -188,6 +196,9 @@ async def test_final_call_offers_only_the_final_call_tools_and_runs_them() -> No
             max_input_tokens=None,
             get_attempt_plan=_make_plan,
             before_retry_callback=lambda _r: None,
+            retry_condition=llm_retry_condition(
+                can_fall_back=False, retry_attempts=1, model="test/model"
+            ),
             final_call_tools=[_WRITE_TOOL],
         )
 

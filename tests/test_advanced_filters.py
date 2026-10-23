@@ -452,6 +452,60 @@ async def test_wildcard_filters(
 
 
 @pytest.mark.asyncio
+async def test_wildcards_and_empty_filters_inside_logical_operators(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """A wildcard or `{}` constrains nothing, so it is TRUE under every operator.
+
+    These all executed cleanly while returning the wrong rows — OR narrowed to
+    the other operand and NOT returned everything — so they need exact row
+    assertions rather than status-code checks.
+    """
+    test_workspace, _test_peer = sample_data
+
+    peer_names = [str(generate_nanoid()) for _ in range(3)]
+    for name in peer_names:
+        client.post(
+            f"/v3/workspaces/{test_workspace.name}/peers",
+            json={"name": name, "metadata": {"role": "member"}},
+        )
+    bob = peer_names[0]
+
+    def list_names(filters: dict[str, Any]) -> set[str]:
+        """Peer ids the list endpoint returns for `filters`, among this test's peers.
+
+        ANDed with the test's own peers so the expected set is exact. That
+        outer AND does not mask the bug: the operator under test is nested
+        inside it.
+        """
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/peers/list",
+            json={"filters": {"AND": [filters, {"id": {"in": peer_names}}]}},
+        )
+        assert response.status_code == 200, filters
+        return {item["id"] for item in response.json()["items"]}
+
+    everyone = set(peer_names)
+    cases: list[tuple[dict[str, Any], set[str]]] = [
+        ({"id": "*"}, everyone),
+        ({}, everyone),
+        ({"AND": [{"id": "*"}, {"id": bob}]}, {bob}),
+        ({"OR": [{"id": "*"}, {"id": bob}]}, everyone),
+        ({"OR": [{}, {"id": bob}]}, everyone),
+        ({"OR": [{"metadata": {"role": {"in": ["*"]}}}, {"id": bob}]}, everyone),
+        ({"NOT": [{"id": "*"}]}, set()),
+        ({"NOT": [{"id": {"in": [bob, "*"]}}]}, set()),
+        ({"NOT": [{}]}, set()),
+        ({"NOT": [{"metadata": {"role": "*"}}]}, set()),
+        ({"NOT": [{"created_at": {"gte": "*"}}]}, set()),
+        ({"NOT": [{"OR": [{"id": "*"}, {"id": bob}]}]}, set()),
+        ({"NOT": [{"id": bob}]}, everyone - {bob}),
+    ]
+    for filters, expected in cases:
+        assert list_names(filters) == expected, filters
+
+
+@pytest.mark.asyncio
 async def test_complex_nested_filters(
     client: TestClient, sample_data: tuple[Workspace, Peer]
 ):

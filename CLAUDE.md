@@ -92,15 +92,11 @@ All API routes follow the pattern: `/v3/{resource}/{id}/{action}`. Most "list/se
 
 #### TypeScript SDK
 
-**🚨 DO NOT RUN `bun test` DIRECTLY. IT WILL NOT WORK. 🚨**
-
-The TypeScript SDK tests require a running Honcho server with database and Redis. Running `bun test` alone will fail immediately because there's no server. The tests are orchestrated via pytest which handles all the infrastructure setup.
-
-**The ONLY way to run TypeScript SDK tests:**
+The TypeScript SDK tests run against a real Honcho server. `bun run test` (not bare `bun test`, which has no server to talk to) starts one for them: `scripts/run_ts_sdk_tests.py` creates a throwaway database on the Postgres named by `DB_CONNECTION_URI`, migrates it, starts the API and the mock LLM provider (`src/mock_provider`), runs `bun test`, and tears it all down. No provider key is needed. They are not part of `uv run pytest`.
 
 ```bash
-# From the monorepo root (not from sdks/typescript/)
-uv run pytest tests/ -k typescript
+cd sdks/typescript && bun run test             # whole suite
+cd sdks/typescript && bun run test peer.test   # bun test args pass through
 ```
 
 **To type-check the TypeScript SDK (this is fine to run directly):**

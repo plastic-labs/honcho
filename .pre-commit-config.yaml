@@ -108,7 +108,16 @@ repos:
         stages: [pre-push]
         pass_filenames: false
 
-      # TypeScript build with bun (tests run via pytest)
+      # TypeScript SDK tests against a throwaway API + mock LLM provider
+      - id: typescript-sdk-tests
+        name: TypeScript SDK tests
+        entry: bash -c 'cd sdks/typescript && bun run test'
+        language: system
+        files: ^(sdks/typescript/(src|__tests__)/.*\.ts|scripts/run_ts_sdk_tests\.py)$
+        stages: [pre-push]
+        pass_filenames: false
+
+      # TypeScript build with bun
       - id: typescript-check
         name: TypeScript build
         entry: bash -c 'if [ -f "sdks/typescript/package.json" ]; then cd sdks/typescript && bun run build; fi'
