@@ -27,7 +27,11 @@ from .backend import ToolCallResult
 from .capture import build_captured_call, dispatch_captured_call, has_exporters
 from .registry import backend_for_provider, default_client
 from .request_builder import execute_completion, execute_stream
-from .runtime import AttemptPlan, effective_config_for_call
+from .runtime import (
+    AttemptPlan,
+    effective_config_for_call,
+    with_opencode_session_header,
+)
 from .types import (
     HonchoLLMCallResponse,
     HonchoLLMCallStreamChunk,
@@ -380,6 +384,7 @@ async def honcho_llm_call_inner(
         thinking_budget_tokens=thinking_budget_tokens,
         reasoning_effort=reasoning_effort,
     )
+    effective_config = with_opencode_session_header(effective_config, telemetry)
 
     # json_mode + verbosity are per-call transport toggles, not ModelConfig
     # knobs — they pass through extra_params. execute_completion merges
