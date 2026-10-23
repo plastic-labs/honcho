@@ -103,6 +103,9 @@ session_peers_table = Table(
 @final
 class Workspace(Base):
     __tablename__: str = "workspaces"
+    deleted_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
     name: Mapped[str] = mapped_column(TEXT, unique=True)
     created_at: Mapped[datetime.datetime] = mapped_column(
@@ -140,6 +143,9 @@ class Workspace(Base):
 @final
 class Peer(Base):
     __tablename__: str = "peers"
+    deleted_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
     name: Mapped[str] = mapped_column(TEXT, nullable=False)
     h_metadata: Mapped[dict[str, Any]] = mapped_column(
@@ -177,6 +183,9 @@ class Peer(Base):
 @final
 class Session(Base):
     __tablename__: str = "sessions"
+    deleted_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     id: Mapped[str] = mapped_column(TEXT, primary_key=True, default=generate_nanoid)
     name: Mapped[str] = mapped_column(TEXT)
     is_active: Mapped[bool] = mapped_column(default=True, server_default=text("true"))
@@ -220,6 +229,9 @@ class Session(Base):
 @final
 class Message(Base):
     __tablename__: str = "messages"
+    deleted_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     id: Mapped[int] = mapped_column(
         BigInteger, Identity(), primary_key=True, autoincrement=True
     )

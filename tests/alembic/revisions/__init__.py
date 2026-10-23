@@ -27,11 +27,13 @@ from . import (
     test_bb6fb3a7a643_add_message_seq_in_session_column,
     test_c6d9e2f74a10_merge_progress_and_pending_work,
     test_c3828084f472_add_indexes_for_messages_and_,
+    test_d8c4f6a2b901_add_primitive_tombstones,
     test_d429de0e5338_adopt_peer_paradigm,
     test_e4eba9cfaa6f_make_document_session_name_nullable,
     test_e9b705f9adf9_add_server_defaults_to_timestamp_,
     test_ec8f94139b02_codify_workspace_name_and_message_id_in_,
     test_f1a2b3c4d5e6_add_reasoning_tree_columns,
+    test_f2a6d9c81b04_merge_progress_and_primitive_tombstones,
 )
 
 __all__ = [
@@ -62,8 +64,10 @@ __all__ = [
     "test_c6d9e2f74a10_merge_progress_and_pending_work",
     "test_c3828084f472_add_indexes_for_messages_and_",
     "test_d429de0e5338_adopt_peer_paradigm",
+    "test_d8c4f6a2b901_add_primitive_tombstones",
     "test_e4eba9cfaa6f_make_document_session_name_nullable",
     "test_e9b705f9adf9_add_server_defaults_to_timestamp_",
     "test_ec8f94139b02_codify_workspace_name_and_message_id_in_",
     "test_f1a2b3c4d5e6_add_reasoning_tree_columns",
+    "test_f2a6d9c81b04_merge_progress_and_primitive_tombstones",
 ]

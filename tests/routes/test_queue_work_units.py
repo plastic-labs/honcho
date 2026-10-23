@@ -1,10 +1,10 @@
 """Public active-work contract, live cursors, and workspace authorization."""
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import delete, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
@@ -324,3 +324,77 @@ async def test_explicit_null_observers_preserve_legacy_scope(
     row = response.json()["items"][0]
     assert row["observer"] == "alice"
     assert row["observers"] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tombstoned", [False, True])
+async def test_inactive_tombstones_leave_progress_and_cleanup_unchanged(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[models.Workspace, models.Peer],
+    tombstoned: bool,
+) -> None:
+    from src.deriver.queue_manager import QueueManager
+    from src.utils.work_unit_progress import work_unit_progress
+
+    workspace, peer = sample_data
+    session = models.Session(name="inactive-tombstone", workspace_name=workspace.name)
+    db_session.add(session)
+    await db_session.flush()
+    message = models.Message(
+        workspace_name=workspace.name,
+        session_name=session.name,
+        peer_name=peer.name,
+        content="still active in the current runtime",
+        seq_in_session=1,
+    )
+    db_session.add(message)
+    claim = await add_work(
+        db_session,
+        workspace.name,
+        "inactive-claim",
+        task="representation",
+        session=session,
+        observers=[peer.name],
+    )
+    queue_item = (
+        await db_session.execute(
+            select(models.QueueItem).where(
+                models.QueueItem.work_unit_key == claim.work_unit_key
+            )
+        )
+    ).scalar_one()
+    queue_item.message_id = message.id
+    await db_session.commit()
+    url = f"/v3/workspaces/{workspace.name}/queue"
+    before = client.get(f"{url}/work-units").json()["items"][0]
+    counts = client.get(f"{url}/status").json()
+
+    # #1429 adds inactive fields, not a deletion lifecycle or a new read filter.
+    for primitive in (workspace, peer, session, message):
+        assert primitive.deleted_at is None
+        if tombstoned:
+            primitive.deleted_at = datetime.now(UTC)
+    await db_session.commit()
+    report = work_unit_progress(claim.work_unit_key, claim.id, queue_item.id)
+    await report("representation")
+    response = client.get(
+        f"{url}/work-units",
+        params={"session_id": session.name, "observer_id": peer.name},
+    )
+    assert response.status_code == 200
+    row = response.json()["items"][0]
+    assert (row["id"], row["started_at"]) == (before["id"], before["started_at"])
+    assert row["stage"] == "representation"
+    assert client.get(f"{url}/status").json() == counts
+
+    assert await QueueManager()._cleanup_work_unit(claim.id, claim.work_unit_key)  # pyright: ignore[reportPrivateUsage]
+    await report("representation")
+    assert client.get(f"{url}/work-units").json()["items"] == []
+    assert (
+        await db_session.execute(
+            select(models.ActiveQueueSession).where(
+                models.ActiveQueueSession.id == claim.id
+            )
+        )
+    ).scalar_one_or_none() is None

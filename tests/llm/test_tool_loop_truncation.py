@@ -21,6 +21,7 @@ from unittest.mock import patch
 import pytest
 
 from src.llm import tool_loop
+from src.llm.errors import llm_retry_condition
 from src.llm.runtime import AttemptPlan
 from src.llm.tool_loop import execute_tool_loop
 from src.llm.types import HonchoLLMCallResponse
@@ -95,6 +96,9 @@ async def test_hit_input_token_cap_fires_when_input_exceeds_cap():
             max_input_tokens=100,
             get_attempt_plan=_make_plan,
             before_retry_callback=lambda _r: None,
+            retry_condition=llm_retry_condition(
+                can_fall_back=False, retry_attempts=1, model="test/model"
+            ),
             stream_final=False,
             telemetry=None,
         )
@@ -139,6 +143,9 @@ async def test_hit_input_token_cap_false_when_under_cap():
             max_input_tokens=100,
             get_attempt_plan=_make_plan,
             before_retry_callback=lambda _r: None,
+            retry_condition=llm_retry_condition(
+                can_fall_back=False, retry_attempts=1, model="test/model"
+            ),
             stream_final=False,
             telemetry=None,
         )
@@ -189,6 +196,9 @@ async def test_hit_input_token_cap_fires_even_when_truncate_cant_shrink():
             max_input_tokens=1_000,
             get_attempt_plan=_make_plan,
             before_retry_callback=lambda _r: None,
+            retry_condition=llm_retry_condition(
+                can_fall_back=False, retry_attempts=1, model="test/model"
+            ),
             stream_final=False,
             telemetry=None,
         )
