@@ -198,6 +198,33 @@ class TestPrefetchEvidence:
         assert {c.content for c in built.conclusions} >= {"User drinks coffee"}
         assert all(c.id for c in built.conclusions)
 
+    async def test_a_query_over_the_embedding_cap_still_prefetches(
+        self, dialectic_test_data: Any, mock_openai_embeddings: dict[str, Any]
+    ):
+        """A chat query may be longer than one embedding input; prefetch embeds its head."""
+        cap = 1000
+        embed = mock_openai_embeddings["embed"]
+        fits = embed.side_effect
+
+        def strict_embed(content: str) -> list[float]:
+            if len(content) > cap:
+                raise ValueError("over the embedding cap")
+            return fits(content)
+
+        embed.side_effect = strict_embed
+        mock_openai_embeddings["truncate_to_token_limit"].side_effect = (
+            lambda text: text[:cap]  # pyright: ignore[reportUnknownLambdaType]
+        )
+        evidence = EvidenceAccumulator()
+        agent = make_agent(dialectic_test_data, evidence)
+        query = "What does the user drink? " + "context " * 20_000
+
+        mock_llm_call = AsyncMock(return_value=make_llm_response())
+        with patch("src.dialectic.core.honcho_llm_call", new=mock_llm_call):
+            await agent.answer(query)
+
+        assert evidence.conclusions, "prefetch was skipped for a long query"
+
     async def test_records_nothing_when_the_prefetch_block_is_dropped(
         self, dialectic_test_data: Any, monkeypatch: pytest.MonkeyPatch
     ):

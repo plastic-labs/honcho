@@ -174,24 +174,24 @@ def test_agent_query_validations_api(
     )
     assert session_response.status_code == 201
 
-    # Test valid string query (under 10000 chars)
+    # Test valid string query (under 40000 chars)
     response = client.post(
         f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}/chat",
         params={"session_id": session_id, "target": "test_target"},
-        json={"query": "a" * 9999, "stream": False},
+        json={"query": "a" * 39999, "stream": False},
     )
     assert response.status_code == 200
 
-    # Test string query too long (over 10000 chars)
+    # Test string query too long (over 40000 chars)
     response = client.post(
         f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}/chat",
         params={"session_id": session_id, "target": "test_target"},
-        json={"query": "a" * 10001, "stream": False},
+        json={"query": "a" * 40001, "stream": False},
     )
     assert response.status_code == 422
     error = response.json()["detail"][0]
     assert error["loc"] == ["body", "query"]
-    assert error["msg"] == "String should have at most 10000 characters"
+    assert error["msg"] == "String should have at most 40000 characters"
     assert error["type"] == "string_too_long"
 
     # Test that strings over 20 chars are allowed

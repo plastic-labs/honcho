@@ -192,6 +192,25 @@ def _require_structured_answer(
     )
 
 
+async def _stream_completed_answer(
+    response: HonchoLLMCallResponse[Any],
+) -> AsyncIterator[HonchoLLMCallStreamChunk]:
+    """Stream an answer the loop already has, as one chunk.
+
+    A parsed `response_model` instance goes out as its JSON, the text a
+    streamed structured answer accumulates to. The chunk carries no
+    `output_tokens`: the loop's totals already count the call that made it.
+    """
+    content = response.content
+    if isinstance(content, BaseModel):
+        content = content.model_dump_json(by_alias=True)
+    yield HonchoLLMCallStreamChunk(
+        content=content if isinstance(content, str) else "",
+        is_done=True,
+        finish_reasons=response.finish_reasons,
+    )
+
+
 def format_assistant_tool_message(
     provider: ModelTransport,
     content: Any,
@@ -233,6 +252,20 @@ def append_tool_results(
     conversation_messages.extend(adapter.format_tool_results(tool_results))
 
 
+def _tools_for_answer_call(
+    provider: str, tools: list[dict[str, Any]] | None
+) -> tuple[list[dict[str, Any]] | None, str | None]:
+    """Tools and tool_choice for a call that must answer rather than call a tool.
+
+    Anthropic rejects a history holding tool_use/tool_result blocks unless
+    tools are defined, so it gets the loop's tools with calls disallowed.
+    Other transports get none.
+    """
+    if provider == "anthropic" and tools:
+        return tools, "none"
+    return None, None
+
+
 async def stream_final_response(
     *,
     winning_plan: AttemptPlan,
@@ -248,6 +281,7 @@ async def stream_final_response(
     retry_attempts: int,
     before_retry_callback: Callable[[Any], None],
     telemetry: LLMTelemetryContext | None = None,
+    tools: list[dict[str, Any]] | None = None,
 ) -> AsyncIterator[HonchoLLMCallStreamChunk]:
     """Stream the final response after tool execution is complete.
 
@@ -266,6 +300,9 @@ async def stream_final_response(
     # this counter, every retried stream-setup emit reports the same attempt
     # value — telemetry can't tell the retry sequence apart.
     stream_attempt = 0
+    answer_tools, answer_tool_choice = _tools_for_answer_call(
+        winning_plan.provider, tools
+    )
 
     async def _setup_stream() -> AsyncIterator[HonchoLLMCallStreamChunk]:
         nonlocal stream_attempt
@@ -293,8 +330,8 @@ async def stream_final_response(
             winning_plan.thinking_budget_tokens,
             stream=True,
             client_override=winning_plan.client,
-            tools=None,
-            tool_choice=None,
+            tools=answer_tools,
+            tool_choice=answer_tool_choice,
             messages=conversation_messages,
             selected_config=winning_plan.selected_config,
             plan=plan_for_attempt,
@@ -532,9 +569,8 @@ async def execute_tool_loop(
 
             # A provider can ignore a forced tool_choice and answer outright.
             # While the gate is unmet, a no-tool answer is discarded for a
-            # nudge, so it isn't held to `response_model`. Nor is it under
-            # stream_final, which streams the answer afresh and doesn't
-            # validate it.
+            # nudge, so it isn't held to `response_model`. Under stream_final
+            # the answer is checked the same way, since it is the one streamed.
             gate_nudge_due = (
                 gate is not None
                 and effective_tool_choice in ("required", "any")
@@ -578,7 +614,7 @@ async def execute_tool_loop(
                         telemetry, iteration_for_call, step_seq=iteration_for_call
                     ),
                 )
-                if check_answer and not stream_final:
+                if check_answer:
                     _require_structured_answer(
                         result, response_model, allow_empty=allow_empty_answer
                     )
@@ -651,34 +687,12 @@ async def execute_tool_loop(
                     continue
 
                 if stream_final:
-                    # Snapshot the plan that just succeeded — streaming retries
-                    # pin to this exact client/model so we don't bounce back to
-                    # primary after the tool loop settled on fallback.
-                    winning_plan = get_attempt_plan()
-                    # +2 (not +1): the in-loop call we just made used iteration+1,
-                    # so the streamed tail needs the next ordinal — otherwise its
-                    # trace resource id collides with that call's. Mirrors the
-                    # synthesis path's distinct-next-value behavior.
-                    stream_telemetry = _telemetry_for_iteration(
-                        telemetry, iteration + 2, step_seq=iteration + 2
-                    )
-                    stream = stream_final_response(
-                        winning_plan=winning_plan,
-                        prompt=prompt,
-                        max_tokens=max_tokens,
-                        conversation_messages=conversation_messages,
-                        response_model=response_model,
-                        json_mode=json_mode,
-                        temperature=temperature,
-                        stop_seqs=stop_seqs,
-                        verbosity=verbosity,
-                        enable_retry=enable_retry,
-                        retry_attempts=retry_attempts,
-                        before_retry_callback=before_retry_callback,
-                        telemetry=stream_telemetry,
-                    )
+                    # Stream the answer in hand, as the non-streaming path
+                    # returns it. Asking again cost a second full call,
+                    # answered from a fresh sample, and could come back empty
+                    # when the model spent that call on thinking.
                     return StreamingResponseWithMetadata(
-                        stream=stream,
+                        stream=_stream_completed_answer(response),
                         tool_calls_made=all_tool_calls,
                         input_tokens=total_input_tokens,
                         output_tokens=total_output_tokens,
@@ -812,6 +826,7 @@ async def execute_tool_loop(
             retry_attempts=retry_attempts,
             before_retry_callback=before_retry_callback,
             telemetry=stream_telemetry,
+            tools=tools,
         )
         return StreamingResponseWithMetadata(
             stream=stream,
@@ -831,6 +846,11 @@ async def execute_tool_loop(
 
     async def _final_call() -> HonchoLLMCallResponse[Any]:
         plan = get_attempt_plan()
+        synthesis_tools, synthesis_tool_choice = (
+            (final_call_tools, None)
+            if final_call_tools
+            else _tools_for_answer_call(plan.provider, tools)
+        )
         response = await honcho_llm_call_inner(
             plan.provider,
             plan.model,
@@ -845,8 +865,8 @@ async def execute_tool_loop(
             plan.thinking_budget_tokens,
             stream=False,
             client_override=plan.client,
-            tools=final_call_tools or None,
-            tool_choice=None,
+            tools=synthesis_tools,
+            tool_choice=synthesis_tool_choice,
             messages=conversation_messages,
             selected_config=plan.selected_config,
             plan=plan,

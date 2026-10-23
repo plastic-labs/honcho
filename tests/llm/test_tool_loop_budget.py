@@ -149,10 +149,12 @@ class _RecordingModel(_ScriptedModel):
     def __init__(self, turns: list[list[str]]) -> None:
         super().__init__(turns)
         self.tools_offered: list[list[str] | None] = []
+        self.tool_choices: list[Any] = []
 
     async def __call__(self, *args: Any, **kwargs: Any) -> HonchoLLMCallResponse[Any]:
         tools = kwargs.get("tools")
         self.tools_offered.append([t["name"] for t in tools] if tools else None)
+        self.tool_choices.append(kwargs.get("tool_choice"))
         return await super().__call__(*args, **kwargs)
 
 
@@ -215,10 +217,12 @@ async def test_final_call_offers_only_the_final_call_tools_and_runs_them() -> No
 
 
 @pytest.mark.asyncio
-async def test_final_call_has_no_tools_by_default() -> None:
+async def test_final_call_allows_no_tool_calls_by_default() -> None:
     model = _RecordingModel([["look"], ["look"]])
     await _run(model, max_tool_iterations=1)
-    assert model.tools_offered[-1] is None
+    # Anthropic needs the tools defined while the history holds tool blocks.
+    assert model.tools_offered[-1] == ["look"]
+    assert model.tool_choices[-1] == "none"
 
 
 @pytest.mark.asyncio
