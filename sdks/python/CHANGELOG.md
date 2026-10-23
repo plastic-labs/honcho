@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [Unreleased]
+
+### Security
+
+- Requires `certifi` 2026.10.19 or newer, the first CA bundle without the emSign root behind the compromised eMudhra intermediates. The client verifies TLS with httpx's default, which reads certifi, so upgrading the SDK now upgrades the bundle in the app's environment too. An app that pins an older `certifi` must raise that pin to upgrade
+
 ## [2.7.0] - 2026-10-20
 
 ### Added

@@ -1180,6 +1180,7 @@ name = "honcho-ai"
 version = "2.7.0"
 source = { editable = "sdks/python" }
 dependencies = [
+    { name = "certifi" },
     { name = "httpx" },
     { name = "pydantic" },
 ]
@@ -1196,6 +1197,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "certifi", specifier = ">=2026.10.19" },
     { name = "honcho-cli", marker = "extra == 'cli'", editable = "honcho-cli" },
     { name = "httpx", specifier = ">=0.28.0,<1" },
     { name = "pydantic", specifier = ">=2.0.0,<3" },
