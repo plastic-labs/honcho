@@ -39,11 +39,19 @@ CONTENT = st.one_of(
     st.text(max_size=40),
     st.sampled_from(["\x00", "a\x00b", "\U0001f600", "", " ", "\u2028"]),
 )
-METADATA = st.dictionaries(
-    st.text(min_size=1, max_size=5),
-    st.one_of(st.integers(), st.text(max_size=5), st.booleans(), st.none()),
-    max_size=3,
+# A few keys shared across rows, so one key ends up holding numbers on some
+# rows and text on others, which is what numeric filters must cope with.
+_META_KEYS = st.one_of(
+    st.sampled_from(["score", "tag"]), st.text(min_size=1, max_size=5)
 )
+_META_VALUES = st.one_of(
+    st.integers(),
+    st.text(max_size=5),
+    st.sampled_from(["7", "high", " ", "1e200000"]),
+    st.booleans(),
+    st.none(),
+)
+METADATA = st.dictionaries(_META_KEYS, _META_VALUES, max_size=3)
 OPT_BOOL = st.one_of(st.none(), st.booleans())
 CONFIGURATION = st.fixed_dictionaries(
     {},
@@ -73,7 +81,19 @@ def _filters(*leaves: st.SearchStrategy[Any]) -> st.SearchStrategy[Any]:
     )
 
 
-_META = st.fixed_dictionaries({"metadata": METADATA})
+_META_COMPARISONS = st.dictionaries(
+    st.sampled_from(["gt", "gte", "lt", "lte", "ne"]),
+    _META_VALUES,
+    min_size=1,
+    max_size=2,
+)
+_META = st.fixed_dictionaries(
+    {
+        "metadata": st.dictionaries(
+            _META_KEYS, st.one_of(_META_VALUES, _META_COMPARISONS), max_size=3
+        )
+    }
+)
 _CREATED = st.fixed_dictionaries(
     {"created_at": st.fixed_dictionaries({"gte": st.just("2020-01-01T00:00:00Z")})}
 )

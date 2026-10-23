@@ -12,6 +12,7 @@ from sqlalchemy import (
     and_,
     case,
     cast,
+    func,
     literal,
     or_,
     select,
@@ -43,6 +44,11 @@ COMPARISON_OPERATORS = {
 }
 
 NUMERIC_OPERATORS = {"gte", "lte", "gt", "lt", "ne"}
+
+# Text that casts to `numeric` without error. The exponent and length bounds
+# keep values like "1e200000" from overflowing numeric's digit limits.
+_NUMERIC_TEXT_PATTERN = r"^\s*[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d{1,4})?\s*$"
+_NUMERIC_TEXT_MAX_LENGTH = 1000
 
 # JSONB columns keep containment semantics: bare lists are not membership
 # sugar, and dict values map to nested-metadata conditions rather than IN/Eq.
@@ -704,12 +710,20 @@ def _safe_numeric_cast(
             # PostgreSQL JSONB stores booleans as "true"/"false" strings when extracted with ->>
             return column_accessor, str(op_value).lower()
 
-        # For numeric values, use a safer cast that handles empty strings and invalid values
-        # We use CASE WHEN to handle empty strings and non-numeric values gracefully
+        # Cast only text that is a number Postgres can hold; anything else (an
+        # empty string, "high", a nested object, NULL) becomes NULL, so a row
+        # that stores this key as text drops out of the comparison instead of
+        # failing the whole query. CASE is the only construct Postgres promises
+        # not to evaluate ahead of its condition.
         safe_cast = case(
-            (column_accessor == "", literal(None)),  # Empty string -> NULL
-            (column_accessor.is_(None), literal(None)),  # NULL -> NULL
-            else_=cast(column_accessor, Numeric()),
+            (
+                and_(
+                    func.length(column_accessor) <= _NUMERIC_TEXT_MAX_LENGTH,
+                    column_accessor.regexp_match(_NUMERIC_TEXT_PATTERN),
+                ),
+                cast(column_accessor, Numeric()),
+            ),
+            else_=literal(None),
         )
 
         if isinstance(op_value, int | float):
