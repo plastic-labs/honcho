@@ -1250,6 +1250,13 @@ class SummarySettings(HonchoSettings):
     MAX_TOKENS_SHORT: Annotated[int, Field(default=1500, gt=0, le=10_000)] = 1500
     MAX_TOKENS_LONG: Annotated[int, Field(default=6000, gt=0, le=20_000)] = 6000
 
+    # Input budget for one summary call: prompt, previous summary and messages.
+    # The message window is chosen by count, so long messages can outgrow the
+    # model's context window; the oldest messages in the window are dropped to
+    # fit. A fixed budget, like DIALECTIC_MAX_INPUT_TOKENS, kept well under the
+    # context windows of the configured model and its fallback.
+    MAX_INPUT_TOKENS: Annotated[int, Field(default=100_000, gt=0, le=200_000)] = 100_000
+
     @model_validator(mode="after")
     def _validate_caps_within_model_ceiling(self) -> "SummarySettings":
         """Keep MODEL_CONFIG.max_output_tokens a ceiling over both summary caps."""
@@ -1262,6 +1269,22 @@ class SummarySettings(HonchoSettings):
                     f"summary.{name} must not exceed "
                     + "summary.MODEL_CONFIG.max_output_tokens"
                 )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_input_budget_fits_previous_summary(self) -> "SummarySettings":
+        """Leave room for messages after the largest possible previous summary.
+
+        A previous summary is sent in full and can be as long as its cap, which
+        may be either one. Requiring twice the larger cap leaves at least that
+        much again for the prompt and messages.
+        """
+        minimum_budget = 2 * max(self.MAX_TOKENS_SHORT, self.MAX_TOKENS_LONG)
+        if minimum_budget > self.MAX_INPUT_TOKENS:
+            raise ValueError(
+                "summary.MAX_INPUT_TOKENS must be at least twice the larger of "
+                + "summary.MAX_TOKENS_SHORT and summary.MAX_TOKENS_LONG"
+            )
         return self
 
 
