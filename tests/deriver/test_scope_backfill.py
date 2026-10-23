@@ -770,6 +770,82 @@ async def test_removal_enqueues_card_refresh_rebuild_and_omni_dream(
     assert card_refresh_payload["observed"] == sender.name
 
 
+async def test_removal_clears_dream_notes_but_keeps_the_cursor(
+    db_session: AsyncSession,
+    sample_data: tuple[models.Workspace, models.Peer],
+):
+    """Notes are free text that can describe the removed session, even for a
+    peer it left no conclusions about, and unlike the card they can't be
+    rebuilt, so removal drops them across the scope."""
+    from src.dreamer.working_memory import (
+        EPOCH_KEY,
+        NOTES_KEY,
+        load_map_entries,
+        parse_epoch,
+    )
+
+    test_workspace, sender = sample_data
+    workspace_name = test_workspace.name
+    scope_peer = await _create_scope_peer(
+        db_session, workspace_name, str(generate_nanoid())
+    )
+    other_peer = await _create_peer(db_session, workspace_name)
+    session = await _create_session(db_session, workspace_name)
+    observer, session_name = scope_peer.name, session.name
+    # The session left conclusions about the sender only.
+    observed_peers = [sender.name, other_peer.name]
+    for observed in observed_peers:
+        db_session.add(
+            models.Collection(
+                workspace_name=workspace_name,
+                observer=observer,
+                observed=observed,
+                internal_metadata={
+                    NOTES_KEY: {
+                        "cursor": {"dreams": 2},
+                        "entries": [
+                            {
+                                "id": "n1",
+                                "kind": "map",
+                                "specialist": "deduction",
+                                "text": "talks mostly about the removed project",
+                                "created_dream": 1,
+                                "updated_at": "2026-10-01T00:00:00+00:00",
+                            }
+                        ],
+                    }
+                },
+            )
+        )
+    await db_session.commit()
+    await _create_document(
+        db_session,
+        workspace_name,
+        observer=observer,
+        observed=observed_peers[0],
+        session_name=session_name,
+    )
+
+    await process_scope_removal(
+        ScopeRemovalPayload(scope_peer=observer, session_name=session_name),
+        workspace_name,
+    )
+
+    db_session.expire_all()
+    for observed in observed_peers:
+        assert (
+            await load_map_entries(workspace_name, observer=observer, observed=observed)
+            == []
+        )
+        notes = await crud.get_collection_internal_metadata_value(
+            db_session, workspace_name, observer, observed, NOTES_KEY
+        )
+        assert notes is not None and notes["cursor"] == {"dreams": 2}
+        # Dreams that started before the removal can no longer write notes.
+        assert parse_epoch(notes) is not None
+        assert EPOCH_KEY in notes
+
+
 # ---------------------------------------------------------------------------
 # 6. Status endpoint
 # ---------------------------------------------------------------------------

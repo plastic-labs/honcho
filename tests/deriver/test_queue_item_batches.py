@@ -15,6 +15,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
+from nanoid import generate as generate_nanoid
 from sqlalchemy import Select, delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
@@ -99,7 +100,7 @@ class TestEnqueueMaintainsTheBatches:
         db_session: AsyncSession,
         seed_work_unit: SeedWorkUnit,
     ) -> None:
-        """Without a tenant on the row the token probe falls back to the plain id."""
+        """Without a tenant on the row the token probe uses the default tenant."""
         work_unit_key = "representation:tenantless"
         await seed_work_unit(work_unit_key, token_counts=(6, 9), tenant_id=None)
 
@@ -108,6 +109,60 @@ class TestEnqueueMaintainsTheBatches:
         assert batch_row is not None
         assert batch_row.tenant_id is None
         assert batch_row.total_tokens == 15
+
+    async def test_tenantless_queue_row_never_prices_another_tenants_message(
+        self,
+        db_session: AsyncSession,
+    ) -> None:
+        """No id-only probe: a tenant-less row reads messages under the default
+        tenant only, so a message owned by any other tenant prices at 0."""
+        tenant_id = str(generate_nanoid())
+        db_session.add(models.Tenant(tenant_id=tenant_id))
+        workspace = models.Workspace(name=str(generate_nanoid()), tenant_id=tenant_id)
+        db_session.add(workspace)
+        await db_session.commit()
+        peer = models.Peer(
+            name=str(generate_nanoid()),
+            workspace_name=workspace.name,
+            tenant_id=tenant_id,
+        )
+        session = models.Session(
+            name=str(generate_nanoid()),
+            workspace_name=workspace.name,
+            tenant_id=tenant_id,
+        )
+        db_session.add_all([peer, session])
+        await db_session.commit()
+        message = models.Message(
+            session_name=session.name,
+            workspace_name=workspace.name,
+            peer_name=peer.name,
+            tenant_id=tenant_id,
+            content="other tenant",
+            token_count=42,
+            seq_in_session=1,
+        )
+        db_session.add(message)
+        await db_session.commit()
+
+        work_unit_key = "representation:tenantless-foreign"
+        db_session.add(
+            models.QueueItem(
+                session_id=session.id,
+                work_unit_key=work_unit_key,
+                task_type="representation",
+                payload={},
+                workspace_name=workspace.name,
+                message_id=message.id,
+                tenant_id=None,
+            )
+        )
+        await db_session.commit()
+
+        batch_row = await read_batch_row(db_session, work_unit_key)
+
+        assert batch_row is not None
+        assert batch_row.total_tokens == 0
 
     async def test_an_item_enqueued_processed_never_creates_a_row(
         self,

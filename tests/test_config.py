@@ -220,3 +220,41 @@ def test_absent_provider_keys_do_not_warn(
         )
 
     assert "API_KEY" not in caplog.text
+
+
+def _configured_with_conflict_mode(mode: object) -> ConfiguredModelSettings:
+    return ConfiguredModelSettings.model_validate(
+        {
+            "model": "claude-via-proxy",
+            "transport": "openai",
+            "overrides": {"provider_params": {"thinking_tool_choice_conflict": mode}},
+        }
+    )
+
+
+@pytest.mark.parametrize("mode", ["throw", "override_thinking", "override_tool"])
+def test_thinking_tool_choice_conflict_is_accepted_at_config_load(mode: str) -> None:
+    settings = _configured_with_conflict_mode(mode)
+
+    assert settings.overrides.provider_params["thinking_tool_choice_conflict"] == mode
+
+
+@pytest.mark.parametrize("mode", ["override-thinking", "OVERRIDE_THINKING", "", 1])
+def test_thinking_tool_choice_conflict_is_rejected_at_config_load(mode: object) -> None:
+    with pytest.raises(
+        ValueError, match=r"provider_params\.thinking_tool_choice_conflict must be"
+    ):
+        _configured_with_conflict_mode(mode)
+
+
+def test_thinking_tool_choice_conflict_from_env_is_validated_at_config_load(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "DIALECTIC_LEVELS__medium__MODEL_CONFIG__OVERRIDES__PROVIDER_PARAMS__"
+        + "THINKING_TOOL_CHOICE_CONFLICT",
+        "override-thinking",
+    )
+
+    with pytest.raises(ValueError, match="thinking_tool_choice_conflict must be"):
+        AppSettings()

@@ -2766,8 +2766,52 @@ class TestObservationContextSessionCorrelation:
             message_ids=[messages[2].public_id, other_messages[2].public_id],
         )
 
-        expected = sorted(
+        rows = [(m.session_name, m.seq_in_session) for m in result]
+        assert sorted(rows) == sorted(
             [(session.name, seq) for seq in (2, 3, 4)]
             + [(other.name, seq) for seq in (2, 3, 4)]
         )
-        assert [(m.session_name, m.seq_in_session) for m in result] == expected
+        # Postgres orders session_name by its collation, which need not agree
+        # with Python's; assert the grouping, not the collation.
+        session_runs = [
+            name for i, (name, _) in enumerate(rows) if i == 0 or rows[i - 1][0] != name
+        ]
+        assert session_runs == [
+            session_runs[0],
+            next(n for n in (session.name, other.name) if n != session_runs[0]),
+        ]
+        for name in (session.name, other.name):
+            assert [seq for n, seq in rows if n == name] == [2, 3, 4]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("raised", "prefix"),
+    [
+        (RuntimeError, "Tool flaky failed unexpectedly: RuntimeError: "),
+        (ValueError, "Tool flaky failed with invalid input: ValueError: "),
+    ],
+    ids=["unexpected", "invalid-input"],
+)
+async def test_executor_bounds_exception_text_returned_to_model(
+    raised: type[Exception], prefix: str
+):
+    """A driver error can embed its whole statement; the model gets the head only."""
+    head = "(psycopg.OperationalError) number of parameters must be between 0 and 65535"
+    huge = head + "\n[SQL: SELECT " + "%(session_name_1)s, " * 200_000 + "]"
+
+    async def flaky(_ctx: Any, _input: dict[str, Any]) -> str:
+        raise raised(huge)
+
+    executor = await create_tool_executor(
+        workspace_name="w",
+        observer="a",
+        observed="a",
+        handler_resolver=lambda name: flaky if name == "flaky" else None,
+    )
+
+    result = await executor("flaky", {})
+
+    assert result.startswith(prefix + head)
+    assert len(result) < settings.LLM.MAX_TOOL_OUTPUT_CHARS + 200
+    assert result.endswith("chars]")

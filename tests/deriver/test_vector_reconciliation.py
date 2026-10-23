@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import models
 from src.config import settings
 from src.db import tenant_context
+from src.reconciler import sync_vectors
 from src.reconciler.sync_vectors import (
     MAX_SYNC_ATTEMPTS,
     ReconciliationMetrics,
@@ -1230,6 +1231,61 @@ class TestMessageEmbeddings:
         claimed = await _get_message_embeddings_needing_sync(db_session, batch_size=1)
         assert len(claimed) == chunk_count
         assert all(emb.message_id == message_id for emb in claimed)
+
+    async def test_bounded_candidate_walk_keeps_order_and_whole_messages(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Step 1 reads only batch_size * MESSAGE_CANDIDATE_FANOUT rows, yet still
+        picks the message with the oldest chunk and claims all of its chunks."""
+        workspace, peer = sample_data
+        session = models.Session(
+            name=str(generate_nanoid()), workspace_name=workspace.name
+        )
+        db_session.add(session)
+        await db_session.commit()
+
+        attempted = datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=1)
+        never_id, attempted_id = str(generate_nanoid()), str(generate_nanoid())
+        for seq, message_id in enumerate((attempted_id, never_id), start=1):
+            db_session.add(
+                models.Message(
+                    public_id=message_id,
+                    session_name=session.name,
+                    workspace_name=workspace.name,
+                    peer_name=peer.name,
+                    content="full message content",
+                    seq_in_session=seq,
+                )
+            )
+        await db_session.commit()
+        for message_id, last_sync_at in (
+            (attempted_id, attempted),
+            (never_id, None),
+            (never_id, attempted),
+            (never_id, attempted),
+        ):
+            db_session.add(
+                models.MessageEmbedding(
+                    content="chunk",
+                    message_id=message_id,
+                    workspace_name=workspace.name,
+                    session_name=session.name,
+                    peer_name=peer.name,
+                    sync_state="pending",
+                    embedding=None,
+                    last_sync_at=last_sync_at,
+                )
+            )
+        await db_session.commit()
+
+        monkeypatch.setattr(sync_vectors, "MESSAGE_CANDIDATE_FANOUT", 1)
+        claimed = await _get_message_embeddings_needing_sync(db_session, batch_size=1)
+
+        assert len(claimed) == 3
+        assert all(emb.message_id == never_id for emb in claimed)
 
 
 @pytest.mark.asyncio

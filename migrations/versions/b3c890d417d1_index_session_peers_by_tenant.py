@@ -13,7 +13,7 @@ The revision makes the new index before it drops the old one. The builds do not
 hold a long write lock (see migrations.utils.create_index_online).
 
 Revision ID: b3c890d417d1
-Revises: a3f9c2e81d47
+Revises: 0c67be41049b
 Create Date: 2026-10-22
 
 """
@@ -24,7 +24,7 @@ from migrations.utils import create_index_online, drop_index_online
 
 # revision identifiers, used by Alembic.
 revision: str = "b3c890d417d1"
-down_revision: str | None = "a3f9c2e81d47"
+down_revision: str | None = "0c67be41049b"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

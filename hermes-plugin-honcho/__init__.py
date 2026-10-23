@@ -20,6 +20,7 @@ from typing import Any, Callable, Dict, List, Optional
 from agent.memory_manager import sanitize_context
 from agent.memory_provider import MemoryProvider, is_trivial_prompt
 from agent.coding_context import INTERACTIVE_CODING_PLATFORMS as _LOCAL_PLATFORMS
+from agent.skill_commands import extract_user_instruction_from_skill_message
 from agent.turn_author import a2a_key
 from .client import HonchoClientConfig, resolve_config_path
 from .client import _host_block, _HostLookup
@@ -164,6 +165,12 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
         self._prefetch_thread_started_at: float = 0.0
         self._prefetch_result_fired_at: int = -999
         self._dialectic_empty_streak: int = 0
+        # The turn this process's first on_turn_start saw (above 1 for a resumed session), whether its
+        # first recall has run, and the turn whose waits on_turn_start already did.
+        self._first_turn_seen: int | None = None
+        self._first_recall_done = False
+        self._recall_waited_turn: int | None = None
+        self._previous_turn_message = ""
 
         # Tools-only mode may defer session initialization until a tool call.
         self._session_initialized = False
@@ -495,14 +502,15 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
         request_timeout = getattr(self._config, "timeout", None)
         return max(0.0, base if request_timeout is None else min(base, max(0.0, request_timeout)))
 
-    def _fetch_base_context_layer(self, query: str, first_turn_base_deadline: float | None) -> str:
+    def _fetch_base_context_layer(self, query: str, first_turn_base_deadline: float | None,
+                                  *, fired_at: int | None = None) -> str:
         """Layer 1: representation + card. The first fetch gets the remaining turn-1 budget;
         later turns consume the refresh queued by the previous turn."""
         with self._base_context_lock:
             first_base_fetch = self._base_context_cache is None
             if first_base_fetch:
                 self._base_context_cache = ""
-                self._last_context_turn = self._turn_count
+                self._last_context_turn = self._turn_count if fired_at is None else fired_at
             base_context = self._base_context_cache
 
         if not self._manager:
@@ -569,8 +577,10 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
             payload = "\n\n".join(part for part in (notice, prefetch_sync(self, query)) if part)
             return self._log_injection("injected" if payload else "recall-sync-empty", payload)
 
+        # on_turn_start() normally does the turn-1 waits; this covers a caller that skipped it.
+        waited = self._recall_waited_turn == self._turn_count
         first_turn_base_deadline = (time.monotonic() + self._first_turn_wait(self._FIRST_TURN_BASE_TIMEOUT)
-                                    if self._turn_count <= 1 else None)
+                                    if self._turn_count <= 1 and not waited else None)
 
         if not self._session_ready():
             # Only turn 1 may wait for session init; later turns fail open.
@@ -591,13 +601,81 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
         # First-turn mode suppresses only the base layer; dialectic is independent.
         if not (self._injection_frequency == "first-turn" and self._turn_count > 1):
             parts.append(self._fetch_base_context_layer(query, first_turn_base_deadline))
-        self._first_turn_dialectic_wait(query)
+        if not waited:
+            self._first_turn_dialectic_wait(query)
         # Consume only results that are already ready; later turns never wait.
         parts.append(self._consume_pending_dialectic())
         parts = [p for p in parts if p and p.strip()]
         if not parts:
             return self._log_injection("fetched-but-empty")
         return self._log_injection("injected", self._truncate_to_budget("\n\n".join(parts)))
+
+    def _previous_user_message(self) -> str:
+        """The user message that opened the previous turn.
+
+        Hermes passes it from its own transcript. Honcho's copy, rejoined from the chunks
+        sync_turn stored, is only a fallback: with saveMessages off nothing is stored."""
+        if self._previous_turn_message:
+            return self._previous_turn_message
+        try:
+            messages = list(self._manager.get_or_create(self._session_key).messages)
+        except Exception as e:
+            logger.debug("Honcho resumed session history unavailable: %s", e)
+            return ""
+        end = len(messages)
+        while end and messages[end - 1].get("role") != "user":
+            end -= 1
+        start = end
+        while start and messages[start - 1].get("role") == "user":
+            start -= 1
+        chunks = [str(m.get("content") or "") for m in messages[start:end]]
+        if not chunks:
+            return ""
+        return "\n".join([chunks[0], *(c.removeprefix("[continued] ") for c in chunks[1:])]).strip()
+
+    def _wait_for_first_recall(self, message: str, *, resumed: bool) -> bool:
+        """Wait for this process's first recall: base context within firstTurnBaseWait, then one
+        dialectic within firstTurnDialecticWait. False when it could not run yet (no session, or
+        nothing to recall on), so a later turn tries again.
+
+        Turn 1 recalls on its own message. A process that resumes a session at turn N recalls on
+        N-1's message instead: in a long-lived process, turn N injects the refresh queue_prefetch()
+        fired at the end of N-1, which a resumed process never fired. Both run here rather than in
+        prefetch(), which the memory manager abandons after a few seconds, so the waits can be
+        configured longer than that."""
+        fired_at = self._turn_count - 1 if resumed else self._turn_count
+        base_deadline = time.monotonic() + self._first_turn_wait(self._FIRST_TURN_BASE_TIMEOUT)
+        if not self._session_ready():
+            self._start_session_init_background()
+            if self._init_thread is not None:
+                self._init_thread.join(timeout=max(0.0, base_deadline - time.monotonic()))
+            if not self._session_ready():
+                return False
+        # Recall on what the user typed, as prefetch() does: Hermes strips slash-skill scaffolding there.
+        query = extract_user_instruction_from_skill_message(message)
+        if resumed:
+            # A trivial previous turn queued no refresh; the current message stands in for it.
+            previous = extract_user_instruction_from_skill_message(self._previous_user_message())
+            if previous and not self._is_trivial_prompt(previous):
+                query = previous
+        if not query or self._is_trivial_prompt(query):
+            return False
+        if not (resumed and self._injection_frequency == "first-turn"):
+            self._fetch_base_context_layer(query, base_deadline, fired_at=fired_at)
+        if not resumed:
+            self._first_turn_dialectic_wait(query)
+            return True
+        # Same cadence gate as the refresh this replaces. The process-start prewarm ran a generic
+        # query; a newer dialectic supersedes it, and its landed result stays if this one comes back empty.
+        if fired_at - self._last_dialectic_turn < self._effective_cadence():
+            return True
+        dia_wait = self._first_turn_wait(self._FIRST_TURN_DIALECTIC_CAP)
+        thread = self._spawn_dialectic(query, thread_name="honcho-resume-dialectic", fired_at=fired_at,
+                                       log_label="resumed-session dialectic")
+        thread.join(timeout=dia_wait)
+        if thread.is_alive():
+            logger.debug("Honcho resumed-session dialectic still running after %.1fs", dia_wait)
+        return True
 
     def _pop_auth_notice(self) -> str:
         """One-time model-facing notice that Honcho auth expired and memory is paused."""
@@ -721,8 +799,16 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
         several participants, and the peer resolved at session init only names whoever opened it."""
         self._recall_generation = object()
         self._turn_count = turn_number
+        self._previous_turn_message = kwargs.get("previous_message") or ""
         self._turn_author = {"id": kwargs.get("author_id") or None, "name": kwargs.get("author_name") or None,
                              "is_bot": bool(kwargs.get("author_is_bot"))}
+        if self._first_turn_seen is None:
+            self._first_turn_seen = turn_number
+        resumed = self._first_turn_seen > 1 and not self._first_recall_done
+        if ((turn_number <= 1 or resumed) and not self._cron_skipped and self._recall_mode != "tools"
+                and not self._recall_sync and self._wait_for_first_recall(message, resumed=resumed)):
+            self._first_recall_done = True
+            self._recall_waited_turn = turn_number
 
     def on_session_switch(self, new_session_id: str, **kwargs) -> None:
         """Discard in-flight recall even when the configured backend session is pinned."""

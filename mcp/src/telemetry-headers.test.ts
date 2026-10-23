@@ -55,3 +55,11 @@ test("no User-Agent means Host only", async () => {
   expect(headers[0].get(HEADER_PLUGIN)).toBeNull();
   expect(identityHeaders("   ")[HEADER_PLUGIN]).toBeUndefined();
 });
+
+test("a caller-set X-Honcho-Plugin is sent with the User-Agent in parentheses", () => {
+  expect(identityHeaders("Cursor/1.0.0", "cursor-honcho/0.2.0")[HEADER_PLUGIN]).toBe(
+    "cursor-honcho/0.2.0 (Cursor/1.0.0)",
+  );
+  expect(identityHeaders(undefined, "cursor-honcho/0.2.0")[HEADER_PLUGIN]).toBe("cursor-honcho/0.2.0");
+  expect(identityHeaders("undici", "  ")[HEADER_PLUGIN]).toBe("undici");
+});

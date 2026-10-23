@@ -161,6 +161,8 @@ ENABLED = true
 MAX_OUTPUT_TOKENS = 8192
 MAX_INPUT_TOKENS = 100000
 SESSION_HISTORY_MAX_TOKENS = 4096
+BUDGET_ENABLED = false
+BRIEF_ENABLED = false
 
 # Per-level settings for reasoning levels
 # MAX_OUTPUT_TOKENS is optional per level; if not set, uses global MAX_OUTPUT_TOKENS
@@ -231,7 +233,17 @@ DOCUMENT_THRESHOLD = 50
 IDLE_TIMEOUT_MINUTES = 60
 MIN_HOURS_BETWEEN_DREAMS = 8
 ENABLED_TYPES = ["omni"]
+# Card-refresh dreams only
 MAX_TOOL_ITERATIONS = 20
+DEDUCTION_MAX_TOOL_ITERATIONS = 12
+INDUCTION_MAX_TOOL_ITERATIONS = 10
+BRIEF_ENABLED = false
+BRIEF_MAX_NEW_CONCLUSIONS = 50
+BRIEF_MAX_NEW_CONCLUSION_TOKENS = 8000
+BUDGET_ENABLED = false
+NOTES_MODE = "off"  # off | shadow | on
+NOTES_MAX_TOKENS = 3000
+# WRITE_WINDOW_ITERATIONS = 2  # default: 15% of each specialist's limit
 
 [dream.deduction_model_config]
 transport = "openai"
