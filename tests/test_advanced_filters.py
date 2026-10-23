@@ -1685,7 +1685,20 @@ async def test_numeric_filter_skips_non_numeric_metadata_values(
         f"/v3/workspaces/{test_workspace.name}/sessions",
         json={"id": session_id, "peer_names": {test_peer.name: {}}},
     )
-    scores: list[Any] = [3, "7", "high", "", " ", "1e200000", True, [1], {"a": 1}]
+    # Arabic-Indic digits and a no-break space can match a locale-aware \d or \s
+    scores: list[Any] = [
+        3,
+        "7",
+        "high",
+        "",
+        " ",
+        "1e200000",
+        True,
+        [1],
+        {"a": 1},
+        "\u0661\u0662",
+        "1\u00a0",
+    ]
     client.post(
         f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/messages",
         json={

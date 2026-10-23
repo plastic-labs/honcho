@@ -46,8 +46,10 @@ COMPARISON_OPERATORS = {
 NUMERIC_OPERATORS = {"gte", "lte", "gt", "lt", "ne"}
 
 # Text that casts to `numeric` without error. The exponent and length bounds
-# keep values like "1e200000" from overflowing numeric's digit limits.
-_NUMERIC_TEXT_PATTERN = r"^\s*[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d{1,4})?\s*$"
+# keep values like "1e200000" from overflowing numeric's digit limits. Classes
+# are ASCII: Postgres' \d and \s follow the locale.
+_ASCII_SPACE = r"[ \t\n\r\f\v]*"
+_NUMERIC_TEXT_PATTERN = rf"^{_ASCII_SPACE}[-+]?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][-+]?[0-9]{{1,4}})?{_ASCII_SPACE}$"
 _NUMERIC_TEXT_MAX_LENGTH = 1000
 
 # JSONB columns keep containment semantics: bare lists are not membership
