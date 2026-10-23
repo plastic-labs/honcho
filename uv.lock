@@ -7,7 +7,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-09-23T03:07:33.3784168Z"
+exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
 exclude-newer-span = "P5D"
 
 [manifest]
@@ -1044,7 +1044,7 @@ wheels = [
 
 [[package]]
 name = "honcho"
-version = "3.3.0"
+version = "3.4.0"
 source = { virtual = "." }
 dependencies = [
     { name = "alembic" },
@@ -1115,7 +1115,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "alembic", specifier = ">=1.14.0" },
+    { name = "alembic", specifier = ">=1.16.0" },
     { name = "cashews", extras = ["redis"], specifier = "==7.5.0" },
     { name = "chromadb", marker = "extra == 'chromadb'", specifier = ">=1.5.2" },
     { name = "cloudevents", specifier = ">=1.12.0,<2.0" },
@@ -1174,7 +1174,7 @@ dev = [
 
 [[package]]
 name = "honcho-ai"
-version = "2.6.0"
+version = "2.7.0"
 source = { editable = "sdks/python" }
 dependencies = [
     { name = "httpx" },
@@ -1205,7 +1205,7 @@ dev = [{ name = "ruff", specifier = ">=0.11.13" }]
 
 [[package]]
 name = "honcho-cli"
-version = "0.2.0"
+version = "0.2.1"
 source = { editable = "honcho-cli" }
 dependencies = [
     { name = "click" },

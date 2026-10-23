@@ -334,15 +334,20 @@ async def setup_test_database(db_url: URL):
     engine = create_async_engine(db_url, echo=False)
     async with engine.connect() as conn:
         try:
-            logger.info("Attempting to create pgvector and pg_trgm extensions...")
+            logger.info(
+                "Attempting to create pgvector, pg_trgm and btree_gin extensions..."
+            )
             await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
             await conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS btree_gin"))
             await conn.commit()
-            logger.info("pgvector and pg_trgm extensions created successfully.")
+            logger.info(
+                "pgvector, pg_trgm and btree_gin extensions created successfully."
+            )
         except ProgrammingError as e:
             logger.error(f"ProgrammingError: {e}")
             raise RuntimeError(
-                "Failed to create pgvector/pg_trgm extensions. Make sure they're installed on the PostgreSQL server."
+                "Failed to create pgvector/pg_trgm/btree_gin extensions. Make sure they're installed on the PostgreSQL server."
             ) from e
         except OperationalError as e:
             logger.error(f"OperationalError: {e}")
@@ -544,6 +549,13 @@ async def client(
     monkeypatch.setattr("src.main.validate_embedding_schema", _skip_validate)
     monkeypatch.setattr("src.main.validate_queue_item_batches", _skip_validate)
 
+    # fastapi_pagination's lifespan wrapper regenerates and re-patches the whole
+    # OpenAPI schema on every startup once `app.openapi_schema` is cached (~80ms).
+    # Production starts once; this fixture starts the app per test, so after any
+    # test fetches /openapi.json every later client would pay it. Drop the cache
+    # so startup stays cheap; a test that needs the schema regenerates it.
+    app.openapi_schema = None
+
     with TestClient(app) as c:
         if settings.AUTH.USE_AUTH:
             # give the test client the admin JWT
@@ -653,6 +665,25 @@ def mock_langfuse():
             if isinstance(handler, TestHandler):
                 handler.close()
                 logging.getLogger().removeHandler(handler)
+
+
+@pytest.fixture(autouse=True)
+def no_llm_retry_backoff(monkeypatch: pytest.MonkeyPatch):
+    """Retry LLM calls immediately instead of after the production backoff.
+
+    `honcho_llm_call` and the tool loop build `wait_exponential(min=4, max=10)`
+    at call time, so every test that exercises a retry otherwise sleeps at least
+    4s per attempt. Attempt counting and fallback selection are unaffected.
+    """
+    from tenacity import wait_none
+
+    from src.llm import api, tool_loop
+
+    def no_wait(**_kwargs: object) -> wait_none:
+        return wait_none()
+
+    monkeypatch.setattr(api, "wait_exponential", no_wait)
+    monkeypatch.setattr(tool_loop, "wait_exponential", no_wait)
 
 
 def _content_to_embedding(content: str) -> list[float]:
@@ -1109,6 +1140,8 @@ def mock_tracked_db(request: pytest.FixtureRequest):
         "src.routers.tenants.service_db",
         "src.dialectic.core.tracked_db",
         "src.dreamer.specialists.tracked_db",
+        "src.utils.memory_brief.tracked_db",
+        "src.dreamer.working_memory.tracked_db",
         "src.dreamer.surprisal.tracked_db",
         "src.deriver.scope_backfill.tracked_db",
     ]

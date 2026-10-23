@@ -348,6 +348,7 @@ alice = honcho.peer("bob", config={"role": "user", "active": True}, metadata={"l
 print(f"Peer ID: {alice.id}")
 print(f"Workspace: {alice.workspace_id}")
 print(f"Created: {alice.created_at}")  # Available after API fetch
+print(f"UID: {alice.uid}")              # Server-assigned, never changes; available after API fetch
 
 # Chat with peer's representations (supports streaming)
 response = alice.chat("What did I have for breakfast?")
@@ -403,6 +404,7 @@ const assistant = await honcho.peer("assistant");
 // Peer properties
 console.log(`Peer ID: ${alice.id}`);
 console.log(`Created: ${alice.createdAt}`);  // Available after API fetch
+console.log(`UID: ${alice.uid}`);            // Server-assigned, never changes; available after API fetch
 
 // Chat with peer's representations (supports streaming)
 const response = await alice.chat("What did I have for breakfast?");
@@ -668,6 +670,7 @@ print(f"Session ID: {session.id}")
 print(f"Workspace: {session.workspace_id}")
 print(f"Created: {session.created_at}")  # Available after API fetch
 print(f"Active: {session.is_active}")    # Available after API fetch
+print(f"UID: {session.uid}")            # Server-assigned, never changes; available after API fetch
 
 # Peer management
 session.add_peers([alice, assistant])
@@ -754,6 +757,7 @@ const session = await honcho.session("conversation-1");
 console.log(`Session ID: ${session.id}`);
 console.log(`Created: ${session.createdAt}`);  // Available after API fetch
 console.log(`Active: ${session.isActive}`);    // Available after API fetch
+console.log(`UID: ${session.uid}`);            // Server-assigned, never changes; available after API fetch
 
 // Peer management
 await session.addPeers([alice, assistant]);

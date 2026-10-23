@@ -14,6 +14,7 @@ from src.llm.backend import CompletionResult, StreamChunk, ToolCallResult
 from src.llm.request_builder import (
     apply_sdk_passthroughs,
     request_timeout_from_extra_params,
+    thinking_tool_choice_conflict_mode,
 )
 from src.llm.structured_output import (
     StructuredOutputError,
@@ -25,35 +26,49 @@ from src.utils.representation import PromptRepresentation
 
 logger = logging.getLogger(__name__)
 
+# extra_body keys that request thinking from an OpenAI-compatible proxy.
+_EXTRA_BODY_THINKING_KEYS = ("reasoning", "reasoning_effort", "thinking")
+
 
 # The point of this being a WeakKeyDictionary, as opposed to a regular dict, is that it
 # does not hold a reference to the keyed BaseModel so that when a dynamically created
 # type is no longer referenced it becomes eligible for garbage collection. This avoids a
 # memory leak.
-_json_object_instruction_cache: weakref.WeakKeyDictionary[type[BaseModel], str] = (
-    weakref.WeakKeyDictionary()
-)
+_json_object_instruction_cache: weakref.WeakKeyDictionary[
+    type[BaseModel], dict[bool, str]
+] = weakref.WeakKeyDictionary()
 
 
-def _json_object_instruction(response_format: type[BaseModel]) -> str:
+def _json_object_instruction(
+    response_format: type[BaseModel], *, tools_present: bool
+) -> str:
     """Schema-injection instruction for json_object mode.
 
     The JSON schema is static per response_format class, so cache the serialized
     instruction — the deriver would otherwise re-walk the schema + re-serialize
     it every call.
+
+    With tools in play the wording is conditional, so the instruction doesn't
+    push the model to answer before it has used them.
     """
-    cached = _json_object_instruction_cache.get(response_format)
+    by_tools = _json_object_instruction_cache.setdefault(response_format, {})
+    cached = by_tools.get(tools_present)
     if cached is not None:
         return cached
     # Some OpenAI-compatible providers enforce this JSON-object precondition with
     # a case-sensitive substring check, so include lowercase "json" explicitly.
+    lead = (
+        "If you are not calling a tool, respond with"
+        if tools_present
+        else "You must respond with"
+    )
     instruction = (
-        "You must respond with a single JSON object (json) that conforms "
+        f"{lead} a single JSON object (json) that conforms "
         "exactly to the following JSON schema. Do not include any text, "
         "markdown, or code fences outside the JSON object.\n\nJSON schema:\n"
         f"{json.dumps(response_format.model_json_schema())}"
     )
-    _json_object_instruction_cache[response_format] = instruction
+    by_tools[tools_present] = instruction
     return instruction
 
 
@@ -182,11 +197,16 @@ class OpenAIBackend:
             thinking_budget_tokens=thinking_budget_tokens,
             extra_params=extra_params,
         )
+        structured_output_mode = self._resolve_thinking_conflict(
+            params, model, extra_params, response_format
+        )
 
         if isinstance(response_format, type):
-            if self._structured_output_mode(extra_params) == "json_object":
+            if structured_output_mode == "json_object":
                 self._apply_json_object_mode(params, response_format)
                 response = await self._client.chat.completions.create(**params)
+                if getattr(response.choices[0].message, "tool_calls", None):
+                    return self._normalize_response(response)
                 # A loose provider that returns nothing shouldn't crash the call.
                 content = self._parse_or_repair_structured_content(
                     response, response_format, model, empty_on_missing=True
@@ -313,10 +333,13 @@ class OpenAIBackend:
             thinking_budget_tokens=thinking_budget_tokens,
             extra_params=extra_params,
         )
+        structured_output_mode = self._resolve_thinking_conflict(
+            params, model, extra_params, response_format
+        )
         params["stream"] = True
         params["stream_options"] = {"include_usage": True}
         if isinstance(response_format, type):
-            if self._structured_output_mode(extra_params) == "json_object":
+            if structured_output_mode == "json_object":
                 # Inject the schema into the prompt for providers without
                 # json_schema support; repair happens downstream.
                 self._apply_json_object_mode(params, response_format)
@@ -501,6 +524,114 @@ class OpenAIBackend:
             return None
         return extra_params.get("structured_output_mode")
 
+    @classmethod
+    def _resolve_thinking_conflict(
+        cls,
+        params: dict[str, Any],
+        model: str,
+        extra_params: dict[str, Any] | None,
+        response_format: type[BaseModel] | dict[str, Any] | None,
+    ) -> str | None:
+        """Apply provider_params.thinking_tool_choice_conflict to an OpenAI request.
+
+        Anthropic rejects extended thinking alongside a forced tool choice. On
+        this transport that conflict reaches Anthropic through an
+        OpenAI-compatible proxy, which may implement a json_schema
+        response_format as a tool it forces the model to call, so a schema
+        request conflicts with thinking too. A proxy that resolves this by
+        leaving the schema tool optional lets the model answer in prose.
+
+        Only acts when the operator sets the mode: OpenAI's own reasoning
+        models accept reasoning_effort with forced tools and json_schema, so
+        there is no default here, unlike the Anthropic backend's "throw".
+        Strips thinking from ``params`` in place for override_thinking and
+        relaxes a forced tool choice for override_tool.
+
+        Returns:
+            The structured output mode the caller should use: "json_object"
+            when override_tool moves a schema into the prompt so thinking can
+            stay, otherwise the configured mode.
+        """
+        configured_mode = cls._structured_output_mode(extra_params)
+        if not (extra_params or {}).get(
+            "thinking_tool_choice_conflict"
+        ) or not cls._thinking_requested(params):
+            return configured_mode
+
+        tool_choice = params.get("tool_choice")
+        forced_tool = tool_choice == "required" or (
+            isinstance(tool_choice, dict)
+            and cast(dict[str, Any], tool_choice).get("type") == "function"
+        )
+        schema_requested = (
+            isinstance(response_format, type) and configured_mode != "json_object"
+        )
+        if not (forced_tool or schema_requested):
+            return configured_mode
+
+        mode = thinking_tool_choice_conflict_mode(extra_params, None)
+        if mode is None:
+            return configured_mode
+
+        conflict = f"model {model}: "
+        conflict += (
+            f"tool_choice {tool_choice} forces tool use"
+            if forced_tool
+            else "a json_schema response_format is a forced tool call behind proxies"
+        )
+        conflict += ", which Anthropic does not allow alongside extended thinking"
+        if mode == "throw":
+            raise ValidationException(f"Cannot send request to {conflict}")
+        if mode == "override_tool":
+            if forced_tool:
+                logger.debug("Relaxing tool_choice to auto for %s", conflict)
+                params["tool_choice"] = "auto"
+            if schema_requested:
+                logger.debug("Requesting the schema as json_object for %s", conflict)
+                return "json_object"
+            return configured_mode
+
+        logger.debug("Dropping extended thinking for %s", conflict)
+        params.pop("reasoning_effort", None)
+        extra_body = params.get("extra_body")
+        if isinstance(extra_body, dict):
+            remaining = {
+                key: value
+                for key, value in cast(dict[str, Any], extra_body).items()
+                if key not in _EXTRA_BODY_THINKING_KEYS
+            }
+            if remaining:
+                params["extra_body"] = remaining
+            else:
+                params.pop("extra_body")
+        return configured_mode
+
+    @staticmethod
+    def _thinking_requested(params: dict[str, Any]) -> bool:
+        """Whether the request asks for thinking: reasoning_effort (top level
+        or in extra_body, which the SDK merges into the body), the budget
+        Honcho injects as extra_body.reasoning, or an operator-supplied
+        extra_body.thinking. Explicitly disabled shapes don't count."""
+        if params.get("reasoning_effort"):
+            return True
+        extra_body = params.get("extra_body")
+        if not isinstance(extra_body, dict):
+            return False
+        body = cast(dict[str, Any], extra_body)
+        if body.get("reasoning_effort") not in (None, "none"):
+            return True
+        reasoning = body.get("reasoning")
+        if isinstance(reasoning, dict):
+            reasoning_dict = cast(dict[str, Any], reasoning)
+            if reasoning_dict.get("enabled") is not False and (
+                reasoning_dict.get("effort") != "none"
+            ):
+                return True
+        thinking = body.get("thinking")
+        if isinstance(thinking, dict):
+            return cast(dict[str, Any], thinking).get("type") != "disabled"
+        return False
+
     def _apply_json_object_mode(
         self,
         params: dict[str, Any],
@@ -512,7 +643,7 @@ class OpenAIBackend:
         without OpenAI Structured Outputs (json_schema) support still return JSON.
         """
         params["messages"] = self._with_json_schema_instructions(
-            params["messages"], response_format
+            params["messages"], response_format, tools_present=bool(params.get("tools"))
         )
         params["response_format"] = {"type": "json_object"}
 
@@ -520,6 +651,8 @@ class OpenAIBackend:
     def _with_json_schema_instructions(
         messages: list[dict[str, Any]],
         response_format: type[BaseModel],
+        *,
+        tools_present: bool,
     ) -> list[dict[str, Any]]:
         """Add JSON-schema instructions to a copy of messages for json_object mode.
 
@@ -527,7 +660,9 @@ class OpenAIBackend:
         (``_append_text_to_last_message``); the two are intentionally kept
         separate since the providers want different placement and wording.
         """
-        instruction = _json_object_instruction(response_format)
+        instruction = _json_object_instruction(
+            response_format, tools_present=tools_present
+        )
         new_messages = [dict(message) for message in messages]
         first = new_messages[0] if new_messages else None
         # Only merge into a leading system message when its content is a plain
@@ -572,7 +707,7 @@ class OpenAIBackend:
         if refusal:
             return refusal
         if not empty_on_missing:
-            raise ValidationException("No parsed content in structured response")
+            raise StructuredOutputError("No parsed content in structured response")
         # empty_structured_output() validates {} against the model, which itself
         # raises if the model has required fields. Fall back to empty string
         # content rather than letting that escape the handler.

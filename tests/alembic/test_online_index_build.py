@@ -16,7 +16,7 @@ from sqlalchemy import Engine, text
 from src.config import settings
 
 REVISION = "647b773f05ac"
-DOWN_REVISION = "c075274557cd"
+DOWN_REVISION = "43d77d0c5846"
 INDEXES = {
     "ix_documents_workspace_recent": "documents",
     "ix_documents_collection_derived": "documents",

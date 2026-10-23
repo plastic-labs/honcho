@@ -41,6 +41,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       python: ${{ steps.filter.outputs.python }}
+      typescript: ${{ steps.filter.outputs.typescript }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -53,12 +54,113 @@ jobs:
               - 'uv.lock'
               - '.python-version'
               - 'migrations/**'
+              - '.github/workflows/unittest.yml'
+            typescript:
+              - 'src/**'
+              - 'migrations/**'
               - 'sdks/typescript/**'
+              - 'scripts/run_ts_sdk_tests.py'
+              - 'pyproject.toml'
+              - 'uv.lock'
+              - '.python-version'
               - '.github/workflows/unittest.yml'
 
   test-python:
     needs: changes
     if: ${{ needs.changes.outputs.python == 'true' }}
+    runs-on: ubuntu-latest
+
+    services:
+      database:
+        image: pgvector/pgvector:pg15
+        env:
+          POSTGRES_DB: test_db
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v2
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: "Set up Python"
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: ".python-version"
+
+      - name: Install the project
+        run: uv sync --all-extras --dev
+
+      - name: Run Tests
+        run: >-
+          uv run pytest -x
+          --cov=src --cov-report=term:skip-covered --cov-report=markdown:coverage.md
+        env:
+          DB_CONNECTION_URI: postgresql+psycopg://postgres:postgres@localhost:5432/test_db
+          AUTH_USE_AUTH: false
+          SENTRY_ENABLED: false
+          LLM_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          LLM_ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          LLM_OPENAI_COMPATIBLE_API_KEY: test-key
+          LLM_OPENAI_COMPATIBLE_BASE_URL: http://localhost:8000
+          DERIVER_PROVIDER: openai
+          DERIVER_MODEL: test
+          DIALECTIC_LEVELS__minimal__PROVIDER: openai
+          DIALECTIC_LEVELS__minimal__MODEL: test
+          DIALECTIC_LEVELS__minimal__THINKING_BUDGET_TOKENS: 0
+          DIALECTIC_LEVELS__minimal__MAX_TOOL_ITERATIONS: 2
+          DIALECTIC_LEVELS__low__PROVIDER: openai
+          DIALECTIC_LEVELS__low__MODEL: test
+          DIALECTIC_LEVELS__low__THINKING_BUDGET_TOKENS: 0
+          DIALECTIC_LEVELS__low__MAX_TOOL_ITERATIONS: 5
+          DIALECTIC_LEVELS__medium__PROVIDER: openai
+          DIALECTIC_LEVELS__medium__MODEL: test
+          DIALECTIC_LEVELS__medium__THINKING_BUDGET_TOKENS: 0
+          DIALECTIC_LEVELS__medium__MAX_TOOL_ITERATIONS: 4
+          DIALECTIC_LEVELS__high__PROVIDER: openai
+          DIALECTIC_LEVELS__high__MODEL: test
+          DIALECTIC_LEVELS__high__THINKING_BUDGET_TOKENS: 0
+          DIALECTIC_LEVELS__high__MAX_TOOL_ITERATIONS: 4
+          DIALECTIC_LEVELS__max__PROVIDER: openai
+          DIALECTIC_LEVELS__max__MODEL: test
+          DIALECTIC_LEVELS__max__THINKING_BUDGET_TOKENS: 0
+          DIALECTIC_LEVELS__max__MAX_TOOL_ITERATIONS: 10
+          DIALECTIC_QUERY_GENERATION_PROVIDER: openai
+          DIALECTIC_QUERY_GENERATION_MODEL: test
+          SUMMARY_PROVIDER: openai
+          SUMMARY_MODEL: test
+
+      # Report only, no threshold: the point is a visible trend per PR.
+      - name: Coverage summary
+        if: always() && hashFiles('coverage.md') != ''
+        run: |
+          {
+            echo "### Coverage of src/: $(uv run coverage report --format=total)%"
+            echo
+            echo "<details><summary>Per file</summary>"
+            echo
+            cat coverage.md
+            echo
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # The TypeScript SDK suite runs against a real API + mock LLM provider,
+  # started by scripts/run_ts_sdk_tests.py; it is not part of pytest.
+  test-typescript-sdk:
+    needs: changes
+    if: ${{ needs.changes.outputs.typescript == 'true' }}
     runs-on: ubuntu-latest
 
     services:
@@ -99,44 +201,13 @@ jobs:
         working-directory: sdks/typescript
 
       - name: Install the project
-        run: uv sync --all-extras --dev
+        run: uv sync --dev
 
-      - name: Run Tests
-        run: uv run pytest -x
+      - name: Run TypeScript SDK tests
+        run: bun run test
+        working-directory: sdks/typescript
         env:
           DB_CONNECTION_URI: postgresql+psycopg://postgres:postgres@localhost:5432/test_db
-          AUTH_USE_AUTH: false
-          SENTRY_ENABLED: false
-          LLM_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          LLM_ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          LLM_OPENAI_COMPATIBLE_API_KEY: test-key
-          LLM_OPENAI_COMPATIBLE_BASE_URL: http://localhost:8000
-          DERIVER_PROVIDER: openai
-          DERIVER_MODEL: test
-          DIALECTIC_LEVELS__minimal__PROVIDER: openai
-          DIALECTIC_LEVELS__minimal__MODEL: test
-          DIALECTIC_LEVELS__minimal__THINKING_BUDGET_TOKENS: 0
-          DIALECTIC_LEVELS__minimal__MAX_TOOL_ITERATIONS: 2
-          DIALECTIC_LEVELS__low__PROVIDER: openai
-          DIALECTIC_LEVELS__low__MODEL: test
-          DIALECTIC_LEVELS__low__THINKING_BUDGET_TOKENS: 0
-          DIALECTIC_LEVELS__low__MAX_TOOL_ITERATIONS: 5
-          DIALECTIC_LEVELS__medium__PROVIDER: openai
-          DIALECTIC_LEVELS__medium__MODEL: test
-          DIALECTIC_LEVELS__medium__THINKING_BUDGET_TOKENS: 0
-          DIALECTIC_LEVELS__medium__MAX_TOOL_ITERATIONS: 4
-          DIALECTIC_LEVELS__high__PROVIDER: openai
-          DIALECTIC_LEVELS__high__MODEL: test
-          DIALECTIC_LEVELS__high__THINKING_BUDGET_TOKENS: 0
-          DIALECTIC_LEVELS__high__MAX_TOOL_ITERATIONS: 4
-          DIALECTIC_LEVELS__max__PROVIDER: openai
-          DIALECTIC_LEVELS__max__MODEL: test
-          DIALECTIC_LEVELS__max__THINKING_BUDGET_TOKENS: 0
-          DIALECTIC_LEVELS__max__MAX_TOOL_ITERATIONS: 10
-          DIALECTIC_QUERY_GENERATION_PROVIDER: openai
-          DIALECTIC_QUERY_GENERATION_MODEL: test
-          SUMMARY_PROVIDER: openai
-          SUMMARY_MODEL: test
 
   # tests/alembic is excluded from test-python by the pyproject addopts
   # (--ignore=tests/alembic). It creates and drops a fixed-name database, so
@@ -190,7 +261,7 @@ jobs:
   # This job always runs and reports success only if all required jobs pass
   test-status:
     runs-on: ubuntu-latest
-    needs: [changes, test-python, test-alembic]
+    needs: [changes, test-python, test-alembic, test-typescript-sdk]
     if: always()
     steps:
       - name: Check test results
@@ -201,6 +272,10 @@ jobs:
           fi
           if [[ "${{ needs.changes.outputs.python }}" == "true" && "${{ needs.test-alembic.result }}" != "success" && "${{ needs.test-alembic.result }}" != "skipped" ]]; then
             echo "Migration tests failed or were cancelled"
+            exit 1
+          fi
+          if [[ "${{ needs.changes.outputs.typescript }}" == "true" && "${{ needs.test-typescript-sdk.result }}" != "success" && "${{ needs.test-typescript-sdk.result }}" != "skipped" ]]; then
+            echo "TypeScript SDK tests failed or were cancelled"
             exit 1
           fi
           echo "All required tests passed!"

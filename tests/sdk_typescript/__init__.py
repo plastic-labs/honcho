@@ -1,1 +1,0 @@
-# TypeScript SDK integration tests

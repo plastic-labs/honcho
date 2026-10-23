@@ -1,0 +1,18 @@
+{
+  "name": "honcho",
+  "owner": {
+    "name": "Plastic Labs",
+    "email": "hello@plasticlabs.ai"
+  },
+  "metadata": {
+    "description": "Honcho plugins for Cursor and Grok Bot: persistent memory powered by Honcho",
+    "version": "0.2.0"
+  },
+  "plugins": [
+    {
+      "name": "honcho",
+      "source": "./integrations/cursor",
+      "description": "Persistent memory for Cursor and Grok Bot, powered by Honcho"
+    }
+  ]
+}
