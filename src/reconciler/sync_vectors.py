@@ -875,7 +875,7 @@ async def record_pending_embeddings_backlog() -> None:
     # refresh it on its own timer for ``max()``/``avg()`` to mean anything.
     #
     # Cost: one COUNT per replica per scheduler interval (~5 min by default).
-    # ``ix_message_embeddings_sync_state_last_sync_at`` keeps the scan proportional to
+    # ``ix_message_embeddings_pending_claim`` (pending rows only) keeps the scan proportional to
     # the pending backlog, not the whole table — which is not the same as cheap: after
     # an embedding outage the backlog is exactly what is large. Still a small duty
     # cycle, and the cost shrinks as the reconciler drains.

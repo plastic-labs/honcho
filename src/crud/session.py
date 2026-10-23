@@ -186,6 +186,7 @@ async def get_sessions(
     """
     stmt = (
         select(models.Session)
+        .where(models.Session.tenant_id == models.scoped_tenant_id())
         .where(models.Session.workspace_name == workspace_name)
         .where(models.Session.is_active == True)  # noqa: E712
     )
@@ -735,6 +736,7 @@ async def delete_session(
                 models.Document.observer,
                 models.Document.observed,
             ).where(
+                models.Document.tenant_id == models.scoped_tenant_id(),
                 models.Document.session_name == session_name,
                 models.Document.workspace_name == workspace_name,
             )
@@ -772,6 +774,7 @@ async def delete_session(
             db,
             models.Document,
             [
+                models.Document.tenant_id == models.scoped_tenant_id(),
                 models.Document.session_name == session_name,
                 models.Document.workspace_name == workspace_name,
             ],

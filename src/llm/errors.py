@@ -9,15 +9,25 @@ They do not share a base class, but they split failures the same two ways:
   a bare `TimeoutError` on its aiohttp transport;
 * the request got a response carrying a server-side status -- anthropic and
   openai expose it as `status_code`, google-genai as `code`.
+
+It also owns the retry condition every LLM retry site shares, since that
+decision turns on the same per-SDK status reading.
 """
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Callable
+
 import anthropic
 import httpx
 import openai
+from google.genai import errors as genai_errors
+from tenacity import RetryCallState
 
 from src.exceptions import UpstreamLLMError
+
+logger = logging.getLogger(__name__)
 
 # Anything at or above this is the provider (or a proxy in front of it) failing,
 # not a malformed request from us. 4xx stays untranslated so genuine client
@@ -76,4 +86,84 @@ def raise_upstream_error(exc: BaseException) -> None:
         raise upstream from exc
 
 
-__all__ = ["as_upstream_error", "raise_upstream_error"]
+# The provider's own status errors -- the only exceptions whose status says
+# anything about the request. Honcho's exceptions carry a `status_code` too
+# (ValidationException is 422), so status is read only after this type check.
+_PROVIDER_STATUS_ERRORS = (
+    anthropic.APIStatusError,
+    openai.APIStatusError,
+    genai_errors.ClientError,
+)
+
+# The 4xx a provider sends about its own state rather than the request: timed
+# out, conflicting, too early, rate limited. The same request can succeed later.
+_RETRYABLE_CLIENT_STATUSES = frozenset({408, 409, 425, 429})
+
+
+def is_non_retryable_client_error(exc: BaseException) -> bool:
+    """True when the provider rejected the request itself, so resending it
+    unchanged gets the same answer (bad request, auth, not found, too large).
+
+    Only provider SDK status errors qualify. Everything else -- outages already
+    translated to `UpstreamLLMError`, connection errors, and the response
+    checks that consume attempts by design -- stays retryable. The openai and
+    anthropic SDKs still honour a server's `x-should-retry` hint in their own
+    retries before raising.
+    """
+    if not isinstance(exc, _PROVIDER_STATUS_ERRORS):
+        return False
+    status = _status_of(exc)
+    return (
+        status is not None
+        and 400 <= status < _SERVER_ERROR_FLOOR
+        and status not in _RETRYABLE_CLIENT_STATUSES
+    )
+
+
+def llm_retry_condition(
+    *, can_fall_back: bool, retry_attempts: int, model: str
+) -> Callable[[RetryCallState], bool]:
+    """Build the tenacity `retry=` condition for an LLM retry site.
+
+    Retries any `Exception`, as tenacity's default does, except a
+    non-retryable client error when no fallback can take a later attempt.
+    With a fallback configured the error keeps today's path: it is retried
+    and the final attempt goes to the fallback, which may accept the request.
+
+    Args:
+        can_fall_back: Whether a later attempt can reach a different model.
+        retry_attempts: The site's attempt budget, for the log line.
+        model: `transport/model` of the attempts this condition stops, for the
+            log line.
+    """
+
+    def _should_retry(retry_state: RetryCallState) -> bool:
+        """Decide whether tenacity retries the attempt recorded in `retry_state`."""
+        outcome = retry_state.outcome
+        if outcome is None or not outcome.failed:
+            return False
+        exc = outcome.exception()
+        if not isinstance(exc, Exception):
+            return False
+        if can_fall_back or not is_non_retryable_client_error(exc):
+            return True
+        # tenacity asks this before checking the budget, so only an attempt
+        # that had retries left is an early stop worth logging.
+        if retry_state.attempt_number < retry_attempts:
+            logger.warning(
+                f"Not retrying {model} after attempt "
+                + f"{retry_state.attempt_number}/{retry_attempts}: the provider "
+                + f"rejected the request with HTTP {_status_of(exc)} and no "
+                + f"other model can take a later attempt: {exc}"
+            )
+        return False
+
+    return _should_retry
+
+
+__all__ = [
+    "as_upstream_error",
+    "is_non_retryable_client_error",
+    "llm_retry_condition",
+    "raise_upstream_error",
+]

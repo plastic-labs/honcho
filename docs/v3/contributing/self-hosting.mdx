@@ -140,7 +140,7 @@ For a full end-to-end test, see [Verify Your Setup](#verify-your-setup) below.
 
 ## Manual Setup
 
-For more control over your environment, you can set up everything manually.
+For more control over your environment, or on a host without Docker, you can set up everything manually. You need Postgres with pgvector and an LLM provider key. Redis is optional: caching is off by default (`CACHE_ENABLED=false`).
 
 ### 1. Clone and Install Dependencies
 
@@ -163,21 +163,25 @@ Install PostgreSQL and pgvector on your system:
 
 **macOS (using Homebrew):**
 ```bash
-brew install postgresql
-brew install pgvector
+brew install postgresql@17 pgvector
+brew services start postgresql@17
 ```
 
 **Ubuntu/Debian:**
 ```bash
 sudo apt update
-sudo apt install postgresql postgresql-contrib
-# Install pgvector extension (see pgvector docs for your version)
+# Postgres and pgvector majors must match the distro's packaged version.
+# Ubuntu 24.04:
+sudo apt install postgresql-16 postgresql-16-pgvector
+# Debian 12:
+sudo apt install postgresql-15 postgresql-15-pgvector
+# Other versions: add the PostgreSQL APT repo (apt.postgresql.org) first.
 ```
 
 **Windows:**
 Download from [postgresql.org](https://www.postgresql.org/download/windows/)
 
-#### Option B: Docker PostgreSQL
+#### Option B: Docker PostgreSQL (if Docker is available)
 
 ```bash
 docker run --name honcho-db \
@@ -189,7 +193,7 @@ docker run --name honcho-db \
 
 ### 3. Enable Extensions
 
-Connect to PostgreSQL and enable pgvector and pg_trgm:
+Connect to PostgreSQL and enable pgvector, pg_trgm and btree_gin:
 
 ```bash
 # Connect to PostgreSQL
@@ -198,13 +202,14 @@ psql -U postgres
 # Enable the extensions on the default database
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE EXTENSION IF NOT EXISTS btree_gin;
 \q
 ```
 
 <Note>
 **Least-privilege database roles.** Honcho runs `CREATE EXTENSION IF NOT EXISTS vector` before migrations and again at startup, so if the role in `DB_CONNECTION_URI` can't create extensions, both fail with a privilege error — `IF NOT EXISTS` doesn't help, because Postgres checks the privilege first.
 
-Run the statements above once as a superuser (or `rds_superuser`) and the application role needs no extension privileges. `pg_trgm` is optional: if it can't be created, migrations skip the trigram index that speeds up message search and log the statement to create it later. See [Troubleshooting](/v3/contributing/troubleshooting) if you hit this.
+Run the statements above once as a superuser (or `rds_superuser`) and the application role needs no extension privileges. `pg_trgm` and `btree_gin` are optional: if one can't be created, migrations skip the index that needs it (the trigram index that speeds up message search, and a queue index used when deleting data) and log the statement to create it later. See [Troubleshooting](/v3/contributing/troubleshooting) if you hit this.
 </Note>
 
 ### 4. Configure Environment

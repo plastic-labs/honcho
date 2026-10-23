@@ -28,6 +28,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+from nanoid import generate as generate_nanoid
 from sqlalchemy import exists, or_, select, update
 from sqlalchemy.dialects.postgresql import array
 from sqlalchemy.orm import load_only
@@ -37,6 +38,7 @@ from src import crud, models
 from src.config import settings
 from src.crud.scope import ScopeBackfillState
 from src.dependencies import tracked_db
+from src.dreamer.working_memory import EPOCH_KEY, NOTES_KEY
 from src.embedding_client import embedding_client
 from src.schemas import DreamType
 from src.utils.queue_payload import ScopeBackfillPayload, ScopeRemovalPayload
@@ -195,6 +197,7 @@ async def _run_backfill(
                 )
             )
             .where(
+                models.Document.tenant_id == models.scoped_tenant_id(),
                 models.Document.workspace_name == workspace_name,
                 models.Document.session_name == session_name,
                 models.Document.level == "explicit",
@@ -508,7 +511,8 @@ async def process_scope_removal(
                 models.Collection.observer == scope_peer,
             )
         )
-        for observed in [row[0] for row in observed_result.all()]:
+        observed_in_scope = [row[0] for row in observed_result.all()]
+        for observed in observed_in_scope:
             explicit_stmt = (
                 update(models.Document)
                 .where(
@@ -559,6 +563,24 @@ async def process_scope_removal(
             if all_removed:
                 removed_by_observed[observed] = all_removed
 
+        # Dream notes are free text, possibly written from the removed
+        # session's messages even where it left no conclusions, so they go for
+        # every collection in the scope, in the same commit as the conclusions.
+        # Unlike the card they can't be rebuilt from what remains. A new epoch
+        # turns away note writes from dreams that started before this, which
+        # may still hold the old notes. The cursor stays.
+        epoch = str(generate_nanoid())
+        for observed in observed_in_scope:
+            await crud.merge_collection_internal_metadata_value(
+                db,
+                workspace_name,
+                scope_peer,
+                observed,
+                NOTES_KEY,
+                {"entries": [], EPOCH_KEY: epoch},
+                commit=False,
+            )
+
         # The session left the scope, so its backfill status entry is moot;
         # clearing it keeps a later re-add starting from a fresh "pending".
         await crud.clear_scope_backfill_status(
@@ -566,6 +588,8 @@ async def process_scope_removal(
         )
         await db.commit()
     await crud.invalidate_scope_peer_cache(workspace_name, scope_peer)
+    for observed in observed_in_scope:
+        await crud.invalidate_collection_cache(workspace_name, scope_peer, observed)
 
     # Delete the vectors eagerly so recall can't surface removed memory while
     # waiting for the reconciler sweep (which remains the backstop on failure).

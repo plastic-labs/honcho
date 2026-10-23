@@ -1,6 +1,6 @@
 // Integrations catalog for /v3/guides/overview.
 // Order inside each section is priority order — keep it that way when adding entries.
-// status: "official" | "community"
+// status: "official" | "community" | "unmaintained"
 // icon: a Font Awesome name, or a pinned CDN URL to a monochrome black SVG
 // (Simple Icons, then Lobe Icons) on jsDelivr; style.css inverts them in dark mode.
 
@@ -47,6 +47,7 @@ export const IntegrationsCatalog = () => {
         { name: "Hermes Agent", icon: "https://cdn.jsdelivr.net/npm/@lobehub/icons-static-svg@1.95.1/icons/hermesagent.svg", href: "/v3/guides/integrations/hermes", desc: "Cross-session memory and user modeling for Nous Research's Hermes agent.", status: "official" },
         { name: "OpenClaw", icon: "https://cdn.jsdelivr.net/npm/@lobehub/icons-static-svg@1.95.1/icons/openclaw.svg", href: "/v3/guides/integrations/openclaw", desc: "Memory across WhatsApp, Telegram, Discord, Slack, and every other OpenClaw channel.", status: "official" },
         { name: "Claude Desktop", icon: "https://cdn.jsdelivr.net/npm/simple-icons@16.33.0/icons/claude.svg", href: "/v3/guides/integrations/mcp#claude-desktop", desc: "Give Claude Desktop memory of you across every chat.", status: "official", via: "MCP" },
+        { name: "Grok Bot", icon: "https://cdn.jsdelivr.net/npm/@lobehub/icons-static-svg@1.95.1/icons/grok.svg", href: "/v3/guides/integrations/grok-bot", desc: "A shared memory of you for every Bot on the account, from the Cursor Marketplace plugin.", status: "official" },
         { name: "Goose", icon: "https://cdn.jsdelivr.net/npm/@lobehub/icons-static-svg@1.95.1/icons/goose.svg", href: "/v3/guides/integrations/mcp#goose", desc: "Add Honcho to Goose as a remote extension.", status: "official", via: "MCP" },
       ],
     },
@@ -56,13 +57,13 @@ export const IntegrationsCatalog = () => {
       blurb: "Memory that carries across sessions, restarts, and projects in the coding tools you already use.",
       items: [
         { name: "Claude Code", icon: "https://cdn.jsdelivr.net/npm/simple-icons@16.33.0/icons/claudecode.svg", href: "/v3/guides/integrations/claude-code", desc: "Memory that survives context wipes, restarts, and project switches.", status: "official" },
-        { name: "Pi", icon: "https://cdn.jsdelivr.net/npm/simple-icons@16.33.0/icons/pi.svg", href: "/v3/guides/community/pi-honcho-memory", desc: "Persistent memory extension for the pi coding agent CLI.", status: "community" },
+        { name: "Pi", icon: "https://cdn.jsdelivr.net/npm/simple-icons@16.33.0/icons/pi.svg", href: "/v3/guides/integrations/pi", desc: "Peer card, session summary, and recall on every turn for the pi coding agent.", status: "official" },
         { name: "Codex", icon: "https://cdn.jsdelivr.net/npm/simple-icons@15.22.0/icons/openai.svg", href: "/v3/guides/integrations/codex", desc: "Lifecycle hooks capture Codex sessions and restore context on start.", status: "official" },
         { name: "OpenCode", icon: "https://cdn.jsdelivr.net/npm/simple-icons@16.33.0/icons/opencode.svg", href: "/v3/guides/integrations/opencode", desc: "Per-directory, per-repo, or branch-scoped session memory.", status: "official" },
         { name: "Kilo Code", icon: "https://cdn.jsdelivr.net/npm/@lobehub/icons-static-svg@1.95.1/icons/kilocode.svg", href: "/v3/guides/integrations/kilo", desc: "Memory across the Kilo CLI, VS Code, and JetBrains from one install.", status: "official" },
         { name: "DeepSeek Harness", icon: "https://cdn.jsdelivr.net/npm/simple-icons@16.33.0/icons/deepseek.svg", href: "/v3/guides/integrations/deepseek-harness", desc: "Context injection, turn capture, and honcho_search for dsh.", status: "official" },
         { name: "Cline", icon: "https://cdn.jsdelivr.net/npm/simple-icons@16.33.0/icons/cline.svg", href: "/v3/guides/integrations/mcp#cline", desc: "Connect Cline to the Honcho MCP server.", status: "official", via: "MCP" },
-        { name: "Cursor", icon: "https://cdn.jsdelivr.net/npm/simple-icons@16.33.0/icons/cursor.svg", href: "/v3/guides/integrations/mcp#cursor", desc: "Add Honcho as an HTTP MCP server in Cursor's global or per-project config.", status: "official", via: "MCP" },
+        { name: "Cursor", icon: "https://cdn.jsdelivr.net/npm/simple-icons@16.33.0/icons/cursor.svg", href: "/v3/guides/integrations/cursor", desc: "Marketplace plugin: skills plus the hosted MCP server, one install for Cursor and Grok Bot.", status: "official" },
         { name: "Windsurf", icon: "https://cdn.jsdelivr.net/npm/simple-icons@16.33.0/icons/windsurf.svg", href: "/v3/guides/integrations/mcp#windsurf", desc: "Give Windsurf's Cascade agent memory through the Honcho MCP server.", status: "official", via: "MCP" },
         { name: "VS Code", icon: "https://cdn.jsdelivr.net/npm/simple-icons@12.4.0/icons/visualstudiocode.svg", href: "/v3/guides/integrations/mcp#vs-code-copilot-chat", desc: "Memory for GitHub Copilot Chat in VS Code.", status: "official", via: "MCP" },
         { name: "Zed", icon: "https://cdn.jsdelivr.net/npm/simple-icons@16.33.0/icons/zedindustries.svg", href: "/v3/guides/integrations/mcp#zed", desc: "Add Honcho to Zed as a context server.", status: "official", via: "MCP" },
@@ -77,7 +78,7 @@ export const IntegrationsCatalog = () => {
         { name: "LangGraph", icon: "https://cdn.jsdelivr.net/npm/simple-icons@16.33.0/icons/langgraph.svg", href: "/v3/guides/integrations/langgraph", desc: "Persistent memory and theory of mind for LangGraph agents.", status: "official" },
         { name: "CrewAI", icon: "https://cdn.jsdelivr.net/npm/simple-icons@16.33.0/icons/crewai.svg", href: "/v3/guides/integrations/crewai", desc: "Honcho as a storage backend for CrewAI's Memory API.", status: "official" },
         { name: "Agent Zero", icon: "https://cdn.jsdelivr.net/gh/agent0ai/agent-zero@e3051fb584b1a36be2b0a0c90606f1c2c2d356ec/webui/public/darkSymbol.svg", href: "/v3/guides/community/agent0", desc: "Persistent memory plugin for the Agent Zero framework.", status: "community" },
-        { name: "Paperclip", icon: "https://cdn.jsdelivr.net/npm/lucide-static@1.50.0/icons/paperclip.svg", href: "/v3/guides/integrations/paperclip", desc: "Memory for Paperclip companies, agents, issues, and documents.", status: "official" },
+        { name: "Paperclip", icon: "https://cdn.jsdelivr.net/npm/lucide-static@1.50.0/icons/paperclip.svg", href: "/v3/guides/integrations/paperclip", desc: "Built-in Honcho connector for Paperclip agents.", status: "official", via: "MCP" },
       ],
     },
     {
@@ -85,9 +86,9 @@ export const IntegrationsCatalog = () => {
       title: "Apps & workflows",
       blurb: "Memory for chat apps and workflow builders.",
       items: [
-        { name: "SillyTavern", icon: "comments", href: "/v3/guides/integrations/sillytavern", desc: "Long-term memory for SillyTavern characters.", status: "official" },
         { name: "n8n", icon: "https://cdn.jsdelivr.net/npm/simple-icons@16.33.0/icons/n8n.svg", href: "/v3/guides/integrations/n8n", desc: "Importable workflow for memory-aware n8n automations.", status: "official" },
         { name: "Zo Computer", icon: "bolt", href: "/v3/guides/integrations/zo-computer", desc: "Persistent memory skill for Zo workflows.", status: "official" },
+        { name: "SillyTavern", icon: "comments", href: "/v3/guides/integrations/sillytavern", desc: "Long-term memory for SillyTavern characters.", status: "unmaintained" },
       ],
     },
     {
@@ -124,6 +125,9 @@ export const IntegrationsCatalog = () => {
   const pill = (status, via) => {
     if (status === "community") {
       return <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 dark:bg-amber-400/10 dark:text-amber-300">Community</span>;
+    }
+    if (status === "unmaintained") {
+      return <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-zinc-100 text-zinc-500 dark:bg-white/5 dark:text-zinc-400">Unmaintained</span>;
     }
     if (via) {
       return <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-primary/10 text-primary dark:text-primary-light">via {via}</span>;

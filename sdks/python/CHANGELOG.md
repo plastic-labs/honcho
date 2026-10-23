@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [2.7.0] - 2026-10-20
+
+### Added
+
+- `uid` on `Peer`, `Session` and the `Honcho` client (the workspace), plus on `PeerResponse`, `SessionResponse` and `WorkspaceResponse`: the immutable identifier the server assigns, next to the client-chosen `id`. Set from any API response that returns the object, and `None` before the first fetch or against servers that don't return it (#1394)
+
+### Fixed
+
+- The async client (`.aio`) builds a new `httpx.AsyncClient` when the running event loop changes, instead of reusing the first loop's client on every later loop. A `Honcho` kept across `asyncio.run()` calls (a module-level client in a Lambda handler, a sync view or a CLI) no longer fails its first request on a new loop with `ConnectionError: Event loop is closed` when the previous loop left a pooled connection, sometimes after the write had been stored. A client set directly on `_async_http` is still used as is, and each thread running its own loop should use its own `Honcho` (#1357)
+
 ## [2.6.0] - 2026-10-07
 
 ### Added

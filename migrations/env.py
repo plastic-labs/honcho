@@ -53,6 +53,11 @@ target_metadata = Base.metadata
 
 # insufficient_privilege, feature_not_supported ("extension is not available")
 OPTIONAL_EXTENSION_ERRORS = frozenset({"42501", "0A000"})
+# Extension -> what runs unindexed without it
+OPTIONAL_EXTENSIONS = {
+    "pg_trgm": "message search will run unindexed",
+    "btree_gin": "pending queue work by observer will be found without its index",
+}
 
 
 def get_url() -> str:
@@ -140,20 +145,22 @@ def _prepare_schema(connection: Connection) -> None:
     connection.execute(text(f"GRANT ALL ON SCHEMA {schema} TO current_user"))
     connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
     # region ai
-    # pg_trgm backs the message-search ILIKE index. Where it can't be created
-    # (no privilege, or not installed on the server) it is skipped; the revision
-    # that builds the index checks for it. Other errors, e.g. a lock timeout
-    # that run_with_lock_retry should retry, propagate.
+    # Optional extensions: pg_trgm backs the message-search ILIKE index and
+    # btree_gin the workspace-scoped queue observers index. Where one can't be
+    # created (no privilege, or not installed on the server) it is skipped; the
+    # revision that builds the index checks for it. Other errors, e.g. a lock
+    # timeout that run_with_lock_retry should retry, propagate.
     # endregion
-    try:
-        with connection.begin_nested():
-            connection.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
-    except DBAPIError as e:
-        if getattr(e.orig, "sqlstate", None) not in OPTIONAL_EXTENSION_ERRORS:
-            raise
-        logging.getLogger("alembic").warning(
-            "Could not create extension pg_trgm; message search will run unindexed"
-        )
+    for extension, consequence in OPTIONAL_EXTENSIONS.items():
+        try:
+            with connection.begin_nested():
+                connection.execute(text(f"CREATE EXTENSION IF NOT EXISTS {extension}"))
+        except DBAPIError as e:
+            if getattr(e.orig, "sqlstate", None) not in OPTIONAL_EXTENSION_ERRORS:
+                raise
+            logging.getLogger("alembic").warning(
+                "Could not create extension %s; %s", extension, consequence
+            )
     connection.execute(text(f"SET search_path TO {schema}, public, extensions"))
 
 

@@ -1,7 +1,7 @@
 """drop the id-only fallback from the queue token-count function
 
 Revision ID: 0c67be41049b
-Revises: 647b773f05ac
+Revises: a3f9c2e81d47
 Create Date: 2026-10-21
 
 ``_queue_item_token_count`` prices a tenant-less queue row by probing
@@ -22,7 +22,7 @@ from migrations.utils import get_schema
 
 # revision identifiers, used by Alembic.
 revision: str = "0c67be41049b"
-down_revision: str | None = "647b773f05ac"
+down_revision: str | None = "a3f9c2e81d47"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

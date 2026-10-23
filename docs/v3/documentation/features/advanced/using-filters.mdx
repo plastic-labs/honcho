@@ -629,6 +629,15 @@ sessions = honcho.sessions(filters={
 ```
 </CodeGroup>
 
+A wildcard, like an empty filter `{}`, places no constraint, so it is always true, including inside logical operators:
+
+| Filter | Matches |
+| --- | --- |
+| `{"AND": [{"peer_id": "*"}, {"peer_id": "bob"}]}` | bob only |
+| `{"OR": [{"peer_id": "*"}, {"peer_id": "bob"}]}` | everything |
+| `{"NOT": [{"peer_id": "*"}]}` | nothing |
+| `{"NOT": [{}]}` | nothing |
+
 ## Resource-Specific Examples
 
 ### Filtering Workspaces

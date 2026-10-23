@@ -497,7 +497,10 @@ async def get_peers(
             ``{"kind": "scope"}`` internal_metadata flag), "scope" returns only
             scope peers, and "all" returns everything.
     """
-    stmt = select(models.Peer).where(models.Peer.workspace_name == workspace_name)
+    stmt = select(models.Peer).where(
+        models.Peer.tenant_id == models.scoped_tenant_id(),
+        models.Peer.workspace_name == workspace_name,
+    )
 
     if kind is None:
         stmt = stmt.where(~scope_peer_clause())
@@ -610,6 +613,7 @@ async def get_sessions_for_peer(
             & (models.Session.workspace_name == models.SessionPeer.workspace_name),
         )
         .where(models.SessionPeer.peer_name == peer_name)
+        .where(models.Session.tenant_id == models.scoped_tenant_id())
         .where(models.Session.workspace_name == workspace_name)
     )
 
