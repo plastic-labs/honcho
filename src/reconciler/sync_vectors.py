@@ -36,6 +36,7 @@ logger = logging.getLogger(__name__)
 
 # Constants
 RECONCILIATION_BATCH_SIZE = 50
+MESSAGE_CANDIDATE_FANOUT = 10
 RECONCILIATION_TIME_BUDGET_SECONDS = 240  # Leave headroom for other maintenance work
 MAX_SYNC_ATTEMPTS = 20  # After this many failures, mark as failed
 # Flat wait between sync attempts. With MAX_SYNC_ATTEMPTS=20 this gives ~3 hours
@@ -150,11 +151,15 @@ async def _get_message_embeddings_needing_sync(
     Note: "synced" = done forever, "failed" = permanent failure (manual intervention)
     """
     # Step 1: pick distinct message_ids with at least one eligible pending row,
-    # prioritizing those with the oldest last_sync_at.
-    msg_id_stmt = (
+    # prioritizing those with the oldest last_sync_at. The candidates come from
+    # an index-ordered walk of the oldest eligible rows, capped at
+    # batch_size * MESSAGE_CANDIDATE_FANOUT, so the aggregate never covers the
+    # whole pending set. A message's first appearance in that walk is its
+    # oldest chunk, so the order matches grouping over every pending row.
+    candidates = (
         select(
             models.MessageEmbedding.message_id,
-            func.min(models.MessageEmbedding.last_sync_at).label("oldest_attempt"),
+            models.MessageEmbedding.last_sync_at,
         )
         .where(
             and_(
@@ -162,8 +167,17 @@ async def _get_message_embeddings_needing_sync(
                 backoff_eligible(models.MessageEmbedding.last_sync_at),
             )
         )
-        .group_by(models.MessageEmbedding.message_id)
-        .order_by(func.min(models.MessageEmbedding.last_sync_at).asc().nullsfirst())
+        .order_by(models.MessageEmbedding.last_sync_at.asc().nullsfirst())
+        .limit(batch_size * MESSAGE_CANDIDATE_FANOUT)
+        .subquery()
+    )
+    msg_id_stmt = (
+        select(
+            candidates.c.message_id,
+            func.min(candidates.c.last_sync_at).label("oldest_attempt"),
+        )
+        .group_by(candidates.c.message_id)
+        .order_by(func.min(candidates.c.last_sync_at).asc().nullsfirst())
         .limit(batch_size)
     )
     msg_id_rows = (await db.execute(msg_id_stmt)).all()
