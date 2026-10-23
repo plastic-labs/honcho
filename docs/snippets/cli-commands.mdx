@@ -261,6 +261,9 @@ honcho peer chat <query>
 <ParamField path="--sessions" type="string">
   Recall only from these session IDs (repeat or comma-separate); explicit conclusions only. Excludes -s and --scope.
 </ParamField>
+<ParamField path="--response-format" type="string">
+  JSON Schema the answer must match (root type object). Inline JSON, or @path/to/schema.json. Sent as a schema object.
+</ParamField>
 <ParamField path="--evidence" type="boolean">
   Also report what the answer was built from: the conclusions and messages read and the tools called.
 </ParamField>
@@ -709,7 +712,10 @@ honcho workspace chat <query>
   Reasoning level: minimal, low, medium, high, max. Short alias: `-r`.
 </ParamField>
 <ParamField path="--scope" type="string">
-  Recall only from this scope. Repeat or comma-separate for several (explicit conclusions only). Excludes -s.
+  Restrict recall to the member sessions of this scope. Workspace chat always treats scope as an allowlist, including a single name (explicit conclusions only — not the scope's own reasoned view). Repeat or comma-separate for several. Excludes -s.
+</ParamField>
+<ParamField path="--response-format" type="string">
+  JSON Schema the answer must match (root type object). Inline JSON, or @path/to/schema.json. Sent as a schema object.
 </ParamField>
 <ParamField path="--evidence" type="boolean">
   Also report what the answer was built from: the conclusions and messages read and the tools called.
@@ -767,6 +773,11 @@ honcho workspace list
 </Accordion>
 <Accordion title="queue-status">
 Get queue processing status.
+
+On Honcho 3.4.0 and later the sessions map is keyed by session uid (the
+server-assigned id), not the client-chosen session name. Each entry's
+session_id is that same uid. The CLI prints the map as the server
+returned it.
 
 ```bash
 honcho workspace queue-status

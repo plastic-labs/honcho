@@ -7,7 +7,8 @@ what happened inside the scope's member sessions only.
 Every command except ``create`` fails closed on an unknown scope name: the SDK's
 ``honcho.scope()`` is get-or-create, so it is never used to *look up* a scope
 here — a typo in ``add-sessions`` must not silently create a new scope and
-start a backfill into it.
+start a backfill into it. Lookups use ``get_scope`` (a plain GET), which also
+lets a named-scope key read its own scope without listing the workspace.
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ from honcho import Honcho, NotFoundError, Scope
 
 from honcho_cli._help import HonchoTyperGroup
 from honcho_cli.commands.workspace import _handle_error, _raw_list
-from honcho_cli.common import add_common_options, get_client, handle_cmd_flags
+from honcho_cli.common import add_common_options, get_client, handle_cmd_flags, resource_uid
 from honcho_cli.output import print_error, print_result
 from honcho_cli.recall import parse_csv_repeatable
 from honcho_cli.validation import validate_resource_id
@@ -44,19 +45,20 @@ def _scope_dict(scope: Scope) -> dict:
 def _find_scope(client: Honcho, name: str) -> Scope:
     """Resolve an existing scope by name, or exit with SCOPE_NOT_FOUND.
 
-    Walks ``client.scopes()`` rather than calling ``client.scope(name)`` because
-    the latter creates the scope when it is missing.
+    ``client.scope()`` get-or-creates, so a typo must not use it. ``get_scope``
+    is a plain GET: it 404s when the name is missing, and a named-scope key can
+    read its own scope without listing every scope in the workspace.
     """
-    for scope in client.scopes():
-        if scope.id == name:
-            return scope
-    print_error(
-        "SCOPE_NOT_FOUND",
-        f"Scope '{name}' not found. Run `honcho scope list` to see existing scopes, "
-        f"or `honcho scope create {name}` to create it.",
-        {"scope": name},
-    )
-    raise typer.Exit(1)
+    try:
+        return client.get_scope(name)
+    except NotFoundError:
+        print_error(
+            "SCOPE_NOT_FOUND",
+            f"Scope '{name}' not found. Run `honcho scope list` to see existing scopes, "
+            f"or `honcho scope create {name}` to create it.",
+            {"scope": name},
+        )
+        raise typer.Exit(1) from None
 
 
 def _handle_scope_error(e: Exception, name: str) -> None:
@@ -179,13 +181,18 @@ def scope_sessions(
         items = [
             {
                 "id": s.id,
+                "uid": resource_uid(s),
                 "is_active": s.is_active,
                 "metadata": s.metadata,
                 "created_at": str(s.created_at),
             }
             for s in _raw_list(scope.sessions())
         ]
-        print_result(items, columns=["id", "is_active", "metadata", "created_at"], title=f"Scope sessions ({name})")
+        print_result(
+            items,
+            columns=["id", "uid", "is_active", "metadata", "created_at"],
+            title=f"Scope sessions ({name})",
+        )
     except Exception as e:
         _handle_scope_error(e, name)
 

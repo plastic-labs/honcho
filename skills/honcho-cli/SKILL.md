@@ -130,4 +130,11 @@ honcho conclusion search "topic" --observer <peer_id> --json
 honcho peer chat <peer_id> "what do you know about X?" --json
 honcho peer chat <peer_id> "what happened here?" --scope my-project --json
 honcho workspace chat "what themes show up across peers?" --json
+honcho peer chat "reply as JSON" --response-format '{"type":"object","properties":{"answer":{"type":"string"}},"required":["answer"]}' --json
 ```
+
+`--response-format` is a JSON Schema object (inline JSON or `@file`), root `type` `object`. `--json` nests the parsed answer. One `--scope` on peer chat is that scope's full view; on workspace chat a scope is always a session allowlist (explicit conclusions only), which is why a scoped workspace chat can look thin next to peer chat against the same scope.
+
+Workspace, peer, and session JSON includes `uid` (Honcho 3.4.0+). `honcho workspace queue-status` keys its `sessions` map by session uid, not the session name. `honcho message list` takes `--last N`.
+
+A named-scope API key does not get-or-create the workspace. It can chat, read a representation, and use member sessions (messages, context, summaries, search) plus its own scope. It cannot list the workspace or pass `-s` / `--sessions` on chat — the key's scope already confines recall.

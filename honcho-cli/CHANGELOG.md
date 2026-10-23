@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-10-20
+
+### Added
+
+- Workspace, peer, and session output includes `uid`, the immutable identifier Honcho 3.4.0 assigns next to the client-chosen `id`. List, inspect, create, session peers, and scope session listings all carry it. `null` when the server does not return one (#1394)
+- `--response-format` on `honcho peer chat` and `honcho workspace chat`. Pass a JSON Schema object inline or as `@path/to/schema.json` (root `type` must be `object`). The CLI sends that object as `response_format`, not a JSON string, and `--json` nests the parsed answer (#1379)
+- Named-scope API keys (audience `honcho:named-scope`) no longer trigger workspace get-or-create before the command's own request. Peer chat and representation build a local peer handle instead of calling peer get-or-create, which those keys cannot do. Scope lookups use `get_scope` so a key can read its own scope without listing the workspace. An ambient `HONCHO_SESSION_ID` is not sent on those recall commands, because the key's scope and `session_id` are mutually exclusive (#1341)
+
+### Changed
+
+- Requires `honcho-ai` 2.7.0 (was 2.5.0), which carries `uid` on workspace, peer, and session responses
+- `honcho workspace chat --scope` help states that workspace chat always treats a scope as a session allowlist, including a single name (explicit conclusions only). A single name on `honcho peer chat` is still that scope's full view
+- `honcho workspace queue-status` help notes that the `sessions` map is keyed by session uid
+- `--evidence` conclusions include `observer_id` and `observed_id`
+- Reported CLI version matches the package version
+
 ## [0.2.1] - 2026-10-20
 
 ### Fixed

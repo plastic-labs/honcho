@@ -125,6 +125,8 @@ class TestChatEvidence:
         assert peer.chat.call_args.kwargs["include_evidence"] is True
         evidence = json.loads(result.stdout)["evidence"]
         assert evidence["conclusions"][0]["level"] == "explicit"
+        assert evidence["conclusions"][0]["observer_id"] == "alice"
+        assert evidence["conclusions"][0]["observed_id"] == "alice"
         assert evidence["tool_calls"] == [{"tool_name": "search_memory", "tool_input": {"query": "q"}}]
         # Messages carry identity only, so they collapse to per-session counts
         assert evidence["messages"] == {"total": 2, "sessions": [{"session_id": "s1", "count": 2}]}
