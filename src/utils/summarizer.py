@@ -36,6 +36,7 @@ from src.telemetry.prometheus.metrics import (
     TokenTypes,
 )
 from src.utils.formatting import custom_instructions_section, utc_now_iso
+from src.utils.sanitization import strip_nul
 from src.utils.tokens import estimate_tokens, tokenizer, track_deriver_input_tokens
 
 from .. import crud, models
@@ -256,7 +257,8 @@ def _refuse_degraded_empty_summary(
     summary is never saved, so accepting it would consume the boundary."""
 
     def validate(response: HonchoLLMCallResponse[Any]) -> None:
-        if str(response.content).strip():
+        # NUL-only output is empty once `_create_summary` strips it.
+        if strip_nul(str(response.content)).strip():
             return
         parse_class = degraded_response_parse_class(response)
         if parse_class is not None:
@@ -753,7 +755,9 @@ async def _create_summary(
                 telemetry=telemetry,
             )
 
-        summary_text = response.content
+        # Strip NUL before the checks below so they judge the text that gets
+        # stored: jsonb rejects NUL, and NUL-only output must count as empty.
+        summary_text = strip_nul(response.content)
         summary_tokens = response.output_tokens
         llm_input_tokens = response.input_tokens
         llm_output_tokens = response.output_tokens
@@ -835,6 +839,9 @@ async def _save_summary(
     """
     Save a summary as metadata on a session.
 
+    NUL is stripped from the content because jsonb rejects it. Deciding whether
+    the content is worth saving (empty, fallback, degenerate) is the caller's job.
+
     Args:
         db: Database session
         summary: The summary to save
@@ -859,7 +866,8 @@ async def _save_summary(
     # We need to merge the new summary into the existing summaries structure
     update_data = {}
     existing_summaries = session.internal_metadata.get(SUMMARIES_KEY, {})
-    existing_summaries[label_value] = summary
+    sanitized: Summary = {**summary, "content": strip_nul(summary["content"])}
+    existing_summaries[label_value] = sanitized
     update_data[SUMMARIES_KEY] = existing_summaries
 
     stmt = (
