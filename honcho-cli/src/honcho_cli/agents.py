@@ -234,10 +234,13 @@ def _openclaw_install(_: Credentials) -> list[list[str]]:
     # The plugin reads the key from ~/.honcho/config.json. From ClawHub rather
     # than npm: OpenClaw cancels an npm-sourced install without a terminal, and
     # without --accept-capabilities it stops to ask for consent either way.
-    # Message capture also needs conversation access, which the plugin's own
-    # warning says to turn on this way.
+    # `plugins uninstall` leaves the entry behind as enabled: false, so a
+    # reinstall would stay disabled without the explicit enable. Message capture
+    # also needs conversation access, which the plugin's own warning says to
+    # turn on this way.
     return [
         ["openclaw", "plugins", "install", "clawhub:@honcho-ai/openclaw-honcho", "--accept-capabilities"],
+        ["openclaw", "plugins", "enable", "openclaw-honcho"],
         ["openclaw", "config", "set", "plugins.entries.openclaw-honcho.hooks.allowConversationAccess", "true"],
     ]
 
@@ -273,7 +276,7 @@ AGENTS: tuple[Agent, ...] = (
         bins=("claude",), paths=lambda: [_env_path("CLAUDE_CONFIG_DIR", _home() / ".claude")],
         caller_env=("CLAUDECODE", "CLAUDE_CODE"),
         has_honcho=_claude_code_has_honcho, install=_claude_code_install,
-        requires=("claude", "bun"),
+        requires=("claude", "node"),  # the plugin's hooks run on node
     ),
     Agent(
         id="codex", name="Codex", kind="mcp", docs_url=f"{MCP_DOCS}#codex",

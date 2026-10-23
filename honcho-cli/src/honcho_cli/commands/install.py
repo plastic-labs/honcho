@@ -14,6 +14,7 @@ prompts.
 from __future__ import annotations
 
 import contextlib
+import getpass
 import json
 import os
 import shlex
@@ -90,17 +91,28 @@ def _fmt(commands: list[list[str]], key: str) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# the API key every install uses
+# the API key and user peer every install uses
+
+
+def _read_config() -> dict[str, Any] | None:
+    """The config file as a dict: empty when missing, None when it exists but can't be parsed."""
+    try:
+        data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _saved_field(key: str) -> str:
+    """A string field from the config file itself (not the env vars CLIConfig overlays)."""
+    value = (_read_config() or {}).get(key)
+    return value if isinstance(value, str) else ""
 
 
 def _saved_key() -> str:
-    """``apiKey`` from the config file itself (not the env var CLIConfig overlays)."""
-    try:
-        data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return ""
-    key = data.get("apiKey") if isinstance(data, dict) else None
-    return key if isinstance(key, str) else ""
+    return _saved_field("apiKey")
 
 
 def _save_key(cfg: CLIConfig, key: str) -> None:
@@ -158,6 +170,36 @@ def _ensure_api_key(interactive: bool) -> str | None:
             _save_key(cfg, key)
             return key
         _console.print(f"  {ICON_FAIL} {detail}. Try again, or press Enter to cancel.")
+
+
+def _default_peer_name() -> str:
+    try:
+        return getpass.getuser() or "user"
+    except Exception:  # no username in the environment or the password database
+        return "user"
+
+
+def _ensure_peer_name(interactive: bool) -> None:
+    """A shared ``peerName`` in ``~/.honcho/config.json``, asking for one if absent.
+
+    Hermes saves nothing from CLI turns until it knows the user's peer, and the
+    other plugins fall back to the same field, so every agent names the user the
+    same way. Defaults to the OS username, as the Claude Code plugin does.
+    """
+    if _saved_field("peerName"):
+        return
+    data = _read_config()
+    if data is None:
+        _console.print(f"  [yellow]![/yellow] Couldn't read {CONFIG_FILE}, so no peerName was saved.")
+        return
+    default = _default_peer_name()
+    name = typer.prompt("  What should your agents call you?", default=default).strip() if interactive else ""
+    data["peerName"] = name or default
+    CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    CONFIG_FILE.write_text(json.dumps(data, indent=2) + "\n")
+    with contextlib.suppress(OSError):
+        os.chmod(CONFIG_FILE, 0o600)
+    _console.print(f"  {ICON_OK} [dim]Agents will call you {data['peerName']} (peerName in {CONFIG_FILE})[/dim]")
 
 
 # --------------------------------------------------------------------------- #
@@ -310,6 +352,7 @@ def _run_installs(chosen: list[Detection], interactive: bool, results: dict[str,
                     results[d.agent.id] = "no_api_key"
             _console.print("  Nothing installed: every agent here needs the API key.")
             return 1
+        _ensure_peer_name(interactive)
         creds = Credentials(api_key=key, base_url=CLIConfig.load().base_url)
 
     failed: list[str] = []

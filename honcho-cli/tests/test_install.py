@@ -19,7 +19,7 @@ KEY = "hch-test-0123456789abcdef"
 STUBS = {
     "claude": 'case "$*" in "plugin list --json") echo \'[{"id":"honcho@honcho"}]\';; esac',
     "codex": '[ "$*" = "mcp get honcho" ] && { [ -f "$HOME/codex-has-honcho" ] || exit 1; }; exit 0',
-    "bun": "exit 0",
+    "node": "exit 0",
     "npx": "exit 0",
 }
 
@@ -80,6 +80,9 @@ def test_detects_agents_and_installs_only_what_is_missing(machine, monkeypatch):
         (["npx", "-y", "skills"], True),
     ]
     assert f"Authorization:Bearer {KEY}" in ran[0][0]
+    # A shared user peer is saved next to the key, keeping what was already there.
+    saved = json.loads((machine / ".honcho" / "config.json").read_text())
+    assert saved["apiKey"] == KEY and saved["peerName"]
 
 
 @pytest.mark.skipif(not CATALOG.exists(), reason="docs catalog not in this checkout")
