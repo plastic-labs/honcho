@@ -68,6 +68,7 @@ def print_welcome(console: Console) -> None:
 
     start_rows = [
         ("honcho init",                  "configure API key and server URL"),
+        ("honcho install",               "detect local AI agents and install Honcho"),
         ("honcho start [--setup basic]", "run a local Honcho stack (Docker)"),
         ("honcho doctor",                "verify connection and workspace health"),
     ]

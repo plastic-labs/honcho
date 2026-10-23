@@ -65,10 +65,12 @@ def main(
 
 
 # Register top-level commands
+from honcho_cli.commands.install import install
 from honcho_cli.commands.setup import doctor, init
 from honcho_cli.commands.stack import start, status, stop
 
 app.command()(init)
+app.command()(install)
 app.command()(doctor)
 app.command()(start)
 app.command()(stop)

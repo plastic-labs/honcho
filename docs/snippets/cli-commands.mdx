@@ -166,6 +166,35 @@ honcho init
   Honcho API URL (e.g. https://api.honcho.dev, http://localhost:8000).
 </ParamField>
 
+## honcho install
+
+Detect local AI agents and install Honcho memory.
+
+Detects which agents from the integrations catalog are on your machine,
+checks if Honcho is already configured, and lets you install plugins
+or view MCP setup guides.
+
+```bash
+honcho install [<targets>]
+honcho install all
+honcho install codex pi
+honcho install deepseek-harness --profile web
+```
+
+<ParamField path="targets" type="string">
+  Agent IDs, or `all` for detected agents without Honcho. Omit for a terminal checkbox picker.
+</ParamField>
+<ParamField path="--profile" type="string">
+  DeepSeek Harness profile, such as `web`, `headless`, or `acp`. Required for DeepSeek in non-interactive runs.
+  With `all`, installs DeepSeek into this profile even if another profile already has Honcho.
+</ParamField>
+<ParamField path="--list" type="boolean">
+  List detected agents and Honcho status without installing. Short alias: `-l`.
+</ParamField>
+<ParamField path="--json" type="boolean">
+  Output detected agents and status as JSON without installing.
+</ParamField>
+
 ## honcho message
 
 List, create, and get messages within a session.

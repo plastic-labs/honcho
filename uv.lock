@@ -1214,6 +1214,8 @@ dependencies = [
     { name = "click" },
     { name = "honcho-ai" },
     { name = "httpx" },
+    { name = "json5" },
+    { name = "pyyaml" },
     { name = "rich" },
     { name = "typer" },
 ]
@@ -1229,8 +1231,10 @@ requires-dist = [
     { name = "click", specifier = ">=8.0.0" },
     { name = "honcho-ai", editable = "sdks/python" },
     { name = "httpx", specifier = ">=0.27.0" },
+    { name = "json5", specifier = ">=0.12.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "pytest-mock", marker = "extra == 'dev'", specifier = ">=3.14.0" },
+    { name = "pyyaml", specifier = ">=6.0.0" },
     { name = "rich", specifier = ">=13.0.0" },
     { name = "typer", specifier = ">=0.15.0" },
 ]
@@ -1484,6 +1488,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/b7/67/eba7fad54ff6f5cce6db4e01f596fc68156b5c7e864af0aa07ad48e880a1/json_repair-0.59.5.tar.gz", hash = "sha256:bb886ee054e99066be8a337b67a986b6a50d79be9a5ad37ae81966e698990784", size = 48632, upload-time = "2026-04-24T11:41:38.133Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/3e/aa/0529dee460b745b93f6abc97b56b7527314c5167ba29ab7a5bd5c08de01f/json_repair-0.59.5-py3-none-any.whl", hash = "sha256:6869965bd1cc1aaaa04dc85865c26fbb76d9a2d83a20010f5eae2563b1567827", size = 47282, upload-time = "2026-04-24T11:41:36.653Z" },
+]
+
+[[package]]
+name = "json5"
+version = "0.17.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/16/1f/58a4d7ee466f81bc3c7337036380fc6d49de3afb7855d74f8121b1e89b32/json5-0.17.3.tar.gz", hash = "sha256:8d0278ad34ebaa9c3af76d9519274811830224a2d1cd5af156dbd067f461b8a4", size = 54234, upload-time = "2026-10-09T21:19:28.335Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ae/39/e689b616c4279a821d5842a8a85c1874540f8d58e35028df93f2182120c2/json5-0.17.3-py3-none-any.whl", hash = "sha256:2c8b22a893c35cd6a3c5ccbf1dd1c7d02c25dc1b5897fea658f9bf08c2e05f9a", size = 34809, upload-time = "2026-10-09T21:19:27.357Z" },
 ]
 
 [[package]]
