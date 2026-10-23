@@ -8,7 +8,6 @@ Config chain: $HERMES_HOME/honcho.json -> ~/.honcho/config.json -> env vars.
 from __future__ import annotations
 
 import contextlib
-import hashlib
 import json
 import logging
 import os
@@ -21,17 +20,56 @@ from agent.memory_manager import sanitize_context
 from agent.memory_provider import MemoryProvider, is_trivial_prompt
 from agent.coding_context import INTERACTIVE_CODING_PLATFORMS as _LOCAL_PLATFORMS
 from agent.skill_commands import extract_user_instruction_from_skill_message
-from agent.turn_author import a2a_key
 from .client import HonchoClientConfig, resolve_config_path
 from .client import _host_block, _HostLookup
 from .client import join_plugin_threads, spawn_context_thread
 from .dialectic import DialecticMixin
-from .session_peers import assistant_peer_id_for, sanitize_peer_id
+from .session_peers import a2a_session_key_for
 from .session_context import usable_honcho_summary
 from .tool_schemas import ALL_TOOL_SCHEMAS
 from tools.registry import tool_error
 
 logger = logging.getLogger(__name__)
+
+
+def _conclusion_error_message(exc: Exception) -> str:
+    """Return a bounded, redacted diagnostic without inspecting transport objects."""
+    fallback = "Failed to save conclusion. Error details unavailable; check the Honcho logs."
+    try:
+        from agent.redact import redact_sensitive_text
+        from honcho.http.exceptions import APIError, ConnectionError, TimeoutError
+
+        from .session_context import ConclusionWriteError
+
+        prefix = "Failed to save conclusion"
+        if isinstance(exc, TimeoutError):
+            detail = (
+                "Honcho request timed out. Check server availability and the timeout setting. "
+                "Confirm whether the conclusion was saved before retrying."
+            )
+        elif isinstance(exc, ConnectionError):
+            detail = (
+                "Could not connect to Honcho. Check the service address and availability. "
+                "Confirm whether the conclusion was saved before retrying."
+            )
+        elif isinstance(exc, APIError):
+            status = exc.status
+            if type(status) is int and 100 <= status <= 599:
+                prefix += f" ({status})"
+            detail = exc.message
+        elif isinstance(exc, ConclusionWriteError):
+            detail = str(exc)
+        else:
+            detail = f"Unexpected {type(exc).__name__}; check the Honcho logs."
+        message = redact_sensitive_text(
+            f"{prefix}: {detail}", force=True, redact_url_credentials=True,
+        )
+        # Hermes masks URL passwords but retains usernames; omit the whole userinfo here.
+        message = re.sub(r"(://)[^/\s?#@]+@", r"\1***@", message)
+        message = " ".join(re.sub(r"[\x00-\x1f\x7f-\x9f]", " ", message).split())
+        return message if len(message) <= 1000 else message[:997] + "..."
+    except Exception:
+        return fallback
 
 
 # Gateway-internal notifications arrive through the same user-role channel as genuine
@@ -918,11 +956,7 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
 
         This agent's ``aiPeer`` is in the key because two profiles can share a workspace and a session
         key. The digest keeps two ids apart when sanitizing would make them equal."""
-        prefix, _, ident = (a2a_key(author) or "").partition(":")
-        digest = hashlib.sha256(ident.encode("utf-8")).hexdigest()[:8]
-        recipient = assistant_peer_id_for(self._config)
-        key = f"{self._session_key}:{prefix}:{recipient}:{sanitize_peer_id(ident)}-{digest}"
-        return HonchoClientConfig._enforce_session_id_limit(key, key)
+        return a2a_session_key_for(self._session_key, self._config, author)
 
     def _bot_turn_write_refusal(self) -> Optional[str]:
         """Refusal for memory writes while a bot-authored turn runs. Conclusions and cards describe the human."""
@@ -1058,6 +1092,7 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
         return json.dumps({"result": "\n\n".join(parts) or "No context available."})
 
     def _tool_conclude(self, args: dict) -> str:
+        """Create, list, or delete conclusions and sanitize explicit write failures."""
         delete_id = (args.get("delete_id") or "").strip()
         conclusion = args.get("conclusion", "").strip()
         list_mode = bool(args.get("list"))
@@ -1076,7 +1111,19 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
             if self._manager.delete_conclusion(self._session_key, delete_id, peer=peer):
                 return json.dumps({"result": f"Conclusion {delete_id} deleted."})
             return tool_error(f"Failed to delete conclusion {delete_id}.")
-        if self._manager.create_conclusion(self._session_key, conclusion, peer=peer):
+        from .session_auth import HonchoAuthError
+
+        try:
+            saved = self._manager.create_conclusion(
+                self._session_key, conclusion, peer=peer, raise_on_error=True,
+            )
+        except HonchoAuthError:
+            raise  # preserve handle_tool_call's auth-specific response
+        except Exception as exc:
+            message = _conclusion_error_message(exc)
+            logger.warning("honcho_conclude failed: %s", message)
+            return tool_error(message)
+        if saved:
             return json.dumps({"result": f"Conclusion saved for {peer}: {conclusion}"})
         return tool_error("Failed to save conclusion.")
 

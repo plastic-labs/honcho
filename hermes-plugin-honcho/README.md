@@ -164,6 +164,12 @@ Five bidirectional tools. All accept an optional `peer` parameter (`"user"` or `
 | `honcho_reasoning` | Yes | LLM-synthesized answer via dialectic `.chat()` |
 | `honcho_conclude` | No | Write, list/search, or delete persistent conclusions (list surfaces the ids delete needs) |
 
+When `honcho_conclude` cannot save a conclusion, its error includes the API reason
+and HTTP status when available. Timeout and connection errors include specific
+checks. Confirm whether the conclusion was saved before retrying either error;
+the plugin adds no retry for these failures. Error details are redacted and capped
+at 1000 characters. Background memory writes keep their existing failure handling.
+
 Tool visibility depends on `recallMode`: hidden in `context` mode, always present in `tools` and `hybrid`.
 
 ## Config Resolution
@@ -427,6 +433,106 @@ Presets:
 | `hermes honcho tokens --dialectic <N>` | Set dialectic max chars |
 | `hermes honcho map <name>` | Map current directory to a session name |
 | `hermes honcho sync` | Create host blocks for all Hermes profiles |
+| `hermes honcho import` | Preview and import local conversation history into Honcho |
+
+## Import Local History
+
+Import conversations stored before you enabled Honcho. The command reads the active
+profile's `state.db` through a temporary SQLite backup, including committed WAL data.
+It preserves each message's original timestamp and uses the current session and peer
+mapping. Original messages archived by in-place compression are included. Compression
+summaries, undone turns, tools, hidden sessions, and subagents are excluded. Text passes
+through Hermes' secret redactor before chunking or hashing, even when ordinary display
+redaction is disabled. NUL characters are removed before upload and verification.
+
+1. Configure Honcho for the profile. Check its owner peer, server, workspace, and mappings.
+2. Preview the default 30-day window:
+
+   ```bash
+   hermes honcho import --dry-run
+   hermes -p coder honcho import --days 90 --dry-run
+   ```
+
+3. Pause live writes for this profile. Use one importer for each source database.
+4. Check the displayed destination and counts, then run:
+
+   ```bash
+   hermes honcho import
+   # For a non-interactive run after checking the preview:
+   hermes honcho import --yes
+   ```
+
+| Option | Meaning |
+|--------|---------|
+| `--days N` | Include messages from the last N days; default 30 |
+| `--workspace ID` | Override the destination workspace for this run |
+| `--source LIST` | Comma-separated sources; default `cli,desktop` |
+| `--before TIMESTAMP` | Import only messages before this ISO 8601 timestamp, with an explicit timezone |
+| `--dry-run` | Show local counts and mappings without remote calls, OAuth refresh, or config/progress writes |
+| `--yes` | Confirm the displayed destination without a prompt |
+
+Select profiles with `hermes -p NAME`; `--target-profile` cannot switch the source
+database. Gateway sources require explicit selection, for example
+`--source cli,desktop,telegram`. Gateway history needs stored proof of a direct
+conversation with the install owner. A configured peer pin alone is not proof.
+Ambiguous authors and group conversations are skipped and reported. Recognized bot
+conversations use the live bot routing rules when `a2aSessions` is enabled.
+
+Compression chains count as one logical conversation. Each physical segment keeps
+its live destination and its own progress. Imported text uses the live message
+chunking rules. Each request contains at most 100 chunks. Importing triggers Honcho's
+normal background processing; uploaded messages can become available before derived
+memory is ready.
+
+### Existing Live History
+
+The importer cannot infer when Honcho was first enabled. If a target contains
+unmarked live messages, it blocks that target. If you know the actual historical
+cutoff, supply it explicitly:
+
+```bash
+hermes honcho import --before 2026-09-01T00:00:00Z --dry-run
+hermes honcho import --before 2026-09-01T00:00:00Z --yes
+```
+
+This boundary comes from you. It is not automatic content deduplication. Identical
+text in different source rows is preserved.
+
+Messages from all sources mapped to one target are uploaded in original timestamp
+order. Honcho assigns conversation sequence numbers when messages are appended; a
+timestamp cannot insert an older message into an existing sequence. If selected new
+history is older than any message already in the target, that target is blocked,
+including with `--before`. The command does not delete or reorder existing messages.
+Choose the full desired time window on the first run. To import an earlier window
+after newer messages are present, use an empty destination workspace or session.
+
+### Resume an Import
+
+Progress is stored in `~/.honcho/hermes-import-state.json`. It contains IDs, hashes,
+and cursors, without conversation text or credentials. It separates servers,
+workspaces, profiles, and source databases. A local process lock serializes writes;
+it does not provide a uniqueness guarantee across machines or separate ledgers.
+
+Run the same command again to resume. Confirmed chunks are skipped. New source rows
+are imported, and a larger time window rescans earlier rows subject to the ordering
+rule above. Keep the original ledger: changed mappings, replaced databases, and damaged
+state stop recovery. If mandatory text normalization changes a previously imported
+payload, recovery stops rather than uploading it again. Check the remote history and
+original progress; do not reset the ledger to bypass this check.
+
+Each request is sent once, with SDK retries disabled. Timeouts, server errors, and
+incomplete responses leave a pending batch. The next run checks its remote metadata.
+It commits progress only when all chunks match. Missing or partial results remain
+pending and are never automatically resent. Restore the original ledger if a
+partially imported source has lost its local progress.
+
+Definite failures while establishing a connection clear the saved pending marker;
+fix connectivity and run the command again. Other transport failures remain pending.
+If clearing the marker cannot be saved, the command reports unresolved work.
+
+Exit codes are `0` for success, no-op, dry-run, or cancellation; `2` for invalid
+input/configuration; `1` for a definite execution failure; and `3` for partial or
+unresolved work. Check the final summary before resuming live writes.
 
 ## Example Config
 
