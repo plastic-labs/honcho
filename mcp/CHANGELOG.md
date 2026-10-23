@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 This package versions independently of the Honcho API, `@honcho-ai/sdk`, and host plugins.
 
+## [Unreleased]
+
+## [3.2.0] - 2026-10-20
+
+### Added
+
+- A caller-set `X-Honcho-Plugin` header is forwarded to the Honcho API as the
+  plugin identity, with the host appended in parentheses
+  (`cursor-honcho/0.2.0 (Cursor/1.0.0)`). Integrations that configure a
+  connection, and the per-client configs in the docs, can now name themselves;
+  before, the Worker discarded the header and recorded only the `User-Agent`.
+- `X-Honcho-Plugin` is allowed through CORS on the Worker and the HTTP server.
+
+Nothing is required: a connection that sends neither header is recorded exactly
+as before.
+
+### Fixed
+
+- An expired or revoked OAuth token now returns HTTP 401 (`invalid_token`)
+  instead of a tool error, so clients refresh it rather than showing Honcho as
+  signed out after an hour. Tool calls now respond with a single JSON body
+  instead of an SSE stream. API key errors are unchanged.
+- A request carrying an expired or unknown `mcp-session-id` returns HTTP 404
+  instead of 400, the Streamable HTTP signal for a client to start a new
+  session. A request with no session header at all still returns 400.
+- `bun run deploy` and `bun run deploy:staging` reinstall from the lockfile and
+  typecheck before deploying. wrangler bundles whatever is in `node_modules`, so a
+  checkout with a stale install shipped the Worker against `@honcho-ai/sdk` 2.2.0.
+  `workspace_chat`, the scope tools, `get_conclusions` and `get_derived_conclusions`
+  failed; `chat` with `include_evidence` returned `{"content":"None"}`; and `scope` /
+  `sessions` recall bounds and conclusion attribution were silently dropped.
+- `chat` with `include_evidence` reports an error when the server's Honcho SDK
+  is older than 2.5.0, instead of answering `{"content":"None"}`. An older SDK
+  drops the option and returns the bare answer.
+
 ## [3.1.0] - 2026-10-07
 
 ### Added

@@ -314,6 +314,13 @@ def _bare_request() -> Request:
 
 
 class TestRequireAuthSentryTenantTag:
+    @pytest.fixture(autouse=True)
+    def _no_inherited_tenant_tag(self) -> None:
+        # A route test run earlier in this process (e.g. tests/routes/test_keys_tenant.py)
+        # goes through require_auth without sentry's ASGI middleware, so its tag lands
+        # on the process-wide isolation scope that every isolation_scope() here forks.
+        sentry_sdk.get_isolation_scope().remove_tag("tenant_id")
+
     @pytest.mark.asyncio
     async def test_tag_outlives_the_dependency_for_the_error_handler_when_flag_on(
         self, monkeypatch: pytest.MonkeyPatch

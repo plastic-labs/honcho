@@ -1,7 +1,7 @@
 """add tenant id primitive
 
 Revision ID: e5fe7f8bcf62
-Revises: a7c3e9f1b2d4
+Revises: a5f8da8f6d23
 Create Date: 2026-09-03
 
 Adds ``tenant_id`` as a first-class primitive to the data model: a new
@@ -25,7 +25,7 @@ from migrations.utils import (
 
 # revision identifiers, used by Alembic.
 revision: str = "e5fe7f8bcf62"
-down_revision: str | None = "a7c3e9f1b2d4"
+down_revision: str | None = "a5f8da8f6d23"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -293,9 +293,11 @@ NEW_FKS: list[tuple[str, str, list[str], str, list[str], str | None]] = [
 # removed those constraints from the catalog under their original names, so
 # there is nothing left on the DB to read the old definitions back from. The
 # two lists below are instead the literal pre-migration constraint set,
-# captured by migrating a fresh database to this revision's down_revision
-# (a7c3e9f1b2d4) and dumping pg_constraint for every TENANT_SCOPED table plus
-# queue. Keep them in lockstep with a7c3e9f1b2d4's schema, not with NEW_FKS /
+# captured by migrating a fresh database to a7c3e9f1b2d4 and dumping
+# pg_constraint for every TENANT_SCOPED table plus queue. The revisions between
+# a7c3e9f1b2d4 and this revision's down_revision (a5f8da8f6d23) add only
+# indexes and plain columns, no constraints, so the lists still hold. Keep them
+# in lockstep with that constraint set, not with NEW_FKS /
 # NEW_UNIQUES above (those are the *new* tenant-aware shape).
 # endregion
 

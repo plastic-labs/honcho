@@ -6,12 +6,18 @@ src/llm/api.py, src/llm/tool_loop.py, src/llm/runtime.py.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator
 from typing import Any, cast
 
 from pydantic import BaseModel
 
-from src.config import ModelConfig, PromptCachePolicy, coerce_provider_timeout
+from src.config import (
+    THINKING_TOOL_CHOICE_CONFLICT_MODES,
+    ModelConfig,
+    PromptCachePolicy,
+    coerce_provider_timeout,
+)
 from src.exceptions import ValidationException
 
 from .backend import (
@@ -21,8 +27,33 @@ from .backend import (
 )
 from .errors import raise_upstream_error
 
+logger = logging.getLogger(__name__)
+
 # Operator escape-hatch keys recognized inside ModelConfig.provider_params.
 PASSTHROUGH_KEYS = ("extra_body", "extra_headers", "extra_query")
+
+
+def thinking_tool_choice_conflict_mode(
+    extra_params: dict[str, Any] | None, default: str | None
+) -> str | None:
+    """Read provider_params.thinking_tool_choice_conflict.
+
+    Config load rejects unknown values (ModelOverrideSettings), so one only
+    gets here from a ModelConfig built in code. Rather than failing the
+    caller's request, log it (an ERROR log reaches Sentry) and use the
+    backend's default.
+    """
+    mode = (extra_params or {}).get("thinking_tool_choice_conflict", default)
+    if mode is not None and mode not in THINKING_TOOL_CHOICE_CONFLICT_MODES:
+        logger.error(
+            "Unknown thinking_tool_choice_conflict mode %r; expected one of %s. "
+            + "Using %r.",
+            mode,
+            sorted(THINKING_TOOL_CHOICE_CONFLICT_MODES),
+            default,
+        )
+        return default
+    return mode
 
 
 def coerce_passthrough_mapping(key: str, value: Any) -> dict[str, Any]:
