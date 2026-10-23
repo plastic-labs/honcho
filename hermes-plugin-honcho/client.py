@@ -123,6 +123,7 @@ def resolve_config_path() -> Path:
 # --- config coercion -------------------------------------------------------
 
 _RECALL_MODES = ({"auto": "hybrid"}, {"hybrid", "context", "tools"}, "hybrid")
+_DIALECTIC_INJECTION_MODES = ({}, {"async", "blocking"}, "async")
 _OBSERVATION_MODES = (
     {"shared": "unified", "separate": "directional", "cross": "directional"},
     {"unified", "directional"},
@@ -293,6 +294,11 @@ def _connection_fields(look: _HostLookup, host: str, path: Path) -> dict[str, An
     }
 
 
+def _template(value: Any) -> str | None:
+    """A non-blank template string, else None (the built-in default applies)."""
+    return value if isinstance(value, str) and value.strip() else None
+
+
 def _behavior_fields(look: _HostLookup, explicitly_configured: bool) -> dict[str, Any]:
     """Resolve memory-behavior tuning fields (host block -> root -> defaults)."""
     raw_wf = look.pick("writeFrequency") or "async"
@@ -320,6 +326,10 @@ def _behavior_fields(look: _HostLookup, explicitly_configured: bool) -> dict[str
         "reasoning_level_cap": look.pick("reasoningLevelCap") or "high",
         "message_max_chars": look.parsed("messageMaxChars", int, 25000),
         "dialectic_max_input_chars": look.parsed("dialecticMaxInputChars", int, 10000),
+        "dialectic_injection_mode": _normalize_choice(look.pick("dialecticInjectionMode") or "async",
+                                                      _DIALECTIC_INJECTION_MODES),
+        "dialectic_query_template": _template(look.pick("dialecticQueryTemplate")),
+        "dialectic_result_template": _template(look.pick("dialecticResultTemplate")),
         "recall_mode": _normalize_choice(look.pick("recallMode") or "hybrid", _RECALL_MODES),
         "recall_sync": look.flag("recallSync", default=False),
         "init_on_session_start": look.flag("initOnSessionStart", default=False),
@@ -376,6 +386,12 @@ class HonchoClientConfig:
     # Honcho API limits (Honcho cloud: 25000 / 10000) — configurable for self-hosts
     message_max_chars: int = 25000
     dialectic_max_input_chars: int = 10000
+    # "async": base context plus a dialectic fired for the next turn. "blocking": one dialectic per turn,
+    # run in on_turn_start over the current prompt and recent exchanges, and nothing else injected.
+    dialectic_injection_mode: str = "async"
+    # Blocking-mode templates; None uses the defaults in dialectic.py.
+    dialectic_query_template: str | None = None
+    dialectic_result_template: str | None = None
     # "hybrid" (context + tools) | "context" (no tools) | "tools" (no auto context)
     recall_mode: str = "hybrid"
     recall_sync: bool = False  # bounded current-query automatic recall
