@@ -2766,11 +2766,22 @@ class TestObservationContextSessionCorrelation:
             message_ids=[messages[2].public_id, other_messages[2].public_id],
         )
 
-        expected = sorted(
+        rows = [(m.session_name, m.seq_in_session) for m in result]
+        assert sorted(rows) == sorted(
             [(session.name, seq) for seq in (2, 3, 4)]
             + [(other.name, seq) for seq in (2, 3, 4)]
         )
-        assert [(m.session_name, m.seq_in_session) for m in result] == expected
+        # Postgres orders session_name by its collation, which need not agree
+        # with Python's; assert the grouping, not the collation.
+        session_runs = [
+            name for i, (name, _) in enumerate(rows) if i == 0 or rows[i - 1][0] != name
+        ]
+        assert session_runs == [
+            session_runs[0],
+            next(n for n in (session.name, other.name) if n != session_runs[0]),
+        ]
+        for name in (session.name, other.name):
+            assert [seq for n, seq in rows if n == name] == [2, 3, 4]
 
 
 @pytest.mark.asyncio
