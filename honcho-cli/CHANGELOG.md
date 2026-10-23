@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
-- `honcho install` finds the AI agents on this machine, shows which already have Honcho, and offers a checkbox picker. Claude Code, Hermes Agent and OpenClaw get their Honcho plugin and Codex the Honcho MCP server and skill, each through the agent's own commands and the API key in `~/.honcho/config.json`. Other agents it finds link to their setup guide, and `honcho install grok-bot` copies a setup prompt for Grok Bot. Run from inside Claude Code or Codex, it sets up that agent without prompting. `honcho install all` or `honcho install <id>...` skips the picker; `--list` and `--json` only report
+- `honcho install` finds the AI agents on this machine, shows which already have Honcho, and offers a checkbox picker. Claude Code, Hermes Agent, OpenClaw and Pi get their Honcho plugin and Codex the Honcho MCP server and skill, each through the agent's own commands and the API key in `~/.honcho/config.json`. Other agents it finds link to their setup guide, and `honcho install grok-bot` copies a setup prompt for Grok Bot. Run from inside Claude Code or Codex, it sets up that agent without prompting. `honcho install all` or `honcho install <id>...` skips the picker; `--list` and `--json` only report
 
 ## [0.2.0] - 2026-09-21
 

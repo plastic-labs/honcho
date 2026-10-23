@@ -61,10 +61,10 @@ def test_detects_agents_and_installs_only_what_is_missing(machine, monkeypatch):
     assert rows["cursor"]["found"] and rows["cursor"]["kind"] == "suggest"
     assert not rows["hermes"]["found"] and not rows["openclaw"]["found"]
 
-    ran: list[list[str]] = []
+    ran: list[tuple[list[str], bool]] = []
 
-    def fake_run(argv):
-        ran.append(list(argv))
+    def fake_run(argv, quiet):
+        ran.append((list(argv), quiet))
         if argv[:3] == ["codex", "mcp", "add"]:
             (machine / "codex-has-honcho").touch()
         return 0
@@ -72,10 +72,14 @@ def test_detects_agents_and_installs_only_what_is_missing(machine, monkeypatch):
     monkeypatch.setattr("honcho_cli.commands.install.runner", fake_run)
     result = runner.invoke(app, ["install", "all"])
 
-    # Claude Code already has Honcho and Cursor is set up from its guide, so only Codex runs.
+    # Claude Code already has Honcho and Cursor is set up from its guide, so only Codex runs:
+    # its own `mcp add` on the terminal, then the skill install with its output hidden.
     assert result.exit_code == 0, result.output
-    assert [argv[:3] for argv in ran] == [["codex", "mcp", "add"], ["npx", "-y", "skills"]]
-    assert f"Authorization:Bearer {KEY}" in ran[0]
+    assert [(argv[:3], quiet) for argv, quiet in ran] == [
+        (["codex", "mcp", "add"], False),
+        (["npx", "-y", "skills"], True),
+    ]
+    assert f"Authorization:Bearer {KEY}" in ran[0][0]
 
 
 @pytest.mark.skipif(not CATALOG.exists(), reason="docs catalog not in this checkout")

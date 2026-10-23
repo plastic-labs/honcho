@@ -1,10 +1,10 @@
 """``honcho install`` — find the agents on this machine and add Honcho to them.
 
 Finding agents is a filesystem check (see ``honcho_cli.agents``). Adding Honcho
-runs only each agent's own commands: plugin installs for Claude Code, Hermes
-and OpenClaw, ``codex mcp add`` and the honcho-memory skill for Codex. All of
-them use the API key in ``~/.honcho/config.json``. Other agents are pointed at
-their setup guide, and Grok Bot gets a prompt to paste into a Bot.
+runs only each agent's own commands: plugin installs for Claude Code, Hermes,
+OpenClaw and Pi, ``codex mcp add`` and the honcho-memory skill for Codex. All
+of them use the API key in ``~/.honcho/config.json``. Other agents are pointed
+at their setup guide, and Grok Bot gets a prompt to paste into a Bot.
 
 On a terminal with no arguments it shows a checkbox picker. Run from inside an
 agent's tool call (Claude Code, Codex), it adds Honcho to that agent and never
@@ -33,6 +33,7 @@ from honcho_cli.agents import (
     Agent,
     Credentials,
     Detection,
+    Quiet,
     calling_agent,
     detect_all,
 )
@@ -42,24 +43,33 @@ from honcho_cli.output import print_error, print_result, set_json_mode, use_json
 
 _console = Console(stderr=True)
 
-Runner = Callable[[Sequence[str]], int]
+Runner = Callable[[Sequence[str], bool], int]
 
 KEY_PLACEHOLDER = "<api-key>"
 
 
-def _run(argv: Sequence[str]) -> int:
+def _run(argv: Sequence[str], quiet: bool) -> int:
     """Run one install command with the terminal attached; return its exit code.
 
     argv[0] is resolved through PATH first so Windows npm ``.cmd`` shims run
     without a shell. In JSON mode the child's stdout goes to stderr, keeping
-    our stdout for the JSON summary.
+    our stdout for the JSON summary. A quiet step's output is captured and
+    shown only if it fails.
     """
     exe = shutil.which(argv[0]) or argv[0]
-    stdout = None
-    if use_json():
-        with contextlib.suppress(AttributeError, OSError, ValueError):
-            stdout = sys.stderr.fileno()
     try:
+        if quiet:
+            proc = subprocess.run(
+                [exe, *argv[1:]], check=False, capture_output=True, text=True, errors="replace",
+                stdin=subprocess.DEVNULL,
+            )
+            if proc.returncode != 0:
+                sys.stderr.write(proc.stdout + proc.stderr)
+            return proc.returncode
+        stdout = None
+        if use_json():
+            with contextlib.suppress(AttributeError, OSError, ValueError):
+                stdout = sys.stderr.fileno()
         return subprocess.run([exe, *argv[1:]], check=False, stdout=stdout).returncode
     except OSError:
         return 127
@@ -273,7 +283,7 @@ def _install_one(agent: Agent, creds: Credentials) -> bool:
     for argv in agent.install(creds):
         shown = _fmt([argv], creds.api_key)
         _console.print(f"\n  {ICON_RUN} [bold]{agent.name}[/bold]  [dim]{shown}[/dim]", highlight=False)
-        code = runner(argv)
+        code = runner(argv, isinstance(argv, Quiet))
         if code != 0:
             _console.print(f"  {ICON_FAIL} {agent.name}: exited {code}. Retry with: {shown}", highlight=False)
             return False
@@ -382,7 +392,7 @@ def install(
 ) -> None:
     """Find the AI agents on this machine and add Honcho to them.
 
-    Claude Code, Hermes and OpenClaw get their Honcho plugin, and Codex the
+    Claude Code, Hermes, OpenClaw and Pi get their Honcho plugin, and Codex the
     Honcho MCP server and skill, each through the agent's own commands and the
     API key in ~/.honcho/config.json. Other agents link to their setup guide.
     """

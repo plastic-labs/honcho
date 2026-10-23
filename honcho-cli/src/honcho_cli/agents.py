@@ -178,8 +178,17 @@ def _openclaw_has_honcho() -> bool | None:
     return None if plugins is None else any(p.get("id") == "openclaw-honcho" for p in plugins)
 
 
+def _pi_has_honcho() -> bool | None:
+    out = _output(["pi", "list"])
+    return None if out is None or out[0] != 0 else "@honcho-ai/pi-honcho" in out[1]
+
+
 # --------------------------------------------------------------------------- #
 # install commands — each is the agent's own CLI
+
+
+class Quiet(list[str]):
+    """An install step that isn't the agent's own CLI; its output shows only if it fails."""
 
 
 def _claude_code_install(_: Credentials) -> list[list[str]]:
@@ -201,8 +210,8 @@ def _codex_install(creds: Credentials) -> list[list[str]]:
             "--header", "X-Honcho-Plugin:codex",
         ],
         # the skill that tells Codex when to recall and record, installed by vercel-labs/skills
-        ["npx", "-y", "skills", "add", "plastic-labs/honcho", "--skill", "honcho-memory",
-         "--agent", "codex", "--global", "--yes"],
+        Quiet(["npx", "-y", "skills", "add", "plastic-labs/honcho", "--skill", "honcho-memory",
+               "--agent", "codex", "--global", "--yes"]),
     ]
 
 
@@ -287,6 +296,12 @@ AGENTS: tuple[Agent, ...] = (
         has_honcho=_openclaw_has_honcho, install=_openclaw_install,
         requires=("openclaw",), activate="openclaw gateway restart",
     ),
+    Agent(
+        id="pi", name="Pi", kind="plugin", docs_url=f"{DOCS}/integrations/pi",
+        bins=("pi",), paths=lambda: [_home() / ".pi" / "agent"],
+        has_honcho=_pi_has_honcho, install=lambda _: [["pi", "install", "npm:@honcho-ai/pi-honcho"]],
+        requires=("pi",),
+    ),
     # ---- set up from the guide
     Agent(
         id="grok-bot", name="Grok Bot", kind="suggest",
@@ -295,10 +310,6 @@ AGENTS: tuple[Agent, ...] = (
     Agent(
         id="opencode", name="OpenCode", kind="suggest", docs_url=f"{DOCS}/integrations/opencode",
         bins=("opencode",), paths=lambda: [_env_path("OPENCODE_CONFIG_DIR", _xdg_config() / "opencode")],
-    ),
-    Agent(
-        id="pi", name="Pi", kind="suggest", docs_url=f"{DOCS}/integrations/pi",
-        bins=("pi",), paths=lambda: [_home() / ".pi" / "agent"],
     ),
     Agent(
         id="kilo", name="Kilo Code", kind="suggest", docs_url=f"{DOCS}/integrations/kilo",
