@@ -1013,6 +1013,25 @@ class DialecticStreamChunk(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class QueueWorkUnit(BaseModel):
+    """One active claim attempt. Progress is observed, not a completion estimate."""
+
+    id: str = Field(description="Claim attempt ID; changes when work is reclaimed")
+    task_type: Literal["representation", "summary", "dream"]
+    workspace_id: str
+    session_id: str | None = None
+    observer: str | None = None
+    observers: list[str] = Field(default_factory=list)
+    observed: str | None = None
+    started_at: datetime.datetime | None = Field(
+        None, description="Immutable claim start; null for pre-upgrade claims"
+    )
+    stage: str | None = Field(None, description="Last observed processing stage")
+    last_activity_at: datetime.datetime | None = Field(
+        None, description="Last observed stage/batch transition, not a heartbeat or lease"
+    )
+
+
 class SessionQueueStatus(BaseModel):
     """Status for a specific session within the processing queue."""
 

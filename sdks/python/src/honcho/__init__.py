@@ -51,6 +51,7 @@ from .api_types import (
     EvidenceObservation,
     EvidenceToolCall,
     MessageCreateParams,
+    QueueWorkUnit,
     ScopeBackfillJob,
     ScopeResponse,
     ScopeStatusResponse,
@@ -74,7 +75,7 @@ from .http.exceptions import (
     UnprocessableEntityError,
 )
 from .message import Message
-from .pagination import AsyncPage, SyncPage
+from .pagination import AsyncCursorPage, AsyncPage, SyncCursorPage, SyncPage
 from .peer import Peer
 from .scope import Scope
 from .session import Session
@@ -131,6 +132,9 @@ __all__ = [
     # Pagination
     "AsyncPage",
     "SyncPage",
+    "SyncCursorPage",
+    "AsyncCursorPage",
+    "QueueWorkUnit",
     # Streaming
     "AsyncDialecticStreamResponse",
     "ChatResponse",

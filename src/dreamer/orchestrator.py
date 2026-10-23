@@ -55,6 +55,7 @@ from src.telemetry.logging import (
 )
 from src.utils.config_helpers import get_configuration
 from src.utils.queue_payload import DreamPayload
+from src.utils.work_unit_progress import ProgressCallback
 
 logger = logging.getLogger(__name__)
 
@@ -137,6 +138,7 @@ async def run_dream(
     documents_since_last_dream_at_schedule: int | None = None,
     document_threshold: int | None = None,
     queue_item_id: int | None = None,
+    progress: ProgressCallback | None = None,
 ) -> DreamResult | None:
     """
     Run a full dream cycle with optional surprisal-based sampling.
@@ -205,6 +207,8 @@ async def run_dream(
     exploration_hints: list[str] | None = None
 
     if settings.DREAM.SURPRISAL.ENABLED:
+        if progress is not None:
+            await progress("surprisal")
         logger.info(f"[{run_id}] Computing surprisal scores")
         try:
             from src.dreamer.surprisal import sample_observations_with_surprisal
@@ -277,6 +281,8 @@ async def run_dream(
     total_input_tokens = 0
     total_output_tokens = 0
     try:
+        if progress is not None:
+            await progress("deduction")
         # Run deduction specialist (manages its own DB sessions)
         logger.info(f"[{run_id}] Running deduction specialist")
         deduction_specialist = SPECIALISTS["deduction"]
@@ -308,6 +314,8 @@ async def run_dream(
             logger.error(f"[{run_id}] Deduction specialist failed: {e}", exc_info=True)
             accumulate_metric(task_name, "deduction_error", str(e), "blob")
 
+        if progress is not None:
+            await progress("induction")
         # Run induction specialist (after deduction so it can see new deductive obs)
         logger.info(f"[{run_id}] Running induction specialist")
         induction_specialist = SPECIALISTS["induction"]
@@ -422,6 +430,7 @@ async def run_card_refresh_dream(
     trigger_reason: str | None = None,
     delay_reason: str | None = None,
     queue_item_id: int | None = None,
+    progress: ProgressCallback | None = None,
 ) -> DreamResult | None:
     """
     Run a lightweight card-only refresh dream.
@@ -486,6 +495,8 @@ async def run_card_refresh_dream(
         dream_type=dream_type,
     )
     try:
+        if progress is not None:
+            await progress("card_refresh")
         specialist = CardRefreshSpecialist(rebuild=rebuild)
         try:
             specialist_result = await specialist.run(
@@ -604,6 +615,7 @@ async def process_dream(
     workspace_name: str,
     *,
     queue_item_id: int | None = None,
+    progress: ProgressCallback | None = None,
 ) -> None:
     """
     Process a dream task by performing collection maintenance operations.
@@ -633,6 +645,7 @@ DREAM: {payload.dream_type} documents for {workspace_name}/{payload.observer}/{p
                     documents_since_last_dream_at_schedule=payload.documents_since_last_dream_at_schedule,
                     document_threshold=payload.document_threshold,
                     queue_item_id=queue_item_id,
+                    progress=progress,
                 )
 
                 # Log completion (telemetry event already emitted in run_dream)
@@ -734,6 +747,7 @@ DREAM: {payload.dream_type} documents for {workspace_name}/{payload.observer}/{p
                     session_name=payload.session_name,
                     rebuild=payload.rebuild,
                     queue_item_id=queue_item_id,
+                    progress=progress,
                     dream_type=payload.dream_type.value,
                     trigger_reason=payload.trigger_reason,
                     delay_reason=payload.delay_reason,

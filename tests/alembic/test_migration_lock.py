@@ -117,8 +117,10 @@ def test_lock_timeout_retries_until_table_is_free(
     script = ScriptDirectory.from_config(alembic_cfg)
     head = _head(alembic_cfg)
     previous = script.get_revision(head).down_revision
-    assert isinstance(previous, str)
-    command.upgrade(alembic_cfg, previous)
+    assert previous is not None
+    parents = (previous,) if isinstance(previous, str) else previous
+    for parent in parents:
+        command.upgrade(alembic_cfg, parent)
 
     backoffs: list[float] = []
     real_sleep = time.sleep

@@ -169,3 +169,8 @@ def conclusions_query(workspace_id: str) -> str:
 
 def conclusion(workspace_id: str, conclusion_id: str) -> str:
     return f"/{API_VERSION}/workspaces/{workspace_id}/conclusions/{conclusion_id}"
+
+
+def workspace_queue_work_units(workspace_id: str) -> str:
+    """Route for active work-unit progress."""
+    return f"{workspace(workspace_id)}/queue/work-units"

@@ -53,7 +53,7 @@ uv run python -m tests.compat_matrix.run --old-image ghcr.io/plastic-labs/honcho
 
 `--lineage` picks how the database is laid out, and `--keep` leaves the stack up
 for inspection. On failure, service logs go to `compat-matrix-logs/`. A pass
-takes about four minutes.
+takes several minutes.
 
 ## Lineages
 
@@ -73,3 +73,17 @@ Add writes to `run_combo` in `scenarios.py`. Each write needs a matching
 expectation in the ledger; a write with no expectation tests nothing. Suppress
 and restore don't exist in the API yet. When they land, their scenarios go next
 to the deletes.
+
+The progress write-path scenario runs once per backfill round, after its last
+pairing has stopped the workers. It calls the actual old/new images' worker
+methods on bounded queue fixtures: defaults, progress versus lease timestamps,
+old reads and renewals, duplicate claims, stale cleanup/reclaim, obsolete claim
+IDs, and empty-loop finalizers. Every snapshot checks known aggregate counts
+through both APIs and candidate claim details with size-one cursor pages. A
+claim created in the old schema is also checked immediately after migration:
+fields the old image did not record must remain null, rather than acquiring a
+fabricated start; any progress it already recorded must remain unchanged.
+
+These are controlled method/callback checks inside the images, separate from
+the matrix's complete worker/model pipelines. They do not claim to observe an
+automatic worker's transient stage. The LLM provider remains the local stub.
