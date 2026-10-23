@@ -26,7 +26,7 @@ from .client import _host_block, _HostLookup
 from .client import join_plugin_threads, spawn_context_thread
 from .dialectic import DialecticMixin
 from .recent_turns import (KEEP_EXCHANGES, append_exchange, extract_exchange, load_exchanges, request_text,
-                           ring_path, same_request)
+                           render_exchanges, ring_path, same_request)
 from .session_peers import assistant_peer_id_for, sanitize_peer_id
 from .session_context import usable_honcho_summary
 from .tool_schemas import ALL_TOOL_SCHEMAS
@@ -184,6 +184,7 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
         self._dialectic_injection_mode = "async"
         self._blocking_injection: Optional[dict[str, Any]] = None
         self._blocking_template_warned = False
+        self._rerank_client_factory: Callable[..., Any] | None = None  # None: anthropic.Anthropic
 
         # Tools-only mode may defer session initialization until a tool call.
         self._session_initialized = False
@@ -415,8 +416,13 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
         self._session_initialized = True
 
     def _blocking_mode(self) -> bool:
-        """dialecticInjectionMode is "blocking": one dialectic per turn in on_turn_start, injected alone."""
-        return self._dialectic_injection_mode == "blocking"
+        """dialecticInjectionMode is "blocking" or "context-rerank": one answer per turn produced in
+        on_turn_start, injected alone."""
+        return self._dialectic_injection_mode in ("blocking", "context-rerank")
+
+    def _rerank_mode(self) -> bool:
+        """dialecticInjectionMode is "context-rerank": the answer comes from one LLM call over peer.context()."""
+        return self._dialectic_injection_mode == "context-rerank"
 
     def _session_ready(self) -> bool:
         """Whether the manager/session key can be used safely. Background init sets
@@ -637,11 +643,14 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
         notice = "\n\n".join(n for n in (self._pop_auth_notice(), self._pop_peer_notice()) if n)
         payload = "\n\n".join(p for p in (notice, outcome.get("payload", "")) if p)
         fields = {k: outcome[k] for k in ("query", "query_trimmed", "recent_turns_count", "dialectic_ms",
-                                          "reasoning_level", "dialectic_output", "error", "previous_message_stubbed")
+                                          "reasoning_level", "dialectic_output", "error", "previous_message_stubbed",
+                                          "context_counts", "context_bytes", "context_ms", "rerank_prompt",
+                                          "rerank_output", "rerank_ms", "usage", "model")
                   if k in outcome}
         # A notice alone makes the record "injected", so the dialectic's own outcome is kept apart.
         # contextTokens is not applied: the answer is the whole injection and the arm sizes it.
-        return self._log_injection("injected" if payload else outcome["reason"], payload, mode="blocking",
+        return self._log_injection("injected" if payload else outcome["reason"], payload,
+                                   mode=self._dialectic_injection_mode,
                                    dialectic_reason=outcome.get("reason", "answered"), **fields)
 
     def _run_blocking_dialectic(self, message: str) -> None:
@@ -658,7 +667,8 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
             self._start_session_init_background()
             if self._init_thread is not None:
                 self._init_thread.join()
-            outcome = self._query_blocking_dialectic(message) if self._session_ready() else {"reason": "session-not-ready"}
+            query = self._query_context_rerank if self._rerank_mode() else self._query_blocking_dialectic
+            outcome = query(message) if self._session_ready() else {"reason": "session-not-ready"}
         with self._prefetch_lock:
             self._blocking_injection = outcome
 
@@ -688,6 +698,59 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
             outcome["payload"] = self._format_blocking_result(output)
         else:
             outcome.setdefault("reason", "dialectic-empty")
+        return outcome
+
+    def _query_context_rerank(self, message: str) -> dict[str, Any]:
+        """Fetch a large peer.context() for this request, then have one LLM call keep what the turn needs."""
+        from .context_rerank import (DEFAULT_RERANK_BASE_URL, DEFAULT_RERANK_PROMPT_TEMPLATE, call_rerank,
+                                     count_conclusions, peer_representation_block, render_rerank_prompt)
+        cfg = self._config
+        exchanges = load_exchanges(self._ring_path(), self._session_key)
+        stubbed = self._stub_unsynced_turn(exchanges)
+        outcome: dict[str, Any] = {"model": cfg.rerank_model, "recent_turns_count": len(exchanges),
+                                   "rerank_output": ""}
+        if stubbed:
+            outcome["previous_message_stubbed"] = True
+        api_key = os.environ.get("HONCHO_RERANK_API_KEY", "").strip()
+        if not api_key:
+            outcome.update(reason="rerank-failed", error="HONCHO_RERANK_API_KEY is not set")
+            logger.warning("Honcho context-rerank skipped: HONCHO_RERANK_API_KEY is not set")
+            return outcome
+        started = time.monotonic()
+        try:
+            ctx = self._manager.get_rerank_context(
+                self._session_key, message, max_conclusions=cfg.context_max_conclusions,
+                search_top_k=cfg.context_search_top_k, search_max_distance=cfg.context_search_max_distance,
+                include_most_frequent=cfg.context_include_most_frequent)
+        except Exception as e:
+            logger.warning("Honcho context-rerank context fetch failed: %s: %s", type(e).__name__, e)
+            outcome.update(reason="context-failed", error=f"{type(e).__name__}: {e}",
+                           context_ms=round((time.monotonic() - started) * 1000))
+            return outcome
+        representation = peer_representation_block(ctx["representation"], ctx["card"])
+        outcome.update(context_ms=round((time.monotonic() - started) * 1000),
+                       context_counts=count_conclusions(ctx["representation"]),
+                       context_bytes=len(representation.encode("utf-8")))
+        prompt = render_rerank_prompt(cfg.rerank_prompt_template or DEFAULT_RERANK_PROMPT_TEMPLATE,
+                                      peer_representation=representation,
+                                      history_of_trial=render_exchanges(exchanges), user_message=message)
+        outcome["rerank_prompt"] = prompt
+        started = time.monotonic()
+        try:
+            output, outcome["usage"] = call_rerank(
+                prompt, api_key=api_key,
+                base_url=os.environ.get("HONCHO_RERANK_BASE_URL", "").strip() or DEFAULT_RERANK_BASE_URL,
+                model=cfg.rerank_model, max_tokens=cfg.rerank_max_tokens, timeout=cfg.timeout,
+                client_factory=self._rerank_client_factory)
+        except Exception as e:
+            logger.warning("Honcho context-rerank call failed: %s: %s", type(e).__name__, e)
+            output = ""
+            outcome.update(reason="rerank-failed", error=f"{type(e).__name__}: {e}")
+        outcome.update(rerank_ms=round((time.monotonic() - started) * 1000), rerank_output=output)
+        if output.strip():
+            outcome["payload"] = self._format_blocking_result(output)
+        else:
+            outcome.setdefault("reason", "rerank-empty")
         return outcome
 
     def _stub_unsynced_turn(self, exchanges: list[dict[str, Any]]) -> bool:
@@ -1500,6 +1563,7 @@ def __getattr__(name):  # PEP 562 — lazy so no import cycles
     if target is None:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
     import importlib
+
     from hermes_cli.plugin_compat import warn_once
     warn_once(__name__, name, *target)
     return getattr(importlib.import_module(target[0]), target[1])

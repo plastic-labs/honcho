@@ -123,7 +123,7 @@ def resolve_config_path() -> Path:
 # --- config coercion -------------------------------------------------------
 
 _RECALL_MODES = ({"auto": "hybrid"}, {"hybrid", "context", "tools"}, "hybrid")
-_DIALECTIC_INJECTION_MODES = ({}, {"async", "blocking"}, "async")
+_DIALECTIC_INJECTION_MODES = ({}, {"async", "blocking", "context-rerank"}, "async")
 _OBSERVATION_MODES = (
     {"shared": "unified", "separate": "directional", "cross": "directional"},
     {"unified", "directional"},
@@ -330,6 +330,13 @@ def _behavior_fields(look: _HostLookup, explicitly_configured: bool) -> dict[str
                                                       _DIALECTIC_INJECTION_MODES),
         "dialectic_query_template": _template(look.pick("dialecticQueryTemplate")),
         "dialectic_result_template": _template(look.pick("dialecticResultTemplate")),
+        "context_max_conclusions": look.parsed("contextMaxConclusions", int, 400),
+        "context_search_top_k": look.parsed("contextSearchTopK", int, 100),
+        "context_search_max_distance": look.parsed("contextSearchMaxDistance", float, None),
+        "context_include_most_frequent": look.flag("contextIncludeMostFrequent", default=True),
+        "rerank_model": look.pick("rerankModel") or "claude-sonnet-5-5",
+        "rerank_max_tokens": look.parsed("rerankMaxTokens", int, 16000),
+        "rerank_prompt_template": _template(look.pick("rerankPromptTemplate")),
         "recall_mode": _normalize_choice(look.pick("recallMode") or "hybrid", _RECALL_MODES),
         "recall_sync": look.flag("recallSync", default=False),
         "init_on_session_start": look.flag("initOnSessionStart", default=False),
@@ -388,10 +395,20 @@ class HonchoClientConfig:
     dialectic_max_input_chars: int = 10000
     # "async": base context plus a dialectic fired for the next turn. "blocking": one dialectic per turn,
     # run in on_turn_start over the current prompt and recent exchanges, and nothing else injected.
+    # "context-rerank": as blocking, but the answer comes from one LLM call over a large peer.context().
     dialectic_injection_mode: str = "async"
     # Blocking-mode templates; None uses the defaults in dialectic.py.
     dialectic_query_template: str | None = None
     dialectic_result_template: str | None = None
+    # "context-rerank": one peer.context() fetch sized by these, then one rerankModel call over it. The
+    # result is wrapped in dialecticResultTemplate; None uses the prompt default in context_rerank.py.
+    context_max_conclusions: int = 400
+    context_search_top_k: int = 100
+    context_search_max_distance: float | None = None
+    context_include_most_frequent: bool = True
+    rerank_model: str = "claude-sonnet-5-5"
+    rerank_max_tokens: int = 16000
+    rerank_prompt_template: str | None = None
     # "hybrid" (context + tools) | "context" (no tools) | "tools" (no auto context)
     recall_mode: str = "hybrid"
     recall_sync: bool = False  # bounded current-query automatic recall

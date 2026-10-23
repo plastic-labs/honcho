@@ -177,6 +177,26 @@ class SessionContextMixin:
                 logger.log(level, msg, e)
         return result
 
+    def get_rerank_context(
+        self, session_key: str, search_query: str, *, max_conclusions: int | None = None,
+        search_top_k: int | None = None, search_max_distance: float | None = None,
+        include_most_frequent: bool | None = None,
+    ) -> dict[str, Any]:
+        """One sized peer.context() fetch of the user's representation and card. No fallback getters:
+        a failed or rejected fetch raises, so it cannot pass for an empty representation."""
+        session = self._cached_session(session_key)
+        if not session:
+            raise RuntimeError(f"Honcho session {session_key!r} is not loaded")
+        observer_peer_id, target_peer_id = self._resolve_observer_target(session, "user")
+        knobs = {"search_top_k": search_top_k, "search_max_distance": search_max_distance,
+                 "include_most_frequent": include_most_frequent, "max_conclusions": max_conclusions}
+        kwargs = {k: v for k, v in knobs.items() if v is not None}
+        ctx = self._authed_call("rerank context fetch", lambda: self._get_or_create_peer(observer_peer_id).context(
+            target=target_peer_id or session.user_peer_id, search_query=search_query, **kwargs,
+        ))
+        return {"representation": getattr(ctx, "representation", None) or "",
+                "card": self._normalize_card(getattr(ctx, "peer_card", None))}
+
     def get_session_context(self, session_key: str, peer: str = "user") -> dict[str, Any]:
         """Fetch session-level context (summary, representation, card, recent messages).
         Raises HonchoAuthError so callers can tell rejected credentials from no context."""
