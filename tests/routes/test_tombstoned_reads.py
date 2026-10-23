@@ -14,7 +14,11 @@ from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models
+from src.config import settings
+from src.crud.message import get_peer_session_names
 from src.crud.session import is_peer_in_session
+from src.security import JWTParams, create_admin_jwt, create_jwt
+from src.utils.scopes import scope_peer_name
 
 Target = Literal["workspace", "peer", "session"]
 
@@ -231,3 +235,96 @@ async def test_workspace_stats_and_active_peers_skip_tombstones(
         assert active == {graph.bystander: 0}
     else:
         assert active == {graph.author: expected_messages, graph.bystander: 0}
+
+
+async def _tombstone_scope(db: AsyncSession, workspace: str, scope: str) -> None:
+    await db.execute(
+        update(models.Peer)
+        .where(
+            models.Peer.workspace_name == workspace,
+            models.Peer.name == scope_peer_name(scope),
+        )
+        .values(deleted_at=datetime.now(UTC))
+    )
+    await db.commit()
+
+
+def _seed_scopes(client: TestClient, root: str, sessions: dict[str, list[str]]) -> None:
+    for scope in {scope for scopes in sessions.values() for scope in scopes}:
+        response = client.post(f"{root}/scopes", json={"id": scope})
+        assert response.status_code == 201, response.text
+    for session, scopes in sessions.items():
+        response = client.post(
+            f"{root}/sessions", json={"id": session, "scopes": scopes}
+        )
+        assert response.status_code == 201, response.text
+
+
+async def test_tombstoned_scope_is_hidden_and_cannot_be_used(
+    client: TestClient, db_session: AsyncSession
+):
+    workspace = str(generate_nanoid())
+    root = f"/v3/workspaces/{workspace}"
+    _seed_scopes(client, root, {"s1": ["gone", "kept"], "s2": []})
+    await _tombstone_scope(db_session, workspace, "gone")
+
+    assert _ids(client, "POST", f"{root}/scopes/list") == {"kept"}
+    for response in (
+        client.get(f"{root}/scopes/gone"),
+        client.post(f"{root}/scopes/gone/sessions/list", json={}),
+        client.post(f"{root}/scopes/gone/sessions", json={"session_ids": ["s2"]}),
+        client.post(f"{root}/search", json={"query": "x", "scope": "gone"}),
+    ):
+        assert response.status_code == 404, response.text
+    assert (
+        client.post(f"{root}/search", json={"query": "x", "scope": "kept"}).status_code
+        == 200
+    )
+    assert _ids(client, "POST", f"{root}/scopes/kept/sessions/list") == {"s1"}
+
+    # The tombstone holds the reserved name.
+    response = client.post(f"{root}/scopes", json={"id": "gone"})
+    assert response.status_code == 409, response.text
+    assert (
+        await get_peer_session_names(db_session, workspace, scope_peer_name("gone"))
+        == []
+    )
+
+
+async def test_tombstoned_session_leaves_scope_reads(
+    client: TestClient, db_session: AsyncSession
+):
+    workspace = str(generate_nanoid())
+    root = f"/v3/workspaces/{workspace}"
+    _seed_scopes(client, root, {"s1": ["kept"], "s2": ["kept"], "s3": []})
+    graph = Graph(workspace, "", "", "s1", "s2")
+    await _tombstone(db_session, graph, "session")
+
+    assert _ids(client, "POST", f"{root}/scopes/kept/sessions/list") == {"s2"}
+    assert await get_peer_session_names(
+        db_session, workspace, scope_peer_name("kept")
+    ) == ["s2"]
+    response = client.post(f"{root}/scopes/kept/sessions", json={"session_ids": ["s1"]})
+    assert response.status_code == 404, response.text
+
+
+async def test_named_scope_key_for_tombstoned_scope_is_refused(
+    client: TestClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+):
+    workspace = str(generate_nanoid())
+    root = f"/v3/workspaces/{workspace}"
+    monkeypatch.setattr(settings.AUTH, "USE_AUTH", True)
+    monkeypatch.setattr(settings.AUTH, "JWT_SECRET", "test-secret")
+    client.headers["Authorization"] = f"Bearer {create_admin_jwt()}"
+    _seed_scopes(client, root, {"s1": ["private"]})
+    key = create_jwt(JWTParams(w=workspace, sc="private"))
+    headers = {"Authorization": f"Bearer {key}"}
+    assert client.get(f"{root}/scopes/private", headers=headers).status_code == 200
+
+    await _tombstone_scope(db_session, workspace, "private")
+    for response in (
+        client.get(f"{root}/scopes/private", headers=headers),
+        client.post(f"{root}/scopes/private/sessions/list", json={}, headers=headers),
+        client.post(f"{root}/sessions/s1/messages/list", json={}, headers=headers),
+    ):
+        assert response.status_code == 404, response.text
