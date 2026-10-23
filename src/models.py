@@ -583,6 +583,15 @@ class MessageEmbedding(Base):
     )
 
 
+DREAM_DOCUMENTS_SINCE_SQL = (
+    "explicit_count - COALESCE("
+    + "((internal_metadata -> 'dream') ->> 'last_dream_document_count')::integer, 0)"
+)
+DREAM_BACKLOG_SQL = (
+    "COALESCE(((internal_metadata -> 'dream') ->> 'work_list_backlog')::integer, 0)"
+)
+
+
 @final
 class Collection(Base):
     __tablename__: str = "collections"
@@ -613,6 +622,12 @@ class Collection(Base):
     deletion_generation: Mapped[int] = mapped_column(
         Integer, default=0, server_default=text("0")
     )
+    explicit_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    newest_explicit_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     __table_args__ = (
         PrimaryKeyConstraint("tenant_id", "id"),
@@ -621,6 +636,16 @@ class Collection(Base):
             "observer",
             "observed",
             "workspace_name",
+        ),
+        Index(
+            "ix_collections_dream_due",
+            text(f"({DREAM_DOCUMENTS_SINCE_SQL})"),
+            "newest_explicit_at",
+        ),
+        Index(
+            "ix_collections_dream_backlog",
+            "newest_explicit_at",
+            postgresql_where=text(f"{DREAM_BACKLOG_SQL} > 0"),
         ),
         CheckConstraint("length(id) = 21", name="id_length"),
         CheckConstraint("id ~ '^[A-Za-z0-9_-]+$'", name="id_format"),

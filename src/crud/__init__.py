@@ -4,6 +4,7 @@ from .collection import (
     get_or_create_collection,
     invalidate_collection_cache,
     merge_collection_internal_metadata_value,
+    record_explicit_documents,
     update_collection_internal_metadata,
 )
 from .deriver import (
@@ -115,6 +116,7 @@ __all__ = [
     "get_collection",
     "get_or_create_collection",
     "update_collection_internal_metadata",
+    "record_explicit_documents",
     "get_collection_internal_metadata_value",
     "invalidate_collection_cache",
     "merge_collection_internal_metadata_value",
