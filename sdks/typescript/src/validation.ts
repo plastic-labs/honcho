@@ -507,6 +507,8 @@ function scopeExclusivityIssues(
 export const ChatQuerySchema = z
   .object({
     query: SearchQuerySchema,
+    semanticQuery: z.string().min(1).max(10000).optional(),
+    reasoningContext: z.string().min(1).max(10000).optional(),
     target: z
       .union([PeerIdSchema, PeerIdObjectSchema])
       .optional()
