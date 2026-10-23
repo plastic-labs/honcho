@@ -373,7 +373,7 @@ class SessionContextMixin:
 
     def dialectic_query(
         self, session_key: str, query: str, reasoning_level: str | None = None, peer: str = "user",
-        apply_injection_cap: bool = True, raise_errors: bool = False,
+        apply_injection_cap: bool = True, raise_errors: bool = False, stream: bool = False,
     ) -> str:
         """Ask Honcho's dialectic endpoint about a peer (LLM on the backend; run off-thread).
         ``reasoning_level`` is honored only when dialecticDynamic is true. ``apply_injection_cap``
@@ -388,7 +388,9 @@ class SessionContextMixin:
         ``honcho_reasoning`` calls pass False because Honcho already bounds their output. raise_errors:
         Re-raise backend failures instead of returning "". Explicit tool calls pass True so a timeout or
         server error surfaces as an error, not as "no result" (#36098 issue 4: collapsing failures to ""
-        made auth errors, timeouts, and genuinely-empty answers indistinguishable).
+        made auth errors, timeouts, and genuinely-empty answers indistinguishable). stream: Use the
+        streaming endpoint and join the chunks. Its response headers arrive before the dialectic runs, so a
+        proxy that bounds time-to-headers cannot cut a slow answer, and the SDK does not retry a stream.
         """
         session = self._cached_session(session_key)
         target_peer_id = self._resolve_peer_id(session, peer) if session else None
@@ -401,9 +403,12 @@ class SessionContextMixin:
         def _chat_once() -> str:
             # The AI peer observes others when allowed; otherwise each peer queries its own context.
             if self._ai_observes_others(session) and target_peer_id != session.assistant_peer_id:
-                observer = self._get_or_create_peer(session.assistant_peer_id)
-                return observer.chat(query, target=target_peer_id, reasoning_level=level) or ""
-            return self._get_or_create_peer(target_peer_id).chat(query, reasoning_level=level) or ""
+                asker, kwargs = self._get_or_create_peer(session.assistant_peer_id), {"target": target_peer_id}
+            else:
+                asker, kwargs = self._get_or_create_peer(target_peer_id), {}
+            if stream:
+                return "".join(asker.chat_stream(query, reasoning_level=level, **kwargs))
+            return asker.chat(query, reasoning_level=level, **kwargs) or ""
         try:
             result = self._authed_call("dialectic query", _chat_once)
             cap = self._dialectic_max_chars if apply_injection_cap else 0
