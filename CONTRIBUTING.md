@@ -48,7 +48,7 @@ issue without notice and block your account.
 
 Only a maintainer applies `maintainer-approved`, which means we have agreed the change should
 be made. If something is missing or wrong, one of these labels is applied with a comment
-saying what to fix. Any reply from you resets the clock.
+saying what to fix.
 
 | Label         | Applied when                                                                                                                                                            | Closed after                                   |
 | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
