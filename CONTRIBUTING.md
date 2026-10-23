@@ -2,7 +2,7 @@
 
 Honcho is developed by a small team of maintainers, who make all changes to the codebase.
 **Pull requests are limited to maintainers.** See
-[this issue](https://github.com/plastic-labs/honcho/issues/XXXX) for why.
+[this issue](https://github.com/plastic-labs/honcho/issues/1448) for why.
 
 You can still help a lot. Clear bug reports, memory-quality reports with a reproduction,
 integration requests, and design discussion all move the project forward.
