@@ -170,8 +170,9 @@ honcho init
 
 Find the AI agents on this machine and add Honcho to them.
 
-With no arguments on a terminal, shows a checkbox picker. Plugin agents run
-their install command; MCP clients open their setup guide.
+Claude Code, Hermes and OpenClaw get their Honcho plugin, and Codex the
+Honcho MCP server and skill, each through the agent's own commands and the
+API key in ~/.honcho/config.json. Other agents link to their setup guide.
 
 ```bash
 honcho install [<targets>]

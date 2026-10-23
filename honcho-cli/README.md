@@ -68,7 +68,7 @@ honcho stop --wipe     # also delete volumes
 | `honcho stop` | Stop the local stack. `--wipe` also deletes volumes. |
 | `honcho status` | Show every local stack (or `--profile` for one). |
 | `honcho doctor` | Health check: config, connectivity, workspace, peer, queue |
-| `honcho install` | Find the AI agents on this machine, show which already have Honcho, and pick which to add it to. Plugin agents run their install command; MCP clients open their setup guide. `honcho install all` or `honcho install <id>...` skips the picker; `--list` only reports. |
+| `honcho install` | Find the AI agents on this machine, show which already have Honcho, and pick which to add it to. Claude Code, Hermes and OpenClaw get their Honcho plugin and Codex the Honcho MCP server, each through the agent's own commands and the API key in `~/.honcho/config.json`. Other agents link to their setup guide; `honcho install grok-bot` copies a prompt to paste into a Grok Bot. `honcho install all` or `honcho install <id>...` skips the picker; `--list` only reports. |
 
 ### Workspaces
 

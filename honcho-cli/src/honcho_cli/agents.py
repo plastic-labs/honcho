@@ -1,26 +1,35 @@
-"""Which AI agents are on this machine, and does each one already have Honcho?
+"""Which AI agents are on this machine, and how ``honcho install`` adds Honcho to each.
 
 Mirrors the "General agents" and "Coding agents" sections of the docs
-integrations catalog (``docs/snippets/integrations-catalog.jsx``). Detection is
-read-only: binaries on PATH, directories and small config files on disk. The
-only subprocess is ``opencode --version``, to pick the right install syntax.
+integrations catalog (``docs/snippets/integrations-catalog.jsx``).
 
-Two kinds of agent:
+Finding an agent works like vercel-labs/skills: a plain filesystem check, its
+binary on PATH or its config directory on disk, plus the variables an agent
+sets when it is the one running ``honcho install``. Nothing is parsed.
+``honcho install`` never edits an agent's config files either; it only runs
+the agent's own commands. Three kinds:
 
-- ``plugin``: Honcho ships a plugin with a one-line install command.
-- ``mcp``: the client talks to the Honcho MCP server; setup is a config edit
-  documented in the MCP guide, so we link to it instead of editing the file.
+- ``plugin``: the agent has an official Honcho plugin, installed with the
+  agent's own plugin commands.
+- ``mcp``: the hosted Honcho MCP server, registered with the agent's own
+  ``mcp add`` command, plus the honcho-memory skill.
+- ``suggest``: ``honcho install`` changes nothing and points at the setup guide.
+  Cloud agents (Grok Bot) get a setup prompt to paste instead.
+
+Whether Honcho is already set up comes from asking the agent itself (its
+``plugin list`` / ``mcp get`` / ``config get`` command), never from reading
+its files.
 """
 
 from __future__ import annotations
 
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -28,10 +37,30 @@ from typing import Literal
 DOCS = "https://honcho.dev/docs/v3/guides"
 CATALOG_URL = f"{DOCS}/overview"
 MCP_DOCS = f"{DOCS}/integrations/mcp"
+MCP_URL = "https://mcp.honcho.dev"
+
+GROK_BOT_PROMPT = (
+    "Set up Honcho memory using the plugin at "
+    "https://github.com/plastic-labs/honcho/tree/main/integrations/cursor: "
+    "connect its MCP server (https://mcp.honcho.dev, sign in with OAuth), "
+    "install its skills, then run honcho-setup."
+)
+
+
+@dataclass(frozen=True)
+class Credentials:
+    """What install commands need from ``~/.honcho/config.json``."""
+
+    api_key: str
+    base_url: str
+
+    @property
+    def hosted(self) -> bool:
+        return self.base_url.rstrip("/") == "https://api.honcho.dev"
 
 
 # --------------------------------------------------------------------------- #
-# small readers — every failure means "can't tell", never an exception
+# locations
 
 
 def _home() -> Path:
@@ -51,97 +80,6 @@ def _exists(path: Path) -> bool:
         return False
 
 
-def _either(*results: bool | None) -> bool | None:
-    """Combine installed checks: True if any is True, None if all can't tell."""
-    if any(r is True for r in results):
-        return True
-    return None if all(r is None for r in results) else False
-
-
-def _read_text(path: Path) -> str | None:
-    try:
-        return path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return None
-
-
-_JSONC_COMMENT = re.compile(r'"(?:\\.|[^"\\])*"|//[^\n]*|/\*.*?\*/', re.S)
-_JSONC_TRAILING_COMMA = re.compile(r",(\s*[}\]])")
-
-
-def _read_json(path: Path) -> object | None:
-    """Parse JSON or JSONC (comments and trailing commas, as VS Code and Zed write)."""
-    text = _read_text(path)
-    if text is None:
-        return None
-    try:
-        return json.loads(text)
-    except ValueError:
-        pass
-    stripped = _JSONC_COMMENT.sub(lambda m: m.group(0) if m.group(0).startswith('"') else "", text)
-    try:
-        return json.loads(_JSONC_TRAILING_COMMA.sub(r"\1", stripped))
-    except ValueError:
-        return None
-
-
-def _get(obj: object, *keys: str) -> object | None:
-    for key in keys:
-        if not isinstance(obj, dict):
-            return None
-        obj = obj.get(key)
-    return obj
-
-
-def _mentions_honcho(value: object) -> bool:
-    """True if a config fragment names Honcho: a ``honcho`` key or the hosted MCP URL."""
-    if isinstance(value, dict):
-        return any("honcho" in str(k).lower() or _mentions_honcho(v) for k, v in value.items())
-    if isinstance(value, list):
-        return any(_mentions_honcho(v) for v in value)
-    return isinstance(value, str) and ("mcp.honcho.dev" in value or "honcho-ai" in value)
-
-
-def _any_list_has(files: list[Path], key: str, package: str) -> bool | None:
-    """Is ``package`` in the ``key`` list of any of these config files?
-
-    Entries may be bare names, names with ``@version``, ``npm:`` prefixes, or
-    objects with a ``source``/``name`` field. Missing files mean "not added";
-    ``None`` only when a file exists but can't be parsed.
-    """
-    unreadable = False
-    for f in files:
-        if not _exists(f):
-            continue
-        data = _read_json(f)
-        if data is None:
-            unreadable = True
-            continue
-        entries = _get(data, key)
-        if not isinstance(entries, list):
-            continue
-        for entry in entries:
-            if isinstance(entry, dict):
-                entry = entry.get("source") or entry.get("name") or ""
-            if isinstance(entry, str) and package in entry:
-                return True
-    return None if unreadable else False
-
-
-def _mcp_file_has_honcho(files: list[Path], *section: str) -> bool | None:
-    """Look for a Honcho server under ``section`` in the first file that exists."""
-    for f in files:
-        if not _exists(f):
-            continue
-        data = _read_json(f)
-        return None if data is None else _mentions_honcho(_get(data, *section))
-    return False
-
-
-# --------------------------------------------------------------------------- #
-# per-platform locations
-
-
 def _app_support() -> Path:
     """Per-user application data dir: macOS Application Support, Windows APPDATA, Linux XDG."""
     if sys.platform == "darwin":
@@ -159,8 +97,8 @@ def _vscode_user() -> Path:
     return _app_support() / "Code" / "User"
 
 
-def _claude_home() -> Path:
-    return _env_path("CLAUDE_CONFIG_DIR", _home() / ".claude")
+def _hermes_home() -> Path:
+    return _env_path("HERMES_HOME", _home() / ".hermes")
 
 
 def _zed_dir() -> Path:
@@ -171,147 +109,6 @@ def _goose_dir() -> Path:
     if sys.platform == "win32":
         return _app_support() / "Block" / "goose" / "config"
     return _xdg_config() / "goose"
-
-
-def _codex_home() -> Path:
-    return _env_path("CODEX_HOME", _home() / ".codex")
-
-
-def _hermes_home() -> Path:
-    return _env_path("HERMES_HOME", _home() / ".hermes")
-
-
-def _openclaw_home() -> Path:
-    return _env_path("OPENCLAW_STATE_DIR", _home() / ".openclaw")
-
-
-def _opencode_dir() -> Path:
-    return _env_path("OPENCODE_CONFIG_DIR", _xdg_config() / "opencode")
-
-
-# --------------------------------------------------------------------------- #
-# installed checks
-
-
-def _claude_code_installed() -> bool | None:
-    settings = _claude_home() / "settings.json"
-    if not _exists(settings):
-        return False
-    data = _read_json(settings)
-    if data is None:
-        return None
-    enabled = _get(data, "enabledPlugins")
-    return isinstance(enabled, dict) and any(k.startswith("honcho@") and v for k, v in enabled.items())
-
-
-def _codex_installed() -> bool | None:
-    hooks = _read_text(_codex_home() / "hooks.json") or ""
-    config = _read_text(_codex_home() / "config.toml") or ""
-    return "codex-honcho" in hooks or "# >>> codex-honcho" in config
-
-
-def _opencode_files() -> list[Path]:
-    d = _opencode_dir()
-    return [d / "opencode.json", d / "opencode.jsonc", d / "config.json"]
-
-
-def _opencode_installed() -> bool | None:
-    files = _opencode_files()
-    plugin = _any_list_has(files, "plugin", "@honcho-ai/opencode-honcho")
-    plugins = _any_list_has(files, "plugins", "@honcho-ai/opencode-honcho")
-    if plugin or plugins:
-        return True
-    return False if plugin is not None else None
-
-
-def _pi_installed() -> bool | None:
-    return _any_list_has([_home() / ".pi" / "agent" / "settings.json"], "packages", "@honcho-ai/pi-honcho")
-
-
-def _kilo_installed() -> bool | None:
-    # Server-side config only: tui.json holds just the /honcho commands, and
-    # Kilo doesn't load the memory plugin from it.
-    d = _xdg_config() / "kilo"
-    files = [d / "kilo.jsonc", d / "kilo.json", d / "opencode.json"]
-    return _any_list_has(files, "plugin", "@honcho-ai/kilo-honcho")
-
-
-# `hermes memory setup` appends `provider:` to the memory block, sometimes after
-# the next section's column-0 comment banner, so comments don't end the block.
-_HERMES_PROVIDER = re.compile(
-    r"^memory:[^\n]*\n(?:[ \t]+[^\n]*\n|[ \t]*#[^\n]*\n|\s*\n)*?[ \t]+provider:\s*['\"]?honcho\b",
-    re.M,
-)
-
-
-def _hermes_install() -> list[list[str]]:
-    setup = ["hermes", "memory", "setup", "honcho"]
-    if _exists(_hermes_home() / "plugins" / "honcho"):
-        # plugin present but not the active provider; reinstalling would fail
-        return [setup]
-    return [["hermes", "plugins", "install", "honcho"], setup]
-
-
-def _hermes_installed() -> bool | None:
-    text = _read_text(_hermes_home() / "config.yaml")
-    if text is None:
-        return False
-    return bool(_HERMES_PROVIDER.search(text + "\n"))
-
-
-def _openclaw_entry() -> object | None:
-    return _get(_read_json(_openclaw_home() / "openclaw.json"), "plugins", "entries", "openclaw-honcho")
-
-
-def _openclaw_installed() -> bool | None:
-    config = _openclaw_home() / "openclaw.json"
-    if not _exists(config):
-        return False
-    data = _read_json(config)
-    if data is None:
-        return None
-    entry = _get(data, "plugins", "entries", "openclaw-honcho")
-    # `openclaw plugins install` alone writes {"enabled": true}; only
-    # `openclaw honcho setup` adds the config block with the key.
-    return isinstance(entry, dict) and isinstance(entry.get("config"), dict)
-
-
-def _openclaw_install() -> list[list[str]]:
-    setup = ["openclaw", "honcho", "setup"]
-    if isinstance(_openclaw_entry(), dict):
-        # plugin already added (setup was interrupted); reinstalling would fail
-        return [setup]
-    return [["openclaw", "plugins", "install", "@honcho-ai/openclaw-honcho"], setup]
-
-
-DSH_PLUGIN = "@honcho-ai/dsh-honcho"
-
-
-def _dsh_home() -> Path:
-    return _env_path("DSH_HOME", _home() / ".dsh")
-
-
-def dsh_profiles() -> dict[str, bool | None]:
-    """dsh profile name -> Honcho in its bundle list (None = unreadable)."""
-    out: dict[str, bool | None] = {}
-    try:
-        manifests = sorted((_dsh_home() / "profiles").glob("*/package.json"))
-    except OSError:
-        return out
-    for m in manifests:
-        data = _read_json(m)
-        if data is None:
-            out[m.parent.name] = None
-            continue
-        bundles = _get(data, "dsh", "profile", "bundles")
-        out[m.parent.name] = isinstance(bundles, list) and DSH_PLUGIN in bundles
-    return out
-
-
-def _dsh_installed() -> bool | None:
-    """Honcho is in some profile's ``dsh.profile.bundles`` (a disabled plugin stays in dependencies)."""
-    profiles = dsh_profiles()
-    return _either(*profiles.values()) if profiles else False
 
 
 def _dsh_present() -> bool:
@@ -325,43 +122,115 @@ def _dsh_present() -> bool:
         return False
 
 
-def _cline_settings() -> Path:
-    return _vscode_user() / "globalStorage" / "saoudrizwan.claude-dev" / "settings" / "cline_mcp_settings.json"
-
-
-def _claude_desktop_dir() -> Path:
-    return _app_support() / "Claude"
-
-
 # --------------------------------------------------------------------------- #
-# install commands
+# asking an agent whether Honcho is set up
 
 
-def _opencode_major() -> int | None:
-    exe = shutil.which("opencode")
+def _output(argv: list[str]) -> tuple[int, str] | None:
+    """Run one of the agent's own status commands. ``None`` when it couldn't run."""
+    exe = shutil.which(argv[0])
     if not exe:
         return None
     try:
-        out = subprocess.run([exe, "--version"], capture_output=True, text=True, timeout=5).stdout
+        proc = subprocess.run(
+            [exe, *argv[1:]], capture_output=True, text=True, errors="replace", timeout=60, stdin=subprocess.DEVNULL
+        )
     except (OSError, subprocess.SubprocessError):
         return None
-    m = re.search(r"(\d+)\.\d+", out)
-    return int(m.group(1)) if m else None
+    return proc.returncode, proc.stdout
 
 
-def _opencode_install() -> list[list[str]]:
-    if _opencode_major() == 1:
-        return [["opencode", "plugin", "@honcho-ai/opencode-honcho", "--global"]]
-    return [["opencode", "plugin", "add", "@honcho-ai/opencode-honcho"]]
+def _json_list(out: tuple[int, str] | None, key: str | None = None) -> list[dict[str, object]] | None:
+    """The list of objects a ``--json`` status command printed, or None if it didn't."""
+    if out is None or out[0] != 0:
+        return None
+    try:
+        data = json.loads(out[1])
+    except ValueError:
+        return None
+    if key is not None:
+        data = data.get(key) if isinstance(data, dict) else None
+    return [d for d in data if isinstance(d, dict)] if isinstance(data, list) else None
 
 
-def _claude_code_install() -> list[list[str]]:
-    known = _read_json(_claude_home() / "plugins" / "known_marketplaces.json")
-    cmds = []
-    if not (isinstance(known, dict) and "honcho" in known):
-        cmds.append(["claude", "plugin", "marketplace", "add", "plastic-labs/claude-honcho"])
-    cmds.append(["claude", "plugin", "install", "honcho@honcho"])
-    return cmds
+def _claude_code_has_honcho() -> bool | None:
+    out = _output(["claude", "plugin", "list", "--json"])
+    return None if out is None or out[0] != 0 else "honcho@honcho" in out[1]
+
+
+def _codex_has_honcho() -> bool | None:
+    out = _output(["codex", "mcp", "get", "honcho"])
+    return None if out is None else out[0] == 0
+
+
+def _hermes_has_honcho() -> bool | None:
+    out = _output(["hermes", "config", "get", "memory.provider"])
+    return None if out is None or out[0] != 0 else out[1].strip() == "honcho"
+
+
+def _hermes_has_plugin() -> bool:
+    plugins = _json_list(_output(["hermes", "plugins", "list", "--json", "--user"]))
+    return any(p.get("name") == "honcho" for p in plugins or [])
+
+
+def _openclaw_has_honcho() -> bool | None:
+    plugins = _json_list(_output(["openclaw", "plugins", "list", "--json"]), key="plugins")
+    return None if plugins is None else any(p.get("id") == "openclaw-honcho" for p in plugins)
+
+
+# --------------------------------------------------------------------------- #
+# install commands — each is the agent's own CLI
+
+
+def _claude_code_install(_: Credentials) -> list[list[str]]:
+    return [
+        ["claude", "plugin", "marketplace", "add", "plastic-labs/claude-honcho"],
+        ["claude", "plugin", "install", "honcho@honcho"],
+    ]
+
+
+def _codex_install(creds: Credentials) -> list[list[str]]:
+    # `codex mcp add --url` reads a bearer token only from an env var, so the
+    # key from the config goes in mcp-remote's header instead. This entry is the
+    # one copy of the key outside ~/.honcho/config.json.
+    return [
+        [
+            "codex", "mcp", "add", "honcho", "--",
+            "npx", "-y", "mcp-remote", MCP_URL,
+            "--header", f"Authorization:Bearer {creds.api_key}",
+            "--header", "X-Honcho-Plugin:codex",
+        ],
+        # the skill that tells Codex when to recall and record, installed by vercel-labs/skills
+        ["npx", "-y", "skills", "add", "plastic-labs/honcho", "--skill", "honcho-memory",
+         "--agent", "codex", "--global", "--yes"],
+    ]
+
+
+def _hermes_install(_: Credentials) -> list[list[str]]:
+    # The plugin reads the key from ~/.honcho/config.json, so switching the
+    # provider on replaces Hermes' interactive `memory setup`.
+    enable = ["hermes", "config", "set", "memory.provider", "honcho"]
+    if _hermes_has_plugin():
+        return [enable]
+    return [["hermes", "plugins", "install", "honcho", "--enable", "--yes-deps"], enable]
+
+
+def _hermes_notes() -> list[str]:
+    # Hermes reads these before ~/.honcho/config.json, so a key in one of them wins.
+    files = dict.fromkeys([_hermes_home() / "honcho.json", _home() / ".hermes" / "honcho.json"])
+    return [f"Hermes reads {f} before ~/.honcho/config.json, so a key there wins." for f in files if _exists(f)]
+
+
+def _openclaw_install(_: Credentials) -> list[list[str]]:
+    # The plugin reads the key from ~/.honcho/config.json. From ClawHub rather
+    # than npm: OpenClaw cancels an npm-sourced install without a terminal, and
+    # without --accept-capabilities it stops to ask for consent either way.
+    # Message capture also needs conversation access, which the plugin's own
+    # warning says to turn on this way.
+    return [
+        ["openclaw", "plugins", "install", "clawhub:@honcho-ai/openclaw-honcho", "--accept-capabilities"],
+        ["openclaw", "config", "set", "plugins.entries.openclaw-honcho.hooks.allowConversationAccess", "true"],
+    ]
 
 
 # --------------------------------------------------------------------------- #
@@ -372,128 +241,101 @@ def _claude_code_install() -> list[list[str]]:
 class Agent:
     id: str
     name: str
-    kind: Literal["plugin", "mcp"]
+    kind: Literal["plugin", "mcp", "suggest"]
     docs_url: str
     bins: tuple[str, ...] = ()
     paths: Callable[[], list[Path]] = field(default=lambda: [])
-    installed: Callable[[], bool | None] = field(default=lambda: None)
-    install: Callable[[], list[list[str]]] = field(default=lambda: [])
-    requires: tuple[str, ...] = ()
-    install_interactive: bool = False
     present: Callable[[], bool] | None = None  # overrides bins/paths when set
+    cloud: bool = False  # runs elsewhere: never found here, always offered
+    caller_env: tuple[str, ...] = ()  # set in the shell of this agent's tool calls
+    has_honcho: Callable[[], bool | None] = field(default=lambda: None)
+    install: Callable[[Credentials], list[list[str]]] | None = None
+    requires: tuple[str, ...] = ()
+    hosted_only: bool = False  # the hosted MCP server can't reach a self-hosted Honcho
     activate: str | None = None  # extra step after install, beyond restarting the agent
+    notes: Callable[[], list[str]] = field(default=lambda: [])  # warnings to show once installed
 
 
 AGENTS: tuple[Agent, ...] = (
-    # ---- coding agents with a Honcho plugin
+    # ---- installed by `honcho install`
     Agent(
         id="claude-code", name="Claude Code", kind="plugin",
         docs_url=f"{DOCS}/integrations/claude-code",
-        bins=("claude",), paths=lambda: [_claude_home()],
-        installed=_claude_code_installed, install=_claude_code_install,
+        bins=("claude",), paths=lambda: [_env_path("CLAUDE_CONFIG_DIR", _home() / ".claude")],
+        caller_env=("CLAUDECODE", "CLAUDE_CODE"),
+        has_honcho=_claude_code_has_honcho, install=_claude_code_install,
         requires=("claude", "bun"),
     ),
     Agent(
-        id="codex", name="Codex", kind="plugin",
-        docs_url=f"{DOCS}/integrations/codex",
-        bins=("codex",), paths=lambda: [_codex_home()],
-        installed=_codex_installed,
-        install=lambda: [["npx", "-y", "@honcho-ai/codex-honcho", "install"]],
-        requires=("npx",),
+        id="codex", name="Codex", kind="mcp", docs_url=f"{MCP_DOCS}#codex",
+        bins=("codex",), paths=lambda: [_env_path("CODEX_HOME", _home() / ".codex")],
+        caller_env=("CODEX_THREAD_ID", "CODEX_SANDBOX", "CODEX_CI"),
+        has_honcho=_codex_has_honcho, install=_codex_install,
+        requires=("codex", "npx"), hosted_only=True,
     ),
-    Agent(
-        id="opencode", name="OpenCode", kind="plugin",
-        docs_url=f"{DOCS}/integrations/opencode",
-        bins=("opencode",), paths=lambda: [_opencode_dir()],
-        installed=_opencode_installed, install=_opencode_install,
-        requires=("opencode",),
-    ),
-    Agent(
-        id="pi", name="Pi", kind="plugin",
-        docs_url=f"{DOCS}/community/pi-honcho-memory",
-        bins=("pi",), paths=lambda: [_home() / ".pi" / "agent"],
-        installed=_pi_installed,
-        install=lambda: [["pi", "install", "npm:@honcho-ai/pi-honcho"]],
-        requires=("pi",),
-    ),
-    Agent(
-        id="kilo", name="Kilo Code", kind="plugin",
-        docs_url=f"{DOCS}/integrations/kilo",
-        bins=("kilo",), paths=lambda: [_xdg_config() / "kilo"],
-        installed=_kilo_installed,
-        install=lambda: [["kilo", "plugin", "@honcho-ai/kilo-honcho", "--global"]],
-        requires=("kilo",),
-    ),
-    Agent(
-        id="dsh", name="DeepSeek Harness", kind="plugin",
-        docs_url=f"{DOCS}/integrations/deepseek-harness",
-        present=_dsh_present,
-        installed=_dsh_installed,
-        install=lambda: [["dsh", "plugin", "--profile", "<profile>", "add", DSH_PLUGIN]],
-        requires=("dsh", "pnpm"),  # `dsh plugin` hands off to pnpm
-    ),
-    # ---- general agents with a Honcho plugin
     Agent(
         id="hermes", name="Hermes Agent", kind="plugin",
         docs_url=f"{DOCS}/integrations/hermes",
         bins=("hermes",), paths=lambda: [_hermes_home()],
-        installed=_hermes_installed, install=_hermes_install,
-        requires=("hermes",), install_interactive=True,
+        has_honcho=_hermes_has_honcho, install=_hermes_install,
+        requires=("hermes",), notes=_hermes_notes,
     ),
     Agent(
         id="openclaw", name="OpenClaw", kind="plugin",
         docs_url=f"{DOCS}/integrations/openclaw",
-        bins=("openclaw",), paths=lambda: [_openclaw_home()],
-        installed=_openclaw_installed, install=_openclaw_install,
-        requires=("openclaw",), install_interactive=True,
-        activate="openclaw gateway --force",
+        bins=("openclaw",), paths=lambda: [_env_path("OPENCLAW_STATE_DIR", _home() / ".openclaw")],
+        has_honcho=_openclaw_has_honcho, install=_openclaw_install,
+        requires=("openclaw",), activate="openclaw gateway restart",
     ),
-    # ---- MCP clients
+    # ---- set up from the guide
     Agent(
-        id="cursor", name="Cursor", kind="mcp", docs_url=f"{MCP_DOCS}#cursor",
+        id="grok-bot", name="Grok Bot", kind="suggest",
+        docs_url=f"{DOCS}/integrations/grok-bot", cloud=True,
+    ),
+    Agent(
+        id="opencode", name="OpenCode", kind="suggest", docs_url=f"{DOCS}/integrations/opencode",
+        bins=("opencode",), paths=lambda: [_env_path("OPENCODE_CONFIG_DIR", _xdg_config() / "opencode")],
+    ),
+    Agent(
+        id="pi", name="Pi", kind="suggest", docs_url=f"{DOCS}/integrations/pi",
+        bins=("pi",), paths=lambda: [_home() / ".pi" / "agent"],
+    ),
+    Agent(
+        id="kilo", name="Kilo Code", kind="suggest", docs_url=f"{DOCS}/integrations/kilo",
+        bins=("kilo",), paths=lambda: [_xdg_config() / "kilo"],
+    ),
+    Agent(
+        id="dsh", name="DeepSeek Harness", kind="suggest",
+        docs_url=f"{DOCS}/integrations/deepseek-harness", present=_dsh_present,
+    ),
+    Agent(
+        id="cursor", name="Cursor", kind="suggest", docs_url=f"{DOCS}/integrations/cursor",
         bins=("cursor", "cursor-agent"), paths=lambda: [_home() / ".cursor"],
-        # the MCP server, or the older cursor-honcho hooks plugin
-        installed=lambda: _either(
-            _mcp_file_has_honcho([_home() / ".cursor" / "mcp.json"], "mcpServers"),
-            "honcho" in (_read_text(_home() / ".cursor" / "hooks.json") or ""),
-        ),
     ),
     Agent(
-        id="claude-desktop", name="Claude Desktop", kind="mcp", docs_url=f"{MCP_DOCS}#claude-desktop",
-        paths=lambda: [_claude_desktop_dir()] if sys.platform in ("darwin", "win32") else [],
-        installed=lambda: _mcp_file_has_honcho(
-            [_claude_desktop_dir() / "claude_desktop_config.json"], "mcpServers"),
+        id="claude-desktop", name="Claude Desktop", kind="suggest", docs_url=f"{MCP_DOCS}#claude-desktop",
+        paths=lambda: [_app_support() / "Claude"] if sys.platform in ("darwin", "win32") else [],
     ),
     Agent(
-        id="windsurf", name="Windsurf", kind="mcp", docs_url=f"{MCP_DOCS}#windsurf",
+        id="windsurf", name="Windsurf", kind="suggest", docs_url=f"{MCP_DOCS}#windsurf",
         bins=("windsurf",), paths=lambda: [_home() / ".codeium" / "windsurf"],
-        installed=lambda: _mcp_file_has_honcho(
-            [_home() / ".codeium" / "windsurf" / "mcp_config.json"], "mcpServers"),
     ),
     Agent(
-        id="cline", name="Cline", kind="mcp", docs_url=f"{MCP_DOCS}#cline",
-        paths=lambda: [_cline_settings().parent.parent],
-        installed=lambda: _mcp_file_has_honcho([_cline_settings()], "mcpServers"),
+        id="cline", name="Cline", kind="suggest", docs_url=f"{MCP_DOCS}#cline",
+        paths=lambda: [_vscode_user() / "globalStorage" / "saoudrizwan.claude-dev"],
     ),
     Agent(
-        id="vscode", name="VS Code", kind="mcp", docs_url=f"{MCP_DOCS}#vs-code-copilot-chat",
+        id="vscode", name="VS Code", kind="suggest", docs_url=f"{MCP_DOCS}#vs-code-copilot-chat",
         bins=("code",), paths=lambda: [_vscode_user()],
-        # user-level mcp.json, or the older "mcp" block in settings.json
-        installed=lambda: _either(
-            _mcp_file_has_honcho([_vscode_user() / "mcp.json"], "servers"),
-            _mcp_file_has_honcho([_vscode_user() / "settings.json"], "mcp", "servers"),
-        ),
     ),
     Agent(
-        id="zed", name="Zed", kind="mcp", docs_url=f"{MCP_DOCS}#zed",
+        id="zed", name="Zed", kind="suggest", docs_url=f"{MCP_DOCS}#zed",
         bins=("zed", "zeditor"), paths=lambda: [_zed_dir()],
-        installed=lambda: _mcp_file_has_honcho([_zed_dir() / "settings.json"], "context_servers"),
     ),
     Agent(
-        id="goose", name="Goose", kind="mcp", docs_url=f"{MCP_DOCS}#goose",
+        id="goose", name="Goose", kind="suggest", docs_url=f"{MCP_DOCS}#goose",
         # config dir only: "goose" is also the binary of a common Go migration tool
         paths=lambda: [_goose_dir()],
-        installed=lambda: "mcp.honcho.dev" in (_read_text(_goose_dir() / "config.yaml") or ""),
     ),
 )
 
@@ -504,25 +346,42 @@ class Detection:
     found: bool
     installed: bool | None = None  # None = can't tell
     blocked: str | None = None     # why the install can't run here
-    commands: list[list[str]] = field(default_factory=list)
 
 
-def detect(agent: Agent) -> Detection:
+def calling_agent() -> Agent | None:
+    """The agent whose tool call is running this command, from env vars it sets."""
+    named = os.environ.get("AI_AGENT", "").strip().lower()
+    for agent in AGENTS:
+        if agent.id == named or any(os.environ.get(v) for v in agent.caller_env):
+            return agent
+    return None
+
+
+def _found(agent: Agent) -> bool:
     if agent.present is not None:
-        found = agent.present()
-    else:
-        found = any(shutil.which(b) for b in agent.bins) or any(_exists(p) for p in agent.paths())
-    if not found:
+        return agent.present()
+    return any(shutil.which(b) for b in agent.bins) or any(_exists(p) for p in agent.paths())
+
+
+def detect(agent: Agent, creds: Credentials | None = None) -> Detection:
+    if agent.cloud or not _found(agent):
         return Detection(agent, found=False)
+    if agent.install is None:
+        return Detection(agent, found=True)
+    missing = [b for b in agent.requires if not shutil.which(b)]
+    if missing:
+        return Detection(agent, found=True, blocked=f"needs {', '.join(missing)} on PATH")
     try:
-        installed = agent.installed()
+        installed = agent.has_honcho()
     except Exception:
         installed = None
-    missing = [b for b in agent.requires if not shutil.which(b)]
-    blocked = f"needs {', '.join(missing)} on PATH" if missing and not installed else None
-    commands = agent.install() if agent.kind == "plugin" and not installed else []
-    return Detection(agent, found=True, installed=installed, blocked=blocked, commands=commands)
+    blocked = None
+    if not installed and agent.hosted_only and creds is not None and not creds.hosted:
+        blocked = f"only works with api.honcho.dev; see {agent.docs_url}"
+    return Detection(agent, found=True, installed=installed, blocked=blocked)
 
 
-def detect_all() -> list[Detection]:
-    return [detect(a) for a in AGENTS]
+def detect_all(creds: Credentials | None = None) -> list[Detection]:
+    """Detect every agent. Status commands run in parallel; some take seconds."""
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        return list(pool.map(lambda a: detect(a, creds), AGENTS))

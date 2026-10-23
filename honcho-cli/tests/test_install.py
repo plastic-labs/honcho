@@ -12,29 +12,40 @@ from honcho_cli.main import app
 from typer.testing import CliRunner
 
 CATALOG = Path(__file__).resolve().parents[2] / "docs" / "snippets" / "integrations-catalog.jsx"
+KEY = "hch-test-0123456789abcdef"
+
+# Fake agent CLIs. Claude Code already lists the Honcho plugin; Codex reports
+# the MCP server only once something has registered it.
+STUBS = {
+    "claude": 'case "$*" in "plugin list --json") echo \'[{"id":"honcho@honcho"}]\';; esac',
+    "codex": '[ "$*" = "mcp get honcho" ] && { [ -f "$HOME/codex-has-honcho" ] || exit 1; }; exit 0',
+    "bun": "exit 0",
+    "npx": "exit 0",
+}
 
 
 @pytest.fixture
 def machine(tmp_path, monkeypatch):
-    """A fake home with Codex and Pi on PATH, Pi already wired, and a Cursor config dir."""
+    """A fake home with Claude Code (Honcho installed), Codex (not yet) and a Cursor config dir."""
     home = tmp_path / "home"
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    for name in ("codex", "pi", "npx"):
+    for name, body in STUBS.items():
         exe = bin_dir / name
-        exe.write_text("#!/bin/sh\nexit 0\n")
+        exe.write_text(f"#!/bin/sh\n{body}\n")
         exe.chmod(0o755)
-
-    pi_settings = home / ".pi" / "agent" / "settings.json"
-    pi_settings.parent.mkdir(parents=True)
-    pi_settings.write_text(json.dumps({"packages": ["npm:@honcho-ai/pi-honcho"]}))
-    (home / ".cursor").mkdir()
+    (home / ".cursor").mkdir(parents=True)
+    config = home / ".honcho" / "config.json"
+    config.parent.mkdir()
+    config.write_text(json.dumps({"apiKey": KEY}))
 
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("PATH", str(bin_dir))
-    monkeypatch.setenv("HONCHO_API_KEY", "hch-test")
-    for var in ("XDG_CONFIG_HOME", "CODEX_HOME", "CLAUDE_CONFIG_DIR", "OPENCODE_CONFIG_DIR", "HERMES_HOME",
-                "OPENCLAW_STATE_DIR", "DSH_HOME", "APPDATA"):
+    monkeypatch.setattr("honcho_cli.config.CONFIG_FILE", config)
+    monkeypatch.setattr("honcho_cli.commands.install.CONFIG_FILE", config)
+    for var in ("HONCHO_API_KEY", "HONCHO_BASE_URL", "XDG_CONFIG_HOME", "CODEX_HOME", "CLAUDE_CONFIG_DIR",
+                "OPENCODE_CONFIG_DIR", "HERMES_HOME", "OPENCLAW_STATE_DIR", "APPDATA", "AI_AGENT",
+                *(v for a in AGENTS for v in a.caller_env)):
         monkeypatch.delenv(var, raising=False)
     return home
 
@@ -43,24 +54,33 @@ def test_detects_agents_and_installs_only_what_is_missing(machine, monkeypatch):
     runner = CliRunner()
 
     rows = {r["id"]: r for r in json.loads(runner.invoke(app, ["install", "--json"]).output)}
-    assert rows["pi"]["found"] and rows["pi"]["installed"] is True
+    assert rows["claude-code"]["found"] and rows["claude-code"]["installed"] is True
     assert rows["codex"]["found"] and rows["codex"]["installed"] is False
-    assert rows["codex"]["command"] == "npx -y @honcho-ai/codex-honcho install"
-    assert rows["cursor"]["found"] and rows["cursor"]["kind"] == "mcp"
-    assert not rows["claude-code"]["found"]
+    assert rows["codex"]["command"].startswith("codex mcp add honcho -- npx -y mcp-remote https://mcp.honcho.dev")
+    assert KEY not in rows["codex"]["command"]  # shown masked
+    assert rows["cursor"]["found"] and rows["cursor"]["kind"] == "suggest"
+    assert not rows["hermes"]["found"] and not rows["openclaw"]["found"]
 
     ran: list[list[str]] = []
-    monkeypatch.setattr("honcho_cli.commands.install.runner", lambda argv: ran.append(list(argv)) or 0)
+
+    def fake_run(argv):
+        ran.append(list(argv))
+        if argv[:3] == ["codex", "mcp", "add"]:
+            (machine / "codex-has-honcho").touch()
+        return 0
+
+    monkeypatch.setattr("honcho_cli.commands.install.runner", fake_run)
     result = runner.invoke(app, ["install", "all"])
 
-    # Pi is already wired and Cursor is an MCP client, so only Codex runs.
+    # Claude Code already has Honcho and Cursor is set up from its guide, so only Codex runs.
     assert result.exit_code == 0, result.output
-    assert ran == [["npx", "-y", "@honcho-ai/codex-honcho", "install"]]
+    assert [argv[:3] for argv in ran] == [["codex", "mcp", "add"], ["npx", "-y", "skills"]]
+    assert f"Authorization:Bearer {KEY}" in ran[0]
 
 
 @pytest.mark.skipif(not CATALOG.exists(), reason="docs catalog not in this checkout")
 def test_every_catalog_agent_is_detected():
-    """Adding an agent to the docs catalog should prompt adding detection here."""
+    """Adding an agent to the docs catalog should prompt adding it here."""
     sections = CATALOG.read_text().split('title: "')[1:]
     names = {
         name
@@ -68,4 +88,4 @@ def test_every_catalog_agent_is_detected():
         if section.startswith(("General agents", "Coding agents"))
         for name in re.findall(r'name: "([^"]+)"', section)
     }
-    assert names == {a.name for a in AGENTS}
+    assert names <= {a.name for a in AGENTS}
