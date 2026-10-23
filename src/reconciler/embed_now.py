@@ -345,7 +345,10 @@ async def _upsert_external(
     them is the only DB work here, done in its own short transaction before any
     network call."""
     async with tracked_db("embed_now_positions", tenant_id=tenant_id) as db:
-        chunk_position = await compute_chunk_positions(db, message_ids)
+        tenant = models.scoped_tenant_id()
+        chunk_position = await compute_chunk_positions(
+            db, [(tenant, message_id) for message_id in message_ids]
+        )
 
     # ai: contained per chunk — an unresolvable key leaves those chunks to the reconciler's backoff instead of failing the whole fast path
     by_namespace: dict[str, list[_ClaimedChunk]] = {}

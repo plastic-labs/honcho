@@ -612,6 +612,7 @@ async def get_sessions_for_peer(
             (models.Session.name == models.SessionPeer.session_name)
             & (models.Session.workspace_name == models.SessionPeer.workspace_name),
         )
+        .where(models.SessionPeer.tenant_id == models.scoped_tenant_id())
         .where(models.SessionPeer.peer_name == peer_name)
         .where(models.Session.tenant_id == models.scoped_tenant_id())
         .where(models.Session.workspace_name == workspace_name)
