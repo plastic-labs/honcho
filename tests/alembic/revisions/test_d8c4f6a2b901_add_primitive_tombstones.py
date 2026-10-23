@@ -33,11 +33,26 @@ def _seed_legacy_rows(verifier: MigrationVerifier, workspace: str) -> None:
         )
 
 
+def _assert_document_deleted_at_index_preserved(verifier: MigrationVerifier) -> None:
+    """The partial index from 119a52b73c60 stays valid with its original predicate."""
+    row = verifier.conn.execute(
+        text(
+            "SELECT i.indisvalid, pg_get_expr(i.indpred, i.indrelid) FROM pg_index i"
+            + " JOIN pg_class c ON c.oid = i.indexrelid"
+            + " JOIN pg_namespace n ON n.oid = c.relnamespace"
+            + " WHERE n.nspname = :schema AND c.relname = 'ix_documents_deleted_at'"
+        ),
+        {"schema": verifier.schema},
+    ).one()
+    assert tuple(row) == (True, "(deleted_at IS NOT NULL)")
+
+
 @register_before_upgrade("d8c4f6a2b901")
 def prepare_primitive_tombstones(verifier: MigrationVerifier) -> None:
     for table in TABLES:
         verifier.assert_column_exists(table, "deleted_at", exists=False)
     _seed_legacy_rows(verifier, "before_tombstones")
+    _assert_document_deleted_at_index_preserved(verifier)
 
 
 @register_after_upgrade("d8c4f6a2b901")
@@ -113,13 +128,4 @@ def verify_primitive_tombstones(verifier: MigrationVerifier) -> None:
             ),
         ]
     )
-    row = verifier.conn.execute(
-        text(
-            "SELECT i.indisvalid, i.indpred IS NULL FROM pg_index i"
-            + " JOIN pg_class c ON c.oid = i.indexrelid"
-            + " JOIN pg_namespace n ON n.oid = c.relnamespace"
-            + " WHERE n.nspname = :schema AND c.relname = 'ix_documents_deleted_at'"
-        ),
-        {"schema": verifier.schema},
-    ).one()
-    assert row == (True, True)
+    _assert_document_deleted_at_index_preserved(verifier)
