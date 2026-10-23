@@ -7,7 +7,7 @@ import pytest
 from nanoid import generate as generate_nanoid
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src import models
+from src import crud, models
 from src.config import settings
 from src.dreamer.dream_due import count_due_dreams
 from src.schemas import DreamType
@@ -87,18 +87,20 @@ async def _insert_docs(
     if session_name is None and not sessionless:
         session_name = await _make_session(db_session, collection.workspace_name)
     created_at = _now() - datetime.timedelta(minutes=age_minutes)
-    for _ in range(count):
-        db_session.add(
-            models.Document(
-                content="test",
-                level=level,
-                workspace_name=collection.workspace_name,
-                observer=collection.observer,
-                observed=collection.observed,
-                session_name=session_name,
-                created_at=created_at,
-            )
+    docs = [
+        models.Document(
+            content="test",
+            level=level,
+            workspace_name=collection.workspace_name,
+            observer=collection.observer,
+            observed=collection.observed,
+            session_name=session_name,
+            created_at=created_at,
         )
+        for _ in range(count)
+    ]
+    db_session.add_all(docs)
+    await crud.record_explicit_documents(db_session, docs)
     await db_session.commit()
 
 
@@ -438,19 +440,21 @@ async def _seed_tenant_docs(
     )
     await db_session.flush()
     created_at = _now() - datetime.timedelta(minutes=age_minutes)
-    for _ in range(count):
-        db_session.add(
-            models.Document(
-                content="test",
-                level="explicit",
-                workspace_name=workspace_name,
-                observer=peer_name,
-                observed=peer_name,
-                session_name=session_name,
-                tenant_id=tenant_id,
-                created_at=created_at,
-            )
+    docs = [
+        models.Document(
+            content="test",
+            level="explicit",
+            workspace_name=workspace_name,
+            observer=peer_name,
+            observed=peer_name,
+            session_name=session_name,
+            tenant_id=tenant_id,
+            created_at=created_at,
         )
+        for _ in range(count)
+    ]
+    db_session.add_all(docs)
+    await crud.record_explicit_documents(db_session, docs)
     await db_session.commit()
     return session_name
 

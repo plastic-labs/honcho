@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src import models
+from src import crud, models
 from src.config import settings
 from src.db import tenant_context
 from src.dreamer.dream_scheduler import (
@@ -451,15 +451,15 @@ class TestThresholdFilter:
         level: str,
     ) -> None:
         """Helper: insert one Document at the given level."""
-        db_session.add(
-            models.Document(
-                content="test",
-                level=level,
-                workspace_name=collection.workspace_name,
-                observer=collection.observer,
-                observed=collection.observed,
-            )
+        doc = models.Document(
+            content="test",
+            level=level,
+            workspace_name=collection.workspace_name,
+            observer=collection.observer,
+            observed=collection.observed,
         )
+        db_session.add(doc)
+        await crud.record_explicit_documents(db_session, [doc])
 
     @pytest.mark.asyncio
     async def test_mixed_levels_below_explicit_threshold(

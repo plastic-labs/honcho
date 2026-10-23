@@ -384,6 +384,7 @@ async def _copy_chunk(
             new_rows.append(row)
 
         db.add_all(new_rows)
+        await crud.record_explicit_documents(db, new_rows)
         if restore_ids:
             await db.execute(
                 update(models.Document)
