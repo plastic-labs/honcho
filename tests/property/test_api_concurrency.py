@@ -238,8 +238,21 @@ def test_harness_overlaps_transactions(fuzz_engine: str):
     assert asyncio.run(go()) >= 4
 
 
-@pytest.mark.parametrize("index", [0, 1, 3, 4, 5, 15])
-def test_identical_get_or_create_race(index: int, fuzz_engine: str):
+@pytest.mark.parametrize(
+    ("index", "expected_rows"),
+    [
+        (0, {"workspaces": 1, "sessions": 0, "peers": 0}),
+        (1, {"workspaces": 1, "sessions": 0, "peers": 1}),
+        (3, {"workspaces": 1, "sessions": 1, "peers": 0}),
+        (4, {"workspaces": 1, "sessions": 1, "peers": 1}),
+        (5, {"workspaces": 1, "sessions": 1, "peers": 1}),
+        # A scope is backed by a peer
+        (15, {"workspaces": 1, "sessions": 0, "peers": 1}),
+    ],
+)
+def test_identical_get_or_create_race(
+    index: int, expected_rows: dict[str, int], fuzz_engine: str
+):
     """25 identical requests at once all succeed and leave one row each."""
 
     async def go() -> None:
@@ -254,11 +267,13 @@ def test_identical_get_or_create_race(index: int, fuzz_engine: str):
             statuses = {r.status_code for r in responses}
             assert statuses <= {200, 201}, [r.text[:200] for r in responses]
             async with engine.connect() as conn:
-                for table in ("workspaces", "sessions", "peers"):
-                    count = (
-                        await conn.exec_driver_sql(f"SELECT count(*) FROM {table}")
-                    ).scalar_one()  # noqa: S608
-                    assert count <= 2, (table, count)
+                rows = {
+                    table: (
+                        await conn.exec_driver_sql(f"SELECT count(*) FROM {table}")  # noqa: S608
+                    ).scalar_one()
+                    for table in expected_rows
+                }
+            assert rows == expected_rows
         finally:
             await engine.dispose()
 
