@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from logging import getLogger
 
 import sentry_sdk
-from sqlalchemy import exists, func, select
+from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
@@ -366,11 +366,11 @@ async def check_and_schedule_dream(
 
     # Count explicit-level docs only: dreamer output (deductive/inductive/
     # contradiction) would inflate the threshold and create a feedback loop.
-    count_stmt = select(func.count(models.Document.id)).where(
-        models.Document.workspace_name == collection.workspace_name,
-        models.Document.observer == collection.observer,
-        models.Document.observed == collection.observed,
-        models.Document.level == "explicit",
+    count_stmt = select(models.Collection.explicit_count).where(
+        models.Collection.tenant_id == collection.tenant_id,
+        models.Collection.workspace_name == collection.workspace_name,
+        models.Collection.observer == collection.observer,
+        models.Collection.observed == collection.observed,
     )
     current_explicit_count = int(await db.scalar(count_stmt) or 0)
 

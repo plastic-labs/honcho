@@ -4,8 +4,17 @@ from datetime import UTC, datetime, timedelta
 from logging import getLogger
 from typing import Any, NamedTuple, cast
 
-from sqlalchemy import func, select
-from sqlalchemy.dialects.postgresql import aggregate_order_by
+from sqlalchemy import (
+    Text,
+    and_,
+    column,
+    func,
+    literal_column,
+    or_,
+    select,
+    true,
+    values,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
@@ -65,34 +74,8 @@ async def list_due_dreams(db: AsyncSession) -> list[DueDream]:
     if not settings.DREAM.ENABLED or not dream_types:
         return []
 
-    # ai: grouped and joined by tenant too — this query runs cross-tenant on the
-    # service session, and (workspace, observer, observed) is unique only per
-    # tenant. A tenant-blind join merges same-named triples across tenants:
-    # inflated document counts, and a newest_session_name from another tenant.
-    explicit_counts = (
-        select(
-            models.Document.tenant_id,
-            models.Document.workspace_name,
-            models.Document.observer,
-            models.Document.observed,
-            func.count(models.Document.id).label("explicit_count"),
-            func.max(models.Document.created_at).label("newest_created_at"),
-            func.array_agg(
-                aggregate_order_by(
-                    models.Document.session_name, models.Document.created_at.desc()
-                )
-            )[1].label("newest_session_name"),
-        )
-        .where(models.Document.level == "explicit")
-        .group_by(
-            models.Document.tenant_id,
-            models.Document.workspace_name,
-            models.Document.observer,
-            models.Document.observed,
-        )
-        .subquery()
-    )
-
+    now = datetime.now(UTC)
+    idle_cutoff = now - timedelta(minutes=settings.DREAM.IDLE_TIMEOUT_MINUTES)
     rows = (
         await db.execute(
             select(
@@ -100,22 +83,23 @@ async def list_due_dreams(db: AsyncSession) -> list[DueDream]:
                 models.Collection.observer,
                 models.Collection.observed,
                 models.Collection.internal_metadata,
-                func.coalesce(explicit_counts.c.explicit_count, 0),
-                explicit_counts.c.newest_created_at,
-                explicit_counts.c.newest_session_name,
+                models.Collection.explicit_count,
+                models.Collection.newest_explicit_at,
                 models.Collection.tenant_id,
-            ).outerjoin(
-                explicit_counts,
-                (models.Collection.tenant_id == explicit_counts.c.tenant_id)
-                & (models.Collection.workspace_name == explicit_counts.c.workspace_name)
-                & (models.Collection.observer == explicit_counts.c.observer)
-                & (models.Collection.observed == explicit_counts.c.observed),
+            ).where(
+                or_(
+                    and_(
+                        literal_column(f"({models.DREAM_DOCUMENTS_SINCE_SQL})")
+                        >= settings.DREAM.DOCUMENT_THRESHOLD,
+                        models.Collection.newest_explicit_at <= idle_cutoff,
+                    ),
+                    # Any documents that were selected but not used in the last dream
+                    literal_column(models.DREAM_BACKLOG_SQL) > literal_column("0"),
+                )
             )
         )
     ).all()
 
-    now = datetime.now(UTC)
-    idle_cutoff = now - timedelta(minutes=settings.DREAM.IDLE_TIMEOUT_MINUTES)
     # A candidate's newest explicit conclusion, or, for a pair whose work list
     # is still behind, its last completed dream: an attempt after that time
     # means the dream is already queued or was tried.
@@ -128,8 +112,7 @@ async def list_due_dreams(db: AsyncSession) -> list[DueDream]:
         internal_metadata = cast("dict[str, Any] | None", row[3])
         explicit_count = cast(int, row[4])
         newest_created_at = cast("datetime | None", row[5])
-        newest_session_name = cast("str | None", row[6])
-        tenant_id = cast(str, row[7])
+        tenant_id = cast(str, row[6])
 
         dream_metadata: dict[str, Any] = (internal_metadata or {}).get("dream", {})
         since_last_dream = explicit_count - int(
@@ -149,9 +132,6 @@ async def list_due_dreams(db: AsyncSession) -> list[DueDream]:
             continue
 
         if newest_created_at is None or newest_created_at > idle_cutoff:
-            continue
-
-        if newest_session_name is None:
             continue
 
         last_dream_at = cast("str | None", dream_metadata.get("last_dream_at"))
@@ -175,7 +155,8 @@ async def list_due_dreams(db: AsyncSession) -> list[DueDream]:
                     observer=observer,
                     observed=observed,
                     dream_type=dream_type,
-                    session_name=newest_session_name,
+                    # Hydrated later on
+                    session_name="",
                     tenant_id=tenant_id,
                 ),
                 max(newest_created_at, backlog_since)
@@ -237,7 +218,84 @@ async def list_due_dreams(db: AsyncSession) -> list[DueDream]:
     if not unattempted:
         return []
 
-    return await _filter_dreams_enabled(db, unattempted)
+    newest_sessions = await _newest_session_names(db, unattempted)
+    with_sessions = [
+        due_dream._replace(session_name=session_name)
+        for due_dream in unattempted
+        if (
+            session_name := newest_sessions.get(
+                (
+                    due_dream.tenant_id,
+                    due_dream.workspace_name,
+                    due_dream.observer,
+                    due_dream.observed,
+                )
+            )
+        )
+        is not None
+    ]
+    if not with_sessions:
+        return []
+
+    return await _filter_dreams_enabled(db, with_sessions)
+
+
+async def _newest_session_names(
+    db: AsyncSession, candidates: list[DueDream]
+) -> dict[tuple[str, str, str, str], str | None]:
+    """The session of each candidate collection's newest explicit document."""
+    keys = values(
+        column("tenant_id", Text),
+        column("workspace_name", Text),
+        column("observer", Text),
+        column("observed", Text),
+        name="keys",
+    ).data(
+        list(
+            {
+                (
+                    due_dream.tenant_id,
+                    due_dream.workspace_name,
+                    due_dream.observer,
+                    due_dream.observed,
+                )
+                for due_dream in candidates
+            }
+        )
+    )
+    newest = (
+        select(models.Document.session_name)
+        .where(
+            models.Document.tenant_id == keys.c.tenant_id,
+            models.Document.observer == keys.c.observer,
+            models.Document.observed == keys.c.observed,
+            models.Document.workspace_name == keys.c.workspace_name,
+            models.Document.level == "explicit",
+        )
+        .order_by(models.Document.created_at.desc())
+        .limit(1)
+        .lateral("newest")
+    )
+    rows = (
+        await db.execute(
+            select(
+                keys.c.tenant_id,
+                keys.c.workspace_name,
+                keys.c.observer,
+                keys.c.observed,
+                newest.c.session_name,
+            ).select_from(keys.join(newest, true()))
+        )
+    ).all()
+    return {
+        (
+            cast(str, row[0]),
+            cast(str, row[1]),
+            cast(str, row[2]),
+            cast(str, row[3]),
+        ): cast("str | None", row[4])
+        for row in rows
+    }
 
 
 async def _filter_dreams_enabled(
