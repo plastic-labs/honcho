@@ -1171,6 +1171,30 @@ async def test_upload_malformed_pdf_returns_422(
 
 
 @pytest.mark.asyncio
+async def test_upload_form_field_failing_schema_returns_422(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    """Form fields are JSON-decoded before validation, so a well-formed value of
+    the wrong type (a list for metadata) must still be a 422."""
+    test_workspace, test_peer = sample_data
+    test_session = models.Session(
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
+    )
+    db_session.add(test_session)
+    await db_session.commit()
+
+    response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages/upload",
+        files={"file": ("a.txt", b"hello", "text/plain")},
+        data={"peer_id": test_peer.name, "metadata": "[]"},
+    )
+    assert response.status_code == 422, response.text
+    error = response.json()["detail"][0]
+    assert error["loc"] == ["body", "metadata"]
+    assert "input" not in error
+
+
+@pytest.mark.asyncio
 async def test_create_message_with_timestamp(
     client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
 ):
