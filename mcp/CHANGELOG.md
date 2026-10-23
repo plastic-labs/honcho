@@ -9,6 +9,13 @@ This package versions independently of the Honcho API, `@honcho-ai/sdk`, and hos
 
 ## [Unreleased]
 
+### Security
+
+- The Docker image now builds on Bun 1.4.4 (was 1.2), the first Bun that
+  rejects certificates from the compromised eMudhra intermediates. Rebuild
+  self-hosted images and run the stdio host on Bun 1.4.4 or newer.
+  mcp.honcho.dev runs on Cloudflare Workers and is unaffected.
+
 ## [3.2.0] - 2026-10-20
 
 ### Added

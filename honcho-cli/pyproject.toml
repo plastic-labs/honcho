@@ -23,6 +23,8 @@ dependencies = [
     "rich>=13.0.0",
     "httpx>=0.27.0",
     "questionary>=2.1.0",
+    # First bundle without emSign ECC Root CA - G3 (eMudhra intermediate key compromise)
+    "certifi>=2026.10.19",
 ]
 
 [project.urls]
