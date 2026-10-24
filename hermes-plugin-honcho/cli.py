@@ -68,6 +68,25 @@ def _local_config_path() -> Path:
     return get_hermes_home() / "honcho.json"
 
 
+def _profile_config_path(profile_name: str) -> Path | None:
+    """A named profile's own honcho.json, or None when it has none.
+
+    resolve_config_path() prefers this file for the running profile, so a profile-local
+    config is authoritative over anything cloned into the default profile's file. Commands
+    that act on *other* profiles must consult this before reading or writing the default
+    file on their behalf. Returns None when the profile is unknown or Hermes cannot be
+    imported, which keeps every caller on its previous behaviour.
+    """
+    if not profile_name or profile_name in {"default", "custom"}:
+        return None
+    try:
+        from hermes_cli.profiles import get_profile_dir
+        path = get_profile_dir(profile_name) / "honcho.json"
+    except Exception:
+        return None
+    return path if path.is_file() else None
+
+
 class _ReadConfig(dict):
     """A command's config, with the ``snapshot`` and ``path`` _write_config() needs to apply only its edits."""
 
@@ -279,7 +298,12 @@ def _inherit_defaults(block: dict, default_block: dict, cfg: dict, keys: tuple[s
 
 def clone_honcho_for_profile(profile_name: str) -> bool:
     """Create a host block for a new profile, cloned from the default host block
-    (called during profile creation). False if Honcho isn't configured or the block exists."""
+    (called during profile creation). False if Honcho isn't configured, the block exists,
+    or the profile has its own honcho.json (which resolve_config_path() prefers, so a
+    block written here would never be read and the peer would be created from the wrong
+    settings)."""
+    if _profile_config_path(profile_name) is not None:
+        return False
     cfg = _read_config()
     if not cfg:
         return False
@@ -313,15 +337,44 @@ def _sync_profiles(verbose: bool) -> int:
         profiles = list_profiles()
     except Exception as e:
         return say(f"  Could not list profiles: {e}\n") or 0
+
+    # Classify before the default-config preflight: a profile with its own honcho.json is
+    # settled regardless of whether the default profile is configured, so reporting it
+    # must not depend on a preflight that only concerns the profiles left to clone.
+    candidates = [p for p in profiles if p.name != "default"]
+    local_names = [p.name for p in candidates if _profile_config_path(p.name) is not None]
+    for name in local_names:
+        say(f"  = {name} has its own honcho.json (skipped)")
+    to_clone = [p for p in candidates if p.name not in set(local_names)]
+
+    local = len(local_names)
+
+    def describe_local() -> None:
+        if local:
+            say(f"  {local} profile(s) have their own honcho.json (skipped).")
+        say()
+
+    if not to_clone:
+        if local:
+            say(f"\n  {local} profile(s) have their own honcho.json (skipped).")
+        else:
+            say("  All profiles already have Honcho config.")
+        say()
+        return 0
+
     cfg = _read_config()
     if not cfg:
-        return say("  No Honcho config found. Run 'hermes honcho setup' first.\n") or 0
+        say("  No Honcho config found. Run 'hermes honcho setup' first.\n")
+        describe_local()
+        return 0
     default_block, has_key = _default_block_and_key(cfg)
     if not default_block and not has_key:
-        return say("  Honcho not configured on default profile. Run 'hermes honcho setup' first.\n") or 0
+        say("  Honcho not configured on default profile. Run 'hermes honcho setup' first.\n")
+        describe_local()
+        return 0
 
     created = skipped = 0
-    for p in (p for p in profiles if p.name != "default"):
+    for p in to_clone:
         try:
             cloned = clone_honcho_for_profile(p.name)
         except ConfigWriteRefused as e:
@@ -334,6 +387,8 @@ def _sync_profiles(verbose: bool) -> int:
     say(f"\n  {created} profile(s) synced." if created else "  All profiles already have Honcho config.")
     if skipped:
         say(f"  {skipped} profile(s) already configured (skipped).")
+    if local:
+        say(f"  {local} profile(s) have their own honcho.json (skipped).")
     say()
     return created
 
@@ -929,7 +984,12 @@ def _active_profile_name() -> str:
 
 
 def _all_profile_host_configs() -> list[tuple[str, str, dict]]:
-    """(profile_name, host_key, host_block) for every known profile, reading honcho.json once."""
+    """(profile_name, host_key, host_block) for every known profile, reading honcho.json once.
+
+    A profile with its own honcho.json is described by that file: its root keys with its
+    own host block on top, matching _pref()'s block-over-root precedence. Reading the
+    default file for such a profile reports settings its runtime never uses.
+    """
     try:
         from hermes_cli.profiles import list_profiles
         profiles = list_profiles()
@@ -938,9 +998,25 @@ def _all_profile_host_configs() -> list[tuple[str, str, dict]]:
     cfg = _read_config()
     # _host_block (not hosts.get) keeps legacy dot-form keys ("hermes.work") readable.
     return [("default", HOST, cfg.get("hosts", {}).get(HOST, {}))] + [
-        (p.name, profile_host_key(p.name), _host_block(cfg, profile_host_key(p.name)))
-        for p in profiles if p.name != "default"
+        (p.name, profile_host_key(p.name), _profile_host_block(p.name, cfg)) for p in profiles if p.name != "default"
     ]
+
+
+def _profile_host_block(profile_name: str, cfg: dict) -> dict:
+    """The host block ``profile_name`` actually runs with.
+
+    Its own honcho.json wins when present (root keys, then its host block on top);
+    otherwise the block cloned into the default file. An unreadable local file falls
+    back to the default file rather than failing a read-only command.
+    """
+    local_path = _profile_config_path(profile_name)
+    if local_path is not None:
+        local = read_json_or_empty(local_path)
+        if local:
+            block = {key: value for key, value in local.items() if key != "hosts"}
+            block.update(_host_block(local, profile_host_key(profile_name)))
+            return block
+    return _host_block(cfg, profile_host_key(profile_name))
 
 
 def cmd_status(args) -> None:
