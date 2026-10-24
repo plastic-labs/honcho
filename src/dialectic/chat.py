@@ -9,6 +9,7 @@ import logging
 from collections.abc import AsyncIterator
 
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models
 from src.config import ReasoningLevel
@@ -47,6 +48,22 @@ def _reject_scope_observed(peer: models.Peer) -> None:
         )
 
 
+async def _member_peer_cards(
+    db: AsyncSession, workspace_name: str, observed_set: crud.ObservedSet | None
+) -> dict[str, list[str]] | None:
+    """Cards for the observed peer's members, keyed by member; None if there are none."""
+    if observed_set is None or not observed_set.aggregated:
+        return None
+    cards: dict[str, list[str]] = {}
+    for observer, observed in observed_set.pairs[1:]:
+        card = await crud.get_peer_card(
+            db, workspace_name, observer=observer, observed=observed
+        )
+        if card:
+            cards[observed] = card
+    return cards
+
+
 async def agentic_chat(
     workspace_name: str,
     session_name: str | None,
@@ -57,6 +74,7 @@ async def agentic_chat(
     session_allowlist: list[str] | None = None,
     response_model: type[BaseModel] | None = None,
     evidence: EvidenceAccumulator | None = None,
+    observed_set: crud.ObservedSet | None = None,
 ) -> str:
     """
     Answer a query about a peer using the agentic dialectic.
@@ -71,6 +89,8 @@ async def agentic_chat(
         session_allowlist: Optional session allowlist restricting all recall
         response_model: Optional Pydantic model the answer must conform to.
             When set, the returned string is JSON matching the model's schema.
+        observed_set: The observed peer expanded over its members, when the
+            read aggregates. None reads the observed peer alone.
 
     Returns:
         The synthesized answer string
@@ -111,6 +131,11 @@ async def agentic_chat(
                 observed_peer_card = await crud.get_peer_card(
                     db, workspace_name, observer=observer, observed=observed
                 )
+        member_peer_cards = (
+            await _member_peer_cards(db, workspace_name, observed_set)
+            if configuration.peer_card.use
+            else None
+        )
     # DB session closed — agent runs without holding a connection
 
     agent = DialecticAgent(
@@ -121,6 +146,8 @@ async def agentic_chat(
         observed=observed,
         observer_peer_card=observer_peer_card,
         observed_peer_card=observed_peer_card,
+        observed_set=observed_set,
+        member_peer_cards=member_peer_cards,
         reasoning_level=reasoning_level,
         session_allowlist=session_allowlist,
         evidence=evidence,
@@ -140,6 +167,7 @@ async def agentic_chat_stream(
     session_allowlist: list[str] | None = None,
     response_model: type[BaseModel] | None = None,
     evidence: EvidenceAccumulator | None = None,
+    observed_set: crud.ObservedSet | None = None,
 ) -> AsyncIterator[str]:
     """
     Stream an answer to a query about a peer using the agentic dialectic.
@@ -155,6 +183,8 @@ async def agentic_chat_stream(
         response_model: Optional Pydantic model the answer must conform to.
             When set, the streamed text accumulates to JSON matching the
             model's schema.
+        observed_set: The observed peer expanded over its members, when the
+            read aggregates. None reads the observed peer alone.
 
     Yields:
         Chunks of the response text as they are generated
@@ -195,6 +225,11 @@ async def agentic_chat_stream(
                 observed_peer_card = await crud.get_peer_card(
                     db, workspace_name, observer=observer, observed=observed
                 )
+        member_peer_cards = (
+            await _member_peer_cards(db, workspace_name, observed_set)
+            if configuration.peer_card.use
+            else None
+        )
     # DB session closed — agent streams without holding a connection
 
     agent = DialecticAgent(
@@ -205,6 +240,8 @@ async def agentic_chat_stream(
         observed=observed,
         observer_peer_card=observer_peer_card,
         observed_peer_card=observed_peer_card,
+        observed_set=observed_set,
+        member_peer_cards=member_peer_cards,
         reasoning_level=reasoning_level,
         session_allowlist=session_allowlist,
         evidence=evidence,

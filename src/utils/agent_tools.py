@@ -1031,6 +1031,7 @@ async def search_memory(
     embedding: list[float] | None = None,
     session_allowlist: list[str] | None = None,
     documents_out: list[models.Document] | None = None,
+    pairs: Sequence[crud.ObservedPair] | None = None,
 ) -> Representation:
     """
     Search for observations in memory using semantic similarity.
@@ -1050,6 +1051,8 @@ async def search_memory(
         documents_out: Optional list the matched documents are appended to, for
                 callers that need the rows and not just the representation
                 built from them
+        pairs: Optional (observer, observed) collections to search together,
+                replacing observer/observed
 
     Returns:
         Representation object containing relevant observations
@@ -1076,6 +1079,7 @@ async def search_memory(
         workspace_name=workspace_name,
         observer=observer,
         observed=observed,
+        pairs=pairs,
         query=query,
         top_k=limit,
         filters=filters or None,
@@ -1211,6 +1215,21 @@ class ToolContext:
     # they loaded; `dataclasses.replace` copies of this context share the same
     # accumulator, so delegating handlers reach it without extra wiring.
     evidence: EvidenceAccumulator | None = None
+    # The observed peer expanded over its members. Memory reads cover every
+    # pair in it; writes stay on (observer, observed). None means the pair alone.
+    observed_set: crud.ObservedSet | None = None
+
+    @property
+    def observed_pairs(self) -> list[crud.ObservedPair]:
+        if self.observed_set is not None:
+            return self.observed_set.pairs
+        return [(self.observer, self.observed)]
+
+    @property
+    def observed_peers(self) -> list[str]:
+        if self.observed_set is not None:
+            return self.observed_set.peers
+        return [self.observed]
 
 
 def _normalize_observation_id(obs_id: str) -> str:
@@ -1705,6 +1724,7 @@ async def _handle_search_memory(
             workspace_name=ctx.workspace_name,
             observer=ctx.observer,
             observed=ctx.observed,
+            pairs=ctx.observed_pairs,
             query=query,
             top_k=top_k,
             embedding=query_embedding,
@@ -1767,7 +1787,10 @@ async def _handle_search_memory(
             content=f"No observations found for query '{query}'",
             metadata=zero_hit_meta,
         )
-    mem_str = mem.str_with_ids() if ctx.include_observation_ids else str(mem)
+    mem_str = mem.render_attributed(
+        ctx.observed_peers,
+        Representation.str_with_ids if ctx.include_observation_ids else str,
+    )
     search_meta["results_count"] = total_count
     return ToolResult(
         content=f"Found {total_count} observations for query '{query}':\n\n{mem_str}",
@@ -2265,7 +2288,10 @@ async def _handle_get_reasoning_chain(
     # Confine every hop of a named scope's chain to its collection.
     fetch_chain_documents = (
         partial(
-            crud.fetch_documents_by_ids, observer=ctx.observer, observed=ctx.observed
+            crud.fetch_documents_by_ids,
+            observer=ctx.observer,
+            observed=ctx.observed,
+            pairs=ctx.observed_pairs,
         )
         if is_scope_peer_name(ctx.observer)
         else crud.get_documents_by_ids
@@ -2332,11 +2358,14 @@ async def _handle_get_reasoning_chain(
 
         # Get conclusions if requested
         if direction in ("conclusions", "both"):
+            # The workspace agent's context has empty observer/observed
+            # sentinels, which mean "no pair filter" rather than a pair.
             stmt = crud.get_child_observations(
                 ctx.workspace_name,
                 observation_id,
-                observer=ctx.observer,
-                observed=ctx.observed,
+                observer=ctx.observer or None,
+                observed=ctx.observed or None,
+                pairs=ctx.observed_set.pairs if ctx.observed_set else None,
             )
             result = await db.execute(stmt)
             children = result.scalars().all()
@@ -2394,6 +2423,7 @@ async def create_tool_executor(
     session_allowlist: list[str] | None = None,
     handler_resolver: Callable[[str], Any] | None = None,
     evidence: EvidenceAccumulator | None = None,
+    observed_set: crud.ObservedSet | None = None,
 ) -> Callable[[str, dict[str, Any]], Any]:
     """
     Create a unified tool executor function for all agent operations.
@@ -2423,6 +2453,8 @@ async def create_tool_executor(
         evidence: Optional accumulator that read handlers record the
             conclusions and messages they load into. None means evidence was
             not requested and nothing is collected.
+        observed_set: Optional expansion of the observed peer over its members.
+            Memory reads cover every pair in it; None reads the pair alone.
 
     Returns:
         An async callable that executes tools with the captured context
@@ -2445,6 +2477,7 @@ async def create_tool_executor(
         agent_type=agent_type,
         parent_category=parent_category,
         evidence=evidence,
+        observed_set=observed_set,
     )
 
     async def execute_tool(tool_name: str, tool_input: dict[str, Any]) -> str:

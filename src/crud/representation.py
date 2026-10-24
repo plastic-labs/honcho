@@ -3,15 +3,19 @@ from __future__ import annotations
 import datetime
 import logging
 import time
+from collections.abc import Callable, Sequence
 from contextlib import suppress
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import ColumnElement, Integer, column, func, select, true, values
+from sqlalchemy.dialects.postgresql import TEXT
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
+from sqlalchemy.orm import aliased
 
 from src import crud, exceptions, models, schemas
 from src.config import settings
+from src.crud.document import ObservedPair
 from src.dependencies import tracked_db
 from src.dreamer.dream_scheduler import check_and_schedule_dream
 from src.embedding_client import EmbeddingTokenLimitError, embedding_client
@@ -76,10 +80,24 @@ class RepresentationManager:
         *,
         observer: str,
         observed: str,
+        pairs: Sequence[ObservedPair] | None = None,
     ) -> None:
+        """
+        Args:
+            workspace_name: Workspace the collections live in.
+            observer: Observer of the collection writes go to.
+            observed: Observed peer of the collection writes go to.
+            pairs: The (observer, observed) collections reads cover. Defaults to
+                the single pair above; a read that aggregates over a peer's
+                members passes one pair per peer in the expanded set. Writes
+                always go to ``observer``/``observed`` alone.
+        """
         self.workspace_name: str = workspace_name
         self.observer: str = observer
         self.observed: str = observed
+        self.pairs: list[ObservedPair] = (
+            list(pairs) if pairs else [(observer, observed)]
+        )
 
     async def save_representation(
         self,
@@ -459,6 +477,7 @@ class RepresentationManager:
                     workspace_name=self.workspace_name,
                     observer=self.observer,
                     observed=self.observed,
+                    pairs=self.pairs,
                     query=query,
                     max_distance=max_distance,
                     top_k=top_k,
@@ -489,70 +508,119 @@ class RepresentationManager:
         session_allowlist: list[str] | None = None,
         excluded_document_ids: set[str] | None = None,
     ) -> list[models.Document]:
-        """Query most recent documents."""
-        stmt = (
-            select(models.Document)
-            .limit(top_k)
-            .where(
-                models.Document.workspace_name == self.workspace_name,
-                models.Document.observer == self.observer,
-                models.Document.observed == self.observed,
-                models.Document.deleted_at.is_(None),
-                *(
-                    [models.Document.id.notin_(excluded_document_ids)]
-                    if excluded_document_ids
-                    else []
-                ),
-                *(
-                    [
-                        models.Document.session_name.in_(session_allowlist),
-                        # Only levels with a trustworthy session stamp are
-                        # scopeable — see ALLOWLIST_SAFE_LEVELS.
-                        models.Document.level.in_(ALLOWLIST_SAFE_LEVELS),
-                    ]
-                    if session_allowlist is not None
-                    else []
-                ),
-            )
-            .order_by(models.Document.created_at.desc())
-        )
+        """Query most recent documents.
 
-        result = await db.execute(stmt)
-        documents = result.scalars().all()
-        db.expunge_all()
-        return list(documents)
+        Across several pairs, each pair contributes its own most recent
+        documents and the results are interleaved, so one prolific peer cannot
+        crowd the rest out of ``top_k``.
+        """
+        conditions = self._row_conditions(session_allowlist)
+        if excluded_document_ids:
+            conditions.append(models.Document.id.notin_(excluded_document_ids))
+        return await self._top_k(
+            db, conditions, lambda document: [document.created_at.desc()], top_k
+        )
 
     async def _query_documents_most_derived(
         self, db: AsyncSession, top_k: int, session_allowlist: list[str] | None = None
     ) -> list[models.Document]:
-        """Query most derived documents."""
-        stmt = (
-            select(models.Document)
-            .limit(top_k)
-            .where(
-                models.Document.workspace_name == self.workspace_name,
-                models.Document.observer == self.observer,
-                models.Document.observed == self.observed,
-                models.Document.deleted_at.is_(None),
-                *(
-                    [
-                        models.Document.session_name.in_(session_allowlist),
-                        # Only levels with a trustworthy session stamp are
-                        # scopeable — see ALLOWLIST_SAFE_LEVELS.
-                        models.Document.level.in_(ALLOWLIST_SAFE_LEVELS),
-                    ]
-                    if session_allowlist is not None
-                    else []
-                ),
-            )
-            .order_by(
-                models.Document.times_derived.desc(),
-                models.Document.created_at.desc(),
+        """Query most derived documents, interleaved per pair like the recent query."""
+        return await self._top_k(
+            db,
+            self._row_conditions(session_allowlist),
+            lambda document: [
+                document.times_derived.desc(),
+                document.created_at.desc(),
                 # created_at is the transaction timestamp, so documents created
                 # in the same batch share it -- id keeps the order deterministic.
-                models.Document.id,
-            )
+                document.id.asc(),
+            ],
+            top_k,
         )
+
+    def _row_conditions(
+        self, session_allowlist: list[str] | None
+    ) -> list[ColumnElement[bool]]:
+        """Conditions every non-semantic query applies, apart from the pair."""
+        conditions: list[ColumnElement[bool]] = [
+            models.Document.workspace_name == self.workspace_name,
+            models.Document.deleted_at.is_(None),
+        ]
+        if session_allowlist is not None:
+            conditions += [
+                models.Document.session_name.in_(session_allowlist),
+                # Only levels with a trustworthy session stamp are
+                # scopeable — see ALLOWLIST_SAFE_LEVELS.
+                models.Document.level.in_(ALLOWLIST_SAFE_LEVELS),
+            ]
+        return conditions
+
+    async def _top_k(
+        self,
+        db: AsyncSession,
+        conditions: list[ColumnElement[bool]],
+        order_by: Callable[[Any], list[ColumnElement[Any]]],
+        top_k: int,
+    ) -> list[models.Document]:
+        """The first ``top_k`` documents by ``order_by``, fairly across pairs.
+
+        ``order_by`` builds the ordering for a given Document entity, so the
+        same ordering can be applied inside the per-pair query and again to
+        rank its rows. One pair is a plain ordered query. Several pairs take
+        each pair's own first ``top_k`` in one statement (a LATERAL per pair)
+        and interleave them by rank, so the first slots go one per pair; the
+        target's pair is first in ``self.pairs`` and so wins ties for the last
+        slots. The rank is computed outside the LATERAL: inside it, the window
+        would be evaluated over every row of the pair before the LIMIT applied.
+        """
+        if top_k <= 0:
+            return []
+        if len(self.pairs) == 1:
+            stmt = (
+                select(models.Document)
+                .where(*crud.observed_pairs_clause(self.pairs), *conditions)
+                .order_by(*order_by(models.Document))
+                .limit(top_k)
+            )
+        else:
+            pairs = values(
+                column("ordinal", Integer),
+                column("observer", TEXT),
+                column("observed", TEXT),
+                name="pairs",
+            ).data(
+                [
+                    (ordinal, observer, observed)
+                    for ordinal, (observer, observed) in enumerate(self.pairs)
+                ]
+            )
+            per_pair = (
+                select(models.Document)
+                .where(
+                    models.Document.observer == pairs.c.observer,
+                    models.Document.observed == pairs.c.observed,
+                    *conditions,
+                )
+                .order_by(*order_by(models.Document))
+                .limit(top_k)
+                .lateral("per_pair")
+            )
+            document = aliased(models.Document, per_pair)
+            rank = func.row_number().over(
+                partition_by=pairs.c.ordinal, order_by=order_by(document)
+            )
+            ranked = (
+                select(document, rank.label("rank"), pairs.c.ordinal)
+                .select_from(pairs)
+                .join(per_pair, true())
+                .subquery("ranked")
+            )
+            ranked_document = aliased(models.Document, ranked)
+            stmt = (
+                select(ranked_document)
+                .order_by(ranked.c.rank, ranked.c.ordinal)
+                .limit(top_k)
+            )
 
         result = await db.execute(stmt)
         documents = result.scalars().all()
@@ -588,6 +656,7 @@ class RepresentationManager:
             workspace_name=self.workspace_name,
             observer=self.observer,
             observed=self.observed,
+            pairs=self.pairs,
             query=query,
             max_distance=max_distance,
             top_k=count,
@@ -644,6 +713,7 @@ async def get_working_representation(
     db: AsyncSession | None = None,
     observer: str,
     observed: str,
+    pairs: Sequence[ObservedPair] | None = None,
     session_allowlist: list[str] | None = None,
     include_semantic_query: str | None = None,
     embedding: list[float] | None = None,
@@ -663,6 +733,8 @@ async def get_working_representation(
     Args:
         db: Optional database session. If provided, uses it directly;
             otherwise creates a new session via tracked_db.
+        pairs: Optional (observer, observed) collections to read together,
+            replacing observer/observed; see ``RepresentationManager``.
         embedding: Pre-computed embedding for the semantic query.
         parent_category: Workflow attribution forwarded to the fallback
             embedding call when no pre-computed embedding was supplied.
@@ -674,6 +746,7 @@ async def get_working_representation(
         workspace_name=workspace_name,
         observer=observer,
         observed=observed,
+        pairs=pairs,
     )
     return await manager.get_working_representation(
         db=db,

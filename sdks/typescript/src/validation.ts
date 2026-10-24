@@ -502,6 +502,20 @@ function scopeExclusivityIssues(
 }
 
 /**
+ * Schema for how far a read aggregates over the target's members. 0 reads the
+ * target alone; 1 adds its members; 2 adds their members, and so on.
+ */
+export const DepthSchema = z
+  .number()
+  .int('depth must be an integer')
+  .min(0, 'depth must be at least 0')
+
+/**
+ * Schema for peer membership metadata.
+ */
+export const PeerMembershipMetadataSchema = z.record(z.string(), z.unknown())
+
+/**
  * Schema for chat query parameters.
  */
 export const ChatQuerySchema = z
@@ -524,6 +538,7 @@ export const ChatQuerySchema = z
     reasoningLevel: z
       .enum(['minimal', 'low', 'medium', 'high', 'max'])
       .optional(),
+    depth: DepthSchema.optional(),
     // A Zod schema (checked first — it is itself an object) or a raw JSON
     // Schema object describing the desired response structure.
     responseFormat: z
@@ -699,6 +714,7 @@ export const PeerGetRepresentationParamsSchema = z
     scope: ScopeOptionSchema.optional(),
     sessions: SessionAllowlistSchema.optional(),
     target: z.union([PeerIdSchema, PeerIdObjectSchema]).optional(),
+    depth: DepthSchema.optional(),
     options: RepresentationOptionsSchema.optional(),
   })
   .strict()

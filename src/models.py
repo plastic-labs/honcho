@@ -729,3 +729,49 @@ class SessionPeer(Base):
     internal_metadata: Mapped[dict[str, Any]]
     joined_at: Mapped[datetime.datetime]
     left_at: Mapped[datetime.datetime | None]
+
+
+@final
+class PeerMembership(Base):
+    """One peer belonging to another: ``member_id`` is a member of ``parent_id``.
+
+    Keyed by the stable peer ``id`` on both sides rather than by name, so a
+    rename never touches this table. Reads aggregate over memberships at query
+    time; nothing here is copied into the members' or the parent's memory.
+    """
+
+    __tablename__: str = "peer_memberships"
+
+    id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
+    workspace_name: Mapped[str] = mapped_column(
+        ForeignKey("workspaces.name"), nullable=False
+    )
+    parent_id: Mapped[str] = mapped_column(
+        ForeignKey("peers.id", ondelete="CASCADE"), nullable=False
+    )
+    member_id: Mapped[str] = mapped_column(
+        ForeignKey("peers.id", ondelete="CASCADE"), nullable=False
+    )
+    h_metadata: Mapped[dict[str, Any]] = mapped_column(
+        "metadata",
+        JSONB,
+        default=dict,
+        nullable=False,
+        server_default=text("'{}'::jsonb"),
+    )
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("workspace_name", "parent_id", "member_id"),
+        CheckConstraint("parent_id <> member_id", name="not_self"),
+        CheckConstraint("length(id) = 21", name="id_length"),
+        CheckConstraint("id ~ '^[A-Za-z0-9_-]+$'", name="id_format"),
+        # Fan-out ("who are my members?") and its reverse ("whom do I belong to?").
+        Index("ix_peer_memberships_parent", "workspace_name", "parent_id"),
+        Index("ix_peer_memberships_member", "workspace_name", "member_id"),
+    )
+
+    def __repr__(self) -> str:
+        return f"PeerMembership(id={self.id}, workspace_name={self.workspace_name}, parent_id={self.parent_id}, member_id={self.member_id})"
