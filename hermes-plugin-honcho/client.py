@@ -237,6 +237,26 @@ class _HostLookup:
         return {k: v for k, v in pairs if k and v}
 
 
+def _coerce_string_list(value) -> list[str]:
+    """Filter a config value to non-blank strings; malformed values fail closed."""
+    if not isinstance(value, list):
+        if value is not None:
+            logger.warning(
+                "Honcho config: expected a list of strings but got %s — "
+                "value ignored (feature stays off). Use a YAML/JSON array, "
+                "e.g. ['off the record'], not a bare string.",
+                type(value).__name__,
+            )
+        return []
+    return [item.strip() for item in value if isinstance(item, str) and item.strip()]
+
+
+def _parse_string_list(host_obj: dict, root_obj: dict, key: str) -> list[str]:
+    """Resolve a list field with host-level whole-value override, including invalid values."""
+    source = host_obj[key] if key in host_obj else root_obj.get(key)
+    return _coerce_string_list(source)
+
+
 def _is_local_base_url(base_url: str | None) -> bool:
     """True for loopback/RFC1918/link-local/ULA/CGNAT self-hosted Honcho URLs. Local
     deployments can run without auth but the SDK needs a non-empty api_key, so LAN/VPN
@@ -331,6 +351,7 @@ def _behavior_fields(look: _HostLookup, explicitly_configured: bool) -> dict[str
         "first_turn_dialectic_wait": look.parsed("firstTurnDialecticWait", lambda v: max(0.0, float(v)), 2.0),
         "observation_mode": observation_mode,
         **_resolve_observation(observation_mode, look.pick("observation")),
+        "observation_opt_out_phrases": _parse_string_list(look.host, look.raw, "observationOptOutPhrases"),
         "session_strategy": look.pick("sessionStrategy", "per-directory"),
         "session_peer_prefix": look.pick_set("sessionPeerPrefix", False),
         "a2a_sessions": look.flag("a2aSessions", default=True),
@@ -394,6 +415,7 @@ class HonchoClientConfig:
     user_observe_others: bool = True
     ai_observe_me: bool = True
     ai_observe_others: bool = True
+    observation_opt_out_phrases: list[str] = field(default_factory=list)
     # Session resolution
     session_strategy: str = "per-directory"
     session_peer_prefix: bool = False
