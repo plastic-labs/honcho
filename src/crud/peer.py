@@ -19,6 +19,7 @@ from src.cache.client import (
     safe_cache_delete,
 )
 from src.config import settings
+from src.crud.lifecycle import live_peer_row, live_session_peer_row, live_session_row
 from src.crud.workspace import get_or_create_workspace
 from src.exceptions import (
     ConflictException,
@@ -294,6 +295,7 @@ async def get_or_create_peers(
         select(models.Peer)
         .where(models.Peer.workspace_name == workspace_name)
         .where(models.Peer.name.in_(peer_names))
+        .where(live_peer_row())
     )
     result = await db.execute(stmt)
     existing_peers: list[Peer] = list(result.scalars().all())
@@ -423,6 +425,7 @@ async def _fetch_peer(
         select(models.Peer)
         .where(models.Peer.workspace_name == workspace_name)
         .where(models.Peer.name == peer_name)
+        .where(live_peer_row())
     )
     if obj is None:
         return None
@@ -492,7 +495,9 @@ async def get_peers(
             ``{"kind": "scope"}`` internal_metadata flag), "scope" returns only
             scope peers, and "all" returns everything.
     """
-    stmt = select(models.Peer).where(models.Peer.workspace_name == workspace_name)
+    stmt = select(models.Peer).where(
+        models.Peer.workspace_name == workspace_name, live_peer_row()
+    )
 
     if kind is None:
         stmt = stmt.where(~scope_peer_clause())
@@ -606,6 +611,7 @@ async def get_sessions_for_peer(
         )
         .where(models.SessionPeer.peer_name == peer_name)
         .where(models.Session.workspace_name == workspace_name)
+        .where(live_session_row(), live_session_peer_row())
     )
 
     stmt = apply_filter(stmt, models.Session, filters)
