@@ -30,6 +30,7 @@ from src.telemetry.events import AgentToolSummaryCreatedEvent, emit
 from src.telemetry.events.llm import CallPurpose
 from src.telemetry.logging import accumulate_metric
 from src.telemetry.prometheus.metrics import (
+    SUMMARY_REJECTION_CONTENT_FILTERED,
     SUMMARY_REJECTION_DEGENERATE,
     DeriverComponents,
     DeriverTaskTypes,
@@ -802,9 +803,14 @@ async def _create_summary(
                         summary_type=summary_type.name.lower(),
                         reason=SUMMARY_REJECTION_DEGENERATE,
                     )
-    except EmptySummaryError:
+    except EmptySummaryError as e:
         # Not a generation failure to paper over: the fallback below is never
         # saved, so it must reach the queue as an error.
+        if e.parse_class == "content_filtered" and settings.METRICS.ENABLED:
+            prometheus_metrics.record_summary_rejection(
+                summary_type=summary_type.name.lower(),
+                reason=SUMMARY_REJECTION_CONTENT_FILTERED,
+            )
         raise
     except Exception:
         logger.exception("Error generating summary!")

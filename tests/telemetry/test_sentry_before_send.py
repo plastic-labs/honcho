@@ -151,6 +151,29 @@ def test_llm_output_failures_are_kept_as_one_issue_each(
     }
 
 
+def test_content_filtered_summary_is_dropped() -> None:
+    """A filtered summary repeats at every boundary of a session whose content
+    the provider refuses, so it is a metric rather than a report. A filtered
+    representation is unchanged."""
+    summary = EmptySummaryError.for_prompt(
+        "prompt",
+        parse_class="content_filtered",
+        finish_reasons=["content_filter"],
+        output_tokens=0,
+    )
+    representation = EmptyRepresentationError.for_prompt(
+        "prompt",
+        parse_class="content_filtered",
+        finish_reasons=["content_filter"],
+        output_tokens=0,
+    )
+    assert default_before_send({}, _hint(summary)) is None
+    assert default_before_send({}, _hint(representation)) == {
+        "fingerprint": ["honcho-deriver-degraded-empty-representation"],
+        "level": "error",
+    }
+
+
 def test_honcho_and_validation_errors_are_dropped() -> None:
     assert default_before_send({}, _hint(ResourceNotFoundException("nope"))) is None
     assert (
