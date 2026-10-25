@@ -149,6 +149,7 @@ class TestConcludeToolDispatch:
         assert "allOf" not in params
 
     def test_honcho_conclude_defaults_to_user_peer(self):
+        """Target the user by default and surface explicit conclusion write failures."""
         provider = HonchoMemoryProvider()
         provider._session_initialized = True
         provider._session_key = "telegram:123"
@@ -165,6 +166,7 @@ class TestConcludeToolDispatch:
             "telegram:123",
             "User prefers dark mode",
             peer="user",
+            raise_on_error=True,
         )
 
 
