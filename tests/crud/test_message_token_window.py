@@ -22,7 +22,18 @@ SESSIONS: dict[str, list[int]] = {
     + [_rng.choice([0, 1, 2]) for _ in range(12)],
     "empty": [],
 }
-LIMITS = [*range(-1, 45), 99, 100, 101, 499, 500, 501, 600, 10_000]
+LIMITS: list[int | None] = [
+    None,
+    *range(-1, 45),
+    99,
+    100,
+    101,
+    499,
+    500,
+    501,
+    600,
+    10_000,
+]
 
 
 async def _old_get_messages_id_range(
@@ -31,7 +42,7 @@ async def _old_get_messages_id_range(
     session_name: str,
     start_id: int,
     end_id: int | None,
-    token_limit: int,
+    token_limit: int | None,
 ) -> list[int]:
     """get_messages_id_range before the walk, with its window query. Returns ids."""
     if start_id < 0 or (end_id is not None and (start_id >= end_id or end_id <= 0)):
@@ -126,6 +137,8 @@ async def test_walk_matches_the_old_window(
     for name, session_ids in ids.items():
         mid = session_ids[len(session_ids) // 2] if session_ids else 1
         bounds = [(0, None), (mid, None), (0, mid + 3), (mid, mid + 3)]
+        # Bounds that the guard rejects: negative start, end <= 0, start >= end
+        bounds += [(-1, None), (0, 0), (0, -1), (mid, mid), (mid + 3, mid)]
         if session_ids:
             bounds += [(session_ids[1 % len(session_ids)], session_ids[-1])]
         for start_id, end_id in bounds:
