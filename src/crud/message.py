@@ -4,7 +4,7 @@ from logging import getLogger
 from typing import Any
 
 from nanoid import generate as generate_nanoid
-from sqlalchemy import ColumnElement, Select, TextClause, and_, func, or_, select, text
+from sqlalchemy import ColumnElement, Select, TextClause, and_, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute
 
@@ -263,46 +263,48 @@ def resolve_session_scope_clauses(
     return clauses, False
 
 
-def _apply_token_limit(
-    base_conditions: list[ColumnElement[Any]], token_limit: int
-) -> Select[tuple[models.Message]]:
-    """
-    Helper function to apply token limit logic to a message query.
+# Rows in one page of the backward walk in _ids_within_token_limit.
+TOKEN_WALK_PAGE_SIZE = 1000
 
-    Creates a subquery that calculates running sum of tokens for most recent messages
-    and returns a select statement that joins with this subquery to limit results
-    based on token count.
+
+async def _ids_within_token_limit(
+    db: AsyncSession, base_conditions: list[ColumnElement[Any]], token_limit: int
+) -> list[int]:
+    """
+    Get the ids of the most recent messages whose token counts add up to at most
+    token_limit, newest first.
+
+    Reads (id, token_count) from ix_messages_session_tokens one page at a time,
+    newest first. Stops at the first message that does not fit, and does not use
+    older messages, also when they are smaller. Because token_count is not
+    negative, the running sum does not decrease.
 
     Args:
+        db: Database session
         base_conditions: List of conditions to apply to the base query
         token_limit: Maximum number of tokens to include in the messages
 
     Returns:
-        Select statement with token limit applied
+        Message ids, newest first
     """
-    tenant_id = models.scoped_tenant_id()
-    # Create a subquery that calculates running sum of tokens for most recent messages
-    token_subquery = (
-        select(
-            models.Message.id,
-            func.sum(models.Message.token_count)
-            .over(order_by=models.Message.id.desc())
-            .label("running_token_sum"),
-        )
-        .where(models.Message.tenant_id == tenant_id, *base_conditions)
-        .subquery()
+    stmt = (
+        select(models.Message.id, models.Message.token_count)
+        .where(models.Message.tenant_id == models.scoped_tenant_id(), *base_conditions)
+        .order_by(models.Message.id.desc())
+        .limit(TOKEN_WALK_PAGE_SIZE)
     )
-
-    # Select Message objects where running sum doesn't exceed token_limit
-    return (
-        select(models.Message)
-        .join(
-            token_subquery,
-            (models.Message.tenant_id == tenant_id)
-            & (models.Message.id == token_subquery.c.id),
-        )
-        .where(token_subquery.c.running_token_sum <= token_limit)
-    )
+    ids: list[int] = []
+    running_token_sum = 0
+    while True:
+        page = stmt.where(models.Message.id < ids[-1]) if ids else stmt
+        rows = (await db.execute(page)).all()
+        for message_id, token_count in rows:
+            running_token_sum += token_count
+            if running_token_sum > token_limit:
+                return ids
+            ids.append(message_id)
+        if len(rows) < TOKEN_WALK_PAGE_SIZE:
+            return ids
 
 
 async def _build_merged_snippets(
@@ -559,21 +561,17 @@ async def get_messages(
     session_name: str,
     reverse: bool | None = False,
     filters: dict[str, Any] | None = None,
-    token_limit: int | None = None,
     message_count_limit: int | None = None,
 ) -> Select[tuple[models.Message]]:
     """
-    Get messages from a session. If token_limit is provided, the n most recent messages
-    with token count adding up to the limit will be returned. If message_count_limit is provided,
-    the n most recent messages will be returned. If both are provided, message_count_limit will be
-    used.
+    Get messages from a session. If message_count_limit is provided, the n most
+    recent messages will be returned. For a token limit, use get_messages_id_range.
 
     Args:
         workspace_name: Name of the workspace
         session_name: Name of the session
         reverse: Whether to reverse the order of messages
         filters: Filter to apply to the messages
-        token_limit: Maximum number of tokens to include in the messages
         message_count_limit: Maximum number of messages to include
 
     Returns:
@@ -585,23 +583,13 @@ async def get_messages(
         models.Message.session_name == session_name,
     ]
 
-    # Apply message count limit first (takes precedence over token limit)
+    # Apply message count limit
     if message_count_limit is not None:
         stmt = select(models.Message).where(*base_conditions)
         stmt = apply_filter(stmt, models.Message, filters)
         # For message count limit, we want the most recent N messages
         # So we order by id desc to get most recent, then apply limit
         stmt = stmt.order_by(models.Message.id.desc()).limit(message_count_limit)
-
-        # Apply final ordering based on reverse parameter
-        if reverse:
-            stmt = stmt.order_by(models.Message.id.desc())
-        else:
-            stmt = stmt.order_by(models.Message.id.asc())
-    elif token_limit is not None:
-        # Apply token limit logic using helper function
-        stmt = _apply_token_limit(base_conditions, token_limit)
-        stmt = apply_filter(stmt, models.Message, filters)
 
         # Apply final ordering based on reverse parameter
         if reverse:
@@ -641,6 +629,8 @@ async def get_messages_id_range(
         session_name: Name of the session
         start_id: Primary key ID of the first message to return
         end_id: Primary key ID of the last message (exclusive)
+        token_limit: If set, return only the most recent messages whose token
+            counts add up to at most this limit
 
     Returns:
         List of messages
@@ -660,9 +650,20 @@ async def get_messages_id_range(
         base_conditions.append(models.Message.id >= start_id)
 
     if token_limit:
-        # Apply token limit logic using helper function
-        stmt = _apply_token_limit(base_conditions, token_limit)
-        stmt = stmt.order_by(models.Message.id)
+        ids = await _ids_within_token_limit(db, base_conditions, token_limit)
+        if not ids:
+            return []
+        # The ingest lock of the session gives each new message a higher id.
+        # Thus this range contains only the messages that the walk counted.
+        stmt = (
+            select(models.Message)
+            .where(
+                models.Message.tenant_id == models.scoped_tenant_id(),
+                *base_conditions,
+                models.Message.id.between(ids[-1], ids[0]),
+            )
+            .order_by(models.Message.id)
+        )
     else:
         stmt = select(models.Message).where(*base_conditions)
 
