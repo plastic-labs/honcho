@@ -330,6 +330,11 @@ class TestPendingEmbeddings:
         assert stats.embeddings_pending == 1
         assert stats.embeddings_pending_due == 1
 
+        skipped = await crud.get_deriver_metrics(db_session, count_embeddings=False)
+
+        assert skipped.embeddings_pending == 0
+        assert skipped.embeddings_pending_due == 0
+
     async def test_row_inside_its_retry_wait_is_pending_but_not_due(
         self,
         db_session: AsyncSession,

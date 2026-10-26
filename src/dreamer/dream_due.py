@@ -184,19 +184,17 @@ async def list_due_dreams(db: AsyncSession) -> list[DueDream]:
         cast(str, row[0]): cast(datetime, row[1]) for row in attempt_rows
     }
 
-    pending_representation_keys = (
-        (
-            await db.execute(
-                select(models.QueueItem.work_unit_key)
-                .where(
-                    models.QueueItem.task_type == "representation",
-                    models.QueueItem.processed == False,  # noqa: E712
-                )
-                .distinct()
-            )
+    pending_representation = select(models.QueueItemBatch.work_unit_key).where(
+        models.QueueItemBatch.task_type == "representation"
+    )
+    if settings.MULTI_TENANT:
+        tenants = sorted({due_dream.tenant_id for due_dream, _ in candidates.values()})
+        pending_representation = pending_representation.where(
+            models.QueueItemBatch.tenant_id.in_(tenants)
+            | models.QueueItemBatch.tenant_id.is_(None)
         )
-        .scalars()
-        .all()
+    pending_representation_keys = (
+        (await db.execute(pending_representation)).scalars().all()
     )
     active_observed = {
         _observed_key(parsed.tenant_id, parsed.workspace_name, parsed.observed)

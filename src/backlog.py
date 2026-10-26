@@ -66,6 +66,7 @@ class DeriverMetricsPoller:
         self._next_dream_poll: float | None = None
         self._due_dreams: list[DueDream] = []
         self._next_stale_cleanup: float | None = None
+        self._embeddings_pending: tuple[int, int] = (0, 0)
 
     @property
     def snapshot(self) -> DeriverMetricsSnapshot:
@@ -118,7 +119,7 @@ class DeriverMetricsPoller:
 
     async def refresh(self) -> None:
         """One pass. The snapshot only advances on a complete pass."""
-        dreams_refreshed = False
+        dream_tick = self._dream_poll_due()
         # region ai
         # Cross-tenant: the metrics query and the due-dream scan both read across every
         # tenant's queue/documents, so they run on the RLS-bypass service session. Under
@@ -126,15 +127,28 @@ class DeriverMetricsPoller:
         # with no request tenant in scope). read_only — no writes on this pass.
         # endregion
         async with service_db("deriver_metrics", read_only=True) as db:
-            stats = await crud.get_deriver_metrics(db)
-            if self._dream_poll_due():
+            stats = await crud.get_deriver_metrics(db, count_embeddings=dream_tick)
+            if dream_tick:
                 self._due_dreams = await list_due_dreams(db)
                 self._next_dream_poll = (
                     time.monotonic() + settings.DREAM.DUE_POLL_INTERVAL_SECONDS
                 )
-                dreams_refreshed = True
 
-        if dreams_refreshed and settings.DERIVER.SCHEDULER == "api":
+        if dream_tick:
+            self._embeddings_pending = (
+                stats.embeddings_pending,
+                stats.embeddings_pending_due,
+            )
+        # We're not fetching these stats anew this turn; copy old ones
+        else:
+            stats = stats.model_copy(
+                update={
+                    "embeddings_pending": self._embeddings_pending[0],
+                    "embeddings_pending_due": self._embeddings_pending[1],
+                }
+            )
+
+        if dream_tick and settings.DERIVER.SCHEDULER == "api":
             await self._enqueue_due_dreams()
 
         signal = outstanding_work_seconds(stats, dreams_due=len(self._due_dreams))

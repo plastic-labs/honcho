@@ -447,7 +447,9 @@ async def cleanup_stale_work_units(db: AsyncSession) -> None:
     await db.commit()
 
 
-async def get_deriver_metrics(db: AsyncSession) -> schemas.DeriverMetrics:
+async def get_deriver_metrics(
+    db: AsyncSession, *, count_embeddings: bool = True
+) -> schemas.DeriverMetrics:
     """Count the outstanding deriver work in the whole database, read-only."""
     from src.reconciler.sync_vectors import backoff_eligible  # noqa: PLC0415
 
@@ -562,7 +564,9 @@ async def get_deriver_metrics(db: AsyncSession) -> schemas.DeriverMetrics:
             )
         }
     pending_count, oldest_age = (await db.execute(pending)).one()
-    embeddings_pending, embeddings_due = (await db.execute(embeddings)).one()
+    embeddings_pending, embeddings_due = (
+        (await db.execute(embeddings)).one() if count_embeddings else (0, 0)
+    )
 
     return schemas.DeriverMetrics(
         eligible_work_units=int(eligible_count),
