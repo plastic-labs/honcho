@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- Chat, the deriver, summaries and dreams no longer fail when an OpenAI-compatible model returns a usage total but omits the prompt and completion counts. The answer is kept and the missing counts are recorded as zero, instead of the request erroring and being sent again (#1410)
+
 ## [3.4.1] - 2026-10-23
 
 ### Security
