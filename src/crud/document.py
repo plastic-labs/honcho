@@ -15,7 +15,7 @@ from sqlalchemy.sql.functions import func
 
 from src import models, schemas
 from src.config import settings
-from src.crud.collection import get_or_create_collection
+from src.crud.collection import get_or_create_collection, record_explicit_documents
 from src.crud.peer import get_peer, reject_scope_observed
 from src.crud.session import get_session
 from src.dependencies import tracked_db
@@ -933,6 +933,7 @@ async def create_documents(
             if fallback_doc.embedding:
                 docs_with_embeddings.append((new_doc, fallback_doc.embedding))
         db.add_all(honcho_documents)
+        await record_explicit_documents(db, honcho_documents)
         # NOTE
         # If the process crashes after this commit but before vector upsert completes,
         # documents will be left in sync_state='pending' with NULL embeddings.
@@ -1298,6 +1299,7 @@ async def create_observations(
 
     try:
         db.add_all(honcho_documents)
+        await record_explicit_documents(db, honcho_documents)
         await db.commit()
         # Refresh all documents to get generated IDs and timestamps
         for doc in honcho_documents:

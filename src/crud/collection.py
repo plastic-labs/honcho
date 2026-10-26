@@ -1,8 +1,10 @@
+from collections.abc import Sequence
+from datetime import datetime
 from logging import getLogger
 from typing import Any, cast
 
 from cashews import NOT_NONE
-from sqlalchemy import func, literal, select, update
+from sqlalchemy import ColumnElement, func, literal, select, update
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
@@ -297,3 +299,41 @@ async def invalidate_collection_cache(
 ) -> None:
     """Drop a collection's cached row after a write to it commits."""
     await safe_cache_delete(collection_cache_key(workspace_name, observer, observed))
+
+
+async def record_explicit_documents(
+    db: AsyncSession, docs: Sequence[models.Document]
+) -> None:
+    """Add new explicit documents to their collections' explicit_count and newest_explicit_at."""
+    explicit = [doc for doc in docs if doc.level == "explicit"]
+    if not explicit:
+        return
+    await db.flush()
+    groups: dict[tuple[str, str, str, str], list[datetime | None]] = {}
+    for doc in explicit:
+        key = (doc.tenant_id, doc.workspace_name, doc.observer, doc.observed)
+        groups.setdefault(key, []).append(doc.__dict__.get("created_at"))
+    for key in sorted(groups):
+        tenant_id, workspace_name, observer, observed = key
+        created = groups[key]
+        newest: ColumnElement[datetime] = (
+            func.now()
+            if any(c is None for c in created)
+            else literal(max(c for c in created if c is not None))
+        )
+        await db.execute(
+            update(models.Collection)
+            .where(
+                models.Collection.tenant_id == tenant_id,
+                models.Collection.workspace_name == workspace_name,
+                models.Collection.observer == observer,
+                models.Collection.observed == observed,
+            )
+            .values(
+                explicit_count=models.Collection.explicit_count + len(created),
+                newest_explicit_at=func.greatest(
+                    func.coalesce(models.Collection.newest_explicit_at, newest),
+                    newest,
+                ),
+            )
+        )
