@@ -1,7 +1,7 @@
 """keep explicit-document counters on collections for the dream-due scan
 
 Revision ID: b7d2e4f19c03
-Revises: 0c67be41049b
+Revises: b3c890d417d1
 Create Date: 2026-10-23
 
 The dream-due scan grouped every explicit document to find collections due a
@@ -25,7 +25,7 @@ from migrations.utils import (
 )
 
 revision: str = "b7d2e4f19c03"
-down_revision: str | None = "0c67be41049b"
+down_revision: str | None = "b3c890d417d1"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
