@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
 from src.models import Peer, Workspace
+from src.schemas.configuration import MessageConfiguration
 
 
 def test_workspace_validations_api(client: TestClient):
@@ -305,6 +306,54 @@ def test_nul_in_configuration_is_stripped(client: TestClient):
     )
     assert response.status_code in (200, 201)
     assert response.json()["configuration"]["k"] == "ab"
+
+
+@pytest.mark.parametrize("depth", [970, 1200])
+@pytest.mark.parametrize("nested_in_reasoning", [False, True])
+def test_deep_unknown_message_configuration_is_ignored(
+    client: TestClient,
+    sample_data: tuple[Workspace, Peer],
+    depth: int,
+    nested_in_reasoning: bool,
+):
+    workspace, peer = sample_data
+    session_id = str(generate_nanoid())
+    base = f"/v3/workspaces/{workspace.name}/sessions/{session_id}"
+    assert (
+        client.post(
+            f"/v3/workspaces/{workspace.name}/sessions",
+            json={"id": session_id, "peers": {peer.name: {}}},
+        ).status_code
+        == 201
+    )
+
+    # Build raw JSON: json.dumps can itself hit Python's recursion limit.
+    unknown = '"x":' + "[" * depth + "0" + "]" * depth
+    reasoning = '"enabled":true,"custom_instructions":"a\\u0000b"'
+    configuration = (
+        '{"reasoning":{' + reasoning + "," + unknown + "}}"
+        if nested_in_reasoning
+        else "{" + unknown + ',"reasoning":{' + reasoning + "}}"
+    )
+    body = (
+        '{"messages":[{"content":"hi","peer_id":'
+        + json.dumps(peer.name)
+        + ',"configuration":'
+        + configuration
+        + "}]}"
+    )
+    response = client.post(
+        f"{base}/messages",
+        content=body,
+        headers={"content-type": "application/json"},
+    )
+    assert response.status_code == 201, response.text
+    assert MessageConfiguration.model_validate(json.loads(configuration)).model_dump(
+        exclude_none=True
+    ) == {"reasoning": {"enabled": True, "custom_instructions": "ab"}}
+    listed = client.post(f"{base}/messages/list", json={})
+    assert listed.status_code == 200, listed.text
+    assert listed.json()["items"][0]["id"] == response.json()[0]["id"]
 
 
 def test_nul_in_id_filter_returns_422(

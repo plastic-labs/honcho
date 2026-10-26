@@ -823,6 +823,16 @@ Three consequences worth knowing:
   a match, wrap the whole condition in `NOT`. See
   [Metadata Filtering](#metadata-filtering).
 
+Numeric comparisons within metadata (for example,
+`{"metadata": {"score": {"gt": 0}}}`) compare stored native JSON numbers and finite
+numeric strings. Native numbers retain PostgreSQL's full JSONB numeric range.
+Stored strings are conservatively limited to 1,000 characters and at most four
+exponent digits to avoid overflow during casting; strings such as `"NaN"`, `"Infinity"`, and
+`"-Infinity"` are intentionally not treated as numbers. Non-numeric or out-of-bound
+strings do not match ordered numeric comparisons (`gt`, `gte`, `lt`, `lte`);
+`ne` still matches values distinct from the requested number, including non-numeric
+and missing values.
+
 For every field other than `metadata`, the same rules apply however the value is
 wrapped — bare, under an operator, or inside an `in` list — so
 `{"level": "explicit"}`, `{"level": {"ne": "explicit"}}` and

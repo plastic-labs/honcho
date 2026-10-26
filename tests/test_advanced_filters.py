@@ -1698,6 +1698,12 @@ async def test_numeric_filter_skips_non_numeric_metadata_values(
         {"a": 1},
         "\u0661\u0662",
         "1\u00a0",
+        10**1000,  # Native JSONB numbers are valid beyond the string safety cap.
+        "NaN",
+        "Infinity",
+        "-Infinity",
+        "1" + "0" * 1000,  # Numeric strings retain the conservative length cap.
+        " \t+7.5e1\r\n",
     ]
     client.post(
         f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/messages",
@@ -1721,9 +1727,10 @@ async def test_numeric_filter_skips_non_numeric_metadata_values(
         assert response.status_code == 200, response.text
         return {item["content"] for item in response.json()["items"]}
 
-    assert matching("gte", 0) == {"score 0", "score 1"}
+    assert matching("gte", 0) == {"score 0", "score 1", "score 11", "score 16"}
     assert matching("lt", 5) == {"score 0"}
-    assert matching("gt", "5") == {"score 1"}
+    assert matching("gt", "5") == {"score 1", "score 11", "score 16"}
+    assert matching("gt", 0) == {"score 0", "score 1", "score 11", "score 16"}
     # `ne` keeps every row whose value is not the number 3, numeric or not
     assert matching("ne", 3) == {f"score {i}" for i in range(1, len(scores))}
 

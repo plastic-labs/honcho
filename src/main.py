@@ -295,7 +295,16 @@ def _is_input_data_error(exc: DataError) -> bool:
 async def data_exception_handler(request: Request, exc: DataError):
     """422 for request values Postgres cannot store; anything else is a 500."""
     if _is_input_data_error(exc):
-        logger.warning(f"Rejected unstorable input: {exc.orig}")
+        sqlstate = getattr(exc.orig, "sqlstate", None) or "unknown"
+        route = get_route_template(request)
+        # Driver messages can echo SQL, parameters, or user data. Log only the
+        # classification and static route template, never the exception/input.
+        logger.warning(
+            "Rejected unstorable input: sqlstate=%s route=%s",
+            sqlstate,
+            route,
+            extra={"sqlstate": sqlstate, "route": route},
+        )
         return JSONResponse(
             status_code=422,
             content={"detail": "Request contains a value that cannot be stored"},

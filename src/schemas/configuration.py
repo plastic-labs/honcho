@@ -188,7 +188,23 @@ class MessageConfiguration(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _strip_nul(cls, data: Any) -> Any:
-        return strip_nul(data)
+        if not isinstance(data, dict):
+            return data
+        # Both models ignore extras. Do not recursively sanitize values that
+        # will be discarded: a deeply nested unknown field must stay harmless.
+        fields = {
+            strip_nul(k): v
+            for k, v in cast(dict[str, Any], data).items()
+            if strip_nul(k) in cls.model_fields
+        }
+        reasoning = fields.get("reasoning")
+        if isinstance(reasoning, dict):
+            fields["reasoning"] = {
+                strip_nul(k): strip_nul(v) if isinstance(v, str) else v
+                for k, v in cast(dict[str, Any], reasoning).items()
+                if strip_nul(k) in ReasoningConfiguration.model_fields
+            }
+        return fields
 
     reasoning: ReasoningConfiguration | None = Field(
         default=None,

@@ -33,7 +33,7 @@ use `fuzz_client` (one DB session per request, as in production) from
 
    ```bash
    HONCHO_FUZZ_EXAMPLES=1000 uv run pytest tests/property/test_api_no_server_errors.py \
-     --fuzz -k "sessions/{session_id}/messages and POST" -n 0 -p no:cacheprovider \
+     --fuzz -k "messages and POST and not list and not upload" -n 0 -p no:cacheprovider \
      --tb=line --show-capture=no
    ```
 
