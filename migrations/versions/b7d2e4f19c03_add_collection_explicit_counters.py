@@ -111,7 +111,7 @@ def _backfill() -> None:
         return
     collection_partitions = _partitions_by_bound("collections")
     if not collection_partitions:
-        with build_timeouts():
+        with op.get_context().autocommit_block(), build_timeouts():
             op.execute(_backfill_sql(collections, documents))
         return
     document_partitions = _partitions_by_bound("documents")
