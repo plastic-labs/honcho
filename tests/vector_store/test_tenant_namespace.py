@@ -13,6 +13,7 @@ from typing import Any
 
 import pytest
 from nanoid import generate as generate_nanoid
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
@@ -287,6 +288,21 @@ async def test_prefix_for_tenant_reuses_a_passed_session(
     monkeypatch.setattr(dependencies_module, "service_db", no_service_db)
 
     assert await prefix_for_tenant(tenant_id, db_session) == "reused-app"
+
+
+@pytest.mark.asyncio
+async def test_prefix_for_tenant_surfaces_a_failed_flush_as_itself(
+    monkeypatch: pytest.MonkeyPatch, db_session: AsyncSession
+) -> None:
+    """The savepoint flushes the caller's pending changes first. A flush that fails
+    is the caller's own error, not a retryable failure to read the key, so it must
+    not come back as a VectorStoreError the reconciler would contain per row."""
+    monkeypatch.setattr(settings, "MULTI_TENANT", True)
+    tenant_id = await _create_tenant(db_session, vector_correlation_id="flush-app")
+    db_session.add(models.Workspace(name="orphan", tenant_id="no-such-tenant"))
+
+    with pytest.raises(IntegrityError):
+        await prefix_for_tenant(tenant_id, db_session)
 
 
 @pytest.mark.asyncio

@@ -1,11 +1,12 @@
 """Tests for the read-only count of collections whose next dream is due."""
 
 import datetime
+from typing import Any
 from unittest.mock import patch
 
 import pytest
 from nanoid import generate as generate_nanoid
-from sqlalchemy import select
+from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models
@@ -432,15 +433,17 @@ async def _seed_tenant_docs(
     peer_name: str,
     count: int,
     age_minutes: int,
+    session_name: str | None = None,
+    session_configuration: dict[str, Any] | None = None,
 ) -> str:
     """Seed a Session and `count` idle explicit Documents for a tenant; return the session name."""
-    session_name = f"s-{generate_nanoid()}"
+    session_name = session_name or f"s-{generate_nanoid()}"
     db_session.add(
         models.Session(
             name=session_name,
             workspace_name=workspace_name,
             tenant_id=tenant_id,
-            configuration={},
+            configuration=session_configuration or {},
         )
     )
     await db_session.flush()
@@ -572,6 +575,59 @@ class TestMultiTenantDueDreams:
         due = await list_due_dreams(db_session)
 
         assert [d.tenant_id for d in due] == ["tenant-b"]
+
+    async def test_dream_setting_is_looked_up_by_tenant(
+        self,
+        db_session: AsyncSession,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """Same workspace and session names, opposite dream settings: each tenant
+        gets its own, and the lookups carry the tenant in SQL so they probe the
+        tenant-leading unique indexes instead of every tenant's same-named rows."""
+        from src.dreamer.dream_due import list_due_dreams
+
+        workspace_name = "ws-shared"
+        peer_name = "peer-shared"
+        monkeypatch.setattr(settings, "MULTI_TENANT", True)
+        for tenant_id, enabled in (("tenant-a", False), ("tenant-b", True)):
+            await _seed_tenant_collection(
+                db_session,
+                tenant_id=tenant_id,
+                workspace_name=workspace_name,
+                peer_name=peer_name,
+            )
+            await _seed_tenant_docs(
+                db_session,
+                tenant_id=tenant_id,
+                workspace_name=workspace_name,
+                peer_name=peer_name,
+                count=60,
+                age_minutes=90,
+                session_name="s-shared",
+                session_configuration={"dream": {"enabled": enabled}},
+            )
+
+        statements: list[str] = []
+
+        def capture(_conn: Any, _cursor: Any, statement: str, *_: Any) -> None:
+            statements.append(statement)
+
+        sync_engine = db_session.bind.sync_engine
+        event.listen(sync_engine, "before_cursor_execute", capture)
+        try:
+            due = await list_due_dreams(db_session)
+        finally:
+            event.remove(sync_engine, "before_cursor_execute", capture)
+
+        assert [d.tenant_id for d in due] == ["tenant-b"]
+        # Row-value IN over the tenant-leading key (table names may carry a schema).
+        assert any(
+            "workspaces.tenant_id," in s and "workspaces.name) IN" in s
+            for s in statements
+        )
+        assert any(
+            "sessions.tenant_id," in s and "sessions.name) IN" in s for s in statements
+        )
 
 
 @pytest.mark.asyncio

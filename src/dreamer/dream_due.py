@@ -13,6 +13,7 @@ from sqlalchemy import (
     or_,
     select,
     true,
+    tuple_,
     values,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -300,20 +301,30 @@ async def _filter_dreams_enabled(
     db: AsyncSession, candidates: list[DueDream]
 ) -> list[DueDream]:
     """Drop candidates whose resolved configuration has dreams turned off."""
-    workspace_names = {due_dream.workspace_name for due_dream in candidates}
-    session_keys = {
-        (due_dream.workspace_name, due_dream.session_name) for due_dream in candidates
-    }
+    workspace_keys = sorted(
+        {(due_dream.tenant_id, due_dream.workspace_name) for due_dream in candidates}
+    )
+    session_keys = sorted(
+        {
+            (due_dream.tenant_id, due_dream.workspace_name, due_dream.session_name)
+            for due_dream in candidates
+        }
+    )
 
     # ai: lookups are keyed by tenant as well as name — this runs on the
     # cross-tenant service session, so a name-only key would let one tenant's
     # same-named workspace/session decide another tenant's dream.enabled config.
+    # The tenant goes in the SQL, not only in the dicts below, so each lookup is a
+    # probe of the (tenant_id, name[, workspace_name]) unique index instead of a
+    # scan of every tenant's same-named rows.
     workspaces = {
         (workspace.tenant_id, workspace.name): workspace
         for workspace in (
             await db.execute(
                 select(models.Workspace).where(
-                    models.Workspace.name.in_(workspace_names)
+                    tuple_(models.Workspace.tenant_id, models.Workspace.name).in_(
+                        workspace_keys
+                    )
                 )
             )
         )
@@ -327,10 +338,11 @@ async def _filter_dreams_enabled(
             (
                 await db.execute(
                     select(models.Session).where(
-                        models.Session.workspace_name.in_(workspace_names),
-                        models.Session.name.in_(
-                            {due_dream.session_name for due_dream in candidates}
-                        ),
+                        tuple_(
+                            models.Session.tenant_id,
+                            models.Session.workspace_name,
+                            models.Session.name,
+                        ).in_(session_keys)
                     )
                 )
             )
