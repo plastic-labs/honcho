@@ -45,6 +45,9 @@ def attribution_url(url: str, placement: str) -> str:
         extra = [(k, v) for k, v in attribution_params(placement).items() if k not in present and v]
         if not extra:
             return url
-        return urlunsplit(parts._replace(path=parts.path or "/", query=urlencode(query + extra)))
+        # Append to the original query bytes rather than re-encoding them: a server-supplied link
+        # (the device verification URL) may be signed or otherwise byte-sensitive.
+        tagged = f"{parts.query}&{urlencode(extra)}" if parts.query else urlencode(extra)
+        return urlunsplit(parts._replace(path=parts.path or "/", query=tagged))
     except Exception:
         return url

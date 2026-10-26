@@ -1,5 +1,6 @@
 """UTM attribution on every Honcho web link the plugin shows or opens."""
 
+import re
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -30,6 +31,12 @@ def test_existing_utm_values_win():
     assert q["utm_medium"] == ["plugin"] and q["utm_content"] == ["oauth"]
 
 
+
+def test_existing_query_bytes_are_not_reencoded():
+    # A server-supplied link may be signed; %20 must not become + and order must not change.
+    url = attribution_url("https://app.honcho.dev/device?b=x%20y&a=1&sig=abc%2F", "device")
+    assert url == "https://app.honcho.dev/device?b=x%20y&a=1&sig=abc%2F&utm_source=hermes&utm_medium=plugin&utm_content=device"
+
 def test_fully_tagged_link_is_returned_unchanged():
     tagged = attribution_url(HONCHO_APP_URL, "walkthrough")
     assert attribution_url(tagged, "something-else") == tagged
@@ -55,10 +62,11 @@ def test_config_schema_file_stays_import_free_of_the_package():
 def test_no_untagged_app_links_left_in_user_facing_code():
     plugin_dir = Path(__file__).resolve().parent.parent
     allowed = {"attribution.py", "oauth_flow.py"}  # the constant itself; the OAuth dashboard origin
+    app_link = re.compile(re.escape(HONCHO_APP_URL))
     offenders = [
         f"{path.name}:{n}"
         for path in sorted(plugin_dir.glob("*.py")) if path.name not in allowed
         for n, line in enumerate(path.read_text().splitlines(), 1)
-        if "https://app.honcho.dev" in line
+        if app_link.search(line)
     ]
     assert offenders == []
