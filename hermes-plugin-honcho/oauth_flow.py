@@ -23,7 +23,7 @@ from typing import Callable
 from urllib.parse import parse_qs, urlencode, urlparse
 
 from . import oauth
-from .attribution import attribution_params, attribution_url
+from .attribution import attribution_url
 from .client import HonchoClientConfig, resolve_active_host, resolve_config_path
 
 logger = logging.getLogger(__name__)
@@ -113,10 +113,11 @@ def begin_authorization(
         "code_challenge": challenge, "code_challenge_method": "S256", "response_type": "code", "state": state,
     }
     params.update({k: v for k, v in (("source", source), ("config_path", config_path)) if v})
+    # HONCHO_OAUTH_AUTHORIZE_URL may already carry a query; extend it rather than starting a second one.
+    sep = "&" if "?" in endpoints.authorize_url else "?"
     # Authorization servers ignore parameters they don't recognize (RFC 6749 §3.1); the dashboard's
     # analytics reads these so a sign-in that starts in Hermes is attributed to Hermes.
-    params.update(attribution_params("oauth"))
-    return f"{endpoints.authorize_url}?{urlencode(params)}", state
+    return attribution_url(f"{endpoints.authorize_url}{sep}{urlencode(params)}", "oauth"), state
 
 def _install(
     endpoints: OAuthEndpoints, grant: dict, *, path: Path | None, host: str | None,

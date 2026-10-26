@@ -6,6 +6,7 @@ exchange → install_grant → forced-expiry refresh with rotation. This is the
 deterministic "real smoke test" for the consumer flow.
 """
 
+import dataclasses
 import json
 import threading
 import time
@@ -238,6 +239,17 @@ def test_authorize_link_carries_hermes_attribution(fake_as):
         assert (q["utm_source"], q["utm_medium"], q["utm_content"]) == (["hermes"], ["plugin"], ["oauth"])
         assert q["client_id"] == [endpoints.client_id] and q["code_challenge_method"] == ["S256"]
 
+
+
+def test_authorize_url_override_with_a_query_is_extended(fake_as):
+    """An overridden /authorize URL that already has a query keeps it, and its utm_* values win."""
+    endpoints = oauth_flow.resolve_endpoints()
+    endpoints = dataclasses.replace(endpoints, authorize_url=f"{endpoints.authorize_url}?tenant=x&utm_source=staging")
+    url, _ = oauth_flow.begin_authorization(endpoints)
+    assert url.count("?") == 1
+    q = parse_qs(urlparse(url).query)
+    assert q["tenant"] == ["x"] and q["utm_source"] == ["staging"]
+    assert q["utm_content"] == ["oauth"] and q["client_id"] == [endpoints.client_id]
 
 def test_client_id_defaults_to_hermes_agent(monkeypatch):
     # One client for every surface; the env var overrides for unusual deployments.
