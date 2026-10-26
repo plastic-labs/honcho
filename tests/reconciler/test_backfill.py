@@ -319,14 +319,10 @@ async def test_scheduler_loop_refreshes_backfill_gauge(
     async def _fake_refresh() -> None:
         refreshed.set()
 
-    async def _noop() -> None:
-        return None
-
     async def _never_enqueue(_self: object, _task: object) -> bool:
         return False
 
     monkeypatch.setattr(scheduler_module, "record_backfill_pending", _fake_refresh)
-    monkeypatch.setattr(scheduler_module, "record_pending_embeddings_backlog", _noop)
     monkeypatch.setattr(ReconcilerScheduler, "_try_enqueue_task", _never_enqueue)
 
     scheduler = ReconcilerScheduler()

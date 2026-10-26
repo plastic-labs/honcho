@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 import pytest
 from nanoid import generate as generate_nanoid
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models
@@ -218,11 +219,15 @@ class TestCountDueDreams:
         db_session.add(item)
         await db_session.commit()
 
+        assert await db_session.scalar(select(models.QueueItemBatch.work_unit_key)) == (
+            representation_key
+        )
         assert await count_due_dreams(db_session) == 0
 
         item.processed = True
         await db_session.commit()
 
+        assert await db_session.scalar(select(models.QueueItemBatch)) is None
         assert await count_due_dreams(db_session) == 1
 
     async def test_documents_since_last_dream_uses_stored_count(
@@ -517,6 +522,56 @@ class TestMultiTenantDueDreams:
         assert due_dream.observer == peer_name
         assert due_dream.observed == peer_name
         assert all(d.tenant_id != "tenant-a" for d in due)
+
+    async def test_pending_representation_blocks_only_its_own_tenant(
+        self,
+        db_session: AsyncSession,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        from src.dreamer.dream_due import list_due_dreams
+
+        workspace_name = "ws-shared"
+        peer_name = "peer-shared"
+        sessions: dict[str, str] = {}
+        monkeypatch.setattr(settings, "MULTI_TENANT", True)
+        for tenant_id in ("tenant-a", "tenant-b"):
+            await _seed_tenant_collection(
+                db_session,
+                tenant_id=tenant_id,
+                workspace_name=workspace_name,
+                peer_name=peer_name,
+            )
+            sessions[tenant_id] = await _seed_tenant_docs(
+                db_session,
+                tenant_id=tenant_id,
+                workspace_name=workspace_name,
+                peer_name=peer_name,
+                count=60,
+                age_minutes=90,
+            )
+        db_session.add(
+            models.QueueItem(
+                work_unit_key=construct_work_unit_key(
+                    workspace_name,
+                    {
+                        "task_type": "representation",
+                        "session_name": sessions["tenant-a"],
+                        "observed": peer_name,
+                    },
+                    tenant_id="tenant-a",
+                ),
+                payload={"task_type": "representation"},
+                task_type="representation",
+                workspace_name=workspace_name,
+                tenant_id="tenant-a",
+                processed=False,
+            )
+        )
+        await db_session.commit()
+
+        due = await list_due_dreams(db_session)
+
+        assert [d.tenant_id for d in due] == ["tenant-b"]
 
 
 @pytest.mark.asyncio

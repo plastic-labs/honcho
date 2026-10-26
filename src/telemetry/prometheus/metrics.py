@@ -236,16 +236,16 @@ telemetry_buffer_size_gauge = NamespacedGauge(
 # (sync_state='pending').
 # region ai
 # Distinct from embed_now_tasks_in_flight (in-flight fast-path work in the API
-# process) — this is the durable, DB-wide backlog the reconciler drains. Every
-# deriver replica refreshes it on its own timer from
-# ReconcilerScheduler._scheduler_loop, so replicas disagree by at most one interval.
-# Service-wide, not per-process — hence the help string's "never sum()".
+# process) — this is the durable, DB-wide backlog the reconciler drains. Set only
+# by DeriverMetricsPoller in API processes, each on its own timer; deriver pods
+# export no series. Service-wide, not per-process — hence the help string's
+# "never sum()".
 # endregion
 message_embeddings_pending_gauge = NamespacedGauge(
     "message_embeddings_pending",
     "MessageEmbedding rows awaiting embedding (sync_state='pending'). "
-    + "Service-wide DB count, reported independently by every replica — "
-    + "aggregate with max() or avg(), never sum()",
+    + "Service-wide DB count, reported independently by every API replica — "
+    + "aggregate with max(), never sum()",
     ["namespace"],
 )
 
@@ -690,8 +690,8 @@ class PrometheusMetrics:
         #    replica count. Scale-preserving aggregations (``max()``, ``avg()``,
         #    quantiles) ARE correct, but only while the witnesses disagree by a bounded
         #    amount — which requires every instance to refresh on its own timer (see
-        #    ``message_embeddings_pending``, refreshed per replica from
-        #    ``ReconcilerScheduler._scheduler_loop``). A bucket-3 metric that cannot
+        #    ``message_embeddings_pending``, refreshed per API replica by
+        #    ``DeriverMetricsPoller``). A bucket-3 metric that cannot
         #    meet that bar does not belong in the app at all — it belongs in an exporter
         #    that yields exactly one series.
         #
@@ -759,7 +759,6 @@ class PrometheusMetrics:
                 self.set_paused_tenants(count=0)
 
             if settings.DERIVER.SCHEDULER == "api":
-                self.set_message_embeddings_pending(count=0)
                 self._initialize_backfill_pending()
 
         elif instance_type == "deriver":
@@ -794,8 +793,6 @@ class PrometheusMetrics:
                     summary_type=summary_type,
                     reason=SUMMARY_REJECTION_DEGENERATE,
                 )
-            # ai: init at 0 so the gauge is visible before its first per-replica refresh
-            self.set_message_embeddings_pending(count=0)
             if settings.DERIVER.SCHEDULER == "deriver":
                 self._initialize_backfill_pending()
 
@@ -811,12 +808,6 @@ class PrometheusMetrics:
             telemetry_buffer_size_gauge.labels().set(size)
         except Exception as e:
             self._handle_metric_error("set_telemetry_buffer_size", e)
-
-    def set_message_embeddings_pending(self, *, count: int) -> None:
-        try:
-            message_embeddings_pending_gauge.labels().set(count)
-        except Exception as e:
-            self._handle_metric_error("set_message_embeddings_pending", e)
 
     def set_backfill_pending(self, *, task: str, count: int) -> None:
         try:

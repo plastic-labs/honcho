@@ -182,10 +182,9 @@ _API_DERIVER_METRIC_GAUGES = (
     "deriver_queue_items_pending",
     "deriver_queue_oldest_pending_age_seconds",
     "dreams_due",
+    "message_embeddings_pending",
     "message_embeddings_pending_due",
 )
-
-_SHARED_DERIVER_METRIC_GAUGES = ("message_embeddings_pending",)
 
 
 # ---------------------------------------------------------------------------
@@ -218,7 +217,7 @@ def test_api_init_materializes_dialectic_and_embed():
             )
     assert sample("embed_now_tasks_shed_total") is not None
     assert sample("embed_now_tasks_in_flight") == 0.0  # gauge, explicit .set(0)
-    for gauge in (*_API_DERIVER_METRIC_GAUGES, *_SHARED_DERIVER_METRIC_GAUGES):
+    for gauge in _API_DERIVER_METRIC_GAUGES:
         assert sample(gauge) == 0.0, f"{gauge} was not zero-initialized"
 
 
@@ -280,7 +279,6 @@ def test_deriver_init_materializes_token_and_backlog():
             )
             is not None
         )
-    assert sample("message_embeddings_pending") == 0.0  # gauge zero-init
 
 
 @pytest.mark.usefixtures("metrics_enabled")
