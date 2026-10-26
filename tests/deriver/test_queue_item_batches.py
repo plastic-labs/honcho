@@ -614,6 +614,42 @@ class TestConcurrentClaimersTakeDisjointUnits:
             assert second_keys == keys_by_age[2:]
             assert set(first_keys).isdisjoint(second_keys)
 
+    async def test_a_small_claim_skips_past_a_large_claims_locks(
+        self,
+        db_engine: AsyncEngine,
+        seed_work_unit: SeedWorkUnit,
+        batch_gate_settings: Callable[..., None],
+    ) -> None:
+        """The candidate window comes from WORKERS, not from the claim's limit,
+        so a claim of one unit still finds a unit after a full claim."""
+        batch_gate_settings(target_tokens=10, workers=4)
+        keys_by_age = [f"representation:window-{index}" for index in range(6)]
+        for index, work_unit_key in enumerate(keys_by_age):
+            await seed_work_unit(
+                work_unit_key, token_counts=(50,), ages_seconds=(600 - index * 100,)
+            )
+
+        sessions = independent_sessions(db_engine)
+        async with (
+            sessions() as full_claimer,
+            full_claimer.begin(),
+            sessions() as small_claimer,
+            small_claimer.begin(),
+        ):
+            full_keys = list(
+                (await full_claimer.execute(_claim_candidate_query(limit=4)))
+                .scalars()
+                .all()
+            )
+            small_keys = list(
+                (await small_claimer.execute(_claim_candidate_query(limit=1)))
+                .scalars()
+                .all()
+            )
+
+            assert full_keys == keys_by_age[:4]
+            assert small_keys == keys_by_age[4:5]
+
 
 @pytest.mark.asyncio
 class TestMetricsReadTheSameBatches:

@@ -988,3 +988,62 @@ class TestTheEnqueueTenantStamp:
         stamped_records = _stamp_tenant_id(records)
 
         assert stamped_records[0]["tenant_id"] is None
+
+
+@pytest.mark.asyncio
+class TestCandidateWindowKeepsTheRanking:
+    """The claim ranks only the oldest units of each tenant, not every unit."""
+
+    async def test_a_tenant_deeper_than_the_window_ranks_like_a_full_ranking(
+        self,
+        seed_work_unit: SeedWorkUnit,
+        batch_gate_settings: Callable[..., None],
+        recorded_claim_order: list[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A tenant adds at most `limit` units to a claim, so a window of `limit`
+        units for each tenant gives the order of a ranking over every unit."""
+        monkeypatch.setattr(crud_deriver_module, "CLAIM_CANDIDATE_FANOUT", 1)
+        claim_size = 5
+        batch_gate_settings(
+            target_tokens=512, max_age_seconds=AGE_FLUSH_SECONDS, workers=claim_size
+        )
+        # (tenant, number of units, age of the oldest unit): the whale is deeper
+        # than the window, and the tenant-less lane is a bucket of its own.
+        backlog = [
+            (WHALE_TENANT, 12, 5000),
+            (FIRST_MINNOW_TENANT, 2, 900),
+            (SECOND_MINNOW_TENANT, 1, 4000),
+            (None, 3, 700),
+        ]
+        units: list[tuple[str, str | None, int]] = []
+        for tenant_id, count, oldest_age in backlog:
+            for index in range(count):
+                key = representation_key(tenant_id, f"{tenant_id or 'lane'}-{index}")
+                age_seconds = oldest_age - index * 10
+                await seed_work_unit(
+                    key,
+                    tenant_id=tenant_id,
+                    token_counts=(1,),
+                    ages_seconds=(age_seconds,),
+                )
+                units.append((key, tenant_id, age_seconds))
+
+        # The full ranking: depth in the tenant (oldest first), then age, then key.
+        depth: dict[str, int] = {}
+        for key, tenant_id, _age in sorted(units, key=lambda unit: (-unit[2], unit[0])):
+            depth[key] = sum(
+                1
+                for other_key, other_tenant, other_age in units
+                if other_tenant == tenant_id and (-other_age, other_key) <= (-_age, key)
+            )
+        expected = [
+            key
+            for key, _tenant, _age in sorted(
+                units, key=lambda unit: (depth[unit[0]], -unit[2], unit[0])
+            )
+        ][:claim_size]
+
+        await QueueManager().get_and_claim_work_units()
+
+        assert recorded_claim_order == expected

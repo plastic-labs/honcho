@@ -219,6 +219,7 @@ async def _filter_by_peer_perspective(
     # Get all session memberships for this peer in this workspace
     session_memberships_query = (
         select(session_peers_table)
+        .where(session_peers_table.c.tenant_id == models.scoped_tenant_id())
         .where(session_peers_table.c.workspace_name == workspace_name)
         .where(session_peers_table.c.peer_name == peer_name)
     )
@@ -371,7 +372,10 @@ async def search(
                     models.Message.created_at <= session_peers_table.c.left_at,
                 ),
             ),
-        ).where(session_peers_table.c.peer_name == peer_perspective_name)
+        ).where(
+            session_peers_table.c.tenant_id == models.scoped_tenant_id(),
+            session_peers_table.c.peer_name == peer_perspective_name,
+        )
 
     stmt = apply_filter(stmt, models.Message, filters)
 

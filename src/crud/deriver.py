@@ -13,9 +13,13 @@ from sqlalchemy import (
     func,
     or_,
     select,
+    true,
+    union_all,
 )
 from sqlalchemy.engine import Row
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
+from sqlalchemy.orm.util import AliasedClass
 
 from src import models, schemas
 from src.config import settings
@@ -24,7 +28,10 @@ from src.db import tenant_context
 logger = getLogger(__name__)
 
 
-def batch_threshold_clause() -> ColumnElement[bool] | None:
+def batch_threshold_clause(
+    batch: type[models.QueueItemBatch]
+    | AliasedClass[models.QueueItemBatch] = models.QueueItemBatch,
+) -> ColumnElement[bool] | None:
     """The token-or-age gate a batch row passes before its unit is claimable, or None when no gate applies."""
     # region ai
     # Typed by task_type on the batch row, never by key prefix — a
@@ -39,17 +46,16 @@ def batch_threshold_clause() -> ColumnElement[bool] | None:
     if target_tokens <= 0:
         return None
 
-    threshold: ColumnElement[bool] = models.QueueItemBatch.total_tokens >= target_tokens
+    threshold: ColumnElement[bool] = batch.total_tokens >= target_tokens
 
     max_age_seconds = settings.DERIVER.REPRESENTATION_BATCH_MAX_AGE_SECONDS
     if max_age_seconds > 0:
         threshold = or_(
             threshold,
-            models.QueueItemBatch.oldest_created_at
-            <= func.now() - timedelta(seconds=max_age_seconds),
+            batch.oldest_created_at <= func.now() - timedelta(seconds=max_age_seconds),
         )
 
-    return or_(models.QueueItemBatch.task_type != "representation", threshold)
+    return or_(batch.task_type != "representation", threshold)
 
 
 # region ai
@@ -200,6 +206,11 @@ def queue_item_tenant_match() -> ColumnElement[bool] | None:
     return models.QueueItem.tenant_id == tenant
 
 
+# The claim ranks this many of each tenant's oldest eligible units for each
+# worker (see claim_rows_query).
+CLAIM_CANDIDATE_FANOUT = 4
+
+
 def claim_rows_query(limit: int) -> Select[Any]:
     """The claim's locked candidate SELECT: the tenants holding least work in flight first, skipping rows a concurrent claimer holds."""
     # region ai
@@ -272,38 +283,86 @@ def claim_rows_query(limit: int) -> Select[Any]:
         .subquery()
     )
 
-    eligible = (
+    # The candidates: the oldest eligible units of each tenant, not every unit.
+    # A tenant adds at most `limit` units to a claim, because its rank grows
+    # with its depth. Thus the claim ranks the same rows as a ranking over every
+    # unit. CLAIM_CANDIDATE_FANOUT gives room for FOR UPDATE SKIP LOCKED: a
+    # concurrent claimer skips the rows that another claimer locked, and takes
+    # the rows after them. Every claimer uses the same window, sized from
+    # WORKERS, so a small claim does not see a smaller window than a large one.
+    # If more than CLAIM_CANDIDATE_FANOUT full claims lock one tenant at the
+    # same time, a claim can be short. The next poll takes the rest.
+    # The window does not limit the rows that the claim reads: to find its
+    # eligible units, the claim reads past the paused units and the units
+    # below the batch threshold of each tenant.
+    per_tenant = max(limit, settings.DERIVER.WORKERS) * CLAIM_CANDIDATE_FANOUT
+    batch = aliased(models.QueueItemBatch, name="claim_candidate")
+
+    def oldest_eligible(tenant_match: ColumnElement[bool]) -> Select[Any]:
+        stmt = select(
+            batch.work_unit_key, batch.tenant_id, batch.oldest_created_at
+        ).where(tenant_match, unclaimed_work_unit_clause(batch.work_unit_key))
+        threshold_clause = batch_threshold_clause(batch)
+        if threshold_clause is not None:
+            stmt = stmt.where(threshold_clause)
+        pause_clause = not_paused_clause(batch.tenant_id, batch.task_type)
+        if pause_clause is not None:
+            stmt = stmt.where(pause_clause)
+        return stmt.order_by(
+            batch.oldest_created_at.asc(), batch.work_unit_key.asc()
+        ).limit(per_tenant)
+
+    # The tenants that have batch rows, found by a skip scan of
+    # ix_queue_item_batches_tenant_oldest_key: one index probe for each tenant,
+    # not one row read for each unit.
+    step = aliased(models.QueueItemBatch, name="tenant_step")
+    tenants = (
+        select(models.QueueItemBatch.tenant_id)
+        .where(models.QueueItemBatch.tenant_id.is_not(None))
+        .order_by(models.QueueItemBatch.tenant_id)
+        .limit(1)
+        .cte("claim_tenants", recursive=True)
+    )
+    tenants = tenants.union_all(
         select(
-            models.QueueItemBatch.work_unit_key,
-            models.QueueItemBatch.oldest_created_at,
+            select(step.tenant_id)
+            .where(step.tenant_id > tenants.c.tenant_id)
+            .order_by(step.tenant_id)
+            .limit(1)
+            .scalar_subquery()
+        ).where(tenants.c.tenant_id.is_not(None))
+    )
+    tenant_candidates = oldest_eligible(batch.tenant_id == tenants.c.tenant_id).lateral(
+        "tenant_candidates"
+    )
+    candidates = union_all(
+        select(tenant_candidates).select_from(tenants).join(tenant_candidates, true()),
+        # The tenant-less lane: the reconciler, and every row with MULTI_TENANT off.
+        oldest_eligible(batch.tenant_id.is_(None)),
+    ).subquery("claim_candidates")
+
+    eligible_subq = (
+        select(
+            candidates.c.work_unit_key,
+            candidates.c.oldest_created_at,
             (
                 func.coalesce(inflight.c.inflight_units, 0)
                 + func.row_number().over(
-                    partition_by=models.QueueItemBatch.tenant_id,
+                    partition_by=candidates.c.tenant_id,
                     order_by=(
-                        models.QueueItemBatch.oldest_created_at.asc(),
-                        models.QueueItemBatch.work_unit_key.asc(),
+                        candidates.c.oldest_created_at.asc(),
+                        candidates.c.work_unit_key.asc(),
                     ),
                 )
             ).label("tenant_fair_rank"),
         )
         .outerjoin(
             inflight,
-            func.coalesce(models.QueueItemBatch.tenant_id, NO_TENANT_KEY)
+            func.coalesce(candidates.c.tenant_id, NO_TENANT_KEY)
             == inflight.c.tenant_key,
         )
-        .where(unclaimed_work_unit_clause(models.QueueItemBatch.work_unit_key))
+        .subquery()
     )
-
-    threshold_clause = batch_threshold_clause()
-    if threshold_clause is not None:
-        eligible = eligible.where(threshold_clause)
-    pause_clause = not_paused_clause(
-        models.QueueItemBatch.tenant_id, models.QueueItemBatch.task_type
-    )
-    if pause_clause is not None:
-        eligible = eligible.where(pause_clause)
-    eligible_subq = eligible.subquery()
 
     return (
         select(

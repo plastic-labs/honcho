@@ -155,9 +155,11 @@ session_peers_table = Table(
         ["peer_name", "workspace_name", "tenant_id"],
         ["peers.name", "peers.workspace_name", "peers.tenant_id"],
     ),
-    # Lets the peer-sessions list start from the peer's rows instead of walking every session
+    # This index serves the sessions of one peer. tenant_id is first, so the scan
+    # stays in one tenant (revision b3c890d417d1).
     Index(
-        "ix_session_peers_workspace_peer",
+        "ix_session_peers_tenant_workspace_peer",
+        "tenant_id",
         "workspace_name",
         "peer_name",
         "session_name",

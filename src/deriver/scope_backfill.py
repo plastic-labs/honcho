@@ -345,6 +345,7 @@ async def _copy_chunk(
         # (``left_at``) cannot commit between the check and the inserts.
         membership = await db.scalar(
             select(models.SessionPeer.peer_name)
+            .where(models.SessionPeer.tenant_id == models.scoped_tenant_id())
             .where(models.SessionPeer.workspace_name == workspace_name)
             .where(models.SessionPeer.session_name == session_name)
             .where(models.SessionPeer.peer_name == scope_peer)
