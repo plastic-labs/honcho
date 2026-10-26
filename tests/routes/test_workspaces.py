@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi.testclient import TestClient
 from nanoid import generate as generate_nanoid
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
@@ -279,6 +280,62 @@ def test_update_workspace_with_configuration(
     assert response.status_code == 200
     data = response.json()
     assert data["configuration"] == configuration
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        ({}, None),
+        ({"configuration": None}, None),
+        ({"metadata": {"updated": True}}, None),
+        ({"configuration": {}}, {}),
+        (
+            {"configuration": {"summary": {"enabled": False}}},
+            {"summary": {"enabled": False}},
+        ),
+        ({"configuration": {"summary": {}}}, {"summary": {}}),
+    ],
+)
+async def test_workspace_configuration_replacement(
+    client: TestClient,
+    db_session: AsyncSession,
+    body: dict[str, Any],
+    expected: dict[str, Any] | None,
+):
+    """Only a supplied object replaces configuration; reads and storage agree."""
+    name = str(generate_nanoid())
+    initial = {
+        "reasoning": {"enabled": False},
+        "summary": {"enabled": True, "messages_per_short_summary": 10},
+    }
+    metadata = {"retained": True}
+    created = client.post(
+        "/v3/workspaces",
+        json={"name": name, "configuration": initial, "metadata": metadata},
+    )
+    assert created.status_code == 201
+
+    # Warm the workspace cache before replacing or clearing the configuration.
+    fetched = client.post("/v3/workspaces", json={"name": name})
+    assert fetched.json()["configuration"] == initial
+
+    expected_config = initial if expected is None else expected
+    updated = client.put(f"/v3/workspaces/{name}", json=body)
+    assert updated.status_code == 200
+    assert updated.json()["configuration"] == expected_config
+    assert updated.json()["metadata"] == body.get("metadata", metadata)
+
+    # Repeated reads exercise invalidation and the newly populated cache.
+    for _ in range(2):
+        fetched = client.post("/v3/workspaces", json={"name": name})
+        assert fetched.status_code == 200
+        assert fetched.json()["configuration"] == expected_config
+
+    persisted = await db_session.scalar(
+        select(Workspace.configuration).where(Workspace.name == name)
+    )
+    assert persisted == expected_config
 
 
 def test_update_workspace_with_all_optional_params(

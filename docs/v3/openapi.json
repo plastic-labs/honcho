@@ -198,7 +198,7 @@
           "workspaces"
         ],
         "summary": "Update Workspace",
-        "description": "Update Workspace metadata and/or configuration.",
+        "description": "Replace supplied Workspace metadata and/or configuration.\n\nAn empty configuration object clears explicit settings. Omitted or null fields\nremain unchanged.",
         "operationId": "update_workspace_v3_workspaces__workspace_id__put",
         "security": [
           {
@@ -7553,7 +7553,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "Replaces the entire workspace configuration. Send {} to clear explicit settings and use system defaults. Omit or send null to leave unchanged."
           }
         },
         "type": "object",

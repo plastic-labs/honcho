@@ -916,6 +916,7 @@ export class Honcho {
    *
    * Makes an API call to update the configuration associated with the current workspace.
    * This will overwrite any existing configuration with the provided values.
+   * Pass an empty object to clear explicit workspace settings and use system defaults.
    * This method also updates the cached configuration property.
    *
    * @param configuration - Configuration to associate with the workspace.

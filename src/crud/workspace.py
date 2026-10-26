@@ -228,9 +228,9 @@ async def update_workspace(
     """
     Get or create a workspace, then apply metadata and configuration updates.
 
-    Provided metadata replaces the current metadata when present. Provided
-    configuration keys are merged into the existing configuration instead of
-    replacing it wholesale.
+    Provided metadata and configuration objects replace their current values.
+    An empty configuration clears explicit workspace settings; omitted or null
+    fields leave the corresponding values unchanged.
 
     Args:
         db: Database session
@@ -264,14 +264,9 @@ async def update_workspace(
         needs_update = True
 
     if workspace.configuration is not None:
-        # Merge configuration instead of replacing to preserve existing keys
-        base_config = (honcho_workspace.configuration or {}).copy()
-        merged_config = {
-            **base_config,
-            **workspace.configuration.model_dump(exclude_none=True),
-        }
-        if honcho_workspace.configuration != merged_config:
-            honcho_workspace.configuration = merged_config
+        configuration = workspace.configuration.model_dump(exclude_none=True)
+        if honcho_workspace.configuration != configuration:
+            honcho_workspace.configuration = configuration
             needs_update = True
 
     # Early exit if unchanged

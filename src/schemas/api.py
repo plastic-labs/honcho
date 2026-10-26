@@ -147,7 +147,13 @@ class WorkspaceGet(WorkspaceBase):
 
 class WorkspaceUpdate(WorkspaceBase):
     metadata: _SanitizedMetadata | None = None
-    configuration: WorkspaceConfiguration | None = None
+    configuration: WorkspaceConfiguration | None = Field(
+        default=None,
+        description=(
+            "Replaces the entire workspace configuration. Send {} to clear explicit "
+            "settings and use system defaults. Omit or send null to leave unchanged."
+        ),
+    )
 
 
 class Workspace(WorkspaceBase):

@@ -4,7 +4,11 @@ from typing import cast
 
 import pytest
 
-from sdks.python.src.honcho.api_types import PeerConfig, SessionConfiguration
+from sdks.python.src.honcho.api_types import (
+    PeerConfig,
+    SessionConfiguration,
+    WorkspaceConfiguration,
+)
 from sdks.python.src.honcho.client import Honcho
 from sdks.python.src.honcho.pagination import AsyncPage, SyncPage
 from sdks.python.src.honcho.peer import Peer
@@ -54,6 +58,71 @@ async def test_workspace_metadata_caching(
         retrieved = honcho_client.get_metadata()
         assert retrieved == {"theme": "dark", "version": "1.0"}
         assert honcho_client.metadata == {"theme": "dark", "version": "1.0"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "replacement",
+    [{}, {"summary": {"enabled": False}}],
+)
+async def test_workspace_configuration_replacement(
+    client_fixture: tuple[Honcho, str],
+    replacement: dict[str, object],
+) -> None:
+    """Replacement and clear agree across the cached, get and refresh surfaces."""
+    client, mode = client_fixture
+    initial = WorkspaceConfiguration.model_validate(
+        {"reasoning": {"enabled": False}, "summary": {"enabled": True}}
+    )
+    expected = WorkspaceConfiguration.model_validate(replacement)
+
+    if mode == "async":
+        await client.aio.set_configuration(initial)
+        fetched = await client.aio.get_configuration()
+    else:
+        client.set_configuration(initial)
+        fetched = client.get_configuration()
+    assert fetched.model_dump(exclude_none=True) == initial.model_dump(
+        exclude_none=True
+    )
+
+    if mode == "async":
+        await client.aio.set_configuration(expected)
+    else:
+        client.set_configuration(expected)
+    assert client.configuration == expected
+
+    if mode == "async":
+        fetched = await client.aio.get_configuration()
+        await client.aio.refresh()
+    else:
+        fetched = client.get_configuration()
+        client.refresh()
+    assert fetched.model_dump(exclude_none=True) == replacement
+    assert isinstance(client.configuration, WorkspaceConfiguration)
+    assert client.configuration.model_dump(exclude_none=True) == replacement
+
+
+@pytest.mark.asyncio
+async def test_workspace_refresh_preserves_configuration_type(
+    client_fixture: tuple[Honcho, str],
+) -> None:
+    """Refresh keeps the typed configuration even without a preceding get."""
+    client, mode = client_fixture
+    expected = WorkspaceConfiguration.model_validate({"summary": {"enabled": True}})
+    if mode == "async":
+        await client.aio.set_metadata({"retained": True})
+        await client.aio.set_configuration(expected)
+        await client.aio.refresh()
+    else:
+        client.set_metadata({"retained": True})
+        client.set_configuration(expected)
+        client.refresh()
+    assert client.metadata == {"retained": True}
+    assert isinstance(client.configuration, WorkspaceConfiguration)
+    assert client.configuration.model_dump(exclude_none=True) == {
+        "summary": {"enabled": True}
+    }
 
 
 @pytest.mark.asyncio
