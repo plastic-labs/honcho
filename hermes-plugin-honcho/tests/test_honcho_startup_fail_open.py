@@ -447,6 +447,39 @@ def test_honcho_sync_turn_skips_anchored_gateway_notifications():
         assert manager_calls == [], f"wrapper not suppressed: {wrapper[:60]!r}"
 
 
+def test_honcho_sync_turn_skips_bot_mode_group_chat_harness():
+    """Bot Mode group-room harnesses must not become durable user speech."""
+    harness = (
+        '[Group chat: "Skill Handoff"] You are @slina, one participant in a group chat '
+        "with @dev and the user.\n\nYou (user): hello"
+    )
+    wrappers = (
+        harness,
+        f"  \n{harness}",
+        harness.replace("[Group chat:", "[group chat:", 1),
+        harness.replace("[Group chat:", "[Group Chat:", 1),
+    )
+
+    for wrapper in wrappers:
+        provider = HonchoMemoryProvider()
+        manager_calls = []
+
+        class Manager:
+            def get_or_create(self, session_key):
+                manager_calls.append(session_key)
+                return SimpleNamespace()
+
+        provider._config = _configured_tools_config(init_on_session_start=True)
+        provider._manager = Manager()
+        provider._session_key = "test-session"
+        provider._session_initialized = True
+
+        provider.sync_turn(wrapper, "assistant reply")
+
+        assert provider._sync_thread is None, f"harness not suppressed: {wrapper[:60]!r}"
+        assert manager_calls == [], f"harness not suppressed: {wrapper[:60]!r}"
+
+
 def test_honcho_sync_turn_skips_prose_gateway_notifications():
     """Prose-form gateway notifications must not become durable messages."""
     prose_wrappers = (
@@ -485,6 +518,8 @@ def test_honcho_sync_turn_does_not_suppress_genuine_user_messages():
         "I want to know about your task list",
         "IMPORTANT: Background process — can you explain what that means?",
         "[IMPORTANT: Background process — what does that mean?]",
+        "Can we set up a group chat with the other bots tomorrow?",
+        'the log line [Group chat: "Skill Handoff"] showed up mid-sentence in my notes',
     )
 
     for msg in genuine:
