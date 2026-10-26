@@ -385,13 +385,13 @@ async def _copy_chunk(
             new_rows.append(row)
 
         db.add_all(new_rows)
-        await crud.record_explicit_documents(db, new_rows)
         if restore_ids:
             await db.execute(
                 update(models.Document)
                 .where(models.Document.id.in_(restore_ids))
                 .values(deleted_at=None, sync_state="pending")
             )
+        await crud.record_explicit_documents(db, new_rows)
         await db.commit()
 
         # IDs are generated client-side and remain accessible post-commit
@@ -508,10 +508,12 @@ async def process_scope_removal(
     removed_by_observed: dict[str, list[str]] = {}
     async with tracked_db("scope_removal") as db:
         observed_result = await db.execute(
-            select(models.Collection.observed).where(
+            select(models.Collection.observed)
+            .where(
                 models.Collection.workspace_name == workspace_name,
                 models.Collection.observer == scope_peer,
             )
+            .order_by(models.Collection.observed)
         )
         observed_in_scope = [row[0] for row in observed_result.all()]
         for observed in observed_in_scope:
