@@ -85,6 +85,8 @@ class SessionAuthMixin:
 
     def _reauth_required(self) -> bool:
         """True when the grant is dead and only a new login can fix it (no network call)."""
+        if getattr(self._config, "user_api_key_selected", False):
+            return False
         try:
             from . import oauth
 
@@ -98,6 +100,8 @@ class SessionAuthMixin:
         """Rotate the token after a 401 and rebind the client. False for a static API key, a dead
         grant, or a failed exchange. ``failed_access_token`` is the bearer the operation sent; sibling
         waiters rotate the live client's ``api_key`` in place, so it cannot be read back here."""
+        if getattr(self._config, "user_api_key_selected", False):
+            return False
         try:
             from . import oauth
             from .client import reset_honcho_client

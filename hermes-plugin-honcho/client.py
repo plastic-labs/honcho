@@ -22,7 +22,7 @@ import weakref
 # replacing the single process-wide slot that pinned the first profile's workspace and bearer for every
 # later profile in multi-profile processes (#69123 multiplexed gateway, #74065 dashboard). The legacy names
 # above are retained only for reset bookkeeping.
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 from urllib.parse import urlparse
@@ -269,6 +269,8 @@ def _connection_fields(look: _HostLookup, host: str, path: Path) -> dict[str, An
     """Resolve identity/credential/transport fields (host block -> root -> env)."""
     raw, host_block = look.raw, look.host
     api_key = look.pick("apiKey") or get_secret("HONCHO_API_KEY")
+    raw_user_keys = look.present("userApiKeys")
+    user_api_keys = dict(raw_user_keys) if isinstance(raw_user_keys, dict) else {}
     # Named-profile host blocks do NOT inherit the default host's apiKey (profiles
     # are credential-isolated); the failure is silent 401s, so warn loudly.
     if not api_key and host_block and host != HOST and _host_block(raw, HOST).get("apiKey"):
@@ -285,11 +287,13 @@ def _connection_fields(look: _HostLookup, host: str, path: Path) -> dict[str, An
         "workspace_id": look.pick("workspace") or host,
         "ai_peer": look.pick("aiPeer") or host,
         "api_key": api_key,
+        # Preserve invalid/empty entries: selecting one must fail closed, not fall back.
+        "user_api_keys": user_api_keys,
         "environment": look.pick("environment", "production"),
         "base_url": base_url,
         "timeout": _resolve_optional_float(*look.vals("timeout", "requestTimeout"), os.environ.get("HONCHO_TIMEOUT")),
-        # Explicit enabled (host, then root) wins; else auto-enable on key/url.
-        "enabled": _first_set(*look.vals("enabled"), default=bool(api_key or base_url)),
+        # Explicit enabled (host, then root) wins; else auto-enable on keys/url.
+        "enabled": _first_set(*look.vals("enabled"), default=bool(api_key or base_url or user_api_keys)),
     }
 
 
@@ -345,6 +349,10 @@ class HonchoClientConfig:
     host: str = HOST
     workspace_id: str = "hermes"
     api_key: str | None = None
+    user_api_keys: dict[str, str] = field(default_factory=dict, repr=False)
+    # Set only on a sender-bound copy; never mutate the shared profile config.
+    credential_user_id: str | None = None
+    user_api_key_selected: bool = False
     environment: str = "production"
     base_url: str | None = None  # self-hosted override of the environment mapping
     timeout: float | None = None  # SDK HTTP timeout, seconds
@@ -419,6 +427,41 @@ class HonchoClientConfig:
     def bound_config_path(self) -> Path:
         """Config path this was resolved from; ambient fallback for hand-built configs."""
         return self.config_path if self.config_path is not None else resolve_config_path()
+
+    def for_user(self, user_id: str | None, user_id_alt: str | None = None) -> HonchoClientConfig:
+        """Bind credentials in the sender's secret scope, before starting background work.
+
+        Direct runtime IDs (primary, alternate) win over their alias targets. Only an
+        unmapped sender may use the base key. A selected blank/invalid/missing secret
+        disables memory, including on a local URL; it never escalates to base OAuth.
+        An already-bound config stays bound when a manager receives it off-thread.
+        """
+        if not self.user_api_keys:
+            return self
+        ids = list(dict.fromkeys(
+            str(v).strip() for v in (user_id, user_id_alt)
+            if v is not None and str(v).strip()
+        ))
+        identity = ids[0] if ids else ""
+        if self.credential_user_id is not None:
+            if self.credential_user_id != identity:
+                raise ValueError("Cannot reuse sender-bound Honcho config for another user")
+            return self
+        candidates = ids + [
+            self.user_peer_aliases[i] for i in ids if i in self.user_peer_aliases
+        ]
+        selected = next((i for i in candidates if i in self.user_api_keys), None)
+        key = self.api_key
+        if selected is not None:
+            value = self.user_api_keys[selected]
+            key = value.strip() if isinstance(value, str) else ""
+            if key.startswith("$"):
+                key = get_secret(key[1:]) or ""
+            key = key.strip() or None
+        return replace(
+            self, api_key=key, enabled=bool(self.enabled and key),
+            credential_user_id=identity, user_api_key_selected=selected is not None,
+        )
 
     @classmethod
     def from_env(cls, workspace_id: str = "hermes", host: str | None = None) -> HonchoClientConfig:
@@ -605,6 +648,8 @@ def get_honcho_client(config: HonchoClientConfig | None = None) -> Honcho:
 
     See #69123, #74065.
     """
+    if config is not None and config.credential_user_id is not None and not config.api_key:
+        raise ValueError("Honcho memory is inactive for this sender (no credential)")
     key = _client_cache_key(config)
     slot = _slot_for(key)
     cached = slot.peek()
@@ -701,7 +746,7 @@ def _build_client(config: HonchoClientConfig) -> "Honcho":
     # key set EXPLICITLY in honcho.json (host block or root) and treat an
     # env-sourced key as likely-cloud, substituting the placeholder.
     raw = config.raw or {}
-    explicit_key = _host_block(raw, config.host).get("apiKey") or raw.get("apiKey")
+    explicit_key = config.user_api_key_selected or _host_block(raw, config.host).get("apiKey") or raw.get("apiKey")
     api_key = "local" if _is_local_base_url(base_url) and not explicit_key else config.api_key
     kwargs: dict = {"workspace_id": config.workspace_id, "api_key": api_key, "environment": config.environment,
                     "timeout": timeout, "default_headers": telemetry_headers()}

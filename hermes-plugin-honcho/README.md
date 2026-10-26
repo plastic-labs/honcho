@@ -188,9 +188,10 @@ For every key, resolution order is: **host block > root > env var > default**.
 |-----|------|---------|-------------|
 | `apiKey` | string | — | API key. Falls back to `HONCHO_API_KEY` env var. When connected via OAuth, holds the auto-refreshing access token instead |
 | `oauth` | object | — | OAuth grant (refresh token, expiry, client, token endpoint). Written by the Connect/sign-in flows and rotated automatically — not hand-edited. Optional: an API key alone works without it |
-| `baseUrl` | string | — | Base URL for self-hosted Honcho. Local URLs auto-skip API key auth |
+| `userApiKeys` | object | `{}` | Runtime user ID or alias target → API key or `$SECRET_NAME`. Host map replaces the root map |
+| `baseUrl` | string | — | Base URL for self-hosted Honcho. Local URLs use a placeholder unless an explicit base or per-user key is selected |
 | `environment` | string | `"production"` | SDK environment mapping |
-| `enabled` | bool | auto | Master toggle. Auto-enables when `apiKey` or `baseUrl` present |
+| `enabled` | bool | auto | Master toggle. Auto-enables when `apiKey`, `baseUrl`, or a nonempty `userApiKeys` map is present |
 | `workspace` | string | host key | Honcho workspace ID. Shared environment — all profiles in the same workspace can see the same user identity and related memories |
 | `peerName` | string | — | User peer identity |
 | `aiPeer` | string | host key | AI peer identity |
@@ -242,6 +243,50 @@ Mapping targets are picked from the workspace list (`p3`) rather than typed, so 
 With multiple profiles: saving a root-cascading map asks whether the edit applies to all profiles (root) or forks this profile's host block; a root write with profiles on other workspaces warns that picked peers may not exist there; and the accounts table marks siblings that resolve the same account to a different peer (`≠ dreamer→bob`). Offline, the command degrades to typed targets over the local account list. `hermes honcho peers` without `map` stays a read-only view.
 
 **Un-pinning (single → per-user).** Flipping `pinUserPeer` from `true` to `false` does not migrate data. Memory accumulated under `peerName` while pinned stays there; runtime users now resolve to fresh, empty peers. To preserve your own continuity, choose the **pooled** path — alias your runtime IDs back to `peerName` so your turns keep landing on the pooled history while other users get their own peers. The wizard offers this steer automatically when it detects you're un-pinning a previously pinned profile.
+
+### Per-user credentials (shared gateways)
+
+Peer naming alone is not an authorization boundary. Set `userApiKeys` in
+`honcho.json` to authenticate each sender with a server-scoped credential:
+
+```json
+{
+  "workspace": "shared-gateway",
+  "userPeerAliases": {"U_ALICE": "alice", "U_BOB": "bob"},
+  "userApiKeys": {"U_ALICE": "$ALICE_HONCHO_KEY", "bob": "$BOB_HONCHO_KEY"}
+}
+```
+
+Selection checks direct runtime IDs (primary, then alternate), then their
+`userPeerAliases` targets in the same order. It does not use `peerName`,
+`pinUserPeer`, or a generated prefix as a credential identity. Prefer stable
+platform IDs over mutable usernames. A host-level `userApiKeys` replaces the
+root map wholesale, including `{}` to remove it.
+
+`$NAME` values resolve through the current Hermes secret scope at session
+initialization; literal keys also work. A selected missing secret, blank, or
+invalid value disables memory for that sender, **never** falling back to the
+base credential or OAuth grant. Per-user keys are explicit even on loopback
+or LAN URLs. Config and credentials are bound before background work starts;
+each sender has independent client and session caches.
+
+With a nonempty map, an **unmapped** sender uses the base `apiKey` (including its
+existing `HONCHO_API_KEY` fallback). Without a base key, memory stays inactive:
+no network calls, memory tools, injected context, or auth notice. Omit the base
+key and unset `HONCHO_API_KEY` for a mapped-users-only gateway. Without a map,
+existing single-user and unauthenticated-local behavior is unchanged. Restart
+active gateway sessions after changing credentials or secret values.
+
+The server/proxy, not the plugin's peer arguments, enforces access. On current
+Honcho, peer-scoped JWTs protect direct recall but **cannot bootstrap the full
+plugin**: get-or-create of the shared assistant peer and session peer enrollment
+are denied, even if an administrator pre-created those resources. The map does
+not grant extra permissions or bypass those denials. For a full shared-workspace
+gateway, use an auth-enforcing proxy that permits the required session and
+assistant-peer operations while rejecting other users' recall and writes; do not
+broaden the keys just to bypass a denial. A workspace-wide key in the map still
+grants workspace-wide access. This protects Honcho requests, not conversations
+already shared in a Hermes group chat or the gateway process itself.
 
 ### Memory & Recall
 

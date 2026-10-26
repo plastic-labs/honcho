@@ -54,6 +54,10 @@ CONFIG_SCHEMA = ProviderConfigSchema(
                default="per-directory", info=_SESSION_STRATEGY_INFO, inline=True, group="Session",
                options=_opts(("per-session", "Per session"), ("per-directory", "Per directory"), ("per-repo", "Per repo"), ("global", "Global"))),
         # — Connection —
+        _field("userApiKeys", "Per-user API keys", KIND_JSON,
+               "Map runtime user IDs or alias targets to keys (use $SECRET_NAME references). "
+               "Unmapped senders use the base key; without one memory is inactive.",
+               placeholder='{"telegram_123": "$ALICE_HONCHO_KEY"}', group="Connection"),
         _field("timeout", "Request timeout", KIND_NUMBER, "Request timeout in seconds for Honcho HTTP calls. Blank uses the default.",
                aliases=("requestTimeout",), env_fallbacks=("HONCHO_TIMEOUT",), placeholder="30", group="Connection", scope="root"),
         # — Identity —

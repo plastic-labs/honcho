@@ -33,6 +33,7 @@ def test_signature_uses_neutral_keys(honcho_json):
         "pin_user_identity": True,
         "runtime_identity_prefix": "tg_",
         "user_identity_aliases": [("111", "alice"), ("222", "bob")],
+        "user_api_keys": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "session_prefixing": [True, False],
         "a2a_sessions": False,
     }

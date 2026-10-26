@@ -10,9 +10,10 @@ from types import SimpleNamespace
 import pytest
 
 from hermes_plugin_honcho import HonchoMemoryProvider
+from hermes_plugin_honcho.client import HonchoClientConfig
 
 
-class _FakeHonchoConfig(SimpleNamespace):
+class _FakeHonchoConfig(HonchoClientConfig):
     raw: dict = {}
     host: str = "hermes"
 

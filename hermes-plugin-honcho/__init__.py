@@ -59,7 +59,7 @@ def _is_internal_gateway_turn(text: str) -> bool:
 
 def _cfg_usable(cfg) -> bool:
     """Enabled with a credential or a self-hosted URL to talk to."""
-    return bool(cfg.enabled and (cfg.api_key or cfg.base_url))
+    return bool(cfg.enabled and (cfg.api_key or cfg.base_url or cfg.user_api_keys))
 
 
 # Static per-mode system prompt text (prompt-cache friendly: never changes between turns).
@@ -186,6 +186,7 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
         self._init_peer_platform: str = "cli"
         self._init_peer_notice_emitted = False
         self._cron_skipped = False  # cron and flush contexts disable the plugin entirely
+        self._credentials_inactive = False  # unmapped/misconfigured sender: no tools or notices
 
     @property
     def name(self) -> str:
@@ -238,8 +239,9 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
             from .client import HonchoClientConfig, get_honcho_client  # noqa: F401 — ImportError probe
             from .session import HonchoSessionManager  # noqa: F401
 
-            cfg = HonchoClientConfig.from_global_config()
+            cfg = HonchoClientConfig.from_global_config().for_user(kwargs.get("user_id"), kwargs.get("user_id_alt"))
             if not _cfg_usable(cfg):
+                self._credentials_inactive = cfg.credential_user_id is not None
                 logger.debug("Honcho not configured — plugin inactive")
                 return
 
@@ -786,6 +788,8 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
                 "pin_user_identity": bool(cfg.pin_peer_name),
                 "runtime_identity_prefix": cfg.runtime_peer_prefix or "",
                 "user_identity_aliases": sorted(aliases.items()),
+                # Invalidate cached gateway agents on mapping/key edits without exposing keys.
+                "user_api_keys": hashlib.sha256(json.dumps(cfg.user_api_keys, sort_keys=True).encode()).hexdigest(),
                 "session_prefixing": [bool(cfg.session_peer_prefix), bool(cfg.session_ai_peer_prefix)],
                 "a2a_sessions": bool(cfg.a2a_sessions),
             }
@@ -974,7 +978,7 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
 
     def get_tool_schemas(self) -> List[Dict[str, Any]]:
         """Tool schemas by recall_mode; context-only mode exposes no Honcho tools."""
-        if self._cron_skipped or self._recall_mode == "context":
+        if self._cron_skipped or self._credentials_inactive or self._recall_mode == "context":
             return []
         return list(ALL_TOOL_SCHEMAS)
 

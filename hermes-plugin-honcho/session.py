@@ -67,6 +67,10 @@ class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMi
         """``honcho`` defaults to the per-identity cached client; ``context_tokens`` caps
         context() calls (None = Honcho default); the runtime peer names are the gateway
         user identity (and a stable alternate) for per-user memory scoping."""
+        from .client import HonchoClientConfig
+
+        if isinstance(config, HonchoClientConfig):
+            config = config.for_user(runtime_user_peer_name, runtime_user_peer_name_alt)
         self._honcho = honcho
         self._context_tokens = context_tokens
         self._config = config

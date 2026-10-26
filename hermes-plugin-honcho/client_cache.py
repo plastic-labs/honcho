@@ -55,7 +55,8 @@ def _credential_fingerprint(config: HonchoClientConfig | None) -> str:
 
     try:
         if config is not None:
-            basis = _fingerprint_basis(_host_block(config.raw or {}, config.host), lambda: config.api_key)
+            block = {} if config.user_api_key_selected else _host_block(config.raw or {}, config.host)
+            basis = _fingerprint_basis(block, lambda: config.api_key)
         else:
             # Ambient: correct on main threads; bound configs are the supported path for background threads.
             raw, block = _ambient_host_block()
@@ -81,7 +82,7 @@ def _ambient_host_block() -> tuple[dict | None, dict]:
 
 def _client_cache_key(config: HonchoClientConfig | None) -> tuple:
     """Cache identity for a Honcho client build. Explicit configs key on connection identity,
-    provenance paths, effective timeout, and the credential fingerprint (the access token itself
+    provenance paths, sender, effective timeout, and the credential fingerprint (the access token itself
     is NOT in the key — in-place rotation must stay within one slot). Ambient callers
     (config=None) key on what from_global_config() would resolve."""
     from .client import resolve_active_host, resolve_config_path
@@ -90,19 +91,20 @@ def _client_cache_key(config: HonchoClientConfig | None) -> tuple:
         return ("explicit", config.host, config.workspace_id, config.base_url or "", config.environment,
                 str(config.config_path) if config.config_path is not None else "",
                 str(config.hermes_home) if config.hermes_home is not None else "",
-                _resolve_timeout_from_sources(config), _credential_fingerprint(config))
+                _resolve_timeout_from_sources(config), _credential_fingerprint(config), config.credential_user_id,
+                config.user_api_key_selected)
     return ("ambient", str(resolve_config_path()), resolve_active_host(),
             _resolve_timeout_from_sources(None), _credential_fingerprint(None))
 
 
 def _slot_identity(key: tuple) -> tuple:
-    """(kind, host, paths) — the part of a cache key that survives credential/timeout churn."""
-    return key[:3] if key[0] == "ambient" else (key[0], key[1], key[5], key[6])
+    """(kind, host, paths, sender) — stable across credential/timeout churn."""
+    return key[:3] if key[0] == "ambient" else (key[0], key[1], key[5], key[6], key[9])
 
 
 def _slot_for(key: tuple) -> SingletonSlot:
-    """Slot for ``key``, evicting stale same-identity slots: a same (kind, host, paths) identity
-    with a different credential/timeout drops the old slot so the replaced client stops being
+    """Slot for ``key``, evicting stale same-profile-and-sender slots, not other users.
+    A different credential/timeout drops the old slot so the replaced client stops being
     served; otherwise credential churn leaks one pinned client per change.
 
     Without eviction, credential churn leaks one pinned client per change — the gap that made #81401's
@@ -182,6 +184,9 @@ def _refresh_oauth(config: HonchoClientConfig | None, client: Honcho | None = No
     default profile."""
     from .client import resolve_active_host, resolve_config_path
 
+    # A sender's static key must never be replaced by the profile's broader grant.
+    if config is not None and config.user_api_key_selected:
+        return
     try:
         from . import oauth
         if config is not None:
