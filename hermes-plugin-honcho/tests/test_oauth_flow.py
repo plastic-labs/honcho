@@ -6,6 +6,7 @@ exchange → install_grant → forced-expiry refresh with rotation. This is the
 deterministic "real smoke test" for the consumer flow.
 """
 
+import dataclasses
 import json
 import threading
 import time
@@ -224,10 +225,31 @@ def test_state_mismatch_is_rejected(fake_as, tmp_path):
 def test_source_tags_the_authorize_link(fake_as):
     endpoints = oauth_flow.resolve_endpoints()
     url, _ = oauth_flow.begin_authorization(endpoints, source="hermes-cli")
-    assert "source=hermes-cli" in url
+    assert parse_qs(urlparse(url).query)["source"] == ["hermes-cli"]
     untagged, _ = oauth_flow.begin_authorization(endpoints)
-    assert "source=" not in untagged
+    assert "source" not in parse_qs(urlparse(untagged).query)
 
+
+def test_authorize_link_carries_hermes_attribution(fake_as):
+    """Web analytics on the dashboard attributes the sign-in to Hermes, not "Direct"."""
+    endpoints = oauth_flow.resolve_endpoints()
+    for source in ("hermes-cli", None):
+        url, _ = oauth_flow.begin_authorization(endpoints, source=source)
+        q = parse_qs(urlparse(url).query)
+        assert (q["utm_source"], q["utm_medium"], q["utm_content"]) == (["hermes"], ["plugin"], ["oauth"])
+        assert q["client_id"] == [endpoints.client_id] and q["code_challenge_method"] == ["S256"]
+
+
+
+def test_authorize_url_override_with_a_query_is_extended(fake_as):
+    """An overridden /authorize URL that already has a query keeps it, and its utm_* values win."""
+    endpoints = oauth_flow.resolve_endpoints()
+    endpoints = dataclasses.replace(endpoints, authorize_url=f"{endpoints.authorize_url}?tenant=x&utm_source=staging")
+    url, _ = oauth_flow.begin_authorization(endpoints)
+    assert url.count("?") == 1
+    q = parse_qs(urlparse(url).query)
+    assert q["tenant"] == ["x"] and q["utm_source"] == ["staging"]
+    assert q["utm_content"] == ["oauth"] and q["client_id"] == [endpoints.client_id]
 
 def test_client_id_defaults_to_hermes_agent(monkeypatch):
     # One client for every surface; the env var overrides for unusual deployments.
@@ -349,7 +371,10 @@ def test_request_device_code_parses_response_and_sends_identity(fake_as):
     assert device.device_code == "dev-code-1"
     assert device.user_code == "ABCD-EFGH"
     assert device.verification_uri.endswith("/device")
-    assert device.verification_uri_complete.endswith("?user_code=ABCD-EFGH")
+    q = parse_qs(urlparse(device.verification_uri_complete).query)
+    assert q["user_code"] == ["ABCD-EFGH"]
+    assert (q["utm_source"], q["utm_medium"], q["utm_content"]) == (["hermes"], ["plugin"], ["device"])
+    assert device.verification_uri.endswith("/device")  # the URL people type stays short and untagged
     assert (device.expires_in, device.interval) == (600, 0)
     assert _FakeAS.last_device_form["client_id"] == "hermes-desktop"
     assert _FakeAS.last_device_form["scope"] == "write"
