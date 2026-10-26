@@ -8,7 +8,6 @@ from sqlalchemy.dialects import postgresql
 from src import models
 from src.config import settings
 from src.crud.document import get_documents_with_filters
-from src.crud.message import _apply_token_limit  # pyright: ignore[reportPrivateUsage]
 from src.db import tenant_context
 
 
@@ -46,16 +45,12 @@ def test_flag_on_with_no_tenant_bound_raises(monkeypatch: pytest.MonkeyPatch) ->
         models.scoped_tenant_id()
 
 
-def test_conclusions_list_and_token_window_filter_on_the_tenant(
+def test_conclusions_list_filters_on_the_tenant(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The (tenant_id, ...) indexes give order only with tenant_id bound in the
-    query, so flag-off reads filter on the default tenant too."""
+    query, so flag-off reads filter on the default tenant too. The token window
+    reads are checked in tests/crud/test_message_token_window.py."""
     monkeypatch.setattr(settings, "MULTI_TENANT", False)
     page = _sql(get_documents_with_filters("ws"))
     assert "documents.tenant_id = 'default'" in page
-
-    window = _sql(
-        _apply_token_limit([models.Message.session_name == "s"], token_limit=100)
-    )
-    assert window.count("messages.tenant_id = 'default'") == 2
