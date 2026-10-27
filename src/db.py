@@ -231,12 +231,17 @@ service_read_engine = service_engine.execution_options(isolation_level="AUTOCOMM
 # tracked_db(tenant_id=...) so its writes are RLS-checked (WITH CHECK). See
 # service_db in src/dependencies.
 # endregion
+# This Session.info key marks a cross-tenant session. The tenant predicate hook
+# in src/models.py does not change the statements of these sessions.
+CROSS_TENANT = "cross_tenant"
+
 ServiceSessionLocal = async_sessionmaker(
     autocommit=False,
     autoflush=False,
     expire_on_commit=False,
     bind=service_engine,
     class_=AsyncSession,
+    info={CROSS_TENANT: True},
 )
 ServiceReadSessionLocal = async_sessionmaker(
     autocommit=False,
@@ -244,6 +249,7 @@ ServiceReadSessionLocal = async_sessionmaker(
     expire_on_commit=False,
     bind=service_read_engine,
     class_=AsyncSession,
+    info={CROSS_TENANT: True},
 )
 
 

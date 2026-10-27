@@ -1358,16 +1358,29 @@ class TestEnqueueTenant:
     async def test_explicit_tenant_needs_nothing_bound(
         self,
         db_session: AsyncSession,
-        sample_data: tuple[Workspace, Peer],
         monkeypatch: pytest.MonkeyPatch,
     ):
-        payload = await self._session_payload(db_session, sample_data)
+        # Enqueue reads only the rows of the tenant that it gets, thus the rows
+        # belong to that tenant. The id is unique: tenants rows outlive the clear.
+        tenant = f"t-enqueue-{generate_nanoid(size=8)}"
+        token = tenant_context.set(tenant)
+        try:
+            db_session.add(models.Tenant(tenant_id=tenant))
+            workspace = Workspace(name=str(generate_nanoid()))
+            db_session.add(workspace)
+            await db_session.flush()
+            peer = Peer(name=str(generate_nanoid()), workspace_name=workspace.name)
+            db_session.add(peer)
+            await db_session.commit()
+            payload = await self._session_payload(db_session, (workspace, peer))
+        finally:
+            tenant_context.reset(token)
         monkeypatch.setattr(settings, "MULTI_TENANT", True)
         assert tenant_context.get() is None
 
-        await enqueue(payload, tenant_id="tenant-t")
+        await enqueue(payload, tenant_id=tenant)
 
-        assert await self._queued_tenants(db_session, payload) == ["tenant-t"]
+        assert await self._queued_tenants(db_session, payload) == [tenant]
 
     @pytest.mark.asyncio
     async def test_without_a_tenant_nothing_is_enqueued(

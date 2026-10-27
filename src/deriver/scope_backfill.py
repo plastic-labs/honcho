@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from nanoid import generate as generate_nanoid
-from sqlalchemy import exists, or_, select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.dialects.postgresql import array
 from sqlalchemy.orm import load_only
 from sqlalchemy.sql.functions import func
@@ -547,13 +547,17 @@ async def process_scope_removal(
                         models.Document.level != "explicit",
                         models.Document.deleted_at.is_(None),
                         or_(
-                            exists().where(
+                            # An entity column, not a bare exists(): then the
+                            # tenant predicate hook adds tenant_id to it.
+                            select(models.DocumentSource.derived_id)
+                            .where(
                                 models.DocumentSource.tenant_id
                                 == models.Document.tenant_id,
                                 models.DocumentSource.derived_id == models.Document.id,
                                 models.DocumentSource.source_id.in_(frontier),
                                 models.DocumentSource.workspace_name == workspace_name,
-                            ),
+                            )
+                            .exists(),
                             # Undrained rows still link through the legacy column.
                             models.Document.legacy_source_ids.has_any(array(frontier)),
                         ),

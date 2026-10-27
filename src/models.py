@@ -20,16 +20,25 @@ from sqlalchemy import (
     PrimaryKeyConstraint,
     Table,
     UniqueConstraint,
+    event,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, TEXT
-from sqlalchemy.orm import Mapped, MappedColumn, mapped_column, relationship
-from sqlalchemy.sql import func
+from sqlalchemy.orm import (
+    Mapped,
+    MappedColumn,
+    ORMExecuteState,
+    mapped_column,
+    relationship,
+    with_loader_criteria,
+)
+from sqlalchemy.orm import Session as OrmSession
+from sqlalchemy.sql import ColumnElement, func
 
 from src.config import settings
 from src.utils.types import DocumentLevel, TaskType, VectorSyncState
 
-from .db import Base, tenant_context
+from .db import CROSS_TENANT, Base, tenant_context
 
 load_dotenv(override=True)
 
@@ -87,6 +96,17 @@ def scoped_tenant_id() -> str:
             "no tenant bound under MULTI_TENANT; a tenant-scoped read needs one"
         )
     return DEFAULT_TENANT_ID
+
+
+class TenantPartitioned:
+    """Mixin for the models whose table has RLS and is HASH partitioned by tenant_id.
+
+    See _add_tenant_predicate.
+    """
+
+    # with_loader_criteria reads this attribute when it analyzes the criteria.
+    # Each model declares its own tenant_id, which replaces this one.
+    tenant_id: Mapped[str] = mapped_column(TEXT)
 
 
 # Association table for many-to-many relationship between sessions and peers
@@ -218,7 +238,7 @@ class Tenant(Base):
 
 
 @final
-class Workspace(Base):
+class Workspace(Base, TenantPartitioned):
     __tablename__: str = "workspaces"
     # region ai
     # tenant_id is the HASH partition key and leads the composite PK, so it is
@@ -273,7 +293,7 @@ class Workspace(Base):
 
 
 @final
-class Peer(Base):
+class Peer(Base, TenantPartitioned):
     __tablename__: str = "peers"
     tenant_id: Mapped[str] = mapped_column(
         TEXT,
@@ -332,7 +352,7 @@ class Peer(Base):
 
 
 @final
-class Session(Base):
+class Session(Base, TenantPartitioned):
     __tablename__: str = "sessions"
     tenant_id: Mapped[str] = mapped_column(
         TEXT,
@@ -393,7 +413,7 @@ class Session(Base):
 
 
 @final
-class Message(Base):
+class Message(Base, TenantPartitioned):
     __tablename__: str = "messages"
     tenant_id: Mapped[str] = mapped_column(
         TEXT,
@@ -496,7 +516,7 @@ class Message(Base):
 
 
 @final
-class MessageEmbedding(Base):
+class MessageEmbedding(Base, TenantPartitioned):
     __tablename__: str = "message_embeddings"
 
     tenant_id: Mapped[str] = mapped_column(
@@ -595,7 +615,7 @@ DREAM_BACKLOG_SQL = (
 
 
 @final
-class Collection(Base):
+class Collection(Base, TenantPartitioned):
     __tablename__: str = "collections"
 
     tenant_id: Mapped[str] = mapped_column(
@@ -674,7 +694,7 @@ SOURCE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{21}$")
 
 
 @final
-class Document(Base):
+class Document(Base, TenantPartitioned):
     __tablename__: str = "documents"
     tenant_id: Mapped[str] = mapped_column(
         TEXT,
@@ -898,7 +918,7 @@ class Document(Base):
 
 
 @final
-class DocumentSource(Base):
+class DocumentSource(Base, TenantPartitioned):
     """One reasoning-tree edge: derived_id was concluded from source_id."""
 
     __tablename__: str = "document_sources"
@@ -1134,7 +1154,7 @@ class QueueItemBatch(Base):
 
 
 @final
-class WebhookEndpoint(Base):
+class WebhookEndpoint(Base, TenantPartitioned):
     __tablename__: str = "webhook_endpoints"
     tenant_id: Mapped[str] = mapped_column(
         TEXT,
@@ -1167,7 +1187,7 @@ class WebhookEndpoint(Base):
 
 
 @final
-class SessionPeer(Base):
+class SessionPeer(Base, TenantPartitioned):
     __table__: Table = session_peers_table
 
     # Type annotations for the columns
@@ -1179,3 +1199,47 @@ class SessionPeer(Base):
     internal_metadata: Mapped[dict[str, Any]]
     joined_at: Mapped[datetime.datetime]
     left_at: Mapped[datetime.datetime | None]
+
+
+@event.listens_for(OrmSession, "do_orm_execute")
+def _add_tenant_predicate(state: ORMExecuteState) -> None:  # pyright: ignore[reportUnusedFunction]
+    """Add tenant_id = <bound tenant> for each TenantPartitioned model of a statement.
+
+    The RLS predicate compares tenant_id to current_setting(), which is not a
+    constant. Postgres prunes partitions with it only at executor startup, thus
+    the planner opens and locks each partition and each partition index. With a
+    bound value, the planner prunes at plan time. The value is the tenant that
+    the checkout hook in src/db.py sets in app.tenant, thus the rows that a
+    statement sees do not change.
+
+    The option applies to a model in the column list, in select_from or in a
+    join. It does not apply to a model that is only in a WHERE clause, as in
+    select(literal(1)).where(...) or exists().where(...). Core statements on
+    Table objects and text() statements also do not get it.
+    """
+    if not settings.MULTI_TENANT or state.session.info.get(CROSS_TENANT):
+        return
+    # A relationship load selects by a foreign key, and a column load (a
+    # refresh) by the primary key. Each of these keys includes tenant_id.
+    if state.is_column_load or state.is_relationship_load:
+        return
+    if not (state.is_select or state.is_update or state.is_delete):
+        return
+    tenant = tenant_context.get()
+    if not tenant:
+        return
+
+    def criteria(cls: Any) -> ColumnElement[bool]:
+        return cls.tenant_id == tenant
+
+    # propagate_to_loaders=False: the loaded objects do not keep the option.
+    # Pickle does not serialize the local criteria function, and a later lazy
+    # load would use the tenant of the first load.
+    state.statement = state.statement.options(
+        with_loader_criteria(
+            TenantPartitioned,
+            criteria,
+            include_aliases=True,
+            propagate_to_loaders=False,
+        )
+    )

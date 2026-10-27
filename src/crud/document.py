@@ -1878,8 +1878,10 @@ def get_child_observations(
         Select query for documents that reference this document as a source,
         for pagination support via apaginate()
     """
+    # An entity column, not literal(1): then the tenant predicate hook
+    # (models._add_tenant_predicate) adds tenant_id to this subquery.
     linked = (
-        select(literal(1))
+        select(models.DocumentSource.derived_id)
         .where(
             models.DocumentSource.tenant_id == models.Document.tenant_id,
             models.DocumentSource.derived_id == models.Document.id,
