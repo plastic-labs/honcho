@@ -7,7 +7,7 @@ from logging import getLogger
 from typing import Any
 
 from cashews import NOT_NONE
-from sqlalchemy import Select, delete, exists, func, select
+from sqlalchemy import Select, delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import make_transient_to_detached
@@ -308,13 +308,18 @@ async def check_no_active_sessions(db: AsyncSession, workspace_name: str) -> Non
     Raises:
         ConflictException: If active sessions exist in the workspace
     """
+    # The subquery selects an entity column, thus the tenant predicate hook
+    # (models._add_tenant_predicate) adds tenant_id to it. A bare exists() has
+    # no entity.
     has_active_sessions: bool = bool(
         await db.scalar(
             select(
-                exists().where(
+                select(models.Session.id)
+                .where(
                     models.Session.workspace_name == workspace_name,
                     models.Session.is_active == True,  # noqa: E712
                 )
+                .exists()
             )
         )
     )
@@ -361,7 +366,8 @@ async def delete_workspace(
         created_at=honcho_workspace.created_at,
     )
 
-    # Count resources before deletion for telemetry
+    # Count resources before deletion for telemetry. A count(*) names its model
+    # in select_from, thus the tenant predicate hook adds tenant_id to it.
     peers_count = int(
         await db.scalar(
             select(func.count(models.Peer.id)).where(
@@ -372,13 +378,17 @@ async def delete_workspace(
     )
     sessions_count = int(
         await db.scalar(
-            select(func.count()).where(models.Session.workspace_name == workspace_name)
+            select(func.count())
+            .select_from(models.Session)
+            .where(models.Session.workspace_name == workspace_name)
         )
         or 0
     )
     messages_count = int(
         await db.scalar(
-            select(func.count()).where(models.Message.workspace_name == workspace_name)
+            select(func.count())
+            .select_from(models.Message)
+            .where(models.Message.workspace_name == workspace_name)
         )
         or 0
     )
@@ -619,7 +629,9 @@ async def get_workspace_stats(
         )
         session_count = int(
             await db.scalar(
-                select(func.count()).where(
+                select(func.count())
+                .select_from(models.Session)
+                .where(
                     models.Session.workspace_name == workspace_name,
                     models.Session.name.in_(session_names),
                 )
@@ -638,9 +650,9 @@ async def get_workspace_stats(
         )
         session_count = int(
             await db.scalar(
-                select(func.count()).where(
-                    models.Session.workspace_name == workspace_name
-                )
+                select(func.count())
+                .select_from(models.Session)
+                .where(models.Session.workspace_name == workspace_name)
             )
             or 0
         )

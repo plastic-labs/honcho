@@ -4,6 +4,7 @@ from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from nanoid import generate as generate_nanoid
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models
@@ -518,7 +519,6 @@ class TestThresholdFilter:
         self,
         dream_scheduler: DreamScheduler,
         db_session: AsyncSession,
-        sample_data: tuple[models.Workspace, models.Peer],
         monkeypatch: pytest.MonkeyPatch,
     ):
         # The dreamer no longer threads tenant_id: under MULTI_TENANT the scheduled
@@ -526,14 +526,27 @@ class TestThresholdFilter:
         # deriver's process_work_unit binds (here simulated by setting it around the
         # call). This pins the collapse-to-the-global decision — the key must still
         # come out tenant-scoped without any explicit tenant_id being passed.
-        collection = await self._make_collection(db_session, sample_data)
-        for _ in range(60):
-            await self._insert_doc(db_session, collection, "explicit")
-        await db_session.commit()
-
-        monkeypatch.setattr(settings, "MULTI_TENANT", True)
-        ambient = tenant_context.set("tenant-x")
+        # The reads of the dreamer see only the rows of the bound tenant, thus
+        # the rows belong to that tenant. The id is unique: tenants rows outlive
+        # the clear.
+        tenant = f"t-dream-{generate_nanoid(size=8)}"
+        ambient = tenant_context.set(tenant)
         try:
+            db_session.add(models.Tenant(tenant_id=tenant))
+            workspace = models.Workspace(name=str(generate_nanoid()))
+            db_session.add(workspace)
+            await db_session.flush()
+            peer = models.Peer(
+                name=str(generate_nanoid()), workspace_name=workspace.name
+            )
+            db_session.add(peer)
+            await db_session.commit()
+            collection = await self._make_collection(db_session, (workspace, peer))
+            for _ in range(60):
+                await self._insert_doc(db_session, collection, "explicit")
+            await db_session.commit()
+
+            monkeypatch.setattr(settings, "MULTI_TENANT", True)
             with patch.object(
                 dream_scheduler, "schedule_dream", new_callable=AsyncMock
             ) as mock_schedule:
@@ -543,8 +556,8 @@ class TestThresholdFilter:
 
         assert scheduled is True
         scheduled_key = mock_schedule.call_args.args[0]
-        assert scheduled_key.startswith("tenant-x:dream:")
-        assert parse_work_unit_key(scheduled_key).tenant_id == "tenant-x"
+        assert scheduled_key.startswith(f"{tenant}:dream:")
+        assert parse_work_unit_key(scheduled_key).tenant_id == tenant
 
     @pytest.mark.asyncio
     async def test_contradiction_excluded_from_count(

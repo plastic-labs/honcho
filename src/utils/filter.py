@@ -544,8 +544,10 @@ def _build_source_ids_condition(
         """
         if not isinstance(sid, str) or not sid:
             raise FilterError("source_ids filter entries must be non-empty strings")
+        # An entity column, not literal(1): then the tenant predicate hook
+        # (models._add_tenant_predicate) adds tenant_id to this subquery.
         linked = (
-            select(literal(1))
+            select(DocumentSource.derived_id)
             .where(
                 DocumentSource.tenant_id == model_class.tenant_id,
                 DocumentSource.derived_id == model_class.id,

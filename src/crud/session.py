@@ -608,8 +608,13 @@ async def _batch_delete_matching(
     primary_key = model.__table__.primary_key.columns.values()
 
     while True:
+        # select_from names the model, thus the tenant predicate hook adds
+        # tenant_id to the subquery too. The table columns alone do not.
         subquery = (
-            select(*primary_key).where(and_(*filter_conditions)).limit(batch_size)
+            select(*primary_key)
+            .select_from(model)
+            .where(and_(*filter_conditions))
+            .limit(batch_size)
         )
         delete_stmt = delete(model).where(tuple_(*primary_key).in_(subquery))
         delete_result = typing_cast(CursorResult[Any], await db.execute(delete_stmt))
