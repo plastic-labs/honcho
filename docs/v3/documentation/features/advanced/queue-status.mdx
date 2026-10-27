@@ -151,3 +151,66 @@ async queueStatus(
   }>
 ```
 </CodeGroup>
+
+## Active work-unit progress
+
+Use `GET /v3/workspaces/{workspace_id}/queue/work-units` to see individual
+in-flight memory attempts. This is separate from the existing aggregate status:
+status counts queued items, while the progress list has at most one row per active
+claim. Both require a workspace or admin key; peer- and session-scoped keys cannot
+read workspace queue activity.
+
+```python
+page = honcho.queue_work_units(task_type="dream", observer="alice", size=20)
+for work in page.items:
+    print(work.id, work.stage, work.started_at, work.last_activity_at)
+
+# Iteration fetches subsequent pages. Async callers use honcho.aio.queue_work_units.
+for work in page:
+    print(work.observer, work.observers, work.observed, work.session_id)
+```
+
+```typescript
+const page = await honcho.queueWorkUnits({ taskType: 'dream', observer: 'alice', size: 20 })
+for (const work of page.items) {
+  console.log(work.id, work.stage, work.startedAt, work.lastActivityAt)
+}
+// Async iteration fetches subsequent pages.
+for await (const work of page) {
+  console.log(work.observer, work.observers, work.observed, work.sessionId)
+}
+```
+
+- `id` identifies a claim attempt, not an item or a permanent work unit. A retry
+  that reclaims work gets a new ID and start time.
+- `task_type` is `representation`, `summary`, or `dream`. Internal tasks are excluded.
+- `workspace_id` and `session_id` use public resource IDs. Session-scoped dreams
+  retain their session scope; global dreams have a null session.
+- `observer` identifies single-observer work. Modern representation batches use
+  `observers` instead, preserving every observer of the current batch. `observed`
+  identifies the message sender or peer being modeled.
+- `started_at` is the immutable claim time, including any wait to start processing.
+  Pre-upgrade claims return null because their original start is unknown.
+- `stage` is the last observed stage: `claimed`, `representation`, `summary`,
+  `surprisal`, `deduction`, `induction`, or `card_refresh`. Future stages may be added.
+- `last_activity_at` records claim creation or an observed stage/batch transition.
+  It is not a heartbeat, lease renewal, success indicator, or percentage estimate.
+  A specialist can be active for a long time without changing this timestamp.
+
+The optional REST filters `task_type`, `observer_id`, `sender_id`, and `session_id`
+intersect. Scope describes the actual item driving the current batch; before
+processing begins it describes the oldest pending item. Between batches, or after
+an unsuccessful progress write, a claim may briefly be absent rather than show
+another item's scope with an old stage.
+
+Pagination is cursor-based, with `size` from 1 to 100 (default 50). Omit `cursor`
+or send an empty string for the first page, then pass the returned `next_page`.
+Stop when `next_page` is null. The response's `total` is null: no completed queue
+history is counted. Pages are live views, not snapshots: completed or cleaned-up
+claims disappear, and new claims may sort before a cursor. Poll again from the
+first page to refresh a dashboard. A valid cursor can return an empty final page.
+
+Apply the database migration before upgrading API/worker processes. Claims already
+running at migration time have null progress fields until a new worker reports an
+observed stage; their start remains unknown. No historical outcomes, heartbeat
+cadence, reasoning algorithms, or prompts are changed by this feature.

@@ -9,7 +9,9 @@ new code wrote. plastic-labs/honcho#952, which moved provenance out of
 ``source_ids``, is the case this was built to catch.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Protocol
 
 from tests.compat_matrix.api import HonchoAPI
@@ -240,6 +242,68 @@ class SummaryExpect:
         return _diff(what, self.pinned, view)
 
 
+@dataclass
+class QueueProgressExpect:
+    """Known queue counts in both images; candidate-only live claim details."""
+
+    origin: str
+    workspace: str
+    counts: dict[str, int]
+    rows: list[dict[str, Any]]
+    aggregate: dict[str, Any] | None = None
+
+    def check(self, api: HonchoAPI, cache: ReadCache) -> list[str]:
+        del cache
+        what = f"progress ({self.origin}, {self.workspace})"
+        base = f"/v3/workspaces/{self.workspace}/queue"
+        aggregate = api.request("GET", f"{base}/status").json()
+        problems = _diff(what, self.counts, aggregate)
+        if self.aggregate is None:
+            self.aggregate = aggregate
+        elif aggregate != self.aggregate:
+            problems.append(f"{what}: aggregate differs across images")
+        if api.label == "old":
+            # The previous release need only support the existing aggregate API.
+            return problems
+
+        rows: list[dict[str, Any]] = []
+        cursor = ""
+        cursors: set[str] = set()
+        for _ in range(len(self.rows) + 1):
+            page = api.request(
+                "GET", f"{base}/work-units", params={"size": 1, "cursor": cursor}
+            ).json()
+            if page["total"] is not None:
+                problems.append(f"{what}: cursor page must not count history")
+            if len(page["items"]) > 1:
+                problems.append(f"{what}: cursor page exceeded size=1")
+            rows.extend(page["items"])
+            cursor = page["next_page"]
+            if not cursor:
+                break
+            if cursor in cursors:
+                return [*problems, f"{what}: cursor repeated"]
+            cursors.add(cursor)
+        else:
+            problems.append(f"{what}: cursor exceeded the known fixture page bound")
+        ids = [row["id"] for row in rows]
+        if len(ids) != len(set(ids)) or set(ids) != {row["id"] for row in self.rows}:
+            problems.append(f"{what}: duplicate, missing or unexpected claims: {ids}")
+        expected = {row["id"]: row for row in self.rows}
+        for row in rows:
+            for key in ("started_at", "last_activity_at"):
+                if row.get(key) is not None:
+                    row[key] = datetime.fromisoformat(row[key])
+            if row["id"] in expected:
+                missing = expected[row["id"]].keys() - row.keys()
+                if missing:
+                    problems.append(
+                        f"{what}: response omitted fields {sorted(missing)}"
+                    )
+                problems += _diff(what, expected[row["id"]], row)
+        return problems
+
+
 class Ledger:
     """Every expectation recorded so far, in write order."""
 
@@ -249,7 +313,7 @@ class Ledger:
     def add(self, *expectations: Expectation) -> None:
         self.items.extend(expectations)
 
-    def retract(self, predicate: Any) -> None:
+    def retract(self, predicate: Callable[[Expectation], bool]) -> None:
         """Drop expectations a later, deliberate write superseded."""
         self.items = [e for e in self.items if not predicate(e)]
 

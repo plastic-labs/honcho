@@ -24,9 +24,11 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from tests.compat_matrix.api import HonchoAPI
 from tests.compat_matrix.ledger import Ledger
+from tests.compat_matrix.progress import check_legacy_progress, seed_legacy_progress
 from tests.compat_matrix.scenarios import (
     Context,
     enqueue_unprocessed,
@@ -140,7 +142,17 @@ def run_round(ctx: Context, report: Report, label: str, carry_writer: str) -> No
         # A pairing that cannot complete is a finding, not the end of the run:
         # the remaining pairings still show what else the candidate breaks.
         try:
-            report.phase(name, functools.partial(run_combo, ctx, tag, writer, workers))
+            report.phase(
+                name,
+                functools.partial(
+                    run_combo,
+                    ctx,
+                    tag,
+                    writer,
+                    workers,
+                    progress=n == len(pairings) - 1,
+                ),
+            )
         except Exception as exc:
             logger.exception("%s failed", name)
             report.lines.append(f"| {name} | failed |")
@@ -186,6 +198,7 @@ def main() -> int:
         },
     )
     report = Report()
+    legacy_progress: dict[str, Any] = {}
     status = 1
     try:
         stack.down()
@@ -197,6 +210,9 @@ def main() -> int:
             ws = run_combo(ctx, "seed", "old", ["deriver-old"])
             seed_legacy_rows(ctx, ws)
             enqueue_unprocessed(ctx, "seedcarry", "old")
+            legacy_progress.update(
+                seed_legacy_progress(stack, ctx.ledger, ctx.apis["old"])
+            )
             stack.stop(*SERVICES)
 
         report.phase("seed with old image", seed)
@@ -214,6 +230,10 @@ def main() -> int:
             report.check("backfill", ["partial backfill left nothing pending"])
 
         stack.up("api-old", "api-new")
+        report.phase(
+            "progress: pre-migration claim on candidate schema",
+            lambda: check_legacy_progress(stack, ctx.ledger, ctx.apis, legacy_progress),
+        )
         report.check("after migrate", ctx.ledger.verify(list(ctx.apis.values())))
         run_round(ctx, report, "ra", carry_writer="old")
         enqueue_unprocessed(ctx, "racarry", "new")

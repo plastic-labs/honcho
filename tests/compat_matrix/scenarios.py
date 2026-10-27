@@ -18,6 +18,7 @@ from tests.compat_matrix.ledger import (
     SummaryExpect,
     WorkspaceExpect,
 )
+from tests.compat_matrix.progress import run_progress_combo
 from tests.compat_matrix.stack import Stack
 
 # Delete, suppress, restore and queued work are the operations rule 7 names.
@@ -39,7 +40,9 @@ def _marker() -> str:
     return f"cmx-{secrets.token_hex(4)}"
 
 
-def run_combo(ctx: Context, tag: str, writer: str, workers: list[str]) -> str:
+def run_combo(
+    ctx: Context, tag: str, writer: str, workers: list[str], *, progress: bool = False
+) -> str:
     """Write through ``writer``, process with ``workers``, delete, then stop.
 
     Covers create and read of every primitive with full, empty and null-valued
@@ -160,6 +163,8 @@ def run_combo(ctx: Context, tag: str, writer: str, workers: list[str]) -> str:
         DeductionExpect(origin, ws, "alice", "alice"),
         SummaryExpect(origin, ws, "keep"),
     )
+    if progress:
+        run_progress_combo(ctx.stack, ctx.ledger, ctx.apis, tag)
     return ws
 
 

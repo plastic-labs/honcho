@@ -1,16 +1,20 @@
 """FastAPI routes for workspace resources and workspace-scoped operations."""
 
 import logging
+from collections.abc import Sequence
+from typing import Any, Literal
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Response
 from fastapi.responses import StreamingResponse
 from fastapi_pagination.bases import AbstractParams
 from pydantic import BaseModel
+from sqlalchemy.engine import Row
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
 from src.config import settings
 from src.crud.message import get_peer_session_names
+from src.crud.queue_progress import get_queue_work_units
 from src.dependencies import db, read_db, tracked_db
 from src.deriver.enqueue import enqueue_deletion, enqueue_dream
 from src.dialectic.chat import workspace_chat, workspace_chat_stream
@@ -21,6 +25,7 @@ from src.utils.evidence import EvidenceAccumulator
 from src.utils.filter import MAX_SESSION_ALLOWLIST_ENTRIES
 from src.utils.pagination import (
     CursorPage,
+    CursorParams,
     Page,
     paginate_offset_or_cursor,
     pagination_params,
@@ -234,6 +239,53 @@ async def get_queue_status(
     except ValueError as e:
         logger.warning(f"Invalid request parameters: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@router.get(
+    "/{workspace_id}/queue/work-units",
+    response_model=CursorPage[schemas.QueueWorkUnit],
+    dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
+)
+async def list_queue_work_units(
+    workspace_id: str = Path(...),
+    task_type: Literal["representation", "summary", "dream"] | None = Query(None),
+    observer_id: str | None = Query(None),
+    sender_id: str | None = Query(None),
+    session_id: str | None = Query(None),
+    size: int = Query(50, ge=1, le=100),
+    cursor: str = Query("", description="Empty for the first page; then use next_page"),
+    db: AsyncSession = read_db,
+):
+    """List active memory work attempts, with intersecting scope filters.
+
+    Requires a workspace or admin key, like queue/status. Rows disappear when
+    claims finish or are cleaned up; pages are live views, not a snapshot.
+    """
+    params = pagination_params(page=1, size=size, cursor=cursor)
+    assert isinstance(params, CursorParams)
+
+    def transform(rows: Sequence[Row[Any]]) -> list[schemas.QueueWorkUnit]:
+        return [
+            # SQLAlchemy exposes its public mapping view as Row._mapping.
+            schemas.QueueWorkUnit(workspace_id=workspace_id, **row._mapping)  # pyright: ignore[reportPrivateUsage]
+            for row in rows
+        ]
+
+    return await paginate_offset_or_cursor(
+        db,
+        get_queue_work_units(
+            workspace_id,
+            task_type=task_type,
+            observer=observer_id,
+            observed=sender_id,
+            session_name=session_id,
+        ),
+        params,
+        # The lateral query already yields one row per claim. JSONB observer
+        # arrays are not hashable, so SQLAlchemy must not unique() these rows.
+        unique=False,
+        transformer=transform,
+    )
 
 
 @router.post(

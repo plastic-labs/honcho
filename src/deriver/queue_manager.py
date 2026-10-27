@@ -53,6 +53,7 @@ from src.telemetry.sentry import initialize_sentry
 from src.utils.queue_payload import RETRY_ATTEMPTS_PAYLOAD_KEY
 from src.utils.retryable_errors import is_retryable_error
 from src.utils.work_unit import parse_work_unit_key
+from src.utils.work_unit_progress import work_unit_progress
 from src.webhooks.events import (
     QueueEmptyEvent,
     publish_webhook_event,
@@ -683,6 +684,11 @@ class QueueManager:
                                     for item in items_to_process
                                     if item.message_id is not None
                                 ]
+                                await work_unit_progress(
+                                    work_unit_key,
+                                    ownership.aqs_id,
+                                    items_to_process[0].id,
+                                )("representation")
                                 await process_representation_batch(
                                     messages_context,
                                     message_level_configuration,
@@ -726,7 +732,15 @@ class QueueManager:
                                 break
 
                             try:
-                                await process_item(queue_item)
+                                progress = work_unit_progress(
+                                    work_unit_key, ownership.aqs_id, queue_item.id
+                                )
+                                if work_unit.task_type == "summary":
+                                    await progress("summary")
+                                if work_unit.task_type == "dream":
+                                    await process_item(queue_item, progress=progress)
+                                else:
+                                    await process_item(queue_item)
                                 await self.mark_queue_items_as_processed(
                                     [queue_item], work_unit_key
                                 )

@@ -696,6 +696,18 @@ class ActiveQueueSession(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
+    # Nullable for claims that were already running when progress was introduced.
+    # Their original start cannot be reconstructed from the renewable lease.
+    started_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    stage: Mapped[str | None] = mapped_column(TEXT, server_default="claimed")
+    last_activity_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    current_queue_item_id: Mapped[int | None] = mapped_column(BigInteger)
+
 
 @final
 class WebhookEndpoint(Base):
