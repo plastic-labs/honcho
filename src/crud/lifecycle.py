@@ -10,7 +10,7 @@ preflight check before a protected write.
 from dataclasses import dataclass
 from typing import Literal
 
-from sqlalchemy import ColumnElement, and_, exists, select
+from sqlalchemy import ColumnElement, and_, exists, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import QueryableAttribute, aliased
 from sqlalchemy.orm.util import AliasedClass
@@ -154,7 +154,8 @@ def _peer_live(
 
 
 def _session_live(
-    workspace_name: QueryableAttribute[str], session_name: QueryableAttribute[str]
+    workspace_name: QueryableAttribute[str],
+    session_name: QueryableAttribute[str] | QueryableAttribute[str | None],
 ) -> ColumnElement[bool]:
     session = aliased(models.Session)
     return exists().where(
@@ -220,4 +221,26 @@ def live_session_peer_row(
         _workspace_live(session_peer.workspace_name),
         _session_live(session_peer.workspace_name, session_peer.session_name),
         _peer_live(session_peer.workspace_name, session_peer.peer_name),
+    )
+
+
+def live_document_row(
+    document: type[models.Document] | AliasedClass[models.Document] = models.Document,
+) -> ColumnElement[bool]:
+    """Row-wise filter: the conclusion, its workspace, observer and observed are live.
+
+    A conclusion with a ``session_name`` is also hidden once that session is
+    tombstoned; one without a session (manual or cross-session) depends only on
+    its peers. This hides conclusions under erased parents; it does not decide
+    which surviving conclusions were derived from erased messages.
+    """
+    return and_(
+        document.deleted_at.is_(None),
+        _workspace_live(document.workspace_name),
+        _peer_live(document.workspace_name, document.observer),
+        _peer_live(document.workspace_name, document.observed),
+        or_(
+            document.session_name.is_(None),
+            _session_live(document.workspace_name, document.session_name),
+        ),
     )
