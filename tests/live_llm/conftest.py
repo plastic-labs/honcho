@@ -135,6 +135,17 @@ def make_large_system_prompt(*, label: str) -> str:
     )
 
 
+# Adaptive-thinking models (Claude 4.6+) often skip thinking on a bare "call
+# the tool" request; a small reasoning step before the call makes them think,
+# so there is a thinking block to replay.
+REASONING_TOOL_PROMPT = (
+    "First work out which of 91, 97 and 119 is prime, checking each candidate's "
+    "divisors. Then call the get_favorite_prime tool exactly once, passing that "
+    "prime in the topic. After you receive the tool result, answer in one sentence "
+    "that includes the number and the word 'prime'."
+)
+
+
 def favorite_prime_tools() -> list[dict[str, Any]]:
     return [
         {
