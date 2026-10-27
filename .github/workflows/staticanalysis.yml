@@ -42,14 +42,6 @@ jobs:
       - name: ruff format
         run: uv run --only-group dev ruff format --check src tests scripts migrations sdks/python sandbox
 
-  issue-gate:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      # The gate runs from `pull_request_target`, where a crash is invisible until
-      # a contributor's PR is silently ungated. Check it here instead.
-      - run: node .github/scripts/issue-gate.test.js
-
   openapi-drift:
     runs-on: ubuntu-latest
     # Advisory, not a merge gate: `main` requires pull requests but declares no

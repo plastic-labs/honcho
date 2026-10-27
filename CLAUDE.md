@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-**Before opening a PR or filing an issue**, read [If you're an agent](CONTRIBUTING.md#if-youre-an-agent) in `CONTRIBUTING.md`. Every PR needs a linked issue labelled `maintainer-approved`, and issues follow [Filing an issue](CONTRIBUTING.md#filing-an-issue). Run the `pre-pr` skill (`skills/pre-pr/`) before opening a PR.
+**Before opening a PR or filing an issue**, read [If you're an agent](CONTRIBUTING.md#if-youre-an-agent) in `CONTRIBUTING.md`. Pull requests are limited to maintainers (write access); everyone else files an issue. Issues follow [Filing an issue](CONTRIBUTING.md#filing-an-issue).
 
 # Honcho Overview
 
@@ -84,6 +84,7 @@ All API routes follow the pattern: `/v3/{resource}/{id}/{action}`. Most "list/se
 - Run server: `uv run fastapi dev src/main.py`
 - Run tests: `uv run pytest tests/`
 - Run single test: `uv run pytest tests/path/to/test_file.py::test_function`
+- Reproduce an API bug (5xx, wrong status) as a property test: see the `property-repro` skill (`skills/property-repro/`)
 - Linting: `uv run ruff check src/`
 - Typechecking: `uv run basedpyright`
 - Format code: `uv run ruff format src/`
@@ -92,15 +93,11 @@ All API routes follow the pattern: `/v3/{resource}/{id}/{action}`. Most "list/se
 
 #### TypeScript SDK
 
-**🚨 DO NOT RUN `bun test` DIRECTLY. IT WILL NOT WORK. 🚨**
-
-The TypeScript SDK tests require a running Honcho server with database and Redis. Running `bun test` alone will fail immediately because there's no server. The tests are orchestrated via pytest which handles all the infrastructure setup.
-
-**The ONLY way to run TypeScript SDK tests:**
+The TypeScript SDK tests run against a real Honcho server. `bun run test` (not bare `bun test`, which has no server to talk to) starts one for them: `scripts/run_ts_sdk_tests.py` creates a throwaway database on the Postgres named by `DB_CONNECTION_URI`, migrates it, starts the API and the mock LLM provider (`src/mock_provider`), runs `bun test`, and tears it all down. No provider key is needed. They are not part of `uv run pytest`.
 
 ```bash
-# From the monorepo root (not from sdks/typescript/)
-uv run pytest tests/ -k typescript
+cd sdks/typescript && bun run test             # whole suite
+cd sdks/typescript && bun run test peer.test   # bun test args pass through
 ```
 
 **To type-check the TypeScript SDK (this is fine to run directly):**

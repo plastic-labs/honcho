@@ -179,7 +179,11 @@ class HonchoAio(AsyncMetadataConfigMixin):
         return self._honcho._configuration
 
     async def set_configuration(self, configuration: WorkspaceConfiguration) -> None:  # pyright: ignore[reportIncompatibleMethodOverride]
-        """Set configuration on the server asynchronously."""
+        """Replace workspace configuration and update the cache asynchronously.
+
+        Pass WorkspaceConfiguration() to clear explicit settings and use system
+        defaults. Settings omitted from the object are removed.
+        """
         await self._get_async_http_client().put(
             self._get_update_route(),
             body={"configuration": configuration.model_dump(exclude_none=True)},

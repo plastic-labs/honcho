@@ -30,12 +30,14 @@ from sqlalchemy.sql.functions import func
 
 from src import models, schemas
 from src.cache.client import safe_cache_delete
+from src.crud.lifecycle import live_peer_row, live_session_peer_row, live_session_row
 from src.exceptions import (
     ConflictException,
     ResourceNotFoundException,
     ValidationException,
 )
 from src.telemetry.events import ScopeCreatedEvent, emit
+from src.utils.path_params import schema_from_path
 from src.utils.scopes import (
     SCOPE_KIND,
     is_scope_peer,
@@ -128,7 +130,7 @@ async def get_or_create_scopes(
             scope peers
     """
     ws_result = await get_or_create_workspace(
-        db, schemas.WorkspaceCreate(name=workspace_name)
+        db, schema_from_path(schemas.WorkspaceCreate, "workspace_id", workspace_name)
     )
 
     peer_names = {scope_peer_name(s.name): s for s in scopes}
@@ -136,6 +138,7 @@ async def get_or_create_scopes(
         select(models.Peer)
         .where(models.Peer.workspace_name == workspace_name)
         .where(models.Peer.name.in_(peer_names.keys()))
+        .where(live_peer_row())
     )
     result = await db.execute(stmt)
     existing_peers: list[models.Peer] = list(result.scalars().all())
@@ -226,6 +229,7 @@ async def get_scopes(
         select(models.Peer)
         .where(models.Peer.workspace_name == workspace_name)
         .where(scope_peer_clause())
+        .where(live_peer_row())
     )
     if reverse:
         return stmt.order_by(models.Peer.created_at.desc(), models.Peer.id.desc())
@@ -256,6 +260,7 @@ async def get_scope_or_raise(
         select(models.Peer)
         .where(models.Peer.workspace_name == workspace_name)
         .where(models.Peer.name == scope_peer_name(scope_name))
+        .where(live_peer_row())
     )
     if peer is None or not is_scope_peer(peer.name, peer.internal_metadata):
         raise ResourceNotFoundException(
@@ -305,6 +310,7 @@ async def resolve_scope_peers(
         select(models.Peer)
         .where(models.Peer.workspace_name == workspace_name)
         .where(models.Peer.name.in_(peer_names))
+        .where(live_peer_row())
     )
     peers_by_name = {peer.name: peer for peer in result.scalars().all()}
 
@@ -383,6 +389,7 @@ async def get_scope_sessions(
         .where(models.SessionPeer.peer_name == scope_peer_name(scope_name))
         .where(models.SessionPeer.left_at.is_(None))
         .where(models.Session.is_active == True)  # noqa: E712
+        .where(live_session_row(), live_session_peer_row())
     )
     if reverse:
         return stmt.order_by(
@@ -428,6 +435,7 @@ async def add_sessions_to_scope(
         .where(models.Session.workspace_name == workspace_name)
         .where(models.Session.name.in_(requested))
         .where(models.Session.is_active == True)  # noqa: E712
+        .where(live_session_row())
     )
     found = {row[0] for row in result.all()}
     missing = sorted(requested - found)

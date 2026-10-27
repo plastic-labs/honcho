@@ -452,6 +452,60 @@ async def test_wildcard_filters(
 
 
 @pytest.mark.asyncio
+async def test_wildcards_and_empty_filters_inside_logical_operators(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """A wildcard or `{}` constrains nothing, so it is TRUE under every operator.
+
+    These all executed cleanly while returning the wrong rows — OR narrowed to
+    the other operand and NOT returned everything — so they need exact row
+    assertions rather than status-code checks.
+    """
+    test_workspace, _test_peer = sample_data
+
+    peer_names = [str(generate_nanoid()) for _ in range(3)]
+    for name in peer_names:
+        client.post(
+            f"/v3/workspaces/{test_workspace.name}/peers",
+            json={"name": name, "metadata": {"role": "member"}},
+        )
+    bob = peer_names[0]
+
+    def list_names(filters: dict[str, Any]) -> set[str]:
+        """Peer ids the list endpoint returns for `filters`, among this test's peers.
+
+        ANDed with the test's own peers so the expected set is exact. That
+        outer AND does not mask the bug: the operator under test is nested
+        inside it.
+        """
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/peers/list",
+            json={"filters": {"AND": [filters, {"id": {"in": peer_names}}]}},
+        )
+        assert response.status_code == 200, filters
+        return {item["id"] for item in response.json()["items"]}
+
+    everyone = set(peer_names)
+    cases: list[tuple[dict[str, Any], set[str]]] = [
+        ({"id": "*"}, everyone),
+        ({}, everyone),
+        ({"AND": [{"id": "*"}, {"id": bob}]}, {bob}),
+        ({"OR": [{"id": "*"}, {"id": bob}]}, everyone),
+        ({"OR": [{}, {"id": bob}]}, everyone),
+        ({"OR": [{"metadata": {"role": {"in": ["*"]}}}, {"id": bob}]}, everyone),
+        ({"NOT": [{"id": "*"}]}, set()),
+        ({"NOT": [{"id": {"in": [bob, "*"]}}]}, set()),
+        ({"NOT": [{}]}, set()),
+        ({"NOT": [{"metadata": {"role": "*"}}]}, set()),
+        ({"NOT": [{"created_at": {"gte": "*"}}]}, set()),
+        ({"NOT": [{"OR": [{"id": "*"}, {"id": bob}]}]}, set()),
+        ({"NOT": [{"id": bob}]}, everyone - {bob}),
+    ]
+    for filters, expected in cases:
+        assert list_names(filters) == expected, filters
+
+
+@pytest.mark.asyncio
 async def test_complex_nested_filters(
     client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
@@ -1616,6 +1670,69 @@ async def test_jsonb_type_casting_edge_cases(
     data = response.json()
     assert len(data["items"]) == 1
     assert "Large number" in data["items"][0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_numeric_filter_skips_non_numeric_metadata_values(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """A numeric comparison on a key that some rows store as text matches the
+    numeric rows and skips the rest, rather than failing the cast (500)."""
+    test_workspace, test_peer = sample_data
+
+    session_id = str(generate_nanoid())
+    client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions",
+        json={"id": session_id, "peer_names": {test_peer.name: {}}},
+    )
+    # Arabic-Indic digits and a no-break space can match a locale-aware \d or \s
+    scores: list[Any] = [
+        3,
+        "7",
+        "high",
+        "",
+        " ",
+        "1e200000",
+        True,
+        [1],
+        {"a": 1},
+        "\u0661\u0662",
+        "1\u00a0",
+        10**1000,  # Native JSONB numbers are valid beyond the string safety cap.
+        "NaN",
+        "Infinity",
+        "-Infinity",
+        "1" + "0" * 1000,  # Numeric strings retain the conservative length cap.
+        " \t+7.5e1\r\n",
+    ]
+    client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/messages",
+        json={
+            "messages": [
+                {
+                    "content": f"score {i}",
+                    "peer_id": test_peer.name,
+                    "metadata": {"score": score},
+                }
+                for i, score in enumerate(scores)
+            ]
+        },
+    )
+
+    def matching(op: str, value: Any) -> set[str]:
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
+            json={"filters": {"metadata": {"score": {op: value}}}},
+        )
+        assert response.status_code == 200, response.text
+        return {item["content"] for item in response.json()["items"]}
+
+    assert matching("gte", 0) == {"score 0", "score 1", "score 11", "score 16"}
+    assert matching("lt", 5) == {"score 0"}
+    assert matching("gt", "5") == {"score 1", "score 11", "score 16"}
+    assert matching("gt", 0) == {"score 0", "score 1", "score 11", "score 16"}
+    # `ne` keeps every row whose value is not the number 3, numeric or not
+    assert matching("ne", 3) == {f"score {i}" for i in range(1, len(scores))}
 
 
 @pytest.mark.asyncio

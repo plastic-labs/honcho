@@ -111,7 +111,11 @@ async def update_workspace(
     ),
     db: AsyncSession = db,
 ):
-    """Update Workspace metadata and/or configuration."""
+    """Replace supplied Workspace metadata and/or configuration.
+
+    An empty configuration object clears explicit settings. Omitted or null fields
+    remain unchanged.
+    """
     # ResourceNotFoundException will be caught by global handler if workspace not found
     honcho_workspace = await crud.update_workspace(
         db, workspace_name=workspace_id, workspace=workspace

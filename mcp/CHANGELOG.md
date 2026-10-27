@@ -9,6 +9,15 @@ This package versions independently of the Honcho API, `@honcho-ai/sdk`, and hos
 
 ## [Unreleased]
 
+### Security
+
+- The Docker image now builds on Bun 1.4.4 (was 1.2), the first Bun that
+  rejects certificates from the compromised eMudhra intermediates. Rebuild
+  self-hosted images and run the stdio host on Bun 1.4.4 or newer.
+  mcp.honcho.dev runs on Cloudflare Workers and is unaffected.
+
+## [3.2.0] - 2026-10-20
+
 ### Added
 
 - `source_message_ids` on every conclusion the tools return: the messages an explicit conclusion cites as evidence (Honcho v3.4.0+, null for derived levels and on older servers). `list_conclusions` filters accept `{"source_message_ids": {"contains": "<message id>"}}` to find the conclusions that cite a message as evidence. Surfaces once `@honcho-ai/sdk` carries the field; earlier SDKs report null
@@ -24,6 +33,19 @@ as before.
 
 ### Fixed
 
+- An expired or revoked OAuth token now returns HTTP 401 (`invalid_token`)
+  instead of a tool error, so clients refresh it rather than showing Honcho as
+  signed out after an hour. Tool calls now respond with a single JSON body
+  instead of an SSE stream. API key errors are unchanged.
+- A request carrying an expired or unknown `mcp-session-id` returns HTTP 404
+  instead of 400, the Streamable HTTP signal for a client to start a new
+  session. A request with no session header at all still returns 400.
+- `bun run deploy` and `bun run deploy:staging` reinstall from the lockfile and
+  typecheck before deploying. wrangler bundles whatever is in `node_modules`, so a
+  checkout with a stale install shipped the Worker against `@honcho-ai/sdk` 2.2.0.
+  `workspace_chat`, the scope tools, `get_conclusions` and `get_derived_conclusions`
+  failed; `chat` with `include_evidence` returned `{"content":"None"}`; and `scope` /
+  `sessions` recall bounds and conclusion attribution were silently dropped.
 - `chat` with `include_evidence` reports an error when the server's Honcho SDK
   is older than 2.5.0, instead of answering `{"content":"None"}`. An older SDK
   drops the option and returns the bare answer.

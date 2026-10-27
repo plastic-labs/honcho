@@ -14,14 +14,23 @@ import {
   errorResult,
   formatMessages,
   workspaceIdSchema,
+  failedResult,
+  isTokenRejected,
 } from "../types.js";
 
-function withAdminKeyHint(prefix: string, e: unknown): string {
+/**
+ * Admin-only routes return 401/403 to a scoped API key; say so. A rejected
+ * OAuth token is a different failure and goes through `failedResult`.
+ */
+function adminResult(ctx: ToolContext, prefix: string, e: unknown) {
+  if (isTokenRejected(e, ctx.config.apiKey)) return failedResult(ctx, prefix, e);
   const message = e instanceof Error ? e.message : String(e);
   const denied =
     e instanceof HonchoError && (e.status === 401 || e.status === 403);
-  if (!denied) return `${prefix}: ${message}`;
-  return `${prefix}: ${message}. This operation is only possible with an admin API key.`;
+  if (!denied) return errorResult(`${prefix}: ${message}`);
+  return errorResult(
+    `${prefix}: ${message}. This operation is only possible with an admin API key.`,
+  );
 }
 
 function formatWorkspace(workspace: WorkspaceResponse) {
@@ -71,9 +80,7 @@ export function register(server: McpServer, ctx: ToolContext) {
           sessions: sessionPage.items.map((s) => ({ id: s.id })),
         });
       } catch (e) {
-        return errorResult(
-          `Failed to inspect workspace: ${e instanceof Error ? e.message : String(e)}`,
-        );
+        return failedResult(ctx, `Failed to inspect workspace`, e);
       }
     },
   );
@@ -123,7 +130,7 @@ export function register(server: McpServer, ctx: ToolContext) {
           pages: result.pages,
         });
       } catch (e) {
-        return errorResult(withAdminKeyHint("Failed to list workspaces", e));
+        return adminResult(ctx, "Failed to list workspaces", e);
       }
     },
   );
@@ -168,7 +175,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         );
         return textResult(formatWorkspace(workspace));
       } catch (e) {
-        return errorResult(withAdminKeyHint("Failed to create workspace", e));
+        return adminResult(ctx, "Failed to create workspace", e);
       }
     },
   );
@@ -315,9 +322,7 @@ export function register(server: McpServer, ctx: ToolContext) {
           })),
         });
       } catch (e) {
-        return errorResult(
-          `Search failed: ${e instanceof Error ? e.message : String(e)}`,
-        );
+        return failedResult(ctx, `Search failed`, e);
       }
     },
   );
@@ -387,9 +392,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         });
         return textResult({ content: content ?? "None", evidence });
       } catch (e) {
-        return errorResult(
-          `Workspace chat failed: ${e instanceof Error ? e.message : String(e)}`,
-        );
+        return failedResult(ctx, `Workspace chat failed`, e);
       }
     },
   );
@@ -435,9 +438,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         }
         return textResult(metadata);
       } catch (e) {
-        return errorResult(
-          `Failed to get metadata: ${e instanceof Error ? e.message : String(e)}`,
-        );
+        return failedResult(ctx, `Failed to get metadata`, e);
       }
     },
   );
@@ -489,9 +490,7 @@ export function register(server: McpServer, ctx: ToolContext) {
           return textResult("Workspace metadata set successfully");
         }
       } catch (e) {
-        return errorResult(
-          `Failed to set metadata: ${e instanceof Error ? e.message : String(e)}`,
-        );
+        return failedResult(ctx, `Failed to set metadata`, e);
       }
     },
   );

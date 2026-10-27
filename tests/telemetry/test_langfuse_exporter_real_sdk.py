@@ -8,6 +8,7 @@ assert on what the real SDK actually exports.
 
 from __future__ import annotations
 
+import json
 import uuid
 from collections.abc import Iterator
 
@@ -132,3 +133,28 @@ def test_trace_has_exactly_one_parentless_root(exported: InMemorySpanExporter):
             assert s.parent.span_id in ids
     assert spans["Dialectic Agent"].attributes is not None
     assert spans["Dialectic Agent"].attributes["langfuse.observation.type"] == "agent"
+
+
+def test_every_observation_carries_the_correlation_attributes(
+    exported: InMemorySpanExporter,
+):
+    # Observations-first: filters and evaluators read one observation, so the
+    # trace-level user/name and the namespace must sit on each, not just the root.
+    _export_dialectic_run(duration_ms=10)
+    spans = _finished(exported)
+
+    assert set(spans) == {
+        "Dialectic Agent",
+        "Dialectic Agent step",
+        "Dialectic Agent generation",
+        "search_memory",
+    }
+    for span in spans.values():
+        attrs = span.attributes
+        assert attrs is not None
+        assert attrs["user.id"] == str(settings.NAMESPACE)
+        assert attrs["langfuse.trace.name"] == "Dialectic Agent"
+        # SDK v5 JSON-encodes metadata values on the span.
+        assert attrs["langfuse.observation.metadata.namespace"] == json.dumps(
+            str(settings.NAMESPACE)
+        )

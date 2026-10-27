@@ -7,7 +7,7 @@ rows keep their batch-level ``internal_metadata.message_ids`` and surface
 ``source_message_ids`` as null.
 
 Revision ID: c4d8e2f6a1b3
-Revises: 3e7a1c9d5b20
+Revises: d8c4f6a2b901
 Create Date: 2026-09-21
 
 """
@@ -21,7 +21,7 @@ from migrations.utils import get_schema, table_exists
 
 # revision identifiers, used by Alembic.
 revision: str = "c4d8e2f6a1b3"
-down_revision: str | None = "3e7a1c9d5b20"
+down_revision: str | None = "d8c4f6a2b901"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

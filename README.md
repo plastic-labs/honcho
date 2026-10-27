@@ -8,7 +8,7 @@
 
 ---
 
-![Static Badge](https://img.shields.io/badge/Server-3.3.0-blue)
+![Static Badge](https://img.shields.io/badge/Server-3.4.1-blue)
 [![PyPI version](https://img.shields.io/pypi/v/honcho-ai.svg)](https://pypi.org/project/honcho-ai/)
 [![NPM version](https://img.shields.io/npm/v/@honcho-ai/sdk.svg)](https://npmjs.org/package/@honcho-ai/sdk)
 [![CLI](https://img.shields.io/pypi/v/honcho-cli.svg?label=honcho-cli)](https://pypi.org/project/honcho-cli/)
@@ -47,7 +47,7 @@ The Honcho project is split between several repositories, with this one hosting 
 
 | I want to...                           | Path                                                       | Get started                   |
 | -------------------------------------- | ---------------------------------------------------------- | ----------------------------- |
-| Give my coding agent persistent memory | Claude Code, OpenCode, Kilo Code, OpenClaw, Hermes, or any MCP client | [Integrations](#integrations) |
+| Give my coding agent persistent memory | Claude Code, Cursor, Grok Bot, OpenCode, Kilo Code, OpenClaw, Hermes, or any MCP client | [Integrations](#integrations) |
 | Add memory to my product               | Python or TypeScript SDK                                   | [Quickstart](#quickstart)     |
 | Run Honcho locally                     | Install CLI, then `honcho start --setup`                   | [CLI](#cli)                   |
 | Inspect a deployment                   | `honcho workspace inspect`, `honcho doctor`                | [CLI](#cli)                   |
@@ -61,7 +61,7 @@ The Honcho project is split between several repositories, with this one hosting 
 | Peer-centric model      | Tracks users, agents, groups, projects, and ideas as entities that change over time. |
 | Multi-peer perspective  | Models what one peer knows about another when configured.                            |
 | Managed or self-hosted  | Use `api.honcho.dev`, `honcho start` locally, or run the FastAPI server yourself.    |
-| Agent-tool integrations | MCP, Claude Code, OpenCode, Kilo Code, OpenClaw, Hermes, Cursor-compatible clients.  |
+| Agent-tool integrations | MCP, Claude Code, Cursor, Grok Bot, OpenCode, Kilo Code, OpenClaw, Hermes.  |
 
 ## The Honcho Loop
 
@@ -182,7 +182,8 @@ gives them one shared memory.
 | ---------------- | ------------------------------------------------------- | ------------------------------------------------------------------ |
 | Claude Code      | `/plugin marketplace add plastic-labs/claude-honcho`    | [claude-honcho](https://github.com/plastic-labs/claude-honcho)     |
 | Codex            | `npm install -g @honcho-ai/codex-honcho`                | [codex-honcho](https://github.com/plastic-labs/codex-honcho)       |
-| Cursor           | `curl -fsSL .../cursor-honcho/main/install.sh \| bash`  | [cursor-honcho](https://github.com/plastic-labs/cursor-honcho)     |
+| Cursor           | Install **Honcho** from the Cursor Marketplace          | [integrations/cursor](integrations/cursor/)                        |
+| Grok Bot         | **Add to Grok Bot** from the Honcho plugin page         | [integrations/cursor](integrations/cursor/)                        |
 | DeepSeek Harness | `dsh plugin --profile <name> add @honcho-ai/dsh-honcho` | [dsh-honcho](https://github.com/plastic-labs/dsh-honcho)           |
 | OpenCode         | `opencode plugin "@honcho-ai/opencode-honcho" --global` | [opencode-honcho](https://github.com/plastic-labs/opencode-honcho) |
 | Kilo Code        | `kilo plugin @honcho-ai/kilo-honcho --global`           | [kilo-honcho](kilo-honcho/)                                        |
@@ -190,7 +191,7 @@ gives them one shared memory.
 | Hermes           | `hermes memory setup`                                   | built in upstream                                                  |
 | Any MCP client   | `claude mcp add honcho --transport http ...`            | [MCP guide](https://honcho.dev/docs/v3/guides/integrations/mcp)    |
 
-Get a key at [app.honcho.dev](https://app.honcho.dev), then `honcho init` (or `uv tool install honcho-cli && honcho init`) writes it to `~/.honcho/config.json` once for every integration.
+Get a key at [app.honcho.dev](https://app.honcho.dev), then `honcho init` (or `uv tool install honcho-cli && honcho init`) writes it to `~/.honcho/config.json` once for every integration. Cursor and Grok Bot are the exception: the marketplace plugin signs in with OAuth, and `honcho init` is optional there (in Cursor it turns on automatic capture).
 
 ### Claude Code
 
@@ -224,13 +225,10 @@ codex-honcho install      # registers hooks + MCP + skill in ~/.codex
 
 Restart Codex to load the hooks. Details: [Codex guide](https://honcho.dev/docs/v3/guides/integrations/codex) · [repo](https://github.com/plastic-labs/codex-honcho).
 
-### Cursor
+### Cursor and Grok Bot
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/plastic-labs/cursor-honcho/main/install.sh | bash
-```
-
-Windows (PowerShell): `irm https://raw.githubusercontent.com/plastic-labs/cursor-honcho/main/install.ps1 | iex`. The installer wires global hooks and MCP config. Details: [cursor-honcho](https://github.com/plastic-labs/cursor-honcho).
+One Cursor Marketplace listing serves both. In Cursor, open **Customize**, install **Honcho**, authenticate the `honcho` MCP server, then run `/honcho-setup` once. In Grok Bot, add **Honcho** under **Connect apps** (or **Add to Grok Bot** from the plugin page) and ask a Bot to set up Honcho. The plugin connects to the hosted MCP server over OAuth and ships the skills that drive the memory loop, so nothing runs locally.
+Details: [Cursor guide](https://honcho.dev/docs/v3/guides/integrations/cursor) · [Grok Bot guide](https://honcho.dev/docs/v3/guides/integrations/grok-bot) · [source](integrations/cursor/).
 
 ### DeepSeek Harness
 
@@ -514,7 +512,7 @@ For verification steps and production notes, see [Self-hosting docs → Manual S
 </details>
 <!-- markdownlint-enable MD033 -->
 
-Contributors: see [`CONTRIBUTING.md`](./CONTRIBUTING.md) for pre-commit setup. Deploying to Fly.io: see [Self-hosting docs → Deploying on Fly.io](https://honcho.dev/docs/v3/contributing/self-hosting#deploying-on-fly-io).
+Contributors: install the git hooks with `uv run pre-commit install --hook-type pre-commit --hook-type commit-msg --hook-type pre-push`. Tests only run at push time, so a clean commit is not a clean push. Deploying to Fly.io: see [Self-hosting docs → Deploying on Fly.io](https://honcho.dev/docs/v3/contributing/self-hosting#deploying-on-fly-io).
 
 ## Configuration
 
@@ -708,7 +706,7 @@ See the [SDK Reference](https://honcho.dev/docs/v3/documentation/reference/sdk) 
 
 ## Contributing
 
-We welcome contributions to Honcho. One thing to know before you start: **pull requests must be linked to an issue carrying the `maintainer-approved` label**, or they are closed automatically. [Browse the approved queue](https://github.com/plastic-labs/honcho/issues?q=is%3Aissue+is%3Aopen+label%3Amaintainer-approved), or make your case in [Discord](http://discord.gg/honcho) — that is where maintainers are most active.
+**Pull requests are limited to maintainers.** If you find a bug or want a change, please [open an issue](https://github.com/plastic-labs/honcho/issues/new/choose) instead. If you think your work is an exception, make the case in [Discord](http://discord.gg/honcho), where maintainers are most active.
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for the full process, an architecture walkthrough, and a map of where to change what. For vulnerabilities, see [SECURITY.md](./SECURITY.md) — note that Honcho does not operate a bug bounty.
 

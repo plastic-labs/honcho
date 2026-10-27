@@ -1,0 +1,24 @@
+---
+name: honcho-memory
+description: Honcho persistent memory is connected. Recall what it knows about the user before working, and record each exchange.
+alwaysApply: true
+---
+
+# Honcho memory is on
+
+You have persistent memory of the user through the `honcho` MCP server. Follow
+the `honcho-memory` skill:
+
+- At the start of a conversation, resolve the workspace and user peer and call
+  `get_peer_context` for the user. Act on what it says.
+- When past context would help, use `search` or `chat` instead of asking the
+  user to repeat themselves.
+- After every exchange, record the user's message and your reply with
+  `add_messages_to_session`, unless the session-start context says automatic
+  capture is on, in which case the hooks already did. Replace secrets with
+  `[redacted]`.
+- When the user states a durable preference, store it with
+  `create_conclusions`.
+
+If a Honcho tool returns an authentication error, run the `honcho-setup`
+skill instead of retrying.

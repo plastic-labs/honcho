@@ -103,6 +103,9 @@ session_peers_table = Table(
 @final
 class Workspace(Base):
     __tablename__: str = "workspaces"
+    deleted_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
     name: Mapped[str] = mapped_column(TEXT, unique=True)
     created_at: Mapped[datetime.datetime] = mapped_column(
@@ -116,6 +119,10 @@ class Workspace(Base):
     )
     configuration: Mapped[dict[str, Any]] = mapped_column(
         JSONB, default=dict, server_default=text("'{}'::jsonb")
+    )
+    # Generation counter for the deletion lifecycle barrier
+    deletion_generation: Mapped[int] = mapped_column(
+        Integer, default=0, server_default=text("0")
     )
 
     sessions = relationship(
@@ -136,6 +143,9 @@ class Workspace(Base):
 @final
 class Peer(Base):
     __tablename__: str = "peers"
+    deleted_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
     name: Mapped[str] = mapped_column(TEXT, nullable=False)
     h_metadata: Mapped[dict[str, Any]] = mapped_column(
@@ -173,6 +183,9 @@ class Peer(Base):
 @final
 class Session(Base):
     __tablename__: str = "sessions"
+    deleted_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     id: Mapped[str] = mapped_column(TEXT, primary_key=True, default=generate_nanoid)
     name: Mapped[str] = mapped_column(TEXT)
     is_active: Mapped[bool] = mapped_column(default=True, server_default=text("true"))
@@ -190,6 +203,10 @@ class Session(Base):
     )
     configuration: Mapped[dict[str, Any]] = mapped_column(
         JSONB, default=dict, server_default=text("'{}'::jsonb")
+    )
+    # Generation counter for the deletion lifecycle barrier
+    deletion_generation: Mapped[int] = mapped_column(
+        Integer, default=0, server_default=text("0")
     )
 
     workspace = relationship("Workspace", back_populates="sessions")
@@ -212,6 +229,9 @@ class Session(Base):
 @final
 class Message(Base):
     __tablename__: str = "messages"
+    deleted_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     id: Mapped[int] = mapped_column(
         BigInteger, Identity(), primary_key=True, autoincrement=True
     )
@@ -369,6 +389,10 @@ class Collection(Base):
     )
     workspace_name: Mapped[str] = mapped_column(
         ForeignKey("workspaces.name"), nullable=False, index=True
+    )
+    # Generation counter for the deletion lifecycle barrier
+    deletion_generation: Mapped[int] = mapped_column(
+        Integer, default=0, server_default=text("0")
     )
 
     __table_args__ = (
@@ -685,6 +709,28 @@ class QueueItem(Base):
             "work_unit_key",
             unique=True,
             postgresql_where=text("task_type = 'dream' AND processed = false"),
+        ),
+        # Pending-work lookups by the peer or session a payload references.
+        # The observers index needs btree_gin for its workspace_name column.
+        Index(
+            "ix_queue_pending_observers",
+            "workspace_name",
+            text("(payload -> 'observers')"),
+            postgresql_using="gin",
+            postgresql_where=text(
+                "processed = false AND (payload -> 'observers') IS NOT NULL"
+            ),
+        ),
+        *(
+            Index(
+                f"ix_queue_pending_{key}",
+                "workspace_name",
+                text(f"(payload ->> '{key}')"),
+                postgresql_where=text(
+                    f"processed = false AND (payload ->> '{key}') IS NOT NULL"
+                ),
+            )
+            for key in ("observed", "observer", "scope_peer", "session_name")
         ),
     )
 

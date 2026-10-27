@@ -22,6 +22,7 @@ from agent.memory_provider import MemoryProvider, is_trivial_prompt
 from agent.coding_context import INTERACTIVE_CODING_PLATFORMS as _LOCAL_PLATFORMS
 from agent.skill_commands import extract_user_instruction_from_skill_message
 from agent.turn_author import a2a_key
+from .attribution import HONCHO_APP_URL, attribution_url
 from .client import HonchoClientConfig, resolve_config_path
 from .client import _host_block, _HostLookup
 from .client import join_plugin_threads, spawn_context_thread
@@ -212,7 +213,8 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
 
     def get_config_schema(self):
         return [
-            {"key": "api_key", "description": "Honcho API key", "secret": True, "env_var": "HONCHO_API_KEY", "url": "https://app.honcho.dev"},
+            {"key": "api_key", "description": "Honcho API key", "secret": True, "env_var": "HONCHO_API_KEY",
+             "url": attribution_url(HONCHO_APP_URL, "provider-setup")},
             {"key": "baseUrl", "description": "Honcho base URL (for self-hosted)"},
         ]
 

@@ -1,6 +1,6 @@
 [project]
 name = "honcho-cli"
-version = "0.2.0"
+version = "0.3.0"
 description = "A terminal for Honcho — memory that reasons."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -22,6 +22,9 @@ dependencies = [
     "honcho-ai>=2.5.0",
     "rich>=13.0.0",
     "httpx>=0.27.0",
+    "questionary>=2.1.0",
+    # First bundle without emSign ECC Root CA - G3 (eMudhra intermediate key compromise)
+    "certifi>=2026.10.19",
 ]
 
 [project.urls]

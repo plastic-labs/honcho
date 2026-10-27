@@ -21,9 +21,16 @@ from src.cache.client import (
     safe_cache_set,
 )
 from src.config import settings
+from src.crud.lifecycle import (
+    live_message_row,
+    live_peer_row,
+    live_session_row,
+    live_workspace_row,
+)
 from src.exceptions import ConflictException, ResourceNotFoundException
 from src.telemetry.events import WorkspaceCreatedEvent, emit
 from src.utils.filter import apply_filter
+from src.utils.path_params import schema_from_path
 from src.utils.types import GetOrCreateResult
 from src.vector_store import get_external_vector_store
 
@@ -69,9 +76,18 @@ def workspace_cache_key(workspace_name: str) -> str:
 async def _fetch_workspace(
     db: AsyncSession, workspace_name: str
 ) -> dict[str, Any] | None:
-    """Fetch a workspace from the database and return as a plain dict for safe caching."""
+    """Fetch a workspace as a plain dict, served from cache when present."""
+    return await _select_workspace(db, workspace_name)
+
+
+async def _select_workspace(
+    db: AsyncSession, workspace_name: str
+) -> dict[str, Any] | None:
+    """Read a workspace straight from the database, bypassing the cache."""
     obj = await db.scalar(
-        select(models.Workspace).where(models.Workspace.name == workspace_name)
+        select(models.Workspace).where(
+            models.Workspace.name == workspace_name, live_workspace_row()
+        )
     )
     if obj is None:
         return None
@@ -85,11 +101,19 @@ async def _fetch_workspace(
     }
 
 
+async def _existing_workspace_result(
+    db: AsyncSession, data: dict[str, Any]
+) -> GetOrCreateResult[models.Workspace]:
+    """Reconstruct a workspace from its fetched dict and merge it into the session."""
+    obj = models.Workspace(**data)
+    make_transient_to_detached(obj)
+    existing_workspace = await db.merge(obj, load=False)
+    return GetOrCreateResult(existing_workspace, created=False)
+
+
 async def get_or_create_workspace(
     db: AsyncSession,
     workspace: schemas.WorkspaceCreate,
-    *,
-    _retry: bool = False,
 ) -> GetOrCreateResult[models.Workspace]:
     """
     Get an existing workspace or create a new one if it doesn't exist.
@@ -111,13 +135,8 @@ async def get_or_create_workspace(
     # Check if workspace already exists
     data = await _fetch_workspace(db, workspace.name)
     if data is not None:
-        # Workspace already exists
         logger.debug("Found existing workspace: %s", workspace.name)
-        # Reconstruct ORM object from cached dict and merge into session
-        obj = models.Workspace(**data)
-        make_transient_to_detached(obj)
-        existing_workspace = await db.merge(obj, load=False)
-        return GetOrCreateResult(existing_workspace, created=False)
+        return await _existing_workspace_result(db, data)
 
     # Workspace doesn't exist, create a new one
     honcho_workspace = models.Workspace(
@@ -153,11 +172,16 @@ async def get_or_create_workspace(
             honcho_workspace, created=True, on_commit=_after_commit
         )
     except IntegrityError:
-        if _retry:
+        # The unique violation means another transaction created the row, so
+        # read it straight from the database. The cached `_fetch_workspace` can
+        # answer None here without querying, which used to turn the lost race
+        # into a 409.
+        data = await _select_workspace(db, workspace.name)
+        if data is None:
             raise ConflictException(
                 f"Unable to create or get workspace: {workspace.name}"
             ) from None
-        return await get_or_create_workspace(db, workspace, _retry=True)
+        return await _existing_workspace_result(db, data)
 
 
 async def get_all_workspaces(
@@ -171,7 +195,7 @@ async def get_all_workspaces(
         filters: Filter the workspaces by a dictionary of metadata
         reverse: Whether to reverse the default creation order
     """
-    stmt = select(models.Workspace)
+    stmt = select(models.Workspace).where(live_workspace_row())
     stmt = apply_filter(stmt, models.Workspace, filters)
     if reverse:
         stmt = stmt.order_by(
@@ -220,9 +244,9 @@ async def update_workspace(
     """
     Get or create a workspace, then apply metadata and configuration updates.
 
-    Provided metadata replaces the current metadata when present. Provided
-    configuration keys are merged into the existing configuration instead of
-    replacing it wholesale.
+    Provided metadata and configuration objects replace their current values.
+    An empty configuration clears explicit workspace settings; omitted or null
+    fields leave the corresponding values unchanged.
 
     Args:
         db: Database session
@@ -238,8 +262,10 @@ async def update_workspace(
     """
     ws_result = await get_or_create_workspace(
         db,
-        schemas.WorkspaceCreate(
-            name=workspace_name,
+        schema_from_path(
+            schemas.WorkspaceCreate,
+            "workspace_id",
+            workspace_name,
             metadata=workspace.metadata or {},  # Provide empty dict if metadata is None
         ),
     )
@@ -256,14 +282,9 @@ async def update_workspace(
         needs_update = True
 
     if workspace.configuration is not None:
-        # Merge configuration instead of replacing to preserve existing keys
-        base_config = (honcho_workspace.configuration or {}).copy()
-        merged_config = {
-            **base_config,
-            **workspace.configuration.model_dump(exclude_none=True),
-        }
-        if honcho_workspace.configuration != merged_config:
-            honcho_workspace.configuration = merged_config
+        configuration = workspace.configuration.model_dump(exclude_none=True)
+        if honcho_workspace.configuration != configuration:
+            honcho_workspace.configuration = configuration
             needs_update = True
 
     # Early exit if unchanged
@@ -584,7 +605,7 @@ async def get_workspace_stats(
             newest_message_at=None,
         )
 
-    msg_filters = [models.Message.workspace_name == workspace_name]
+    msg_filters = [models.Message.workspace_name == workspace_name, live_message_row()]
     if session_names is not None:
         msg_filters.append(models.Message.session_name.in_(session_names))
         peer_count = int(
@@ -596,7 +617,7 @@ async def get_workspace_stats(
                     (models.Peer.workspace_name == models.Message.workspace_name)
                     & (models.Peer.name == models.Message.peer_name),
                 )
-                .where(*msg_filters, ~scope_peer_clause())
+                .where(*msg_filters, live_peer_row(), ~scope_peer_clause())
             )
             or 0
         )
@@ -605,6 +626,7 @@ async def get_workspace_stats(
                 select(func.count(models.Session.id)).where(
                     models.Session.workspace_name == workspace_name,
                     models.Session.name.in_(session_names),
+                    live_session_row(),
                 )
             )
             or 0
@@ -614,6 +636,7 @@ async def get_workspace_stats(
             await db.scalar(
                 select(func.count(models.Peer.id)).where(
                     models.Peer.workspace_name == workspace_name,
+                    live_peer_row(),
                     ~scope_peer_clause(),
                 )
             )
@@ -622,7 +645,8 @@ async def get_workspace_stats(
         session_count = int(
             await db.scalar(
                 select(func.count(models.Session.id)).where(
-                    models.Session.workspace_name == workspace_name
+                    models.Session.workspace_name == workspace_name,
+                    live_session_row(),
                 )
             )
             or 0
@@ -683,6 +707,7 @@ async def get_active_peers(
     msg_filters = [
         models.Message.workspace_name == workspace_name,
         models.Message.created_at >= window_start,
+        live_message_row(),
     ]
     if session_names is not None:
         msg_filters.append(models.Message.session_name.in_(session_names))
@@ -710,6 +735,7 @@ async def get_active_peers(
             .join(subq, models.Peer.name == subq.c.peer_name)
             .where(
                 models.Peer.workspace_name == workspace_name,
+                live_peer_row(),
                 ~scope_peer_clause(),
             )
         )
@@ -719,6 +745,7 @@ async def get_active_peers(
             .outerjoin(subq, models.Peer.name == subq.c.peer_name)
             .where(
                 models.Peer.workspace_name == workspace_name,
+                live_peer_row(),
                 ~scope_peer_clause(),
             )
         )

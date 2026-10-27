@@ -1,20 +1,22 @@
 {
   "name": "honcho-mcp",
-  "version": "3.1.0",
+  "version": "3.2.0",
   "description": "Honcho MCP Server",
   "main": "src/index.ts",
-  "packageManager": "bun@1.2.0",
+  "packageManager": "bun@1.4.4",
   "engines": {
     "node": ">=18.0.0",
-    "bun": ">=1.2.0"
+    "bun": ">=1.4.4"
   },
   "scripts": {
     "preinstall": "node -e \"const ua=process.env.npm_config_user_agent||'';if(ua.includes('npm')&&!ua.includes('bun')){console.error('❌ Please use bun instead of npm!\\n📦 Run: bun install\\n🌐 Install bun: https://bun.sh/');process.exit(1)}\"",
     "dev": "wrangler dev",
     "stdio": "bun src/stdio.ts",
     "http": "bun src/http.ts",
-    "deploy": "wrangler deploy",
-    "deploy:staging": "wrangler deploy --env staging"
+    "typecheck": "tsc --noEmit",
+    "check:deploy": "bun install --frozen-lockfile && tsc --noEmit",
+    "deploy": "bun run check:deploy && wrangler deploy",
+    "deploy:staging": "bun run check:deploy && wrangler deploy --env staging"
   },
   "dependencies": {
     "@honcho-ai/sdk": "^2.5.0",

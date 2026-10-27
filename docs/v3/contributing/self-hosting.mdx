@@ -65,6 +65,45 @@ DERIVER_MODEL_CONFIG__OVERRIDES__BASE_URL=https://openrouter.ai/api/v1
 For recommended model tiers per feature, using multiple providers, or direct vendor API keys, see the [Configuration Guide](./configuration#llm-configuration).
 </Info>
 
+### Running without a model provider
+
+`src/mock_provider/` is a deterministic, OpenAI-compatible endpoint, so you can run the full
+stack with no provider account, no API key, and no spend. It answers `/v1/chat/completions`
+and `/v1/embeddings` with obviously-synthetic content derived from the request, and the same
+request always produces the same response. Run it from the standard image or the repo:
+
+```bash
+uv run fastapi run --host 0.0.0.0 --port 8106 src/mock_provider/main.py
+```
+
+Then point Honcho at it. All three variables are required:
+
+```bash
+export LLM_OPENAI_API_KEY=any-non-empty-string   # only truthiness is checked
+export LLM_OPENAI_BASE_URL=http://localhost:8106/v1
+export EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL=http://localhost:8106/v1
+```
+
+The key's _value_ is never checked — the mock reads no Authorization header, and Honcho only
+tests it for truthiness before building the client (`src/llm/registry.py`). Set the base URL
+without it and the client is never constructed, so the base URL is silently ignored. Keep the
+value obviously fake, so a module that ever escapes the override 401s rather than spends.
+
+Embeddings resolve through a separate client that reads the base URL only from the per-module
+override, so without the third variable your embedding calls go to `api.openai.com` for real.
+Do not set any per-module credential override (`..._OVERRIDES__API_KEY` / `API_KEY_ENV`) —
+that makes the module ignore the global base URL.
+
+Two things to know:
+
+- **A repo `.env` beats your exported environment.** `src/config.py` calls
+  `load_dotenv(override=True)` at import, so a stale `.env` silently wins over the variables
+  above. Set `PYTHON_DOTENV_DISABLED=1` (and `HONCHO_CONFIG_TOML_DISABLED=1` for a local
+  `config.toml`) when you need the environment to be the only input.
+- **Mock embeddings are hash-derived and carry no semantic similarity.** Two paraphrases are as
+  far apart as two unrelated strings. Recall against this provider must use lexical/full-text
+  search; anything asserting on vector ranking needs a real embedding provider.
+
 ## Personal local stack (CLI)
 
 Recommended if you want Honcho running locally without cloning this repo or building an image. Install the CLI, then run the setup wizard:
@@ -193,7 +232,7 @@ docker run --name honcho-db \
 
 ### 3. Enable Extensions
 
-Connect to PostgreSQL and enable pgvector and pg_trgm:
+Connect to PostgreSQL and enable pgvector, pg_trgm and btree_gin:
 
 ```bash
 # Connect to PostgreSQL
@@ -202,13 +241,14 @@ psql -U postgres
 # Enable the extensions on the default database
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE EXTENSION IF NOT EXISTS btree_gin;
 \q
 ```
 
 <Note>
 **Least-privilege database roles.** Honcho runs `CREATE EXTENSION IF NOT EXISTS vector` before migrations and again at startup, so if the role in `DB_CONNECTION_URI` can't create extensions, both fail with a privilege error — `IF NOT EXISTS` doesn't help, because Postgres checks the privilege first.
 
-Run the statements above once as a superuser (or `rds_superuser`) and the application role needs no extension privileges. `pg_trgm` is optional: if it can't be created, migrations skip the trigram index that speeds up message search and log the statement to create it later. See [Troubleshooting](/v3/contributing/troubleshooting) if you hit this.
+Run the statements above once as a superuser (or `rds_superuser`) and the application role needs no extension privileges. `pg_trgm` and `btree_gin` are optional: if one can't be created, migrations skip the index that needs it (the trigram index that speeds up message search, and a queue index used when deleting data) and log the statement to create it later. See [Troubleshooting](/v3/contributing/troubleshooting) if you hit this.
 </Note>
 
 ### 4. Configure Environment

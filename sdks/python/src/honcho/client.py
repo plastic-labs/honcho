@@ -170,7 +170,10 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
         ),
     ) -> None:
         """
-        Set configuration on the server and update the cache.
+        Replace the entire workspace configuration and update the cache.
+
+        Pass an empty WorkspaceConfiguration (or {}) to clear explicit settings
+        and use system defaults. Settings omitted from the object are removed.
 
         Args:
             configuration: A WorkspaceConfiguration object with configuration settings.
@@ -180,6 +183,10 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
             body={"configuration": configuration.model_dump(exclude_none=True)},
         )
         self._configuration = configuration  # pyright: ignore[reportIncompatibleVariableOverride]
+
+    def refresh(self) -> None:
+        """Refresh metadata and typed configuration together from the server."""
+        self.get_configuration()
 
     @property
     def base_url(self) -> str:
