@@ -30,6 +30,8 @@ from src.telemetry.events import AgentToolSummaryCreatedEvent, emit
 from src.telemetry.events.llm import CallPurpose
 from src.telemetry.logging import accumulate_metric
 from src.telemetry.prometheus.metrics import (
+    SUMMARY_NEUTRAL_RETRY_FAILED,
+    SUMMARY_NEUTRAL_RETRY_RECOVERED,
     SUMMARY_REJECTION_CONTENT_FILTERED,
     SUMMARY_REJECTION_DEGENERATE,
     DeriverComponents,
@@ -144,14 +146,34 @@ def _basic_fallback_summary(
     )
 
 
+# Added on the one retry after a provider filters a summary. Output filters react
+# to explicit wording far more than to a neutral account of the same facts, and
+# the previous summary is restated too, so a summary that carried quoted explicit
+# text forward stops tripping the filter at every later boundary.
+NEUTRAL_WORDING_INSTRUCTION = (
+    "Describe profanity, slurs, sexual content and other explicit material in "
+    "neutral, non-graphic terms instead of quoting or reproducing it. This "
+    "applies to the previous summary too: restate anything explicit in it "
+    "neutrally. Keep every fact: who said or did what, to whom, and when."
+)
+
+
+def _neutral_wording_section(neutral_wording: bool) -> str:
+    # Renders nothing by default, so the normal prompt is unchanged.
+    return f"{NEUTRAL_WORDING_INSTRUCTION}\n\n" if neutral_wording else ""
+
+
 def short_summary_prompt(
     formatted_messages: str,
     target_tokens: int,
     previous_summary_text: str,
     custom_instructions: str | None = None,
+    *,
+    neutral_wording: bool = False,
 ) -> str:
     """Generate the short summary prompt."""
     instructions_section = custom_instructions_section(custom_instructions)
+    wording_section = _neutral_wording_section(neutral_wording)
     return c(f"""
 You are a system that summarizes parts of a conversation to create a concise and accurate summary. Focus on capturing:
 
@@ -166,7 +188,7 @@ Provide a concise, factual summary that captures the essence of the conversation
 
 Return only the summary without any explanation or meta-commentary.
 
-{instructions_section}
+{wording_section}{instructions_section}
 
 <previous_summary>
 {previous_summary_text}
@@ -185,9 +207,12 @@ def long_summary_prompt(
     target_tokens: int,
     previous_summary_text: str,
     custom_instructions: str | None = None,
+    *,
+    neutral_wording: bool = False,
 ) -> str:
     """Generate the long summary prompt."""
     instructions_section = custom_instructions_section(custom_instructions)
+    wording_section = _neutral_wording_section(neutral_wording)
     return c(f"""
 You are a system that creates thorough, comprehensive summaries of conversations. Focus on capturing:
 
@@ -204,7 +229,7 @@ Provide a thorough and detailed summary that captures the essence of the convers
 
 Return only the summary without any explanation or meta-commentary.
 
-{instructions_section}
+{wording_section}{instructions_section}
 
 <previous_summary>
 {previous_summary_text}
@@ -279,6 +304,7 @@ async def create_short_summary(
     previous_summary: str | None = None,
     custom_instructions: str | None = None,
     *,
+    neutral_wording: bool = False,
     telemetry: LLMTelemetryContext | None = None,
 ) -> HonchoLLMCallResponse[str]:
     # input_tokens indicates how many tokens the message list + previous summary take up.
@@ -294,7 +320,11 @@ async def create_short_summary(
         previous_summary_text = "There is no previous summary -- the messages are the beginning of the conversation."
 
     prompt = short_summary_prompt(
-        formatted_messages, target_tokens, previous_summary_text, custom_instructions
+        formatted_messages,
+        target_tokens,
+        previous_summary_text,
+        custom_instructions,
+        neutral_wording=neutral_wording,
     )
 
     # Mint a root span id.
@@ -321,6 +351,7 @@ async def create_long_summary(
     previous_summary: str | None = None,
     custom_instructions: str | None = None,
     *,
+    neutral_wording: bool = False,
     telemetry: LLMTelemetryContext | None = None,
 ) -> HonchoLLMCallResponse[str]:
     target_tokens = int(settings.SUMMARY.MAX_TOKENS_LONG * SUMMARY_TARGET_RATIO)
@@ -331,7 +362,11 @@ async def create_long_summary(
         previous_summary_text = "There is no previous summary -- the messages are the beginning of the conversation."
 
     prompt = long_summary_prompt(
-        formatted_messages, target_tokens, previous_summary_text, custom_instructions
+        formatted_messages,
+        target_tokens,
+        previous_summary_text,
+        custom_instructions,
+        neutral_wording=neutral_wording,
     )
 
     # Mint a root span id.
@@ -700,6 +735,67 @@ async def _create_and_save_summary(
         )
 
 
+async def _generate_summary(
+    summary_type: SummaryType,
+    formatted_messages: str,
+    input_tokens: int,
+    previous_summary_text: str | None,
+    custom_instructions: str | None,
+    *,
+    telemetry: LLMTelemetryContext | None,
+) -> HonchoLLMCallResponse[str]:
+    """Call the summary model, retrying once in neutral wording when the
+    provider filters the summary.
+
+    A filtered summary is never saved, so without the retry a session whose
+    content trips the filter keeps its last summary and loses every refused
+    window. A refusal of the retry escapes like the first one would.
+    """
+
+    async def call(*, neutral_wording: bool) -> HonchoLLMCallResponse[str]:
+        if summary_type == SummaryType.SHORT:
+            return await create_short_summary(
+                formatted_messages,
+                input_tokens,
+                previous_summary_text,
+                custom_instructions,
+                neutral_wording=neutral_wording,
+                telemetry=telemetry,
+            )
+        return await create_long_summary(
+            formatted_messages,
+            previous_summary_text,
+            custom_instructions,
+            neutral_wording=neutral_wording,
+            telemetry=telemetry,
+        )
+
+    try:
+        return await call(neutral_wording=False)
+    except EmptySummaryError as e:
+        if e.parse_class != "content_filtered":
+            raise
+
+    logger.warning(
+        "%s summary was content-filtered; retrying once in neutral wording",
+        summary_type.name,
+    )
+    try:
+        response = await call(neutral_wording=True)
+    except Exception:
+        _record_neutral_retry(summary_type, SUMMARY_NEUTRAL_RETRY_FAILED)
+        raise
+    _record_neutral_retry(summary_type, SUMMARY_NEUTRAL_RETRY_RECOVERED)
+    return response
+
+
+def _record_neutral_retry(summary_type: SummaryType, outcome: str) -> None:
+    if settings.METRICS.ENABLED:
+        prometheus_metrics.record_summary_neutral_retry(
+            summary_type=summary_type.name.lower(), outcome=outcome
+        )
+
+
 async def _create_summary(
     formatted_messages: str,
     previous_summary_text: str | None,
@@ -740,21 +836,14 @@ async def _create_summary(
     llm_input_tokens = 0
     llm_output_tokens = 0
     try:
-        if summary_type == SummaryType.SHORT:
-            response = await create_short_summary(
-                formatted_messages,
-                input_tokens,
-                previous_summary_text,
-                custom_instructions,
-                telemetry=telemetry,
-            )
-        else:
-            response = await create_long_summary(
-                formatted_messages,
-                previous_summary_text,
-                custom_instructions,
-                telemetry=telemetry,
-            )
+        response = await _generate_summary(
+            summary_type,
+            formatted_messages,
+            input_tokens,
+            previous_summary_text,
+            custom_instructions,
+            telemetry=telemetry,
+        )
 
         # Strip NUL before the checks below so they judge the text that gets
         # stored: jsonb rejects NUL, and NUL-only output must count as empty.
@@ -1167,8 +1256,9 @@ def _format_messages(messages: list[models.Message]) -> str:
 
 
 # Covers prompt text the scaffold estimate leaves out: the "no previous summary"
-# placeholder and the digits of the target length.
-_PROMPT_SLACK_TOKENS = 64
+# placeholder, the digits of the target length, and the neutral-wording
+# instruction a filtered summary is retried with.
+_PROMPT_SLACK_TOKENS = 64 + estimate_tokens(NEUTRAL_WORDING_INSTRUCTION)
 
 _TRUNCATION_MARKER = " [truncated]"
 

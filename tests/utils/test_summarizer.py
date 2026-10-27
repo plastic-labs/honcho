@@ -16,6 +16,7 @@ from src.config import settings
 from src.exceptions import EmptySummaryError
 from src.llm import HonchoLLMCallResponse
 from src.utils.summarizer import (
+    NEUTRAL_WORDING_INSTRUCTION,
     SUMMARY_TARGET_RATIO,
     Summary,
     SummaryType,
@@ -773,3 +774,118 @@ async def test_filtered_summary_is_counted_as_a_rejection(
         )
     else:
         mock_metrics.record_summary_rejection.assert_not_called()
+
+
+def _filtered() -> EmptySummaryError:
+    return EmptySummaryError.for_prompt(
+        "prompt",
+        parse_class="content_filtered",
+        finish_reasons=["content_filter"],
+        output_tokens=0,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("summary_type", [SummaryType.SHORT, SummaryType.LONG])
+async def test_filtered_summary_is_retried_in_neutral_wording(
+    monkeypatch: pytest.MonkeyPatch, summary_type: SummaryType
+):
+    """A content-filtered summary gets one retry asking for neutral wording,
+    and a successful retry is saved like any other summary."""
+    monkeypatch.setattr(settings.METRICS, "ENABLED", True)
+    recovered = HonchoLLMCallResponse(
+        content="Participants made crude jokes about a colleague.",
+        input_tokens=100,
+        output_tokens=9,
+        finish_reasons=["stop"],
+    )
+    with (
+        patch(
+            _SUMMARY_CREATORS[summary_type],
+            new_callable=AsyncMock,
+            side_effect=[_filtered(), recovered],
+        ) as mock_create,
+        patch("src.utils.summarizer.prometheus_metrics") as mock_metrics,
+    ):
+        summary, is_fallback, _, _ = await _call_create_summary(summary_type)
+
+    assert is_fallback is False
+    assert summary["content"] == "Participants made crude jokes about a colleague."
+    assert [c.kwargs["neutral_wording"] for c in mock_create.await_args_list] == [
+        False,
+        True,
+    ]
+    mock_metrics.record_summary_neutral_retry.assert_called_once_with(
+        summary_type=summary_type.name.lower(), outcome="recovered"
+    )
+    mock_metrics.record_summary_rejection.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_refused_neutral_retry_escapes(monkeypatch: pytest.MonkeyPatch):
+    """When the retry is filtered too, the refusal reaches the queue and both
+    the retry outcome and the rejection are counted."""
+    monkeypatch.setattr(settings.METRICS, "ENABLED", True)
+    with (
+        patch(
+            "src.utils.summarizer.create_short_summary",
+            new_callable=AsyncMock,
+            side_effect=[_filtered(), _filtered()],
+        ) as mock_create,
+        patch("src.utils.summarizer.prometheus_metrics") as mock_metrics,
+        pytest.raises(EmptySummaryError),
+    ):
+        await _call_create_summary(SummaryType.SHORT)
+
+    assert mock_create.await_count == 2
+    mock_metrics.record_summary_neutral_retry.assert_called_once_with(
+        summary_type="short", outcome="failed"
+    )
+    mock_metrics.record_summary_rejection.assert_called_once_with(
+        summary_type="short", reason="content_filtered"
+    )
+
+
+@pytest.mark.asyncio
+async def test_truncated_summary_is_not_retried():
+    """Only a content filter is worth rewording for; a truncated summary
+    escapes on the first refusal."""
+    with (
+        patch(
+            "src.utils.summarizer.create_short_summary",
+            new_callable=AsyncMock,
+            side_effect=_refusal(),
+        ) as mock_create,
+        pytest.raises(EmptySummaryError),
+    ):
+        await _call_create_summary(SummaryType.SHORT)
+
+    assert mock_create.await_count == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("summary_type", [SummaryType.SHORT, SummaryType.LONG])
+async def test_neutral_wording_reaches_the_prompt(summary_type: SummaryType):
+    """The retry's prompt carries the instruction; the normal one does not."""
+    prompts: list[str] = []
+    for neutral_wording in (False, True):
+        with patch(
+            "src.utils.summarizer.honcho_llm_call", new_callable=AsyncMock
+        ) as mock_call:
+            if summary_type is SummaryType.SHORT:
+                await create_short_summary(
+                    _FORMATTED_MESSAGES,
+                    _INPUT_TOKENS,
+                    neutral_wording=neutral_wording,
+                )
+            else:
+                await create_long_summary(
+                    _FORMATTED_MESSAGES, neutral_wording=neutral_wording
+                )
+        await_args = mock_call.await_args
+        assert await_args is not None
+        prompts.append(await_args.kwargs["prompt"])
+
+    normal, neutral = prompts
+    assert NEUTRAL_WORDING_INSTRUCTION not in normal
+    assert NEUTRAL_WORDING_INSTRUCTION in neutral

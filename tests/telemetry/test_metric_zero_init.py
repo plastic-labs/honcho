@@ -25,6 +25,8 @@ from src.telemetry.events import ALL_EVENT_TYPES, HIGH_VOLUME_EVENT_TYPES
 from src.telemetry.events.base import BaseEvent
 from src.telemetry.prometheus.metrics import (
     _DERIVER_TOKEN_COMBOS_BY_TASK,  # pyright: ignore[reportPrivateUsage]
+    SUMMARY_NEUTRAL_RETRY_FAILED,
+    SUMMARY_NEUTRAL_RETRY_RECOVERED,
     SUMMARY_REJECTION_CONTENT_FILTERED,
     SUMMARY_REJECTION_DEGENERATE,
     DeriverComponents,
@@ -240,6 +242,15 @@ def test_deriver_init_materializes_token_and_backlog():
                     "summary_rejections_total",
                     summary_type=summary_type,
                     reason=reason,
+                )
+                is not None
+            )
+        for outcome in (SUMMARY_NEUTRAL_RETRY_RECOVERED, SUMMARY_NEUTRAL_RETRY_FAILED):
+            assert (
+                sample(
+                    "summary_neutral_retries_total",
+                    summary_type=summary_type,
+                    outcome=outcome,
                 )
                 is not None
             )

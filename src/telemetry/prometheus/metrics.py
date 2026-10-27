@@ -165,6 +165,15 @@ summary_rejections_counter = NamespacedCounter(
     ["namespace", "summary_type", "reason"],
 )
 
+SUMMARY_NEUTRAL_RETRY_RECOVERED = "recovered"
+SUMMARY_NEUTRAL_RETRY_FAILED = "failed"
+
+summary_neutral_retries_counter = NamespacedCounter(
+    "summary_neutral_retries",
+    "Content-filtered summaries retried in neutral wording, by outcome",
+    ["namespace", "summary_type", "outcome"],
+)
+
 dialectic_tokens_processed_counter = NamespacedCounter(
     "dialectic_tokens_processed",
     "Total tokens processed by the dialectic",
@@ -445,6 +454,14 @@ class PrometheusMetrics:
         except Exception as e:
             self._handle_metric_error("record_summary_rejection", e)
 
+    def record_summary_neutral_retry(self, *, summary_type: str, outcome: str) -> None:
+        try:
+            summary_neutral_retries_counter.labels(
+                summary_type=summary_type, outcome=outcome
+            ).inc()
+        except Exception as e:
+            self._handle_metric_error("record_summary_neutral_retry", e)
+
     def record_dialectic_tokens(
         self,
         *,
@@ -651,7 +668,8 @@ class PrometheusMetrics:
                         specialist_name=specialist.name,
                         token_type=token_type.value,
                     )
-            # summary rejections: summary_type x reason.
+            # summary rejections (summary_type x reason) and neutral retries
+            # (summary_type x outcome).
             for summary_type in ("short", "long"):
                 for reason in (
                     SUMMARY_REJECTION_DEGENERATE,
@@ -661,6 +679,15 @@ class PrometheusMetrics:
                         summary_rejections_counter,
                         summary_type=summary_type,
                         reason=reason,
+                    )
+                for outcome in (
+                    SUMMARY_NEUTRAL_RETRY_RECOVERED,
+                    SUMMARY_NEUTRAL_RETRY_FAILED,
+                ):
+                    self._touch(
+                        summary_neutral_retries_counter,
+                        summary_type=summary_type,
+                        outcome=outcome,
                     )
             # ai: init at 0 so the gauge is visible before its first per-replica refresh
             self.set_message_embeddings_pending(count=0)
