@@ -490,10 +490,13 @@ class OpenAIBackend:
         else:
             content = ""
 
+        # OpenAI-compatible gateways can return usage with only total_tokens.
+        # The SDK then sets the omitted counts to None; record that as 0 so a
+        # successful response is not rejected downstream.
         return CompletionResult(
             content=content,
-            input_tokens=usage.prompt_tokens if usage else 0,
-            output_tokens=usage.completion_tokens if usage else 0,
+            input_tokens=(usage.prompt_tokens or 0) if usage else 0,
+            output_tokens=(usage.completion_tokens or 0) if usage else 0,
             cache_creation_input_tokens=cache_creation,
             cache_read_input_tokens=cache_read,
             finish_reason=finish_reason or "stop",

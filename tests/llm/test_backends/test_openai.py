@@ -1842,3 +1842,63 @@ async def test_stream_throw_raises_before_sending() -> None:
             pass
 
     client.chat.completions.create.assert_not_awaited()
+
+
+def _chat_completion(usage: Any) -> SimpleNamespace:
+    return SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                finish_reason="stop",
+                message=SimpleNamespace(content="Hello", tool_calls=[]),
+            )
+        ],
+        usage=usage,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("usage", "expected_input", "expected_output"),
+    [
+        pytest.param(
+            SimpleNamespace(
+                prompt_tokens=None,
+                completion_tokens=None,
+                total_tokens=17,
+            ),
+            0,
+            0,
+            id="omitted-counts",
+        ),
+        pytest.param(
+            SimpleNamespace(
+                prompt_tokens=12,
+                completion_tokens=7,
+                total_tokens=19,
+            ),
+            12,
+            7,
+            id="integer-counts",
+        ),
+        pytest.param(None, 0, 0, id="usage-absent"),
+    ],
+)
+async def test_openai_backend_coalesces_missing_usage_token_counts(
+    usage: Any,
+    expected_input: int,
+    expected_output: int,
+) -> None:
+    """Gateways may return usage with only total_tokens. The SDK then sets
+    prompt_tokens and completion_tokens to None; that must not fail the call."""
+    client = Mock()
+    client.chat.completions.create = AsyncMock(return_value=_chat_completion(usage))
+
+    result = await OpenAIBackend(client).complete(
+        model="gpt-4o",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+    )
+
+    assert result.content == "Hello"
+    assert result.input_tokens == expected_input
+    assert result.output_tokens == expected_output
