@@ -10,7 +10,7 @@ from sqlalchemy.orm import InstrumentedAttribute
 
 from src import models, schemas
 from src.config import settings
-from src.crud.lifecycle import live_session_peer_row
+from src.crud.lifecycle import live_message_row, live_session_peer_row
 from src.dependencies import tracked_db
 from src.embedding_client import embedding_client
 from src.telemetry.events import EmbeddingCallPurpose
@@ -372,6 +372,7 @@ async def _build_merged_snippets(
         select(models.Message)
         .where(models.Message.workspace_name == workspace_name)
         .where(or_(*session_predicates))
+        .where(live_message_row())
         .order_by(
             models.Message.session_name.asc(),
             models.Message.seq_in_session.asc(),
@@ -545,6 +546,7 @@ async def get_messages(
     base_conditions = [
         models.Message.workspace_name == workspace_name,
         models.Message.session_name == session_name,
+        live_message_row(),
     ]
 
     # Apply message count limit first (takes precedence over token limit)
@@ -613,6 +615,7 @@ async def get_messages_id_range(
     base_conditions = [
         models.Message.workspace_name == workspace_name,
         models.Message.session_name == session_name,
+        live_message_row(),
     ]
     if end_id:
         base_conditions.append(
@@ -660,6 +663,7 @@ async def get_messages_by_seq_range(
     base_conditions = [
         models.Message.workspace_name == workspace_name,
         models.Message.session_name == session_name,
+        live_message_row(),
     ]
 
     if end_seq is not None:
@@ -720,6 +724,7 @@ async def get_message(
         .where(models.Message.workspace_name == workspace_name)
         .where(models.Message.session_name == session_name)
         .where(models.Message.public_id == message_id)
+        .where(live_message_row())
     )
     result = await db.execute(stmt)
     return result.scalar_one_or_none()
@@ -822,6 +827,7 @@ async def _fetch_messages_by_ids(
         select(models.Message)
         .where(models.Message.public_id.in_(message_ids))
         .where(models.Message.workspace_name == workspace_name)
+        .where(live_message_row())
     )
     if after_date:
         fetch_stmt = fetch_stmt.where(models.Message.created_at >= after_date)
@@ -861,6 +867,7 @@ async def _search_messages_pgvector(
         # distance sorts last and would pad the window with unranked messages.
         .where(models.MessageEmbedding.embedding.isnot(None))
         .where(models.MessageEmbedding.workspace_name == workspace_name)
+        .where(live_message_row())
         .order_by(models.MessageEmbedding.embedding.cosine_distance(query_embedding))
         .limit(limit * 2)
     )
@@ -1055,6 +1062,7 @@ async def _grep_messages_internal(
         .where(
             models.Message.content.ilike(f"%{escaped_text}%", escape=ILIKE_ESCAPE_CHAR)
         )
+        .where(live_message_row())
         .order_by(models.Message.created_at.desc())
         .limit(limit)
     )
@@ -1175,7 +1183,9 @@ async def get_messages_by_date_range(
     if deny:
         return []
 
-    stmt = select(models.Message).where(models.Message.workspace_name == workspace_name)
+    stmt = select(models.Message).where(
+        models.Message.workspace_name == workspace_name, live_message_row()
+    )
 
     if session_name:
         stmt = stmt.where(models.Message.session_name == session_name)

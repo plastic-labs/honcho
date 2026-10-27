@@ -6,6 +6,7 @@ from pydantic import ValidationError
 from sqlalchemy import select
 
 from src import crud, models
+from src.crud.lifecycle import live_message_row
 from src.dependencies import tracked_db
 from src.deriver.deriver import process_representation_tasks_batch
 from src.deriver.scope_backfill import (
@@ -114,6 +115,7 @@ async def process_item(queue_item: models.QueueItem) -> None:
                     .where(models.Message.workspace_name == workspace_name)
                     .where(models.Message.session_name == validated.session_name)
                     .where(models.Message.id == message_id)
+                    .where(live_message_row())
                 )
                 result = await db.execute(stmt)
 
