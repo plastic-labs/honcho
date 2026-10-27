@@ -13,7 +13,7 @@ from __future__ import annotations
 from typing import Any, cast
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from src.config import ModelConfig
 from src.llm import client_for_model_config, honcho_llm_call
@@ -51,6 +51,13 @@ LOOP_PROMPT = (
     "For each of 91, 97 and 119, in that order: first work out whether it is "
     "prime by checking its divisors, then call check_number once for it. Make "
     "one call per turn. After all three calls, report which of them are prime."
+)
+# One tool round is enough for the response_model test to replay thinking, and
+# asking for one call per turn makes some models end a turn with prose instead.
+REPORT_PROMPT = (
+    "For each of 4087, 4093 and 4097, work out whether it is prime by checking "
+    "its divisors, without writing out your work, and call check_number once for "
+    "it. Then report which of them are prime."
 )
 # ~1.5k tokens per result, so the loop crosses the input cap used below.
 _FILLER = " ".join(f"note{i}" for i in range(1500))
@@ -161,24 +168,37 @@ async def test_live_response_model_tool_loop_keeps_replayed_thinking_valid(
     config = _enforced_config(model_spec)
     requests, responses = _record_client(monkeypatch, config)
 
-    response = await honcho_llm_call(
-        model_config=config,
-        prompt=LOOP_PROMPT,
-        max_tokens=4096,
-        tools=[CHECK_NUMBER_TOOL],
-        tool_choice="auto",
-        tool_executor=_check_number,
-        max_tool_iterations=6,
-        response_model=PrimeReport,
-        enable_retry=False,
-    )
+    # Now and then the model ends with prose instead of the JSON, or the API
+    # returns an empty turn. Retry only that; an API error such as the 400 this
+    # test is for fails on the first attempt.
+    response = None
+    for attempt in range(3):
+        requests.clear()
+        responses.clear()
+        try:
+            response = await honcho_llm_call(
+                model_config=config,
+                prompt=REPORT_PROMPT,
+                max_tokens=4096,
+                tools=[CHECK_NUMBER_TOOL],
+                tool_choice="auto",
+                tool_executor=_check_number,
+                max_tool_iterations=6,
+                response_model=PrimeReport,
+                enable_retry=False,
+            )
+            break
+        except ValidationError:
+            if attempt == 2:
+                raise
+    assert response is not None
 
     # Nothing truncates here, so every thinking block is replayed in later rounds.
     if not _thinking_replayed(requests[1:]):
         pytest.skip(f"{model_spec.model} produced no thinking to replay")
     assert _thinking_produced(responses)
     assert isinstance(response.content, PrimeReport)
-    assert 97 in response.content.primes
+    assert response.content.primes == [4093]
 
 
 @pytest.mark.asyncio
