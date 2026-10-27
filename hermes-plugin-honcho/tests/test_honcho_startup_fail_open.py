@@ -447,27 +447,46 @@ def test_honcho_sync_turn_skips_anchored_gateway_notifications():
         assert manager_calls == [], f"wrapper not suppressed: {wrapper[:60]!r}"
 
 
-def test_honcho_sync_turn_skips_bot_mode_group_chat_harness():
-    """Bot Mode group-room harnesses must not become durable user speech."""
-    harness = (
+@pytest.mark.parametrize("harness", [
+    (
         '[Group chat: "Skill Handoff"] You are @slina, one participant in a group chat '
         "with @dev and the user.\n\nYou (user): hello"
-    )
+    ),
+    (
+        '[Discussion: "Skill Handoff"] You are @slina, one participant '
+        "with @dev and the user.\n\n"
+        "New messages in this thread since your last turn (oldest first):\n"
+        "  User (user): hello\n\nRules for this Discussion:\n"
+        "- Reply with one conversational message only when you have something new worth adding."
+    ),
+], ids=["group-chat", "discussion"])
+def test_honcho_sync_turn_skips_room_harness(harness):
+    """Group-chat and hosted Discussion harnesses must not become user speech."""
+    marker = harness.split(":", 1)[0]
     wrappers = (
         harness,
         f"  \n{harness}",
-        harness.replace("[Group chat:", "[group chat:", 1),
-        harness.replace("[Group chat:", "[Group Chat:", 1),
+        harness.replace(marker, marker.lower(), 1),
+        harness.replace(marker, marker.upper(), 1),
     )
 
     for wrapper in wrappers:
         provider = HonchoMemoryProvider()
         manager_calls = []
+        messages = []
 
         class Manager:
             def get_or_create(self, session_key):
                 manager_calls.append(session_key)
-                return SimpleNamespace()
+                return SimpleNamespace(
+                    add_message=lambda role, content, **kwargs: messages.append((role, content)),
+                )
+
+            def resolve_author_peer_id(self, session_key, author_id, author_name=None):
+                return None
+
+            def save(self, session):
+                pass
 
         provider._config = _configured_tools_config(init_on_session_start=True)
         provider._manager = Manager()
@@ -475,9 +494,30 @@ def test_honcho_sync_turn_skips_bot_mode_group_chat_harness():
         provider._session_initialized = True
 
         provider.sync_turn(wrapper, "assistant reply")
+        if provider._sync_thread is not None:
+            provider._sync_thread.join(timeout=5)
 
         assert provider._sync_thread is None, f"harness not suppressed: {wrapper[:60]!r}"
         assert manager_calls == [], f"harness not suppressed: {wrapper[:60]!r}"
+        assert messages == [], f"harness turn was written: {messages!r}"
+
+
+@pytest.mark.parametrize("marker", ["Group chat", "Discussion"])
+def test_honcho_sync_turn_skips_room_harness_before_session_init(monkeypatch, marker):
+    """Dropping a room harness must not kick off lazy session initialization."""
+    provider = HonchoMemoryProvider()
+    provider._config = _configured_hybrid_config()
+
+    def unexpected_init():
+        pytest.fail("room harness reached session initialization")
+
+    monkeypatch.setattr(provider, "_ready_or_kick_init", unexpected_init)
+
+    provider.sync_turn(f'[{marker}: "Skill Handoff"] You are @slina', "assistant reply")
+
+    assert provider._session_initialized is False
+    assert provider._init_thread is None
+    assert provider._sync_thread is None
 
 
 def test_honcho_sync_turn_skips_prose_gateway_notifications():
@@ -520,19 +560,30 @@ def test_honcho_sync_turn_does_not_suppress_genuine_user_messages():
         "[IMPORTANT: Background process — what does that mean?]",
         "Can we set up a group chat with the other bots tomorrow?",
         'the log line [Group chat: "Skill Handoff"] showed up mid-sentence in my notes',
+        "Can we have a discussion with the other bots tomorrow?",
+        'the log line [dIsCuSsIoN: "Skill Handoff"] showed up mid-sentence in my notes',
+        "[Discussion] Can you explain how hosted rooms work?",
     )
 
     for msg in genuine:
         provider = HonchoMemoryProvider()
         manager_calls = []
+        messages = []
+        saved_sessions = []
+        session = SimpleNamespace(
+            add_message=lambda role, content, **kwargs: messages.append((role, content)),
+        )
 
         class Manager:
             def get_or_create(self, session_key):
                 manager_calls.append(session_key)
-                return SimpleNamespace()
+                return session
 
             def resolve_author_peer_id(self, session_key, author_id, author_name=None):
                 return None
+
+            def save(self, session):
+                saved_sessions.append(session)
 
         provider._config = _configured_tools_config(init_on_session_start=True)
         provider._manager = Manager()
@@ -542,7 +593,11 @@ def test_honcho_sync_turn_does_not_suppress_genuine_user_messages():
         provider.sync_turn(msg, "assistant reply")
 
         assert provider._sync_thread is not None, f"genuine message suppressed: {msg[:60]!r}"
-        assert manager_calls != [], f"genuine message suppressed: {msg[:60]!r}"
+        provider._sync_thread.join(timeout=5)
+        assert not provider._sync_thread.is_alive()
+        assert manager_calls == ["test-session"], f"genuine message suppressed: {msg[:60]!r}"
+        assert messages == [("user", msg), ("assistant", "assistant reply")]
+        assert saved_sessions == [session]
 
 
 def test_honcho_sync_turn_skips_empty_content():
