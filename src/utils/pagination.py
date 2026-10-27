@@ -79,7 +79,8 @@ def _invalid_cursor() -> HTTPException:
 
 
 def pagination_params(
-    page: int = Query(1, ge=1, description="Page number (offset mode)"),
+    # ai: bounded so (page - 1) * size stays inside Postgres' bigint OFFSET
+    page: int = Query(1, ge=1, le=2**31 - 1, description="Page number (offset mode)"),
     size: int = Query(50, ge=1, le=100, description="Page size"),
     cursor: str | None = Query(
         None,

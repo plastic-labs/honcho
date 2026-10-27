@@ -205,7 +205,7 @@ class PeerSpec(PeerBase):
 
     name: str
     metadata: _SanitizedMetadata | None = None
-    configuration: dict[str, Any] | None = None
+    configuration: Annotated[dict[str, Any], NulStripped] | None = None
 
 
 class PeerCreate(PeerSpec):
@@ -230,7 +230,7 @@ class PeerGet(PeerBase):
 
 class PeerUpdate(PeerBase):
     metadata: _SanitizedMetadata | None = None
-    configuration: dict[str, Any] | None = None
+    configuration: Annotated[dict[str, Any], NulStripped] | None = None
 
 
 class Peer(PeerBase):

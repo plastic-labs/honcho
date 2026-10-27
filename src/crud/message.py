@@ -16,6 +16,7 @@ from src.embedding_client import embedding_client
 from src.telemetry.events import EmbeddingCallPurpose
 from src.utils.filter import apply_filter
 from src.utils.formatting import ILIKE_ESCAPE_CHAR, escape_ilike_pattern
+from src.utils.path_params import schema_from_path
 from src.utils.scopes import is_scope_peer_name
 from src.utils.types import embedding_call_purpose
 from src.vector_store import get_external_vector_store
@@ -436,7 +437,9 @@ async def create_messages(
     peers = {message.peer_name: schemas.SessionPeerConfig() for message in messages}
     await get_or_create_session(
         db,
-        session=schemas.SessionCreate(name=session_name, peers=peers),
+        session=schema_from_path(
+            schemas.SessionCreate, "session_id", session_name, peers=peers
+        ),
         workspace_name=workspace_name,
     )
 

@@ -12,6 +12,7 @@ from sqlalchemy import (
     and_,
     case,
     cast,
+    func,
     literal,
     or_,
     select,
@@ -43,6 +44,14 @@ COMPARISON_OPERATORS = {
 }
 
 NUMERIC_OPERATORS = {"gte", "lte", "gt", "lt", "ne"}
+
+# Finite numeric text only: NaN/Infinity strings are intentionally excluded.
+# The exponent and length bounds keep values like "1e200000" from overflowing
+# numeric's digit limits. Native JSONB numbers bypass these text bounds. Classes
+# are ASCII: Postgres' \d and \s follow the locale.
+_ASCII_SPACE = r"[ \t\n\r\f\v]*"
+_NUMERIC_TEXT_PATTERN = rf"^{_ASCII_SPACE}[-+]?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][-+]?[0-9]{{1,4}})?{_ASCII_SPACE}$"
+_NUMERIC_TEXT_MAX_LENGTH = 1000
 
 # JSONB columns keep containment semantics: bare lists are not membership
 # sugar, and dict values map to nested-metadata conditions rather than IN/Eq.
@@ -685,7 +694,9 @@ def _build_field_condition(
 
 
 def _safe_numeric_cast(
-    column_accessor: ColumnElement[Any], op_value: Any
+    column_accessor: ColumnElement[Any],
+    op_value: Any,
+    json_accessor: ColumnElement[Any],
 ) -> tuple[ColumnElement[Any], Any]:
     """
     Safely cast JSONB column accessor to appropriate type for comparison.
@@ -693,6 +704,7 @@ def _safe_numeric_cast(
     Args:
         column_accessor: SQLAlchemy JSONB column accessor (.astext)
         op_value: The value to compare against
+        json_accessor: The same accessor before text extraction (->, not ->>)
 
     Returns:
         Tuple of (cast_column_accessor, cast_op_value) for typed comparison
@@ -704,12 +716,26 @@ def _safe_numeric_cast(
             # PostgreSQL JSONB stores booleans as "true"/"false" strings when extracted with ->>
             return column_accessor, str(op_value).lower()
 
-        # For numeric values, use a safer cast that handles empty strings and invalid values
-        # We use CASE WHEN to handle empty strings and non-numeric values gracefully
+        # JSONB numbers have already passed Postgres' numeric range checks,
+        # including valid numbers longer than our conservative string cap.
+        # Other values must be finite, bounded numeric strings; anything else
+        # becomes NULL instead of failing the whole query. CASE is the only
+        # construct Postgres promises not to evaluate ahead of its condition.
         safe_cast = case(
-            (column_accessor == "", literal(None)),  # Empty string -> NULL
-            (column_accessor.is_(None), literal(None)),  # NULL -> NULL
-            else_=cast(column_accessor, Numeric()),
+            (
+                or_(
+                    func.jsonb_typeof(json_accessor) == "number",
+                    and_(
+                        func.jsonb_typeof(json_accessor) == "string",
+                        func.length(column_accessor) <= _NUMERIC_TEXT_MAX_LENGTH,
+                        column_accessor.collate("C").regexp_match(
+                            _NUMERIC_TEXT_PATTERN
+                        ),
+                    ),
+                ),
+                cast(column_accessor, Numeric()),
+            ),
+            else_=literal(None),
         )
 
         if isinstance(op_value, int | float):
@@ -767,7 +793,9 @@ def _build_comparison_condition(
     # Mapping of operators to their SQLAlchemy methods
     if operator in NUMERIC_OPERATORS:
         try:
-            safe_accessor, safe_value = _safe_numeric_cast(field_accessor, op_value)
+            safe_accessor, safe_value = _safe_numeric_cast(
+                field_accessor, op_value, column[field_name]
+            )
             operator_map: dict[str, Callable[[Any, Any], ColumnElement[bool]]] = {
                 "gte": lambda a, v: a >= v,
                 "lte": lambda a, v: a <= v,

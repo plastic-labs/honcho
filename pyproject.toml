@@ -73,6 +73,8 @@ dev = [
     "boto3>=1.42.5",
     "pytest-xdist>=3.8.0",
     "chromadb>=1.5.2",
+    "schemathesis>=4.31.1",
+    "hypothesis>=6.170.1",
 ]
 
 [tool.uv]

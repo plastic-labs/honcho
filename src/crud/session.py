@@ -45,6 +45,7 @@ from src.exceptions import (
 )
 from src.telemetry.events import SessionCreatedEvent, emit
 from src.utils.filter import apply_filter
+from src.utils.path_params import schema_from_path
 from src.utils.scopes import is_scope_peer, scope_peer_name
 from src.utils.types import GetOrCreateResult
 from src.vector_store import get_external_vector_store
@@ -273,7 +274,7 @@ async def get_or_create_session(
         # Get or create workspace to ensure it exists
         ws_result = await get_or_create_workspace(
             db,
-            schemas.WorkspaceCreate(name=workspace_name),
+            schema_from_path(schemas.WorkspaceCreate, "workspace_id", workspace_name),
         )
 
         # Create honcho session
@@ -538,7 +539,9 @@ async def update_session(
     """
     honcho_session: models.Session = (
         await get_or_create_session(
-            db, schemas.SessionCreate(name=session_name), workspace_name=workspace_name
+            db,
+            schema_from_path(schemas.SessionCreate, "session_id", session_name),
+            workspace_name=workspace_name,
         )
     ).resource
 
