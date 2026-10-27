@@ -23,6 +23,36 @@ Separately, you can configure the reasoning status of a peer. This overrides def
 All configuration fields are optional. If not specified, the value is inherited from the next level up in the hierarchy.
 </Info>
 
+## Replacing and clearing workspace configuration
+
+Workspace `set_configuration()` (Python) and `setConfiguration()` (TypeScript)
+replace the **entire** stored workspace configuration, rather than merging it.
+Include every setting you want to retain. Passing an empty object clears all
+explicit workspace settings, so global defaults apply again. Session and message
+overrides are unaffected.
+
+<CodeGroup>
+```python Python
+honcho.set_configuration({"summary": {"enabled": True}})
+honcho.set_configuration({})  # Clear explicit workspace settings
+assert honcho.get_configuration().model_dump(exclude_none=True) == {}
+```
+```typescript TypeScript
+await honcho.setConfiguration({ summary: { enabled: true } });
+await honcho.setConfiguration({}); // Clear explicit workspace settings
+console.log(await honcho.getConfiguration()); // {}
+await honcho.refresh();
+console.log(honcho.configuration); // {}
+```
+</CodeGroup>
+
+For REST `PUT /v3/workspaces/{workspace_id}`, `{"configuration": {}}` clears
+the configuration, while omitting `configuration` or sending `null` leaves it
+unchanged. Metadata-only updates therefore preserve the configuration.
+`POST /v3/workspaces` still returns an existing workspace without updating it.
+These replacement semantics are specific to workspace configuration updates;
+they do not change peer or session partial-update behavior.
+
 ## Configuration Options
 
 ### Reasoning Configuration

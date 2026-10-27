@@ -37,6 +37,7 @@ from src.exceptions import (
     ValidationException,
 )
 from src.telemetry.events import ScopeCreatedEvent, emit
+from src.utils.path_params import schema_from_path
 from src.utils.scopes import (
     SCOPE_KIND,
     is_scope_peer,
@@ -129,7 +130,7 @@ async def get_or_create_scopes(
             scope peers
     """
     ws_result = await get_or_create_workspace(
-        db, schemas.WorkspaceCreate(name=workspace_name)
+        db, schema_from_path(schemas.WorkspaceCreate, "workspace_id", workspace_name)
     )
 
     peer_names = {scope_peer_name(s.name): s for s in scopes}

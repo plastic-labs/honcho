@@ -15,6 +15,7 @@ from src.crud.peer import (
     peer_cache_key,
     reject_scope_observed,
 )
+from src.utils.sanitization import strip_nul
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +88,10 @@ async def set_peer_card(
         [observed],
         action="No peer card is ever formed about a scope.",
     )
+
+    # jsonb rejects NUL in strings. Only the bytes are removed; what counts as a
+    # valid entry is the caller's call (the API may set `[]` or free-form lines).
+    peer_card = strip_nul(peer_card)
 
     # Ensure the peer exists (get-or-create)
     peers_result = await get_or_create_peers(

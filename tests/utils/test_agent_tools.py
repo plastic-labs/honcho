@@ -1896,6 +1896,113 @@ class TestUpdatePeerCard:
         )
         assert peer_card == ["IDENTITY: Name: Dana"]
 
+    async def test_strips_nul_before_validation_and_dedupe(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        """NUL is stripped before validation and dedupe, and never reaches jsonb."""
+        from src.utils.types import ToolResult
+
+        workspace, peer1, peer2, _, _, _ = tool_test_data
+        ctx = make_tool_context()
+
+        result = await _handle_update_peer_card(
+            ctx,
+            {
+                "content": [
+                    "IDENTITY: Name: Al\x00ice",
+                    "IDENTITY: Name: Alice\x00",  # duplicate once stripped
+                    "IDENTITY:\x00 Nick: Ali",  # prefix only valid once stripped
+                    "IDENTITY: \x00",  # empty body once stripped
+                    "ATTRIBUTE: Handle: \\u0000",  # literal text, not a NUL
+                ]
+            },
+        )
+
+        assert isinstance(result, ToolResult)
+        assert "\x00" not in result.content
+        assert result.metadata is not None
+        assert result.metadata["facts_count"] == 3
+        assert result.metadata["rejected_count"] == 1
+
+        await db_session.refresh(peer1)
+        peer_card = await crud.get_peer_card(
+            db_session,
+            workspace_name=workspace.name,
+            observer=peer1.name,
+            observed=peer2.name,
+        )
+        assert peer_card == [
+            "IDENTITY: Name: Alice",
+            "IDENTITY: Nick: Ali",
+            "ATTRIBUTE: Handle: \\u0000",
+        ]
+
+    async def test_nul_only_update_preserves_existing_card(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        """An update that is empty once NUL is stripped keeps the existing card."""
+        workspace, peer1, peer2, _, _, _ = tool_test_data
+        ctx = make_tool_context()
+
+        await _handle_update_peer_card(ctx, {"content": ["IDENTITY: Name: Erin"]})
+
+        result = await _handle_update_peer_card(
+            ctx, {"content": ["\x00", " \x00\x00 ", "IDENTITY: \x00"]}
+        )
+        assert "rejected all 1" in str(result).lower()
+        assert "\x00" not in str(result)
+
+        await db_session.refresh(peer1)
+        peer_card = await crud.get_peer_card(
+            db_session,
+            workspace_name=workspace.name,
+            observer=peer1.name,
+            observed=peer2.name,
+        )
+        assert peer_card == ["IDENTITY: Name: Erin"]
+
+    async def test_length_cap_and_fact_cap_apply_to_stripped_text(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        """NUL padding counts toward neither the per-entry length cap nor the fact cap."""
+        workspace, peer1, peer2, _, _, _ = tool_test_data
+        ctx = make_tool_context()
+
+        prefix = "IDENTITY: "
+        at_cap = prefix + "x" * (MAX_PEER_CARD_ENTRY_LENGTH - len(prefix))
+        over_cap = prefix + "y" * (MAX_PEER_CARD_ENTRY_LENGTH - len(prefix) + 1)
+        # Each alias appears twice, differing only by NUL: 2x the fact cap raw,
+        # exactly the cap once stripped and deduped.
+        aliases = [f"ATTRIBUTE: Alias: a-{i}" for i in range(MAX_PEER_CARD_FACTS - 1)]
+        content = [
+            at_cap + "\x00" * 5,
+            over_cap + "\x00" * 5,
+            *aliases,
+            *(f"{a}\x00" for a in aliases),
+        ]
+
+        await _handle_update_peer_card(ctx, {"content": content})
+
+        await db_session.refresh(peer1)
+        peer_card = await crud.get_peer_card(
+            db_session,
+            workspace_name=workspace.name,
+            observer=peer1.name,
+            observed=peer2.name,
+        )
+        assert peer_card is not None
+        assert peer_card == [at_cap, *aliases]
+        assert len(peer_card) == MAX_PEER_CARD_FACTS
+
 
 class TestPeerCardEntryValidator:
     """Unit tests for the pure structural validator."""

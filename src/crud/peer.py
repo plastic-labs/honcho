@@ -31,6 +31,7 @@ from src.schemas.api import RESOURCE_NAME_PATTERN
 from src.telemetry.events import PeerCreatedEvent, emit
 from src.utils import scopes as scopes_util
 from src.utils.filter import apply_filter
+from src.utils.path_params import schema_from_path
 from src.utils.types import GetOrCreateResult
 
 logger = getLogger(__name__)
@@ -285,7 +286,7 @@ async def get_or_create_peers(
     """
 
     ws_result = await get_or_create_workspace(
-        db, schemas.WorkspaceCreate(name=workspace_name)
+        db, schema_from_path(schemas.WorkspaceCreate, "workspace_id", workspace_name)
     )
     peer_names = [p.name for p in peers]
     # Before the lookup: these values cannot match a stored row and would fail

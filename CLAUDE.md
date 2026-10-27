@@ -84,6 +84,7 @@ All API routes follow the pattern: `/v3/{resource}/{id}/{action}`. Most "list/se
 - Run server: `uv run fastapi dev src/main.py`
 - Run tests: `uv run pytest tests/`
 - Run single test: `uv run pytest tests/path/to/test_file.py::test_function`
+- Reproduce an API bug (5xx, wrong status) as a property test: see the `property-repro` skill (`skills/property-repro/`)
 - Linting: `uv run ruff check src/`
 - Typechecking: `uv run basedpyright`
 - Format code: `uv run ruff format src/`

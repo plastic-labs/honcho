@@ -1673,6 +1673,69 @@ async def test_jsonb_type_casting_edge_cases(
 
 
 @pytest.mark.asyncio
+async def test_numeric_filter_skips_non_numeric_metadata_values(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """A numeric comparison on a key that some rows store as text matches the
+    numeric rows and skips the rest, rather than failing the cast (500)."""
+    test_workspace, test_peer = sample_data
+
+    session_id = str(generate_nanoid())
+    client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions",
+        json={"id": session_id, "peer_names": {test_peer.name: {}}},
+    )
+    # Arabic-Indic digits and a no-break space can match a locale-aware \d or \s
+    scores: list[Any] = [
+        3,
+        "7",
+        "high",
+        "",
+        " ",
+        "1e200000",
+        True,
+        [1],
+        {"a": 1},
+        "\u0661\u0662",
+        "1\u00a0",
+        10**1000,  # Native JSONB numbers are valid beyond the string safety cap.
+        "NaN",
+        "Infinity",
+        "-Infinity",
+        "1" + "0" * 1000,  # Numeric strings retain the conservative length cap.
+        " \t+7.5e1\r\n",
+    ]
+    client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/messages",
+        json={
+            "messages": [
+                {
+                    "content": f"score {i}",
+                    "peer_id": test_peer.name,
+                    "metadata": {"score": score},
+                }
+                for i, score in enumerate(scores)
+            ]
+        },
+    )
+
+    def matching(op: str, value: Any) -> set[str]:
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
+            json={"filters": {"metadata": {"score": {op: value}}}},
+        )
+        assert response.status_code == 200, response.text
+        return {item["content"] for item in response.json()["items"]}
+
+    assert matching("gte", 0) == {"score 0", "score 1", "score 11", "score 16"}
+    assert matching("lt", 5) == {"score 0"}
+    assert matching("gt", "5") == {"score 1", "score 11", "score 16"}
+    assert matching("gt", 0) == {"score 0", "score 1", "score 11", "score 16"}
+    # `ne` keeps every row whose value is not the number 3, numeric or not
+    assert matching("ne", 3) == {f"score {i}" for i in range(1, len(scores))}
+
+
+@pytest.mark.asyncio
 async def test_real_datetime_column_filtering(
     client: TestClient, sample_data: tuple[Workspace, Peer]
 ):

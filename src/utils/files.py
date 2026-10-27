@@ -1,5 +1,6 @@
 import datetime
 import logging
+import zlib
 from io import BytesIO
 from typing import Any, Protocol
 
@@ -25,20 +26,58 @@ class FileProcessor(Protocol):
     def supports_file_type(self, content_type: str) -> bool: ...
 
 
+# Builtin errors pypdf leaks on malformed input instead of raising PyPdfError.
+# They only mean "bad upload" when pypdf itself raised them; see
+# `_raised_by_pypdf`.
+_PYPDF_LEAKED_ERRORS = (
+    ValueError,
+    KeyError,
+    IndexError,
+    TypeError,
+    AttributeError,
+    OverflowError,
+    RecursionError,
+)
+
+
+def _raised_by_pypdf(exc: BaseException) -> bool:
+    """Whether the innermost frame of `exc`'s traceback is pypdf's own code."""
+    tb = exc.__traceback__
+    if tb is None:
+        return False
+    while tb.tb_next is not None:
+        tb = tb.tb_next
+    module = tb.tb_frame.f_globals.get("__name__", "")
+    return module == "pypdf" or module.startswith("pypdf.")
+
+
 class PDFProcessor:
     def supports_file_type(self, content_type: str) -> bool:
         return content_type == "application/pdf"
 
     async def extract_text(self, content: bytes) -> str:
         from pypdf import PdfReader
+        from pypdf.errors import PyPdfError
 
-        reader = PdfReader(BytesIO(content))
-        text_parts: list[str] = []
-        for page_num, page in enumerate(reader.pages):
-            text = page.extract_text()
-            if text and text.strip():
-                text_parts.append(f"[Page {page_num + 1}]\n{text}")
-        return "\n\n".join(text_parts)
+        try:
+            reader = PdfReader(BytesIO(content))
+            page_texts = [page.extract_text() for page in reader.pages]
+        except (PyPdfError, zlib.error) as exc:
+            raise ValidationException("Uploaded PDF could not be read") from exc
+        except _PYPDF_LEAKED_ERRORS as exc:
+            # A builtin error from anywhere else is a bug, so it stays a 500.
+            if not _raised_by_pypdf(exc):
+                raise
+            # Logged with its traceback so a pypdf bug on a valid file can be
+            # told apart from a malformed upload.
+            logger.warning("Rejected unreadable PDF upload", exc_info=exc)
+            raise ValidationException("Uploaded PDF could not be read") from exc
+
+        return "\n\n".join(
+            f"[Page {page_num + 1}]\n{text}"
+            for page_num, text in enumerate(page_texts)
+            if text and text.strip()
+        )
 
 
 class TextProcessor:

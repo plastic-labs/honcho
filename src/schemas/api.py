@@ -147,7 +147,13 @@ class WorkspaceGet(WorkspaceBase):
 
 class WorkspaceUpdate(WorkspaceBase):
     metadata: _SanitizedMetadata | None = None
-    configuration: WorkspaceConfiguration | None = None
+    configuration: WorkspaceConfiguration | None = Field(
+        default=None,
+        description=(
+            "Replaces the entire workspace configuration. Send {} to clear explicit "
+            "settings and use system defaults. Omit or send null to leave unchanged."
+        ),
+    )
 
 
 class Workspace(WorkspaceBase):
@@ -199,7 +205,7 @@ class PeerSpec(PeerBase):
 
     name: str
     metadata: _SanitizedMetadata | None = None
-    configuration: dict[str, Any] | None = None
+    configuration: Annotated[dict[str, Any], NulStripped] | None = None
 
 
 class PeerCreate(PeerSpec):
@@ -224,7 +230,7 @@ class PeerGet(PeerBase):
 
 class PeerUpdate(PeerBase):
     metadata: _SanitizedMetadata | None = None
-    configuration: dict[str, Any] | None = None
+    configuration: Annotated[dict[str, Any], NulStripped] | None = None
 
 
 class Peer(PeerBase):

@@ -758,6 +758,10 @@ class UnifiedTestExecutor:
             )
             return _query_result(response)
 
+        elif step.target == "get_workspace_config":
+            configuration = await self.client.aio.get_configuration()
+            return {"configuration": configuration.model_dump(exclude_none=True)}
+
         elif step.target == "get_context":
             if not step.session_id:
                 raise ValueError("session_id required for get_context")

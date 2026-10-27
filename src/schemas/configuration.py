@@ -10,6 +10,7 @@ from typing import Annotated, Any, Self, cast
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
 
 from src.config import settings
+from src.utils.sanitization import strip_nul
 from src.utils.tokens import estimate_tokens
 
 
@@ -135,6 +136,12 @@ class WorkspaceConfiguration(BaseModel):
 
     model_config = ConfigDict(extra="allow")  # pyright: ignore
 
+    # Extra keys are allowed and stored as JSONB, which rejects NUL anywhere
+    @model_validator(mode="before")
+    @classmethod
+    def _strip_nul(cls, data: Any) -> Any:
+        return strip_nul(data)
+
     custom_instructions: CustomInstructions = Field(
         default=None,
         description="Custom instructions shared by the deriver, summarizer, dialectic, and dreamer. A module's own custom_instructions at the same level takes precedence, and session-level values beat workspace-level ones. Messages can only override reasoning.custom_instructions.",
@@ -177,6 +184,27 @@ class MessageConfiguration(BaseModel):
 
     All fields are optional. Message-level configuration overrides all other configurations.
     """
+
+    @model_validator(mode="before")
+    @classmethod
+    def _strip_nul(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        # Both models ignore extras. Do not recursively sanitize values that
+        # will be discarded: a deeply nested unknown field must stay harmless.
+        fields = {
+            strip_nul(k): v
+            for k, v in cast(dict[str, Any], data).items()
+            if strip_nul(k) in cls.model_fields
+        }
+        reasoning = fields.get("reasoning")
+        if isinstance(reasoning, dict):
+            fields["reasoning"] = {
+                strip_nul(k): strip_nul(v) if isinstance(v, str) else v
+                for k, v in cast(dict[str, Any], reasoning).items()
+                if strip_nul(k) in ReasoningConfiguration.model_fields
+            }
+        return fields
 
     reasoning: ReasoningConfiguration | None = Field(
         default=None,

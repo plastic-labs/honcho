@@ -599,6 +599,10 @@ when `TELEMETRY_ENABLED=true`. With telemetry off, Langfuse keys are ignored.
 `TELEMETRY_ENDPOINT` is not required: without it, Langfuse still gets traces
 and no CloudEvents are sent.
 
+Honcho uses Langfuse Python SDK v5, which requires Langfuse Cloud or a
+self-hosted Langfuse server at v4.59.0 or later. A self-hosted Langfuse v3
+server does not accept its traces.
+
 ### Database
 
 ```bash
