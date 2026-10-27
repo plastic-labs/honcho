@@ -838,6 +838,8 @@ class PeerAio(AsyncMetadataConfigMixin):
         self,
         query: str,
         *,
+        semantic_query: str | None = None,
+        reasoning_context: str | None = None,
         target: str | PeerBase | None = None,
         session: str | SessionBase | None = None,
         scope: str | ScopeBase | Sequence[str | ScopeBase] | None = None,
@@ -854,6 +856,8 @@ class PeerAio(AsyncMetadataConfigMixin):
         self,
         query: str,
         *,
+        semantic_query: str | None = None,
+        reasoning_context: str | None = None,
         target: str | PeerBase | None = None,
         session: str | SessionBase | None = None,
         scope: str | ScopeBase | Sequence[str | ScopeBase] | None = None,
@@ -870,6 +874,8 @@ class PeerAio(AsyncMetadataConfigMixin):
         self,
         query: str,
         *,
+        semantic_query: str | None = None,
+        reasoning_context: str | None = None,
         target: str | PeerBase | None = None,
         session: str | SessionBase | None = None,
         scope: str | ScopeBase | Sequence[str | ScopeBase] | None = None,
@@ -886,6 +892,8 @@ class PeerAio(AsyncMetadataConfigMixin):
         self,
         query: str,
         *,
+        semantic_query: str | None = None,
+        reasoning_context: str | None = None,
         target: str | PeerBase | None = None,
         session: str | SessionBase | None = None,
         scope: str | ScopeBase | Sequence[str | ScopeBase] | None = None,
@@ -902,6 +910,18 @@ class PeerAio(AsyncMetadataConfigMixin):
         self,
         query: str = Field(..., min_length=1, description="The natural language query"),
         *,
+        semantic_query: str | None = Field(
+            None,
+            min_length=1,
+            max_length=10000,
+            description="Text used for semantic prefetch instead of the query",
+        ),
+        reasoning_context: str | None = Field(
+            None,
+            min_length=1,
+            max_length=10000,
+            description="Additional user-level instructions alongside the full query",
+        ),
         target: str | PeerBase | None = None,
         session: str | SessionBase | None = None,
         scope: str | ScopeBase | Sequence[str | ScopeBase] | None = None,
@@ -922,12 +942,21 @@ class PeerAio(AsyncMetadataConfigMixin):
         the answer comes back in a ChatResponse alongside what the dialectic
         read to produce it. When timeout is omitted, the Honcho client's
         configured timeout is used; retries can extend total elapsed time.
+
+        semantic_query overrides only semantic prefetch retrieval text, falling
+        back to query when omitted. reasoning_context adds user-level instructions
+        alongside the full query and is never embedded for semantic prefetch.
+        Both options must be non-empty and at most 10000 characters when supplied.
         """
         await self._peer._honcho._ensure_workspace_async()
         target_id = resolve_id(target)
         resolved_session_id = resolve_id(session)
 
         body: dict[str, Any] = {"query": query, "stream": False}
+        if semantic_query is not None:
+            body["semantic_query"] = semantic_query
+        if reasoning_context is not None:
+            body["reasoning_context"] = reasoning_context
         body.update(
             scope_recall_fields(
                 scope=scope, sessions=sessions, session_id=resolved_session_id
@@ -957,6 +986,18 @@ class PeerAio(AsyncMetadataConfigMixin):
         self,
         query: str = Field(..., min_length=1, description="The natural language query"),
         *,
+        semantic_query: str | None = Field(
+            None,
+            min_length=1,
+            max_length=10000,
+            description="Text used for semantic prefetch instead of the query",
+        ),
+        reasoning_context: str | None = Field(
+            None,
+            min_length=1,
+            max_length=10000,
+            description="Additional user-level instructions alongside the full query",
+        ),
         target: str | PeerBase | None = None,
         session: str | SessionBase | None = None,
         scope: str | ScopeBase | Sequence[str | ScopeBase] | None = None,
@@ -972,12 +1013,21 @@ class PeerAio(AsyncMetadataConfigMixin):
         chunks stay raw text that accumulates to a JSON string; parse it after
         the stream completes. With include_evidence, the returned stream's
         `evidence` is populated once it has been fully consumed.
+
+        semantic_query overrides only semantic prefetch retrieval text, falling
+        back to query when omitted. reasoning_context adds user-level instructions
+        alongside the full query and is never embedded for semantic prefetch.
+        Both options must be non-empty and at most 10000 characters when supplied.
         """
         await self._peer._honcho._ensure_workspace_async()
         target_id = resolve_id(target)
         resolved_session_id = resolve_id(session)
 
         body: dict[str, Any] = {"query": query, "stream": True}
+        if semantic_query is not None:
+            body["semantic_query"] = semantic_query
+        if reasoning_context is not None:
+            body["reasoning_context"] = reasoning_context
         body.update(
             scope_recall_fields(
                 scope=scope, sessions=sessions, session_id=resolved_session_id

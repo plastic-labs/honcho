@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- `semanticQuery` and `reasoningContext` on `Peer.chat()` and `Peer.chatStream()`. Retrieval uses `semanticQuery` when supplied, otherwise `query`; reasoning receives the full query plus optional additional instructions. Both options accept 1–10000 characters and require a server supporting these fields (#754).
 - `uid` on `Peer`, `Session` and the `Honcho` client (the workspace), plus on `PeerResponse`, `SessionResponse` and `WorkspaceResponse`: the immutable identifier the server assigns, next to the client-chosen `id`. Set from any API response that returns the object, and `undefined` before the first fetch or against servers that don't return it (#1394)
 
 ## [2.6.0] - 2026-10-07

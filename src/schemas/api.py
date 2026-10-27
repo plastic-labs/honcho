@@ -832,6 +832,34 @@ class DialecticOptions(BaseModel):
         Field(min_length=1, max_length=10000, description="Dialectic API Prompt"),
         NulStripped,
     ]
+    semantic_query: Annotated[
+        str | None,
+        Field(
+            default=None,
+            min_length=1,
+            max_length=10000,
+            description=(
+                "Optional text used only to prefetch relevant conclusions. "
+                "Defaults to `query`. Set it when `query` carries instructions "
+                "or formatting that would dilute the retrieval embedding; the "
+                "reasoning agent still receives `query` in full."
+            ),
+        ),
+        NulStripped,
+    ]
+    reasoning_context: Annotated[
+        str | None,
+        Field(
+            default=None,
+            min_length=1,
+            max_length=10000,
+            description=(
+                "Optional additional instructions for the reasoning agent, "
+                "included alongside `query` but not in the prefetch embedding."
+            ),
+        ),
+        NulStripped,
+    ]
     stream: bool = False
     reasoning_level: ReasoningLevel = Field(
         default="low",
