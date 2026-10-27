@@ -84,6 +84,20 @@ async def _resolve_scope_option(
     return None, union
 
 
+async def _member_cards(
+    db: AsyncSession, workspace_id: str, observed_set: crud.ObservedSet
+) -> dict[str, list[str] | None] | None:
+    """Each member's card, keyed by member, or None when nothing was aggregated."""
+    if not observed_set.aggregated:
+        return None
+    return {
+        observed: await crud.get_peer_card(
+            db, workspace_id, observer=observer, observed=observed
+        )
+        for observer, observed in observed_set.pairs[1:]
+    }
+
+
 @router.post(
     "/list",
     response_model=Page[schemas.Peer] | CursorPage[schemas.Peer],
@@ -242,6 +256,125 @@ async def get_sessions_for_peer(
 
 
 @router.post(
+    "/{peer_id}/members",
+    response_model=schemas.PeerMembership,
+    dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
+)
+async def add_peer_member(
+    response: Response,
+    workspace_id: str = Path(...),
+    peer_id: str = Path(..., description="ID of the parent peer"),
+    member: schemas.PeerMembershipCreate = Body(
+        ..., description="The peer to add as a member"
+    ),
+    db: AsyncSession = db,
+):
+    """Add a peer as a member of this peer.
+
+    Reads that name this peer as their target then include the member's
+    knowledge, attributed to the member, down to the requested `depth`. Both
+    peers are created if they do not exist. Adding an existing member again
+    returns 200 and replaces the membership's metadata when given.
+
+    Returns 409 if the membership would create a cycle, and 422 if either peer
+    is a scope, the peer names itself, or this peer already has the maximum
+    number of members. Requires a workspace- or admin-level key: a member's
+    knowledge becomes readable by anyone who can read this peer.
+    """
+    # The scope guard runs on the resolved rows inside crud.add_member, so a
+    # legacy peer that merely occupies the reserved namespace still works; a
+    # reserved name that does not exist is refused by the create path.
+    result = await crud.add_member(
+        db,
+        workspace_id,
+        parent_name=peer_id,
+        member_name=member.peer_id,
+        metadata=member.metadata,
+    )
+    await db.commit()
+    await result.post_commit()
+    response.status_code = 201 if result.created else 200
+    return result.membership
+
+
+@router.post(
+    "/{peer_id}/members/list",
+    response_model=Page[schemas.PeerMembership] | CursorPage[schemas.PeerMembership],
+    dependencies=[
+        Depends(require_auth(workspace_name="workspace_id", peer_name="peer_id"))
+    ],
+)
+async def list_peer_members(
+    workspace_id: str = Path(...),
+    peer_id: str = Path(..., description="ID of the parent peer"),
+    options: schemas.PeerMembershipGet | None = Body(
+        None, description="Filtering options for the members list"
+    ),
+    params: AbstractParams = Depends(pagination_params),
+    db: AsyncSession = read_db,
+):
+    """List this peer's members, oldest membership first."""
+    return await paginate_offset_or_cursor(
+        db,
+        crud.get_members(
+            workspace_id, peer_id, filters=options.filters if options else None
+        ),
+        params,
+        transformer=crud.membership_rows_to_schemas,
+    )
+
+
+@router.delete(
+    "/{peer_id}/members/{member_id}",
+    status_code=204,
+    response_model=None,
+    dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
+)
+async def remove_peer_member(
+    workspace_id: str = Path(...),
+    peer_id: str = Path(..., description="ID of the parent peer"),
+    member_id: str = Path(..., description="ID of the member peer to remove"),
+    db: AsyncSession = db,
+):
+    """Remove a member from this peer. Removing a peer that is not a member is a no-op.
+
+    No conclusions change: the member keeps everything it knows, and reads of
+    this peer simply stop including it.
+    """
+    await crud.remove_member(
+        db, workspace_id, parent_name=peer_id, member_name=member_id
+    )
+    await db.commit()
+
+
+@router.post(
+    "/{peer_id}/parents/list",
+    response_model=Page[schemas.PeerMembership] | CursorPage[schemas.PeerMembership],
+    dependencies=[
+        Depends(require_auth(workspace_name="workspace_id", peer_name="peer_id"))
+    ],
+)
+async def list_peer_parents(
+    workspace_id: str = Path(...),
+    peer_id: str = Path(..., description="ID of the member peer"),
+    options: schemas.PeerMembershipGet | None = Body(
+        None, description="Filtering options for the parents list"
+    ),
+    params: AbstractParams = Depends(pagination_params),
+    db: AsyncSession = read_db,
+):
+    """List the peers this peer is a member of, oldest membership first."""
+    return await paginate_offset_or_cursor(
+        db,
+        crud.get_parents(
+            workspace_id, peer_id, filters=options.filters if options else None
+        ),
+        params,
+        transformer=crud.membership_rows_to_schemas,
+    )
+
+
+@router.post(
     "/{peer_id}/chat",
     summary="Peer Chat",
     responses={
@@ -270,6 +403,7 @@ async def chat(
     answer the query based on all latent knowledge gathered about the peer from their messages and conclusions.
     """
     options.scope = bind_scope_key(options.scope, jwt_params)
+    depth = crud.resolve_depth(options.depth)
     # Scope peers are never observed, so no representation of them exists to
     # query. Covers the path-level observer too: a scope `peer_id` no longer
     # errors out downstream now that crud.get_peer takes a plain name, and
@@ -377,6 +511,18 @@ async def chat(
         await peer_db.commit()
     await peers_result.post_commit()
 
+    observed = options.target if options.target is not None else peer_id
+    # Expanded here rather than inside the dialectic so a depth or fan-out
+    # violation is a 422 before any streaming starts.
+    async with tracked_db("peers.chat.expand", read_only=True) as expand_db:
+        observed_set = await crud.resolve_observed_set(
+            expand_db,
+            workspace_id,
+            observer=observer,
+            observed=observed,
+            depth=depth,
+        )
+
     evidence = EvidenceAccumulator() if options.include_evidence else None
 
     if options.stream:
@@ -394,11 +540,12 @@ async def chat(
                     session_name=options.session_id,
                     query=options.query,
                     observer=observer,
-                    observed=options.target if options.target is not None else peer_id,
+                    observed=observed,
                     reasoning_level=options.reasoning_level,
                     session_allowlist=session_allowlist,
                     response_model=response_model,
                     evidence=evidence,
+                    observed_set=observed_set,
                 ),
                 evidence,
             ),
@@ -413,11 +560,12 @@ async def chat(
         observer=observer,
         # if target is given, that's the observed peer. otherwise, observer==observed
         # and it's answered from the omniscient Honcho perspective
-        observed=options.target if options.target is not None else peer_id,
+        observed=observed,
         reasoning_level=options.reasoning_level,
         session_allowlist=session_allowlist,
         response_model=response_model,
         evidence=evidence,
+        observed_set=observed_set,
     )
 
     # Prometheus metrics
@@ -458,6 +606,7 @@ async def get_representation(
     If no target is provided, we get the omniscient Honcho Representation of the Peer.
     """
     options.scope = bind_scope_key(options.scope, jwt_params)
+    depth = crud.resolve_depth(options.depth)
     # Fast-fail before any embedding work. Same guard as the authoritative one
     # below, so a reserved name is refused here rather than after paying for an
     # embedding; the check is repeated at the read because this session closes and
@@ -549,6 +698,13 @@ async def get_representation(
                     " a representation observer or target."
                 ),
             )
+            observed_set = await crud.resolve_observed_set(
+                read_session,
+                workspace_id,
+                observer=observer,
+                observed=observed,
+                depth=depth,
+            )
             # If no target specified, this is the global (omniscient) representation
             representation = await crud.get_working_representation(
                 workspace_id,
@@ -556,6 +712,7 @@ async def get_representation(
                 # a single `scope` swaps the observer to the scope peer
                 observer=observer,
                 observed=observed,
+                pairs=observed_set.pairs,
                 session_allowlist=[options.session_id]
                 if options.session_id is not None
                 else session_allowlist,
@@ -582,7 +739,9 @@ async def get_representation(
                 parent_category="api",
             )
         return schemas.RepresentationResponse(
-            representation=representation.format_as_markdown()
+            representation=representation.render_attributed(
+                observed_set.peers, lambda r: r.format_as_markdown()
+            )
         )
     except ValueError as e:
         logger.warning(f"Failed to get representation for peer {peer_id}: {str(e)}")
@@ -603,20 +762,32 @@ async def get_peer_card(
         None,
         description="Optional target peer to retrieve a card for, from the observer's perspective. If not provided, returns the observer's own card",
     ),
+    depth: int | None = Query(None, ge=0, description=schemas.DEPTH_DESCRIPTION),
     db: AsyncSession = read_db,
 ):
     """Get a peer card for a specific peer relationship.
 
     Returns the peer card that the observer peer has for the target peer if it exists.
-    If no target is specified, returns the observer's own peer card.
+    If no target is specified, returns the observer's own peer card. When the
+    target has members, their cards come back in `member_cards`, down to `depth`.
     """
     # If no target specified, get the observer's own card
     observed = target if target is not None else peer_id
+    observed_set = await crud.resolve_observed_set(
+        db,
+        workspace_id,
+        observer=peer_id,
+        observed=observed,
+        depth=crud.resolve_depth(depth),
+    )
 
     peer_card = await crud.get_peer_card(
         db, workspace_id, observer=peer_id, observed=observed
     )
-    return schemas.PeerCardResponse(peer_card=peer_card)
+    return schemas.PeerCardResponse(
+        peer_card=peer_card,
+        member_cards=await _member_cards(db, workspace_id, observed_set),
+    )
 
 
 @router.put(
@@ -701,6 +872,7 @@ async def get_peer_context(
         le=100,
         description="Maximum number of conclusions to include in the representation",
     ),
+    depth: int | None = Query(None, ge=0, description=schemas.DEPTH_DESCRIPTION),
 ):
     """
     Get context for a peer, including their representation and peer card.
@@ -734,6 +906,7 @@ async def get_peer_context(
 
     # If no target specified, get the peer's own context (self-observation)
     observed = target if target is not None else peer_id
+    resolved_depth = crud.resolve_depth(depth)
     context_started = perf_counter()
 
     try:
@@ -752,11 +925,23 @@ async def get_peer_context(
                 search_query = embedding_client.truncate_to_token_limit(search_query)
                 embedding = await embedding_client.embed(search_query)
 
+        async with tracked_db(
+            "peers.get_peer_context.expand", read_only=True
+        ) as expand_db:
+            observed_set = await crud.resolve_observed_set(
+                expand_db,
+                workspace_id,
+                observer=peer_id,
+                observed=observed,
+                depth=resolved_depth,
+            )
+
         # Get the working representation
         representation = await crud.get_working_representation(
             workspace_id,
             observer=peer_id,
             observed=observed,
+            pairs=observed_set.pairs,
             session_allowlist=None,  # Peer context is global, not session-scoped
             # Semantic search only with an embedding; otherwise the downstream
             # fallback re-embeds a query that already failed.
@@ -777,12 +962,16 @@ async def get_peer_context(
             peer_card = await crud.get_peer_card(
                 card_db, workspace_id, observer=peer_id, observed=observed
             )
+            member_cards = await _member_cards(card_db, workspace_id, observed_set)
 
         response = schemas.PeerContext(
             peer_id=peer_id,
             target_id=observed,
-            representation=representation.format_as_markdown(),
+            representation=representation.render_attributed(
+                observed_set.peers, lambda r: r.format_as_markdown()
+            ),
             peer_card=peer_card,
+            member_cards=member_cards,
         )
         emit(
             GetContextEvent(
@@ -816,14 +1005,21 @@ async def get_peer_context(
 async def search_peer(
     workspace_id: str = Path(...),
     peer_id: str = Path(...),
-    body: schemas.MessageSearchOptions = Body(
+    body: schemas.PeerMessageSearchOptions = Body(
         ...,
         description="Message search parameters. Use `limit` to control the number of results returned.",
     ),
 ):
-    """Search a Peer's messages, optionally filtered by various criteria."""
+    """Search a Peer's messages, optionally filtered by various criteria.
+
+    When the peer has members, messages any of them wrote match too, down to
+    `depth`.
+    """
+    depth = crud.resolve_depth(body.depth)
+    async with tracked_db("peers.search.expand", read_only=True) as expand_db:
+        authors = await crud.expand_observed(expand_db, workspace_id, peer_id, depth)
     # take user-provided filter and add workspace_id and peer_id to it
     filters = body.filters or {}
     filters["workspace_id"] = workspace_id
-    filters["peer_id"] = peer_id
+    filters["peer_id"] = peer_id if len(authors) == 1 else {"in": authors}
     return await search(body.query, filters=filters, limit=body.limit)

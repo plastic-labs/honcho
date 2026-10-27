@@ -41,6 +41,7 @@ from .aio import (
     ConclusionsViewAio,
     HonchoAio,
     PeerAio,
+    PeerMembersAio,
     ScopeAio,
     SessionAio,
     WorkspaceConclusionsAio,
@@ -51,6 +52,7 @@ from .api_types import (
     EvidenceObservation,
     EvidenceToolCall,
     MessageCreateParams,
+    PeerMembership,
     ScopeBackfillJob,
     ScopeResponse,
     ScopeStatusResponse,
@@ -73,6 +75,7 @@ from .http.exceptions import (
     TimeoutError,
     UnprocessableEntityError,
 )
+from .members import PeerMembers
 from .message import Message
 from .pagination import AsyncPage, SyncPage
 from .peer import Peer
@@ -105,6 +108,7 @@ __all__ = [
     "Message",
     "MessageCreateParams",
     "Peer",
+    "PeerMembers",
     "Scope",
     "Session",
     # Aio views (for type hints)
@@ -112,6 +116,7 @@ __all__ = [
     "WorkspaceConclusionsAio",
     "HonchoAio",
     "PeerAio",
+    "PeerMembersAio",
     "ScopeAio",
     "SessionAio",
     # Base classes
@@ -119,6 +124,7 @@ __all__ = [
     "ScopeBase",
     "SessionBase",
     # Response types
+    "PeerMembership",
     "ScopeBackfillJob",
     "ScopeResponse",
     "ScopeStatusResponse",

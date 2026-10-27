@@ -69,6 +69,24 @@ def peer_sessions_list(workspace_id: str, peer_id: str) -> str:
     return f"/{API_VERSION}/workspaces/{workspace_id}/peers/{peer_id}/sessions"
 
 
+def peer_members(workspace_id: str, peer_id: str) -> str:
+    return f"/{API_VERSION}/workspaces/{workspace_id}/peers/{peer_id}/members"
+
+
+def peer_members_list(workspace_id: str, peer_id: str) -> str:
+    return f"/{API_VERSION}/workspaces/{workspace_id}/peers/{peer_id}/members/list"
+
+
+def peer_member(workspace_id: str, peer_id: str, member_id: str) -> str:
+    return (
+        f"/{API_VERSION}/workspaces/{workspace_id}/peers/{peer_id}/members/{member_id}"
+    )
+
+
+def peer_parents_list(workspace_id: str, peer_id: str) -> str:
+    return f"/{API_VERSION}/workspaces/{workspace_id}/peers/{peer_id}/parents/list"
+
+
 # Session routes
 def sessions(workspace_id: str) -> str:
     return f"/{API_VERSION}/workspaces/{workspace_id}/sessions"

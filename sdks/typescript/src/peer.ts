@@ -6,6 +6,7 @@ import {
   createDialecticStream,
   type DialecticStreamResponse,
 } from './http/streaming'
+import { listMemberships, PeerMembers, type PeerMembership } from './members'
 import { Message, type MessageInput } from './message'
 import { Page } from './pagination'
 // Type-only: scope.ts imports Session, which imports Peer. Importing the type
@@ -19,6 +20,7 @@ import type {
   PeerCardResponse,
   PeerChatResponse,
   PeerContextResponse,
+  PeerMembershipResponse,
   PeerResponse,
   RepresentationResponse,
   SessionResponse,
@@ -26,6 +28,7 @@ import type {
 import {
   CardTargetSchema,
   ChatQuerySchema,
+  DepthSchema,
   FilterSchema,
   type Filters,
   LimitSchema,
@@ -72,16 +75,24 @@ export class PeerContext {
    */
   readonly peerCard: string[] | null
 
+  /**
+   * Cards for the target's members, keyed by member peer ID, or null when the
+   * read did not aggregate over any members.
+   */
+  readonly memberCards: Record<string, string[] | null> | null
+
   constructor(
     peerId: string,
     targetId: string,
     representation: string | null,
-    peerCard: string[] | null
+    peerCard: string[] | null,
+    memberCards: Record<string, string[] | null> | null = null
   ) {
     this.peerId = peerId
     this.targetId = targetId
     this.representation = representation
     this.peerCard = peerCard
+    this.memberCards = memberCards
   }
 
   /**
@@ -92,7 +103,8 @@ export class PeerContext {
       response.peer_id,
       response.target_id,
       response.representation,
-      response.peer_card
+      response.peer_card,
+      response.member_cards ?? null
     )
   }
 
@@ -271,6 +283,7 @@ export class Peer {
     scope?: string | string[]
     filters?: Record<string, unknown>
     reasoning_level?: string
+    depth?: number
     response_format?: Record<string, unknown>
     include_evidence?: boolean
   }): Promise<PeerChatResponse> {
@@ -288,6 +301,7 @@ export class Peer {
     scope?: string | string[]
     filters?: Record<string, unknown>
     reasoning_level?: string
+    depth?: number
     response_format?: Record<string, unknown>
     include_evidence?: boolean
   }): Promise<Response> {
@@ -308,6 +322,7 @@ export class Peer {
     query: string
     filters?: Record<string, unknown>
     limit?: number
+    depth?: number
   }): Promise<MessageResponse[]> {
     await this._ensureWorkspace()
     return this._http.post<MessageResponse[]>(
@@ -326,6 +341,7 @@ export class Peer {
     search_max_distance?: number
     include_most_frequent?: boolean
     max_conclusions?: number
+    depth?: number
   }): Promise<RepresentationResponse> {
     await this._ensureWorkspace()
     return this._http.post<RepresentationResponse>(
@@ -341,6 +357,7 @@ export class Peer {
     search_max_distance?: number
     include_most_frequent?: boolean
     max_conclusions?: number
+    depth?: number
   }): Promise<PeerContextResponse> {
     await this._ensureWorkspace()
     return this._http.get<PeerContextResponse>(
@@ -404,6 +421,10 @@ export class Peer {
    *                           allowlist. Reach for a named `scope` when you need that depth.
    * @param options.reasoningLevel - Optional reasoning level for the query: "minimal", "low", "medium",
    *                                 "high", or "max". Defaults to "low" if not provided.
+   * @param options.depth - Optional depth to aggregate over the target's members. 0 reads
+   *                        the target alone; 1 adds its members; 2 adds their members, and
+   *                        so on. Each member's knowledge is attributed to that member.
+   *                        Defaults to the server's default (1) if not provided.
    * @returns Promise resolving to the response string, or null if no relevant information
    *
    * @example
@@ -436,6 +457,7 @@ export class Peer {
       scope?: string | Scope | (string | Scope)[]
       sessions?: (string | Session)[]
       reasoningLevel?: string
+      depth?: number
       responseFormat: ZodType<T>
       includeEvidence: true
     }
@@ -448,6 +470,7 @@ export class Peer {
       scope?: string | Scope | (string | Scope)[]
       sessions?: (string | Session)[]
       reasoningLevel?: string
+      depth?: number
       responseFormat: ZodType<T>
       includeEvidence?: false
     }
@@ -460,6 +483,7 @@ export class Peer {
       scope?: string | Scope | (string | Scope)[]
       sessions?: (string | Session)[]
       reasoningLevel?: string
+      depth?: number
       responseFormat?: Record<string, unknown>
       includeEvidence: true
     }
@@ -472,6 +496,7 @@ export class Peer {
       scope?: string | Scope | (string | Scope)[]
       sessions?: (string | Session)[]
       reasoningLevel?: string
+      depth?: number
       responseFormat?: Record<string, unknown>
       includeEvidence?: false
     }
@@ -484,6 +509,7 @@ export class Peer {
       scope?: string | Scope | (string | Scope)[]
       sessions?: (string | Session)[]
       reasoningLevel?: string
+      depth?: number
       responseFormat?: ZodType<T> | Record<string, unknown>
       includeEvidence?: boolean
     }
@@ -506,6 +532,7 @@ export class Peer {
       scope: options?.scope,
       sessions: options?.sessions,
       reasoningLevel: options?.reasoningLevel,
+      depth: options?.depth,
       responseFormat: options?.responseFormat,
       includeEvidence: options?.includeEvidence,
     })
@@ -522,6 +549,7 @@ export class Peer {
       session_id: chatParams.session,
       ...scopeRecallFields(chatParams),
       reasoning_level: chatParams.reasoningLevel,
+      depth: chatParams.depth,
       response_format: Peer.toResponseFormatSchema(options?.responseFormat),
       include_evidence: chatParams.includeEvidence ? true : undefined,
     })
@@ -560,6 +588,8 @@ export class Peer {
    *                           See {@link Peer.chat} for the depth caveat.
    * @param options.reasoningLevel - Optional reasoning level for the query: "minimal", "low", "medium",
    *                                 "high", or "max". Defaults to "low" if not provided.
+   * @param options.depth - Optional depth to aggregate over the target's members.
+   *                        See {@link Peer.chat}.
    * @param options.includeEvidence - When true, the returned stream's `evidence` is
    *                                 populated once it has been fully consumed. Evidence
    *                                 cannot be known before the answer is complete, so the
@@ -589,6 +619,7 @@ export class Peer {
       scope?: string | Scope | (string | Scope)[]
       sessions?: (string | Session)[]
       reasoningLevel?: string
+      depth?: number
       responseFormat?: ZodType | Record<string, unknown>
       includeEvidence?: boolean
     }
@@ -611,6 +642,7 @@ export class Peer {
       scope: options?.scope,
       sessions: options?.sessions,
       reasoningLevel: options?.reasoningLevel,
+      depth: options?.depth,
       responseFormat: options?.responseFormat,
       includeEvidence: options?.includeEvidence,
     })
@@ -621,6 +653,7 @@ export class Peer {
       session_id: chatParams.session,
       ...scopeRecallFields(chatParams),
       reasoning_level: chatParams.reasoningLevel,
+      depth: chatParams.depth,
       response_format: Peer.toResponseFormatSchema(options?.responseFormat),
       include_evidence: chatParams.includeEvidence ? true : undefined,
     })
@@ -846,12 +879,14 @@ export class Peer {
    * @param query The search query to use
    * @param filters - Optional filters to scope the search. See [search filters documentation](https://honcho.dev/docs/v3/documentation/core-concepts/features/using-filters).
    * @param limit - Optional limit on the number of results to return.
+   * @param depth - Optional depth to aggregate over this peer's members: messages any
+   *                member wrote match too. See {@link Peer.chat}.
    * @returns Promise resolving to an array of Message objects representing the search results.
    *          Returns an empty array if no messages are found.
    */
   async search(
     query: string,
-    options?: { filters?: Filters; limit?: number }
+    options?: { filters?: Filters; limit?: number; depth?: number }
   ): Promise<Message[]> {
     const validatedQuery = SearchQuerySchema.parse(query)
     const validatedFilters = options?.filters
@@ -860,10 +895,15 @@ export class Peer {
     const validatedLimit = options?.limit
       ? LimitSchema.parse(options.limit)
       : undefined
+    const validatedDepth =
+      options?.depth === undefined
+        ? undefined
+        : DepthSchema.parse(options.depth)
     const response = await this._search({
       query: validatedQuery,
       filters: validatedFilters,
       limit: validatedLimit,
+      depth: validatedDepth,
     })
     return response.map(Message.fromApiResponse)
   }
@@ -935,6 +975,8 @@ export class Peer {
    * @param options.searchMaxDistance - Maximum semantic distance for search results (0.0-1.0).
    * @param options.includeMostFrequent - Whether to include the most frequent conclusions.
    * @param options.maxConclusions - Maximum number of conclusions to include.
+   * @param options.depth - Optional depth to aggregate over the target's members, each
+   *                        member's conclusions attributed to it. See {@link Peer.chat}.
    * @returns Promise resolving to a string representation containing conclusions
    *
    * @example
@@ -963,6 +1005,7 @@ export class Peer {
     searchMaxDistance?: number
     includeMostFrequent?: boolean
     maxConclusions?: number
+    depth?: number
   }): Promise<string> {
     const searchQuery = normalizeSearchQuery(options?.searchQuery)
     const getRepresentationParams = PeerGetRepresentationParamsSchema.parse({
@@ -970,6 +1013,7 @@ export class Peer {
       scope: options?.scope,
       sessions: options?.sessions,
       target: options?.target,
+      depth: options?.depth,
       options: {
         searchQuery,
         searchTopK: options?.searchTopK,
@@ -999,6 +1043,7 @@ export class Peer {
       include_most_frequent:
         getRepresentationParams.options?.includeMostFrequent,
       max_conclusions: getRepresentationParams.options?.maxConclusions,
+      depth: getRepresentationParams.depth,
     })
     return response.representation
   }
@@ -1007,7 +1052,8 @@ export class Peer {
    * Get context for this peer, including representation and peer card.
    *
    * This is a convenience method that retrieves both the working representation
-   * and peer card in a single API call.
+   * and peer card in a single API call. When the target has members, the
+   * representation includes theirs and their cards come back in `memberCards`.
    *
    * @param options.target - Optional target peer to get context for. If provided, returns
    *                         the context for the target from this peer's perspective.
@@ -1016,6 +1062,8 @@ export class Peer {
    * @param options.searchMaxDistance - Maximum semantic distance for search results (0.0-1.0).
    * @param options.includeMostFrequent - Whether to include the most frequent conclusions.
    * @param options.maxConclusions - Maximum number of conclusions to include.
+   * @param options.depth - Optional depth to aggregate over the target's members.
+   *                        See {@link Peer.chat}.
    * @returns Promise resolving to a PeerContext object containing representation and peer card
    *
    * @example
@@ -1042,6 +1090,7 @@ export class Peer {
     searchMaxDistance?: number
     includeMostFrequent?: boolean
     maxConclusions?: number
+    depth?: number
   }): Promise<PeerContext> {
     const targetId = options?.target
       ? typeof options.target === 'string'
@@ -1059,6 +1108,10 @@ export class Peer {
       includeMostFrequent: options?.includeMostFrequent,
       maxConclusions: options?.maxConclusions,
     })
+    const validatedDepth =
+      options?.depth === undefined
+        ? undefined
+        : DepthSchema.parse(options.depth)
 
     const response = await this._getContext({
       target: targetId,
@@ -1067,6 +1120,7 @@ export class Peer {
       search_max_distance: validatedOptions.searchMaxDistance,
       include_most_frequent: validatedOptions.includeMostFrequent,
       max_conclusions: validatedOptions.maxConclusions,
+      depth: validatedDepth,
     })
 
     return PeerContext.fromApiResponse(response)
@@ -1134,6 +1188,50 @@ export class Peer {
       this.id,
       targetId,
       () => this._ensureWorkspace()
+    )
+  }
+
+  /**
+   * Access this peer's members.
+   *
+   * Reads that name this peer as their target aggregate its own knowledge plus
+   * its members', down to the requested `depth`.
+   *
+   * @returns A PeerMembers view for adding, listing, and removing members
+   *
+   * @example
+   * ```typescript
+   * const team = await honcho.peer('engineering-team')
+   * await team.members.add('alice', { metadata: { role: 'lead' } })
+   * const members = await team.members.list()
+   * await team.chat('what did we decide about the rewrite?')
+   * ```
+   */
+  get members(): PeerMembers {
+    return new PeerMembers(this._http, this.workspaceId, this.id, () =>
+      this._ensureWorkspace()
+    )
+  }
+
+  /**
+   * Get the peers this peer is a member of, oldest membership first.
+   *
+   * @param options.filters - Optional filter criteria on the parent peers, in
+   *                          the same shape as `honcho.peers()`
+   * @param options.page - Page number (1-indexed)
+   * @param options.size - Number of items per page
+   * @returns Promise resolving to a paginated list of memberships
+   */
+  async parents(options?: {
+    filters?: Filters
+    page?: number
+    size?: number
+  }): Promise<Page<PeerMembership, PeerMembershipResponse>> {
+    return listMemberships(
+      this._http,
+      () => this._ensureWorkspace(),
+      `/${API_VERSION}/workspaces/${this.workspaceId}/peers/${this.id}/parents/list`,
+      options
     )
   }
 

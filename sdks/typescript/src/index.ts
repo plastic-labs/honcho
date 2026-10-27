@@ -34,6 +34,7 @@ export {
   type DialecticStreamChunk,
   DialecticStreamResponse,
 } from './http/streaming'
+export { PeerMembers, type PeerMembership } from './members'
 export { Message, type MessageInput } from './message'
 export { Page } from './pagination'
 export { Peer, PeerContext } from './peer'
@@ -62,7 +63,9 @@ export type {
   EvidenceToolCall,
   MessageResponse,
   PageResponse,
+  PeerCardResponse,
   PeerContextResponse,
+  PeerMembershipResponse,
   PeerResponse,
   QueueStatus,
   QueueStatusResponse,

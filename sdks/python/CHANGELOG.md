@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 ### Added
 
 - `uid` on `Peer`, `Session` and the `Honcho` client (the workspace), plus on `PeerResponse`, `SessionResponse` and `WorkspaceResponse`: the immutable identifier the server assigns, next to the client-chosen `id`. Set from any API response that returns the object, and `None` before the first fetch or against servers that don't return it (#1394)
+- Composable peers (sync and async): `peer.members.add(peer, metadata=None)` / `list(filters=None)` / `remove(peer)` manage a peer's members, and `peer.parents(filters=None)` lists the peers it belongs to. Both listings return pages of the new `PeerMembership` type. Adding an existing member returns the existing membership; a cycle raises `ConflictError`. `depth` on `chat()` / `chat_stream()`, `representation()`, `context()`, and `search()` controls how far a read of a peer aggregates over its members (0 reads the peer alone; omitted uses the server default of 1). `PeerContextResponse.member_cards` carries the members' cards when the read aggregated. Requires a Honcho server with the matching API support
 
 ### Fixed
 

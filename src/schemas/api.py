@@ -176,6 +176,19 @@ class Workspace(WorkspaceBase):
     )
 
 
+DEPTH_DESCRIPTION = (
+    "How far to aggregate over the target peer's members. 0 reads the target "
+    "alone; 1 adds its members; 2 adds their members, and so on. Defaults to the "
+    "server's PEER_AGGREGATION_DEFAULT_DEPTH (1). A read of a peer's own "
+    "representation (no target, or the target is the peer itself) includes each "
+    "member's own representation; a read with another peer as target, or with a "
+    "single scope, includes that observer's view of each member. Anyone who can "
+    "read the target can read it at any depth. Requests above "
+    "PEER_AGGREGATION_MAX_DEPTH, or that would expand past "
+    "PEER_AGGREGATION_MAX_FANOUT peers, are rejected with 422. A peer with no "
+    "members reads the same at every depth."
+)
+
 # ---------------------------------------------------------------------------
 # Peer schemas
 # ---------------------------------------------------------------------------
@@ -284,6 +297,7 @@ class PeerRepresentationGet(BaseModel):
         None,
         description="Optional peer ID to get the representation for, from the perspective of this peer",
     )
+    depth: int | None = Field(None, ge=0, description=DEPTH_DESCRIPTION)
     search_query: str | None = Field(
         None,
         description="Optional input to curate the representation around semantic search results",
@@ -320,6 +334,14 @@ class PeerCardResponse(BaseModel):
     peer_card: list[str] | None = Field(
         None, description="The peer card content, or None if not found"
     )
+    member_cards: dict[str, list[str] | None] | None = Field(
+        default=None,
+        exclude_if=lambda v: v is None,
+        description=(
+            "Cards for the target's members, keyed by member peer ID, when the "
+            "read aggregated over members. Omitted when nothing was aggregated."
+        ),
+    )
 
 
 class PeerCardSet(BaseModel):
@@ -334,6 +356,43 @@ class PeerCardSet(BaseModel):
                 for item in cast(list[Any], v)
             ]
         return v
+
+
+class PeerMembershipCreate(BaseModel):
+    """Add a peer as a member of another peer."""
+
+    peer_id: Annotated[
+        str,
+        Field(
+            min_length=1,
+            max_length=512,
+            pattern=RESOURCE_NAME_PATTERN,
+            description="ID of the peer to add as a member. Created if it does not exist.",
+        ),
+    ]
+    metadata: _SanitizedMetadata | None = Field(
+        default=None,
+        description="Application-owned metadata for the membership, such as a role",
+    )
+
+
+class PeerMembershipGet(BaseModel):
+    filters: dict[str, Any] | None = Field(
+        default=None,
+        description="Filters on the listed peers, in the same shape as peers/list",
+    )
+
+
+class PeerMembership(BaseModel):
+    """One peer's membership in another."""
+
+    parent_id: str = Field(description="ID of the peer the member belongs to")
+    peer_id: str = Field(description="ID of the member peer")
+    workspace_id: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime.datetime
+
+    model_config = ConfigDict(from_attributes=True)  # pyright: ignore
 
 
 # ---------------------------------------------------------------------------
@@ -534,6 +593,14 @@ class PeerContext(BaseModel):
     peer_card: list[str] | None = Field(
         default=None,
         description="The peer card for the target peer from the observer's perspective",
+    )
+    member_cards: dict[str, list[str] | None] | None = Field(
+        default=None,
+        exclude_if=lambda v: v is None,
+        description=(
+            "Cards for the target's members, keyed by member peer ID, when the "
+            "read aggregated over members. Omitted when nothing was aggregated."
+        ),
     )
 
 
@@ -768,6 +835,18 @@ class MessageSearchOptions(BaseModel):
     )
 
 
+class PeerMessageSearchOptions(MessageSearchOptions):
+    depth: int | None = Field(
+        None,
+        ge=0,
+        description=(
+            DEPTH_DESCRIPTION
+            + " At depth, messages written by any peer in the expanded set match,"
+            + " in any session they wrote in."
+        ),
+    )
+
+
 class WorkspaceMessageSearchOptions(MessageSearchOptions):
     """Workspace-level message search options, extended with `scope`."""
 
@@ -827,6 +906,7 @@ class DialecticOptions(BaseModel):
         None,
         description="Optional peer to get the representation for, from the perspective of this peer",
     )
+    depth: int | None = Field(None, ge=0, description=DEPTH_DESCRIPTION)
     query: Annotated[
         str,
         Field(min_length=1, max_length=10000, description="Dialectic API Prompt"),
