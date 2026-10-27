@@ -459,7 +459,10 @@ async def add_sessions_to_scope(
         .where(models.Message.session_name.in_(requested))
         .distinct()
     )
-    for session_with_messages in sorted({row[0] for row in msg_result.all()}):
+    sessions_with_messages = sorted({row[0] for row in msg_result.all()})
+    # ai: end the read's transaction so this session's connection returns to the pool before each enqueue checks out its own; holding both can deadlock a saturated pool
+    await db.commit()
+    for session_with_messages in sessions_with_messages:
         await enqueue_scope_backfill(
             workspace_name,
             scope_peer=scope_peer_name(scope_name),

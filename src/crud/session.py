@@ -434,6 +434,8 @@ async def get_or_create_session(
                 )
             )
         )
+        # ai: end the read's transaction so this session's connection returns to the pool before each enqueue checks out its own; holding both can deadlock a saturated pool
+        await db.commit()
         if has_messages:
             # Imported lazily: src.deriver.enqueue imports crud at module level.
             from src.deriver.enqueue import enqueue_scope_backfill

@@ -133,6 +133,9 @@ async def prefix_for_tenant(
         # ai: read inside the block — service_db's teardown rolls back (expiring the instance) and closes it, so an attribute read after exit raises DetachedInstanceError
         return tenant is not None, tenant.vector_correlation_id if tenant else None
 
+    if db is not None:
+        # ai: begin_nested() flushes the caller's pending changes unconditionally; flush here, outside the try, so a failed flush surfaces as itself rather than as a retryable key-read failure
+        await db.flush()
     try:
         if db is not None:
             # ai: savepoint so a failed read can't abort the caller's transaction — the callers record the failure on that same session
