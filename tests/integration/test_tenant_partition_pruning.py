@@ -14,6 +14,7 @@ the hook, the count is small and the same for the two databases.
 
 from __future__ import annotations
 
+import pickle
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator
 from typing import Any
 
@@ -398,6 +399,26 @@ async def test_hook_does_not_change_the_rows(
             async_engines[_LARGE], partitioned_dbs[_LARGE], _session_messages, tenant
         )
         assert messages == [f"{tenant} message {seq}" for seq in (3, 2, 1)]
+
+
+async def test_loaded_objects_pickle(
+    partitioned_dbs: dict[int, _PartitionedDb],
+    async_engines: dict[int, AsyncEngine],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A loaded object keeps no option of the hook. The criteria function is
+    # local to the hook, and pickle does not serialize a local function.
+    monkeypatch.setattr(settings, "MULTI_TENANT", True)
+
+    async def pickled_messages(db: AsyncSession, _source_id: str) -> list[Any]:
+        stmt = await crud.get_messages("w", "s", message_count_limit=10)
+        rows = (await db.execute(stmt)).scalars()
+        return [pickle.loads(pickle.dumps(m)).content for m in rows]
+
+    _, messages = await _run_case(
+        async_engines[_LARGE], partitioned_dbs[_LARGE], pickled_messages
+    )
+    assert messages == [f"{_TENANTS[0]} message {seq}" for seq in (3, 2, 1)]
 
 
 async def _all_message_tenants(db: AsyncSession) -> list[str]:

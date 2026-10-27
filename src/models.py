@@ -1219,9 +1219,8 @@ def _add_tenant_predicate(state: ORMExecuteState) -> None:  # pyright: ignore[re
     """
     if not settings.MULTI_TENANT or state.session.info.get(CROSS_TENANT):
         return
-    # A relationship load gets the option from the statement that loaded its
-    # parent. A column load (a refresh) selects by the primary key, which
-    # starts with tenant_id.
+    # A relationship load selects by a foreign key, and a column load (a
+    # refresh) by the primary key. Each of these keys includes tenant_id.
     if state.is_column_load or state.is_relationship_load:
         return
     if not (state.is_select or state.is_update or state.is_delete):
@@ -1233,6 +1232,14 @@ def _add_tenant_predicate(state: ORMExecuteState) -> None:  # pyright: ignore[re
     def criteria(cls: Any) -> ColumnElement[bool]:
         return cls.tenant_id == tenant
 
+    # propagate_to_loaders=False: the loaded objects do not keep the option.
+    # Pickle does not serialize the local criteria function, and a later lazy
+    # load would use the tenant of the first load.
     state.statement = state.statement.options(
-        with_loader_criteria(TenantPartitioned, criteria, include_aliases=True)
+        with_loader_criteria(
+            TenantPartitioned,
+            criteria,
+            include_aliases=True,
+            propagate_to_loaders=False,
+        )
     )
