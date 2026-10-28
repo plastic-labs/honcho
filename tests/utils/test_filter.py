@@ -195,6 +195,7 @@ def test_equality_and_comparison_paths_coerce_alike(filters: dict[str, Any]):
         (Document, {"metadata": {"gte": 5}}),  # jsonb >= integer
         (Document, {"metadata": {"contains": "x"}}),  # jsonb ~~* text
         (Document, {"source_ids": 5}),  # linkage ids must be strings
+        (Document, {"source_message_ids": 5}),  # linkage ids must be strings
         (Document, {"session_id": 5}),  # text = integer
         (Document, {"session_id": True}),  # text = boolean
         (Message, {"created_at": 5}),  # timestamptz = integer
@@ -309,11 +310,59 @@ def test_source_ids_null_is_rejected():
         apply_filter(select(Document), Document, {"source_ids": None})
 
 
-def test_source_ids_wildcard_entry_keeps_the_other_entries():
+def test_source_message_ids_scalar_compiles_to_exists():
+    where = _where(Document, {"source_message_ids": "abc"})
+    assert "conclusion_source_messages" in where
+    assert "message_id" in where
+    # No legacy JSONB fallback: citations never lived in a column.
+    assert "@>" not in where
+
+
+def test_source_message_ids_in_compiles_to_any_member():
+    stmt = apply_filter(
+        select(Document), Document, {"source_message_ids": {"in": ["abc", "def"]}}
+    )
+    sql = str(stmt.compile(dialect=psycopg_dialect.dialect()))
+    assert sql.count("EXISTS") == 2
+    assert " OR " in sql
+
+
+def test_source_message_ids_unknown_operator_raises():
+    with pytest.raises(FilterError):
+        apply_filter(select(Document), Document, {"source_message_ids": {"gte": "abc"}})
+
+
+def test_source_message_ids_null_is_rejected():
+    with pytest.raises(FilterError):
+        apply_filter(select(Document), Document, {"source_message_ids": None})
+
+
+@pytest.mark.parametrize("field", ["source_ids", "source_message_ids"])
+@pytest.mark.parametrize("value", [[], {"in": []}])
+def test_link_filter_empty_list_matches_nothing(field: str, value: Any):
+    """An empty id list names nothing, so it must not widen to every row the
+    way a dropped condition would. Mirrors `in: []` on regular columns."""
+    where = _where(Document, {field: value})
+    assert "false" in where.lower()
+    assert "EXISTS" not in where
+
+
+@pytest.mark.parametrize("field", ["source_ids", "source_message_ids"])
+def test_link_filter_rejects_invalid_entries(field: str):
+    for value in ["", ["abc", ""], {"in": ["abc", 1]}, {"contains": 1}]:
+        with pytest.raises(FilterError):
+            apply_filter(select(Document), Document, {field: value})
+
+
+@pytest.mark.parametrize("field", ["source_ids", "source_message_ids"])
+def test_source_ids_wildcard_entry_keeps_the_other_entries(field: str):
     """A bare list requires ALL entries, so ["abc", "*"] is "linked to abc".
     The wildcard used to short-circuit the whole list to no condition."""
-    where = _where(Document, {"source_ids": ["abc", "*"]})
-    assert "document_sources" in where
+    where = _where(Document, {field: ["abc", "*"]})
+    table = (
+        "document_sources" if field == "source_ids" else "conclusion_source_messages"
+    )
+    assert table in where
 
 
 # --- Filters that constrain nothing ------------------------------------------
@@ -331,6 +380,7 @@ _CONSTRAINS_NOTHING: list[tuple[Any, dict[str, Any]]] = [
     (Message, {"OR": [{}, {"peer_id": "bob"}]}),
     (Message, {"OR": [{"metadata": {"role": {"in": ["*"]}}}, {"peer_id": "bob"}]}),
     (Document, {"source_ids": ["*"]}),
+    (Document, {"source_message_ids": ["*"]}),
 ]
 
 

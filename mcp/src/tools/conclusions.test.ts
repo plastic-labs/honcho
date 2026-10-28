@@ -19,6 +19,7 @@ const conclusion = (over: Record<string, unknown> = {}) => ({
   session_id: "s1",
   level: "inductive",
   source_ids: ["p1", "p2"],
+  source_message_ids: null,
   times_derived: 3,
   created_at: "2026-09-15T00:00:00Z",
   ...over,
@@ -80,6 +81,7 @@ test("list_conclusions surfaces attribution and forwards paging and filters", as
     id: "c1",
     level: "inductive",
     source_ids: ["p1", "p2"],
+    source_message_ids: null,
     times_derived: 3,
   });
 

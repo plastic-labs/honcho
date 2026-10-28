@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- `Conclusion.source_message_ids`: the messages the deriver cited as evidence for an explicit conclusion (Honcho v3.4.0+). None for derived levels and for conclusions recorded before citations existed. Filter with `{"source_message_ids": {"contains": "<message_id>"}}` to find the conclusions that cite a message as evidence
 - `uid` on `Peer`, `Session` and the `Honcho` client (the workspace), plus on `PeerResponse`, `SessionResponse` and `WorkspaceResponse`: the immutable identifier the server assigns, next to the client-chosen `id`. Set from any API response that returns the object, and `None` before the first fetch or against servers that don't return it (#1394)
 
 ### Fixed

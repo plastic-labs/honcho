@@ -87,6 +87,12 @@ export class Conclusion {
   readonly sourceIds: string[] | null
   /** Number of times this conclusion has been independently derived. */
   readonly timesDerived: number
+  /**
+   * IDs of the messages the deriver cited as evidence for an 'explicit'
+   * conclusion, in citation order. Null for derived levels and for
+   * conclusions recorded before citations existed.
+   */
+  readonly sourceMessageIds: string[] | null
   readonly createdAt: string
 
   constructor(
@@ -98,7 +104,8 @@ export class Conclusion {
     createdAt: string,
     level: ConclusionLevel = 'explicit',
     sourceIds: string[] | null = null,
-    timesDerived: number = 1
+    timesDerived: number = 1,
+    sourceMessageIds: string[] | null = null
   ) {
     this.id = id
     this.content = content
@@ -108,6 +115,7 @@ export class Conclusion {
     this.level = level
     this.sourceIds = sourceIds
     this.timesDerived = timesDerived
+    this.sourceMessageIds = sourceMessageIds
     this.createdAt = createdAt
   }
 
@@ -121,7 +129,8 @@ export class Conclusion {
       data.created_at,
       data.level,
       data.source_ids ?? null,
-      data.times_derived ?? 1
+      data.times_derived ?? 1,
+      data.source_message_ids ?? null
     )
   }
 
@@ -286,8 +295,10 @@ export class ConclusionsView {
    *   this view's observer/observed (and session, if given). Supports the same
    *   operators as other list endpoints — e.g. `{ level: 'explicit' }` to get
    *   only conclusions extracted directly from messages (i.e. not derived during
-   *   dreaming), or `{ source_ids: { contains: '<id>' } }` to get conclusions
-   *   derived from a given conclusion (see also `derived()`). See
+   *   dreaming), `{ source_ids: { contains: '<id>' } }` to get conclusions
+   *   derived from a given conclusion (see also `derived()`), or
+   *   `{ source_message_ids: { contains: '<message id>' } }` to get the
+   *   conclusions a message was cited for. See
    *   https://honcho.dev/docs/v3/documentation/features/advanced/using-filters
    * @returns Promise resolving to a Page of Conclusion objects
    */
@@ -375,7 +386,7 @@ export class ConclusionsView {
    *
    * @param conclusionId - The ID of the conclusion to retrieve
    * @returns Promise resolving to the Conclusion object, including its
-   *   attribution fields (`sourceIds`, `timesDerived`)
+   *   attribution fields (`sourceIds`, `sourceMessageIds`, `timesDerived`)
    */
   async get(conclusionId: string): Promise<Conclusion> {
     const response = await this._get(conclusionId)

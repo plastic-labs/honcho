@@ -20,6 +20,7 @@ This package versions independently of the Honcho API, `@honcho-ai/sdk`, and hos
 
 ### Added
 
+- `source_message_ids` on every conclusion the tools return: the messages an explicit conclusion cites as evidence (Honcho v3.4.0+, null for derived levels and on older servers). `list_conclusions` filters accept `{"source_message_ids": {"contains": "<message id>"}}` to find the conclusions that cite a message as evidence. Surfaces once `@honcho-ai/sdk` carries the field; earlier SDKs report null
 - A caller-set `X-Honcho-Plugin` header is forwarded to the Honcho API as the
   plugin identity, with the host appended in parentheses
   (`cursor-honcho/0.2.0 (Cursor/1.0.0)`). Integrations that configure a
