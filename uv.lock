@@ -1156,7 +1156,7 @@ requires-dist = [
     { name = "prometheus-client", specifier = ">=0.21.0" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.1.19" },
     { name = "pyarrow", marker = "extra == 'lancedb'", specifier = ">=19.0.0" },
-    { name = "pydantic", specifier = ">=2.11.7" },
+    { name = "pydantic", specifier = ">=2.12" },
     { name = "pydantic-settings", specifier = ">=2.10.1" },
     { name = "pyjwt", specifier = ">=2.10.0" },
     { name = "pypdf", specifier = ">=6.21.2" },

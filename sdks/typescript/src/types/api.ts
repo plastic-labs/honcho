@@ -221,6 +221,11 @@ export interface SessionResponse {
   metadata: Record<string, unknown>
   configuration: SessionConfigApi
   created_at: string
+  /**
+   * Active scope names. Only returned by the session list with
+   * `include_scopes`.
+   */
+  scopes?: string[]
 }
 
 export interface SessionCreateParams {

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `honcho.sessions()` takes `scope`, `in_no_scope` and `include_scopes` (sync and async). `scope` lists only that scope's sessions, `in_no_scope=True` only sessions in no scope, and `include_scopes=True` sets `Session.scopes` (and `SessionResponse.scopes`) to the names of the scopes each listed session is in. Requires a Honcho server that supports these options
+
 ### Security
 
 - Requires `certifi` 2026.10.19 or newer, the first CA bundle without the emSign root behind the compromised eMudhra intermediates. The client verifies TLS with httpx's default, which reads certifi, so upgrading the SDK now upgrades the bundle in the app's environment too. An app that pins an older `certifi` must raise that pin to upgrade

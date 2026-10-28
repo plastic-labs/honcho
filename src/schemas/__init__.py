@@ -63,6 +63,7 @@ from src.schemas.api import (
     WorkspaceCreate,
     WorkspaceGet,
     WorkspaceMessageSearchOptions,
+    WorkspaceSessionGet,
     WorkspaceUpdate,
 )
 from src.schemas.configuration import (
@@ -172,6 +173,7 @@ __all__ = [
     "WebhookEndpointBase",
     "WebhookEndpointCreate",
     "Workspace",
+    "WorkspaceSessionGet",
     "WorkspaceBase",
     "WorkspaceCreate",
     "WorkspaceGet",

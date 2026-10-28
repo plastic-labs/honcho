@@ -21,7 +21,7 @@ from logging import getLogger
 from typing import Any, Literal
 from typing import cast as py_cast
 
-from sqlalchemy import Select, Text, cast, select, update
+from sqlalchemy import ColumnElement, Select, Text, cast, select, update
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, array
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
@@ -41,6 +41,7 @@ from src.utils.path_params import schema_from_path
 from src.utils.scopes import (
     SCOPE_KIND,
     is_scope_peer,
+    scope_name_from_peer,
     scope_peer_name,
 )
 from src.utils.types import GetOrCreateResult
@@ -396,6 +397,82 @@ async def get_scope_sessions(
             models.SessionPeer.joined_at.desc(), models.Session.id.desc()
         )
     return stmt.order_by(models.SessionPeer.joined_at.asc(), models.Session.id.asc())
+
+
+def _active_scope_memberships() -> Select[tuple[str, str]]:
+    """Select ``(session_name, scope peer name)`` for every active scope membership.
+
+    The membership row must have no ``left_at`` and a live session, peer and
+    workspace, and the peer must be a real scope (reserved name AND kind flag),
+    so an ordinary peer squatting on the ``scope.`` prefix never counts.
+    """
+    return (
+        select(models.SessionPeer.session_name, models.SessionPeer.peer_name)
+        .join(
+            models.Peer,
+            (models.Peer.workspace_name == models.SessionPeer.workspace_name)
+            & (models.Peer.name == models.SessionPeer.peer_name),
+        )
+        .where(models.SessionPeer.left_at.is_(None))
+        .where(scope_peer_clause())
+        .where(live_session_peer_row())
+    )
+
+
+def session_in_scope_clause(scope_name: str | None) -> ColumnElement[bool]:
+    """Correlated EXISTS: the outer ``Session`` is an active member of a scope.
+
+    Args:
+        scope_name: Unprefixed scope name, or None to match membership of any
+            scope. Callers check a named scope exists (``get_scope_or_raise``).
+
+    Returns:
+        A clause to put in the WHERE of a query over ``models.Session``
+    """
+    stmt = _active_scope_memberships().where(
+        models.SessionPeer.workspace_name == models.Session.workspace_name,
+        models.SessionPeer.session_name == models.Session.name,
+    )
+    if scope_name is not None:
+        stmt = stmt.where(models.SessionPeer.peer_name == scope_peer_name(scope_name))
+    return stmt.exists()
+
+
+async def get_session_scopes(
+    db: AsyncSession,
+    workspace_name: str,
+    session_names: Sequence[str],
+) -> dict[str, list[str]]:
+    """
+    Get the scopes each of the given sessions is an active member of.
+
+    One query for the whole batch, so the session list can attach scopes to a
+    page without a query per session.
+
+    Args:
+        db: Database session
+        workspace_name: Name of the workspace
+        session_names: Names of the sessions to look up
+
+    Returns:
+        Each requested session name mapped to its unprefixed scope names, sorted;
+        a session in no scope maps to an empty list
+    """
+    scopes: dict[str, list[str]] = {name: [] for name in session_names}
+    if not scopes:
+        return scopes
+    result = await db.execute(
+        _active_scope_memberships()
+        .where(models.SessionPeer.workspace_name == workspace_name)
+        .where(models.SessionPeer.session_name.in_(scopes))
+    )
+    for session_name, peer_name in result.all():
+        scopes[session_name].append(scope_name_from_peer(peer_name))
+    # Sorted here rather than by ORDER BY, so the order doesn't depend on the
+    # database's collation.
+    for names in scopes.values():
+        names.sort()
+    return scopes
 
 
 async def add_sessions_to_scope(

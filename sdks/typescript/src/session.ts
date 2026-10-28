@@ -89,6 +89,7 @@ export class Session {
   private _createdAt?: string
   private _uid?: string
   private _isActive?: boolean
+  private _scopes?: string[]
   private _ensureWorkspace: () => Promise<void>
 
   /**
@@ -137,6 +138,15 @@ export class Session {
   }
 
   /**
+   * Names of the scopes this session was in when it was listed. Only set on
+   * sessions returned by `honcho.sessions({ includeScopes: true })`, and not
+   * refreshed afterwards; undefined otherwise.
+   */
+  get scopes(): string[] | undefined {
+    return this._scopes
+  }
+
+  /**
    * Initialize a new Session. **Do not call this directly, use the client.session() method instead.**
    *
    * @param id - Unique identifier for this session within the workspace
@@ -154,7 +164,8 @@ export class Session {
     ensureWorkspace: () => Promise<void> = async () => undefined,
     createdAt?: string,
     isActive?: boolean,
-    uid?: string
+    uid?: string,
+    scopes?: string[]
   ) {
     this.id = id
     this.workspaceId = workspaceId
@@ -165,6 +176,7 @@ export class Session {
     this._createdAt = createdAt
     this._isActive = isActive
     this._uid = uid
+    this._scopes = scopes
   }
 
   private _applySessionResponse(session: SessionResponse): void {

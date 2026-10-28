@@ -284,6 +284,8 @@ class SessionResponse(BaseModel):
         default_factory=SessionConfigurationResponse
     )
     created_at: datetime.datetime
+    scopes: list[str] | None = None
+    """Active scope names. Only returned by the session list with ``include_scopes``."""
 
 
 class SessionCreateParams(BaseModel):

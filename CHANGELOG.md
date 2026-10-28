@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- The workspace session list can report and filter by scope membership. `?include_scopes=true` gives each session a `scopes` list of the scopes it is in (`[]` for none), fetched in one query per page; without it the response is unchanged. Body `scope` lists only that scope's sessions (404 if the scope doesn't exist) and `in_no_scope: true` lists only sessions in no scope; both combine with `filters` and pagination, and `total` counts the filtered result. Clients no longer need to list every scope's members to show which scopes a session is in
+
 ### Changed
 
 - Langfuse Python SDK upgraded from 4.6.1 to 5.0.2, which sends traces on the Langfuse v4 ingestion path ahead of Langfuse Cloud's v4 cutover on 2026-11-16. Self-hosted Langfuse must be v4.59.0 or later; a v3 server no longer receives Honcho's traces. Observation metadata values are now JSON-encoded on the span (`"honcho"` rather than `honcho`), so saved Langfuse metadata filters written against the old shape may need updating. Trace names, user ids and the trace tree are unchanged

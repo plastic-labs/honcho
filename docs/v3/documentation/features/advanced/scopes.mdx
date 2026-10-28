@@ -306,6 +306,58 @@ peer's own session membership, so peer- and session-scoped keys are rejected
 with `401`.
 </Note>
 
+### Listing Membership From the Session Side
+
+The workspace session list can answer the reverse question — which scopes is
+this session in? — without listing every scope's members:
+
+<CodeGroup>
+```python Python
+# Each listed session's `scopes` holds its scope names, sorted ([] for none)
+for s in honcho.sessions(include_scopes=True):
+    print(s.id, s.scopes)
+
+# Only the sessions in one scope, or only the sessions in no scope
+therapy_sessions = honcho.sessions(scope="therapy")
+unscoped = honcho.sessions(in_no_scope=True)
+```
+
+```typescript TypeScript
+// Each listed session's `scopes` holds its scope names, sorted ([] for none)
+for await (const s of await honcho.sessions({ includeScopes: true })) {
+  console.log(s.id, s.scopes);
+}
+
+// Only the sessions in one scope, or only the sessions in no scope
+const therapySessions = await honcho.sessions({ scope: "therapy" });
+const unscoped = await honcho.sessions({ inNoScope: true });
+```
+
+```bash REST
+# Each session in the page carries `scopes`: its active scope names, sorted
+# ([] for a session in no scope). Without the flag, sessions have no `scopes` key.
+curl -X POST "$HONCHO_URL/v3/workspaces/my-app/sessions/list?include_scopes=true" \
+  -H "Authorization: Bearer $HONCHO_API_KEY"
+
+# Only the sessions in one scope (404 if the scope doesn't exist)
+curl -X POST "$HONCHO_URL/v3/workspaces/my-app/sessions/list" \
+  -H "Authorization: Bearer $HONCHO_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"scope": "therapy"}'
+
+# Only the sessions in no scope
+curl -X POST "$HONCHO_URL/v3/workspaces/my-app/sessions/list" \
+  -H "Authorization: Bearer $HONCHO_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"in_no_scope": true}'
+```
+</CodeGroup>
+
+`scope` and `in_no_scope` are mutually exclusive, and both combine with
+`filters`, pagination and `include_scopes`. The page's `total` counts the
+filtered sessions, so `{"in_no_scope": true}` with `size=1` tells you how many
+sessions are in no scope.
+
 ## Membership Changes Copy, They Don't Re-Derive
 
 A session added to a scope while empty needs nothing special: messages sent
