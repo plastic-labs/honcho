@@ -15,8 +15,8 @@ from src.dependencies import tracked_db
 from src.embedding_client import embedding_client
 from src.telemetry.events import EmbeddingCallPurpose
 from src.utils.filter import apply_filter
-from src.utils.formatting import ILIKE_ESCAPE_CHAR, escape_ilike_pattern
 from src.utils.scopes import is_scope_peer_name
+from src.utils.search import message_text_condition
 from src.utils.types import embedding_call_purpose
 from src.vector_store import get_external_vector_store
 
@@ -1088,14 +1088,10 @@ async def _grep_messages_internal(
     scope_clauses: Sequence[ColumnElement[bool]] = (),
 ) -> list[tuple[list[models.Message], list[models.Message]]]:
     """Internal implementation of exact-text message search."""
-    # Build the base query with ILIKE for case-insensitive text search
-    escaped_text = escape_ilike_pattern(text)
     match_stmt = (
         select(models.Message)
         .where(models.Message.workspace_name == workspace_name)
-        .where(
-            models.Message.content.ilike(f"%{escaped_text}%", escape=ILIKE_ESCAPE_CHAR)
-        )
+        .where(message_text_condition(workspace_name, text, use_fts=False))
         .order_by(models.Message.created_at.desc())
         .limit(limit)
     )

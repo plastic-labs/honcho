@@ -45,7 +45,7 @@ flag on without RLS in place.
 from __future__ import annotations
 
 import logging
-from typing import Literal
+from typing import Literal, NamedTuple
 
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
@@ -60,6 +60,7 @@ from tenacity import (
 )
 
 from src.config import AppSettings, settings
+from src.models import MESSAGE_TEXT_MATCHES
 from src.startup.embedding_validator import StartupValidationError
 
 logger = logging.getLogger(__name__)
@@ -121,6 +122,8 @@ async def validate_tenant_isolation(
     _assert_rls_enforced(rls, schema=s.DB.SCHEMA)
     rolname, rolsuper, rolbypassrls = await _introspect_tenant_role_with_retry(engine)
     _assert_tenant_role_cannot_bypass_rls(rolname, rolsuper, rolbypassrls)
+    search_function = await _introspect_search_function_with_retry(engine, s.DB.SCHEMA)
+    _assert_search_function_bypasses_rls(search_function, schema=s.DB.SCHEMA)
 
 
 def _assert_service_role_configured(s: AppSettings) -> None:
@@ -330,4 +333,82 @@ def _assert_tenant_role_cannot_bypass_rls(
             + " DB_CONNECTION_URI at an ordinary role with RLS enforced;"
             + " superuser/BYPASSRLS is reserved for the cross-tenant service role"
             + " (DB_SERVICE_CONNECTION_URI)."
+        )
+
+
+class SearchFunction(NamedTuple):
+    """What the boot check reads about ``message_text_matches``."""
+
+    security_definer: bool
+    owner: str
+    owner_is_superuser: bool
+    owner_bypasses_rls: bool
+
+
+async def _introspect_search_function_with_retry(
+    engine: AsyncEngine, schema: str
+) -> SearchFunction | None:
+    """Return the search function's definer flag and owner, or None if it is absent."""
+    try:
+        async for attempt in AsyncRetrying(
+            stop=stop_after_attempt(_RETRY_ATTEMPTS),
+            wait=wait_fixed(_RETRY_BACKOFF_SECONDS),
+            retry=retry_if_exception_type(SQLAlchemyError),
+            before_sleep=before_sleep_log(logger, logging.WARNING),
+            reraise=False,
+        ):
+            with attempt:
+                return await _introspect_search_function_once(engine, schema)
+    except RetryError as e:
+        underlying = e.last_attempt.exception()
+        raise StartupValidationError(
+            f"could not validate the message search function: {underlying}"
+        ) from underlying
+    raise StartupValidationError("message search function introspection did not run")
+
+
+async def _introspect_search_function_once(
+    engine: AsyncEngine, schema: str
+) -> SearchFunction | None:
+    query = text(
+        """
+        SELECT p.prosecdef, r.rolname, r.rolsuper, r.rolbypassrls
+        FROM pg_proc p
+        JOIN pg_namespace n ON n.oid = p.pronamespace
+        JOIN pg_roles r ON r.oid = p.proowner
+        WHERE n.nspname = :schema AND p.proname = :name
+        """
+    )
+    async with engine.connect() as conn:
+        row = (
+            await conn.execute(query, {"schema": schema, "name": MESSAGE_TEXT_MATCHES})
+        ).first()
+    if row is None:
+        return None
+    return SearchFunction(row.prosecdef, row.rolname, row.rolsuper, row.rolbypassrls)
+
+
+def _assert_search_function_bypasses_rls(
+    found: SearchFunction | None, *, schema: str
+) -> None:
+    name = f"{schema}.{MESSAGE_TEXT_MATCHES}"
+    if found is None:
+        raise StartupValidationError(
+            f"MULTI_TENANT is on but the message search function {name} is absent."
+            + " Run `alembic upgrade head` first."
+        )
+    if not found.security_definer:
+        raise StartupValidationError(
+            f"MULTI_TENANT is on but {name} is not SECURITY DEFINER, so message"
+            + " search runs under RLS and cannot use the content indexes."
+            + " Recreate it with `alembic upgrade head`."
+        )
+    if not (found.owner_is_superuser or found.owner_bypasses_rls):
+        raise StartupValidationError(
+            f"MULTI_TENANT is on but {name} is owned by {found.owner!r}, which"
+            + " cannot bypass RLS: the function runs under the policy like any"
+            + " other statement and message search cannot use the content"
+            + " indexes. Run migrations as a BYPASSRLS role, or"
+            + f" `ALTER FUNCTION {name}(text, text, text, text, boolean)"
+            + " OWNER TO <a BYPASSRLS role>`."
         )
