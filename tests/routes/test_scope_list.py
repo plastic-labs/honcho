@@ -218,3 +218,84 @@ def test_scope_list_rejects_unknown_filter_fields(
     for field in ("peer_id", "session_id", "configuration", "internal_metadata"):
         response = _list_scopes(client, ws, {"filters": {field: "x"}})
         assert response.status_code == 422, (field, response.text)
+
+
+async def test_scope_membership_reads_agree(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+):
+    """Every scope membership read counts the same sessions.
+
+    For each scope, its session_count, the session list filtered to it, its
+    member list, and the listed sessions whose `scopes` include it all name the
+    same members. Departed and archived members drop out of all four together.
+    Checked against the expected members too, since reads that all counted a
+    departed member would still agree with each other.
+    """
+    test_workspace, _ = sample_data
+    ws = test_workspace.name
+    alpha, beta = (str(generate_nanoid()) for _ in range(2))
+    for scope_name in (alpha, beta):
+        _create_scope(client, ws, scope_name)
+    ours = _create_sessions(client, ws, 5)
+    in_both, in_alpha, departed, archived, outsider = ours
+    _add(client, ws, alpha, [in_both, in_alpha, departed, archived])
+    _add(client, ws, beta, [in_both, archived])
+    response = client.delete(f"/v3/workspaces/{ws}/scopes/{alpha}/sessions/{departed}")
+    assert response.status_code == 204
+    await db_session.execute(
+        update(models.Session)
+        .where(models.Session.workspace_name == ws)
+        .where(models.Session.name == archived)
+        .values(is_active=False)
+    )
+    await db_session.commit()
+    expected = {alpha: {in_both, in_alpha}, beta: {in_both}}
+
+    def session_ids(response: Any) -> set[str]:
+        """IDs on one page of a session listing, which holds all of them here."""
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert data["total"] == len(data["items"])
+        return {item["id"] for item in data["items"]}
+
+    counts = _counts(
+        _list_scopes(
+            client,
+            ws,
+            {"filters": {"id": {"in": [alpha, beta]}}},
+            include_session_count=True,
+        )
+    )
+    response = client.post(
+        f"/v3/workspaces/{ws}/sessions/list",
+        params={"include_scopes": "true"},
+        json={"filters": {"id": {"in": ours}}},
+    )
+    assert response.status_code == 200, response.text
+    listed = response.json()["items"]
+
+    for scope_name, members in expected.items():
+        by_filter = session_ids(
+            client.post(
+                f"/v3/workspaces/{ws}/sessions/list", json={"scope": scope_name}
+            )
+        )
+        member_list = session_ids(
+            client.post(f"/v3/workspaces/{ws}/scopes/{scope_name}/sessions/list")
+        )
+        by_include = {item["id"] for item in listed if scope_name in item["scopes"]}
+        assert counts[scope_name] == len(members)
+        assert by_filter == members
+        assert member_list == members
+        assert by_include == members
+
+    # The complement: of ours, the session list's in-no-scope set
+    no_scope = session_ids(
+        client.post(
+            f"/v3/workspaces/{ws}/sessions/list",
+            json={"in_no_scope": True, "filters": {"id": {"in": ours}}},
+        )
+    )
+    assert no_scope == {departed, outsider}
