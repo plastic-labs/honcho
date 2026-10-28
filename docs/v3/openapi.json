@@ -2899,7 +2899,7 @@
           "scopes"
         ],
         "summary": "Get Scopes",
-        "description": "Get all Scopes for a Workspace. Results are paginated.",
+        "description": "Get all Scopes for a Workspace. Results are paginated.\n\nFilter by name with `{\"filters\": {\"id\": {\"icontains\": \"sup\"}}}`; `id` is\nthe unprefixed scope name.",
         "operationId": "get_scopes_v3_workspaces__workspace_id__scopes_list_post",
         "security": [
           {
@@ -2927,6 +2927,18 @@
               "title": "Reverse"
             },
             "description": "Whether to reverse the order of results"
+          },
+          {
+            "name": "include_session_count",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Whether to include each scope's member session count as `session_count`",
+              "default": false,
+              "title": "Include Session Count"
+            },
+            "description": "Whether to include each scope's member session count as `session_count`"
           },
           {
             "name": "page",
@@ -2975,6 +2987,24 @@
             "description": "Opt in to cursor pagination. Send an empty value for the first page, then the `next_page` value from each response. When set, `page` is ignored and the response is a cursor page with no `total`."
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ScopeGet"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Filtering options for the scopes list",
+                "title": "Options"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -6623,6 +6653,18 @@
             "type": "string",
             "format": "date-time",
             "title": "Created At"
+          },
+          "session_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Count",
+            "description": "Number of sessions that are active members of this scope. Only returned by the scope list when `include_session_count` is true."
           }
         },
         "type": "object",
@@ -6659,6 +6701,26 @@
         ],
         "title": "ScopeCreate",
         "description": "Schema for creating (or getting) a scope by its unprefixed name."
+      },
+      "ScopeGet": {
+        "properties": {
+          "filters": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filters",
+            "description": "Filters on the scope list. `id` matches the unprefixed scope name, e.g. `{\"id\": {\"icontains\": \"sup\"}}`; `created_at` and `metadata` work as on other lists."
+          }
+        },
+        "type": "object",
+        "title": "ScopeGet",
+        "description": "Options for the scope list."
       },
       "ScopeSessionsAdd": {
         "properties": {

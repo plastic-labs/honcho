@@ -1,6 +1,6 @@
 import datetime
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from decimal import Decimal
 from logging import getLogger
 from typing import Any, TypeVar, get_args
@@ -370,7 +370,11 @@ def normalize_session_allowlist(
 
 
 def apply_filter(
-    stmt: Select[tuple[T]], model_class: type[T], filters: dict[str, Any] | None = None
+    stmt: Select[tuple[T]],
+    model_class: type[T],
+    filters: dict[str, Any] | None = None,
+    *,
+    column_overrides: Mapping[str, ColumnElement[Any]] | None = None,
 ) -> Select[tuple[T]]:
     """
     Apply advanced filter to a SQL statement based on filter dictionary.
@@ -402,6 +406,10 @@ def apply_filter(
         stmt: SQLAlchemy Select statement to modify
         model_class: SQLAlchemy model class for column access
         filters: Optional filter dictionary
+        column_overrides: Filter keys that resolve to a scalar expression instead
+            of a model column, e.g. a scope's unprefixed name. An override
+            supports every operator its expression's type does; it never gets
+            JSONB containment handling, so don't override a JSONB field.
 
     Returns:
         Modified Select statement with filter applied if provided
@@ -417,7 +425,11 @@ def apply_filter(
     # somewhere deep in SQLAlchemy. The exception is still logged in full so a
     # genuine bug in the builder stays visible rather than being swallowed.
     try:
-        stmt = stmt.where(_build_filter_conditions(filters, model_class))
+        stmt = stmt.where(
+            _build_filter_conditions(
+                filters, model_class, column_overrides=column_overrides
+            )
+        )
     except FilterError:
         raise
     except Exception:
@@ -435,7 +447,11 @@ def apply_filter(
 
 
 def _build_filter_conditions(
-    filter_dict: dict[str, Any], model_class: type[Any], *, _depth: int = 0
+    filter_dict: dict[str, Any],
+    model_class: type[Any],
+    *,
+    column_overrides: Mapping[str, ColumnElement[Any]] | None = None,
+    _depth: int = 0,
 ) -> ColumnElement[bool]:
     """
     Recursively build filter conditions from a filter dictionary.
@@ -443,6 +459,8 @@ def _build_filter_conditions(
     Args:
         filter_dict: Filter dictionary that may contain logical operators
         model_class: SQLAlchemy model class for column access
+        column_overrides: Filter keys that resolve to an expression instead of a
+            model column (see ``apply_filter``)
 
     Returns:
         SQLAlchemy condition object. A filter that constrains nothing — `{}`,
@@ -466,6 +484,7 @@ def _build_filter_conditions(
             sub_condition = _build_filter_conditions(
                 sub_filter,  # pyright: ignore[reportUnknownArgumentType]
                 model_class,
+                column_overrides=column_overrides,
                 _depth=_depth + 1,
             )
             and_conditions.append(sub_condition)
@@ -482,6 +501,7 @@ def _build_filter_conditions(
             sub_condition = _build_filter_conditions(
                 sub_filter,  # pyright: ignore[reportUnknownArgumentType]
                 model_class,
+                column_overrides=column_overrides,
                 _depth=_depth + 1,
             )
             or_conditions.append(sub_condition)
@@ -500,6 +520,7 @@ def _build_filter_conditions(
             sub_condition = _build_filter_conditions(
                 sub_filter,  # pyright: ignore[reportUnknownArgumentType]
                 model_class,
+                column_overrides=column_overrides,
                 _depth=_depth + 1,
             )
             # `IS NOT TRUE` rather than `NOT`: under SQL's three-valued
@@ -521,7 +542,9 @@ def _build_filter_conditions(
         if key in logical_keys:
             continue
 
-        condition = _build_field_condition(key, value, model_class)
+        condition = _build_field_condition(
+            key, value, model_class, column_overrides=column_overrides
+        )
         if condition is not None:
             conditions.append(condition)
 
@@ -634,7 +657,11 @@ def _build_link_condition(
 
 
 def _build_field_condition(
-    key: str, value: Any, model_class: type[Any]
+    key: str,
+    value: Any,
+    model_class: type[Any],
+    *,
+    column_overrides: Mapping[str, ColumnElement[Any]] | None = None,
 ) -> ColumnElement[bool] | None:
     """
     Build a condition for a single field.
@@ -643,10 +670,15 @@ def _build_field_condition(
         key: Field name
         value: Field value or comparison dict
         model_class: SQLAlchemy model class
+        column_overrides: Filter keys that resolve to an expression instead of a
+            model column (see ``apply_filter``)
 
     Returns:
         SQLAlchemy condition object or None
     """
+    if column_overrides is not None and key in column_overrides:
+        return _build_column_condition(column_overrides[key], key, key, value)
+
     if model_class.__name__ == "Message":
         column_name = ALLOWED_EXTERNAL_TO_INTERNAL_COLUMN_MAPPING_MESSAGES.get(key)
     elif model_class.__name__ == "Document":
@@ -681,7 +713,24 @@ def _build_field_condition(
         raise FilterError(f"Column '{key}' does not exist on {model_class.__name__}")
 
     column = getattr(model_class, column_name)
+    return _build_column_condition(column, column_name, key, value)
 
+
+def _build_column_condition(
+    column: Any, column_name: str, key: str, value: Any
+) -> ColumnElement[bool] | None:
+    """
+    Build a condition for one filter value against a resolved column.
+
+    Args:
+        column: SQLAlchemy column or expression to compare
+        column_name: Internal column name (selects JSONB handling)
+        key: Field name as the client wrote it, for error messages
+        value: Field value or comparison dict
+
+    Returns:
+        SQLAlchemy condition object, or None for a wildcard
+    """
     # Handle wildcard - matches everything, so no condition needed
     if value == "*":
         return None

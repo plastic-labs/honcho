@@ -614,6 +614,15 @@ class Scope(BaseModel):
         default_factory=dict, serialization_alias="metadata"
     )
     created_at: datetime.datetime
+    session_count: int | None = Field(
+        default=None,
+        # Only present when the scope list is asked for it (`include_session_count`).
+        exclude_if=lambda v: v is None,
+        description=(
+            "Number of sessions that are active members of this scope. Only "
+            "returned by the scope list when `include_session_count` is true."
+        ),
+    )
 
     @field_validator("name", mode="after")
     @classmethod
@@ -624,6 +633,19 @@ class Scope(BaseModel):
 
     model_config = ConfigDict(  # pyright: ignore
         from_attributes=True, populate_by_name=True
+    )
+
+
+class ScopeGet(BaseModel):
+    """Options for the scope list."""
+
+    filters: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Filters on the scope list. `id` matches the unprefixed scope name, "
+            'e.g. `{"id": {"icontains": "sup"}}`; `created_at` and `metadata` '
+            "work as on other lists."
+        ),
     )
 
 

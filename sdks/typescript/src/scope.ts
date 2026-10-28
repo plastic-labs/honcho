@@ -72,6 +72,7 @@ export class Scope {
   private _http: HonchoHTTPClient
   private _metadata?: Record<string, unknown>
   private _createdAt?: string
+  private _sessionCount?: number
   private _ensureWorkspace: () => Promise<void>
 
   /**
@@ -90,6 +91,15 @@ export class Scope {
   }
 
   /**
+   * How many sessions were in this scope when it was listed. Only set on
+   * scopes returned by `honcho.scopes({ includeSessionCount: true })`, and not
+   * refreshed afterwards; undefined otherwise.
+   */
+  get sessionCount(): number | undefined {
+    return this._sessionCount
+  }
+
+  /**
    * Initialize a new Scope. **Do not call this directly, use the client.scope() method instead.**
    *
    * @param id - Unprefixed scope name, unique within the workspace
@@ -98,6 +108,7 @@ export class Scope {
    * @param metadata - Optional metadata to initialize the cached value
    * @param ensureWorkspace - Callback that guarantees the workspace exists
    * @param createdAt - Creation timestamp, if already fetched
+   * @param sessionCount - Member session count, if listed with counts
    */
   constructor(
     id: string,
@@ -105,7 +116,8 @@ export class Scope {
     http: HonchoHTTPClient,
     metadata?: Record<string, unknown>,
     ensureWorkspace: () => Promise<void> = async () => undefined,
-    createdAt?: string
+    createdAt?: string,
+    sessionCount?: number
   ) {
     this.id = id
     this.workspaceId = workspaceId
@@ -113,6 +125,7 @@ export class Scope {
     this._metadata = metadata
     this._ensureWorkspace = ensureWorkspace
     this._createdAt = createdAt
+    this._sessionCount = sessionCount
   }
 
   // ===========================================================================

@@ -77,16 +77,42 @@ async def get_or_create_scope(
 )
 async def get_scopes(
     workspace_id: str = Path(...),
+    options: schemas.ScopeGet | None = Body(
+        None, description="Filtering options for the scopes list"
+    ),
     reverse: bool = Query(False, description="Whether to reverse the order of results"),
+    include_session_count: bool = Query(
+        False,
+        description="Whether to include each scope's member session count as `session_count`",
+    ),
     params: AbstractParams = Depends(pagination_params),
     db: AsyncSession = read_db,
 ):
-    """Get all Scopes for a Workspace. Results are paginated."""
-    return await paginate_offset_or_cursor(
+    """Get all Scopes for a Workspace. Results are paginated.
+
+    Filter by name with `{"filters": {"id": {"icontains": "sup"}}}`; `id` is
+    the unprefixed scope name.
+    """
+    page = await paginate_offset_or_cursor(
         db,
-        await crud.get_scopes(workspace_name=workspace_id, reverse=reverse),
+        await crud.get_scopes(
+            workspace_name=workspace_id,
+            reverse=reverse,
+            filters=options.filters if options and options.filters else None,
+        ),
         params,
     )
+
+    if include_session_count:
+        scopes = [schemas.Scope.model_validate(peer) for peer in page.items]
+        counts = await crud.count_scope_sessions(
+            db, workspace_id, [scope.name for scope in scopes]
+        )
+        page.items = [
+            scope.model_copy(update={"session_count": counts[scope.name]})
+            for scope in scopes
+        ]
+    return page
 
 
 @router.get(

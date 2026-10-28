@@ -488,27 +488,38 @@ class HonchoAio(AsyncMetadataConfigMixin):
 
     async def scopes(
         self,
+        filters: dict[str, object] | None = None,
         *,
         page: int = 1,
         size: int = 50,
         reverse: bool = False,
+        include_session_count: bool = False,
     ) -> AsyncPage[ScopeResponse, Scope]:
         """
         Get all scopes in the current workspace asynchronously.
 
         Args:
+            filters: Optional filter criteria. ``id`` matches the scope name, e.g.
+                ``{"id": {"icontains": "sup"}}``.
             page: Page number (1-indexed). Default: 1.
             size: Number of items per page. Default: 50.
             reverse: If True, reverses the default ordering. Default: False.
+            include_session_count: Set each returned scope's ``session_count``.
+                Default: False.
         """
         await self._honcho._ensure_workspace_async()
 
         async def fetch(next_page: int) -> dict[str, Any]:
+            """Fetch one page of scopes with the caller's filters and options."""
             query: dict[str, Any] = {"page": next_page, "size": size}
             if reverse:
                 query["reverse"] = "true"
+            if include_session_count:
+                query["include_session_count"] = "true"
             return await self._honcho._async_http_client.post(
-                routes.scopes_list(self._honcho.workspace_id), query=query
+                routes.scopes_list(self._honcho.workspace_id),
+                body={"filters": filters} if filters else None,
+                query=query,
             )
 
         def transform(scope: ScopeResponse) -> Scope:
@@ -518,6 +529,7 @@ class HonchoAio(AsyncMetadataConfigMixin):
                 self._honcho,
                 metadata=scope.metadata,
                 created_at=scope.created_at,
+                session_count=scope.session_count,
             )
 
         async def fetch_next(next_page: int) -> AsyncPage[ScopeResponse, Scope]:

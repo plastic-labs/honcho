@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 ### Added
 
 - `honcho.sessions()` takes `scope`, `inNoScope` and `includeScopes`. `scope` lists only that scope's sessions, `inNoScope: true` only sessions in no scope, and `includeScopes: true` sets `Session.scopes` (and `SessionResponse.scopes`) to the names of the scopes each listed session is in. Requires a Honcho server that supports these options
+- `honcho.scopes()` takes `filters` (e.g. `{ id: { icontains: 'sup' } }`, matching the scope name) and `includeSessionCount`. With `includeSessionCount: true`, `Scope.sessionCount` (and `ScopeResponse.session_count`) holds each listed scope's member session count. Requires a Honcho server that supports these options
 
 ## [2.7.0] - 2026-10-20
 

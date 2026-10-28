@@ -61,6 +61,7 @@ from .representation import (
 from .scope import (
     add_sessions_to_scope,
     clear_scope_backfill_status,
+    count_scope_sessions,
     get_or_create_scopes,
     get_scope_backfill_status,
     get_scope_or_raise,
@@ -172,6 +173,7 @@ __all__ = [
     # Scope
     "add_sessions_to_scope",
     "clear_scope_backfill_status",
+    "count_scope_sessions",
     "get_or_create_scopes",
     "get_scope_backfill_status",
     "get_scope_or_raise",

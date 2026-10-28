@@ -330,6 +330,8 @@ class ScopeResponse(BaseModel):
     id: str
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime.datetime
+    session_count: int | None = None
+    """Active member sessions. Only returned by the scope list with ``include_session_count``."""
 
 
 class ScopeBackfillJob(BaseModel):
