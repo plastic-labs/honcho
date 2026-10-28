@@ -171,7 +171,9 @@ def test_scope_list_name_filter(
     """`id` filters on the unprefixed name, never on the reserved prefix."""
     test_workspace, _ = sample_data
     ws = test_workspace.name
-    tag = str(generate_nanoid(size=8)).replace("-", "_")
+    # Hex after a letter, so the tag can never spell a substring the filters
+    # below match on ("sup", "t2", "billing", "scope")
+    tag = "x" + str(generate_nanoid("0123456789abcdef", 8))
     support, support_t2, billing = f"support{tag}", f"support{tag}t2", f"billing{tag}"
     # Matches none of the filters below, so an unfiltered total would differ
     unrelated = str(generate_nanoid(size=8)).replace("-", "_")
