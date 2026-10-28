@@ -241,7 +241,9 @@ def live_document_row(
     cannot become a semi-join, and Postgres instead hashes every live session
     in the database on each read. Here each parent is checked against the
     workspace's *tombstoned* rows with uncorrelated ``NOT IN`` subqueries, each
-    hashed once per query and empty until deletion is enabled. Do not rewrite
+    hashed once per query and empty until deletion is enabled. Without a
+    partial index on tombstoned peers and sessions, building those hashes
+    still reads every peer and session in the workspace. Do not rewrite
     them as ``NOT EXISTS``: the pinned workspace makes Postgres estimate the
     anti-join at about one row, which loses index-ordered plans. The composite
     foreign keys guarantee every parent exists, so this does not need the
