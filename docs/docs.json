@@ -91,7 +91,8 @@
                 "pages": [
                   "v3/documentation/reference/platform",
                   "v3/documentation/reference/sdk",
-                  "v3/documentation/reference/cli"
+                  "v3/documentation/reference/cli",
+                  "v3/documentation/reference/data-privacy"
                 ]
               },
               {
