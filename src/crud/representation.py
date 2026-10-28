@@ -498,7 +498,7 @@ class RepresentationManager:
                 models.Document.workspace_name == self.workspace_name,
                 models.Document.observer == self.observer,
                 models.Document.observed == self.observed,
-                live_document_row(),
+                live_document_row(self.workspace_name),
                 *(
                     [models.Document.id.notin_(excluded_document_ids)]
                     if excluded_document_ids
@@ -534,7 +534,7 @@ class RepresentationManager:
                 models.Document.workspace_name == self.workspace_name,
                 models.Document.observer == self.observer,
                 models.Document.observed == self.observed,
-                live_document_row(),
+                live_document_row(self.workspace_name),
                 *(
                     [
                         models.Document.session_name.in_(session_allowlist),

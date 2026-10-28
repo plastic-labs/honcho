@@ -386,3 +386,37 @@ async def test_conclusion_reads_hide_tombstoned_parents(
         )
         == visible
     )
+
+
+async def test_conclusion_reads_hide_either_tombstoned_peer(db_session: AsyncSession):
+    """Tombstoning a peer hides conclusions it observes and conclusions about it."""
+    graph = await _seed(db_session)
+    ws = graph.workspace
+    ids: dict[str, str] = {}
+    for observer, observed in (("author", "bystander"), ("bystander", "author")):
+        db_session.add(
+            models.Collection(workspace_name=ws, observer=observer, observed=observed)
+        )
+        await db_session.flush()
+        document = models.Document(
+            workspace_name=ws,
+            observer=observer,
+            observed=observed,
+            content=f"{observer} about {observed}",
+            level="explicit",
+        )
+        db_session.add(document)
+        await db_session.flush()
+        ids[document.id] = f"{observer}->{observed}"
+    await db_session.commit()
+
+    def visible(docs: Sequence[models.Document]) -> set[str]:
+        return {ids[d.id] for d in docs}
+
+    by_id = await crud.get_documents_by_ids(db_session, ws, list(ids))
+    assert visible(by_id) == {"author->bystander", "bystander->author"}
+
+    await _tombstone(db_session, graph, "author")
+    assert visible(await crud.get_documents_by_ids(db_session, ws, list(ids))) == set()
+    stmt = crud.get_documents_with_filters(ws, filters={"observer": "bystander"})
+    assert visible((await db_session.scalars(stmt)).all()) == set()

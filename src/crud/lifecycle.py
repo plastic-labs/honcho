@@ -225,6 +225,7 @@ def live_session_peer_row(
 
 
 def live_document_row(
+    workspace_name: str,
     document: type[models.Document] | AliasedClass[models.Document] = models.Document,
 ) -> ColumnElement[bool]:
     """Row-wise filter: the conclusion, its workspace, observer and observed are live.
@@ -232,15 +233,40 @@ def live_document_row(
     A conclusion with a ``session_name`` is also hidden once that session is
     tombstoned; one without a session (manual or cross-session) depends only on
     its peers. This hides conclusions under erased parents; it does not decide
-    which surviving conclusions were derived from erased messages.
+    which surviving conclusions were derived from erased messages. Also
+    restricts rows to ``workspace_name``.
+
+    Conclusion reads scan whole collections, so this does not use the
+    correlated semi-joins above. ``session_name IS NULL OR EXISTS (...)``
+    cannot become a semi-join, and Postgres instead hashes every live session
+    in the database on each read. Here each parent is checked against the
+    workspace's *tombstoned* rows with uncorrelated ``NOT IN`` subqueries, each
+    hashed once per query and empty until deletion is enabled. Do not rewrite
+    them as ``NOT EXISTS``: the pinned workspace makes Postgres estimate the
+    anti-join at about one row, which loses index-ordered plans. The composite
+    foreign keys guarantee every parent exists, so this does not need the
+    semi-joins' fail-closed check for a missing parent; the workspace is still
+    checked positively.
     """
+    workspace = aliased(models.Workspace)
+    peer = aliased(models.Peer)
+    session = aliased(models.Session)
+    tombstoned_peers = select(peer.name).where(
+        peer.workspace_name == workspace_name, peer.deleted_at.is_not(None)
+    )
+    tombstoned_sessions = select(session.name).where(
+        session.workspace_name == workspace_name, session.deleted_at.is_not(None)
+    )
     return and_(
+        document.workspace_name == workspace_name,
         document.deleted_at.is_(None),
-        _workspace_live(document.workspace_name),
-        _peer_live(document.workspace_name, document.observer),
-        _peer_live(document.workspace_name, document.observed),
+        select(workspace.name)
+        .where(workspace.name == workspace_name, workspace.deleted_at.is_(None))
+        .exists(),
+        document.observer.not_in(tombstoned_peers),
+        document.observed.not_in(tombstoned_peers),
         or_(
             document.session_name.is_(None),
-            _session_live(document.workspace_name, document.session_name),
+            document.session_name.not_in(tombstoned_sessions),
         ),
     )
