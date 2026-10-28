@@ -1,3 +1,4 @@
+import asyncio
 import datetime
 import logging
 import zlib
@@ -51,17 +52,25 @@ def _raised_by_pypdf(exc: BaseException) -> bool:
     return module == "pypdf" or module.startswith("pypdf.")
 
 
+def _read_pdf_pages(content: bytes) -> list[str]:
+    from pypdf import PdfReader
+
+    reader = PdfReader(BytesIO(content))
+    return [page.extract_text() for page in reader.pages]
+
+
 class PDFProcessor:
     def supports_file_type(self, content_type: str) -> bool:
         return content_type == "application/pdf"
 
     async def extract_text(self, content: bytes) -> str:
-        from pypdf import PdfReader
         from pypdf.errors import PyPdfError
 
         try:
-            reader = PdfReader(BytesIO(content))
-            page_texts = [page.extract_text() for page in reader.pages]
+            # pypdf is synchronous and a crafted file can keep it busy for a
+            # long time, so parse off the event loop to stall one request
+            # rather than the whole worker.
+            page_texts = await asyncio.to_thread(_read_pdf_pages, content)
         except (PyPdfError, zlib.error) as exc:
             raise ValidationException("Uploaded PDF could not be read") from exc
         except _PYPDF_LEAKED_ERRORS as exc:
