@@ -525,12 +525,35 @@ async def process_scope_removal(
     Soft-deletes (fail-closed) rather than hard-deletes: the reconciler's
     soft-delete sweep handles vector cleanup and eventual hard deletion, and a
     later re-add restores the same rows.
+
+    Skipped entirely if the session is an active member again: it was re-added
+    after this task was queued, and its copies, notes and status are live data
+    the re-add's backfill reconciles.
     """
     scope_peer = payload.scope_peer
     session_name = payload.session_name
 
     removed_by_observed: dict[str, list[str]] = {}
     async with tracked_db("scope_removal") as db:
+        # Row-lock the membership for this whole transaction, as the backfill's
+        # write phase does, so a re-add can't commit between this check and the
+        # writes below. Nothing here commits until the end, so the lock holds.
+        rejoined = await db.scalar(
+            select(models.SessionPeer.left_at.is_(None))
+            .where(models.SessionPeer.workspace_name == workspace_name)
+            .where(models.SessionPeer.session_name == session_name)
+            .where(models.SessionPeer.peer_name == scope_peer)
+            .with_for_update()
+        )
+        if rejoined:
+            logger.info(
+                "Scope removal skipped for %s/%s/%s: the session is a member again",
+                workspace_name,
+                scope_peer,
+                session_name,
+            )
+            return
+
         observed_result = await db.execute(
             select(models.Collection.observed).where(
                 models.Collection.workspace_name == workspace_name,

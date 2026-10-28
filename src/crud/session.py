@@ -776,6 +776,18 @@ async def delete_session(
                         f"Failed to delete document vectors from {namespace}: {e}"
                     )
 
+        # Delete SessionPeer associations before the documents. A scope_removal
+        # task locks the scope's membership row and then updates this session's
+        # documents; taking the same rows in the opposite order here could
+        # deadlock against it. Nothing references session_peers, so this is
+        # safe ahead of the rows below, and all of it commits together.
+        await db.execute(
+            delete(models.SessionPeer).where(
+                models.SessionPeer.session_name == session_name,
+                models.SessionPeer.workspace_name == workspace_name,
+            )
+        )
+
         # Delete Document entries associated with this session in batches
         conclusions_deleted = await _batch_delete_matching(
             db,
@@ -796,14 +808,6 @@ async def delete_session(
                 models.Message.workspace_name == workspace_name,
             ],
             batch_size=5000,
-        )
-
-        # Delete SessionPeer associations
-        await db.execute(
-            delete(models.SessionPeer).where(
-                models.SessionPeer.session_name == session_name,
-                models.SessionPeer.workspace_name == workspace_name,
-            )
         )
 
         # Finally, delete the session itself

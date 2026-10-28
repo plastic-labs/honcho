@@ -460,6 +460,13 @@ async def delete_workspace(
                 models.MessageEmbedding.workspace_name == workspace_name
             )
         )
+        # Memberships before documents, in the order a scope_removal task
+        # takes them; see delete_session.
+        await db.execute(
+            delete(models.SessionPeer).where(
+                models.SessionPeer.workspace_name == workspace_name
+            )
+        )
         await db.execute(
             delete(models.Document).where(
                 models.Document.workspace_name == workspace_name
@@ -479,11 +486,6 @@ async def delete_workspace(
         await db.execute(
             delete(models.WebhookEndpoint).where(
                 models.WebhookEndpoint.workspace_name == workspace_name
-            )
-        )
-        await db.execute(
-            delete(models.SessionPeer).where(
-                models.SessionPeer.workspace_name == workspace_name
             )
         )
         await db.execute(
