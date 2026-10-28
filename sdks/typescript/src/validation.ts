@@ -292,7 +292,7 @@ export const ScopeOptionSchema = z
 export const ScopeSessionsSchema = z
   .array(SessionIdSchema)
   .min(1, 'At least one session must be given')
-  .max(100, 'At most 100 sessions can be added per call')
+  .max(100, 'At most 100 sessions can be given per call')
 
 /**
  * Schema for the `scopes` option on session creation: the scopes a new session

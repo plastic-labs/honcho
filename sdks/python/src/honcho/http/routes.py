@@ -123,6 +123,10 @@ def scope_sessions(workspace_id: str, scope_id: str) -> str:
     return f"/{API_VERSION}/workspaces/{workspace_id}/scopes/{scope_id}/sessions"
 
 
+def scope_sessions_remove(workspace_id: str, scope_id: str) -> str:
+    return f"/{API_VERSION}/workspaces/{workspace_id}/scopes/{scope_id}/sessions/remove"
+
+
 def scope_sessions_list(workspace_id: str, scope_id: str) -> str:
     return f"/{API_VERSION}/workspaces/{workspace_id}/scopes/{scope_id}/sessions/list"
 

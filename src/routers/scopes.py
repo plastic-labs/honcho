@@ -197,6 +197,37 @@ async def remove_session_from_scope(
 
 
 @router.post(
+    "/{scope_id}/sessions/remove",
+    status_code=204,
+    response_model=None,
+    dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
+)
+async def remove_sessions_from_scope(
+    workspace_id: str = Path(...),
+    scope_id: str = Path(...),
+    body: schemas.ScopeSessionsRemove = Body(
+        ..., description="IDs of the sessions to remove from the scope"
+    ),
+    db: AsyncSession = db,
+):
+    """
+    Remove up to 100 Sessions from a Scope in one request.
+
+    The batch is all-or-nothing: if any named session does not exist, the
+    request returns 404 and no membership changes. Sessions that are not
+    members of the scope are ignored. Each removed session is reconciled
+    asynchronously, exactly as `DELETE /scopes/{scope_id}/sessions/{session_id}`
+    does.
+    """
+    await crud.remove_sessions_from_scope(
+        db,
+        workspace_name=workspace_id,
+        scope_name=scope_id,
+        session_names=body.session_ids,
+    )
+
+
+@router.post(
     "/{scope_id}/sessions/list",
     response_model=Page[schemas.Session] | CursorPage[schemas.Session],
     dependencies=[

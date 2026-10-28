@@ -231,6 +231,10 @@ for s in therapy.sessions():
 
 therapy.remove_session("therapy-session-1")
 
+# Or remove up to 100 at once — all-or-nothing if any session doesn't exist;
+# sessions that aren't members are ignored
+therapy.remove_sessions(["therapy-session-2", "therapy-session-3"])
+
 for scope in honcho.scopes():
     print(scope.id, scope.metadata)
 ```
@@ -261,6 +265,10 @@ for await (const s of await therapy.sessions()) {
 
 await therapy.removeSession("therapy-session-1");
 
+// Or remove up to 100 at once — all-or-nothing if any session doesn't exist;
+// sessions that aren't members are ignored
+await therapy.removeSessions(["therapy-session-2", "therapy-session-3"]);
+
 for await (const scope of await honcho.scopes()) {
   console.log(scope.id, scope.metadata);
 }
@@ -290,6 +298,13 @@ curl -X POST "$HONCHO_URL/v3/workspaces/my-app/scopes/therapy/sessions/list" \
 # Remove one session
 curl -X DELETE "$HONCHO_URL/v3/workspaces/my-app/scopes/therapy/sessions/therapy-session-1" \
   -H "Authorization: Bearer $HONCHO_API_KEY"
+
+# Remove up to 100 sessions (404 and no change if any doesn't exist;
+# non-members are ignored)
+curl -X POST "$HONCHO_URL/v3/workspaces/my-app/scopes/therapy/sessions/remove" \
+  -H "Authorization: Bearer $HONCHO_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"session_ids": ["therapy-session-2", "therapy-session-3"]}'
 ```
 </CodeGroup>
 

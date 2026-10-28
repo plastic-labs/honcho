@@ -3214,6 +3214,67 @@
         }
       }
     },
+    "/v3/workspaces/{workspace_id}/scopes/{scope_id}/sessions/remove": {
+      "post": {
+        "tags": [
+          "scopes"
+        ],
+        "summary": "Remove Sessions From Scope",
+        "description": "Remove up to 100 Sessions from a Scope in one request.\n\nThe batch is all-or-nothing: if any named session does not exist, the\nrequest returns 404 and no membership changes. Sessions that are not\nmembers of the scope are ignored. Each removed session is reconciled\nasynchronously, exactly as `DELETE /scopes/{scope_id}/sessions/{session_id}`\ndoes.",
+        "operationId": "remove_sessions_from_scope_v3_workspaces__workspace_id__scopes__scope_id__sessions_remove_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "scope_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Scope Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScopeSessionsRemove",
+                "description": "IDs of the sessions to remove from the scope"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v3/workspaces/{workspace_id}/scopes/{scope_id}/sessions/list": {
       "post": {
         "tags": [
@@ -6741,6 +6802,26 @@
         ],
         "title": "ScopeSessionsAdd",
         "description": "Schema for adding sessions to a scope."
+      },
+      "ScopeSessionsRemove": {
+        "properties": {
+          "session_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Session Ids",
+            "description": "IDs of existing sessions to remove from the scope. Sessions that are not members are ignored."
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_ids"
+        ],
+        "title": "ScopeSessionsRemove",
+        "description": "Schema for removing sessions from a scope."
       },
       "ScopeStatus": {
         "properties": {
