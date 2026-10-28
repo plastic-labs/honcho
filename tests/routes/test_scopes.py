@@ -7,12 +7,13 @@ and never speaks. See src/utils/scopes.py.
 """
 
 import re
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 from nanoid import generate as generate_nanoid
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
@@ -1202,3 +1203,281 @@ def test_session_create_scopes_list_is_capped(
         },
     )
     assert response.status_code == 422, response.text
+
+
+# ---------------------------------------------------------------------------
+# Scope membership on the workspace session list
+# ---------------------------------------------------------------------------
+
+
+def _list_sessions(
+    client: TestClient,
+    workspace_name: str,
+    body: dict[str, Any] | None = None,
+    **query: Any,
+):
+    """POST the workspace session list with an optional body and query params."""
+    return client.post(
+        f"/v3/workspaces/{workspace_name}/sessions/list", json=body, params=query
+    )
+
+
+def _session_scopes_by_id(response: Any) -> dict[str, list[str] | None]:
+    """Map each listed session ID to its scopes (None when the key is omitted)."""
+    assert response.status_code == 200, response.text
+    return {item["id"]: item.get("scopes") for item in response.json()["items"]}
+
+
+def test_session_list_include_scopes(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """include_scopes lists each session's active scopes, sorted, and composes with filters."""
+    test_workspace, _ = sample_data
+    ws = test_workspace.name
+    scope_a, scope_b = sorted(str(generate_nanoid()) for _ in range(2))
+    for scope_name in (scope_a, scope_b):
+        assert _create_scope(client, ws, scope_name).status_code == 201
+    in_both = _create_session(client, ws)
+    in_one = _create_session(client, ws)
+    in_none = _create_session(client, ws)
+    left = _create_session(client, ws)
+    assert _add_sessions(client, ws, scope_a, [in_both, in_one, left]) == 204
+    assert _add_sessions(client, ws, scope_b, [in_both]) == 204
+    response = client.delete(f"/v3/workspaces/{ws}/scopes/{scope_a}/sessions/{left}")
+    assert response.status_code == 204
+
+    scopes = _session_scopes_by_id(_list_sessions(client, ws, include_scopes=True))
+    assert scopes[in_both] == [scope_a, scope_b]
+    assert scopes[in_one] == [scope_a]
+    assert scopes[in_none] == []
+    assert scopes[left] == []
+
+    # Omitting the option leaves the response shape unchanged: no `scopes` key
+    response = _list_sessions(client, ws)
+    assert response.status_code == 200, response.text
+    assert all("scopes" not in item for item in response.json()["items"])
+
+    # Composes with the existing filters
+    response = _list_sessions(
+        client, ws, {"filters": {"id": {"in": [in_both, in_none]}}}, include_scopes=True
+    )
+    assert _session_scopes_by_id(response) == {
+        in_both: [scope_a, scope_b],
+        in_none: [],
+    }
+
+
+async def test_session_list_scopes_ignore_unflagged_prefixed_peers(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+):
+    """A peer squatting on the reserved prefix is a session member, not a scope."""
+    test_workspace, _ = sample_data
+    ws = test_workspace.name
+    squatter = scope_peer_name(str(generate_nanoid()))
+    db_session.add(models.Peer(workspace_name=ws, name=squatter))
+    await db_session.commit()
+
+    session_name = _create_session(client, ws)
+    response = client.post(
+        f"/v3/workspaces/{ws}/sessions/{session_name}/messages",
+        json={"messages": [{"peer_id": squatter, "content": "hello"}]},
+    )
+    assert response.status_code in [200, 201], response.text
+
+    response = _list_sessions(
+        client,
+        ws,
+        {"filters": {"id": session_name}, "in_no_scope": True},
+        include_scopes=True,
+    )
+    assert _session_scopes_by_id(response) == {session_name: []}
+
+
+def test_session_list_scope_filter(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """scope and in_no_scope select members and non-members; total counts the filtered result."""
+    test_workspace, _ = sample_data
+    ws = test_workspace.name
+    scope_a, scope_b = (str(generate_nanoid()) for _ in range(2))
+    for scope_name in (scope_a, scope_b):
+        assert _create_scope(client, ws, scope_name).status_code == 201
+    in_both = _create_session(client, ws)
+    in_a = _create_session(client, ws)
+    in_none = _create_session(client, ws)
+    left = _create_session(client, ws)
+    assert _add_sessions(client, ws, scope_a, [in_both, in_a, left]) == 204
+    assert _add_sessions(client, ws, scope_b, [in_both]) == 204
+    response = client.delete(f"/v3/workspaces/{ws}/scopes/{scope_a}/sessions/{left}")
+    assert response.status_code == 204
+    ours = {in_both, in_a, in_none, left}
+
+    response = _list_sessions(client, ws, {"scope": scope_a})
+    assert response.status_code == 200, response.text
+    assert {item["id"] for item in response.json()["items"]} == {in_both, in_a}
+    assert response.json()["total"] == 2
+
+    response = _list_sessions(client, ws, {"scope": scope_b})
+    assert [item["id"] for item in response.json()["items"]] == [in_both]
+
+    # sample_data's workspace may hold other sessions; only ours matter here
+    response = _list_sessions(
+        client, ws, {"in_no_scope": True, "filters": {"id": {"in": sorted(ours)}}}
+    )
+    assert response.status_code == 200, response.text
+    assert {item["id"] for item in response.json()["items"]} == {in_none, left}
+    assert response.json()["total"] == 2
+
+    # The scope filter composes with the existing filters
+    response = _list_sessions(
+        client, ws, {"scope": scope_a, "filters": {"id": {"in": [in_a, in_none]}}}
+    )
+    assert [item["id"] for item in response.json()["items"]] == [in_a]
+
+
+def test_session_list_scope_filter_cursor_pages(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """A session in several scopes is listed once per page walk, in both modes."""
+    test_workspace, _ = sample_data
+    ws = test_workspace.name
+    scopes = [str(generate_nanoid()) for _ in range(3)]
+    for scope_name in scopes:
+        assert _create_scope(client, ws, scope_name).status_code == 201
+    sessions = [_create_session(client, ws) for _ in range(5)]
+    for scope_name in scopes:
+        assert _add_sessions(client, ws, scope_name, sessions) == 204
+
+    body = {"scope": scopes[0]}
+    seen: list[str] = []
+    cursor: str | None = ""
+    while cursor is not None:
+        response = _list_sessions(
+            client, ws, body, cursor=cursor, size=2, include_scopes=True
+        )
+        assert response.status_code == 200, response.text
+        data = response.json()
+        for item in data["items"]:
+            assert item["scopes"] == sorted(scopes)
+            seen.append(item["id"])
+        cursor = data["next_page"]
+        assert len(seen) <= len(sessions)
+    assert sorted(seen) == sorted(sessions)
+
+    seen = []
+    for page in (1, 2, 3):
+        response = _list_sessions(client, ws, body, page=page, size=2)
+        assert response.json()["total"] == len(sessions)
+        seen += [item["id"] for item in response.json()["items"]]
+    assert sorted(seen) == sorted(sessions)
+
+
+def test_session_list_scopes_stay_in_their_workspace(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Same session and scope names in two workspaces never see each other.
+
+    Only the other workspace's session is in the scope, so nothing about this
+    workspace's same-named session may reflect that membership.
+    """
+    test_workspace, _ = sample_data
+    ws = test_workspace.name
+    other_ws = str(generate_nanoid())
+    response = client.post("/v3/workspaces", json={"id": other_ws})
+    assert response.status_code in [200, 201], response.text
+    scope_name = str(generate_nanoid())
+    session_name = str(generate_nanoid())
+    for workspace_name in (ws, other_ws):
+        assert _create_scope(client, workspace_name, scope_name).status_code == 201
+        _create_session(client, workspace_name, session_name)
+    assert _add_sessions(client, other_ws, scope_name, [session_name]) == 204
+    only_ours = {"filters": {"id": session_name}}
+
+    response = _list_sessions(client, ws, only_ours, include_scopes=True)
+    assert _session_scopes_by_id(response) == {session_name: []}
+    response = _list_sessions(client, ws, {**only_ours, "in_no_scope": True})
+    assert _session_scopes_by_id(response) == {session_name: None}
+    response = _list_sessions(client, ws, {"scope": scope_name})
+    assert _session_scopes_by_id(response) == {}
+
+    # The membership is visible from its own workspace
+    response = _list_sessions(
+        client, other_ws, {"scope": scope_name}, include_scopes=True
+    )
+    assert _session_scopes_by_id(response) == {session_name: [scope_name]}
+
+
+async def test_session_list_ignores_deleted_scope(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+):
+    """A tombstoned scope no longer counts as a membership anywhere."""
+    test_workspace, _ = sample_data
+    ws = test_workspace.name
+    scope_name = str(generate_nanoid())
+    assert _create_scope(client, ws, scope_name).status_code == 201
+    session_name = _create_session(client, ws)
+    assert _add_sessions(client, ws, scope_name, [session_name]) == 204
+    only_ours = {"filters": {"id": session_name}}
+
+    await db_session.execute(
+        update(models.Peer)
+        .where(models.Peer.workspace_name == ws)
+        .where(models.Peer.name == scope_peer_name(scope_name))
+        .values(deleted_at=datetime.now(UTC))
+    )
+    await db_session.commit()
+
+    response = _list_sessions(client, ws, only_ours, include_scopes=True)
+    assert _session_scopes_by_id(response) == {session_name: []}
+    response = _list_sessions(client, ws, {**only_ours, "in_no_scope": True})
+    assert _session_scopes_by_id(response) == {session_name: None}
+    assert _list_sessions(client, ws, {"scope": scope_name}).status_code == 404
+
+
+def test_session_list_scopes_after_readd(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Removing a session and adding it back makes it a member again."""
+    test_workspace, _ = sample_data
+    ws = test_workspace.name
+    scope_name = str(generate_nanoid())
+    assert _create_scope(client, ws, scope_name).status_code == 201
+    session_name = _create_session(client, ws)
+    only_ours = {"filters": {"id": session_name}}
+
+    assert _add_sessions(client, ws, scope_name, [session_name]) == 204
+    response = client.delete(
+        f"/v3/workspaces/{ws}/scopes/{scope_name}/sessions/{session_name}"
+    )
+    assert response.status_code == 204
+    assert _add_sessions(client, ws, scope_name, [session_name]) == 204
+
+    response = _list_sessions(client, ws, only_ours, include_scopes=True)
+    assert _session_scopes_by_id(response) == {session_name: [scope_name]}
+    response = _list_sessions(client, ws, {"scope": scope_name})
+    assert _session_scopes_by_id(response) == {session_name: None}
+    response = _list_sessions(client, ws, {**only_ours, "in_no_scope": True})
+    assert _session_scopes_by_id(response) == {}
+
+
+def test_session_list_scope_filter_errors(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """An unknown scope is a 404; a prefixed name or both options at once is a 422."""
+    test_workspace, _ = sample_data
+    ws = test_workspace.name
+    scope_name = str(generate_nanoid())
+    assert _create_scope(client, ws, scope_name).status_code == 201
+
+    response = _list_sessions(client, ws, {"scope": str(generate_nanoid())})
+    assert response.status_code == 404
+
+    response = _list_sessions(client, ws, {"scope": scope_peer_name(scope_name)})
+    assert response.status_code == 422
+
+    response = _list_sessions(client, ws, {"scope": scope_name, "in_no_scope": True})
+    assert response.status_code == 422

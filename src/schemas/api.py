@@ -458,6 +458,29 @@ class SessionGet(SessionBase):
     filters: dict[str, Any] | None = None
 
 
+class WorkspaceSessionGet(SessionGet):
+    """Options for the workspace session list, which can also filter by scope."""
+
+    scope: _ScopeName | None = Field(
+        default=None,
+        description=(
+            "Only return sessions that are active members of this (unprefixed) "
+            "scope. Returns 404 if the scope does not exist."
+        ),
+    )
+    in_no_scope: bool = Field(
+        default=False,
+        description="Only return sessions that are not an active member of any scope.",
+    )
+
+    @model_validator(mode="after")
+    def validate_scope_options(self) -> Self:
+        """Refuse `scope` together with `in_no_scope`; they select disjoint sets."""
+        if self.scope is not None and self.in_no_scope:
+            raise ValueError("`scope` and `in_no_scope` are mutually exclusive")
+        return self
+
+
 class SessionUpdate(SessionBase):
     metadata: _SanitizedMetadata | None = None
     configuration: SessionConfiguration | None = None
@@ -479,6 +502,15 @@ class Session(SessionBase):
     )
     configuration: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime.datetime
+    scopes: list[str] | None = Field(
+        default=None,
+        # Only present when the session list is asked for it (`include_scopes`).
+        exclude_if=lambda v: v is None,
+        description=(
+            "Names of the scopes this session is an active member of. Only "
+            "returned by the session list when `include_scopes` is true."
+        ),
+    )
 
     model_config = ConfigDict(  # pyright: ignore
         from_attributes=True, populate_by_name=True

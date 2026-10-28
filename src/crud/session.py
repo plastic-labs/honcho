@@ -57,7 +57,11 @@ from .peer import (
     scope_peer_clause,
     scope_peer_names,
 )
-from .scope import SCOPE_MEMBERSHIP_CONFIG, get_or_create_scopes
+from .scope import (
+    SCOPE_MEMBERSHIP_CONFIG,
+    get_or_create_scopes,
+    session_in_scope_clause,
+)
 from .workspace import get_or_create_workspace
 
 logger = getLogger(__name__)
@@ -168,6 +172,8 @@ async def get_sessions(
     workspace_name: str,
     filters: dict[str, Any] | None = None,
     reverse: bool = False,
+    scope_name: str | None = None,
+    in_no_scope: bool = False,
 ) -> Select[tuple[models.Session]]:
     """
     Get all active sessions in a workspace.
@@ -176,6 +182,9 @@ async def get_sessions(
         workspace_name: Name of the workspace
         filters: Optional filters to apply to the query
         reverse: If True, order by created_at descending; if False, ascending
+        scope_name: Only sessions that are active members of this unprefixed
+            scope. Callers check the scope exists (``get_scope_or_raise``).
+        in_no_scope: Only sessions that are not an active member of any scope
 
     Returns:
         Select statement for Session objects
@@ -186,6 +195,11 @@ async def get_sessions(
         .where(models.Session.is_active == True)  # noqa: E712
         .where(live_session_row())
     )
+
+    if scope_name is not None:
+        stmt = stmt.where(session_in_scope_clause(scope_name))
+    elif in_no_scope:
+        stmt = stmt.where(~session_in_scope_clause(None))
 
     stmt = apply_filter(stmt, models.Session, filters)
 

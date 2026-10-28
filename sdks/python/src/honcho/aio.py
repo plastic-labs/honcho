@@ -349,6 +349,9 @@ class HonchoAio(AsyncMetadataConfigMixin):
         page: int = 1,
         size: int = 50,
         reverse: bool = False,
+        scope: str | None = None,
+        in_no_scope: bool = False,
+        include_scopes: bool = False,
     ) -> AsyncPage[SessionResponse, Session]:
         """
         Get all sessions in the current workspace asynchronously.
@@ -358,14 +361,29 @@ class HonchoAio(AsyncMetadataConfigMixin):
             page: Page number (1-indexed). Default: 1.
             size: Number of items per page. Default: 50.
             reverse: If True, reverses the default ordering. Default: False.
+            scope: Only list sessions in this scope. The server returns 404 if the
+                scope does not exist.
+            in_no_scope: Only list sessions that are in no scope. Mutually
+                exclusive with ``scope``.
+            include_scopes: Set each returned session's ``scopes`` to the names of
+                the scopes it is in. Default: False.
         """
         await self._honcho._ensure_workspace_async()
+        body: dict[str, Any] = {}
+        if filters:
+            body["filters"] = filters
+        if scope is not None:
+            body["scope"] = scope
+        if in_no_scope:
+            body["in_no_scope"] = True
         query: dict[str, Any] = {"page": page, "size": size}
         if reverse:
             query["reverse"] = "true"
+        if include_scopes:
+            query["include_scopes"] = "true"
         data = await self._honcho._async_http_client.post(
             routes.sessions_list(self._honcho.workspace_id),
-            body={"filters": filters} if filters else None,
+            body=body or None,
             query=query,
         )
 
@@ -379,16 +397,15 @@ class HonchoAio(AsyncMetadataConfigMixin):
                 created_at=session.created_at,
                 uid=session.uid,
                 is_active=session.is_active,
+                scopes=session.scopes,
             )
 
         async def fetch_next(next_page: int) -> AsyncPage[SessionResponse, Session]:
             """Fetch the next page while preserving filters and ordering."""
-            next_query: dict[str, Any] = {"page": next_page, "size": size}
-            if reverse:
-                next_query["reverse"] = "true"
+            next_query = {**query, "page": next_page}
             next_data = await self._honcho._async_http_client.post(
                 routes.sessions_list(self._honcho.workspace_id),
-                body={"filters": filters} if filters else None,
+                body=body or None,
                 query=next_query,
             )
             return AsyncPage(next_data, SessionResponse, transform, fetch_next)
