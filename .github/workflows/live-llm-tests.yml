@@ -101,6 +101,7 @@ jobs:
             echo "SENTRY_ENABLED=false"
             echo "TELEMETRY_ENABLED=false"
             echo "LIVE_LLM_ANTHROPIC_45_PLUS_MODELS=claude-sonnet-4-5"
+            echo "LIVE_LLM_ANTHROPIC_55_MODELS=claude-haiku-5-5,claude-sonnet-5-5"
           } >> "$GITHUB_ENV"
 
       - name: Install uv
