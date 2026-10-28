@@ -40,6 +40,7 @@ from src.deriver.scope_backfill import (
     process_scope_backfill,
     process_scope_removal,
 )
+from src.dreamer.working_memory import NOTES_KEY
 from src.schemas import DreamType
 from src.utils.queue_payload import ScopeBackfillPayload, ScopeRemovalPayload
 from src.utils.scopes import is_scope_peer, scope_peer_name
@@ -97,6 +98,29 @@ async def _join_scope(
             session_name=session_name,
             peer_name=scope_peer,
         )
+    )
+    await db_session.commit()
+
+
+async def _set_left_at(
+    db_session: AsyncSession,
+    workspace_name: str,
+    session_name: str,
+    scope_peer: str,
+    *,
+    left: bool,
+) -> None:
+    """End (left=True) or resume (left=False) a scope membership, as the routes do.
+
+    The removal handler skips a session that is a member again, so tests driving
+    it directly must end the membership first, and re-add before a backfill.
+    """
+    await db_session.execute(
+        update(models.SessionPeer)
+        .where(models.SessionPeer.workspace_name == workspace_name)
+        .where(models.SessionPeer.session_name == session_name)
+        .where(models.SessionPeer.peer_name == scope_peer)
+        .values(left_at=func.now() if left else None)
     )
     await db_session.commit()
 
@@ -357,6 +381,7 @@ async def test_add_remove_readd_converges_on_one_live_copy(
     db_session: AsyncSession,
     sample_data: tuple[models.Workspace, models.Peer],
 ):
+    """Add, remove, re-add: the removal soft-deletes the copy and the re-add restores it."""
     test_workspace, sender = sample_data
     workspace_name = test_workspace.name
     scope_name = str(generate_nanoid())
@@ -388,6 +413,9 @@ async def test_add_remove_readd_converges_on_one_live_copy(
     # add
     await process_scope_backfill(backfill_payload, workspace_name)
     # remove
+    await _set_left_at(
+        db_session, workspace_name, session.name, scope_peer.name, left=True
+    )
     await process_scope_removal(removal_payload, workspace_name)
     live = await _get_docs(
         db_session,
@@ -398,6 +426,9 @@ async def test_add_remove_readd_converges_on_one_live_copy(
     )
     assert live == []
     # re-add
+    await _set_left_at(
+        db_session, workspace_name, session.name, scope_peer.name, left=False
+    )
     await process_scope_backfill(backfill_payload, workspace_name)
 
     all_copies = await _get_docs(
@@ -412,6 +443,7 @@ async def test_readd_refreshes_a_restored_copys_citations(
     db_session: AsyncSession,
     sample_data: tuple[models.Workspace, models.Peer],
 ):
+    """A copy restored by a re-add picks up citations its source gained meanwhile."""
     test_workspace, sender = sample_data
     workspace_name = test_workspace.name
     scope_peer = await _create_scope_peer(
@@ -458,6 +490,9 @@ async def test_readd_refreshes_a_restored_copys_citations(
         scope_peer=scope_peer.name, session_name=session.name
     )
     await process_scope_backfill(backfill_payload, workspace_name)
+    await _set_left_at(
+        db_session, workspace_name, session.name, scope_peer.name, left=True
+    )
     await process_scope_removal(
         ScopeRemovalPayload(scope_peer=scope_peer.name, session_name=session.name),
         workspace_name,
@@ -474,6 +509,9 @@ async def test_readd_refreshes_a_restored_copys_citations(
     )
     await db_session.commit()
 
+    await _set_left_at(
+        db_session, workspace_name, session.name, scope_peer.name, left=False
+    )
     await process_scope_backfill(backfill_payload, workspace_name)
 
     [copy] = await _get_docs(
@@ -674,6 +712,350 @@ async def test_copy_chunk_membership_lock_blocks_leave_until_write_commits(
     assert membership is not None
 
 
+async def test_stale_removal_after_readd_keeps_the_scopes_memory(
+    db_session: AsyncSession,
+    sample_data: tuple[models.Workspace, models.Peer],
+):
+    """A removal queued before a re-add must not run against the re-added session.
+
+    Removal and backfill are separate work units, so a removal can drain after
+    the re-add's backfill (two replicas, a retry, a backlog). It used to delete
+    the session's restored copy and anything derived since, leaving an active
+    member with no memory in the scope (DEV-3197).
+    """
+    test_workspace, sender = sample_data
+    workspace_name = test_workspace.name
+    scope_peer = await _create_scope_peer(
+        db_session, workspace_name, str(generate_nanoid())
+    )
+    session = await _create_session(db_session, workspace_name)
+    await _join_scope(db_session, workspace_name, session.name, scope_peer.name)
+    await _create_collection(
+        db_session, workspace_name, observer=sender.name, observed=sender.name
+    )
+    await _create_document(
+        db_session,
+        workspace_name,
+        observer=sender.name,
+        observed=sender.name,
+        session_name=session.name,
+    )
+    await _create_collection(
+        db_session, workspace_name, observer=scope_peer.name, observed=sender.name
+    )
+    backfill_payload = ScopeBackfillPayload(
+        scope_peer=scope_peer.name, session_name=session.name
+    )
+    await process_scope_backfill(backfill_payload, workspace_name)
+
+    # Removed (its removal task is queued), then re-added before that drains.
+    await _set_left_at(
+        db_session, workspace_name, session.name, scope_peer.name, left=True
+    )
+    await _set_left_at(
+        db_session, workspace_name, session.name, scope_peer.name, left=False
+    )
+    await process_scope_backfill(backfill_payload, workspace_name)
+    # The deriver writes into the scope for a message sent after the re-add,
+    # a dream derives from the session's copy, and leaves notes.
+    await _create_document(
+        db_session,
+        workspace_name,
+        observer=scope_peer.name,
+        observed=sender.name,
+        session_name=session.name,
+        content="said after the re-add",
+    )
+    [copy] = [
+        d
+        for d in await _get_docs(
+            db_session,
+            workspace_name,
+            observer=scope_peer.name,
+            observed=sender.name,
+            include_deleted=False,
+        )
+        if d.internal_metadata.get(COPIED_FROM_KEY)
+    ]
+    await _create_document(
+        db_session,
+        workspace_name,
+        observer=scope_peer.name,
+        observed=sender.name,
+        session_name=None,
+        content="deduced from the session",
+        level="deductive",
+        source_ids=[copy.id],
+    )
+    await db_session.execute(
+        update(models.Collection)
+        .where(
+            models.Collection.workspace_name == workspace_name,
+            models.Collection.observer == scope_peer.name,
+            models.Collection.observed == sender.name,
+        )
+        .values(internal_metadata={NOTES_KEY: {"entries": [{"id": "n1"}]}})
+    )
+    await db_session.commit()
+
+    await process_scope_removal(
+        ScopeRemovalPayload(scope_peer=scope_peer.name, session_name=session.name),
+        workspace_name,
+    )
+
+    live = await _get_docs(
+        db_session,
+        workspace_name,
+        observer=scope_peer.name,
+        observed=sender.name,
+        include_deleted=False,
+    )
+    assert len(live) == 3  # both explicit docs and the deduction
+    notes = await crud.get_collection_internal_metadata_value(
+        db_session, workspace_name, scope_peer.name, sender.name, NOTES_KEY
+    )
+    assert notes == {"entries": [{"id": "n1"}]}
+    dreams = await _dream_items(db_session, workspace_name)
+    assert not [d for d in dreams if d.payload.get("trigger_reason") == "scope_removal"]
+    scope_peer_name_str, session_name = scope_peer.name, session.name
+    db_session.expire_all()
+    peer = await db_session.scalar(
+        select(models.Peer)
+        .where(models.Peer.workspace_name == workspace_name)
+        .where(models.Peer.name == scope_peer_name_str)
+    )
+    assert peer is not None
+    status = peer.internal_metadata.get("backfill_status", {})
+    assert status[session_name]["state"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_removal_membership_lock_blocks_readd_until_it_commits(
+    db_session: AsyncSession,
+    sample_data: tuple[models.Workspace, models.Peer],
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A re-add can't commit between the removal's membership check and its writes.
+
+    The re-add waits on the removal's row lock, then its backfill restores the
+    copy the removal soft-deleted, so the two converge on one live copy.
+    """
+    test_workspace, sender = sample_data
+    workspace_name = test_workspace.name
+    scope_peer = await _create_scope_peer(
+        db_session, workspace_name, str(generate_nanoid())
+    )
+    session = await _create_session(db_session, workspace_name)
+    await _join_scope(db_session, workspace_name, session.name, scope_peer.name)
+    await _create_collection(
+        db_session, workspace_name, observer=sender.name, observed=sender.name
+    )
+    await _create_document(
+        db_session,
+        workspace_name,
+        observer=sender.name,
+        observed=sender.name,
+        session_name=session.name,
+    )
+    await _create_collection(
+        db_session, workspace_name, observer=scope_peer.name, observed=sender.name
+    )
+    backfill_payload = ScopeBackfillPayload(
+        scope_peer=scope_peer.name, session_name=session.name
+    )
+    await process_scope_backfill(backfill_payload, workspace_name)
+    await _set_left_at(
+        db_session, workspace_name, session.name, scope_peer.name, left=True
+    )
+
+    factory = async_sessionmaker(bind=db_engine, expire_on_commit=False)
+    readd_task_box: dict[str, asyncio.Task[None]] = {}
+
+    async def concurrent_readd() -> None:
+        """Re-add the session on another connection, as the scopes route does."""
+        async with factory() as readd_db:
+            await readd_db.execute(
+                update(models.SessionPeer)
+                .where(
+                    models.SessionPeer.workspace_name == workspace_name,
+                    models.SessionPeer.session_name == session.name,
+                    models.SessionPeer.peer_name == scope_peer.name,
+                )
+                .values(left_at=None)
+            )
+            await readd_db.commit()
+
+    original_tracked_db = scope_backfill_mod.tracked_db  # pyright: ignore[reportPrivateLocalImportUsage]
+
+    @asynccontextmanager
+    async def tracked_db_with_readd_race(
+        operation_name: str | None = None, *, read_only: bool = False
+    ) -> AsyncGenerator[AsyncSession]:
+        """Start the re-add right after the removal's membership check."""
+        async with original_tracked_db(operation_name, read_only=read_only) as db:
+            if operation_name == "scope_removal":
+                real_scalar = db.scalar
+                raced = False
+
+                async def scalar_then_race(statement: Any, *args: Any, **kwargs: Any):
+                    """Run the membership check, then start the re-add and confirm it blocks."""
+                    nonlocal raced
+                    result = await real_scalar(statement, *args, **kwargs)
+                    if not raced:
+                        raced = True
+                        readd_task_box["task"] = asyncio.create_task(concurrent_readd())
+                        # The re-add's UPDATE must block on this txn's row lock.
+                        for _ in range(50):
+                            await asyncio.sleep(0.01)
+                            if readd_task_box["task"].done():
+                                break
+                        assert not readd_task_box["task"].done()
+                    return result
+
+                real_commit = db.commit
+
+                async def commit_while_locked() -> None:
+                    # Still blocked at the final commit: no step in between
+                    # released the lock early.
+                    """Confirm the re-add is still blocked when the removal commits."""
+                    await asyncio.sleep(0.05)
+                    assert not readd_task_box["task"].done()
+                    await real_commit()
+
+                db.scalar = scalar_then_race  # type: ignore[method-assign]
+                db.commit = commit_while_locked  # type: ignore[method-assign]
+            yield db
+
+    monkeypatch.setattr(scope_backfill_mod, "tracked_db", tracked_db_with_readd_race)
+
+    await process_scope_removal(
+        ScopeRemovalPayload(scope_peer=scope_peer.name, session_name=session.name),
+        workspace_name,
+    )
+    await asyncio.wait_for(readd_task_box["task"], timeout=2.0)
+    monkeypatch.undo()
+
+    # The removal ran to completion before the re-add could commit ...
+    assert (
+        await _get_docs(
+            db_session,
+            workspace_name,
+            observer=scope_peer.name,
+            observed=sender.name,
+            include_deleted=False,
+        )
+        == []
+    )
+    # ... and the re-add's backfill then restores the copy.
+    await process_scope_backfill(backfill_payload, workspace_name)
+    live = await _get_docs(
+        db_session,
+        workspace_name,
+        observer=scope_peer.name,
+        observed=sender.name,
+        include_deleted=False,
+    )
+    assert len(live) == 1
+
+
+@pytest.mark.asyncio
+async def test_removal_and_session_deletion_do_not_deadlock(
+    db_session: AsyncSession,
+    sample_data: tuple[models.Workspace, models.Peer],
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Removal and session deletion take membership and document locks in one order.
+
+    The removal holds the membership lock while deletion starts. Deletion takes
+    the membership rows first, so it waits there without holding any document
+    the removal needs next. Taking the documents first, as deletion used to,
+    would leave each waiting on the other until Postgres aborted one.
+    """
+    test_workspace, sender = sample_data
+    workspace_name = test_workspace.name
+    scope_peer = await _create_scope_peer(
+        db_session, workspace_name, str(generate_nanoid())
+    )
+    session = await _create_session(db_session, workspace_name)
+    await _join_scope(db_session, workspace_name, session.name, scope_peer.name)
+    await _create_collection(
+        db_session, workspace_name, observer=sender.name, observed=sender.name
+    )
+    await _create_document(
+        db_session,
+        workspace_name,
+        observer=sender.name,
+        observed=sender.name,
+        session_name=session.name,
+    )
+    await _create_collection(
+        db_session, workspace_name, observer=scope_peer.name, observed=sender.name
+    )
+    await process_scope_backfill(
+        ScopeBackfillPayload(scope_peer=scope_peer.name, session_name=session.name),
+        workspace_name,
+    )
+    await _set_left_at(
+        db_session, workspace_name, session.name, scope_peer.name, left=True
+    )
+
+    factory = async_sessionmaker(bind=db_engine, expire_on_commit=False)
+    deletion_box: dict[str, asyncio.Task[Any]] = {}
+    session_name = session.name
+
+    async def concurrent_delete() -> None:
+        """Delete the session on another connection, as the deletion task does."""
+        async with factory() as delete_db:
+            await crud.delete_session(delete_db, workspace_name, session_name)
+
+    original_tracked_db = scope_backfill_mod.tracked_db  # pyright: ignore[reportPrivateLocalImportUsage]
+
+    @asynccontextmanager
+    async def tracked_db_with_deletion_race(
+        operation_name: str | None = None, *, read_only: bool = False
+    ) -> AsyncGenerator[AsyncSession]:
+        """Start the deletion right after the removal's membership check."""
+        async with original_tracked_db(operation_name, read_only=read_only) as db:
+            if operation_name == "scope_removal":
+                real_scalar = db.scalar
+                raced = False
+
+                async def scalar_then_race(statement: Any, *args: Any, **kwargs: Any):
+                    """Run the membership check, then start the deletion and give it time to lock."""
+                    nonlocal raced
+                    result = await real_scalar(statement, *args, **kwargs)
+                    if not raced:
+                        raced = True
+                        deletion_box["task"] = asyncio.create_task(concurrent_delete())
+                        # Let deletion get as far as it can before removal goes on.
+                        await asyncio.sleep(0.3)
+                        assert not deletion_box["task"].done()
+                    return result
+
+                db.scalar = scalar_then_race  # type: ignore[method-assign]
+            yield db
+
+    monkeypatch.setattr(scope_backfill_mod, "tracked_db", tracked_db_with_deletion_race)
+
+    await process_scope_removal(
+        ScopeRemovalPayload(scope_peer=scope_peer.name, session_name=session_name),
+        workspace_name,
+    )
+    await asyncio.wait_for(deletion_box["task"], timeout=10.0)
+
+    remaining = await db_session.scalar(
+        select(func.count())
+        .select_from(models.Document)
+        .where(
+            models.Document.workspace_name == workspace_name,
+            models.Document.session_name == session_name,
+        )
+    )
+    assert remaining == 0
+
+
 # ---------------------------------------------------------------------------
 # 3. Multi-peer session
 # ---------------------------------------------------------------------------
@@ -733,6 +1115,7 @@ async def test_removal_cascades_to_dependent_derived_docs_only(
     db_session: AsyncSession,
     sample_data: tuple[models.Workspace, models.Peer],
 ):
+    """Removal soft-deletes derived docs resting on the removed copy, and no others."""
     test_workspace, sender = sample_data
     workspace_name = test_workspace.name
     scope_name = str(generate_nanoid())
@@ -786,6 +1169,9 @@ async def test_removal_cascades_to_dependent_derived_docs_only(
 
     copy_id, dependent_id, unrelated_id = copy.id, dependent.id, unrelated.id
 
+    await _set_left_at(
+        db_session, workspace_name, session.name, scope_peer.name, left=True
+    )
     await process_scope_removal(
         ScopeRemovalPayload(scope_peer=scope_peer.name, session_name=session.name),
         workspace_name,
