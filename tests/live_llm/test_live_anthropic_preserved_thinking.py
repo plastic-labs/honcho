@@ -213,21 +213,31 @@ async def test_live_truncation_and_synthesis_keep_replayed_thinking_valid(
     config = _enforced_config(model_spec)
     requests, responses = _record_client(monkeypatch, config)
 
-    response = await honcho_llm_call(
-        model_config=config,
-        prompt="",
-        messages=[
-            {"role": "system", "content": "You check numbers with check_number."},
-            {"role": "user", "content": LOOP_PROMPT},
-        ],
-        max_tokens=4096,
-        tools=[CHECK_NUMBER_TOOL],
-        tool_choice="auto",
-        tool_executor=_check_number,
-        max_tool_iterations=3,
-        max_input_tokens=2600,
-        enable_retry=False,
-    )
+    # Now and then the model finishes early (batching calls or answering in
+    # prose) and never reaches synthesis. Retry only that; an API error such as
+    # the 400 this test is for fails on the first attempt.
+    response = None
+    for _ in range(3):
+        requests.clear()
+        responses.clear()
+        response = await honcho_llm_call(
+            model_config=config,
+            prompt="",
+            messages=[
+                {"role": "system", "content": "You check numbers with check_number."},
+                {"role": "user", "content": LOOP_PROMPT},
+            ],
+            max_tokens=4096,
+            tools=[CHECK_NUMBER_TOOL],
+            tool_choice="auto",
+            tool_executor=_check_number,
+            max_tool_iterations=3,
+            max_input_tokens=2600,
+            enable_retry=False,
+        )
+        if response.hit_iteration_limit:
+            break
+    assert response is not None
 
     # Thinking produced before a truncation or the tool-set change has to be
     # dropped from later requests rather than replayed, so what matters is that
