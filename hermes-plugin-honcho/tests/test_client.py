@@ -601,6 +601,88 @@ class TestResolveSessionNameGatewayKey:
         assert ":" not in result
 
 
+class TestResolveSessionNameLocalGatewayKey:
+    """A LOCAL gateway key (``agent:<ns>:local:...``) falls through to ``sessionStrategy``.
+
+    Since Hermes routed its own CLI/TUI/Desktop/ACP chats through the gateway runtime, each of them
+    arrives with a gateway session key like a Telegram chat does. Honoring it opened one Honcho
+    session per chat (``agent-main-local-dm-local-<sha>``) and the configured per-repo /
+    per-directory strategy was never reached. Those chats have their own frozen workspace, so the
+    strategy applies to them; messaging platforms keep their per-chat isolation.
+    """
+
+    LOCAL_KEY = "agent:main:local:dm:local-98538a20971158c0308ab21c193d3dbc508f54b85c00b71677ae2a91caaa6f95"
+    TELEGRAM_KEY = "agent:main:telegram:dm:8439114563"
+
+    def test_local_key_matches_core_platform_value(self):
+        """The literal the plugin compares against must track ``Platform.LOCAL`` in Hermes core."""
+        from gateway.config import Platform
+        assert HonchoClientConfig._LOCAL_GATEWAY_PLATFORM == Platform.LOCAL.value
+
+    @pytest.mark.parametrize("key", [
+        LOCAL_KEY,
+        "agent:main:local:dm:local-abc",
+        "agent:coder:local:dm:local-abc",      # named profile namespace
+        "agent:main~:local:dm:local-abc",      # profile literally named "main"
+        "agent:main:local:dm",                 # no chat id
+    ])
+    def test_recognizes_local_keys(self, key):
+        assert HonchoClientConfig._is_local_gateway_key(key) is True
+
+    @pytest.mark.parametrize("key", [
+        TELEGRAM_KEY,
+        "agent:main:discord:group:123:456",
+        "agent:main:telegram:dm:local-abc",    # "local" as a chat id, not the platform slot
+        "agent:main:dm:1",                     # malformed: too short to carry a platform
+        "local:dm:local-abc",                  # no agent prefix
+        "agent:local",                         # "local" in the namespace slot
+    ])
+    def test_rejects_non_local_keys(self, key):
+        assert HonchoClientConfig._is_local_gateway_key(key) is False
+
+    def test_local_key_falls_through_to_per_directory(self, tmp_path):
+        config = HonchoClientConfig(session_strategy="per-directory")
+        result = config.resolve_session_name(cwd=str(tmp_path), gateway_session_key=self.LOCAL_KEY)
+        assert result == tmp_path.name
+
+    def test_local_key_falls_through_to_sessions_map(self, tmp_path):
+        config = HonchoClientConfig(session_strategy="per-repo", sessions={str(tmp_path): "mapped-bucket"})
+        result = config.resolve_session_name(cwd=str(tmp_path), gateway_session_key=self.LOCAL_KEY)
+        assert result == "mapped-bucket"
+
+    def test_local_key_falls_through_to_explicit_title(self, tmp_path):
+        config = HonchoClientConfig(session_strategy="per-directory")
+        result = config.resolve_session_name(
+            cwd=str(tmp_path), gateway_session_key=self.LOCAL_KEY,
+            session_title="Refactor auth", session_title_source="user",
+        )
+        assert result == "Refactor-auth"
+
+    def test_local_key_with_per_session_isolates_by_session_id(self, tmp_path):
+        """Per-chat isolation stays available for local chats: ask for it with ``per-session``."""
+        config = HonchoClientConfig(session_strategy="per-session")
+        result = config.resolve_session_name(
+            cwd=str(tmp_path), session_id="local-98538a20971158", gateway_session_key=self.LOCAL_KEY,
+        )
+        assert result == "local-98538a20971158"
+
+    def test_local_key_with_global_strategy_uses_workspace(self, tmp_path):
+        config = HonchoClientConfig(session_strategy="global", workspace_id="agents")
+        result = config.resolve_session_name(cwd=str(tmp_path), gateway_session_key=self.LOCAL_KEY)
+        assert result == "agents"
+
+    def test_messaging_key_still_beats_directory_strategies(self, tmp_path):
+        """The fall-through is LOCAL-only: a Telegram chat never resolves by the gateway's cwd."""
+        config = HonchoClientConfig(session_strategy="per-repo", sessions={str(tmp_path): "mapped-bucket"})
+        result = config.resolve_session_name(cwd=str(tmp_path), gateway_session_key=self.TELEGRAM_KEY)
+        assert result == "agent-main-telegram-dm-8439114563"
+
+    def test_local_key_result_gets_ai_peer_prefix_like_any_other_path(self, tmp_path):
+        config = HonchoClientConfig(session_strategy="per-directory", ai_peer="ivy", session_ai_peer_prefix=True)
+        result = config.resolve_session_name(cwd=str(tmp_path), gateway_session_key=self.LOCAL_KEY)
+        assert result == f"ivy-{tmp_path.name}"
+
+
 class TestResolveSessionNameLengthLimit:
     """Regression tests for Honcho's 100-char session ID limit (issue #13868).
 
