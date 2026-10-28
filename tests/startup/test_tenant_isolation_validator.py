@@ -20,6 +20,8 @@ from src.config import AppSettings, settings
 from src.startup import StartupValidationError, validate_tenant_isolation
 from src.startup.tenant_isolation_validator import (
     _RLS_REQUIRED_TABLES,  # pyright: ignore[reportPrivateUsage]
+    SearchFunction,
+    _assert_search_function_bypasses_rls,  # pyright: ignore[reportPrivateUsage]
     _assert_tenant_role_cannot_bypass_rls,  # pyright: ignore[reportPrivateUsage]
 )
 from tests.conftest import untouchable_engine
@@ -80,6 +82,18 @@ def _fake_enforced_rls(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
+_OWNED_BY_BYPASSRLS = SearchFunction(True, "honcho_owner", False, True)
+
+
+def _fake_search_function(
+    monkeypatch: pytest.MonkeyPatch, found: SearchFunction | None
+) -> None:
+    monkeypatch.setattr(
+        "src.startup.tenant_isolation_validator._introspect_search_function_with_retry",
+        AsyncMock(return_value=found),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Flag off: the single-tenant default
 # ---------------------------------------------------------------------------
@@ -126,6 +140,7 @@ async def test_deriver_instance_skips_the_auth_check(
     # would be checked for passes, with the DB introspection faked.
     _fake_enforced_rls(monkeypatch)
     _fake_tenant_role(monkeypatch, "honcho_app", False, False)
+    _fake_search_function(monkeypatch, _OWNED_BY_BYPASSRLS)
     s = _flag_on_settings()
     s.AUTH.USE_AUTH = False
     await validate_tenant_isolation(_NO_ENGINE, instance_type="deriver", app_settings=s)
@@ -326,7 +341,78 @@ async def test_boots_when_the_tenant_role_cannot_bypass_rls(
 ) -> None:
     _fake_enforced_rls(monkeypatch)
     _fake_tenant_role(monkeypatch, "honcho_app", False, False)
+    _fake_search_function(monkeypatch, _OWNED_BY_BYPASSRLS)
 
     await validate_tenant_isolation(
         _NO_ENGINE, instance_type="api", app_settings=_flag_on_settings()
+    )
+
+
+# ---------------------------------------------------------------------------
+# The message search function must run as a role that bypasses RLS
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "found",
+    [
+        _OWNED_BY_BYPASSRLS,
+        SearchFunction(True, "postgres", True, False),
+    ],
+)
+def test_assert_search_function_passes_when_its_owner_bypasses_rls(
+    found: SearchFunction,
+) -> None:
+    _assert_search_function_bypasses_rls(found, schema="public")
+
+
+@pytest.mark.parametrize(
+    ("found", "match"),
+    [
+        (None, "is absent"),
+        (SearchFunction(False, "honcho_owner", False, True), "not SECURITY DEFINER"),
+        (SearchFunction(True, "honcho_app", False, False), "cannot bypass RLS"),
+    ],
+)
+def test_assert_search_function_raises(
+    found: SearchFunction | None, match: str
+) -> None:
+    with pytest.raises(StartupValidationError, match=match):
+        _assert_search_function_bypasses_rls(found, schema="public")
+
+
+def test_assert_search_function_names_the_repair() -> None:
+    with pytest.raises(StartupValidationError, match="OWNER TO") as exc:
+        _assert_search_function_bypasses_rls(
+            SearchFunction(True, "honcho_app", False, False), schema="public"
+        )
+    assert "'honcho_app'" in str(exc.value)
+    assert "public.message_text_matches(text, text, text, text, boolean)" in str(
+        exc.value
+    )
+
+
+@pytest.mark.asyncio
+async def test_refuses_boot_when_the_search_function_owner_is_under_rls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_enforced_rls(monkeypatch)
+    _fake_tenant_role(monkeypatch, "honcho_app", False, False)
+    _fake_search_function(monkeypatch, SearchFunction(True, "honcho_app", False, False))
+
+    with pytest.raises(StartupValidationError, match="cannot bypass RLS"):
+        await validate_tenant_isolation(
+            _NO_ENGINE, instance_type="api", app_settings=_flag_on_settings()
+        )
+
+
+@pytest.mark.asyncio
+async def test_the_migrated_search_function_passes_on_the_real_schema(
+    monkeypatch: pytest.MonkeyPatch, db_engine: AsyncEngine
+) -> None:
+    _fake_enforced_rls(monkeypatch)
+    _fake_tenant_role(monkeypatch, "honcho_app", False, False)
+
+    await validate_tenant_isolation(
+        db_engine, instance_type="api", app_settings=_flag_on_settings()
     )

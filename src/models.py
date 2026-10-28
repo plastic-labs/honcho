@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 from nanoid import generate as generate_nanoid
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
+    DDL,
     BigInteger,
     Boolean,
     CheckConstraint,
@@ -513,6 +514,57 @@ class Message(Base, TenantPartitioned):
     @override
     def __repr__(self) -> str:
         return f"Message(tenant_id={self.tenant_id}, id={self.id}, session_name={self.session_name}, peer_name={self.peer_name}, content={self.content})"
+
+
+MESSAGE_TEXT_MATCHES = "message_text_matches"
+
+
+def message_text_matches_ddl(schema: str) -> str:
+    """Creates an ILIKE equivalent function `message_text_matches` using the
+    SECURITY DEFINER feature.
+
+    The row-level security we use for multi-tenant features defers using ILIKE/@@
+    with index until after the security checks because it might expose secrets
+    in its error messages (unless defined in a LEAKPROOF postgres function). But
+    that makes it much slower.
+
+    `message_text_matches` is a specific function that runs as an escalated
+    user to bypass the RLS checks to use ILIKE specifically in certain cases.
+    If we don't use this, postgres will convert ILIKE into simpler row scan
+    instead of pre-filtering with an index.
+    """
+    return f"""
+CREATE OR REPLACE FUNCTION "{schema}".{MESSAGE_TEXT_MATCHES}(
+    p_tenant text, p_workspace text, p_query text, p_pattern text, p_use_fts boolean
+) RETURNS SETOF bigint
+LANGUAGE plpgsql STABLE SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE
+    match text := 'm.content ILIKE $2 ESCAPE ' || quote_literal('\\');
+BEGIN
+    IF p_tenant IS NULL OR p_tenant IS DISTINCT FROM current_setting('app.tenant', true)
+    THEN
+        RETURN;
+    END IF;
+    IF p_use_fts THEN
+        match := 'to_tsvector(''english'', m.content)'
+            || ' @@ plainto_tsquery(''english'', $3) OR ' || match;
+    END IF;
+    RETURN QUERY EXECUTE 'SELECT m.id FROM "{schema}".messages AS m'
+        || ' WHERE m.tenant_id = ' || quote_literal(p_tenant)
+        || ' AND m.workspace_name = $1 AND (' || match || ')'
+        USING p_workspace, p_pattern, p_query;
+END
+$$
+"""  # nosec B608
+
+
+event.listen(
+    Base.metadata,
+    "after_create",
+    DDL(message_text_matches_ddl(settings.DB.SCHEMA).replace("%", "%%")),
+)
 
 
 @final

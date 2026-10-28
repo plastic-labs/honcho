@@ -8,7 +8,7 @@ of each item's rank in each list, then summing these reciprocal ranks.
 import re
 from typing import Any, TypeVar
 
-from sqlalchemy import Select, and_, func, or_, select
+from sqlalchemy import ColumnElement, Select, and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
@@ -251,11 +251,37 @@ async def _filter_by_peer_perspective(
     return filtered_messages
 
 
+def message_text_condition(
+    workspace_name: str | None, query: str, *, use_fts: bool
+) -> ColumnElement[bool]:
+    """The predicate that matches messages.content against a search query."""
+    pattern = f"%{escape_ilike_pattern(query)}%"
+    if settings.MULTI_TENANT and workspace_name is not None:
+        matches = select(
+            getattr(func, settings.DB.SCHEMA).message_text_matches(
+                models.scoped_tenant_id(), workspace_name, query, pattern, use_fts
+            )
+        )
+        return models.Message.id.in_(matches)
+    condition: ColumnElement[bool] = models.Message.content.ilike(
+        pattern, escape=ILIKE_ESCAPE_CHAR
+    )
+    if use_fts:
+        condition = or_(
+            func.to_tsvector("english", models.Message.content).op("@@")(
+                func.plainto_tsquery("english", query)
+            ),
+            condition,
+        )
+    return condition
+
+
 async def _fulltext_search(
     db: AsyncSession,
     query: str,
     stmt: Select[tuple[models.Message]],
     limit: int,
+    workspace_name: str | None = None,
 ) -> list[models.Message]:
     """
     Perform full-text search using PostgreSQL FTS and ILIKE fallback.
@@ -265,6 +291,7 @@ async def _fulltext_search(
         query: Search query
         stmt: Base SQL query conditions
         limit: Maximum number of results to return
+        workspace_name: The workspace the statement is scoped to, if known
 
     Returns:
         list of messages ordered by text search relevance
@@ -274,30 +301,15 @@ async def _fulltext_search(
         re.search(r'[~`!@#$%^&*()_+=\[\]{};\':"\\|,.<>/?-]', query)
     )
 
-    # Escape ILIKE pattern characters to treat user input literally
-    escaped_query = escape_ilike_pattern(query)
-
     if has_special_chars:
         # For queries with special characters, use exact string matching (ILIKE)
-        search_condition = models.Message.content.ilike(
-            f"%{escaped_query}%", escape=ILIKE_ESCAPE_CHAR
-        )
+        search_condition = message_text_condition(workspace_name, query, use_fts=False)
         fulltext_query = stmt.where(search_condition).order_by(
             models.Message.created_at.desc()
         )
     else:
         # For natural language queries, use full text search with ranking
-        fts_condition = func.to_tsvector("english", models.Message.content).op("@@")(
-            func.plainto_tsquery("english", query)
-        )
-
-        # Combine FTS with ILIKE as fallback for better coverage
-        combined_condition = or_(
-            fts_condition,
-            models.Message.content.ilike(
-                f"%{escaped_query}%", escape=ILIKE_ESCAPE_CHAR
-            ),
-        )
+        combined_condition = message_text_condition(workspace_name, query, use_fts=True)
 
         fulltext_query = stmt.where(combined_condition).order_by(
             # Order by FTS relevance first, then by creation time
@@ -448,6 +460,7 @@ async def search(
             query=query,
             stmt=stmt,
             limit=limit * 2,
+            workspace_name=workspace_name,
         )
         search_results.append(fulltext_results)
 

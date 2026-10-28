@@ -264,8 +264,142 @@ def test_rls_predicate_preserves_index_use(rls_engine: Engine) -> None:
                 text("EXPLAIN SELECT id FROM peers WHERE workspace_name = 'ws-1'")
             )
         )
+        conn.execute(text("RESET ROLE"))
     finally:
         raw.close()
 
     assert "Index Scan" in plan or "Index Only Scan" in plan, plan
     assert "Seq Scan" not in plan, plan
+
+
+def _seed_same_named_workspaces(engine: Engine) -> None:
+    """Two tenants with a same-named workspace and same-content messages."""
+    with engine.begin() as conn:
+        conn.execute(text("RESET ROLE"))
+        for n, tenant in enumerate(("t-search-1", "t-search-2"), start=1):
+            conn.execute(
+                text("INSERT INTO tenants (tenant_id) VALUES (:t)"), {"t": tenant}
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO workspaces (tenant_id, id, name) VALUES (:t, :id, :n)"
+                ),
+                {"t": tenant, "id": _new_id(), "n": "ws-search"},
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO peers (tenant_id, id, name, workspace_name)"
+                    + " VALUES (:t, :id, 'p', 'ws-search')"
+                ),
+                {"t": tenant, "id": _new_id()},
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO sessions (tenant_id, id, name, workspace_name)"
+                    + " VALUES (:t, :id, 's', 'ws-search')"
+                ),
+                {"t": tenant, "id": _new_id()},
+            )
+            for seq, content in ((1, "the quick brown fox"), (2, "nothing here")):
+                conn.execute(
+                    text(
+                        "INSERT INTO messages (tenant_id, id, public_id, workspace_name,"
+                        + " session_name, peer_name, content, seq_in_session,"
+                        + " token_count) VALUES (:t, :id, :pid, 'ws-search', 's', 'p',"
+                        + " :c, :seq, 4)"
+                    ),
+                    {
+                        "t": tenant,
+                        "id": n * 100 + seq,
+                        "pid": _new_id(),
+                        "c": content,
+                        "seq": seq,
+                    },
+                )
+        conn.execute(
+            text(
+                "INSERT INTO messages (tenant_id, id, public_id, workspace_name,"
+                + " session_name, peer_name, content, seq_in_session, token_count)"
+                + " SELECT 't-search-1', 1000 + g, 'a1e7ce5396d5' || lpad(g::text, 9, '0'),"
+                + " 'ws-search', 's', 'p', 'filler message number ' || g, 10 + g, 4"
+                + " FROM generate_series(1, 3000) AS g"
+            )
+        )
+        conn.execute(text("ANALYZE messages"))
+
+
+def _matches(conn: Connection, tenant: str) -> list[int]:
+    rows = conn.execute(
+        text(
+            "SELECT * FROM message_text_matches(:t, 'ws-search', 'fox', '%fox%', true)"
+            + " ORDER BY 1"
+        ),
+        {"t": tenant},
+    )
+    return [int(r[0]) for r in rows]
+
+
+def test_search_function_reads_only_the_bound_tenant(rls_engine: Engine) -> None:
+    _seed_same_named_workspaces(rls_engine)
+
+    raw = rls_engine.connect()
+    conn = raw.execution_options(isolation_level="AUTOCOMMIT")
+    try:
+        conn.execute(text(f"SET ROLE {_RLS_ROLE}"))
+
+        _bind_tenant(conn, "t-search-1")
+        assert _matches(conn, "t-search-1") == [101]
+        assert _matches(conn, "t-search-2") == []
+        assert [
+            int(r[0])
+            for r in conn.execute(
+                text(
+                    "SELECT id FROM messages WHERE id IN (SELECT message_text_matches"
+                    + "('t-search-1', 'ws-search', 'fox', '%fox%', true))"
+                )
+            )
+        ] == [101]
+
+        _bind_tenant(conn, "t-search-2")
+        assert _matches(conn, "t-search-2") == [201]
+        assert _matches(conn, "t-search-1") == []
+
+        _bind_tenant(conn, "")
+        assert _matches(conn, "t-search-1") == []
+        assert _matches(conn, "") == []
+
+        conn.execute(text("RESET ROLE"))
+    finally:
+        raw.close()
+
+
+def _search_plan(conn: Connection) -> str:
+    conn.execute(text("SET enable_seqscan = off"))
+    rows = conn.execute(
+        text(
+            "EXPLAIN SELECT id FROM messages WHERE tenant_id = 't-search-1'"
+            + " AND workspace_name = 'ws-search'"
+            + " AND to_tsvector('english', content) @@ plainto_tsquery('english', 'fox')"
+        )
+    )
+    return "\n".join(str(r[0]) for r in rows)
+
+
+def test_rls_keeps_the_content_index_from_the_app_role(rls_engine: Engine) -> None:
+    # The function exists because @@ is not leakproof: for the app role the policy
+    # qual runs first and the GIN index cannot serve the match. The owner, who
+    # bypasses RLS, gets the index. The function runs as the owner.
+    raw = rls_engine.connect()
+    conn = raw.execution_options(isolation_level="AUTOCOMMIT")
+    try:
+        conn.execute(text("RESET ROLE"))
+        _bind_tenant(conn, "t-search-1")
+        owner_plan = _search_plan(conn)
+        conn.execute(text(f"SET ROLE {_RLS_ROLE}"))
+        app_plan = _search_plan(conn)
+        conn.execute(text("RESET ROLE"))
+    finally:
+        raw.close()
+
+    assert "ix_messages_content_gin" in owner_plan, owner_plan
+    assert "ix_messages_content_gin" not in app_plan, app_plan

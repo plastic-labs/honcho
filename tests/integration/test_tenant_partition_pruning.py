@@ -32,6 +32,9 @@ from sqlalchemy_utils import (
 from src import crud, models, schemas
 from src.cache.client import cache
 from src.config import settings
+from src.crud.message import (
+    _grep_messages_internal,  # pyright: ignore[reportPrivateUsage]
+)
 from src.db import (
     CROSS_TENANT,
     Base,
@@ -41,6 +44,7 @@ from src.db import (
 )
 from src.db import connect_args as app_connect_args
 from src.utils.search import (
+    _fulltext_search,  # pyright: ignore[reportPrivateUsage]
     _semantic_search_pgvector,  # pyright: ignore[reportPrivateUsage]
 )
 from tests.conftest import (
@@ -277,6 +281,17 @@ async def _semantic_message_search(db: AsyncSession, _source_id: str) -> list[An
     return sorted(m.content for m in rows)
 
 
+async def _message_grep(db: AsyncSession, _source_id: str) -> list[Any]:
+    snippets = await _grep_messages_internal(db, "w", None, "message 2", limit=5)
+    return sorted(m.content for matched, _ in snippets for m in matched)
+
+
+async def _message_fulltext_search(db: AsyncSession, _source_id: str) -> list[Any]:
+    stmt = select(models.Message).where(models.Message.workspace_name == "w")
+    rows = await _fulltext_search(db, "message", stmt, limit=5, workspace_name="w")
+    return sorted(m.content for m in rows)
+
+
 async def _message_ingest(db: AsyncSession, _source_id: str) -> list[Any]:
     created = await crud.create_messages(
         db, [schemas.MessageCreate(content="new", peer_id="p")], "w", "s"
@@ -302,6 +317,8 @@ _CASES: dict[str, _Case] = {
     "conclusions read with a source filter": _conclusions_by_source,
     "reasoning chain read": _child_observations,
     "message_embeddings search": _semantic_message_search,
+    "message grep": _message_grep,
+    "message full-text search": _message_fulltext_search,
     "message ingest write": _message_ingest,
     "conclusion soft delete": _conclusion_delete,
     "session delete": _session_delete,
