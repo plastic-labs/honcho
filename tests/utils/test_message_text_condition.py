@@ -45,10 +45,23 @@ def test_flag_on_reads_the_matching_ids_from_the_function(
         sql, params = _compile(message_text_condition("w", "hello", use_fts=use_fts))
     finally:
         tenant_context.reset(token)
-    assert f"messages.id IN (SELECT {models.MESSAGE_TEXT_MATCHES}(" in sql
+    assert f"messages.id IN (SELECT public.{models.MESSAGE_TEXT_MATCHES}(" in sql
     assert "ILIKE" not in sql
     assert "@@" not in sql
     assert list(params.values()) == ["tenant-a", "w", "hello", "%hello%", use_fts]
+
+
+def test_flag_on_qualifies_the_function_with_the_configured_schema(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "MULTI_TENANT", True)
+    monkeypatch.setattr(settings.DB, "SCHEMA", "honcho_tenants")
+    token = tenant_context.set("tenant-a")
+    try:
+        sql, _ = _compile(message_text_condition("w", "hello", use_fts=True))
+    finally:
+        tenant_context.reset(token)
+    assert f"(SELECT honcho_tenants.{models.MESSAGE_TEXT_MATCHES}(" in sql
 
 
 def test_flag_on_without_a_bound_tenant_fails_closed(

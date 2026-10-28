@@ -258,7 +258,7 @@ def message_text_condition(
     pattern = f"%{escape_ilike_pattern(query)}%"
     if settings.MULTI_TENANT and workspace_name is not None:
         matches = select(
-            func.message_text_matches(
+            getattr(func, settings.DB.SCHEMA).message_text_matches(
                 models.scoped_tenant_id(), workspace_name, query, pattern, use_fts
             )
         )
