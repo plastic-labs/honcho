@@ -1,4 +1,5 @@
 import json
+import threading
 
 import pytest
 
@@ -59,3 +60,26 @@ async def test_pdf_processor_does_not_mask_builtin_errors_from_other_code(
 
     with pytest.raises(TypeError, match="bug outside pypdf"):
         await PDFProcessor().extract_text(b"%PDF-1.4\n")
+
+
+@pytest.mark.asyncio
+async def test_pdf_processor_parses_off_the_event_loop(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    # pypdf is synchronous; parsing on the loop thread would stall every other
+    # request on the worker for as long as one PDF takes to read.
+    parse_threads: list[threading.Thread] = []
+
+    def recording_reader(_stream: object) -> object:
+        parse_threads.append(threading.current_thread())
+
+        class _Reader:
+            pages: list[object] = []
+
+        return _Reader()
+
+    monkeypatch.setattr("pypdf.PdfReader", recording_reader)
+
+    assert await PDFProcessor().extract_text(b"%PDF-1.4\n") == ""
+    assert parse_threads
+    assert parse_threads[0] is not threading.current_thread()
