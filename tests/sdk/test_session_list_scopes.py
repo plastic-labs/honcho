@@ -28,6 +28,7 @@ async def test_sessions_scope_options(client_fixture: tuple[Honcho, str]) -> Non
         await beta.aio.add_sessions(["s1"])
 
         async def collect(**options: object) -> list[Session]:
+            """Walk every page of the session list and collect its sessions."""
             sessions: list[Session] = []
             page = await honcho_client.aio.sessions(size=1, **options)  # pyright: ignore[reportArgumentType]
             while page is not None:
@@ -48,6 +49,7 @@ async def test_sessions_scope_options(client_fixture: tuple[Honcho, str]) -> Non
         beta.add_sessions(["s1"])
 
         def collect_sync(**options: object) -> list[Session]:
+            """Walk every page of the session list and collect its sessions."""
             page = honcho_client.sessions(size=1, **options)  # pyright: ignore[reportArgumentType]
             return cast(list[Session], list(page))
 

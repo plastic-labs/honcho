@@ -1216,12 +1216,14 @@ def _list_sessions(
     body: dict[str, Any] | None = None,
     **query: Any,
 ):
+    """POST the workspace session list with an optional body and query params."""
     return client.post(
         f"/v3/workspaces/{workspace_name}/sessions/list", json=body, params=query
     )
 
 
 def _session_scopes_by_id(response: Any) -> dict[str, list[str] | None]:
+    """Map each listed session ID to its scopes (None when the key is omitted)."""
     assert response.status_code == 200, response.text
     return {item["id"]: item.get("scopes") for item in response.json()["items"]}
 
@@ -1229,6 +1231,7 @@ def _session_scopes_by_id(response: Any) -> dict[str, list[str] | None]:
 def test_session_list_include_scopes(
     client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
+    """include_scopes lists each session's active scopes, sorted, and composes with filters."""
     test_workspace, _ = sample_data
     ws = test_workspace.name
     scope_a, scope_b = sorted(str(generate_nanoid()) for _ in range(2))
@@ -1295,6 +1298,7 @@ async def test_session_list_scopes_ignore_unflagged_prefixed_peers(
 def test_session_list_scope_filter(
     client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
+    """scope and in_no_scope select members and non-members; total counts the filtered result."""
     test_workspace, _ = sample_data
     ws = test_workspace.name
     scope_a, scope_b = (str(generate_nanoid()) for _ in range(2))
@@ -1463,6 +1467,7 @@ def test_session_list_scopes_after_readd(
 def test_session_list_scope_filter_errors(
     client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
+    """An unknown scope is a 404; a prefixed name or both options at once is a 422."""
     test_workspace, _ = sample_data
     ws = test_workspace.name
     scope_name = str(generate_nanoid())

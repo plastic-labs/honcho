@@ -475,6 +475,7 @@ class WorkspaceSessionGet(SessionGet):
 
     @model_validator(mode="after")
     def validate_scope_options(self) -> Self:
+        """Refuse `scope` together with `in_no_scope`; they select disjoint sets."""
         if self.scope is not None and self.in_no_scope:
             raise ValueError("`scope` and `in_no_scope` are mutually exclusive")
         return self

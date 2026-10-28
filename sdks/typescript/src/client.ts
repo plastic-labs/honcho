@@ -401,6 +401,14 @@ export class Honcho {
     )
   }
 
+  /**
+   * Fetch one page of the workspace's sessions.
+   *
+   * @param workspaceId - Workspace to list
+   * @param params - Filters, pagination, the `scope` / `inNoScope` membership
+   *                 filters, and whether to include each session's `scopes`
+   * @returns The raw page response
+   */
   private async _listSessions(
     workspaceId: string,
     params?: {
