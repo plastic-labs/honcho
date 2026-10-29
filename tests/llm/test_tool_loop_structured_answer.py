@@ -12,10 +12,12 @@ from tenacity import wait_none
 
 from src.llm import tool_loop
 from src.llm.errors import llm_retry_condition
+from src.llm.messages import ChatMessage, UserMessage
 from src.llm.runtime import AttemptPlan, current_attempt
 from src.llm.structured_output import StructuredOutputError
 from src.llm.tool_loop import execute_tool_loop
 from src.llm.types import HonchoLLMCallResponse, StreamingResponseWithMetadata
+from tests.llm.conftest import with_assistant_turn
 
 _TOOLS: list[dict[str, Any]] = [
     {"name": "recall", "description": "recall", "input_schema": {}}
@@ -49,17 +51,19 @@ def _plan_for_current_attempt(retry_attempts: int) -> AttemptPlan:
 def _response(
     content: Any, tool_names: tuple[str, ...] = ()
 ) -> HonchoLLMCallResponse[Any]:
-    return HonchoLLMCallResponse(
-        content=content,
-        input_tokens=10,
-        output_tokens=5,
-        cache_creation_input_tokens=0,
-        cache_read_input_tokens=0,
-        finish_reasons=["tool_use" if tool_names else "stop"],
-        tool_calls_made=[
-            {"id": f"t{i}", "name": name, "input": {}}
-            for i, name in enumerate(tool_names)
-        ],
+    return with_assistant_turn(
+        HonchoLLMCallResponse(
+            content=content,
+            input_tokens=10,
+            output_tokens=5,
+            cache_creation_input_tokens=0,
+            cache_read_input_tokens=0,
+            finish_reasons=["tool_use" if tool_names else "stop"],
+            tool_calls_made=[
+                {"id": f"t{i}", "name": name, "input": {}}
+                for i, name in enumerate(tool_names)
+            ],
+        )
     )
 
 
@@ -69,7 +73,7 @@ class _ScriptedModel:
     def __init__(self, script: list[dict[str, HonchoLLMCallResponse[Any]]]) -> None:
         self.script: list[dict[str, HonchoLLMCallResponse[Any]]] = list(script)
         self.models: list[str] = []
-        self.messages: list[list[dict[str, Any]]] = []
+        self.messages: list[list[ChatMessage]] = []
 
     async def __call__(self, *_args: Any, **kwargs: Any) -> HonchoLLMCallResponse[Any]:
         model = kwargs["plan"].model
@@ -173,7 +177,9 @@ async def test_empty_answer_gets_the_nudge_before_it_counts_as_a_miss() -> None:
     assert result.content == _Answer(answer="ok")
     # One call per iteration: the empty answer went to the nudge, not a retry.
     assert model.models == [_PRIMARY, _PRIMARY]
-    assert "Your last response was empty" in model.messages[1][-1]["content"]
+    nudge = model.messages[1][-1]
+    assert isinstance(nudge, UserMessage)
+    assert "Your last response was empty" in nudge.content
 
 
 @pytest.mark.asyncio

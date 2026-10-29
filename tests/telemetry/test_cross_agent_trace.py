@@ -27,6 +27,7 @@ from src.llm.capture import (
     dispatch_captured_call,
     register_exporter,
 )
+from src.llm.messages import UserMessage
 from src.llm.types import LLMTelemetryContext
 from src.telemetry.langfuse_exporter import LangfuseExporter
 
@@ -55,7 +56,7 @@ def _dispatch(telemetry: LLMTelemetryContext, *, content: str = "answer") -> Non
         transport="anthropic",
         provider_label=None,
         model="claude-x",
-        messages=[{"role": "user", "content": "q"}],
+        messages=[UserMessage(content="q")],
         tools=None,
         tool_choice=None,
         result=CompletionResult(content=content, finish_reason="stop"),

@@ -1272,6 +1272,7 @@ def _tool_call_message(
     *,
     content: str | None,
     reasoning_details: list[Any] | None = None,
+    arguments: str = '{"query":"honcho"}',
 ) -> SimpleNamespace:
     return SimpleNamespace(
         content=content,
@@ -1280,7 +1281,7 @@ def _tool_call_message(
                 id="call_probe",
                 function=SimpleNamespace(
                     name="search",
-                    arguments='{"query":"honcho"}',
+                    arguments=arguments,
                 ),
             )
         ],
@@ -1300,6 +1301,23 @@ def _completion_response(
             prompt_tokens_details=None,
         ),
     )
+
+
+@pytest.mark.parametrize("arguments", ['"{\\"query\\": 1}"', "[1]", "null", "{bad"])
+def test_openai_tool_arguments_that_are_not_an_object_become_empty(
+    arguments: str,
+) -> None:
+    """Double-encoded, non-object or undecodable arguments still yield a tool
+    call the loop can run and answer, rather than failing the completion."""
+    response = _completion_response(
+        _tool_call_message(content=None, arguments=arguments), "tool_calls"
+    )
+
+    result = OpenAIBackend(Mock())._normalize_response(  # pyright: ignore[reportPrivateUsage]
+        response
+    )
+
+    assert [(call.name, call.input) for call in result.tool_calls] == [("search", {})]
 
 
 def test_openai_normalize_preserves_null_content_on_tool_call_turns() -> None:

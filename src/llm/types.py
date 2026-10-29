@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar
 
 from pydantic import BaseModel, Field
 
+from .messages import AIMessage
+
 if TYPE_CHECKING:
     from anthropic import AsyncAnthropic
     from google import genai
@@ -158,9 +160,10 @@ class HonchoLLMCallResponse(BaseModel, Generic[T]):
     iterations: int = 0
     """Number of LLM calls made in the tool execution loop."""
     thinking_content: str | None = None
-    # Full thinking blocks with signatures for multi-turn replay (Anthropic only).
+    # Anthropic thinking blocks, with signatures, as the provider returned them.
+    # Replay goes through `message.reasoning`.
     thinking_blocks: list[dict[str, Any]] = Field(default_factory=list)
-    # OpenRouter reasoning_details for Gemini models — must be preserved across turns.
+    # OpenAI-compatible reasoning_details (e.g. OpenRouter) as returned.
     reasoning_details: list[dict[str, Any]] = Field(default_factory=list)
     # True when the original input exceeded `max_input_tokens` — covers
     # both "messages were dropped" and "couldn't drop the last unit and
@@ -171,6 +174,8 @@ class HonchoLLMCallResponse(BaseModel, Generic[T]):
     # True when the tool loop ran out of iterations and made its final call
     # without a natural stop.
     hit_iteration_limit: bool = False
+    # The assistant turn this response carries, ready to append to a history.
+    message: AIMessage | None = None
 
 
 # Finish reasons arrive provider-native (never normalized by the executor), so

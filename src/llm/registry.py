@@ -1,9 +1,9 @@
-"""Single owner of provider runtime objects: clients, backends, history adapters.
+"""Single owner of provider runtime objects: clients and backends.
 
 Consolidates wiring that previously lived in both `src/llm/__init__.py` and
 `src/utils/clients.py`. Everything that touches provider SDKs at runtime
-(default client construction, override client caching, backend selection,
-history adapter selection) lives here now.
+(default client construction, override client caching, backend selection)
+lives here now.
 """
 
 from __future__ import annotations
@@ -16,12 +16,6 @@ from src.exceptions import ValidationException
 
 from .backend import ProviderBackend
 from .credentials import default_transport_api_key
-from .history_adapters import (
-    AnthropicHistoryAdapter,
-    GeminiHistoryAdapter,
-    HistoryAdapter,
-    OpenAIHistoryAdapter,
-)
 from .types import ProviderClient
 
 if TYPE_CHECKING:
@@ -242,15 +236,6 @@ def backend_for_provider(
     assert_never(provider)
 
 
-def history_adapter_for_provider(provider: ModelTransport) -> HistoryAdapter:
-    """Provider-appropriate HistoryAdapter for assistant/tool message formatting."""
-    if provider == "anthropic":
-        return AnthropicHistoryAdapter()
-    if provider == "gemini":
-        return GeminiHistoryAdapter()
-    return OpenAIHistoryAdapter()
-
-
 def get_backend(config: ModelConfig) -> ProviderBackend:
     """High-level one-shot backend factory: ModelConfig → ProviderBackend.
 
@@ -276,5 +261,4 @@ __all__ = [
     "get_gemini_override_client",
     "get_openai_client",
     "get_openai_override_client",
-    "history_adapter_for_provider",
 ]

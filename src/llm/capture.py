@@ -7,17 +7,18 @@ so telemetry can never break the LLM call path.
 from __future__ import annotations
 
 import base64
-import contextlib
 import hashlib
 import json
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Literal, Protocol, cast, runtime_checkable
+from typing import Any, Literal, Protocol, runtime_checkable
 
 from src.config import settings
 
 from .backend import CompletionResult as BackendCompletionResult
 from .backend import ToolCallResult
+from .messages import AIMessage, ChatMessage, ToolMessage
 from .types import LLMTelemetryContext
 
 logger = logging.getLogger(__name__)
@@ -158,98 +159,36 @@ class CapturedLLMCall:
     custom_instructions: str | None = None
 
 
-def _normalize_message(
-    message: dict[str, Any], transport: str | None
+def _project_message(
+    message: ChatMessage,
 ) -> tuple[Any, str | None, list[dict[str, Any]]]:
-    """Normalize a provider-native message to (content, tool_call_id, tool_calls).
+    """A message as trace content: (content, tool_call_id, tool_calls).
 
-    Providers stash tool calls and results outside `content` (openai's
-    `tool_calls`, gemini's `parts`), so a naive `content` read loses them. This
-    lifts them into a unified shape: `content` becomes text, `tool_calls` is a
-    list of `{id, name, input}`, and tool results surface as `content` keyed by
-    `tool_call_id`.
+    `content` is the text, `tool_calls` a list of `{id, name, input}`, and a
+    tool result surfaces as its `content`, keyed by `tool_call_id`.
     """
-    content: Any = message.get("content")
-    tool_call_id: str | None = message.get("tool_call_id")
-    tool_calls: list[dict[str, Any]] = []
-
-    if transport == "openai":
-        for tc in cast("list[dict[str, Any]]", message.get("tool_calls") or []):
-            fn = cast("dict[str, Any]", tc.get("function") or {})
-            args = fn.get("arguments")
-            if isinstance(args, str):
-                with contextlib.suppress(json.JSONDecodeError):
-                    args = json.loads(args)
-            tool_calls.append(
-                {"id": tc.get("id"), "name": fn.get("name"), "input": args}
-            )
-
-    elif transport == "gemini":
-        parts = message.get("parts")
-        if isinstance(parts, list):
-            texts: list[str] = []
-            results: list[Any] = []
-            for raw_part in cast("list[Any]", parts):
-                if not isinstance(raw_part, dict):
-                    continue
-                part = cast("dict[str, Any]", raw_part)
-                text = part.get("text")
-                if isinstance(text, str):
-                    texts.append(text)
-                elif "function_call" in part:
-                    fc = cast("dict[str, Any]", part["function_call"] or {})
-                    tool_calls.append(
-                        {"id": None, "name": fc.get("name"), "input": fc.get("args")}
-                    )
-                elif "function_response" in part:
-                    fr = cast("dict[str, Any]", part["function_response"] or {})
-                    resp = fr.get("response")
-                    if isinstance(resp, dict):
-                        results.append(cast("dict[str, Any]", resp).get("result"))
-                    else:
-                        results.append(resp)
-                    if tool_call_id is None:
-                        tool_call_id = fr.get("name")
-            content = "\n".join(texts) if texts else (results[0] if results else None)
-
-    elif transport == "anthropic" and isinstance(content, list):
-        texts = []
-        for raw_block in cast("list[Any]", content):
-            if not isinstance(raw_block, dict):
-                continue
-            block = cast("dict[str, Any]", raw_block)
-            btype = block.get("type")
-            text = block.get("text")
-            if btype == "text" and isinstance(text, str):
-                texts.append(text)
-            elif btype == "tool_use":
-                tool_calls.append(
-                    {
-                        "id": block.get("id"),
-                        "name": block.get("name"),
-                        "input": block.get("input"),
-                    }
-                )
-            elif btype == "tool_result":
-                if tool_call_id is None:
-                    tool_call_id = block.get("tool_use_id")
-                inner = block.get("content")
-                texts.append(inner if isinstance(inner, str) else canonical_json(inner))
-        content = "\n".join(texts) if texts else None
-
-    return content, tool_call_id, tool_calls
+    if isinstance(message, AIMessage):
+        return (
+            message.text,
+            None,
+            [
+                {"id": call.id, "name": call.name, "input": call.input}
+                for call in message.tool_calls
+            ],
+        )
+    if isinstance(message, ToolMessage):
+        return message.content, message.tool_call_id, []
+    return message.content, None, []
 
 
 def build_captured_messages(
-    messages: list[dict[str, Any]],
+    messages: Sequence[ChatMessage],
     memo: dict[int, CapturedMessage] | None,
-    transport: str | None = None,
 ) -> tuple[list[CapturedMessage], bool]:
-    """Create a list of CapturedMessage from LLM response messages.
+    """Create a list of CapturedMessage from an LLM call's input history.
 
     Conversation is append-only. Uses hashed message content to deduplicate
-    across turns. Messages are normalized per provider, then content is
-    truncated and hashed.
+    across turns. Content is truncated, then hashed.
     """
     captured: list[CapturedMessage] = []
     any_truncated = False
@@ -260,8 +199,8 @@ def build_captured_messages(
             captured.append(cached)
             any_truncated = any_truncated or cached.truncated
             continue
-        role = str(message.get("role", ""))
-        raw_content, tool_call_id, tool_calls = _normalize_message(message, transport)
+        role = message.role
+        raw_content, tool_call_id, tool_calls = _project_message(message)
         content, truncated = clip_for_trace(raw_content)
         any_truncated = any_truncated or truncated
         captured_message = CapturedMessage(
@@ -284,7 +223,7 @@ def build_captured_call(
     transport: str,
     provider_label: str | None,
     model: str,
-    messages: list[dict[str, Any]],
+    messages: Sequence[ChatMessage],
     tools: list[dict[str, Any]] | None,
     tool_choice: Any,
     result: BackendCompletionResult | None,
@@ -300,9 +239,7 @@ def build_captured_call(
 ) -> CapturedLLMCall:
     """Assemble a `CapturedLLMCall` from telemetry + the provider result."""
     memo = telemetry.hash_memo if telemetry is not None else None
-    captured_messages, input_truncated = build_captured_messages(
-        messages, memo, transport
-    )
+    captured_messages, input_truncated = build_captured_messages(messages, memo)
 
     output_tool_calls = [
         _tool_call_to_dict(tc) for tc in (result.tool_calls if result else [])
