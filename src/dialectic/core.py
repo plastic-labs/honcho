@@ -334,7 +334,11 @@ class DialecticAgent:
                 parent_category="dialectic",
                 session_id=self.session_id,
             ):
-                query_embedding = await embedding_client.embed(query)
+                # A long query (e.g. one quoting recent turns) can exceed the
+                # embedding cap; embed its leading part rather than skip prefetch.
+                query_embedding = await embedding_client.embed(
+                    embedding_client.truncate_to_token_limit(query)
+                )
 
             # Prefetched conclusions never pass through the tool executor, so
             # they are recorded here or not at all -- and on a query that

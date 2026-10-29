@@ -906,7 +906,11 @@ class DialecticOptions(BaseModel):
     )
     query: Annotated[
         str,
-        Field(min_length=1, max_length=10000, description="Dialectic API Prompt"),
+        Field(
+            min_length=1,
+            max_length=settings.DIALECTIC.MAX_QUERY_LENGTH,
+            description="Dialectic API Prompt",
+        ),
         NulStripped,
     ]
     stream: bool = False
