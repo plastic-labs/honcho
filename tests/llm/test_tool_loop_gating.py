@@ -13,6 +13,7 @@ from src.llm.errors import llm_retry_condition
 from src.llm.runtime import AttemptPlan
 from src.llm.tool_loop import execute_tool_loop
 from src.llm.types import HonchoLLMCallResponse
+from tests.llm.conftest import with_assistant_turn
 
 _TOOLS = [
     {"name": name, "description": name, "input_schema": {"type": "object"}}
@@ -35,17 +36,19 @@ def _make_plan() -> AttemptPlan:
 
 
 def _response(tool_names: list[str]) -> HonchoLLMCallResponse[Any]:
-    return HonchoLLMCallResponse(
-        content="" if tool_names else "done",
-        input_tokens=10,
-        output_tokens=5,
-        cache_creation_input_tokens=0,
-        cache_read_input_tokens=0,
-        finish_reasons=["tool_use" if tool_names else "stop"],
-        tool_calls_made=[
-            {"id": f"t{i}", "name": name, "input": {}}
-            for i, name in enumerate(tool_names)
-        ],
+    return with_assistant_turn(
+        HonchoLLMCallResponse(
+            content="" if tool_names else "done",
+            input_tokens=10,
+            output_tokens=5,
+            cache_creation_input_tokens=0,
+            cache_read_input_tokens=0,
+            finish_reasons=["tool_use" if tool_names else "stop"],
+            tool_calls_made=[
+                {"id": f"t{i}", "name": name, "input": {}}
+                for i, name in enumerate(tool_names)
+            ],
+        )
     )
 
 

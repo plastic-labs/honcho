@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar
 
 from pydantic import BaseModel, Field
 
+from .messages import AIMessage
+
 if TYPE_CHECKING:
     from anthropic import AsyncAnthropic
     from google import genai
@@ -171,6 +173,8 @@ class HonchoLLMCallResponse(BaseModel, Generic[T]):
     # True when the tool loop ran out of iterations and made its final call
     # without a natural stop.
     hit_iteration_limit: bool = False
+    # The assistant turn this response carries, ready to append to a history.
+    message: AIMessage | None = None
 
 
 # Finish reasons arrive provider-native (never normalized by the executor), so

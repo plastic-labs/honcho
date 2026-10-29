@@ -14,6 +14,13 @@ from src.llm.capture import (
     clip_for_trace,
     compute_content_hash,
 )
+from src.llm.messages import (
+    AIMessage,
+    ChatMessage,
+    ToolCall,
+    ToolMessage,
+    UserMessage,
+)
 from src.llm.types import LLMTelemetryContext
 
 
@@ -67,9 +74,9 @@ class TestClipForTrace:
 
 class TestBuildCapturedMessages:
     def test_hashes_each_message(self):
-        messages = [
-            {"role": "user", "content": "q"},
-            {"role": "assistant", "content": "a"},
+        messages: list[ChatMessage] = [
+            UserMessage(content="q"),
+            AIMessage(text="a"),
         ]
         captured, truncated = build_captured_messages(messages, memo=None)
         assert [m.role for m in captured] == ["user", "assistant"]
@@ -77,8 +84,8 @@ class TestBuildCapturedMessages:
         assert truncated is False
 
     def test_memo_makes_hashing_on(self, monkeypatch: pytest.MonkeyPatch):
-        # The conversation is append-only and message dicts are reused, so with
-        # a shared memo each message is hashed exactly once across iterations.
+        # The conversation is append-only and messages are reused, so with a
+        # shared memo each message is hashed exactly once across iterations.
         calls = {"n": 0}
         real = compute_content_hash
 
@@ -93,9 +100,9 @@ class TestBuildCapturedMessages:
 
         monkeypatch.setattr(capture, "compute_content_hash", counting)
 
-        m1 = {"role": "user", "content": "q1"}
-        m2 = {"role": "assistant", "content": "a1"}
-        m3 = {"role": "user", "content": "q2"}
+        m1 = UserMessage(content="q1")
+        m2 = AIMessage(text="a1")
+        m3 = UserMessage(content="q2")
         memo: dict[int, capture.CapturedMessage] = {}
 
         build_captured_messages([m1, m2], memo)
@@ -104,106 +111,38 @@ class TestBuildCapturedMessages:
         assert calls["n"] == 3  # only the newly-appended m3 hashed (not re-hashed)
 
 
-class TestNormalizeToolCalls:
-    """Tool calls live outside `content` for openai/gemini — capture must lift
-    them into the unified `tool_calls` shape (the PR concern)."""
+class TestToolTurnsInTraces:
+    """Tool calls and results surface in the unified trace shape whichever
+    provider produced them."""
 
-    def test_openai_assistant_tool_calls_captured(self):
-        msg = {
-            "role": "assistant",
-            "content": None,
-            "tool_calls": [
-                {
-                    "id": "call_1",
-                    "type": "function",
-                    "function": {
-                        "name": "search_memory",
-                        "arguments": '{"query": "coffee"}',
-                    },
-                }
+    def test_assistant_tool_calls_captured(self):
+        msg = AIMessage(
+            text="let me look",
+            tool_calls=[
+                ToolCall(id="call_1", name="search_memory", input={"query": "coffee"})
             ],
-        }
-        captured, _ = build_captured_messages([msg], memo=None, transport="openai")
+        )
+        captured, _ = build_captured_messages([msg], memo=None)
+        assert captured[0].role == "assistant"
+        assert captured[0].content == "let me look"
         assert captured[0].tool_calls == [
             {"id": "call_1", "name": "search_memory", "input": {"query": "coffee"}}
         ]
 
-    def test_gemini_model_parts_captured(self):
-        msg = {
-            "role": "model",
-            "parts": [
-                {"text": "let me look"},
-                {"function_call": {"name": "grep_messages", "args": {"text": "x"}}},
-            ],
-        }
-        captured, _ = build_captured_messages([msg], memo=None, transport="gemini")
-        assert captured[0].content == "let me look"
-        assert captured[0].tool_calls == [
-            {"id": None, "name": "grep_messages", "input": {"text": "x"}}
-        ]
-
-    def test_gemini_tool_result_recovered(self):
-        # Gemini tool results live in `parts` (no `content` key) and were dropped.
-        msg = {
-            "role": "user",
-            "parts": [
-                {
-                    "function_response": {
-                        "name": "grep_messages",
-                        "response": {"result": "3 hits"},
-                    }
-                }
-            ],
-        }
-        captured, _ = build_captured_messages([msg], memo=None, transport="gemini")
+    def test_tool_result_keyed_by_call_id(self):
+        msg = ToolMessage(tool_call_id="call_1", name="grep_messages", content="3 hits")
+        captured, _ = build_captured_messages([msg], memo=None)
+        assert captured[0].role == "tool"
         assert captured[0].content == "3 hits"
-        assert captured[0].tool_call_id == "grep_messages"
-
-    def test_anthropic_tool_use_blocks_normalized(self):
-        msg = {
-            "role": "assistant",
-            "content": [
-                {"type": "text", "text": "searching"},
-                {
-                    "type": "tool_use",
-                    "id": "tu_1",
-                    "name": "search_memory",
-                    "input": {"q": "x"},
-                },
-            ],
-        }
-        captured, _ = build_captured_messages([msg], memo=None, transport="anthropic")
-        assert captured[0].content == "searching"
-        assert captured[0].tool_calls == [
-            {"id": "tu_1", "name": "search_memory", "input": {"q": "x"}}
-        ]
+        assert captured[0].tool_call_id == "call_1"
 
     def test_hash_distinguishes_tool_calls(self):
         # Two empty-content assistant turns with different tool calls must not
-        # collide in the dedup store (they did before tool_calls entered the hash).
-        base = {"role": "assistant", "content": None}
-        a = {
-            **base,
-            "tool_calls": [
-                {
-                    "id": "c1",
-                    "type": "function",
-                    "function": {"name": "search_memory", "arguments": "{}"},
-                }
-            ],
-        }
-        b = {
-            **base,
-            "tool_calls": [
-                {
-                    "id": "c2",
-                    "type": "function",
-                    "function": {"name": "search_messages", "arguments": "{}"},
-                }
-            ],
-        }
-        (ca,), _ = build_captured_messages([a], memo=None, transport="openai")
-        (cb,), _ = build_captured_messages([b], memo=None, transport="openai")
+        # collide in the dedup store.
+        a = AIMessage(tool_calls=[ToolCall(id="c1", name="search_memory", input={})])
+        b = AIMessage(tool_calls=[ToolCall(id="c2", name="search_messages", input={})])
+        (ca,), _ = build_captured_messages([a], memo=None)
+        (cb,), _ = build_captured_messages([b], memo=None)
         assert ca.content_hash != cb.content_hash
 
 
@@ -232,7 +171,7 @@ class TestBuildCapturedCall:
             transport="anthropic",
             provider_label=None,
             model="claude-x",
-            messages=[{"role": "user", "content": "q"}],
+            messages=[UserMessage(content="q")],
             tools=None,
             tool_choice=None,
             result=result,
@@ -262,7 +201,7 @@ class TestBuildCapturedCall:
             transport="anthropic",
             provider_label=None,
             model="claude-x",
-            messages=[{"role": "user", "content": "q"}],
+            messages=[UserMessage(content="q")],
             tools=None,
             tool_choice=None,
             result=CompletionResult(content="a", finish_reason="stop"),
@@ -286,7 +225,7 @@ class TestBuildCapturedCall:
             transport="anthropic",
             provider_label=None,
             model="claude-x",
-            messages=[{"role": "user", "content": "q"}],
+            messages=[UserMessage(content="q")],
             tools=None,
             tool_choice=None,
             result=CompletionResult(content="a", finish_reason="stop"),
@@ -307,7 +246,7 @@ class TestBuildCapturedCall:
             transport="anthropic",
             provider_label=None,
             model="claude-x",
-            messages=[{"role": "user", "content": "q"}],
+            messages=[UserMessage(content="q")],
             tools=None,
             tool_choice=None,
             result=None,
@@ -406,7 +345,7 @@ class TestThoughtSignatureSerialization:
             transport="gemini",
             provider_label=None,
             model="gemini-2.5-flash",
-            messages=[{"role": "user", "content": "q"}],
+            messages=[UserMessage(content="q")],
             tools=None,
             tool_choice=None,
             result=result,

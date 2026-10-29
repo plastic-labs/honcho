@@ -3,7 +3,6 @@ from __future__ import annotations
 import pytest
 
 from src.llm.caching import PromptCachePolicy
-from src.llm.history_adapters import GeminiHistoryAdapter
 from src.llm.request_builder import execute_completion
 
 from .conftest import (
@@ -12,6 +11,7 @@ from .conftest import (
     favorite_prime_tools,
     make_backend,
     make_large_system_prompt,
+    replay_tool_round,
     require_provider_key,
     wrap_async_method,
 )
@@ -110,7 +110,6 @@ async def test_live_gemini_thinking_and_tool_replay(
         "generate_content",
     )
     tools = favorite_prime_tools()
-    adapter = GeminiHistoryAdapter()
 
     initial_messages = [
         {
@@ -143,18 +142,7 @@ async def test_live_gemini_thinking_and_tool_replay(
 
     tool_call = first.tool_calls[0]
     tool_result = execute_local_tool(tool_call.name, tool_call.input)
-    replay_messages = initial_messages + [
-        adapter.format_assistant_tool_message(first),
-        *adapter.format_tool_results(
-            [
-                {
-                    "tool_id": tool_call.id,
-                    "tool_name": tool_call.name,
-                    "result": tool_result,
-                }
-            ]
-        ),
-    ]
+    replay_messages = replay_tool_round(config, initial_messages, first, tool_result)
 
     second = await execute_completion(
         backend,

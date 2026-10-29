@@ -22,13 +22,14 @@ from collections.abc import (
     Awaitable,
     Callable,
     Collection,
+    Mapping,
+    Sequence,
 )
 from typing import Any, ParamSpec, TypeVar
 
 from pydantic import BaseModel
 from tenacity import RetryCallState, retry, stop_after_attempt, wait_exponential
 
-from src.config import ModelTransport
 from src.exceptions import ValidationException
 from src.utils.types import (
     get_last_tool_error,
@@ -44,7 +45,13 @@ from .capabilities import capabilities_for
 from .conversation import strip_thinking_blocks
 from .errors import llm_retry_condition
 from .executor import honcho_llm_call_inner
-from .registry import history_adapter_for_provider
+from .messages import (
+    AIMessage,
+    ChatMessage,
+    ToolMessage,
+    UserMessage,
+    coerce_messages,
+)
 from .runtime import (
     AttemptPlan,
     CapturedAgentSpan,
@@ -213,52 +220,18 @@ async def _stream_completed_answer(
     )
 
 
-def format_assistant_tool_message(
-    provider: ModelTransport,
-    content: Any,
-    tool_calls: list[dict[str, Any]],
-    thinking_blocks: list[dict[str, Any]] | None = None,
-    reasoning_details: list[dict[str, Any]] | None = None,
-    thinking_content: str | None = None,
-) -> dict[str, Any]:
-    """Format an assistant message with tool calls in provider-native shape."""
-    from .backend import CompletionResult as BackendCompletionResult
-    from .backend import ToolCallResult
-
-    adapter = history_adapter_for_provider(provider)
-    result = BackendCompletionResult(
-        content=content,
-        tool_calls=[
-            ToolCallResult(
-                id=tool_call["id"],
-                name=tool_call["name"],
-                input=tool_call["input"],
-                thought_signature=tool_call.get("thought_signature"),
-            )
-            for tool_call in tool_calls
-        ],
-        thinking_content=thinking_content,
-        thinking_blocks=thinking_blocks or [],
-        reasoning_details=reasoning_details or [],
-    )
-    return adapter.format_assistant_tool_message(result)
-
-
-def append_tool_results(
-    provider: ModelTransport,
-    tool_results: list[dict[str, Any]],
-    conversation_messages: list[dict[str, Any]],
-) -> None:
-    """Append tool results to `conversation_messages` in provider-native shape."""
-    adapter = history_adapter_for_provider(provider)
-    conversation_messages.extend(adapter.format_tool_results(tool_results))
+def _assistant_turn(response: HonchoLLMCallResponse[Any]) -> AIMessage:
+    """The assistant turn a tool-call response adds to the history."""
+    if response.message is None:
+        raise RuntimeError("A tool-call response carries no assistant message")
+    return response.message
 
 
 def _without_stale_thinking(
-    conversation_messages: list[dict[str, Any]],
+    conversation_messages: list[ChatMessage],
     plan: AttemptPlan,
     stale_before: int,
-) -> list[dict[str, Any]]:
+) -> list[ChatMessage]:
     """Strip replayed thinking blocks whose request prefix has since changed.
 
     Models with `preserved_thinking` reject a replayed thinking block once the
@@ -294,7 +267,7 @@ async def stream_final_response(
     winning_plan: AttemptPlan,
     prompt: str,
     max_tokens: int,
-    conversation_messages: list[dict[str, Any]],
+    conversation_messages: list[ChatMessage],
     response_model: type[BaseModel] | None,
     json_mode: bool,
     temperature: float | None,
@@ -393,13 +366,13 @@ async def _execute_tool_calls(
     tool_calls: list[dict[str, Any]],
     tool_executor: Callable[[str, dict[str, Any]], Any],
     all_tool_calls: list[dict[str, Any]],
-) -> tuple[list[dict[str, Any]], set[str]]:
+) -> tuple[list[ToolMessage], set[str]]:
     """Run one response's tool calls in order.
 
     Successful calls are appended to `all_tool_calls`. Returns the results to
     send back to the model and the names of the tools that succeeded.
     """
-    tool_results: list[dict[str, Any]] = []
+    tool_results: list[ToolMessage] = []
     succeeded_tools: set[str] = set()
     for seq, tool_call in enumerate(tool_calls):
         tool_name = tool_call["name"]
@@ -428,11 +401,9 @@ async def _execute_tool_calls(
             if not get_last_tool_error():
                 succeeded_tools.add(tool_name)
             tool_results.append(
-                {
-                    "tool_id": tool_id,
-                    "tool_name": tool_name,
-                    "result": tool_result,
-                }
+                ToolMessage(
+                    tool_call_id=tool_id, name=tool_name, content=str(tool_result)
+                )
             )
             all_tool_calls.append(
                 {
@@ -445,18 +416,18 @@ async def _execute_tool_calls(
         except Exception as e:
             logger.error(f"Tool execution failed for {tool_name}: {e}")
             tool_results.append(
-                {
-                    "tool_id": tool_id,
-                    "tool_name": tool_name,
-                    "result": f"Error: {str(e)}",
-                    "is_error": True,
-                }
+                ToolMessage(
+                    tool_call_id=tool_id,
+                    name=tool_name,
+                    content=f"Error: {str(e)}",
+                    is_error=True,
+                )
             )
     return tool_results, succeeded_tools
 
 
 def _append_budget_line(
-    conversation_messages: list[dict[str, Any]],
+    conversation_messages: list[ChatMessage],
     budget_line: BudgetLine | None,
     rounds_used: int,
     round_limit: int,
@@ -470,7 +441,7 @@ def _append_budget_line(
         return
     line = budget_line(rounds_used, round_limit)
     if line:
-        conversation_messages.append({"role": "user", "content": line})
+        conversation_messages.append(UserMessage(content=line))
 
 
 @_with_iteration_scope
@@ -478,7 +449,7 @@ async def execute_tool_loop(
     *,
     prompt: str,
     max_tokens: int,
-    messages: list[dict[str, Any]] | None,
+    messages: Sequence[ChatMessage | Mapping[str, Any]] | None,
     tools: list[dict[str, Any]],
     tool_choice: str | dict[str, Any] | None,
     tool_executor: Callable[[str, dict[str, Any]], Any],
@@ -538,8 +509,8 @@ async def execute_tool_loop(
             + "call would have to both stream an answer and run tools"
         )
 
-    conversation_messages: list[dict[str, Any]] = (
-        messages.copy() if messages else [{"role": "user", "content": prompt}]
+    conversation_messages: list[ChatMessage] = (
+        coerce_messages(messages) if messages else [UserMessage(content=prompt)]
     )
 
     # Seed one hash memo for the whole span. dataclasses.replace copies the dict reference into
@@ -616,7 +587,7 @@ async def execute_tool_loop(
                 tool_choice_for_call: str
                 | dict[str, Any]
                 | None = effective_tool_choice,
-                captured_messages: list[dict[str, Any]] = conversation_messages,
+                captured_messages: list[ChatMessage] = conversation_messages,
                 iteration_for_call: int = iteration + 1,
                 check_answer: bool = not gate_nudge_due,
                 allow_empty_answer: bool = empty_nudge_due,
@@ -690,14 +661,11 @@ async def execute_tool_loop(
                 if gate_nudge_due and gate is not None:
                     forced_rounds += 1
                     conversation_messages.append(
-                        {
-                            "role": "user",
-                            "content": (
-                                "Your last response called no tool. Call one of "
-                                + ", ".join(sorted(gate))
-                                + " to read the relevant memory before answering."
-                            ),
-                        }
+                        UserMessage(
+                            content="Your last response called no tool. Call one of "
+                            + ", ".join(sorted(gate))
+                            + " to read the relevant memory before answering."
+                        )
                     )
                     iteration += 1
                     continue
@@ -709,13 +677,11 @@ async def execute_tool_loop(
                 ):
                     empty_response_retries += 1
                     conversation_messages.append(
-                        {
-                            "role": "user",
-                            "content": (
-                                "Your last response was empty. Provide a concise answer "
-                                "to the original query using the available context."
-                            ),
-                        }
+                        UserMessage(
+                            content="Your last response was empty. Provide a concise "
+                            + "answer to the original query using the available "
+                            + "context."
+                        )
                     )
                     iteration += 1
                     continue
@@ -749,17 +715,7 @@ async def execute_tool_loop(
                 )
                 return response
 
-            current_provider = get_attempt_plan().provider
-
-            assistant_message = format_assistant_tool_message(
-                current_provider,
-                response.content,
-                response.tool_calls_made,
-                response.thinking_blocks,
-                response.reasoning_details,
-                response.thinking_content,
-            )
-            conversation_messages.append(assistant_message)
+            conversation_messages.append(_assistant_turn(response))
 
             # Telemetry context — 1-indexed iteration.
             set_current_iteration(iteration + 1)
@@ -768,7 +724,7 @@ async def execute_tool_loop(
                 response.tool_calls_made, tool_executor, all_tool_calls
             )
 
-            append_tool_results(current_provider, tool_results, conversation_messages)
+            conversation_messages.extend(tool_results)
 
             _append_budget_line(
                 conversation_messages, budget_line, iteration + 1, max_tool_iterations
@@ -828,7 +784,7 @@ async def execute_tool_loop(
             "Based on all the information you have gathered, provide your final response now. "
             "Do not attempt to call any more tools."
         )
-    conversation_messages.append({"role": "user", "content": synthesis_prompt})
+    conversation_messages.append(UserMessage(content=synthesis_prompt))
 
     # Truncate again — the per-iteration truncate ran before the last tool
     # call, so appending synthesis_prompt could nudge us back over the cap.
@@ -982,8 +938,6 @@ async def execute_tool_loop(
 __all__ = [
     "MAX_TOOL_ITERATIONS",
     "MIN_TOOL_ITERATIONS",
-    "append_tool_results",
     "execute_tool_loop",
-    "format_assistant_tool_message",
     "stream_final_response",
 ]

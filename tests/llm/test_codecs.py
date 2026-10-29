@@ -179,6 +179,16 @@ def test_openai_reasoning_content_replays_without_details() -> None:
     assert "reasoning_details" not in rendered[2]
 
 
+@pytest.mark.parametrize("thinking_content", [None, ""])
+def test_openai_empty_reasoning_content_is_omitted(
+    thinking_content: str | None,
+) -> None:
+    result = CompletionResult(
+        content="Calling", tool_calls=CALLS[:1], thinking_content=thinking_content
+    )
+    assert "reasoning_content" not in _render(_round(result, OPENAI), OPENAI)[2]
+
+
 def test_gemini_round_renders_parts_with_signatures() -> None:
     result = CompletionResult(content="Looking.", tool_calls=CALLS)
     assert _render(_round(result, GEMINI), GEMINI) == [

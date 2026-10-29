@@ -21,6 +21,7 @@ from src.llm.types import (
     ProviderClient,
     StreamingResponseWithMetadata,
 )
+from tests.llm.conftest import with_assistant_turn
 
 TOOLS = [
     {"name": "search", "description": "Search", "input_schema": {"type": "object"}}
@@ -42,12 +43,14 @@ def _plan() -> AttemptPlan:
 
 
 def _tool_round() -> HonchoLLMCallResponse[Any]:
-    return HonchoLLMCallResponse(
-        content="",
-        input_tokens=100,
-        output_tokens=5,
-        finish_reasons=["tool_calls"],
-        tool_calls_made=[{"id": "t1", "name": "search", "input": {}}],
+    return with_assistant_turn(
+        HonchoLLMCallResponse(
+            content="",
+            input_tokens=100,
+            output_tokens=5,
+            finish_reasons=["tool_calls"],
+            tool_calls_made=[{"id": "t1", "name": "search", "input": {}}],
+        )
     )
 
 
@@ -139,9 +142,7 @@ async def test_an_empty_answer_still_gets_the_nudge_when_streaming() -> None:
 
     assert text == "second try"
     assert len(calls) == 2 and not any(call.get("stream") for call in calls)
-    assert calls[1]["messages"][-1]["content"].startswith(
-        "Your last response was empty"
-    )
+    assert calls[1]["messages"][-1].content.startswith("Your last response was empty")
 
 
 @pytest.mark.asyncio

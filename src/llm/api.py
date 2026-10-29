@@ -12,7 +12,7 @@ Orchestrates:
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncIterator, Callable, Collection
+from collections.abc import AsyncIterator, Callable, Collection, Sequence
 from typing import Any, Literal, TypeVar, cast, overload
 
 from pydantic import BaseModel
@@ -25,6 +25,7 @@ from src.telemetry.reasoning_traces import log_reasoning_trace
 
 from .errors import llm_retry_condition
 from .executor import honcho_llm_call_inner
+from .messages import ChatMessage, UserMessage, coerce_messages
 from .runtime import (
     AttemptPlan,
     CapturedAgentSpan,
@@ -48,6 +49,12 @@ from .types import (
 logger = logging.getLogger(__name__)
 
 M = TypeVar("M", bound=BaseModel)
+
+
+def _trace_messages(history: list[ChatMessage] | None) -> list[dict[str, Any]] | None:
+    if history is None:
+        return None
+    return [message.model_dump(mode="json") for message in history]
 
 
 @overload
@@ -76,7 +83,7 @@ async def honcho_llm_call(
     max_forced_iterations: int = 3,
     budget_line: BudgetLine | None = None,
     final_call_tools: list[dict[str, Any]] | None = None,
-    messages: list[dict[str, Any]] | None = None,
+    messages: Sequence[ChatMessage | dict[str, Any]] | None = None,
     max_input_tokens: int | None = None,
     trace_name: str | None = None,
     iteration_callback: IterationCallback | None = None,
@@ -111,7 +118,7 @@ async def honcho_llm_call(
     max_forced_iterations: int = 3,
     budget_line: BudgetLine | None = None,
     final_call_tools: list[dict[str, Any]] | None = None,
-    messages: list[dict[str, Any]] | None = None,
+    messages: Sequence[ChatMessage | dict[str, Any]] | None = None,
     max_input_tokens: int | None = None,
     trace_name: str | None = None,
     iteration_callback: IterationCallback | None = None,
@@ -146,7 +153,7 @@ async def honcho_llm_call(
     max_forced_iterations: int = 3,
     budget_line: BudgetLine | None = None,
     final_call_tools: list[dict[str, Any]] | None = None,
-    messages: list[dict[str, Any]] | None = None,
+    messages: Sequence[ChatMessage | dict[str, Any]] | None = None,
     max_input_tokens: int | None = None,
     trace_name: str | None = None,
     iteration_callback: IterationCallback | None = None,
@@ -180,7 +187,7 @@ async def honcho_llm_call(
     max_forced_iterations: int = 3,
     budget_line: BudgetLine | None = None,
     final_call_tools: list[dict[str, Any]] | None = None,
-    messages: list[dict[str, Any]] | None = None,
+    messages: Sequence[ChatMessage | dict[str, Any]] | None = None,
     max_input_tokens: int | None = None,
     trace_name: str | None = None,
     iteration_callback: IterationCallback | None = None,
@@ -217,6 +224,9 @@ async def honcho_llm_call(
                              without `stream_final_only=True`.
     """
     runtime_model_config = resolve_runtime_model_config(model_config)
+    # Typed once here; everything below carries `history`, and each attempt
+    # renders it for its own provider.
+    history = coerce_messages(messages) if messages else None
 
     # Caller kwargs left at None are resolved downstream by
     # effective_config_for_call against whichever ModelConfig wins the
@@ -383,11 +393,11 @@ async def honcho_llm_call(
         # (the deriver's prompt-only case) would otherwise silently fly
         # through with hit=False. Token-based comparison catches it.
         toolless_hit_input_token_cap = False
-        toolless_messages = messages
+        toolless_messages = history
         if max_input_tokens is not None:
             from .conversation import count_message_tokens, truncate_messages_to_fit
 
-            base_messages = messages or [{"role": "user", "content": prompt}]
+            base_messages = history or [UserMessage(content=prompt)]
             toolless_hit_input_token_cap = (
                 count_message_tokens(base_messages) > max_input_tokens
             )
@@ -488,7 +498,7 @@ async def honcho_llm_call(
                 reasoning_effort=_trace_reasoning_effort(),
                 json_mode=json_mode,
                 stop_seqs=_trace_stop_seqs(),
-                messages=messages,
+                messages=_trace_messages(history),
             )
         return result
 
@@ -509,7 +519,7 @@ async def honcho_llm_call(
         result = await execute_tool_loop(
             prompt=prompt,
             max_tokens=max_tokens,
-            messages=messages,
+            messages=history,
             tools=tools,
             tool_choice=tool_choice,
             tool_executor=tool_executor,
@@ -558,7 +568,7 @@ async def honcho_llm_call(
             reasoning_effort=_trace_reasoning_effort(),
             json_mode=json_mode,
             stop_seqs=_trace_stop_seqs(),
-            messages=messages,
+            messages=_trace_messages(history),
         )
     return result
 
