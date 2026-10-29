@@ -13,6 +13,7 @@ from src.llm.messages import (
     ToolMessage,
     UserMessage,
 )
+from src.utils.tokens import estimate_tokens
 
 _SYSTEM = SystemMessage(content="You are a helper.")
 _QUERY = UserMessage(content="What does the user like? " * 20)
@@ -40,6 +41,26 @@ def _clipped(message: ChatMessage) -> bool:
     return isinstance(message, ToolMessage) and (
         "[TRUNCATED to fit the input budget" in message.content
     )
+
+
+def test_token_count_covers_tool_calls_results_and_reasoning() -> None:
+    """Tokens are counted from the typed content, the same whichever provider
+    the history is later rendered for: a tool-call turn counts its calls and
+    reasoning, and a tool result counts its text, not an escaped encoding."""
+    call_turn = AIMessage(
+        tool_calls=[ToolCall(id="c1", name="grep", input={"query": "tea " * 50})],
+        reasoning=[
+            ReasoningPart(
+                kind="openai_reasoning_details",
+                payload={"type": "reasoning.text", "text": "think " * 50},
+                origin=_CLAUDE,
+            )
+        ],
+    )
+    result = ToolMessage(tool_call_id="c1", name="grep", content="用户喜欢喝茶。" * 50)
+
+    assert count_message_tokens([call_turn]) > 100
+    assert count_message_tokens([result]) == estimate_tokens(result.content)
 
 
 def test_truncate_messages_to_fit_keeps_last_unit_when_over_limit() -> None:

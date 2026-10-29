@@ -41,7 +41,6 @@ from src.utils.types import (
     set_last_tool_metadata,
 )
 
-from .capabilities import capabilities_for
 from .conversation import strip_thinking_blocks
 from .errors import llm_retry_condition
 from .executor import honcho_llm_call_inner
@@ -52,6 +51,7 @@ from .messages import (
     UserMessage,
     coerce_messages,
 )
+from .profiles import profile_for
 from .runtime import (
     AttemptPlan,
     CapturedAgentSpan,
@@ -248,7 +248,7 @@ def _without_stale_thinking(
     """
     if stale_before <= 0:
         return conversation_messages
-    if not capabilities_for(plan.provider, plan.model).preserved_thinking:
+    if not profile_for(plan.provider, plan.model).capabilities.preserved_thinking:
         return conversation_messages
     front, removed = strip_thinking_blocks(conversation_messages[:stale_before])
     if not removed:
