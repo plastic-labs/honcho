@@ -51,7 +51,7 @@ Here's an example of a data structure the reasoning models generate:
 }
 ```
 
-The explicit reasoning model ([Neuromancer XR](https://blog.plasticlabs.ai/research/Introducing-Neuromancer-XR)) outputs its "thinking" followed by things that were explicitly stated, which serve as premises to scaffold deductive conclusions. It's on top of this reasoning foundation that further reasoning is scaffolded. Currently that includes peer cards (key biographical information about the peer), consolidation (identifying redundant or contradictory information), induction (pattern recognition across multiple messages), and abduction (inferring the simplest explanations for observed behavior).
+The explicit reasoning model ([Neuromancer XR](https://blog.plasticlabs.ai/research/Introducing-Neuromancer-XR)) outputs its "thinking" followed by things that were explicitly stated, which serve as premises to scaffold deductive conclusions. It's on top of this reasoning foundation that further reasoning is scaffolded. Currently that includes peer cards (key biographical information about the peer), consolidation (identifying redundant or contradictory information), and induction (pattern recognition across multiple messages).
 
 The reasoning that Honcho does is something we're constantly iterating and improving on. Our goal is simple--provide the richest, most relevant context in the fastest, cheapest way possible in order to simulate statefulness in whatever setting you need.
 
@@ -73,7 +73,7 @@ Off-the-shelf LLMs can perform formal logical reasoning, but they aren't optimiz
 
 The approach balances quality with practical constraints. Custom models are smaller and cheaper to run, and scaffolded conclusions are more token-efficient than raw conversation history.
 
-Honcho's reasoning capabilities are actively being improved. Current areas of development include enhanced inductive and abductive reasoning, multi-hop  and temporal reasoning, and expanded file types and modalities. The system is designed to be extensible--new reasoning capabilities can be added without breaking existing functionality.
+Honcho's reasoning capabilities are actively being improved. Current areas of development include enhanced inductive reasoning, abductive reasoning (inferring the simplest explanations for observed behavior), multi-hop  and temporal reasoning, and expanded file types and modalities. The system is designed to be extensible--new reasoning capabilities can be added without breaking existing functionality.
 
 <Note>
 If you find that the data you're uploading to Honcho isn't being reasoned over to your liking, we'd love to improve it for you and ingest your data for free--reach out via [Discord](https://discord.gg/honcho) or [email](mailto:support@plasticlabs.ai)!
