@@ -16,7 +16,8 @@ import logging
 import time
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, cast
+from urllib.parse import urlsplit
 
 from src.config import (
     ConfiguredModelSettings,
@@ -240,6 +241,50 @@ def effective_config_for_call(
     return selected_config.model_copy(update=updates)
 
 
+def with_opencode_session_header(
+    config: ModelConfig,
+    telemetry: LLMTelemetryContext | None,
+) -> ModelConfig:
+    """Use the Honcho conversation ID for OpenCode Go's routing header.
+
+    OpenCode Go requires a stable ``x-opencode-session`` value per conversation.
+    Prefer Honcho's canonical session ID; for sessionless calls, use the LLM run
+    ID so retries and tool-loop steps in that invocation share one value.
+    Operator-configured headers remain the fallback when no ID is available.
+    """
+    if config.transport != "openai" or config.base_url is None or telemetry is None:
+        return config
+
+    parsed_url = urlsplit(config.base_url)
+    if (
+        parsed_url.scheme != "https"
+        or parsed_url.hostname != "opencode.ai"
+        or not (parsed_url.path == "/zen/go" or parsed_url.path.startswith("/zen/go/"))
+    ):
+        return config
+
+    session_id = telemetry.session_id or telemetry.run_id
+    if not session_id:
+        return config
+
+    provider_params = dict(config.provider_params)
+    configured_headers = provider_params.get("extra_headers")
+    if configured_headers is not None and not isinstance(configured_headers, dict):
+        # Leave malformed operator configuration untouched so the existing
+        # request validation reports it rather than silently changing it.
+        return config
+
+    headers: dict[str, Any] = cast(dict[str, Any], configured_headers or {})
+    headers = {
+        key: value
+        for key, value in headers.items()
+        if key.casefold() != "x-opencode-session"
+    }
+    headers["x-opencode-session"] = session_id
+    provider_params["extra_headers"] = headers
+    return config.model_copy(update={"provider_params": provider_params})
+
+
 def effective_temperature(temperature: float | None) -> float | None:
     """Bump temperature from 0.0 → 0.2 on retry attempts for variety."""
     if temperature == 0.0 and current_attempt.get() > 1:
@@ -264,4 +309,5 @@ __all__ = [
     "resolve_runtime_model_config",
     "select_model_config_for_attempt",
     "start_captured_span",
+    "with_opencode_session_header",
 ]
