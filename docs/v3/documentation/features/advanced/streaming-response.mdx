@@ -7,7 +7,7 @@ icon: "wave-sine"
 Honcho's SDKs can receive chat answers as a stream of text chunks over server-sent events, so your application can consume the answer through the same streaming interface it uses for other model output.
 
 <Note>
-The chat agent gathers context with tool calls before it answers, and that part is not streamed. When it answers within its tool budget, which is the usual case, the whole answer arrives as a single chunk once it finishes. Only an answer synthesized after the agent reaches its tool-call limit streams as it is generated. Streaming therefore does not reduce time to first token for most queries.
+The dialectic is an agent loop. It will stream when it can but it's designed to answer as fast as possible.
 </Note>
 
 ## When to Use Streaming
