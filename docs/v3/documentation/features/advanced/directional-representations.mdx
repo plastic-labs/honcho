@@ -214,7 +214,7 @@ Most applications don't need directional representations. Start with the default
 Under the hood, Honcho stores representations as (observer, observed) pairs in internal collections:
 
 - **Collection**: A unique (observer, observed, workspace) tuple containing documents
-- **Documents**: Individual conclusions and artifacts (deductive, inductive, abductive conclusions, summaries, peer cards) with per-session filtering
+- **Documents**: Individual conclusions and artifacts (deductive, inductive, and contradiction conclusions, summaries, peer cards) with per-session filtering
 
 When you retrieve with `target`, Honcho fetches documents from the specific (observer, observed) collection. When you retrieve without `target`, it fetches from the (peer, peer) collection—the peer's self-representation.
 
