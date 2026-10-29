@@ -381,3 +381,28 @@ def test_a_cursor_that_does_not_fit_is_a_400(
     response = client.post(url, params={"cursor": cursor})
 
     assert response.status_code == 400, response.text
+
+
+@pytest.mark.parametrize("shim", [True, False], ids=["shim", "plain"])
+def test_a_capped_total_does_not_end_a_walk_early(
+    client: TestClient,
+    sample_data: tuple[Workspace, Peer],
+    monkeypatch: pytest.MonkeyPatch,
+    shim: bool,
+):
+    """`total` stops one past the limit, but `pages` still carries a walk to the last row."""
+    workspace, peer = sample_data
+    url, seeded = _seed_sessions(client, workspace.name, peer.name)
+    endpoint = ENDPOINTS[1]
+    monkeypatch.setattr(settings, "PAGINATION_COUNT_LIMIT", SEEDED - 2)
+    monkeypatch.setattr(settings.CACHE, "PAGINATION_OFFSET_SHIM", shim)
+
+    first = _get(client, endpoint, url, {"page": 1, "size": SIZE})
+    assert first["total"] == SEEDED - 1
+    assert first["pages"] == 2
+
+    ids = _walk_offset(client, endpoint, url, {})
+    assert seeded <= set(ids)
+    assert len(ids) == len(set(ids))
+    last = _get(client, endpoint, url, {"page": len(ids) // SIZE + 1, "size": SIZE})
+    assert last["total"] == len(ids)
