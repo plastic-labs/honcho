@@ -825,8 +825,9 @@ from_message = peer.conclusions.list(
 </CodeGroup>
 
 `source_message_ids` is recorded only for conclusions the deriver wrote on
-Honcho v3.4.0 or later; older explicit conclusions and every derived level
-return it as null.
+Honcho v3.5.0 or later. Every derived level returns it as null, and so do older
+explicit conclusions until the deriver derives the same conclusion again and
+merges the new citations into them.
 
 ## Value Types
 

@@ -29,7 +29,7 @@ def _format_conclusion(c, workspace_id: str | None) -> dict:
 
     ``level``, ``source_ids`` and ``times_derived`` are the attribution the
     server started returning in Honcho v3.2.0; ``source_message_ids`` (the
-    messages an explicit conclusion cites) arrived in v3.4.0 and is read
+    messages an explicit conclusion cites) arrived in v3.5.0 and is read
     leniently so older SDKs still work. In table mode the id lists collapse
     to counts, since nanoids make the row unreadable; JSON mode keeps them so
     they can be piped back into ``honcho conclusion get`` or ``message get``.
