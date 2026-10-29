@@ -5558,6 +5558,7 @@
           "stream": {
             "type": "boolean",
             "title": "Stream",
+            "description": "Return the answer as a text/event-stream. The answer arrives when the agent finishes gathering context, usually as a single chunk; only an answer synthesized at the tool-call limit streams as it is generated.",
             "default": false
           },
           "reasoning_level": {
@@ -7498,6 +7499,7 @@
           "stream": {
             "type": "boolean",
             "title": "Stream",
+            "description": "Return the answer as a text/event-stream. The answer arrives when the agent finishes gathering context, usually as a single chunk; only an answer synthesized at the tool-call limit streams as it is generated.",
             "default": false
           },
           "reasoning_level": {
