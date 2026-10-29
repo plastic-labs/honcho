@@ -6,11 +6,14 @@ normal LLM responses, ensuring fallback logic prevents empty summaries
 from being persisted.
 """
 
+import asyncio
 import hashlib
+import logging
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+from sqlalchemy.exc import OperationalError
 
 from src.config import settings
 from src.exceptions import EmptySummaryError
@@ -570,6 +573,94 @@ async def test_refused_summary_escapes_parallel_long_and_short():
         )
 
     assert mock_create.await_count == 2
+
+
+async def _run_combined_boundary(
+    failures: dict[SummaryType, BaseException],
+) -> Mock:
+    """Run a combined long/short boundary where each type raises its failure."""
+    configuration = Mock()
+    configuration.summary.enabled = True
+    configuration.summary.messages_per_long_summary = 60
+    configuration.summary.messages_per_short_summary = 20
+
+    async def create_and_save(*_args: Any, **kwargs: Any) -> None:
+        failure = failures.get(kwargs["summary_type"])
+        if failure is not None:
+            raise failure
+
+    with patch(
+        "src.utils.summarizer._create_and_save_summary",
+        side_effect=create_and_save,
+    ) as mock_create:
+        try:
+            await summarize_if_needed(
+                "workspace",
+                "session",
+                message_id=1,
+                message_seq_in_session=60,
+                message_public_id="msg_1",
+                configuration=configuration,
+            )
+        finally:
+            # Both summaries run to completion even when one fails.
+            assert mock_create.await_count == 2
+    return mock_create
+
+
+def _deadlock() -> OperationalError:
+    """A DB error the queue classifies as transient (and so retries)."""
+
+    class FakePGError(Exception):
+        sqlstate: str = "40P01"
+
+    return OperationalError("UPDATE sessions", {}, FakePGError())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failing", [SummaryType.LONG, SummaryType.SHORT])
+async def test_combined_boundary_raises_any_failure(failing: SummaryType):
+    """A fetch or save failure used to be dropped at a combined boundary, so
+    the queue item completed and that summary was lost for good (DEV-3159)."""
+    with pytest.raises(ValueError, match="save failed"):
+        await _run_combined_boundary({failing: ValueError("save failed")})
+
+
+@pytest.mark.asyncio
+async def test_combined_boundary_prefers_transient_failure(
+    caplog: pytest.LogCaptureFixture,
+):
+    """When both fail, the transient error is raised so the queue retries,
+    and the terminal one is logged at error with its summary type."""
+    with (
+        caplog.at_level(logging.WARNING, logger="src.utils.summarizer"),
+        pytest.raises(OperationalError),
+    ):
+        await _run_combined_boundary(
+            {SummaryType.LONG: ValueError("bad"), SummaryType.SHORT: _deadlock()}
+        )
+
+    levels = {
+        record.getMessage().split()[0]: record.levelno
+        for record in caplog.records
+        if "summary failed" in record.getMessage()
+    }
+    assert levels == {"LONG": logging.ERROR, "SHORT": logging.WARNING}
+
+
+@pytest.mark.asyncio
+async def test_combined_boundary_prefers_refusal_over_other_terminal_failure():
+    """Between terminal failures the refusal still reaches the queue (DEV-2307)."""
+    with pytest.raises(EmptySummaryError):
+        await _run_combined_boundary(
+            {SummaryType.LONG: ValueError("bad"), SummaryType.SHORT: _refusal()}
+        )
+
+
+@pytest.mark.asyncio
+async def test_combined_boundary_propagates_cancellation():
+    with pytest.raises(asyncio.CancelledError):
+        await _run_combined_boundary({SummaryType.SHORT: asyncio.CancelledError()})
 
 
 # =============================================================================

@@ -9,7 +9,8 @@ from inspect import cleandoc as c
 from typing import Any, TypedDict
 
 from nanoid import generate as generate_nanoid
-from sqlalchemy import update
+from sqlalchemy import case, func, literal, update
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import schemas
@@ -37,6 +38,7 @@ from src.telemetry.prometheus.metrics import (
     TokenTypes,
 )
 from src.utils.formatting import custom_instructions_section, utc_now_iso
+from src.utils.retryable_errors import is_retryable_error
 from src.utils.sanitization import strip_nul
 from src.utils.tokens import estimate_tokens, tokenizer, track_deriver_input_tokens
 
@@ -430,16 +432,20 @@ async def summarize_if_needed(
                 "count",
             )
 
-        results = await asyncio.gather(
+        # Every long boundary is also a short one under the default cadence, so
+        # this is how every long summary runs. Both finish before any failure is
+        # raised, so one failing never cancels the other.
+        long_result, short_result = await asyncio.gather(
             create_long_summary_task(),
             create_short_summary_task(),
             return_exceptions=True,
         )
-        # Every long boundary is also a short one under the default cadence,
-        # so a refused summary must escape here or it is silently dropped.
-        for result in results:
-            if isinstance(result, EmptySummaryError):
-                raise result
+        _raise_summary_failures(
+            {SummaryType.LONG: long_result, SummaryType.SHORT: short_result},
+            workspace_name=workspace_name,
+            session_name=session_name,
+            message_id=message_id,
+        )
     else:
         # If only one summary needs to be created, run individually
         if should_create_long:
@@ -476,6 +482,66 @@ async def summarize_if_needed(
                 message_seq_in_session,
                 "count",
             )
+
+
+def _raise_summary_failures(
+    results: dict[SummaryType, BaseException | None],
+    *,
+    workspace_name: str,
+    session_name: str,
+    message_id: int,
+) -> None:
+    """Log every failed summary from a combined boundary, then raise one.
+
+    A failure here used to be dropped unless it was an ``EmptySummaryError``, so
+    the queue item completed and the summary for that window was lost for good
+    (DEV-3159). Now any failure reaches the queue. A cancellation is re-raised
+    first. Otherwise a transient error wins over a terminal one, because only
+    transient errors are retried; the retry reruns both summaries, and one that
+    was already saved skips itself. Between terminal errors, an
+    ``EmptySummaryError`` wins, as before.
+
+    The raised failure is logged at warning, since the queue reports it. Any
+    other is logged at error, because it is reported nowhere else.
+
+    Args:
+        results: Each summary type's ``gather`` result, None when it succeeded
+        workspace_name: Workspace name, for the log line
+        session_name: Session name, for the log line
+        message_id: The boundary message's ID, for the log line
+    """
+    failures = {
+        summary_type: result
+        for summary_type, result in results.items()
+        if isinstance(result, BaseException)
+    }
+    if not failures:
+        return
+    for failure in failures.values():
+        if not isinstance(failure, Exception):
+            raise failure
+    # Transient first, then a refusal (raised here before DEV-3159), then the rest.
+    raised = min(
+        failures.values(),
+        key=lambda failure: (
+            0
+            if is_retryable_error(failure)
+            else 1
+            if isinstance(failure, EmptySummaryError)
+            else 2
+        ),
+    )
+    for summary_type, failure in failures.items():
+        logger.log(
+            logging.WARNING if failure is raised else logging.ERROR,
+            "%s summary failed for message %s in session %s (workspace %s)",
+            summary_type.name,
+            message_id,
+            session_name,
+            workspace_name,
+            exc_info=failure,
+        )
+    raise raised
 
 
 async def _create_and_save_summary(
@@ -860,7 +926,7 @@ async def _save_summary(
     label_value = summary["summary_type"]
 
     try:
-        session = await crud.get_session(db, session_name, workspace_name)
+        await crud.get_session(db, session_name, workspace_name)
     except ResourceNotFoundException:
         # If session doesn't exist, we can't save the summary
         logger.warning(
@@ -868,20 +934,26 @@ async def _save_summary(
         )
         return
 
-    # Use SQLAlchemy update() with PostgreSQL's || operator to properly merge JSONB
-    # We need to merge the new summary into the existing summaries structure
-    update_data = {}
-    existing_summaries = session.internal_metadata.get(SUMMARIES_KEY, {})
     sanitized: Summary = {**summary, "content": strip_nul(summary["content"])}
-    existing_summaries[label_value] = sanitized
-    update_data[SUMMARIES_KEY] = existing_summaries
 
+    # Merge this one entry into the summaries map on the server. Writing back a
+    # map read earlier (possibly from cache) would drop or revert a summary saved
+    # in between, such as the sibling at a combined short/long boundary (DEV-3160).
+    stored = models.Session.internal_metadata[SUMMARIES_KEY]
+    summaries = case(
+        (func.jsonb_typeof(stored) == "object", stored),
+        else_=literal({}, JSONB),
+    ).op("||", return_type=JSONB)(
+        func.jsonb_build_object(label_value, literal(sanitized, JSONB))
+    )
     stmt = (
         update(models.Session)
         .where(models.Session.workspace_name == workspace_name)
         .where(models.Session.name == session_name)
         .values(
-            internal_metadata=models.Session.internal_metadata.op("||")(update_data)
+            internal_metadata=models.Session.internal_metadata.op(
+                "||", return_type=JSONB
+            )(func.jsonb_build_object(SUMMARIES_KEY, summaries))
         )
     )
 
