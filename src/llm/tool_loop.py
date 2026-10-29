@@ -194,6 +194,25 @@ def _require_structured_answer(
     )
 
 
+async def _stream_completed_answer(
+    response: HonchoLLMCallResponse[Any],
+) -> AsyncIterator[HonchoLLMCallStreamChunk]:
+    """Stream an answer the loop already has, as one chunk.
+
+    A parsed `response_model` instance goes out as its JSON, the text a
+    streamed structured answer accumulates to. The chunk carries no
+    `output_tokens`: the loop's totals already count the call that made it.
+    """
+    content = response.content
+    if isinstance(content, BaseModel):
+        content = content.model_dump_json(by_alias=True)
+    yield HonchoLLMCallStreamChunk(
+        content=content if isinstance(content, str) else "",
+        is_done=True,
+        finish_reasons=response.finish_reasons,
+    )
+
+
 def format_assistant_tool_message(
     provider: ModelTransport,
     content: Any,
@@ -581,9 +600,8 @@ async def execute_tool_loop(
 
             # A provider can ignore a forced tool_choice and answer outright.
             # While the gate is unmet, a no-tool answer is discarded for a
-            # nudge, so it isn't held to `response_model`. Nor is it under
-            # stream_final, which streams the answer afresh and doesn't
-            # validate it.
+            # nudge, so it isn't held to `response_model`. Under stream_final
+            # the answer is checked the same way, since it is the one streamed.
             gate_nudge_due = (
                 gate is not None
                 and effective_tool_choice in ("required", "any")
@@ -630,7 +648,7 @@ async def execute_tool_loop(
                         telemetry, iteration_for_call, step_seq=iteration_for_call
                     ),
                 )
-                if check_answer and not stream_final:
+                if check_answer:
                     _require_structured_answer(
                         result, response_model, allow_empty=allow_empty_answer
                     )
@@ -703,34 +721,12 @@ async def execute_tool_loop(
                     continue
 
                 if stream_final:
-                    # Snapshot the plan that just succeeded — streaming retries
-                    # pin to this exact client/model so we don't bounce back to
-                    # primary after the tool loop settled on fallback.
-                    winning_plan = get_attempt_plan()
-                    # +2 (not +1): the in-loop call we just made used iteration+1,
-                    # so the streamed tail needs the next ordinal — otherwise its
-                    # trace resource id collides with that call's. Mirrors the
-                    # synthesis path's distinct-next-value behavior.
-                    stream_telemetry = _telemetry_for_iteration(
-                        telemetry, iteration + 2, step_seq=iteration + 2
-                    )
-                    stream = stream_final_response(
-                        winning_plan=winning_plan,
-                        prompt=prompt,
-                        max_tokens=max_tokens,
-                        conversation_messages=conversation_messages,
-                        response_model=response_model,
-                        json_mode=json_mode,
-                        temperature=temperature,
-                        stop_seqs=stop_seqs,
-                        verbosity=verbosity,
-                        enable_retry=enable_retry,
-                        retry_attempts=retry_attempts,
-                        before_retry_callback=before_retry_callback,
-                        telemetry=stream_telemetry,
-                    )
+                    # Stream the answer in hand, as the non-streaming path
+                    # returns it. Asking again cost a second full call,
+                    # answered from a fresh sample, and could come back empty
+                    # when the model spent that call on thinking.
                     return StreamingResponseWithMetadata(
-                        stream=stream,
+                        stream=_stream_completed_answer(response),
                         tool_calls_made=all_tool_calls,
                         input_tokens=total_input_tokens,
                         output_tokens=total_output_tokens,

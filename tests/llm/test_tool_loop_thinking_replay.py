@@ -211,11 +211,11 @@ async def test_truncation_drops_thinking_for_preserved_thinking_model() -> None:
 
 
 @pytest.mark.asyncio
-async def test_streamed_final_answer_drops_thinking() -> None:
+async def test_streamed_synthesis_drops_thinking() -> None:
     calls, _ = await _run_loop(
         "claude-sonnet-5-5",
-        [_tool_call_turn("t1"), _answer()],
-        max_tool_iterations=5,
+        [_tool_call_turn("t1")],
+        max_tool_iterations=1,
         stream_final=True,
     )
 

@@ -15,7 +15,12 @@ from src.config import (
     settings,
 )
 from src.llm import api, capture, executor, runtime, tool_loop
-from src.llm.backend import CompletionResult, ProviderBackend, StreamChunk
+from src.llm.backend import (
+    CompletionResult,
+    ProviderBackend,
+    StreamChunk,
+    ToolCallResult,
+)
 from src.llm.types import HonchoLLMCallStreamChunk, LLMTelemetryContext
 from src.telemetry import events, trace_exporter
 from src.telemetry.events import BaseEvent, LLMCallCompletedEvent
@@ -182,6 +187,12 @@ async def test_stream_records_partial_output_and_outcome(
         return chunks()
 
     backend.stream.side_effect = setup
+    if with_tools:
+        # A tool loop streams only its max-iteration synthesis; an answer it
+        # already has goes out as is. One tool round at a cap of one gets there.
+        backend.complete.return_value = CompletionResult(
+            tool_calls=[ToolCallResult(id="t1", name="lookup", input={})]
+        )
     stream = await api.honcho_llm_call(
         model_config=ModelConfig(transport="openai", model="synthetic"),
         prompt="question",
@@ -189,7 +200,8 @@ async def test_stream_records_partial_output_and_outcome(
         stream=True,
         stream_final_only=with_tools,
         tools=[LOOKUP_TOOL] if with_tools else None,
-        tool_executor=Mock() if with_tools else None,
+        tool_executor=AsyncMock(return_value="found") if with_tools else None,
+        max_tool_iterations=1,
         telemetry=LLMTelemetryContext(
             trace_id="trace", span_id="span", session_id="session"
         ),
@@ -261,6 +273,12 @@ async def test_stream_setup_retries_record_each_actual_attempt_once(
         return chunks()
 
     backend.stream.side_effect = setup
+    if with_tools:
+        # A tool loop streams only its max-iteration synthesis; an answer it
+        # already has goes out as is. One tool round at a cap of one gets there.
+        backend.complete.return_value = CompletionResult(
+            tool_calls=[ToolCallResult(id="t1", name="lookup", input={})]
+        )
     stream = await api.honcho_llm_call(
         model_config=ConfiguredModelSettings(
             transport="openai",
@@ -272,7 +290,8 @@ async def test_stream_setup_retries_record_each_actual_attempt_once(
         stream=True,
         stream_final_only=with_tools,
         tools=[LOOKUP_TOOL] if with_tools else None,
-        tool_executor=Mock() if with_tools else None,
+        tool_executor=AsyncMock(return_value="found") if with_tools else None,
+        max_tool_iterations=1,
         telemetry=LLMTelemetryContext(
             trace_id="trace", span_id="span", session_id="session"
         ),
