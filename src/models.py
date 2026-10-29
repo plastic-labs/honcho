@@ -7,7 +7,6 @@ from dotenv import load_dotenv
 from nanoid import generate as generate_nanoid
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
-    DDL,
     BigInteger,
     Boolean,
     CheckConstraint,
@@ -516,12 +515,16 @@ class Message(Base, TenantPartitioned):
         return f"Message(tenant_id={self.tenant_id}, id={self.id}, session_name={self.session_name}, peer_name={self.peer_name}, content={self.content})"
 
 
-MESSAGE_TEXT_MATCHES = "message_text_matches"
+MESSAGE_TEXT_MATCHES = "message_text_matches_page"
+MESSAGE_TEXT_MATCHES_ARGS = (
+    "(text, text, text, text, boolean, double precision,"
+    + " timestamp with time zone, bigint, integer)"
+)
 
 
-def message_text_matches_ddl(schema: str) -> str:
-    """Creates an ILIKE equivalent function `message_text_matches` using the
-    SECURITY DEFINER feature.
+def message_text_matches_ddl(schema: str) -> tuple[str, ...]:
+    """Creates a paginated ILIKE equivalent function `message_text_matches`
+    using the SECURITY DEFINER feature.
 
     The row-level security we use for multi-tenant features defers using ILIKE/@@
     with index until after the security checks because it might expose secrets
@@ -533,15 +536,21 @@ def message_text_matches_ddl(schema: str) -> str:
     If we don't use this, postgres will convert ILIKE into simpler row scan
     instead of pre-filtering with an index.
     """
-    return f"""
-CREATE OR REPLACE FUNCTION "{schema}".{MESSAGE_TEXT_MATCHES}(
-    p_tenant text, p_workspace text, p_query text, p_pattern text, p_use_fts boolean
-) RETURNS SETOF bigint
+    name = f'"{schema}".{MESSAGE_TEXT_MATCHES}'
+    create = f"""
+CREATE OR REPLACE FUNCTION {name}(
+    p_tenant text, p_workspace text, p_query text, p_pattern text, p_use_fts boolean,
+    p_after_rank double precision, p_after_created_at timestamp with time zone,
+    p_after_id bigint,
+    p_limit integer
+) RETURNS TABLE (id bigint, created_at timestamp with time zone, rank double precision)
 LANGUAGE plpgsql STABLE SECURITY DEFINER
 SET search_path = pg_catalog, pg_temp
 AS $$
 DECLARE
     match text := 'm.content ILIKE $2 ESCAPE ' || quote_literal('\\');
+    rank_expr text := '0::double precision';
+    after text := '';
 BEGIN
     IF p_tenant IS NULL OR p_tenant IS DISTINCT FROM current_setting('app.tenant', true)
     THEN
@@ -550,21 +559,24 @@ BEGIN
     IF p_use_fts THEN
         match := 'to_tsvector(''english'', m.content)'
             || ' @@ plainto_tsquery(''english'', $3) OR ' || match;
+        rank_expr := 'coalesce(ts_rank(to_tsvector(''english'', m.content),'
+            || ' plainto_tsquery(''english'', $3)), 0)::double precision';
     END IF;
-    RETURN QUERY EXECUTE 'SELECT m.id FROM "{schema}".messages AS m'
+    IF p_after_id IS NOT NULL THEN
+        after := ' AND (' || rank_expr || ', m.created_at, m.id) < ($4, $5, $6)';
+    END IF;
+    RETURN QUERY EXECUTE 'SELECT m.id, m.created_at, ' || rank_expr
+        || ' FROM "{schema}".messages AS m'
         || ' WHERE m.tenant_id = ' || quote_literal(p_tenant)
-        || ' AND m.workspace_name = $1 AND (' || match || ')'
-        USING p_workspace, p_pattern, p_query;
+        || ' AND m.workspace_name = $1 AND (' || match || ')' || after
+        || ' ORDER BY 3 DESC, m.created_at DESC, m.id DESC LIMIT $7'
+        USING p_workspace, p_pattern, p_query, p_after_rank, p_after_created_at,
+            p_after_id, p_limit;
 END
 $$
 """  # nosec B608
-
-
-event.listen(
-    Base.metadata,
-    "after_create",
-    DDL(message_text_matches_ddl(settings.DB.SCHEMA).replace("%", "%%")),
-)
+    revoke = f"REVOKE ALL ON FUNCTION {name}{MESSAGE_TEXT_MATCHES_ARGS} FROM PUBLIC"
+    return (create, revoke)
 
 
 @final

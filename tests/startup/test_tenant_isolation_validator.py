@@ -82,7 +82,7 @@ def _fake_enforced_rls(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
-_OWNED_BY_BYPASSRLS = SearchFunction(True, "honcho_owner", False, True)
+_OWNED_BY_BYPASSRLS = SearchFunction(True, "honcho_owner", False, True, True)
 
 
 def _fake_search_function(
@@ -357,7 +357,7 @@ async def test_boots_when_the_tenant_role_cannot_bypass_rls(
     "found",
     [
         _OWNED_BY_BYPASSRLS,
-        SearchFunction(True, "postgres", True, False),
+        SearchFunction(True, "postgres", True, False, True),
     ],
 )
 def test_assert_search_function_passes_when_its_owner_bypasses_rls(
@@ -370,8 +370,11 @@ def test_assert_search_function_passes_when_its_owner_bypasses_rls(
     ("found", "match"),
     [
         (None, "is absent"),
-        (SearchFunction(False, "honcho_owner", False, True), "not SECURITY DEFINER"),
-        (SearchFunction(True, "honcho_app", False, False), "cannot bypass RLS"),
+        (
+            SearchFunction(False, "honcho_owner", False, True, True),
+            "not SECURITY DEFINER",
+        ),
+        (SearchFunction(True, "honcho_app", False, False, True), "cannot bypass RLS"),
     ],
 )
 def test_assert_search_function_raises(
@@ -384,12 +387,20 @@ def test_assert_search_function_raises(
 def test_assert_search_function_names_the_repair() -> None:
     with pytest.raises(StartupValidationError, match="OWNER TO") as exc:
         _assert_search_function_bypasses_rls(
-            SearchFunction(True, "honcho_app", False, False), schema="public"
+            SearchFunction(True, "honcho_app", False, False, True), schema="public"
         )
     assert "'honcho_app'" in str(exc.value)
-    assert "public.message_text_matches(text, text, text, text, boolean)" in str(
+    assert "public.message_text_matches_page(text, text, text, text, boolean," in str(
         exc.value
     )
+
+
+def test_assert_search_function_raises_when_the_app_role_cannot_execute() -> None:
+    with pytest.raises(StartupValidationError, match="GRANT EXECUTE") as exc:
+        _assert_search_function_bypasses_rls(
+            SearchFunction(True, "honcho_owner", False, True, False), schema="public"
+        )
+    assert "TO <the DB_CONNECTION_URI role>" in str(exc.value)
 
 
 @pytest.mark.asyncio
@@ -398,7 +409,9 @@ async def test_refuses_boot_when_the_search_function_owner_is_under_rls(
 ) -> None:
     _fake_enforced_rls(monkeypatch)
     _fake_tenant_role(monkeypatch, "honcho_app", False, False)
-    _fake_search_function(monkeypatch, SearchFunction(True, "honcho_app", False, False))
+    _fake_search_function(
+        monkeypatch, SearchFunction(True, "honcho_app", False, False, True)
+    )
 
     with pytest.raises(StartupValidationError, match="cannot bypass RLS"):
         await validate_tenant_isolation(

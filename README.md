@@ -523,7 +523,8 @@ Contributors: see [`CONTRIBUTING.md`](./CONTRIBUTING.md) for pre-commit setup. D
 `MULTI_TENANT=true` makes one Honcho serve many tenants on one database, with
 row-level security scoping every query to the tenant bound on the connection.
 Honcho does not create the roles or the policies itself; the startup validator
-checks them and refuses to boot otherwise. The database needs three roles:
+checks them and refuses to boot otherwise. The database needs these roles (the
+first and the last may be one role):
 
 - the migration role, which owns the schema and runs `alembic upgrade head`,
   created `WITH LOGIN BYPASSRLS`. Message search runs through a `SECURITY
@@ -531,10 +532,13 @@ checks them and refuses to boot otherwise. The database needs three roles:
   not leakproof, so under RLS the content indexes cannot serve them, and the
   function reads as its owner, pinned to the bound tenant. If the function was
   created by a role without `BYPASSRLS`, boot fails with the repair:
-  `ALTER FUNCTION message_text_matches(text, text, text, text, boolean) OWNER TO
-  <the BYPASSRLS role>`;
+  `ALTER FUNCTION message_text_matches_page(...) OWNER TO <the BYPASSRLS role>`
+  (the full signature is in the error);
 - the app role (`DB_CONNECTION_URI`), an ordinary role with no `BYPASSRLS`, which
-  every tenant-scoped query runs as;
+  every tenant-scoped query runs as. It needs `GRANT EXECUTE ON FUNCTION
+  message_text_matches_page(...) TO <app role>`: EXECUTE is revoked from PUBLIC
+  so no other role can reach the function's RLS bypass, and boot fails with the
+  exact statement when the grant is missing;
 - the service role (`DB_SERVICE_CONNECTION_URI`), `WITH LOGIN BYPASSRLS`, for the
   cross-tenant background work (the deriver claim, the reconciler).
 

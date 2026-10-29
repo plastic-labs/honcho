@@ -32,6 +32,7 @@ from sqlalchemy_utils import (
 )
 
 from src.config import settings
+from src.models import MESSAGE_TEXT_MATCHES, MESSAGE_TEXT_MATCHES_ARGS
 from tests.conftest import CONNECTION_URI
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -59,6 +60,10 @@ _RLS_TABLES: tuple[str, ...] = (
 # A non-owner, non-superuser role the assertions assume via SET ROLE: RLS is
 # bypassed by the owner/superuser, so the checks must run as an ordinary grantee.
 _RLS_ROLE = "honcho_rls_probe"
+
+# A role with USAGE on the schema and nothing else: it must not be able to call
+# the SECURITY DEFINER search function.
+_STRANGER_ROLE = "honcho_rls_stranger"
 
 
 def _new_id() -> str:
@@ -92,6 +97,15 @@ def _apply_rls_and_role(engine: Engine) -> None:
                 + f"IN SCHEMA public TO {_RLS_ROLE}"
             )
         )
+        conn.execute(
+            text(
+                "GRANT EXECUTE ON FUNCTION"
+                + f" {MESSAGE_TEXT_MATCHES}{MESSAGE_TEXT_MATCHES_ARGS} TO {_RLS_ROLE}"
+            )
+        )
+        conn.execute(text(f"DROP ROLE IF EXISTS {_STRANGER_ROLE}"))
+        conn.execute(text(f"CREATE ROLE {_STRANGER_ROLE} NOLOGIN"))
+        conn.execute(text(f"GRANT USAGE ON SCHEMA public TO {_STRANGER_ROLE}"))
 
 
 def _run_on_maintenance_db(*statements: str) -> None:
@@ -123,7 +137,9 @@ def _force_drop_test_db() -> None:
 def _drop_probe_role() -> None:
     # After the test database (and its grants) are gone, the cluster-global role
     # drops cleanly.
-    _run_on_maintenance_db(f"DROP ROLE IF EXISTS {_RLS_ROLE}")
+    _run_on_maintenance_db(
+        f"DROP ROLE IF EXISTS {_RLS_ROLE}", f"DROP ROLE IF EXISTS {_STRANGER_ROLE}"
+    )
 
 
 @pytest.fixture(scope="session")
@@ -328,15 +344,36 @@ def _seed_same_named_workspaces(engine: Engine) -> None:
         conn.execute(text("ANALYZE messages"))
 
 
-def _matches(conn: Connection, tenant: str) -> list[int]:
+def _matches(
+    conn: Connection,
+    tenant: str,
+    term: str = "fox",
+    *,
+    after: tuple[int, object, float] | None = None,
+    limit: int = 50,
+) -> list[tuple[int, object, float]]:
+    id_, created_at, rank = after if after is not None else (None, None, None)
     rows = conn.execute(
         text(
-            "SELECT * FROM message_text_matches(:t, 'ws-search', 'fox', '%fox%', true)"
-            + " ORDER BY 1"
+            f"SELECT * FROM {MESSAGE_TEXT_MATCHES}(:t, 'ws-search', :q, :p, true,"
+            + " CAST(:rank AS double precision), CAST(:created_at AS timestamptz),"
+            + " CAST(:id AS bigint), :limit)"
         ),
-        {"t": tenant},
+        {
+            "t": tenant,
+            "q": term,
+            "p": f"%{term}%",
+            "rank": rank,
+            "created_at": created_at,
+            "id": id_,
+            "limit": limit,
+        },
     )
-    return [int(r[0]) for r in rows]
+    return [(int(r[0]), r[1], float(r[2])) for r in rows]
+
+
+def _ids(rows: list[tuple[int, object, float]]) -> list[int]:
+    return [row[0] for row in rows]
 
 
 def test_search_function_reads_only_the_bound_tenant(rls_engine: Engine) -> None:
@@ -348,29 +385,60 @@ def test_search_function_reads_only_the_bound_tenant(rls_engine: Engine) -> None
         conn.execute(text(f"SET ROLE {_RLS_ROLE}"))
 
         _bind_tenant(conn, "t-search-1")
-        assert _matches(conn, "t-search-1") == [101]
-        assert _matches(conn, "t-search-2") == []
-        assert [
-            int(r[0])
-            for r in conn.execute(
-                text(
-                    "SELECT id FROM messages WHERE id IN (SELECT message_text_matches"
-                    + "('t-search-1', 'ws-search', 'fox', '%fox%', true))"
-                )
-            )
-        ] == [101]
+        assert _ids(_matches(conn, "t-search-1")) == [101]
+        assert _ids(_matches(conn, "t-search-2")) == []
 
         _bind_tenant(conn, "t-search-2")
-        assert _matches(conn, "t-search-2") == [201]
-        assert _matches(conn, "t-search-1") == []
+        assert _ids(_matches(conn, "t-search-2")) == [201]
+        assert _ids(_matches(conn, "t-search-1")) == []
 
         _bind_tenant(conn, "")
-        assert _matches(conn, "t-search-1") == []
-        assert _matches(conn, "") == []
+        assert _ids(_matches(conn, "t-search-1")) == []
+        assert _ids(_matches(conn, "")) == []
 
         conn.execute(text("RESET ROLE"))
     finally:
         raw.close()
+
+
+def test_search_function_pages_newest_first(rls_engine: Engine) -> None:
+    raw = rls_engine.connect()
+    conn = raw.execution_options(isolation_level="AUTOCOMMIT")
+    try:
+        conn.execute(text(f"SET ROLE {_RLS_ROLE}"))
+        _bind_tenant(conn, "t-search-1")
+
+        first = _matches(conn, "t-search-1", "filler message", limit=10)
+        second = _matches(
+            conn, "t-search-1", "filler message", after=first[-1], limit=10
+        )
+        everything = _matches(conn, "t-search-1", "filler message", limit=5000)
+
+        conn.execute(text("RESET ROLE"))
+    finally:
+        raw.close()
+
+    assert len(first) == 10 and len(second) == 10
+    assert _ids(first) == list(range(4000, 3990, -1))
+    assert _ids(second) == list(range(3990, 3980, -1))
+    assert len(everything) == 3000
+    assert _ids(everything) == sorted(_ids(everything), reverse=True)
+
+
+def test_search_function_is_not_executable_by_an_ungranted_role(
+    rls_engine: Engine,
+) -> None:
+    raw = rls_engine.connect()
+    conn = raw.execution_options(isolation_level="AUTOCOMMIT")
+    try:
+        conn.execute(text(f"SET ROLE {_STRANGER_ROLE}"))
+        _bind_tenant(conn, "t-search-1")
+        with pytest.raises(DBAPIError) as exc:
+            _matches(conn, "t-search-1")
+        conn.execute(text("RESET ROLE"))
+    finally:
+        raw.close()
+    assert "permission denied for function" in str(exc.value)
 
 
 def _search_plan(conn: Connection) -> str:

@@ -16,7 +16,7 @@ from src.embedding_client import embedding_client
 from src.telemetry.events import EmbeddingCallPurpose
 from src.utils.filter import apply_filter
 from src.utils.scopes import is_scope_peer_name
-from src.utils.search import message_text_condition
+from src.utils.search import matching_messages, message_text_condition
 from src.utils.types import embedding_call_purpose
 from src.vector_store import get_external_vector_store
 
@@ -1088,20 +1088,24 @@ async def _grep_messages_internal(
     scope_clauses: Sequence[ColumnElement[bool]] = (),
 ) -> list[tuple[list[models.Message], list[models.Message]]]:
     """Internal implementation of exact-text message search."""
-    match_stmt = (
-        select(models.Message)
-        .where(models.Message.workspace_name == workspace_name)
-        .where(message_text_condition(workspace_name, text, use_fts=False))
-        .order_by(models.Message.created_at.desc())
-        .limit(limit)
+    match_stmt = select(models.Message).where(
+        models.Message.workspace_name == workspace_name
     )
-
     if session_name:
         match_stmt = match_stmt.where(models.Message.session_name == session_name)
     match_stmt = match_stmt.where(*scope_clauses)
 
-    result = await db.execute(match_stmt)
-    matched_messages = list(result.scalars().all())
+    if settings.MULTI_TENANT:
+        matched_messages = await matching_messages(
+            db, match_stmt, workspace_name, text, use_fts=False, limit=limit
+        )
+    else:
+        match_stmt = (
+            match_stmt.where(message_text_condition(text, use_fts=False))
+            .order_by(models.Message.created_at.desc())
+            .limit(limit)
+        )
+        matched_messages = list((await db.execute(match_stmt)).scalars().all())
 
     return await _build_merged_snippets(
         db, workspace_name, matched_messages, context_window

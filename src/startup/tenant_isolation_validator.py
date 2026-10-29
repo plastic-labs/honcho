@@ -60,7 +60,7 @@ from tenacity import (
 )
 
 from src.config import AppSettings, settings
-from src.models import MESSAGE_TEXT_MATCHES
+from src.models import MESSAGE_TEXT_MATCHES, MESSAGE_TEXT_MATCHES_ARGS
 from src.startup.embedding_validator import StartupValidationError
 
 logger = logging.getLogger(__name__)
@@ -337,12 +337,13 @@ def _assert_tenant_role_cannot_bypass_rls(
 
 
 class SearchFunction(NamedTuple):
-    """What the boot check reads about ``message_text_matches``."""
+    """What the boot check reads about ``message_text_matches_page``."""
 
     security_definer: bool
     owner: str
     owner_is_superuser: bool
     owner_bypasses_rls: bool
+    executable: bool
 
 
 async def _introspect_search_function_with_retry(
@@ -372,7 +373,8 @@ async def _introspect_search_function_once(
 ) -> SearchFunction | None:
     query = text(
         """
-        SELECT p.prosecdef, r.rolname, r.rolsuper, r.rolbypassrls
+        SELECT p.prosecdef, r.rolname, r.rolsuper, r.rolbypassrls,
+               has_function_privilege(current_user, p.oid, 'EXECUTE') AS executable
         FROM pg_proc p
         JOIN pg_namespace n ON n.oid = p.pronamespace
         JOIN pg_roles r ON r.oid = p.proowner
@@ -385,7 +387,9 @@ async def _introspect_search_function_once(
         ).first()
     if row is None:
         return None
-    return SearchFunction(row.prosecdef, row.rolname, row.rolsuper, row.rolbypassrls)
+    return SearchFunction(
+        row.prosecdef, row.rolname, row.rolsuper, row.rolbypassrls, row.executable
+    )
 
 
 def _assert_search_function_bypasses_rls(
@@ -409,6 +413,14 @@ def _assert_search_function_bypasses_rls(
             + " cannot bypass RLS: the function runs under the policy like any"
             + " other statement and message search cannot use the content"
             + " indexes. Run migrations as a BYPASSRLS role, or"
-            + f" `ALTER FUNCTION {name}(text, text, text, text, boolean)"
+            + f" `ALTER FUNCTION {name}{MESSAGE_TEXT_MATCHES_ARGS}"
             + " OWNER TO <a BYPASSRLS role>`."
+        )
+    if not found.executable:
+        raise StartupValidationError(
+            f"MULTI_TENANT is on but the TENANT engine's role cannot execute {name},"
+            + " so every message search would fail. EXECUTE is revoked from PUBLIC"
+            + " on purpose; grant it to the app role:"
+            + f" `GRANT EXECUTE ON FUNCTION {name}{MESSAGE_TEXT_MATCHES_ARGS}"
+            + " TO <the DB_CONNECTION_URI role>`."
         )
