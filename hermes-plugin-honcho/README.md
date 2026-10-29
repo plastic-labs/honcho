@@ -478,9 +478,11 @@ The unit tests run against a pinned Hermes install (the plugin imports Hermes co
 modules) and make no network calls:
 
 ```bash
-cd hermes-plugin-honcho
-uv run --group test pytest tests
+cd hermes-plugin-honcho/tests
+uv run pytest
 ```
 
-The Hermes pin is the `hermes-agent` entry in the `test` dependency group of
-`pyproject.toml`; bump it together with `uv lock`.
+The Hermes pin is the `hermes-agent` entry in `tests/pyproject.toml`; bump it together
+with `uv lock` in `tests/`. Keep test dependencies out of the plugin's own
+`pyproject.toml`: Hermes locks that file, and a `hermes-agent` entry there breaks every
+install.
