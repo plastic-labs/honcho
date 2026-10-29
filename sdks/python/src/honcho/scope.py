@@ -158,6 +158,30 @@ class Scope(ScopeBase):
         )
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
+    def remove_sessions(self, sessions: Sequence[str | SessionBase]) -> None:
+        """
+        Remove sessions from this scope in one request.
+
+        Every named session must exist; if any doesn't, the server rejects the
+        whole batch and nothing is removed. Sessions that aren't members are
+        ignored. Each removed session is reconciled out asynchronously, as with
+        :meth:`remove_session`; poll :meth:`status` to watch that settle.
+
+        Args:
+            sessions: Sessions to remove, as ID strings or Session objects. At
+                most 100 per call, matching the server's limit.
+
+        Raises:
+            ValueError: If no sessions are given, or more than 100.
+        """
+        session_ids = resolve_scope_membership(sessions)
+        self._honcho._ensure_workspace()
+        self._honcho._http.post(
+            routes.scope_sessions_remove(self.workspace_id, self.id),
+            body={"session_ids": session_ids},
+        )
+
+    @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     def remove_session(self, session: str | SessionBase) -> None:
         """
         Remove a session from this scope.

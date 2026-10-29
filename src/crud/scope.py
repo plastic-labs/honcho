@@ -662,6 +662,91 @@ async def remove_session_from_scope(
     )
 
 
+async def remove_sessions_from_scope(
+    db: AsyncSession,
+    workspace_name: str,
+    scope_name: str,
+    session_names: Sequence[str],
+) -> list[str]:
+    """
+    Remove sessions from a scope, ending each membership in one transaction.
+
+    The batch is all-or-nothing: if any named session does not exist, nothing
+    is removed. Sessions that are not members of the scope are ignored, and get
+    no ``scope_removal`` task, since there is nothing of theirs to reconcile.
+    Each session whose membership ended gets one, inserted in the same
+    transaction: a retry finds those sessions already gone, so a task lost
+    after the commit could never be recovered.
+
+    Args:
+        db: Database session
+        workspace_name: Name of the workspace
+        scope_name: Unprefixed scope name
+        session_names: Names of existing sessions to remove
+
+    Returns:
+        The sessions whose membership this call ended, sorted
+
+    Raises:
+        ResourceNotFoundException: If the scope or any named session does not
+            exist
+    """
+    # Lazy import for the same circular-import reason as add_sessions_to_scope.
+    from src.deriver.enqueue import insert_scope_task
+
+    await get_scope_or_raise(db, workspace_name, scope_name)
+
+    requested = set(session_names)
+    result = await db.execute(
+        select(models.Session.name)
+        .where(models.Session.workspace_name == workspace_name)
+        .where(models.Session.name.in_(requested))
+        .where(models.Session.is_active == True)  # noqa: E712
+        .where(live_session_row())
+    )
+    missing = sorted(requested - {row[0] for row in result.all()})
+    if missing:
+        raise ResourceNotFoundException(
+            f"Session(s) {missing} not found in workspace {workspace_name}"
+        )
+
+    scope_peer = scope_peer_name(scope_name)
+    # Lock the active memberships in session order before ending them. Bulk add
+    # upserts the same rows one at a time in Python's sorted() order, so an
+    # unordered UPDATE here could lock them in scan order and deadlock against
+    # it. COLLATE "C" makes Postgres order the names by code point, as sorted()
+    # does; the database collation (e.g. en_US) would order them differently.
+    active = (
+        select(models.SessionPeer.session_name)
+        .where(models.SessionPeer.workspace_name == workspace_name)
+        .where(models.SessionPeer.peer_name == scope_peer)
+        .where(models.SessionPeer.session_name.in_(requested))
+        .where(models.SessionPeer.left_at.is_(None))
+        .order_by(models.SessionPeer.session_name.collate("C"))
+        .with_for_update()
+    )
+    removed = [row[0] for row in (await db.execute(active)).all()]
+    if removed:
+        await db.execute(
+            update(models.SessionPeer)
+            .where(models.SessionPeer.workspace_name == workspace_name)
+            .where(models.SessionPeer.peer_name == scope_peer)
+            .where(models.SessionPeer.session_name.in_(removed))
+            .where(models.SessionPeer.left_at.is_(None))
+            .values(left_at=func.now())
+        )
+    for session_name in removed:
+        await insert_scope_task(
+            db,
+            workspace_name,
+            task_type="scope_removal",
+            scope_peer=scope_peer,
+            session_name=session_name,
+        )
+    await db.commit()
+    return removed
+
+
 async def update_scope_backfill_status(
     db: AsyncSession,
     workspace_name: str,

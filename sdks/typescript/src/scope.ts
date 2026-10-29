@@ -143,6 +143,13 @@ export class Scope {
     })
   }
 
+  private async _removeSessions(sessionIds: string[]): Promise<void> {
+    await this._ensureWorkspace()
+    await this._http.post(`${this._basePath}/sessions/remove`, {
+      body: { session_ids: sessionIds },
+    })
+  }
+
   private async _removeSession(sessionId: string): Promise<void> {
     await this._ensureWorkspace()
     await this._http.delete(`${this._basePath}/sessions/${sessionId}`)
@@ -193,6 +200,22 @@ export class Scope {
   async addSessions(sessions: (string | Session)[]): Promise<void> {
     const sessionIds = ScopeSessionsSchema.parse(sessions.map(resolveId))
     await this._addSessions(sessionIds)
+  }
+
+  /**
+   * Remove sessions from this scope in one request.
+   *
+   * Every named session must exist; if any doesn't, the server rejects the
+   * whole batch and nothing is removed. Sessions that aren't members are
+   * ignored. Each removed session is reconciled out asynchronously, as with
+   * {@link Scope.removeSession}; poll {@link Scope.status} to watch that settle.
+   *
+   * @param sessions - Sessions to remove, as ID strings or Session objects. At
+   *                   most 100 per call, matching the server's limit.
+   */
+  async removeSessions(sessions: (string | Session)[]): Promise<void> {
+    const sessionIds = ScopeSessionsSchema.parse(sessions.map(resolveId))
+    await this._removeSessions(sessionIds)
   }
 
   /**

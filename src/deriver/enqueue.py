@@ -611,6 +611,83 @@ def create_scope_task_record(
     }
 
 
+async def insert_scope_task(
+    db_session: AsyncSession,
+    workspace_name: str,
+    *,
+    task_type: Literal["scope_backfill", "scope_removal"],
+    scope_peer: str,
+    session_name: str,
+) -> bool:
+    """
+    Insert a scope backfill / removal task in the caller's transaction.
+
+    Deduplicates like enqueue_dream: if a task with the same work_unit_key is
+    already in progress (has an ActiveQueueSession) or pending in the queue,
+    nothing is inserted — the handlers are idempotent, so a queued task already
+    covers this membership change.
+
+    For backfill tasks, the scope peer's per-session status entry is written
+    to "pending" alongside the queue insert, so the status surface never claims
+    a job exists that was never enqueued (or vice versa).
+
+    Does not commit. A caller that commits this with the membership change it
+    reconciles can never end up with one and not the other. After committing a
+    backfill task, the caller invalidates the scope peer cache.
+
+    Returns:
+        Whether a task was inserted
+    """
+    record = create_scope_task_record(
+        workspace_name,
+        task_type=task_type,
+        scope_peer=scope_peer,
+        session_name=session_name,
+    )
+    work_unit_key = record["work_unit_key"]
+
+    is_in_progress = await db_session.scalar(
+        select(
+            exists(
+                select(models.ActiveQueueSession.id).where(
+                    models.ActiveQueueSession.work_unit_key == work_unit_key
+                )
+            )
+        )
+    )
+    if is_in_progress:
+        logger.debug(
+            "Skipping %s enqueue - already in progress: %s", task_type, work_unit_key
+        )
+        return False
+
+    is_pending = await db_session.scalar(
+        select(
+            exists(
+                select(QueueItem.id).where(
+                    QueueItem.work_unit_key == work_unit_key,
+                    QueueItem.processed == False,  # noqa: E712
+                )
+            )
+        )
+    )
+    if is_pending:
+        logger.debug("%s already pending in queue: %s", task_type, work_unit_key)
+        return False
+
+    await db_session.execute(insert(QueueItem).returning(QueueItem), [record])
+
+    if task_type == "scope_backfill":
+        await crud.update_scope_backfill_status(
+            db_session,
+            workspace_name,
+            scope_peer,
+            session_name,
+            state="pending",
+        )
+    return True
+
+
 async def _enqueue_scope_task(
     workspace_name: str,
     *,
@@ -619,72 +696,21 @@ async def _enqueue_scope_task(
     session_name: str,
 ) -> None:
     """
-    Enqueue a scope backfill / removal task, deduplicating like enqueue_dream.
+    Enqueue a scope backfill / removal task in its own transaction.
 
-    If a task with the same work_unit_key is already in progress (has an
-    ActiveQueueSession) or pending in the queue, the enqueue is skipped — the
-    handlers are idempotent, so a queued task already covers this membership
-    change.
-
-    For backfill tasks, the scope peer's per-session status entry is written
-    to "pending" in the same transaction as the queue insert, so the status
-    surface never claims a job exists that was never enqueued (or vice versa).
+    See ``insert_scope_task`` for the deduplication and backfill-status rules.
     """
     async with tracked_db("scope_task_enqueue") as db_session:
         try:
-            record = create_scope_task_record(
+            inserted = await insert_scope_task(
+                db_session,
                 workspace_name,
                 task_type=task_type,
                 scope_peer=scope_peer,
                 session_name=session_name,
             )
-            work_unit_key = record["work_unit_key"]
-
-            is_in_progress = await db_session.scalar(
-                select(
-                    exists(
-                        select(models.ActiveQueueSession.id).where(
-                            models.ActiveQueueSession.work_unit_key == work_unit_key
-                        )
-                    )
-                )
-            )
-            if is_in_progress:
-                logger.debug(
-                    "Skipping %s enqueue - already in progress: %s",
-                    task_type,
-                    work_unit_key,
-                )
+            if not inserted:
                 return
-
-            is_pending = await db_session.scalar(
-                select(
-                    exists(
-                        select(QueueItem.id).where(
-                            QueueItem.work_unit_key == work_unit_key,
-                            QueueItem.processed == False,  # noqa: E712
-                        )
-                    )
-                )
-            )
-            if is_pending:
-                logger.debug(
-                    "%s already pending in queue: %s", task_type, work_unit_key
-                )
-                return
-
-            stmt = insert(QueueItem).returning(QueueItem)
-            await db_session.execute(stmt, [record])
-
-            if task_type == "scope_backfill":
-                await crud.update_scope_backfill_status(
-                    db_session,
-                    workspace_name,
-                    scope_peer,
-                    session_name,
-                    state="pending",
-                )
-
             await db_session.commit()
             await crud.invalidate_scope_peer_cache(workspace_name, scope_peer)
 

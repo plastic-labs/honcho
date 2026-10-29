@@ -2244,6 +2244,19 @@ class ScopeAio:
         )
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
+    async def remove_sessions(self, sessions: Sequence[str | SessionBase]) -> None:
+        """Remove sessions from this scope in one request, asynchronously.
+
+        See Scope.remove_sessions for the all-or-nothing batch semantics.
+        """
+        session_ids = resolve_scope_membership(sessions)
+        await self._scope._honcho._ensure_workspace_async()
+        await self._scope._honcho._async_http_client.post(
+            routes.scope_sessions_remove(self._scope.workspace_id, self._scope.id),
+            body={"session_ids": session_ids},
+        )
+
+    @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     async def remove_session(self, session: str | SessionBase) -> None:
         """Remove a session from this scope asynchronously.
 
