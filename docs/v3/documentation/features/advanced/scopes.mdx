@@ -299,6 +299,41 @@ call returns it, and any `metadata` you pass is written onto it. When a lookup
 must not create a scope — resolving a user-supplied name, for example — use
 `get_scope` / `getScope` instead, which fails with a not-found error.
 
+### Searching and Counting Scopes
+
+The scope list can filter by name and report how many sessions each scope
+holds, so a client never has to load every scope or list each one's members:
+
+<CodeGroup>
+```python Python
+# `id` matches the scope name (never the internal prefix)
+for scope in honcho.scopes({"id": {"icontains": "sup"}}, include_session_count=True):
+    print(scope.id, scope.session_count)
+```
+
+```typescript TypeScript
+const scopes = await honcho.scopes({
+  filters: { id: { icontains: "sup" } },
+  includeSessionCount: true,
+});
+for await (const scope of scopes) {
+  console.log(scope.id, scope.sessionCount);
+}
+```
+
+```bash REST
+curl -X POST "$HONCHO_URL/v3/workspaces/my-app/scopes/list?include_session_count=true" \
+  -H "Authorization: Bearer $HONCHO_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"filters": {"id": {"icontains": "sup"}}}'
+```
+</CodeGroup>
+
+`session_count` counts the sessions `scopes/{id}/sessions/list` would return,
+and is omitted unless requested. The name filter takes the same operators as
+other list filters (`icontains`, `contains`, `in`, AND/OR/NOT), plus
+`created_at` and `metadata`; `total` counts the filtered scopes.
+
 <Note>
 Every scopes route — and every read that passes `scope` — requires a
 **workspace-level or admin key**. A scope's membership can exceed any single

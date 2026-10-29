@@ -240,6 +240,11 @@ export interface ScopeResponse {
   id: string
   metadata: Record<string, unknown>
   created_at: string
+  /**
+   * Active member sessions. Only returned by the scope list with
+   * `include_session_count`.
+   */
+  session_count?: number
 }
 
 /**

@@ -703,18 +703,24 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
 
     def scopes(
         self,
+        filters: dict[str, object] | None = None,
         *,
         page: int = 1,
         size: int = 50,
         reverse: bool = False,
+        include_session_count: bool = False,
     ) -> SyncPage[ScopeResponse, Scope]:
         """
         Get all scopes in the current workspace.
 
         Args:
+            filters: Optional filter criteria. ``id`` matches the scope name, e.g.
+                ``{"id": {"icontains": "sup"}}``.
             page: Page number (1-indexed). Default: 1.
             size: Number of items per page. Default: 50.
             reverse: If True, reverses the default ordering. Default: False.
+            include_session_count: Set each returned scope's ``session_count``.
+                Default: False.
 
         Returns:
             A SyncPage of Scope objects representing all scopes in the workspace.
@@ -722,10 +728,17 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
         self._ensure_workspace()
 
         def fetch(next_page: int) -> dict[str, Any]:
+            """Fetch one page of scopes with the caller's filters and options."""
             query: dict[str, Any] = {"page": next_page, "size": size}
             if reverse:
                 query["reverse"] = "true"
-            return self._http.post(routes.scopes_list(self.workspace_id), query=query)
+            if include_session_count:
+                query["include_session_count"] = "true"
+            return self._http.post(
+                routes.scopes_list(self.workspace_id),
+                body={"filters": filters} if filters else None,
+                query=query,
+            )
 
         def transform(scope: ScopeResponse) -> Scope:
             """Convert a scope API response into a Scope SDK object."""
@@ -734,6 +747,7 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
                 self,
                 metadata=scope.metadata,
                 created_at=scope.created_at,
+                session_count=scope.session_count,
             )
 
         def fetch_next(next_page: int) -> SyncPage[ScopeResponse, Scope]:

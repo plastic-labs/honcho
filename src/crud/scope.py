@@ -21,7 +21,7 @@ from logging import getLogger
 from typing import Any, Literal
 from typing import cast as py_cast
 
-from sqlalchemy import ColumnElement, Select, Text, cast, select, update
+from sqlalchemy import ColumnElement, Select, Text, and_, cast, select, update
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, array
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
@@ -37,9 +37,11 @@ from src.exceptions import (
     ValidationException,
 )
 from src.telemetry.events import ScopeCreatedEvent, emit
+from src.utils.filter import apply_filter
 from src.utils.path_params import schema_from_path
 from src.utils.scopes import (
     SCOPE_KIND,
+    SCOPE_PEER_PREFIX,
     is_scope_peer,
     scope_name_from_peer,
     scope_peer_name,
@@ -216,21 +218,44 @@ async def get_or_create_scopes(
     )
 
 
+def _scope_name_column() -> ColumnElement[str]:
+    """The unprefixed scope name of a scope peer, as a SQL expression.
+
+    Filtering on this rather than ``Peer.name`` keeps a name filter about the
+    name the client knows: ``{"icontains": "sco"}`` must not match every scope
+    through the reserved ``scope.`` prefix.
+    """
+    return func.substr(models.Peer.name, len(SCOPE_PEER_PREFIX) + 1, type_=Text)
+
+
 async def get_scopes(
     workspace_name: str,
     reverse: bool = False,
+    filters: dict[str, Any] | None = None,
 ) -> Select[tuple[models.Peer]]:
     """Build a scope list query, ordered by creation time.
 
     Requires both halves via ``scope_peer_clause`` (reserved name prefix AND the
     internal kind flag), so a peer carrying a forged ``configuration`` cannot
     inject itself into the scope list.
+
+    Args:
+        workspace_name: Name of the workspace
+        reverse: Whether to return the newest scopes first
+        filters: Optional filters. ``id`` matches the unprefixed scope name;
+            ``created_at`` and ``metadata`` work as on other lists.
+
+    Returns:
+        Select for the workspace's scope peers
     """
     stmt = (
         select(models.Peer)
         .where(models.Peer.workspace_name == workspace_name)
         .where(scope_peer_clause())
         .where(live_peer_row())
+    )
+    stmt = apply_filter(
+        stmt, models.Peer, filters, column_overrides={"id": _scope_name_column()}
     )
     if reverse:
         return stmt.order_by(models.Peer.created_at.desc(), models.Peer.id.desc())
@@ -354,6 +379,73 @@ async def resolve_scope_session_union(
     return union
 
 
+def _active_scope_membership() -> ColumnElement[bool]:
+    """Join condition: a ``SessionPeer`` row is an active membership of a scope.
+
+    The one definition every scope membership read builds on: the member list,
+    the per-scope count, and the session list's ``scope`` filter,
+    ``in_no_scope`` and ``include_scopes``. It also joins the row to its
+    ``Session``, so it serves as a join's ON clause or as the WHERE of a
+    subquery correlated to an outer ``Session``.
+
+    A membership counts when the row has no ``left_at``; the session is active,
+    so an archived session is in no scope's list or count; the session, peer
+    and workspace are live; and the peer is a real scope (reserved name AND
+    kind flag), so a peer squatting on the ``scope.`` prefix never counts.
+    """
+    return and_(
+        models.SessionPeer.workspace_name == models.Session.workspace_name,
+        models.SessionPeer.session_name == models.Session.name,
+        models.SessionPeer.left_at.is_(None),
+        models.Session.is_active == True,  # noqa: E712
+        live_session_row(),
+        live_session_peer_row(),
+        select(models.Peer.id)
+        .where(models.Peer.workspace_name == models.SessionPeer.workspace_name)
+        .where(models.Peer.name == models.SessionPeer.peer_name)
+        .where(scope_peer_clause())
+        # Always this membership's own peer, never one from an enclosing query
+        .correlate_except(models.Peer)
+        .exists(),
+    )
+
+
+async def count_scope_sessions(
+    db: AsyncSession,
+    workspace_name: str,
+    scope_names: Sequence[str],
+) -> dict[str, int]:
+    """
+    Count each scope's member sessions, as ``get_scope_sessions`` lists them.
+
+    One query for the whole batch, so the scope list can attach counts to a
+    page without a query per scope.
+
+    Args:
+        db: Database session
+        workspace_name: Name of the workspace
+        scope_names: Unprefixed names of existing scopes
+
+    Returns:
+        Each requested scope name mapped to its member session count
+    """
+    counts: dict[str, int] = dict.fromkeys(scope_names, 0)
+    if not counts:
+        return counts
+    result = await db.execute(
+        select(models.SessionPeer.peer_name, func.count())
+        .join(models.Session, _active_scope_membership())
+        .where(models.SessionPeer.workspace_name == workspace_name)
+        .where(
+            models.SessionPeer.peer_name.in_([scope_peer_name(name) for name in counts])
+        )
+        .group_by(models.SessionPeer.peer_name)
+    )
+    for peer_name, count in result.all():
+        counts[scope_name_from_peer(peer_name)] = count
+    return counts
+
+
 async def get_scope_sessions(
     workspace_name: str,
     scope_name: str,
@@ -381,16 +473,9 @@ async def get_scope_sessions(
     """
     stmt = (
         select(models.Session)
-        .join(
-            models.SessionPeer,
-            (models.Session.name == models.SessionPeer.session_name)
-            & (models.Session.workspace_name == models.SessionPeer.workspace_name),
-        )
+        .join(models.SessionPeer, _active_scope_membership())
         .where(models.SessionPeer.workspace_name == workspace_name)
         .where(models.SessionPeer.peer_name == scope_peer_name(scope_name))
-        .where(models.SessionPeer.left_at.is_(None))
-        .where(models.Session.is_active == True)  # noqa: E712
-        .where(live_session_row(), live_session_peer_row())
     )
     if reverse:
         return stmt.order_by(
@@ -399,28 +484,11 @@ async def get_scope_sessions(
     return stmt.order_by(models.SessionPeer.joined_at.asc(), models.Session.id.asc())
 
 
-def _active_scope_memberships() -> Select[tuple[str, str]]:
-    """Select ``(session_name, scope peer name)`` for every active scope membership.
-
-    The membership row must have no ``left_at`` and a live session, peer and
-    workspace, and the peer must be a real scope (reserved name AND kind flag),
-    so an ordinary peer squatting on the ``scope.`` prefix never counts.
-    """
-    return (
-        select(models.SessionPeer.session_name, models.SessionPeer.peer_name)
-        .join(
-            models.Peer,
-            (models.Peer.workspace_name == models.SessionPeer.workspace_name)
-            & (models.Peer.name == models.SessionPeer.peer_name),
-        )
-        .where(models.SessionPeer.left_at.is_(None))
-        .where(scope_peer_clause())
-        .where(live_session_peer_row())
-    )
-
-
 def session_in_scope_clause(scope_name: str | None) -> ColumnElement[bool]:
     """Correlated EXISTS: the outer ``Session`` is an active member of a scope.
+
+    Membership as ``_active_scope_membership`` defines it, like every other
+    scope membership read.
 
     Args:
         scope_name: Unprefixed scope name, or None to match membership of any
@@ -429,10 +497,7 @@ def session_in_scope_clause(scope_name: str | None) -> ColumnElement[bool]:
     Returns:
         A clause to put in the WHERE of a query over ``models.Session``
     """
-    stmt = _active_scope_memberships().where(
-        models.SessionPeer.workspace_name == models.Session.workspace_name,
-        models.SessionPeer.session_name == models.Session.name,
-    )
+    stmt = select(models.SessionPeer.peer_name).where(_active_scope_membership())
     if scope_name is not None:
         stmt = stmt.where(models.SessionPeer.peer_name == scope_peer_name(scope_name))
     return stmt.exists()
@@ -462,7 +527,8 @@ async def get_session_scopes(
     if not scopes:
         return scopes
     result = await db.execute(
-        _active_scope_memberships()
+        select(models.SessionPeer.session_name, models.SessionPeer.peer_name)
+        .join(models.Session, _active_scope_membership())
         .where(models.SessionPeer.workspace_name == workspace_name)
         .where(models.SessionPeer.session_name.in_(scopes))
     )
