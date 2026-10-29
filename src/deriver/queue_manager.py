@@ -52,6 +52,7 @@ from src.telemetry import prometheus_metrics
 from src.telemetry.sentry import initialize_sentry
 from src.utils.queue_payload import RETRY_ATTEMPTS_PAYLOAD_KEY
 from src.utils.retryable_errors import is_retryable_error
+from src.utils.sanitization import escape_unstorable
 from src.utils.work_unit import parse_work_unit_key
 from src.webhooks.events import (
     QueueEmptyEvent,
@@ -582,6 +583,7 @@ class QueueManager:
         Terminal errors mark only the first queue item as errored so we don't
         potentially throw away a batch. This allows us to incrementally attempt
         to process the batch while still maintaining progress in a work unit.
+        If that mark fails, the work unit is released as for a transient error.
 
         Args:
             error: The exception that occurred
@@ -625,6 +627,9 @@ class QueueManager:
                 f"Failed to mark queue items as errored for work unit {work_unit_key}: {mark_error}",
                 exc_info=True,
             )
+            mark_failed = True
+        else:
+            mark_failed = False
 
         logger.error(
             f"Error {context} for work unit {work_unit_key}: {error}",
@@ -632,7 +637,10 @@ class QueueManager:
         )
         if settings.SENTRY.ENABLED:
             sentry_sdk.capture_exception(error)
-        return False
+        # An unmarked item is still the next one in the work unit, so carrying on
+        # would re-run it at once, LLM call included, in a tight loop. Release the
+        # work unit instead and let a later poll re-claim it after the backoff.
+        return mark_failed
 
     async def process_work_unit(self, work_unit_key: str, worker_id: str) -> None:
         """Process all queue items for a specific work unit by routing to the correct handler."""
@@ -1218,7 +1226,10 @@ class QueueManager:
                 update(models.QueueItem)
                 .where(models.QueueItem.id == item.id)
                 .where(models.QueueItem.work_unit_key == work_unit_key)
-                .values(processed=True, error=error[:65535])  # Truncate to TEXT limit
+                # Escape before truncating: an exception message can echo a NUL or
+                # lone surrogate from its input, and Postgres would reject the
+                # UPDATE, leaving the item unprocessed and claimable forever.
+                .values(processed=True, error=escape_unstorable(error)[:65535])
             )
             await db.execute(
                 update(models.ActiveQueueSession)
