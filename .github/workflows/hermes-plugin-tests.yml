@@ -18,11 +18,12 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
-    # The plugin is its own uv project (not a workspace member): its tests need a pinned
-    # Hermes install for the core modules the plugin imports, and no Honcho server.
+    # The tests are their own uv project (not a workspace member), apart from the plugin's
+    # pyproject.toml: they need a pinned Hermes install for the core modules the plugin
+    # imports, and no Honcho server.
     defaults:
       run:
-        working-directory: hermes-plugin-honcho
+        working-directory: hermes-plugin-honcho/tests
     steps:
       - uses: actions/checkout@v4
 
@@ -30,15 +31,15 @@ jobs:
         uses: astral-sh/setup-uv@v2
         with:
           enable-cache: true
-          cache-dependency-glob: "hermes-plugin-honcho/uv.lock"
+          cache-dependency-glob: "hermes-plugin-honcho/tests/uv.lock"
 
       - name: "Set up Python"
         uses: actions/setup-python@v5
         with:
-          python-version-file: "hermes-plugin-honcho/.python-version"
+          python-version-file: "hermes-plugin-honcho/tests/.python-version"
 
       - name: Install the test environment
-        run: uv sync --locked --group test
+        run: uv sync --locked
 
       - name: Run tests
-        run: uv run --group test pytest tests
+        run: uv run pytest
