@@ -209,8 +209,9 @@ async def honcho_llm_call(
     call, so raising from it consumes an attempt exactly like a provider error:
     it is retried and reaches the fallback on the final attempt (with
     `enable_retry=False`, the first raise propagates). It sees the response
-    before call-level fields such as `hit_input_token_cap` are set. Tool-less,
-    non-streaming calls only.
+    before call-level fields such as `hit_input_token_cap` are set, and a
+    response it rejects is recorded in telemetry as a failed attempt, output
+    included. Tool-less, non-streaming calls only.
 
     Raises:
         ValidationException: If streaming and tool calling are combined
@@ -300,9 +301,8 @@ async def honcho_llm_call(
             selected_config=plan.selected_config,
             plan=plan,
             telemetry=telemetry,
+            validate_response=validate_response,
         )
-        if validate_response is not None:
-            validate_response(response)
         return response
 
     decorated = _call_with_provider_selection
@@ -448,9 +448,8 @@ async def honcho_llm_call(
                     plan=plan,
                     telemetry=telemetry,
                     messages=captured_messages,
+                    validate_response=validate_response,
                 )
-                if validate_response is not None:
-                    validate_response(response)
                 return response
 
             wrapped = _toolless_call

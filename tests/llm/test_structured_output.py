@@ -36,6 +36,8 @@ def test_prompt_representation_malformed_json_raises_safe_error() -> None:
     assert sentinel not in rendered
     assert error.__cause__ is None
     assert error.__context__ is None
+    # Kept off the message and traceback, but available to telemetry.
+    assert error.raw_content == payload
 
 
 def test_prompt_representation_schema_irrelevant_json_raises() -> None:

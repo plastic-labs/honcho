@@ -9,6 +9,7 @@ user attributes, session-as-metadata) without a real Langfuse backend.
 from __future__ import annotations
 
 import time
+from dataclasses import replace
 from typing import cast
 
 import pytest
@@ -325,6 +326,40 @@ def test_error_finish_marks_generation_level(_exporter_env: FakeClient):
     )
     gen = client.observations[0]
     assert gen.kwargs["level"] == "ERROR"
+
+
+def test_failed_attempt_is_filterable_and_keeps_its_output(
+    _exporter_env: FakeClient,
+):
+    """A rejected or unparseable response is exported with what the model
+    said, tagged so failed generations can be filtered from successful ones."""
+    client = _exporter_env
+    failed = replace(
+        _call(run_id=None, trace_id="t1", finish_reason="error", content="{bad"),
+        outcome="error",
+        error_class="StructuredOutputError",
+    )
+    LangfuseExporter().export(failed)
+    gen = client.observations[0]
+    assert gen.kwargs["output"] == "{bad"
+    assert gen.kwargs["level"] == "ERROR"
+    assert gen.kwargs["status_message"] == "StructuredOutputError"
+    metadata = cast(dict[str, str], gen.kwargs["metadata"])
+    assert metadata["outcome"] == "error"
+    assert metadata["error_class"] == "StructuredOutputError"
+
+
+def test_successful_attempt_is_tagged_success(_exporter_env: FakeClient):
+    client = _exporter_env
+    LangfuseExporter().export(
+        replace(_call(run_id=None, trace_id="t1"), outcome="success")
+    )
+    gen = client.observations[0]
+    assert gen.kwargs["level"] is None
+    assert gen.kwargs["status_message"] is None
+    metadata = cast(dict[str, str], gen.kwargs["metadata"])
+    assert metadata["outcome"] == "success"
+    assert "error_class" not in metadata
 
 
 def test_exporter_disabled_without_public_key_emits_nothing(

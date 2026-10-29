@@ -1448,13 +1448,32 @@ async def test_openai_backend_structured_without_tools_still_uses_parse() -> Non
 
 
 @pytest.mark.asyncio
-async def test_structured_output_parse_validation_error_hides_payload() -> None:
+@pytest.mark.parametrize(
+    ("body", "raw_content"),
+    [
+        pytest.param(
+            "user said my-sentinel-secret-4417",
+            "user said my-sentinel-secret-4417",
+            id="not-json",
+        ),
+        # Only the offending sub-value survives, which is not the output.
+        pytest.param(
+            '{"explicit": [{"note": "my-sentinel-secret-4417"}]}',
+            None,
+            id="schema-mismatch",
+        ),
+    ],
+)
+async def test_structured_output_parse_validation_error_hides_payload(
+    body: str, raw_content: str | None
+) -> None:
     """parse() validates the body itself, so prose never reaches the repair
     path. For PromptRepresentation it surfaces as StructuredOutputError without
-    pydantic's input_value, which would echo the model's output."""
+    pydantic's input_value, which would echo the model's output; the body is
+    carried on the error for telemetry instead."""
     secret = "my-sentinel-secret-4417"
     with pytest.raises(ValidationError) as raised:
-        PromptRepresentation.model_validate_json(f"user said {secret}")
+        PromptRepresentation.model_validate_json(body)
     validation_error = raised.value
     client = Mock()
     client.chat.completions.parse = AsyncMock(side_effect=validation_error)
@@ -1471,6 +1490,7 @@ async def test_structured_output_parse_validation_error_hides_payload() -> None:
     assert secret in str(validation_error)
     assert secret not in str(exc_info.value)
     assert exc_info.value.__cause__ is None
+    assert exc_info.value.raw_content == raw_content
 
 
 # thinking_tool_choice_conflict on the OpenAI transport. An OpenAI-compatible
