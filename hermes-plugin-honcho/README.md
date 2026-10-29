@@ -275,7 +275,7 @@ The Honcho session name determines which conversation bucket memory lands in. Re
 
 | Priority | Source | Example session name |
 |----------|--------|---------------------|
-| 1 | Gateway session key (Telegram, Discord, etc.) | `"agent-main-telegram-dm-8439114563"` |
+| 1 | Messaging-platform gateway session key (Telegram, Discord, etc.) | `"agent-main-telegram-dm-8439114563"` |
 | 2 | `per-session` strategy | Hermes session ID (`20260415_a3f2b1`) |
 | 3 | Manual map (`sessions` config) | `"myproject-main"` |
 | 4 | Explicit `/title` command (non-automatic title) | `"refactor-auth"` |
@@ -283,7 +283,7 @@ The Honcho session name determines which conversation bucket memory lands in. Re
 | 6 | `per-directory` strategy | Directory basename (`my-project`) |
 | 7 | `global` strategy | Workspace name |
 
-Messaging gateway platforms always resolve via priority 1 (per-chat isolation) regardless of `sessionStrategy`. The strategy setting controls non-gateway sessions such as CLI and Desktop.
+Messaging gateway platforms always resolve via priority 1 (per-chat isolation) regardless of `sessionStrategy`: every Telegram or Discord chat shares the gateway's launch directory, so no directory strategy could tell them apart. The strategy setting controls Hermes' own surfaces (CLI, TUI, Desktop, ACP). Those chats now run inside the gateway runtime too and carry a `local` session key (`agent:main:local:dm:local-<sha>`), but each has its own frozen workspace, so that key is skipped and priorities 2 to 7 apply as before. A `per-session` strategy still gives each of them its own Honcho session through priority 2.
 
 Directory strategies and manual mappings use the logical session workspace, not the backend process's launch directory. Desktop/TUI and ACP pass the workspace during agent construction; deferred Desktop/TUI builds use the same session cwd. With no non-empty construction cwd, Honcho uses the runtime resolver: session cwd context, scoped `terminal.cwd`, then the launch directory. No process-wide `chdir` is needed.
 

@@ -490,6 +490,20 @@ class HonchoClientConfig:
     def _with_peer_prefix(self, name: str) -> str:
         return f"{self.peer_name}-{name}" if self.session_peer_prefix and self.peer_name else name
 
+    # ``Platform.LOCAL.value`` in ``gateway.config``: the platform slot of a session key for a
+    # Hermes CLI, TUI, Desktop or ACP chat routed through the gateway runtime.
+    _LOCAL_GATEWAY_PLATFORM = "local"
+
+    @classmethod
+    def _is_local_gateway_key(cls, key: str) -> bool:
+        """``agent:<ns>:local:...`` — a Hermes-surface (CLI/TUI/Desktop/ACP) chat keyed by the gateway.
+
+        ``gateway.session.build_session_key`` lays a key out as ``agent:<ns>:<platform>:<chat_type>...``;
+        the namespace is one segment (``main``, ``main~`` or a profile id), so the platform is always
+        the third. Only that slot is read: a chat id such as ``local-<sha>`` further along never matches."""
+        parts = key.split(":")
+        return len(parts) >= 3 and parts[0] == "agent" and parts[2] == cls._LOCAL_GATEWAY_PLATFORM
+
     def resolve_session_name(
         self, cwd: str | None = None, session_title: str | None = None,
         session_id: str | None = None, gateway_session_key: str | None = None,
@@ -514,17 +528,25 @@ class HonchoClientConfig:
         session_id: str | None = None, gateway_session_key: str | None = None,
         session_title_source: str | None = None,
     ) -> str | None:
-        """Order: gateway session key (per-chat isolation no cwd/strategy gives) -> per-session
+        """Order: messaging-platform gateway session key (per-chat isolation no cwd/strategy gives:
+        every Telegram or Discord chat shares the gateway's launch directory) -> per-session
         strategy's session_id (authoritative, so a generated title never remaps a live conversation)
         -> sessions map override -> /title -> per-repo (git root name) -> per-directory (basename)
-        -> global (workspace)."""
+        -> global (workspace).
+
+        A LOCAL gateway key (``agent:<ns>:local:...``) is skipped: it names a Hermes CLI/TUI/Desktop/ACP
+        chat that runs inside the gateway runtime but has its own frozen workspace, so the configured
+        strategy applies to it as it did before those chats were routed through the gateway. Honoring
+        the key opened one Honcho session per chat regardless of ``sessionStrategy``; ``per-session``
+        still isolates them through ``session_id``."""
         import re
 
         def _slug(text: str) -> str:
             return re.sub(r'[^a-zA-Z0-9_-]+', '-', text).strip('-')
 
         cwd = cwd or os.getcwd()
-        if gateway_session_key and _slug(gateway_session_key):
+        if (gateway_session_key and _slug(gateway_session_key)
+                and not self._is_local_gateway_key(gateway_session_key)):
             return self._enforce_session_id_limit(_slug(gateway_session_key), gateway_session_key)
         if self.session_strategy == "per-session" and session_id:
             return self._with_peer_prefix(session_id)
