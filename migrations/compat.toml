@@ -4,6 +4,6 @@
 # safe to roll back to.
 
 # Alembic head this floor was declared against.
-alembic_revision = "a5f8da8f6d23"
+alembic_revision = "c4d8e2f6a1b3"
 # Oldest released Honcho version whose image can still run against alembic_revision.
 compat_floor = "3.2.2"
