@@ -734,3 +734,42 @@ async def test_clean_nul_only_summary_is_not_retried(finish_reasons: list[str]):
     assert inner.await_count == 1
     assert is_fallback is True
     assert "\x00" not in summary["content"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("parse_class", "finish_reason", "recorded"),
+    [("content_filtered", "content_filter", True), ("truncated", "length", False)],
+)
+async def test_filtered_summary_is_counted_as_a_rejection(
+    monkeypatch: pytest.MonkeyPatch,
+    parse_class: str,
+    finish_reason: str,
+    recorded: bool,
+):
+    """Sentry drops a filtered summary, so the rejection counter is where it
+    shows up. A truncated one stays a Sentry error and is not counted."""
+    monkeypatch.setattr(settings.METRICS, "ENABLED", True)
+    refusal = EmptySummaryError.for_prompt(
+        "prompt",
+        parse_class=parse_class,
+        finish_reasons=[finish_reason],
+        output_tokens=0,
+    )
+    with (
+        patch(
+            "src.utils.summarizer.create_short_summary",
+            new_callable=AsyncMock,
+            side_effect=refusal,
+        ),
+        patch("src.utils.summarizer.prometheus_metrics") as mock_metrics,
+        pytest.raises(EmptySummaryError),
+    ):
+        await _call_create_summary(SummaryType.SHORT)
+
+    if recorded:
+        mock_metrics.record_summary_rejection.assert_called_once_with(
+            summary_type="short", reason="content_filtered"
+        )
+    else:
+        mock_metrics.record_summary_rejection.assert_not_called()
