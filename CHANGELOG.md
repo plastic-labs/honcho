@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 - Removing a session from a scope and adding it back no longer loses the scope's memory of that session. The removal's cleanup task could run after the re-add (another deriver replica, a retry, a backlog) and soft-delete the session's scope conclusions, including ones derived after the re-add, plus the scope's dream notes and the session's backfill status. The cleanup now locks the membership and skips if the session is a member again. Session and workspace deletion now delete memberships before conclusions, in the order the cleanup takes them, so the two can't deadlock (DEV-3197)
 - Chat, the deriver, summaries and dreams no longer fail when an OpenAI-compatible model returns a usage total but omits the prompt and completion counts. The answer is kept and the missing counts are recorded as zero, instead of the request erroring and being sent again (#1410)
+- A deriver queue item whose error message contains a NUL or a lone surrogate is now marked errored. Postgres rejected that error text, so the item was never marked and the worker ran it again straight away, LLM call included, over and over. Those characters are now stored escaped (`\x00`, `\ud83d`). If marking an item errored fails for any other reason, the worker now releases the work unit and backs off instead of rerunning the item at once (DEV-3163)
 
 ## [3.4.1] - 2026-10-23
 
