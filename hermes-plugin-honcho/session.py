@@ -163,6 +163,13 @@ class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMi
         return self._cached_sdk_object(
             self._peers_cache, peer_id, lambda: self._authed_call("peer setup", lambda: self.honcho.peer(peer_id)))
 
+    def _peer_ref(self, peer_id: str) -> Any:
+        """A peer handle for read-only calls. Built locally with no API call, so a read never
+        creates the peer the way ``_get_or_create_peer`` would."""
+        from honcho import Peer
+
+        return Peer(peer_id, self.honcho)
+
     # ----- Observation config (per session) -----
 
     def _observation_flags(self, honcho_session_id: str) -> dict[str, bool]:

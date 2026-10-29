@@ -236,10 +236,13 @@ class SessionContextMixin:
             "message search", lambda: self.honcho.search(q, filters={"peer_perspective": peer_id}, limit=limit),
             _FAILED, logging.DEBUG, "Honcho message search failed (peer_perspective=%s): %s", peer_id,
         )
-        if messages is _FAILED:
-            # Older Honcho versions lack the perspective filter; fall back to peer-authored search.
+        if messages is _FAILED or not messages:
+            # Older Honcho versions lack the perspective filter (raise), and servers before v3.1.0
+            # moved joined_at on every peer re-add, so the filter returns [] for history the peer was
+            # present for; upgrading doesn't restore those windows. A peer's own messages are always
+            # in its perspective, so peer-authored search is a safe fallback for both.
             messages = self._guarded_authed(
-                "peer search", lambda: self._get_or_create_peer(peer_id).search(q, limit=limit),
+                "peer search", lambda: self._peer_ref(peer_id).search(q, limit=limit),
                 None, logging.DEBUG, "Honcho peer search fallback also failed: %s",
             )
         if not messages:
