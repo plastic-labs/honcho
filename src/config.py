@@ -1115,6 +1115,11 @@ class DialecticSettings(HonchoSettings):
     MAX_OUTPUT_TOKENS: Annotated[int, Field(default=8192, gt=0, le=100_000)] = 8192
     MAX_INPUT_TOKENS: Annotated[int, Field(default=100_000, gt=0, le=200_000)] = 100_000
 
+    # Longest peer chat query accepted, in characters. Raise it for clients
+    # that quote recent conversation turns in the query. Workspace chat keeps
+    # its own fixed limit.
+    MAX_QUERY_LENGTH: Annotated[int, Field(default=10_000, gt=0, le=200_000)] = 10_000
+
     # Extra tool rounds workspace chat gets on top of its level's limit. A
     # workspace query fans out over peers where a pair query reads one
     # representation, so it needs room to route and then recall. Not applied at

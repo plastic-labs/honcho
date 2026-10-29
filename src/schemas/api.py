@@ -906,10 +906,22 @@ class DialecticOptions(BaseModel):
     )
     query: Annotated[
         str,
-        Field(min_length=1, max_length=10000, description="Dialectic API Prompt"),
+        Field(
+            min_length=1,
+            max_length=settings.DIALECTIC.MAX_QUERY_LENGTH,
+            description="Dialectic API Prompt",
+        ),
         NulStripped,
     ]
-    stream: bool = False
+    stream: bool = Field(
+        default=False,
+        description=(
+            "Return the answer as a text/event-stream. The answer arrives when "
+            + "the agent finishes gathering context, usually as a single chunk; "
+            + "only an answer synthesized at the tool-call limit streams as it "
+            + "is generated."
+        ),
+    )
     reasoning_level: ReasoningLevel = Field(
         default="low",
         description="Level of reasoning to apply: minimal, low, medium, high, or max",
@@ -940,7 +952,15 @@ class WorkspaceChatOptions(BaseModel):
         Field(min_length=1, max_length=10000, description="Workspace chat prompt"),
         NulStripped,
     ]
-    stream: bool = False
+    stream: bool = Field(
+        default=False,
+        description=(
+            "Return the answer as a text/event-stream. The answer arrives when "
+            + "the agent finishes gathering context, usually as a single chunk; "
+            + "only an answer synthesized at the tool-call limit streams as it "
+            + "is generated."
+        ),
+    )
     reasoning_level: ReasoningLevel = Field(
         default="low",
         description="Level of reasoning to apply: minimal, low, medium, high, or max",

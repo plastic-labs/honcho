@@ -258,3 +258,27 @@ def test_thinking_tool_choice_conflict_from_env_is_validated_at_config_load(
 
     with pytest.raises(ValueError, match="thinking_tool_choice_conflict must be"):
         AppSettings()
+
+
+def test_dialectic_query_limit_is_read_from_env() -> None:
+    """The peer chat query limit binds when the schema module is imported."""
+    import subprocess
+    import sys
+
+    probe = (
+        "from src.schemas.api import DialecticOptions\n"
+        + "DialecticOptions(query='x' * 40_000)\n"
+        + "try:\n"
+        + "    DialecticOptions(query='x' * 40_001)\n"
+        + "except ValueError:\n"
+        + "    print('rejected')\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", probe],
+        env={**os.environ, "DIALECTIC_MAX_QUERY_LENGTH": "40000"},
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    assert result.stdout.strip() == "rejected"

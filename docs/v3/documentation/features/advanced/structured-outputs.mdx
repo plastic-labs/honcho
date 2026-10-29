@@ -161,7 +161,7 @@ curl -X POST "$HONCHO_URL/v3/workspaces/my-app/chat" \
 
 ## Streaming
 
-`response_format` works with streaming. The stream emits the JSON answer incrementally as raw text chunks; the accumulated text is a valid JSON string once the stream completes. To enable streaming the SDKs cannot parse streamed responses for you, you parse the final string yourself:
+`response_format` works with streaming. The stream emits the JSON answer as raw text chunks (usually one); the accumulated text is a valid JSON string once the stream completes. To enable streaming the SDKs cannot parse streamed responses for you, you parse the final string yourself:
 
 <CodeGroup>
 ```python Python
