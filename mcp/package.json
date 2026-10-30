@@ -19,7 +19,7 @@
     "deploy:staging": "bun run check:deploy && wrangler deploy --env staging"
   },
   "dependencies": {
-    "@honcho-ai/sdk": "^2.5.0",
+    "@honcho-ai/sdk": "^2.8.0",
     "@modelcontextprotocol/sdk": "^1.26.0",
     "@sentry/bun": "^11.1.0",
     "@sentry/cloudflare": "^11.1.0",
