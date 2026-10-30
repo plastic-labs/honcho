@@ -51,8 +51,8 @@ class NamespacedHistogram(Histogram):
 class TenantScopedCounter(NamespacedCounter):
     """A counter whose value is attributable to one tenant.
 
-    Injects ``tenant_id`` from the ambient tenant beside ``namespace``. Empty when
-    ``MULTI_TENANT`` is off or nothing is bound: Prometheus treats
+    Injects ``tenant_id`` from the ambient tenant beside ``namespace`` (flag-off,
+    ``TENANT_ID``). Empty when neither is set: Prometheus treats
     an empty label value as absent, so the flag-off series set is exactly the
     pre-tenancy one, and the startup zero-init (which runs with nothing bound)
     materializes the same children as before. Per-tenant children appear on first

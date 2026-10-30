@@ -34,7 +34,14 @@ no connection; (4) and (5) introspect the database (with retry).
    passes vacuously while isolation is actually off. Refuse to boot if the
    TENANT engine's connecting role (``DB_CONNECTION_URI``) is either.
 
-No-op when ``MULTI_TENANT`` is off: self-host runs on plain, RLS-free Postgres.
+``TENANT_ID`` is the flag-off counterpart: it names the one tenant a single-tenant
+instance's rows carry. Set alongside ``MULTI_TENANT`` it names a tenant the instance
+does not serve, so boot is refused. Set with the flag off, the database must have been
+migrated under it — a tenants row for it and no workspaces under any other tenant —
+or every read filters on a tenant the rows do not carry and the instance looks empty.
+
+No-op when ``MULTI_TENANT`` is off and ``TENANT_ID`` unset: self-host runs on plain,
+RLS-free Postgres and never pays for this.
 
 This is a permanent isolation guard, not a migration-scoped check: it stays in
 OSS so a self-hoster running one instance across multiple tenants gets the same
@@ -100,7 +107,9 @@ async def validate_tenant_isolation(
     instance_type: Literal["api", "deriver"],
     app_settings: AppSettings | None = None,
 ) -> None:
-    """Fail boot on a multi-tenant half-state. No-op unless MULTI_TENANT is on.
+    """Fail boot on a multi-tenant half-state, or on a TENANT_ID the data lacks.
+
+    No-op when MULTI_TENANT is off and TENANT_ID is unset.
 
     Run after the DB pool is initialized and before serving traffic / processing
     the queue — the same placement as ``validate_embedding_schema``. The caller
@@ -109,11 +118,17 @@ async def validate_tenant_isolation(
     """
     s = app_settings if app_settings is not None else settings
     if not s.MULTI_TENANT:
+        if s.TENANT_ID is not None:
+            registered, foreign = await _introspect_instance_tenant(
+                engine, s.DB.SCHEMA, s.TENANT_ID
+            )
+            _assert_instance_tenant_matches(s.TENANT_ID, registered, foreign)
         return
 
     # Every settings-only check runs first: a misconfiguration that needs no
     # database should be reported immediately, not after the introspection retries
     # have spent themselves failing to reach a database that may also be down.
+    _assert_tenant_id_unset(s)
     _assert_auth_enabled(s, instance_type)
     _assert_pooler_mode_safe(s.DB.POOLER_MODE)
     _assert_service_role_configured(s)
@@ -124,6 +139,53 @@ async def validate_tenant_isolation(
     _assert_tenant_role_cannot_bypass_rls(rolname, rolsuper, rolbypassrls)
     search_function = await _introspect_search_function_with_retry(engine, s.DB.SCHEMA)
     _assert_search_function_bypasses_rls(search_function, schema=s.DB.SCHEMA)
+
+
+def _assert_tenant_id_unset(s: AppSettings) -> None:
+    """Refuse TENANT_ID on a shared instance, whose tenant comes from each JWT."""
+    if s.TENANT_ID is not None:
+        raise StartupValidationError(
+            f"MULTI_TENANT is on but TENANT_ID={s.TENANT_ID!r} is set: a shared"
+            + " instance takes each request's tenant from its JWT, so TENANT_ID"
+            + " names a tenant it does not serve. Unset TENANT_ID."
+        )
+
+
+async def _introspect_instance_tenant(
+    engine: AsyncEngine, schema: str, tenant_id: str
+) -> tuple[bool, bool]:
+    """Return (TENANT_ID has a tenants row, workspaces exist under another tenant)."""
+    query = text(
+        f"""
+        SELECT
+            EXISTS (SELECT 1 FROM "{schema}".tenants WHERE tenant_id = :tenant),
+            EXISTS (SELECT 1 FROM "{schema}".workspaces WHERE tenant_id <> :tenant)
+        """  # nosec B608
+    )
+    async with engine.connect() as conn:
+        registered, foreign = (await conn.execute(query, {"tenant": tenant_id})).one()
+    return bool(registered), bool(foreign)
+
+
+def _assert_instance_tenant_matches(
+    tenant_id: str, registered: bool, foreign: bool
+) -> None:
+    fix = (
+        " TENANT_ID is fixed for the life of a database: set it to the tenant the"
+        + " rows carry, or run `alembic upgrade head` on a fresh database with it set."
+    )
+    if foreign:
+        raise StartupValidationError(
+            f"TENANT_ID={tenant_id!r} but the database holds workspaces under"
+            + " another tenant, which every read would filter out."
+            + fix
+        )
+    if not registered:
+        raise StartupValidationError(
+            f"TENANT_ID={tenant_id!r} but the database has no tenants row for it, so"
+            + " every write would fail its tenant foreign key."
+            + fix
+        )
 
 
 def _assert_service_role_configured(s: AppSettings) -> None:

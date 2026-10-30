@@ -305,8 +305,9 @@ class TelemetryEmitter:
         # (`tenantid`: lowercase alphanumeric per the spec), never `source` — on a
         # shared instance `source` still names the instance, and one flush batch
         # holds many tenants' events, so the consumer must read this per event.
-        # Only under MULTI_TENANT: a single-tenant instance's envelope stays
-        # byte-identical and its tenant IS the namespace. Read here, at emit time,
+        # Under MULTI_TENANT the bound tenant; flag-off the instance's TENANT_ID,
+        # and with that unset the envelope stays byte-identical and its tenant IS
+        # the namespace. Read here, at emit time,
         # because this runs in the emitting request's or work unit's context; the
         # flush loop that serializes the buffer later does not.
         # A flag-on emit with no tenant bound is an emit site outside its bind

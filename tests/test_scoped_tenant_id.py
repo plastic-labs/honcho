@@ -20,11 +20,15 @@ def _sql(stmt: Any) -> str:
     )
 
 
-def test_flag_off_with_no_tenant_bound_is_the_default_tenant(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize(
+    ("tenant_id", "expected"), [(None, "default"), ("dedicated", "dedicated")]
+)
+def test_flag_off_with_no_tenant_bound_is_the_instance_tenant(
+    monkeypatch: pytest.MonkeyPatch, tenant_id: str | None, expected: str
 ) -> None:
     monkeypatch.setattr(settings, "MULTI_TENANT", False)
-    assert models.scoped_tenant_id() == models.DEFAULT_TENANT_ID
+    monkeypatch.setattr(settings, "TENANT_ID", tenant_id)
+    assert models.scoped_tenant_id() == expected
 
 
 @pytest.mark.parametrize("multi_tenant", [True, False])
@@ -45,12 +49,16 @@ def test_flag_on_with_no_tenant_bound_raises(monkeypatch: pytest.MonkeyPatch) ->
         models.scoped_tenant_id()
 
 
+@pytest.mark.parametrize(
+    ("tenant_id", "expected"), [(None, "default"), ("dedicated", "dedicated")]
+)
 def test_conclusions_list_filters_on_the_tenant(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tenant_id: str | None, expected: str
 ) -> None:
     """The (tenant_id, ...) indexes give order only with tenant_id bound in the
-    query, so flag-off reads filter on the default tenant too. The token window
+    query, so flag-off reads filter on the instance tenant too. The token window
     reads are checked in tests/crud/test_message_token_window.py."""
     monkeypatch.setattr(settings, "MULTI_TENANT", False)
+    monkeypatch.setattr(settings, "TENANT_ID", tenant_id)
     page = _sql(get_documents_with_filters("ws"))
-    assert "documents.tenant_id = 'default'" in page
+    assert f"documents.tenant_id = '{expected}'" in page

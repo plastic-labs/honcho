@@ -14,11 +14,17 @@ from src.models import (
 )
 
 
-def test_flag_off_unbound_is_default(monkeypatch: pytest.MonkeyPatch):
+@pytest.mark.parametrize(
+    ("tenant_id", "expected"), [(None, DEFAULT_TENANT_ID), ("dedicated", "dedicated")]
+)
+def test_flag_off_unbound_is_the_instance_tenant(
+    monkeypatch: pytest.MonkeyPatch, tenant_id: str | None, expected: str
+):
     monkeypatch.setattr(settings, "MULTI_TENANT", False)
+    monkeypatch.setattr(settings, "TENANT_ID", tenant_id)
     token = tenant_context.set(None)
     try:
-        assert _default_tenant_id() == DEFAULT_TENANT_ID
+        assert _default_tenant_id() == expected
     finally:
         tenant_context.reset(token)
 

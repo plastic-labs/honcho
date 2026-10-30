@@ -398,7 +398,30 @@ def test_current_tenant_id_is_none_flag_off_even_when_bound(
     """The single source every chokepoint above reads: flag-off it is None no
     matter what is bound on the ContextVar."""
     monkeypatch.setattr(settings, "MULTI_TENANT", False)
+    monkeypatch.setattr(settings, "TENANT_ID", None)
     assert current_tenant_id() is None
+
+
+@pytest.mark.usefixtures("bound_tenant")
+def test_current_tenant_id_is_tenant_id_flag_off_even_when_bound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A dedicated instance declares its tenant: flag-off every chokepoint reports
+    TENANT_ID, never what is bound on the ContextVar."""
+    monkeypatch.setattr(settings, "MULTI_TENANT", False)
+    monkeypatch.setattr(settings, "TENANT_ID", "dedicated")
+    assert current_tenant_id() == "dedicated"
+
+
+def test_flag_off_tenant_id_rides_the_envelope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "MULTI_TENANT", False)
+    monkeypatch.setattr(settings, "TENANT_ID", "dedicated")
+    monkeypatch.setattr(settings.TELEMETRY, "NAMESPACE", "test_ns")
+    emitter = TelemetryEmitter(endpoint="http://test:8001/events")
+    emitter.emit(_message_created_event())
+    assert emitter._buffer[-1].get_attributes()["tenantid"] == "dedicated"
 
 
 @pytest.mark.usefixtures("bound_tenant")

@@ -458,8 +458,8 @@ class LangfuseExporter:
             return
         from langfuse import LangfuseOtelSpanAttributes as Attr
 
-        # The tenant is the Langfuse user under MULTI_TENANT; flag-off the namespace
-        # (the instance) is, exactly as before tenancy.
+        # The tenant is the Langfuse user (flag-off, TENANT_ID when set); with no
+        # tenant the namespace (the instance) is, exactly as before tenancy.
         span.set_attribute(
             Attr.TRACE_USER_ID, current_tenant_id() or str(settings.NAMESPACE)
         )
