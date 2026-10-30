@@ -32,7 +32,7 @@ EmbeddingEncodingFormatMode = Literal["auto", "float", "base64"]
 
 # OpenAI-compatible models that reject the `dimensions=` request parameter.
 _EMBEDDING_KNOWN_REJECTING_MODELS: frozenset[str] = frozenset(
-    {"text-embedding-ada-002"}
+    {"text-embedding-ada-002", "mistral-embed"}
 )
 
 # Hosts known to serve base64 embeddings, which are ~3.6x smaller on the wire.
