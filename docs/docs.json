@@ -129,6 +129,7 @@
                 "group": "Frameworks & SDKs",
                 "pages": [
                   "v3/guides/integrations/vercel-ai-sdk",
+                  "v3/guides/integrations/cursor-agent-sdk",
                   "v3/guides/integrations/langgraph",
                   "v3/guides/integrations/crewai",
                   "v3/guides/community/agent0",
