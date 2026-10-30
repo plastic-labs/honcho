@@ -123,3 +123,88 @@ class TestCmdPeers:
         assert "hermes.new" not in out  # well-formed key, no dot-form leak
         new_line = [l for l in out.splitlines() if l.strip().startswith("new")][0]
         assert "alice" in new_line  # top-level peerName fallback
+
+
+class TestProfileOwnConfigWins:
+    """#1352: a profile with its own honcho.json runs with that file, so every reader must
+    describe that file rather than the block cloned into the default profile's file."""
+
+    @staticmethod
+    def _write_local_profile(profiles_dir, name, cfg):
+        profile_dir = profiles_dir / name
+        profile_dir.mkdir(parents=True)
+        (profile_dir / "honcho.json").write_text(json.dumps(cfg))
+        return profile_dir
+
+    def _pin_profile_dirs(self, monkeypatch, profiles_dir):
+        monkeypatch.setattr(
+            "hermes_cli.profiles.get_profile_dir",
+            lambda name: profiles_dir / name,
+        )
+
+    def test_local_config_settings_win_over_the_default_file(self, honcho_home, monkeypatch):
+        """recallMode / writeFrequency / peerName come from the profile's own file —
+        the values its runtime actually uses."""
+        profiles_dir = honcho_home / "profiles"
+        self._write_local_profile(profiles_dir, "work", {
+            "peerName": "carol",
+            "recallMode": "tools",
+            "writeFrequency": "sync",
+            "hosts": {"hermes_work": {"workspace": "other-ws"}},
+        })
+        self._pin_profile_dirs(monkeypatch, profiles_dir)
+        monkeypatch.setattr(
+            "hermes_cli.profiles.list_profiles",
+            lambda: [SimpleNamespace(name="default"), SimpleNamespace(name="work")],
+        )
+        rows = honcho_cli._all_profile_host_configs()
+        _, host, block = {name: (name, h, b) for name, h, b in rows}["work"]
+        assert host == "hermes_work"
+        assert block["peerName"] == "carol"  # not the default file's "alice"
+        assert block["recallMode"] == "tools"  # not "hybrid" from the default file
+        assert block["writeFrequency"] == "sync"  # not "async" from the default file
+        assert block["workspace"] == "other-ws"
+
+    def test_profiles_without_a_local_config_keep_the_default_file(self, honcho_home, monkeypatch):
+        """No local honcho.json stays on the previous path: the cloned block, root fallback."""
+        profiles_dir = honcho_home / "profiles"
+        profiles_dir.mkdir()
+        self._pin_profile_dirs(monkeypatch, profiles_dir)
+        monkeypatch.setattr(
+            "hermes_cli.profiles.list_profiles",
+            lambda: [SimpleNamespace(name="default"), SimpleNamespace(name="work")],
+        )
+        rows = honcho_cli._all_profile_host_configs()
+        _, host, block = {name: (name, h, b) for name, h, b in rows}["work"]
+        assert host == "hermes_work"
+        assert block.get("peerName") == "alice"  # the block cloned into the default file
+
+    def test_unparseable_local_config_falls_back_instead_of_raising(self, honcho_home, monkeypatch):
+        """A read-only view must not fail on a broken local file; it degrades to the default file."""
+        profiles_dir = honcho_home / "profiles"
+        profile_dir = profiles_dir / "work"
+        profile_dir.mkdir(parents=True)
+        (profile_dir / "honcho.json").write_text("{ not json")
+        self._pin_profile_dirs(monkeypatch, profiles_dir)
+        monkeypatch.setattr(
+            "hermes_cli.profiles.list_profiles",
+            lambda: [SimpleNamespace(name="default"), SimpleNamespace(name="work")],
+        )
+        rows = honcho_cli._all_profile_host_configs()
+        block = {name: b for name, _, b in rows}["work"]
+        assert block.get("peerName") == "alice"
+
+    def test_unknown_profile_dir_keeps_the_default_behaviour(self, honcho_home, monkeypatch):
+        """When get_profile_dir cannot resolve (Hermes not importable / unknown profile),
+        every caller must stay on its previous path."""
+        monkeypatch.setattr(
+            "hermes_cli.profiles.get_profile_dir",
+            lambda name: (_ for _ in ()).throw(KeyError(name)),
+        )
+        assert honcho_cli._profile_config_path("work") is None
+        monkeypatch.setattr(
+            "hermes_cli.profiles.list_profiles",
+            lambda: [SimpleNamespace(name="default"), SimpleNamespace(name="work")],
+        )
+        block = {name: b for name, _, b in honcho_cli._all_profile_host_configs()}["work"]
+        assert block.get("peerName") == "alice"

@@ -323,6 +323,115 @@ class TestCloneHonchoForProfile:
         assert "pinPeerName" not in new_block
 
 
+class TestCloneRespectsProfileOwnConfig:
+    """#1352: resolve_config_path() prefers a profile's own honcho.json, so a block cloned
+    into the default file is never read by that profile — and _ensure_peer_exists would
+    create the peer from the wrong settings. The clone must decline instead."""
+
+    def _setup(self, monkeypatch, tmp_path, cfg, profiles_dir):
+        import hermes_plugin_honcho.cli as honcho_cli
+        cfg_path = tmp_path / "config.json"
+        cfg_path.write_text("{}")
+        monkeypatch.setattr(honcho_cli, "_read_config", lambda: cfg)
+        monkeypatch.setattr(honcho_cli, "_config_path", lambda: cfg_path)
+        monkeypatch.setattr(honcho_cli, "_local_config_path", lambda: cfg_path)
+        monkeypatch.setattr("hermes_cli.profiles.get_profile_dir", lambda name: profiles_dir / name)
+        calls = {"write": 0, "peer": 0}
+
+        def _write(c, path=None):
+            calls["write"] += 1
+
+        def _peer(host_key=None):
+            calls["peer"] += 1
+            return True
+
+        monkeypatch.setattr(honcho_cli, "_write_config", _write)
+        monkeypatch.setattr(honcho_cli, "_ensure_peer_exists", _peer)
+        return honcho_cli, calls
+
+    def test_profile_with_its_own_config_is_not_cloned(self, monkeypatch, tmp_path):
+        cfg = {"apiKey": "***", "hosts": {"hermes": {"peerName": "eri"}}}
+        profiles_dir = tmp_path / "profiles"
+        (profiles_dir / "coder").mkdir(parents=True)
+        (profiles_dir / "coder" / "honcho.json").write_text('{"peerName": "eri", "recallMode": "tools"}')
+        honcho_cli, calls = self._setup(monkeypatch, tmp_path, cfg, profiles_dir)
+
+        assert honcho_cli.clone_honcho_for_profile("coder") is False
+        # Nothing was written and no peer was created from the default file's settings.
+        assert calls == {"write": 0, "peer": 0}
+
+    def test_profile_without_its_own_config_still_clones(self, monkeypatch, tmp_path):
+        cfg = {"apiKey": "***", "hosts": {"hermes": {"peerName": "eri"}}}
+        profiles_dir = tmp_path / "profiles"
+        (profiles_dir / "coder").mkdir(parents=True)
+        honcho_cli, calls = self._setup(monkeypatch, tmp_path, cfg, profiles_dir)
+
+        assert honcho_cli.clone_honcho_for_profile("coder") is True
+        assert calls == {"write": 1, "peer": 1}
+
+    def test_default_profile_is_never_treated_as_having_a_local_config(self, monkeypatch, tmp_path):
+        """'default' / 'custom' resolve to HOST, not to a profile directory."""
+        profiles_dir = tmp_path / "profiles"
+        profiles_dir.mkdir(parents=True)
+        import hermes_plugin_honcho.cli as honcho_cli
+        monkeypatch.setattr("hermes_cli.profiles.get_profile_dir", lambda name: profiles_dir / name)
+        assert honcho_cli._profile_config_path("default") is None
+        assert honcho_cli._profile_config_path("custom") is None
+
+
+class TestSyncReportsLocalProfilesBeforePreflight:
+    """A profile with its own honcho.json is settled independently of the default profile.
+
+    The default-config preflight only decides whether the remaining profiles can be
+    cloned; letting it return first hid the local-profile skips behind "run setup".
+    """
+
+    @staticmethod
+    def _run(monkeypatch, capsys, tmp_path, *, default_cfg, local_profiles):
+        import hermes_plugin_honcho.cli as honcho_cli
+        profiles_dir = tmp_path / "profiles"
+        for name in local_profiles:
+            (profiles_dir / name).mkdir(parents=True, exist_ok=True)
+            (profiles_dir / name / "honcho.json").write_text('{"peerName": "x"}')
+        (profiles_dir / "plain").mkdir(parents=True, exist_ok=True)
+        monkeypatch.setattr(honcho_cli, "_read_config", lambda: default_cfg)
+        monkeypatch.setattr("hermes_cli.profiles.get_profile_dir", lambda name: profiles_dir / name)
+        # The clone path writes and registers a peer; neither belongs in a report test.
+        monkeypatch.setattr(honcho_cli, "_write_config", lambda cfg, path=None: None)
+        monkeypatch.setattr(honcho_cli, "_ensure_peer_exists", lambda host_key=None: True)
+        names = ["default", *local_profiles, "plain"]
+        monkeypatch.setattr(
+            "hermes_cli.profiles.list_profiles",
+            lambda: [SimpleNamespace(name=n) for n in names],
+        )
+        honcho_cli._sync_profiles(verbose=True)
+        return capsys.readouterr().out
+
+    def test_local_profiles_are_reported_when_default_has_no_config(self, monkeypatch, capsys, tmp_path):
+        output = self._run(monkeypatch, capsys, tmp_path, default_cfg={}, local_profiles=["coder"])
+        assert "= coder has its own honcho.json (skipped)" in output
+        assert "1 profile(s) have their own honcho.json" in output
+
+    def test_local_profiles_are_reported_when_default_block_is_missing(self, monkeypatch, capsys, tmp_path):
+        output = self._run(
+            monkeypatch, capsys, tmp_path, default_cfg={"hosts": {}}, local_profiles=["coder", "ops"]
+        )
+        assert "= coder has its own honcho.json (skipped)" in output
+        assert "= ops has its own honcho.json (skipped)" in output
+        assert "2 profile(s) have their own honcho.json" in output
+
+    def test_clone_still_runs_when_a_default_exists(self, monkeypatch, capsys, tmp_path):
+        output = self._run(
+            monkeypatch,
+            capsys,
+            tmp_path,
+            default_cfg={"apiKey": "***", "hosts": {"hermes": {"peerName": "eri"}}},
+            local_profiles=["coder"],
+        )
+        assert "= coder has its own honcho.json (skipped)" in output
+        assert "+ plain -> hermes_plain" in output
+
+
 class TestSetupWizardDeploymentShape:
     """The gateway identity-mapping tree writes pinUserPeer / userPeerAliases /
     runtimePeerPrefix based on the operator's intent.
