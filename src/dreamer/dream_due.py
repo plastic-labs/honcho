@@ -55,7 +55,7 @@ class DueDream(NamedTuple):
     # The collection's tenant. Under MULTI_TENANT this scheduler runs cross-tenant on
     # the service session, so the tenant is carried explicitly (like the deriver's
     # work-unit key) to namespace the enqueued dream and to key the pending-work check
-    # per tenant. "default" under flag-off (the model default).
+    # per tenant. Flag-off, the instance tenant the rows were stamped with.
     # endregion
     tenant_id: str
 

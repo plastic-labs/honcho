@@ -124,6 +124,15 @@ async def test_flag_off_is_a_no_op_that_never_touches_the_engine() -> None:
 
 
 @pytest.mark.asyncio
+async def test_refuses_boot_when_tenant_id_is_set() -> None:
+    # A shared instance's tenant comes from each JWT; TENANT_ID would name another.
+    s = _flag_on_settings()
+    s.TENANT_ID = "acme"
+    with pytest.raises(StartupValidationError, match="TENANT_ID='acme' is set"):
+        await validate_tenant_isolation(_NO_ENGINE, instance_type="api", app_settings=s)
+
+
+@pytest.mark.asyncio
 async def test_refuses_boot_when_auth_is_off() -> None:
     s = _flag_on_settings()
     s.AUTH.USE_AUTH = False

@@ -19,6 +19,7 @@ from collections.abc import Sequence
 from alembic import op
 
 from migrations.utils import get_schema
+from src.config import settings
 
 # revision identifiers, used by Alembic.
 revision: str = "0c67be41049b"
@@ -27,6 +28,9 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 schema = get_schema()
+
+
+instance_tenant = settings.TENANT_ID or "default"
 
 
 def _token_count_function(tenantless_probe: str) -> str:
@@ -57,7 +61,7 @@ def upgrade() -> None:
         _token_count_function(
             f"""                SELECT token_count INTO t
                 FROM {schema}.messages
-                WHERE tenant_id = 'default' AND id = msg_id;"""
+                WHERE tenant_id = '{instance_tenant}' AND id = msg_id;"""
         )
     )
 
@@ -67,7 +71,7 @@ def downgrade() -> None:
         _token_count_function(
             f"""                SELECT token_count INTO t
                 FROM {schema}.messages
-                WHERE tenant_id = 'default' AND id = msg_id;
+                WHERE tenant_id = '{instance_tenant}' AND id = msg_id;
                 IF NOT FOUND THEN
                     SELECT token_count INTO t
                     FROM {schema}.messages WHERE id = msg_id;

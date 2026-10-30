@@ -20,6 +20,7 @@ import sqlalchemy as sa
 from alembic import op
 
 from migrations.utils import get_schema, index_exists, table_exists
+from src.config import settings
 
 # revision identifiers, used by Alembic.
 revision: str = "b7d2f4a81c39"
@@ -28,6 +29,10 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 schema = get_schema()
+
+# ai: a literal, not a bind: it lands in a function body. TENANT_ID's pattern
+# (alphanumerics, '_' and '-') keeps it a safe one.
+instance_tenant = settings.TENANT_ID or "default"
 
 # region ai
 # Trigger design notes the SQL below encodes:
@@ -116,14 +121,14 @@ def upgrade() -> None:
             END IF;
             IF tenant IS NULL THEN
                 -- A tenant-less queue row means a single-tenant deployment,
-                -- whose message rows all carry the bootstrap default tenant —
-                -- probe the composite PK with it (an id-only predicate cannot
-                -- use a (tenant_id, id) PK as a search key and would scan).
-                -- The id-only probe remains as a fallback for rows that
-                -- predate the default-tenant backfill.
+                -- whose message rows all carry the instance tenant (TENANT_ID,
+                -- else 'default') — probe the composite PK with it (an id-only
+                -- predicate cannot use a (tenant_id, id) PK as a search key and
+                -- would scan). The id-only probe remains as a fallback for rows
+                -- that predate the tenant backfill.
                 SELECT token_count INTO t
                 FROM {schema}.messages
-                WHERE tenant_id = 'default' AND id = msg_id;
+                WHERE tenant_id = '{instance_tenant}' AND id = msg_id;
                 IF NOT FOUND THEN
                     SELECT token_count INTO t
                     FROM {schema}.messages WHERE id = msg_id;

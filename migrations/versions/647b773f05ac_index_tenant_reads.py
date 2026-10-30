@@ -21,8 +21,8 @@ that serves them:
 
 All three lead with tenant_id, like the other tenant-scoped lookup indexes in
 src/models.py, and the reads they serve filter on tenant_id explicitly
-(models.scoped_tenant_id: the bound tenant, or 'default' when MULTI_TENANT is
-off). With tenant_id as the leading equality the rest of the key reads in
+(models.scoped_tenant_id: the bound tenant, or the instance tenant when
+MULTI_TENANT is off). With tenant_id as the leading equality the rest of the key reads in
 order. A query with no tenant_id condition gets no order from them.
 
 The builds hold no long write lock, on plain or partitioned tables (see

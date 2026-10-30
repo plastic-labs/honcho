@@ -1721,6 +1721,12 @@ class AppSettings(HonchoSettings):
     # endregion
     MULTI_TENANT: bool = False
 
+    # The tenant that owns this instance's data, when MULTI_TENANT is off.
+    TENANT_ID: Annotated[
+        str | None,
+        Field(min_length=1, max_length=128, pattern=r"^[a-zA-Z0-9_-]+$"),
+    ] = None
+
     # Nested settings models
     DB: DBSettings = Field(default_factory=DBSettings)
     AUTH: AuthSettings = Field(default_factory=AuthSettings)

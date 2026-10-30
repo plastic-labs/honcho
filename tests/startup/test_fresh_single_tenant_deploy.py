@@ -14,6 +14,11 @@ and pins what "no tenant configuration at all" has to mean:
   naming a tenant;
 - the first enqueue produces an un-namespaced work unit (``tenant_id`` NULL), the
   trigger-maintained aggregate row the claim reads, and the flag-off claim returns it.
+
+The same walk with ``TENANT_ID`` set before the first migration is a dedicated
+instance's first boot: that tenant replaces ``"default"`` in the seed and on every
+row, the queue still prices the tenant-less unit's tokens, and the validator holds
+the database to that tenant from then on.
 """
 
 from __future__ import annotations
@@ -42,13 +47,14 @@ from sqlalchemy_utils import (
     create_database,  # pyright: ignore[reportUnknownVariableType]
 )
 
-from src import crud, schemas
+from src import crud, models, schemas
 from src.config import settings
 from src.crud.deriver import claim_rows_query
 from src.db import tenant_context
 from src.deriver.enqueue import enqueue
 from src.models import DEFAULT_TENANT_ID
 from src.startup import (
+    StartupValidationError,
     validate_embedding_schema,
     validate_queue_item_batches,
     validate_tenant_isolation,
@@ -68,16 +74,24 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _ALEMBIC_INI = _REPO_ROOT / "alembic.ini"
 _MIGRATIONS_DIR = _REPO_ROOT / "migrations"
 
-# The tenant-scoped tables the first message touches; every row must read "default".
+# The tenant-scoped tables the first message touches; every row must read the
+# instance's tenant.
 _FIRST_WRITE_TABLES = ("workspaces", "peers", "sessions", "session_peers", "messages")
 
 
-@pytest_asyncio.fixture(scope="module")
-async def fresh_engine(worker_id: str) -> AsyncGenerator[AsyncEngine]:
-    """An empty database taken to alembic head exactly the way a first boot does."""
+# A groudon-shaped tenant id: 21 nanoid characters.
+_DEDICATED_TENANT = "9vxwslQ3rdzLXUO2LgHoq"
+
+
+@asynccontextmanager
+async def _migrated_database(
+    worker_id: str, tag: str, *, tenant_id: str | None = None
+) -> AsyncGenerator[AsyncEngine]:
+    """An empty database taken to alembic head exactly the way a first boot does,
+    with ``TENANT_ID`` as given for the upgrade."""
     # Named like the suite database (run id + worker suffix + a tag), so a run
     # that dies before teardown leaves something conftest's stale sweep reclaims.
-    url = _get_test_db_url(worker_id, tag="fresh")
+    url = _get_test_db_url(worker_id, tag=tag)
     _drop_database(url)  # only ever present under a pinned HONCHO_TEST_RUN_ID
     create_database(url)
 
@@ -90,17 +104,17 @@ async def fresh_engine(worker_id: str) -> AsyncGenerator[AsyncEngine]:
     finally:
         sync_engine.dispose()
 
-    # env.py reads the migration target from settings; point it at the throwaway
-    # database for the upgrade only, the same way conftest builds the worker DB.
-    previous_uri = settings.DB.CONNECTION_URI
-    settings.DB.CONNECTION_URI = url_str
+    # env.py reads the migration target from settings, and the migrations read
+    # TENANT_ID; set both for the upgrade only, the way conftest builds the worker DB.
+    previous_uri, previous_tenant = settings.DB.CONNECTION_URI, settings.TENANT_ID
+    settings.DB.CONNECTION_URI, settings.TENANT_ID = url_str, tenant_id
     try:
         cfg = Config(str(_ALEMBIC_INI))
         cfg.set_main_option("script_location", str(_MIGRATIONS_DIR))
         cfg.set_main_option("sqlalchemy.url", url_str)
         await asyncio.to_thread(command.upgrade, cfg, "head")
     finally:
-        settings.DB.CONNECTION_URI = previous_uri
+        settings.DB.CONNECTION_URI, settings.TENANT_ID = previous_uri, previous_tenant
 
     engine = create_async_engine(url_str)
     try:
@@ -108,6 +122,22 @@ async def fresh_engine(worker_id: str) -> AsyncGenerator[AsyncEngine]:
     finally:
         await engine.dispose()
         _drop_database(url)
+
+
+@pytest_asyncio.fixture(scope="module")
+async def fresh_engine(worker_id: str) -> AsyncGenerator[AsyncEngine]:
+    """A self-hoster's first boot: no tenant setting at all."""
+    async with _migrated_database(worker_id, "fresh") as engine:
+        yield engine
+
+
+@pytest_asyncio.fixture(scope="module")
+async def dedicated_engine(worker_id: str) -> AsyncGenerator[AsyncEngine]:
+    """A dedicated instance's first boot: TENANT_ID set before migrating."""
+    async with _migrated_database(
+        worker_id, "dedicated", tenant_id=_DEDICATED_TENANT
+    ) as engine:
+        yield engine
 
 
 @pytest.fixture(autouse=True)
@@ -118,37 +148,13 @@ def _public_schema(monkeypatch: pytest.MonkeyPatch) -> None:  # pyright: ignore[
     monkeypatch.setattr(settings.DB, "SCHEMA", "public")
 
 
-@pytest.mark.asyncio
-async def test_first_boot_seeds_one_tenant_and_every_validator_passes(
-    fresh_engine: AsyncEngine,
-) -> None:
-    assert settings.MULTI_TENANT is False, (
-        "this gate runs under the shipped single-tenant defaults"
-    )
-
-    async with fresh_engine.connect() as conn:
-        tenants = (await conn.execute(text("SELECT tenant_id FROM tenants"))).scalars()
-        assert list(tenants) == [DEFAULT_TENANT_ID]
-
-    # The API lifespan and the deriver entrypoint run these three before serving.
-    await validate_embedding_schema(fresh_engine)
-    await validate_tenant_isolation(fresh_engine, instance_type="api")
-    await validate_queue_item_batches(fresh_engine)
-
-    # Flag off, the isolation validator must not so much as open a connection.
-    await validate_tenant_isolation(untouchable_engine(), instance_type="api")
-
-
-@pytest.mark.asyncio
-async def test_first_write_and_first_claim_need_no_tenant(
-    fresh_engine: AsyncEngine,
+async def _write_and_enqueue_first_message(
+    engine: AsyncEngine,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
-) -> None:
-    assert settings.MULTI_TENANT is False
-    assert tenant_context.get() is None  # nobody has named a tenant, and nobody will
-
-    sessions = async_sessionmaker(bind=fresh_engine, expire_on_commit=False)
+) -> models.Message:
+    """The first message: written through the crud the routes use, then enqueued."""
+    sessions = async_sessionmaker(bind=engine, expire_on_commit=False)
     workspace_name, peer_name, session_name = (generate_nanoid() for _ in range(3))
 
     # First write, through the same crud the routes use.
@@ -187,15 +193,8 @@ async def test_first_write_and_first_claim_need_no_tenant(
             }
         ]
 
-    async with fresh_engine.connect() as conn:
-        for table in _FIRST_WRITE_TABLES:
-            stamped = await conn.execute(
-                text(f"SELECT DISTINCT tenant_id FROM {table}")
-            )
-            assert list(stamped.scalars()) == [DEFAULT_TENANT_ID], table
-
     # First enqueue, the way the messages route fires it. enqueue() opens its own
-    # sessions by name; route them at the fresh database (conftest points them at
+    # sessions by name; route them at this database (conftest points them at
     # the per-worker suite database).
     @asynccontextmanager
     async def fresh_tracked_db(
@@ -210,6 +209,52 @@ async def test_first_write_and_first_claim_need_no_tenant(
 
     with caplog.at_level("ERROR"):
         await enqueue(payload, tenant_id=None)
+    return message
+
+
+async def _assert_first_write_stamped(engine: AsyncEngine, tenant_id: str) -> None:
+    async with engine.connect() as conn:
+        for table in _FIRST_WRITE_TABLES:
+            stamped = await conn.execute(
+                text(f"SELECT DISTINCT tenant_id FROM {table}")
+            )
+            assert list(stamped.scalars()) == [tenant_id], table
+
+
+@pytest.mark.asyncio
+async def test_first_boot_seeds_one_tenant_and_every_validator_passes(
+    fresh_engine: AsyncEngine,
+) -> None:
+    assert settings.MULTI_TENANT is False and settings.TENANT_ID is None, (
+        "this gate runs under the shipped single-tenant defaults"
+    )
+
+    async with fresh_engine.connect() as conn:
+        tenants = (await conn.execute(text("SELECT tenant_id FROM tenants"))).scalars()
+        assert list(tenants) == [DEFAULT_TENANT_ID]
+
+    # The API lifespan and the deriver entrypoint run these three before serving.
+    await validate_embedding_schema(fresh_engine)
+    await validate_tenant_isolation(fresh_engine, instance_type="api")
+    await validate_queue_item_batches(fresh_engine)
+
+    # Flag off, the isolation validator must not so much as open a connection.
+    await validate_tenant_isolation(untouchable_engine(), instance_type="api")
+
+
+@pytest.mark.asyncio
+async def test_first_write_and_first_claim_need_no_tenant(
+    fresh_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    assert settings.MULTI_TENANT is False
+    assert tenant_context.get() is None  # nobody has named a tenant, and nobody will
+
+    await _write_and_enqueue_first_message(fresh_engine, monkeypatch, caplog)
+    await _assert_first_write_stamped(fresh_engine, DEFAULT_TENANT_ID)
+
+    sessions = async_sessionmaker(bind=fresh_engine, expire_on_commit=False)
 
     async with sessions() as db:
         queued = (
@@ -264,3 +309,46 @@ async def test_first_write_and_first_claim_need_no_tenant(
         claimed = (await db.execute(claim_rows_query(limit=8))).all()
         assert [row.work_unit_key for row in claimed] == [work_unit_key]
         await db.rollback()
+
+
+@pytest.mark.asyncio
+async def test_dedicated_first_boot_carries_tenant_id_through(
+    dedicated_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    assert settings.MULTI_TENANT is False
+    monkeypatch.setattr(settings, "TENANT_ID", _DEDICATED_TENANT)
+
+    async with dedicated_engine.connect() as conn:
+        tenants = (await conn.execute(text("SELECT tenant_id FROM tenants"))).scalars()
+        assert list(tenants) == [_DEDICATED_TENANT]
+    await validate_embedding_schema(dedicated_engine)
+    await validate_tenant_isolation(dedicated_engine, instance_type="api")
+    await validate_queue_item_batches(dedicated_engine)
+
+    # Another tenant against this database, before it holds data: no tenants row.
+    monkeypatch.setattr(settings, "TENANT_ID", "someone-else")
+    with pytest.raises(StartupValidationError, match="no tenants row"):
+        await validate_tenant_isolation(dedicated_engine, instance_type="api")
+    monkeypatch.setattr(settings, "TENANT_ID", _DEDICATED_TENANT)
+
+    message = await _write_and_enqueue_first_message(
+        dedicated_engine, monkeypatch, caplog
+    )
+    await _assert_first_write_stamped(dedicated_engine, _DEDICATED_TENANT)
+
+    # The queue row is still tenant-less (flag-off keys carry no tenant), so the
+    # token-count trigger must probe messages under TENANT_ID, not 'default': a
+    # miss prices the unit at 0 and it never reaches the token target.
+    async with dedicated_engine.connect() as conn:
+        batches = await conn.execute(
+            text("SELECT tenant_id, total_tokens FROM queue_item_batches")
+        )
+        assert [tuple(row) for row in batches.all()] == [(None, message.token_count)]
+    assert message.token_count > 0
+
+    # And after it holds data, every other tenant is refused.
+    monkeypatch.setattr(settings, "TENANT_ID", "someone-else")
+    with pytest.raises(StartupValidationError, match="under another tenant"):
+        await validate_tenant_isolation(dedicated_engine, instance_type="deriver")

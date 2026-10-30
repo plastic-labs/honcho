@@ -543,6 +543,9 @@ Every tenant table needs `ENABLE` and `FORCE ROW LEVEL SECURITY` and a policy
 the connection must not go through a transaction-mode pooler. Self-hosted
 single-tenant installs leave the flag off; none of this applies then.
 
+A single-tenant instance can still name the tenant that owns its data with
+`TENANT_ID`, with the flag off.
+
 ## Configuration
 
 Honcho uses a flexible configuration system that supports both TOML files and environment variables. Configuration values are loaded in priority order: **environment variables > `.env` file > `config.toml` > defaults**.

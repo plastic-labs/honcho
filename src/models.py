@@ -48,24 +48,30 @@ _VECTOR_DIM: int = settings.EMBEDDING.VECTOR_DIMENSIONS
 logger = getLogger(__name__)
 
 
-# The single tenant every single-tenant / self-host deployment operates as.
+# The tenant a single-tenant / self-host deployment operates as when TENANT_ID
+# is unset, and the bootstrap tenants row the migration seeds in that case.
 # region ai
 # New tenant-scoped rows default to the current tenant (tenant_context, when one
-# is bound) or this constant when no tenant is in scope (self-host / flag off).
+# is bound) or instance_tenant_id() when no tenant is in scope (flag off).
 # endregion
 DEFAULT_TENANT_ID = "default"
 
 
+def instance_tenant_id() -> str:
+    """The tenant a flag-off instance operates as: TENANT_ID, else 'default'."""
+    return settings.TENANT_ID or DEFAULT_TENANT_ID
+
+
 def _default_tenant_id() -> str:
     """Model-side default for tenant_id columns: the bound tenant; flag-off with
-    none bound, the single self-host tenant; flag-on with none bound, raises."""
+    none bound, the instance's tenant; flag-on with none bound, raises."""
     # region ai
     # Populates every ORM create without threading tenant_id through call sites.
     # Intentionally NOT a DB-level default: that would need a migration and could
     # silently stamp a tenant on a flag-on row that forgot to set one (tracked_db
     # fail-closes that case instead). Flag-on with no tenant bound raises for
-    # the same reason: 'default' is the self-host tenant, and stamping it on a
-    # multi-tenant row would file the row under the wrong tenant silently.
+    # the same reason: the instance tenant is a single-tenant id, and stamping it
+    # on a multi-tenant row would file the row under the wrong tenant silently.
     # (tracked_db already refuses an unbound session; this also covers inserts
     # on service_db, which binds no tenant.)
     # endregion
@@ -77,15 +83,15 @@ def _default_tenant_id() -> str:
             "tenant_id default requires a bound tenant when MULTI_TENANT is "
             + "enabled; set tenant_context or pass tenant_id explicitly"
         )
-    return DEFAULT_TENANT_ID
+    return instance_tenant_id()
 
 
 def scoped_tenant_id() -> str:
     """The tenant_id a tenant-scoped read filters on explicitly."""
     # region ai
-    # The bound tenant, or DEFAULT_TENANT_ID flag-off: the same value
+    # The bound tenant, or instance_tenant_id() flag-off: the same value
     # _default_tenant_id stamps on writes. Under MULTI_TENANT with no tenant bound
-    # it raises rather than read the 'default' tenant (tracked_db fail-closes the
+    # it raises rather than read the instance tenant (tracked_db fail-closes the
     # same case). Binding tenant_id explicitly, not only through RLS, lets the
     # (tenant_id, ...) indexes give order flag-off too, where no policy supplies it.
     # endregion
@@ -96,7 +102,7 @@ def scoped_tenant_id() -> str:
         raise ValueError(
             "no tenant bound under MULTI_TENANT; a tenant-scoped read needs one"
         )
-    return DEFAULT_TENANT_ID
+    return instance_tenant_id()
 
 
 class TenantPartitioned:
