@@ -31,6 +31,7 @@ import {
   type HonchoConfig,
   HonchoConfigSchema,
   LimitSchema,
+  MaxDistanceSchema,
   normalizeListOptions,
   type PeerAddition,
   PeerAdditionToApiSchema,
@@ -300,6 +301,7 @@ export class Honcho {
       filters?: Record<string, unknown>
       scope?: string
       limit?: number
+      max_distance?: number
     }
   ): Promise<MessageResponse[]> {
     return this._http.post<MessageResponse[]>(
@@ -1079,6 +1081,9 @@ export class Honcho {
    *                        sessions. Mutually exclusive with a `session_id` filter. A scope
    *                        with no member sessions matches nothing rather than everything.
    * @param limit - Number of results to return (1-100, default: 10).
+   * @param options.maxDistance - Optional maximum cosine distance (0-2) for semantic matches.
+   *                              Farther semantic hits are dropped, so fewer than `limit`
+   *                              results (or none) may be returned. Full-text matches are unaffected.
    * @returns Promise resolving to an array of Message objects representing the search results.
    *          Returns an empty array if no messages are found.
    * @throws Error if the search query is empty or invalid
@@ -1089,6 +1094,7 @@ export class Honcho {
       filters?: Filters
       scope?: string | Scope
       limit?: number
+      maxDistance?: number
     }
   ): Promise<Message[]> {
     await this._ensureWorkspace()
@@ -1105,11 +1111,16 @@ export class Honcho {
     const validatedLimit = options?.limit
       ? LimitSchema.parse(options.limit)
       : undefined
+    const validatedMaxDistance =
+      options?.maxDistance !== undefined
+        ? MaxDistanceSchema.parse(options.maxDistance)
+        : undefined
     const response = await this._searchWorkspace(this.workspaceId, {
       query: validatedQuery,
       filters: validatedFilters,
       scope: validatedScope,
       limit: validatedLimit,
+      max_distance: validatedMaxDistance,
     })
     return response.map(Message.fromApiResponse)
   }

@@ -1193,4 +1193,5 @@ async def search_session(
         body.query,
         filters=filters,
         limit=body.limit,
+        max_distance=body.max_distance,
     )

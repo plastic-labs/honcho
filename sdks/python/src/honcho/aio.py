@@ -674,6 +674,12 @@ class HonchoAio(AsyncMetadataConfigMixin):
             default=10, ge=1, le=100, description="Number of results to return"
         ),
         *,
+        max_distance: float | None = Field(
+            None,
+            ge=0.0,
+            le=2.0,
+            description="Maximum cosine distance for semantic matches",
+        ),
         scope: str | ScopeBase | None = None,
     ) -> list[Message]:
         """Search for messages in the current workspace asynchronously.
@@ -682,6 +688,9 @@ class HonchoAio(AsyncMetadataConfigMixin):
             query: The search query to use
             filters: Filters to scope the search.
             limit: Number of results to return (1-100, default: 10)
+            max_distance: Optional maximum cosine distance (0-2) for semantic
+                matches. Farther semantic hits are dropped, so fewer than ``limit``
+                results (or none) may be returned. Full-text matches are unaffected.
             scope: Optional scope (ID or Scope object) restricting the search to
                 that scope's member sessions. Mutually exclusive with a
                 ``session_id`` filter. A scope with no member sessions matches
@@ -689,6 +698,8 @@ class HonchoAio(AsyncMetadataConfigMixin):
         """
         await self._honcho._ensure_workspace_async()
         body: dict[str, Any] = {"query": query, "filters": filters, "limit": limit}
+        if max_distance is not None:
+            body["max_distance"] = max_distance
         if scope is not None:
             body["scope"] = validate_scope_id(resolve_id(scope))
         data = await self._honcho._async_http_client.post(
@@ -1096,12 +1107,22 @@ class PeerAio(AsyncMetadataConfigMixin):
         limit: int = Field(
             default=10, ge=1, le=100, description="Number of results to return"
         ),
+        *,
+        max_distance: float | None = Field(
+            None,
+            ge=0.0,
+            le=2.0,
+            description="Maximum cosine distance for semantic matches",
+        ),
     ) -> list[Message]:
         """Search across all messages with this peer as author asynchronously."""
         await self._peer._honcho._ensure_workspace_async()
+        body: dict[str, Any] = {"query": query, "filters": filters, "limit": limit}
+        if max_distance is not None:
+            body["max_distance"] = max_distance
         data = await self._peer._honcho._async_http_client.post(
             routes.peer_search(self._peer.workspace_id, self._peer.id),
-            body={"query": query, "filters": filters, "limit": limit},
+            body=body,
         )
         return [
             Message.from_api_response(MessageResponse.model_validate(item))
@@ -1716,12 +1737,22 @@ class SessionAio(AsyncMetadataConfigMixin):
         limit: int = Field(
             default=10, ge=1, le=100, description="Number of results to return"
         ),
+        *,
+        max_distance: float | None = Field(
+            None,
+            ge=0.0,
+            le=2.0,
+            description="Maximum cosine distance for semantic matches",
+        ),
     ) -> list[Message]:
         """Search for messages in this session asynchronously."""
         await self._session._honcho._ensure_workspace_async()
+        body: dict[str, Any] = {"query": query, "filters": filters, "limit": limit}
+        if max_distance is not None:
+            body["max_distance"] = max_distance
         data = await self._session._honcho._async_http_client.post(
             routes.session_search(self._session.workspace_id, self._session.id),
-            body={"query": query, "filters": filters, "limit": limit},
+            body=body,
         )
         return [
             Message.from_api_response(MessageResponse.model_validate(msg))

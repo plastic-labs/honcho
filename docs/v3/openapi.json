@@ -5852,6 +5852,20 @@
             "title": "Limit",
             "description": "Number of results to return",
             "default": 10
+          },
+          "max_distance": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 2.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Distance",
+            "description": "Optional maximum cosine distance for semantic matches. Semantic hits farther than this are dropped, so fewer than `limit` results (or none) are returned when nothing is close enough. Applies only to semantic candidates: full-text matches remain eligible independently."
           }
         },
         "type": "object",
@@ -7707,6 +7721,20 @@
             "title": "Limit",
             "description": "Number of results to return",
             "default": 10
+          },
+          "max_distance": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 2.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Distance",
+            "description": "Optional maximum cosine distance for semantic matches. Semantic hits farther than this are dropped, so fewer than `limit` results (or none) are returned when nothing is close enough. Applies only to semantic candidates: full-text matches remain eligible independently."
           },
           "scope": {
             "anyOf": [
