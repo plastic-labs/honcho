@@ -96,6 +96,16 @@ CONFIG_SCHEMA = ProviderConfigSchema(
                placeholder='["low", "medium"]', group="Dialectic"),
         _field("dialecticMaxInputChars", "Max input chars", KIND_NUMBER, "Max chars of query input sent to peer.chat().",
                placeholder="10000", group="Dialectic"),
+        _field("dialecticInjectionMode", "Injection mode", KIND_SELECT,
+               "Async injects base context plus a dialectic answer fired the turn before. Blocking runs one dialectic "
+               "per turn over the current request and recent exchanges, waits for it, and injects only its answer.",
+               default="async", options=_opts(("async", "Async"), ("blocking", "Blocking")), group="Dialectic"),
+        _field("dialecticQueryTemplate", "Blocking query template", KIND_TEXT,
+               "Blocking-mode dialectic question. Placeholders: {current_prompt}, {recent_turns}, {peer_name}.",
+               placeholder="(built-in)", group="Dialectic"),
+        _field("dialecticResultTemplate", "Blocking result template", KIND_TEXT,
+               "How blocking mode wraps the dialectic answer before injecting it. Placeholder: {dialectic_output}.",
+               placeholder="(built-in)", group="Dialectic"),
         # — Reasoning —
         _field("reasoningHeuristic", "Reasoning heuristic", KIND_BOOL, "Scale the reasoning level up on longer queries.",
                default="true", group="Reasoning"),

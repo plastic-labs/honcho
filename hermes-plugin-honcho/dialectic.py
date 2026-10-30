@@ -8,10 +8,26 @@ import threading
 import time
 
 from .client import spawn_context_thread
+from .recent_turns import render_exchanges
 
 logger = logging.getLogger("plugins.memory.honcho")
 
 _STRUCTURE_RE = re.compile(r"^(?:[*-] |\s*\d+\. )", re.MULTILINE)  # bullet / ordered-list line
+
+_TRIM_MARK = " …[trimmed]"
+_QUERY_PLACEHOLDER_RE = re.compile(r"\{(current_prompt|recent_turns|peer_name)\}")
+# Blocking-mode defaults for dialecticQueryTemplate / dialecticResultTemplate. Placeholders are
+# substituted literally, so a template may contain other braces.
+DEFAULT_BLOCKING_QUERY_TEMPLATE = (
+    "What do I need to know to fulfil the user's request as faithfully to their personal preferences as "
+    "possible?\n\n"
+    "## Recent exchanges with {peer_name}\n{recent_turns}\n\n"
+    "## Current request from {peer_name}\n{current_prompt}"
+)
+DEFAULT_BLOCKING_RESULT_TEMPLATE = (
+    "Honcho thinks you need to know the following about the user to fulfil the user request as faithfully to "
+    "the user's preferences accumulated in memory: {dialectic_output}"
+)
 
 
 class DialecticMixin:
@@ -167,6 +183,75 @@ class DialecticMixin:
             return False
         structured = "\n" in result and bool("##" in result or "•" in result or _STRUCTURE_RE.search(result))
         return structured or len(result.strip()) > 300
+
+    def _build_blocking_query(self, current: str, exchanges: list[dict]) -> tuple[str, list[str], int]:
+        """Render dialecticQueryTemplate over the current prompt and recent exchanges, fitted to
+        dialecticMaxInputChars. Returns the query, what was trimmed, and how many exchanges it quotes.
+
+        Exchanges are trimmed oldest first: tool lines from the end, then the reply, then the user text,
+        and only then is the exchange dropped. The newest exchange is trimmed but never dropped. If the
+        query is still too long, the middle of the current prompt is cut, keeping its head and tail, so
+        the manager's own cut (which drops the end of the query) never runs."""
+        template = (self._config.dialectic_query_template if self._config else None) or DEFAULT_BLOCKING_QUERY_TEMPLATE
+        peer_name = (self._config.peer_name if self._config else None) or "the user"
+        limit = self._config.dialectic_max_input_chars if self._config else 10000
+        if "{current_prompt}" not in template and not self._blocking_template_warned:
+            self._blocking_template_warned = True
+            logger.warning("Honcho dialecticQueryTemplate has no {current_prompt}: the dialectic will not see the request")
+
+        def _render(kept: list[dict]) -> str:
+            values = {"peer_name": peer_name, "recent_turns": render_exchanges(kept), "current_prompt": prompt}
+            # One pass, so placeholder-like text inside the substituted values is left alone.
+            return _QUERY_PLACEHOLDER_RE.sub(lambda m: values[m.group(1)], template)
+
+        prompt = current
+        kept = [{**turn, "tools": list(turn.get("tools") or ())} for turn in exchanges]
+        query, trimmed = _render(kept), []
+        idx = 0
+        while len(query) > limit and idx < len(kept):
+            turn, n = kept[idx], len(exchanges) - len(kept) + idx + 1
+            if turn["tools"]:
+                dropped = 0
+                while turn["tools"] and len(query) > limit:
+                    turn["tools"].pop()
+                    dropped += 1
+                    query = _render(kept)
+                trimmed.append(f"exchange {n}: {dropped} tool line(s)")
+                continue
+            for key in ("assistant", "user"):
+                text = str(turn.get(key) or "")
+                if text and len(query) > limit:
+                    keep = max(0, len(text) - (len(query) - limit) - len(_TRIM_MARK))
+                    turn[key] = text[:keep] + _TRIM_MARK if keep else ""
+                    trimmed.append(f"exchange {n}: {key} text cut by {len(text) - keep} chars")
+                    query = _render(kept)
+            if len(query) <= limit or idx == len(kept) - 1:
+                idx += 1
+            else:
+                kept.pop(idx)
+                trimmed.append(f"exchange {n}: dropped")
+                query = _render(kept)
+        if len(query) > limit:
+            omitted = len(query) - limit
+            for _ in range(2):  # the marker's own length depends on the count it reports
+                marker = f"[… {omitted} chars omitted …]"
+                omitted = min(len(current), len(query) - limit + len(marker))
+            if omitted < len(current):
+                head = (len(current) - omitted) // 2
+                prompt = current[:head] + marker + current[len(current) - (len(current) - omitted - head):]
+                trimmed.append(f"current prompt: {omitted} chars omitted from the middle")
+                query = _render(kept)
+            if len(query) > limit:
+                trimmed.append(f"template alone is over the cap: {len(query) - limit} chars will be cut from the end")
+        if trimmed:
+            logger.warning("Honcho blocking dialectic query over dialecticMaxInputChars=%d (%d recent exchange(s)): %s",
+                           limit, len(exchanges), "; ".join(trimmed))
+        return query, trimmed, len(kept)
+
+    def _format_blocking_result(self, output: str) -> str:
+        """Wrap a dialectic answer in dialecticResultTemplate."""
+        template = (self._config.dialectic_result_template if self._config else None) or DEFAULT_BLOCKING_RESULT_TEMPLATE
+        return template.replace("{dialectic_output}", output.strip())
 
     def _run_dialectic_depth(self, query: str, *, use_query_rewrite: bool = True) -> str:
         """Run up to dialecticDepth .chat() passes, bailing early once a pass returns
