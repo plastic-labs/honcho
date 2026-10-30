@@ -363,7 +363,7 @@ class LangfuseExporter:
         start_ns: int | None,
         end_ns: int,
     ) -> None:
-        level = "ERROR" if (call.finish_reason in _ERROR_FINISHES) else None
+        failed = call.finish_reason in _ERROR_FINISHES
         obs = client.start_observation(
             trace_context=self._trace_context(lf_trace_id, parent_span_id),
             name=self._gen_name(call),
@@ -373,7 +373,8 @@ class LangfuseExporter:
             output=self._output(call),
             metadata=self._generation_metadata(call),
             usage_details=self._usage(call),
-            level=level,
+            level="ERROR" if failed else None,
+            status_message=call.error_class if failed else None,
         )
         backdated = self._backdate_start(obs, start_ns)
         self._attach(obs, parent_span_id, self._trace_name(call))
@@ -518,6 +519,12 @@ class LangfuseExporter:
         md = self._step_metadata(call)
         if call.custom_instructions:
             md["custom_instructions"] = call.custom_instructions
+        # A failed attempt keeps its output, so these are what tell it apart
+        # from a successful one when filtering generations.
+        if call.outcome is not None:
+            md["outcome"] = call.outcome
+        if call.error_class is not None:
+            md["error_class"] = call.error_class
         return md
 
     @staticmethod

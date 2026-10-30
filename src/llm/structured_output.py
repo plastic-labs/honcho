@@ -11,7 +11,17 @@ from src.utils.representation import PromptRepresentation
 
 
 class StructuredOutputError(ValueError):
-    """Raised when structured output cannot be validated or repaired."""
+    """Raised when structured output cannot be validated or repaired.
+
+    ``raw_content`` is the model's unparsed output, when the raising site has
+    it. It stays out of the message (which reaches logs and the queue item's
+    error column) and is read only by telemetry, so a failed generation can be
+    inspected in the same sinks that already hold successful ones.
+    """
+
+    def __init__(self, message: str, *, raw_content: str | None = None) -> None:
+        super().__init__(message)
+        self.raw_content: str | None = raw_content
 
 
 def schema_instruction(response_format: type[BaseModel], *, tools_present: bool) -> str:
@@ -84,7 +94,8 @@ def repair_response_model_json(
         f"payload_bytes={len(payload)} payload_sha256={sha256(payload).hexdigest()}"
     )
     raise StructuredOutputError(
-        f"PromptRepresentation structured output failed {details} {payload_details}"
+        f"PromptRepresentation structured output failed {details} {payload_details}",
+        raw_content=raw_content,
     ) from None
 
 
