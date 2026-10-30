@@ -17,10 +17,16 @@ from typing import Optional
 
 import typer
 
-from honcho import Honcho
+from honcho import (
+    APIError,
+    AuthenticationError,
+    ConnectionError as HonchoConnectionError,
+    Honcho,
+    TimeoutError as HonchoTimeoutError,
+)
 
 from honcho_cli import oauth
-from honcho_cli.config import CLIConfig, OAuthTokens, get_client_kwargs
+from honcho_cli.config import CLIConfig, OAuthTokens, get_client_kwargs, identity_headers
 from honcho_cli.output import print_error, set_json_mode
 from honcho_cli.validation import validate_resource_id
 
@@ -103,6 +109,34 @@ def maybe_refresh_token(config: CLIConfig) -> None:
         return
     print_error("SESSION_EXPIRED", "OAuth session expired. Run `honcho init` to log in again.")
     raise typer.Exit(1)
+
+
+def probe_connection(
+    base_url: str, api_key: str, *, timeout: float | None = None
+) -> tuple[bool, str]:
+    """Probe the Honcho API by listing workspaces. Returns (ok, detail).
+
+    Dispatches on the SDK's typed exception hierarchy instead of matching
+    substrings of error messages — robust to SDK message changes and locale.
+    ``timeout`` (seconds) overrides the SDK default for short diagnostics.
+    """
+    kwargs: dict = {"base_url": base_url, "api_key": api_key, "default_headers": identity_headers()}
+    if timeout is not None:
+        kwargs["timeout"] = timeout
+    try:
+        client = Honcho(**kwargs)
+        list(client.workspaces())
+        return True, "OK"
+    except AuthenticationError:
+        return False, "Unauthorized — check your API key"
+    except HonchoConnectionError:
+        return False, "Connection refused — is the server running?"
+    except HonchoTimeoutError:
+        return False, "Request timed out"
+    except APIError as e:
+        return False, f"API error ({e.status}): {e}"
+    except Exception as e:
+        return False, str(e)
 
 
 def get_client(*, require_workspace: bool = True):

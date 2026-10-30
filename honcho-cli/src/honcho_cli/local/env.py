@@ -20,7 +20,7 @@ MANAGED_KEYS = (
 )
 
 # Host env forwarded into the profile .env (overrides config.toml).
-_SETTINGS_PREFIXES = (
+SETTINGS_PREFIXES = (
     "LLM_",
     "EMBEDDING_",
     "DERIVER_",
@@ -60,7 +60,7 @@ def settings_from_environ() -> dict[str, str]:
     return {
         k: v
         for k, v in os.environ.items()
-        if k.startswith(_SETTINGS_PREFIXES) and not is_placeholder_key(v)
+        if k.startswith(SETTINGS_PREFIXES) and not is_placeholder_key(v)
     }
 
 
