@@ -10,7 +10,7 @@ preflight check before a protected write.
 from dataclasses import dataclass
 from typing import Literal
 
-from sqlalchemy import ColumnElement, and_, exists, select
+from sqlalchemy import ColumnElement, and_, exists, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import QueryableAttribute, aliased
 from sqlalchemy.orm.util import AliasedClass
@@ -154,7 +154,8 @@ def _peer_live(
 
 
 def _session_live(
-    workspace_name: QueryableAttribute[str], session_name: QueryableAttribute[str]
+    workspace_name: QueryableAttribute[str],
+    session_name: QueryableAttribute[str] | QueryableAttribute[str | None],
 ) -> ColumnElement[bool]:
     session = aliased(models.Session)
     return exists().where(
@@ -220,4 +221,54 @@ def live_session_peer_row(
         _workspace_live(session_peer.workspace_name),
         _session_live(session_peer.workspace_name, session_peer.session_name),
         _peer_live(session_peer.workspace_name, session_peer.peer_name),
+    )
+
+
+def live_document_row(
+    workspace_name: str,
+    document: type[models.Document] | AliasedClass[models.Document] = models.Document,
+) -> ColumnElement[bool]:
+    """Row-wise filter: the conclusion, its workspace, observer and observed are live.
+
+    A conclusion with a ``session_name`` is also hidden once that session is
+    tombstoned; one without a session (manual or cross-session) depends only on
+    its peers. This hides conclusions under erased parents; it does not decide
+    which surviving conclusions were derived from erased messages. Also
+    restricts rows to ``workspace_name``.
+
+    Conclusion reads scan whole collections, so this does not use the
+    correlated semi-joins above. ``session_name IS NULL OR EXISTS (...)``
+    cannot become a semi-join, and Postgres instead hashes every live session
+    in the database on each read. Here each parent is checked against the
+    workspace's *tombstoned* rows with uncorrelated ``NOT IN`` subqueries, each
+    hashed once per query and empty until deletion is enabled. Without a
+    partial index on tombstoned peers and sessions, building those hashes
+    still reads every peer and session in the workspace. Do not rewrite
+    them as ``NOT EXISTS``: the pinned workspace makes Postgres estimate the
+    anti-join at about one row, which loses index-ordered plans. The composite
+    foreign keys guarantee every parent exists, so this does not need the
+    semi-joins' fail-closed check for a missing parent; the workspace is still
+    checked positively.
+    """
+    workspace = aliased(models.Workspace)
+    peer = aliased(models.Peer)
+    session = aliased(models.Session)
+    tombstoned_peers = select(peer.name).where(
+        peer.workspace_name == workspace_name, peer.deleted_at.is_not(None)
+    )
+    tombstoned_sessions = select(session.name).where(
+        session.workspace_name == workspace_name, session.deleted_at.is_not(None)
+    )
+    return and_(
+        document.workspace_name == workspace_name,
+        document.deleted_at.is_(None),
+        select(workspace.name)
+        .where(workspace.name == workspace_name, workspace.deleted_at.is_(None))
+        .exists(),
+        document.observer.not_in(tombstoned_peers),
+        document.observed.not_in(tombstoned_peers),
+        or_(
+            document.session_name.is_(None),
+            document.session_name.not_in(tombstoned_sessions),
+        ),
     )

@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
 from src.config import settings
+from src.crud.lifecycle import live_message_row
 from src.dependencies import tracked_db
 from src.embedding_client import EmbeddingTokenLimitError, embedding_client
 from src.exceptions import ValidationException
@@ -129,7 +130,9 @@ async def fetch_messages_by_ids(
     if not message_ids:
         return []
 
-    stmt = select(models.Message).where(models.Message.public_id.in_(message_ids))
+    stmt = select(models.Message).where(
+        models.Message.public_id.in_(message_ids), live_message_row()
+    )
     stmt = apply_filter(stmt, models.Message, filters)
 
     result = await db.execute(stmt)
@@ -168,6 +171,7 @@ async def _semantic_search_pgvector(
         )
         .where(models.MessageEmbedding.embedding.isnot(None))
         .where(models.MessageEmbedding.workspace_name == workspace_name)
+        .where(live_message_row())
     )
 
     if filters:
@@ -340,7 +344,7 @@ async def search(
         ValidationException: If query exceeds maximum token limit for embeddings
     """
     # Base query conditions
-    stmt = select(models.Message)
+    stmt = select(models.Message).where(live_message_row())
 
     # Handle special peer_perspective filter
     peer_perspective_name: str | None = None
